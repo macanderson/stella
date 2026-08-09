@@ -468,28 +468,79 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
     );
 }
 
+/// A provider whose FIRST completion burns real wall clock and comes back
+/// starved (#2128's signature: stopped at the token limit with nothing to
+/// show), so the management chokepoint retries the SAME role. That second
+/// dispatch is the only shape that can exercise an anticipatory rung built on
+/// measurement — the first call of any role has no history and is never
+/// refused, by design.
+struct SlowThenStarved {
+    first: std::time::Duration,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl SlowThenStarved {
+    fn new(first: std::time::Duration) -> Self {
+        Self {
+            first,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Provider for SlowThenStarved {
+    fn id(&self) -> &str {
+        "slow-then-starved"
+    }
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::time::sleep(self.first).await;
+            return Ok(CompletionResult {
+                finish_reason: Some(stella_protocol::FinishReason::Length),
+                ..text_result("")
+            });
+        }
+        Ok(text_result("multi"))
+    }
+}
+
+/// Hands [`SlowThenStarved`] to every role — the single-model wiring
+/// `OneProvider` gives the scripted provider, which is typed to it.
+struct SlowResolver<'p>(&'p SlowThenStarved);
+impl ProviderResolver for SlowResolver<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        Some(self.0)
+    }
+}
+
 /// #2432 witness: a task deadline that has NOT passed, but is too near to fit
-/// the call about to be dispatched, stops the run before dispatching it.
+/// a call the pipeline has already measured, stops that call before dispatch.
 ///
-/// The deadline is 500ms out and triage's own declared ceiling
-/// ([`PipelineConfig::triage_latency_ceiling`], 30s by default) is the reserve,
-/// so the seam can see the call cannot finish. Fails on `main`, where the rung
-/// consults `check_deadline` — `check_deadline_with_reserve(now, ZERO)` — so
-/// `DeadlineOutcome::Closing` is unreachable there and the call is dispatched
-/// anyway, to overrun the task clock by the difference. That is #2278's shape
-/// one layer up: the seam refuses only work that is already too late, never
-/// work it can see it cannot finish.
+/// The first triage call takes 300ms and comes back starved, so the chokepoint
+/// retries the same role — and by then the pipeline knows what a triage call
+/// costs. With 400ms of deadline armed, 100ms remains against a 300ms forecast,
+/// so the retry is refused before it reaches the provider.
+///
+/// Fails on `main`, where the rung consults `check_deadline` —
+/// `check_deadline_with_reserve(now, ZERO)` — so `DeadlineOutcome::Closing` is
+/// unreachable and the retry is dispatched anyway, to overrun the task clock by
+/// the difference. That is #2278's shape one layer up: the seam refuses only
+/// work that is already too late, never work it can see it cannot finish.
 ///
 /// Dollar axes deliberately unarmed, as in the #2238 witness above: the only
 /// ceiling in this fixture is the wall clock.
 #[tokio::test]
-async fn a_deadline_too_near_to_fit_the_call_stops_the_run_before_dispatch() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("multi"),
-        text_result(r#"["plan must never run"]"#),
-        text_result("worker must never run"),
-    ]);
-    let resolver = OneProvider(&provider);
+async fn a_deadline_too_near_to_fit_a_measured_call_stops_it_before_dispatch() {
+    let provider = SlowThenStarved::new(std::time::Duration::from_millis(300));
+    let resolver = SlowResolver(&provider);
     let runner = ScriptedRunner::new(vec![], "");
     let tools = EmptyTools;
     let recall = NoContextRecall;
@@ -525,9 +576,10 @@ async fn a_deadline_too_near_to_fit_the_call_stops_the_run_before_dispatch() {
     );
     let mut messages = vec![CompletionMessage::system("sys")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    // Still ahead — this run has time left, just not enough of it.
+    // Still ahead — this run has time left, just not enough of it for the call
+    // it is about to start.
     budget.set_task_deadline(Some(
-        std::time::Instant::now() + std::time::Duration::from_millis(500),
+        std::time::Instant::now() + std::time::Duration::from_millis(400),
     ));
 
     let outcome = pipeline
@@ -551,13 +603,10 @@ async fn a_deadline_too_near_to_fit_the_call_stops_the_run_before_dispatch() {
         outcome.status
     );
     assert_eq!(
-        outcome.total_cost_usd, 0.0,
-        "nothing was dispatched, so nothing was spent"
-    );
-    assert_eq!(
-        provider.remaining().await,
-        3,
-        "the anticipatory rung refuses BEFORE dispatch: not one completion may be consumed"
+        provider.calls(),
+        1,
+        "the anticipatory rung refuses BEFORE dispatch: the retry must never \
+         reach the provider"
     );
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
     let anticipatory = events.iter().any(|event| matches!(

@@ -302,22 +302,25 @@ impl<'a> Pipeline<'a> {
         // basis it has (`TurnState::last_step`, which it measures).
         //
         // Provenance of the number, stated because a reserve with none is the
-        // invented policy above: it is this call's OWN `timeout` — the
-        // per-call ceiling every management role already passes (`model_timeout`,
-        // or `triage_latency_ceiling` for triage). "Do not start a call whose
-        // own declared ceiling exceeds the clock left" needs no new state and
-        // no measurement. It is an IDLE bound rather than a wall-clock one, so
-        // it under-states a slow-but-live generation and this rung is
-        // conservative by construction; #2021 would make it a true wall-clock
-        // reserve. A role passing no timeout gets no anticipation and keeps
-        // #2238's reactive behaviour exactly, which is also why an unarmed
-        // deadline is untouched: `check_deadline_with_reserve` answers
-        // `Continue` when none is set.
+        // invented policy above: it is the measured wall clock of the LAST
+        // completed call of this same role (`super::role_pace`), the pipeline's
+        // equivalent of the `TurnState::last_step` the engine forecasts from.
+        // A role with no history yet reports `None` and is never refused —
+        // anticipation requires a measurement, and this seam makes none up.
+        //
+        // The call's own `timeout` was the cheaper candidate and is wrong: it
+        // is an IDLE ceiling (`model_timeout` defaults to 816s), so reserving
+        // it would refuse every management call on any run whose deadline is
+        // under ~14 minutes — a stop far larger than the overrun it prevents.
+        //
+        // An unarmed deadline is untouched: `check_deadline_with_reserve`
+        // answers `Continue` when none is set, so a run nobody is timing keeps
+        // #2238's behaviour exactly.
         //
         // Invariant 6 holds — this is still before dispatch, between model
         // calls, with nothing in flight to interrupt. Invariant 2 holds: the
         // clock is read here and handed in, never read inside the guard.
-        if let Some(reserve) = timeout
+        if let Some(reserve) = self.role_pace.forecast(meta.role)
             && let DeadlineOutcome::Closing { remaining } =
                 budget.check_deadline_with_reserve(Instant::now(), reserve)
         {
@@ -325,6 +328,7 @@ impl<'a> Pipeline<'a> {
                 remaining, reserve,
             )));
         }
+        let dispatched_at = Instant::now();
         match run_accounted_call(
             AccountedCall {
                 provider: meta.provider,
@@ -355,6 +359,11 @@ impl<'a> Pipeline<'a> {
         {
             Ok(result) => {
                 *total += result.cost_usd;
+                // Only a completed call teaches the forecast anything (#2432).
+                // A refusal or an early death would report the failure's
+                // duration rather than the work's, talking the estimate down
+                // exactly when a run is in trouble.
+                self.role_pace.observe(meta.role, dispatched_at.elapsed());
                 Ok(result)
             }
             Err(AccountedCallError::Provider(_)) => Err(RawCallError::Provider),
