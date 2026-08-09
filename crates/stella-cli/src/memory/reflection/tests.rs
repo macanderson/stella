@@ -15,13 +15,17 @@
 //! nothing here can. They pin the two things that were actually wrong: that the
 //! discard test is present at all, and that the construct which carried the
 //! anti-example both times has not come back.
+//!
+//! The witnesses at the bottom of the file pin something else: what the prompt
+//! is allowed to *see*. Both fail on the tail-window digest #2460 replaced, each
+//! on a different one of its two defects.
 
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use stella_protocol::{
     CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
-    Provider, ProviderError, ReasoningEffort,
+    Provider, ProviderError, ReasoningEffort, ToolCall, ToolOutput, ToolResult,
 };
 
 /// Records the prompt it is asked to complete — and the request's dispatch
@@ -251,4 +255,167 @@ async fn dispatch_shape(
     let shape = *provider.shape.lock().expect("shape lock");
     let reasoning = *provider.reasoning.lock().expect("reasoning lock");
     (shape, reasoning)
+}
+
+/// One assistant message that calls one tool, and the `Tool` message answering
+/// it. Built as the engine builds them — `content` empty, payload in
+/// `tool_results` — because that construction is the whole of defect two.
+fn tool_exchange(call_id: &str, name: &str, output: ToolOutput) -> Vec<CompletionMessage> {
+    vec![
+        CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: call_id.to_string(),
+                name: name.to_string(),
+                input: serde_json::json!({"cmd": "cargo test -p stella-core"}),
+            }],
+            tool_results: Vec::new(),
+            attachments: Vec::new(),
+        },
+        CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: Vec::new(),
+            tool_results: vec![ToolResult {
+                call_id: call_id.to_string(),
+                output,
+            }],
+            attachments: Vec::new(),
+        },
+    ]
+}
+
+/// WITNESS (#2460, defect one — the window is in the wrong place).
+///
+/// A thirty-message turn whose only learnable fact sits at index 8. The old
+/// digest read the last twelve messages, so index 8 of 30 was outside the window
+/// by construction and the fact could not reach the prompt at any truncation
+/// length. Selection keeps it because the tool call it provoked errored.
+#[tokio::test]
+async fn a_fact_in_the_middle_of_a_long_turn_reaches_the_reflection_prompt() {
+    const THE_FACT: &str = "withTenantDb must be opened before the migration lock or the \
+                            leak reappears silently";
+    let mut transcript = vec![CompletionMessage::user("fix the tenancy leak")];
+    for step in 0..14 {
+        if step == 4 {
+            // The fact, and the failure that taught it, in the middle.
+            transcript.push(CompletionMessage::assistant(THE_FACT));
+            transcript.extend(tool_exchange(
+                "call_middle",
+                "bash",
+                ToolOutput::Error {
+                    message: "migration lock held by another connection".into(),
+                },
+            ));
+            continue;
+        }
+        transcript.extend(tool_exchange(
+            &format!("call_{step}"),
+            "read_file",
+            ToolOutput::Ok {
+                content: format!("routine step {step}, nothing to learn here"),
+            },
+        ));
+    }
+    transcript.push(CompletionMessage::assistant("done — tests pass"));
+    assert!(
+        transcript.len() > 24,
+        "the fact must sit well outside a twelve-message tail, or this witness \
+         proves nothing"
+    );
+
+    let prompt = prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, true)).await;
+    assert!(
+        prompt.contains(THE_FACT),
+        "reflection is being asked what it learned by a witness that cannot see \
+         where the turn went wrong: the fact at index 5 of {} never reached the \
+         prompt.\n\nprompt was:\n{prompt}",
+        transcript.len()
+    );
+}
+
+/// WITNESS (#2460, defect two — a `Tool` message's payload is not in `content`).
+///
+/// Four messages, so every one of them is inside even the old twelve-message
+/// tail: the window is not what this pins. The old digest rendered
+/// `message.content`, which the engine leaves EMPTY on a `Tool` message, so
+/// every tool result Stella has ever produced reached reflection as the six
+/// characters `"tool: "` — the 300-character cut never even applied.
+#[tokio::test]
+async fn a_failed_tool_result_reaches_the_reflection_prompt() {
+    const THE_ERROR: &str = "assertion failed: expected 1_15 minor units, got 1_14";
+    let mut transcript = vec![CompletionMessage::user("make the money test pass")];
+    transcript.extend(tool_exchange(
+        "call_1",
+        "bash",
+        ToolOutput::Error {
+            message: THE_ERROR.into(),
+        },
+    ));
+    transcript.push(CompletionMessage::assistant("gave up"));
+
+    let prompt = prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, false)).await;
+    assert!(
+        prompt.contains(THE_ERROR),
+        "the tool result that failed is the highest-value evidence in the turn, \
+         and it is not in the prompt.\n\nprompt was:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("bash"),
+        "a failed result must name the tool that produced it — the name lives on \
+         the call, not the result, so it has to be joined by call id"
+    );
+}
+
+/// The event-derived half of the evidence (#2460's definition of done, item 1):
+/// cost, wall clock, retries and loop firings leave no message at all, so no
+/// window over the transcript can reach them.
+#[tokio::test]
+async fn the_prompt_names_where_the_turn_spent_itself() {
+    let mut friction = super::TurnFriction::default();
+    friction.observe(&stella_protocol::AgentEvent::StepUsage {
+        step: 9,
+        role: stella_protocol::ModelCallRole::Worker,
+        provider: "anthropic".into(),
+        output_text: None,
+        model: "claude".into(),
+        input_tokens: 120_000,
+        output_tokens: 900,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: None,
+        estimated_input_tokens: 0,
+        cost_usd: 0.42,
+        duration_ms: 42_000,
+        retries: 0,
+        tool_calls: 3,
+        complete: true,
+        finish_reason: None,
+    });
+    friction.observe(&stella_protocol::AgentEvent::LoopDetected {
+        turn_instance: 0,
+        kind: "stagnation".into(),
+        pattern: vec!["bash".into()],
+        repeats: 4,
+        evidence: "same command, no progress".into(),
+        aborted: false,
+    });
+    let transcript = vec![CompletionMessage::user("fix it")];
+    let prompt = prompt_for_evidence(super::TurnEvidence {
+        transcript: &transcript,
+        friction: &friction,
+        succeeded: false,
+    })
+    .await;
+    assert!(
+        prompt.contains("step 9 (worker)") && prompt.contains("$0.4200"),
+        "the costliest step is where a turn's money went, and it is nowhere in \
+         the transcript.\n\nprompt was:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("stagnation ×4"),
+        "a loop-detector firing leaves no message behind, so a transcript window \
+         can never recover it.\n\nprompt was:\n{prompt}"
+    );
 }
