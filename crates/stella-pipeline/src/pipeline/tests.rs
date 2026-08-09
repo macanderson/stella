@@ -1034,12 +1034,17 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
         .verdict
         .expect("zero-diff guard forced verification");
     assert!(verdict.passed);
-    assert!(!verdict.deterministic, "verified via the model verifier");
+    assert!(
+        !verdict.deterministic,
+        "a lookup that unexpectedly wrote is not a proven change"
+    );
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "the zero-diff guard must run the verifier on an unexpected mutation"
+        !stages(&events).contains(&StageKind::Verdict),
+        "the zero-diff guard forces the turn through verification rather than \
+         letting it complete unexamined — and verification now ends in the \
+         ladder, buying no opinion about the mutation it found"
     );
 }
 
@@ -1696,17 +1701,16 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         "triage said no witness: {s:?}"
     );
     assert!(
-        s.contains(&StageKind::Verdict),
-        "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
+        !s.contains(&StageKind::Verdict),
+        "a behavioral diff is graded by the ladder, whatever triage guessed: {s:?}"
     );
-    // Three paid calls: triage, the worker, and the verifier the evidence
-    // demanded. The plan and witness-author ceremony triage declined is
-    // never bought.
+    // Two paid calls: triage and the worker. The plan and witness-author
+    // ceremony triage declined is never bought, and neither is a verdict.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(calls, 3, "no plan or witness-author call is bought: {s:?}");
+    assert_eq!(calls, 2, "no plan, witness-author or verdict call is bought: {s:?}");
 }
 
 /// The observed failure, end to end at the seam that actually decides it.

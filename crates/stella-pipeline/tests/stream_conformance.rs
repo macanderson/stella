@@ -38,7 +38,7 @@ fn fixture(relative: &str) -> String {
 /// writer that crashed mid-line.
 const CONFORMING: &[&str] = &[
     "golden/single_task_deterministic_flip.jsonl",
-    "golden/verifier_escalation_without_a_test_command.jsonl",
+    "golden/unproven_without_a_test_command.jsonl",
     "single_task_flip.jsonl",
     "single_task_flip_reference.jsonl",
     "verifier_escalation.jsonl",
