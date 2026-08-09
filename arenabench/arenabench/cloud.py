@@ -888,6 +888,59 @@ def _cmd_cloud_fetch(args: Any, executor: CloudExecutor | None = None) -> int:
     return 0
 
 
+def _cmd_cloud_watch(args: Any, executor: CloudExecutor | None = None) -> int:
+    """``arenabench cloud watch <run-id>`` — a live scoreboard in the browser.
+
+    Loopback-only by default and read-only by construction: it issues
+    ``GetObject``/``DescribeJobs``/``Query`` and nothing else, so the worst a
+    reachable watcher can do is show someone a scoreboard.
+    """
+    import http.server
+    import webbrowser
+
+    from .cloud_watch import CloudScoreboard, render_html
+
+    executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
+    board = CloudScoreboard(executor, args.run_id)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib's spelling
+            try:
+                page = render_html(board.fetch(), refresh_seconds=args.refresh)
+                status = 200
+            except Exception as exc:  # noqa: BLE001 - a transient AWS error
+                # must not kill the watcher; the next refresh retries.
+                page = (
+                    "<!doctype html><meta charset='utf-8'>"
+                    f"<meta http-equiv='refresh' content='{args.refresh}'>"
+                    f"<pre>not readable yet: {exc}</pre>"
+                )
+                status = 503
+            body = page.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: Any) -> None:
+            """One line per auto-refresh is noise, not information."""
+
+    server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
+    url = f"http://{args.host}:{server.server_address[1]}/"
+    print(f"watching  : {args.run_id}")
+    print(f"scoreboard: {url}   (ctrl-c to stop)")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print()
+    finally:
+        server.server_close()
+    return 0
+
+
 def _common_aws_arguments(parser: Any) -> None:
     parser.add_argument("--region", help="AWS region (default: the SDK's chain)")
     parser.add_argument(
@@ -944,6 +997,20 @@ def register_cli(subparsers: Any) -> None:
     status.add_argument("--poll", type=float, default=15.0)
     _common_aws_arguments(status)
     status.set_defaults(func=_cmd_cloud_status)
+
+    watch = verbs.add_parser(
+        "watch", help="live head-to-head scoreboard for a cloud run, in a browser"
+    )
+    watch.add_argument("run_id")
+    watch.add_argument("--host", default="127.0.0.1")
+    watch.add_argument("--port", type=int, default=8199,
+                       help="0 picks a free port (default: 8199, beside the "
+                            "local match watcher)")
+    watch.add_argument("--refresh", type=int, default=5,
+                       help="seconds between page refreshes")
+    watch.add_argument("--no-browser", action="store_true")
+    _common_aws_arguments(watch)
+    watch.set_defaults(func=_cmd_cloud_watch)
 
     fetch = verbs.add_parser("fetch", help="download a cloud run's results")
     fetch.add_argument("run_id")

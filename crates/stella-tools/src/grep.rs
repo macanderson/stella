@@ -384,7 +384,11 @@ impl Tool for Grep {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(|v| v.as_str());

@@ -118,6 +118,23 @@ pub enum BudgetOutcome {
 pub enum DeadlineOutcome {
     /// No deadline configured, or `now` is still before it.
     Continue,
+    /// Still inside the deadline, but not by enough to fit another step.
+    ///
+    /// The reactive check could only ever report a crossing that had already
+    /// happened, so the loop learned it was out of time *after* spending it:
+    /// one trial ended `deadline exceeded by 1.6s` at step 77 and scored 0
+    /// after fourteen minutes of work (#2278). Whether that work was
+    /// sufficient is not the point — the loop had no way to spend its last
+    /// seconds on finishing rather than on starting.
+    ///
+    /// `Closing` is the anticipatory half: it fires while there is still time
+    /// to act, so a caller can stop opening new work and settle what exists.
+    /// Reported, never enforced — this module has no I/O and aborts nothing.
+    Closing {
+        /// Wall clock left before the deadline. Always non-zero: at zero the
+        /// answer is [`DeadlineOutcome::Exceeded`] instead.
+        remaining: Duration,
+    },
     /// `now` is at or past the configured deadline.
     Exceeded {
         /// How long ago the deadline passed (zero if `now` lands exactly on
@@ -299,12 +316,37 @@ impl BudgetGuard {
     /// [`DeadlineOutcome::Continue`].
     #[must_use]
     pub fn check_deadline(&self, now: Instant) -> DeadlineOutcome {
-        match self.task_deadline {
-            Some(deadline) if now >= deadline => DeadlineOutcome::Exceeded {
+        self.check_deadline_with_reserve(now, Duration::ZERO)
+    }
+
+    /// [`check_deadline`](Self::check_deadline), plus the anticipatory rung:
+    /// `reserve` is how much wall clock the caller wants left to finish with.
+    ///
+    /// A zero reserve reproduces the reactive check exactly, which is why
+    /// `check_deadline` delegates here rather than the two drifting apart.
+    ///
+    /// The caller supplies `reserve` because only the caller knows what a step
+    /// costs it — this module holds no clock and measures nothing. Passing an
+    /// estimate of one step's duration yields "stop opening work you cannot
+    /// finish"; passing zero yields the old behaviour.
+    ///
+    /// Ordering matters and is deliberate: an already-crossed deadline reports
+    /// [`Exceeded`](DeadlineOutcome::Exceeded) even when a reserve is set, so
+    /// arming anticipation can never mask a real overrun.
+    pub fn check_deadline_with_reserve(&self, now: Instant, reserve: Duration) -> DeadlineOutcome {
+        let Some(deadline) = self.task_deadline else {
+            return DeadlineOutcome::Continue;
+        };
+        if now >= deadline {
+            return DeadlineOutcome::Exceeded {
                 overrun: now.saturating_duration_since(deadline),
-            },
-            _ => DeadlineOutcome::Continue,
+            };
         }
+        let remaining = deadline.saturating_duration_since(now);
+        if !reserve.is_zero() && remaining <= reserve {
+            return DeadlineOutcome::Closing { remaining };
+        }
+        DeadlineOutcome::Continue
     }
 
     /// Remaining headroom before the *tightest* configured limit trips, or
@@ -914,6 +956,77 @@ mod tests {
             }
             other => panic!("expected Exceeded with a 5s overrun, got {other:?}"),
         }
+    }
+
+    // ---- anticipatory close (#2278) ------------------------------------
+
+    #[test]
+    fn a_reserve_reports_closing_while_there_is_still_time_to_act() {
+        // The trial this exists for ran 14 minutes and ended
+        // `deadline exceeded by 1.6s` at step 77, scoring 0. The reactive
+        // check can only ever report a crossing that already happened.
+        let now = Instant::now();
+        let mut guard = BudgetGuard::new(BudgetMode::Off, None, None);
+        guard.set_task_deadline(Some(now + Duration::from_secs(20)));
+
+        let step = Duration::from_secs(30);
+        match guard.check_deadline_with_reserve(now, step) {
+            DeadlineOutcome::Closing { remaining } => {
+                assert_eq!(remaining, Duration::from_secs(20));
+            }
+            other => panic!("expected Closing with 20s left, got {other:?}"),
+        }
+
+        // Room for another step of that size: nothing to announce.
+        guard.set_task_deadline(Some(now + Duration::from_secs(90)));
+        assert_eq!(
+            guard.check_deadline_with_reserve(now, step),
+            DeadlineOutcome::Continue
+        );
+    }
+
+    #[test]
+    fn a_zero_reserve_is_exactly_the_reactive_check() {
+        // The delegation is the point: one deadline rule, not two that drift.
+        let now = Instant::now();
+        let mut guard = BudgetGuard::new(BudgetMode::Off, None, None);
+        for offset in [-30i64, -1, 0, 1, 30] {
+            let deadline = if offset < 0 {
+                now - Duration::from_secs(offset.unsigned_abs())
+            } else {
+                now + Duration::from_secs(offset as u64)
+            };
+            guard.set_task_deadline(Some(deadline));
+            assert_eq!(
+                guard.check_deadline_with_reserve(now, Duration::ZERO),
+                guard.check_deadline(now),
+                "offset {offset}s"
+            );
+        }
+    }
+
+    #[test]
+    fn an_already_crossed_deadline_reports_exceeded_even_with_a_reserve() {
+        // Arming anticipation must never be able to mask a real overrun —
+        // otherwise the softer signal silently replaces the hard one.
+        let now = Instant::now();
+        let mut guard = BudgetGuard::new(BudgetMode::Off, None, None);
+        guard.set_task_deadline(Some(now - Duration::from_secs(2)));
+        match guard.check_deadline_with_reserve(now, Duration::from_secs(600)) {
+            DeadlineOutcome::Exceeded { overrun } => {
+                assert_eq!(overrun, Duration::from_secs(2));
+            }
+            other => panic!("expected Exceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_deadline_never_closes_however_large_the_reserve() {
+        let guard = BudgetGuard::new(BudgetMode::Enforced, None, None);
+        assert_eq!(
+            guard.check_deadline_with_reserve(Instant::now(), Duration::from_secs(9_999)),
+            DeadlineOutcome::Continue
+        );
     }
 
     #[test]

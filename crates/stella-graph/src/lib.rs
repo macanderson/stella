@@ -99,7 +99,7 @@ pub fn load_storage_snapshot(workspace_root: &std::path::Path) -> StorageSnapsho
     // being enforced because of a typo", and those must not look identical.
     let (manifest, manifest_error) = match manifest::StorageManifest::load(workspace_root) {
         Ok(manifest) => (manifest, None),
-        Err(error) => (None, Some(error)),
+        Err(error) => (None, Some(error.to_string())),
     };
     let db_path = workspace_root
         .join(".stella")

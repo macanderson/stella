@@ -20,12 +20,12 @@ import pytest
 
 from arenabench.telemetry import (
     MetricsReader,
-    TranscriptReader,
     TrialMetrics,
     aggregate,
     leaders,
     seat_manifest_path,
 )
+from arenabench.transcript import TranscriptReader
 
 # --------------------------------------------------------------------------
 # fixtures
@@ -490,6 +490,95 @@ class TestUnpricedModelsAreNamed:
     def test_a_fully_priced_contestant_reports_no_names_at_all(self):
         totals = aggregate([TrialMetrics("a", "a__1", resolved=True, priced_cost=1.5)])
         assert totals["unpriced_models"] == []
+
+
+class TestATrialTheAgentNeverRanIsNotALoss:
+    """A verdict is not evidence of an attempt.
+
+    The verifier scores an untouched workspace 0 exactly as it scores a botched
+    one, so a trial whose agent never got a turn arrives as `resolved=False`
+    and divides into the solve rate as a loss. Six trials on this rig were that
+    shape: zero steps, zero tokens, a provider that refused the very first call
+    (Anthropic HTTP 400), and a 0 recorded against the agent's name. The
+    existing `void_no_fair_attempt` guard could not catch them because it only
+    runs when a trial goes UNJUDGED (#1480).
+
+    Witness for both halves: the label, and — the half that actually moves a
+    number — the denominator.
+    """
+
+    def _never_ran(self) -> TrialMetrics:
+        return TrialMetrics(
+            "a", "a__1", status="done", resolved=False, reward=0.0,
+            failure="NonZeroAgentExitCodeError",
+            steps=0, tokens_in=0, tokens_out=0,
+        )
+
+    def test_zero_work_with_a_scored_verdict_is_labelled_a_void(self):
+        assert self._never_ran().outcome_reason() == "void_no_fair_attempt"
+
+    def test_and_it_leaves_the_solve_rate_denominator(self):
+        """The label alone changes nothing a scoreboard prints."""
+        totals = aggregate(
+            [
+                TrialMetrics("a", "a__1", status="done", resolved=True,
+                             steps=10, tokens_in=100),
+                self._never_ran(),
+            ]
+        )
+        assert totals["judged"] == 1, "the trial that never ran is not judged"
+        assert totals["solve_rate"] == 100.0, "1 of 1 that started, not 1 of 2"
+        assert totals["never_ran"] == 1, "and the exclusion is disclosed, not silent"
+
+    def test_a_real_loss_still_counts_against_the_agent(self):
+        """The guard must not become a way for genuine failures to vanish."""
+        worked_and_lost = TrialMetrics(
+            "a", "a__1", status="done", resolved=False, reward=0.0,
+            failure="AgentTimeoutError", steps=40, tokens_in=5000, tokens_out=900,
+        )
+        assert worked_and_lost.outcome_reason() == "timeout_before_solve"
+        totals = aggregate([worked_and_lost])
+        assert totals["judged"] == 1 and totals["solve_rate"] == 0.0
+        assert totals["never_ran"] == 0
+
+    def test_telemetry_that_failed_to_attach_is_not_mistaken_for_no_attempt(self):
+        """Steps alone would void a trial whose usage never got reported.
+
+        Both zeros are required precisely so a telemetry gap — a real hazard
+        here, see #2132 — cannot be read as "the agent did nothing".
+        """
+        no_usage_but_stepped = TrialMetrics(
+            "a", "a__1", status="done", resolved=False, reward=0.0,
+            failure="AgentTimeoutError", steps=12, tokens_in=0, tokens_out=0,
+        )
+        assert not no_usage_but_stepped.never_ran()
+        assert aggregate([no_usage_but_stepped])["judged"] == 1
+
+    def test_a_pass_is_never_voided_however_thin_its_telemetry(self):
+        """A solved task ran, whatever its usage rows say.
+
+        The first cut of this rule keyed on zeros alone and voided *passing*
+        trials whose telemetry was absent — turning a win into a non-event.
+        The bias has to run the other way: when the evidence is ambiguous the
+        trial stays in the denominator, because a rule that quietly deletes
+        losses flatters the arm it is measuring.
+        """
+        thin_pass = TrialMetrics("a", "a__1", status="done", resolved=True)
+        assert not thin_pass.never_ran()
+        assert aggregate([thin_pass])["solve_rate"] == 100.0
+
+    def test_a_silent_zero_with_no_failure_named_stays_a_loss(self):
+        """No numbers AND no stated reason is ambiguous, so it is not voided.
+
+        Voiding needs the positive half — something went wrong at startup and
+        said so. Absence of evidence is not evidence of absence, and the
+        unflattering reading is the honest default.
+        """
+        silent = TrialMetrics(
+            "a", "a__1", status="done", resolved=False, reward=0.0, failure=""
+        )
+        assert not silent.never_ran()
+        assert aggregate([silent])["judged"] == 1
 
 
 class TestUnmeasuredUsageIsNotZeroUsage:
