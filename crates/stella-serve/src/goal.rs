@@ -34,7 +34,6 @@
 //! turn outcome carrying its real cost — the same contract a cancelled
 //! single-turn run has, which is what lets a host handle one path.
 
-use stella_core::bus::HookBus;
 use stella_core::{BudgetGuard, Engine, EventSender, GoalConfig, TurnOutcome};
 use stella_engine::CancelToken;
 use stella_protocol::{AgentEvent, CompletionMessage, Provider, StageKind};
@@ -99,11 +98,6 @@ pub(crate) async fn drive_goal(
     mut budget: BudgetGuard,
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
-    // This turn's operator hook plane (#1298), forwarded into every round.
-    // A goal run is many turns wearing one turn's id, and an observer that
-    // saw only the first round would report a truncated run — so the bus
-    // reaches each round exactly as it reaches a single served turn.
-    bus: Option<&HookBus>,
 ) -> DrivenTurn {
     let sender = EventSender::new(events.clone());
     messages.push(CompletionMessage::user(
@@ -113,16 +107,14 @@ pub(crate) async fn drive_goal(
     for round in 1..=run.config.max_rounds {
         budget.begin_turn();
         let offset = stella_core::goal::goal_round_turn_offset(round);
+        // A goal run is many turns wearing one turn's id, and each round is a
+        // turn: `with_turn_instance` carries this session's hook bus into the
+        // round engine, so `Engine::drive` emits every round's boundary pair
+        // and an observer never reports a truncated run (#1298).
         let round_engine = engine.with_turn_instance(base_turn.saturating_add(offset));
-        let driven = crate::session::drive_turn(
-            &round_engine,
-            messages,
-            budget,
-            events,
-            cancel.clone(),
-            bus,
-        )
-        .await;
+        let driven =
+            crate::session::drive_turn(&round_engine, messages, budget, events, cancel.clone())
+                .await;
         messages = driven.messages;
         budget = driven.budget;
         if let TurnOutcome::Aborted {

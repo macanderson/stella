@@ -223,7 +223,7 @@ impl<'a> Pipeline<'a> {
         };
         let mut state =
             stella_core::step::TurnState::from_checkpoint(checkpoint, &self.config.engine);
-        let outcome = engine.drive_restored_turn(&mut state, &filtered).await;
+        let outcome = engine.drive(&mut state, &filtered).await;
         tallies.fold_into(signals);
         let budget = stella_core::step::BudgetSnapshot::of(state.budget()).restore();
         (outcome, state.into_messages(), budget)
