@@ -1,25 +1,36 @@
 //! Durable adapter for paid one-shot calls that are not part of an engine turn.
 //!
 //! This is the standalone counterpart to `stella-pipeline`'s `metered_raw_call`
-//! chokepoint, and it carries the same reasoning-starvation recovery for the
-//! same reason. Every call through here is a bounded call with a written output
-//! contract — a JSON lessons array, an authored manifest, a domain list — and a
-//! reasoning model bills its thinking against the one `max_output_tokens`
-//! number on the wire. #2128 taught the pipeline to notice that and left this
-//! path untouched, so post-turn reflection kept dispatching a reasoning model
-//! against a bare 2,048-token cap; it came back empty with
-//! `finish_reason: length`, which parses to zero lessons exactly like a turn
-//! with nothing to learn, and the context lifecycle sat frozen for nine days
-//! (#2174).
+//! chokepoint, and it carries the same two mechanisms for the same reason.
+//! Every call through here is a bounded call with a written output contract —
+//! a JSON lessons array, an authored manifest, a domain list — and a reasoning
+//! model bills its thinking against the one `max_output_tokens` number on the
+//! wire. #2128 taught the pipeline to notice that and left this path untouched,
+//! so post-turn reflection kept dispatching a reasoning model against a bare
+//! 2,048-token cap; it came back empty with `finish_reason: length`, which
+//! parses to zero lessons exactly like a turn with nothing to learn, and the
+//! context lifecycle sat frozen for nine days (#2174).
+//!
+//! In the same order the pipeline applies them:
+//!
+//! 1. [`standalone_bounds`] declares each role's written-output contract, and
+//!    [`role_output_cap`] pads it with thinking room. Prevention — it makes
+//!    starvation rare. #2174 gave reflection this and left the other three
+//!    roles each carrying whatever number their own call site picked, which is
+//!    the state reflection had just been rescued from (#2444).
+//! 2. The starvation retry below recovers the calls that starve anyway. That
+//!    is the actual guarantee.
 
 use std::path::Path;
 use std::time::Duration;
 
-use stella_core::starvation::{starved_of_output, starved_retry_cap};
+use stella_core::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, RetryPolicy, run_accounted_call,
 };
-use stella_protocol::{AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, Provider};
+use stella_protocol::{
+    AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, Provider, ReasoningEffort,
+};
 use stella_store::Store;
 use tokio::sync::mpsc;
 
@@ -40,6 +51,132 @@ pub(crate) struct StandaloneCallError {
     pub(crate) events: Vec<AgentEvent>,
 }
 
+/// Role-shaped request bounds `(visible output, effort)` for the standalone
+/// chokepoint — the counterpart to `stella-pipeline`'s `management_bounds`
+/// (`crates/stella-pipeline/src/pipeline/raw_usage.rs`), and exhaustive over
+/// [`ModelCallRole`] for the same reason: a new standalone role must decide
+/// its bounds here rather than inherit whatever number its call site happened
+/// to pick in isolation.
+///
+/// Each arm names the role's **visible-output** contract; the thinking room a
+/// reasoning model spends before writing any of it is added on top by
+/// [`with_reasoning_headroom`] in [`role_output_cap`]. So the numbers here stay
+/// readable against the prompts that justify them (transcribed in
+/// `docs/prompts/`) instead of silently encoding someone's guess at a reasoning
+/// budget.
+///
+/// The three authoring/inference roles inherit `effort` rather than pinning it
+/// low the way `management_bounds` pins triage. That is a decision, not an
+/// omission: triage writes a three-line classification whose value is the
+/// routing choice, while these three roles' *product* is the written artifact.
+/// Buying less deliberation for a call whose output is another role's system
+/// prompt is a quality change nobody has measured, and this chokepoint's
+/// concern is bounds. Reflection keeps the low pin it already had (#2174).
+fn standalone_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffort>) {
+    match role {
+        // A whole agent definition: three frontmatter lines plus a body that
+        // its own prompt requires be "a complete, self-contained system
+        // prompt" — this role's output IS another role's system prompt
+        // (`docs/prompts/agent-author.md`). Sized against real definitions of
+        // exactly that shape rather than a guess: five sampled files span
+        // 3.0-9.0 KB, so ~870-2,590 tokens at the estimator's 3.5 bytes each.
+        // The 1,200 this call site sent is *below the median artifact it asks
+        // for*, and that was the whole budget — reasoning is billed against
+        // the same number, so the visible half was smaller still.
+        ModelCallRole::AgentAuthor => (Some(4_096), None),
+        // One `SKILL.md`: frontmatter plus "a concise markdown body". Same
+        // measurement, four sampled single-file skills spanning 2.4-10 KB, so
+        // ~700-2,855 tokens; the 1,200 sent here truncates three of the four.
+        ModelCallRole::SkillAuthor => (Some(4_096), None),
+        // A 4-10 element JSON array — name, one-line description, and a short
+        // path list per domain (`docs/prompts/domain-inference.md`). 2,048 is
+        // the number `infer_domains` already chose and it fits the contract;
+        // what it lacked was room to think before the first `[`.
+        //
+        // `ingest_cmd/extract.rs` shares this role for document extraction,
+        // whose output is a whole claim list sized to the source file. It
+        // states its own cap and therefore keeps it — see [`role_output_cap`].
+        ModelCallRole::DomainInference => (Some(2_048), None),
+        // Up to `memory::reflection::MAX_LESSONS_PER_TURN` lesson objects,
+        // each three prose fields (`lesson`, `trigger`, `saves`), plus a
+        // five-field self-review (`docs/prompts/reflection.md`).
+        //
+        // 512 was the original and was enough only for a model that answers
+        // with bare JSON; one that narrates first spends the allowance on
+        // prose and never reaches the array, losing every lesson from every
+        // turn — silently, because a truncated response parses to zero lessons
+        // exactly like an empty one. 2,048 was that repair and is no longer the
+        // number: it was sized for a one-field lesson capped at three per turn,
+        // and a lesson now carries three fields with eight of them permitted —
+        // call it eight times the ~90 tokens a grounded lesson takes, plus the
+        // self-review (#2465). Room here is only ever spent by a response that
+        // was going to be truncated, and a truncation here is invisible.
+        //
+        // Pinned low because an unset effort leaves the provider's default
+        // reasoning allowance in force: unbounded thinking spent deciding, most
+        // turns, to return an empty list.
+        ModelCallRole::Reflection => (Some(4_096), Some(ReasoningEffort::Low)),
+        // Never dispatched through this chokepoint today. If one ever is,
+        // inheriting the caller's request unchanged is exactly the behaviour
+        // it has now — but the arm is spelled out rather than swept into a
+        // catch-all so that adding a standalone role is a decision someone
+        // makes on purpose.
+        ModelCallRole::Unknown
+        | ModelCallRole::Triage
+        | ModelCallRole::Research
+        | ModelCallRole::Plan
+        | ModelCallRole::PlanRepair
+        | ModelCallRole::WitnessAuthor
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::Worker
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Verdict
+        | ModelCallRole::Summarization => (None, None),
+    }
+}
+
+/// The wire cap for one standalone call: the caller's own cap (which always
+/// wins, unchanged), else the role's visible-output contract plus
+/// [`with_reasoning_headroom`]'s thinking room, else nothing.
+///
+/// The caller's cap is deliberately given no headroom, for the reason
+/// `role_output_cap` states on the pipeline side: it is the most specific
+/// statement anyone made about this call, and quietly serving a larger number
+/// would make it a suggestion. The starvation retry below is what keeps
+/// honouring it from being a silent loss.
+///
+/// **What "the caller's own cap" means here is narrower than on the pipeline
+/// side, and the difference is the whole design.** `metered_raw_call` has two
+/// channels — an operator's `RoleCallOverrides` and the role default — so it
+/// can tell a deliberate pin from an absent one. This chokepoint takes a
+/// fully-built `CompletionRequest`, where one field carries both meanings. So
+/// `None` is the statement "I have no per-call reason for a number, use my
+/// role's contract", and a call site states a cap only when it has one:
+/// `ingest_cmd/extract.rs` sizes its first request to the document and doubles
+/// it on truncation (#2226), which no per-role constant could express. Every
+/// other standalone call site was picking a number in isolation, which is
+/// the defect (#2444).
+fn role_output_cap(role: ModelCallRole, caller: Option<u32>) -> Option<u32> {
+    if let Some(explicit) = caller {
+        return Some(explicit);
+    }
+    standalone_bounds(role).0.map(with_reasoning_headroom)
+}
+
+/// Fill a request's unstated bounds from its role's declared contract.
+///
+/// Pure over owned data, so the precedence is testable without a provider, a
+/// store, or a tokio runtime.
+fn with_role_bounds(role: ModelCallRole, mut request: CompletionRequest) -> CompletionRequest {
+    request.max_output_tokens = role_output_cap(role, request.max_output_tokens);
+    // Same precedence, same reason: an effort the caller stated is the more
+    // specific statement about this call. Reflection relies on exactly this —
+    // it forwards the operator's configured triage posture, and the role pin
+    // fills in only when none was configured (#1847).
+    request.effort = request.effort.or(standalone_bounds(role).1);
+    request
+}
+
 pub(crate) async fn complete_standalone(
     workspace_root: &Path,
     provider: &dyn Provider,
@@ -49,6 +186,11 @@ pub(crate) async fn complete_standalone(
     budget_limit: Option<f64>,
     request: CompletionRequest,
 ) -> Result<StandaloneCompletion, StandaloneCallError> {
+    // Before anything reads the request, and in particular before the
+    // starvation retry is planned below: `starved_retry_cap` declines to retry
+    // an unset cap, so a role whose contract is applied here is also a role
+    // whose starved call becomes recoverable.
+    let request = with_role_bounds(role, request);
     let store = Store::open(workspace_root).map_err(|error| StandaloneCallError {
         message: format!("accounting store unavailable before model dispatch: {error}"),
         cost_usd: 0.0,
@@ -327,6 +469,168 @@ mod tests {
         ] {
             assert!(json.contains(role), "missing persisted role {role}: {json}");
         }
+    }
+
+    /// Records the request shape that actually reached the wire.
+    #[derive(Default)]
+    struct CapturingProvider {
+        shape: std::sync::Mutex<Vec<(Option<u32>, Option<ReasoningEffort>)>>,
+    }
+
+    #[async_trait]
+    impl Provider for CapturingProvider {
+        fn id(&self) -> &str {
+            "capturing"
+        }
+
+        async fn complete_ref(
+            &self,
+            request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            self.shape
+                .lock()
+                .expect("shape lock")
+                .push((request.max_output_tokens, request.effort));
+            Ok(CompletionResult {
+                text: "[]".into(),
+                tool_calls: Vec::new(),
+                // `reported: true` or the usage event lands incomplete and the
+                // accounting closeout fails the call before any assertion runs.
+                usage: CompletionUsage {
+                    reported: true,
+                    output_tokens: 2,
+                    ..CompletionUsage::default()
+                },
+                model: "capturing".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    /// #2444 witness: every standalone role reaches the provider with a cap
+    /// strictly above its written-output contract, so a reasoning model has
+    /// room to think before its first visible token.
+    ///
+    /// Before this, exactly one of the four had that property. The other three
+    /// each carried whatever number their call site picked in isolation —
+    /// agent and skill authoring at 1,200, which is *below the median artifact
+    /// each is asked to write* — and a reasoning model bills its thinking
+    /// against that same number, so the visible half was smaller still. That is
+    /// the state reflection was in when the learning plane froze for nine days
+    /// (#2174); this asserts the other three are out of it.
+    #[tokio::test]
+    async fn every_standalone_role_reaches_the_wire_with_room_to_think() {
+        for (role, kind, contract) in [
+            (ModelCallRole::AgentAuthor, "agent_author", 4_096),
+            (ModelCallRole::SkillAuthor, "skill_author", 4_096),
+            (ModelCallRole::DomainInference, "domain_inference", 2_048),
+            (ModelCallRole::Reflection, "reflection", 4_096),
+        ] {
+            let root = tempfile::tempdir().expect("root");
+            let provider = CapturingProvider::default();
+            complete_standalone(
+                root.path(),
+                &provider,
+                role,
+                kind,
+                "capturing",
+                None,
+                CompletionRequest {
+                    // The call site states no cap: it has no per-call reason
+                    // for one, so the role's declared contract governs.
+                    max_output_tokens: None,
+                    ..request()
+                },
+            )
+            .await
+            .expect("accounted call");
+
+            let (cap, _) = provider.shape.lock().expect("shape lock")[0];
+            let cap = cap.unwrap_or_else(|| {
+                panic!(
+                    "{role:?} dispatched with NO cap at all — its contract is \
+                     declared but never applied"
+                )
+            });
+            assert_eq!(
+                cap,
+                with_reasoning_headroom(contract),
+                "{role:?} must budget its written contract PLUS thinking room"
+            );
+            assert!(
+                cap > contract,
+                "{role:?} sent its written contract alone ({contract}), which \
+                 is the #2174 defect itself"
+            );
+        }
+    }
+
+    /// The one call site with a per-call reason for its number keeps it.
+    ///
+    /// `ingest_cmd/extract.rs` shares `DomainInference` and sizes its request
+    /// to the document, doubling on truncation — a per-document ladder no
+    /// per-role constant can express. Widening it to the role contract would
+    /// *shrink* a large document's budget from up to 131,072 down to 6,144 and
+    /// silently cut every long extraction in half.
+    #[tokio::test]
+    async fn a_call_site_that_states_its_own_cap_is_never_widened() {
+        let root = tempfile::tempdir().expect("root");
+        let provider = CapturingProvider::default();
+        complete_standalone(
+            root.path(),
+            &provider,
+            ModelCallRole::DomainInference,
+            "ingest_extraction",
+            "capturing",
+            None,
+            CompletionRequest {
+                max_output_tokens: Some(65_536),
+                ..request()
+            },
+        )
+        .await
+        .expect("accounted call");
+        assert_eq!(
+            provider.shape.lock().expect("shape lock")[0].0,
+            Some(65_536),
+            "a stated cap is the most specific statement about the call and \
+             must reach the wire unchanged"
+        );
+    }
+
+    /// The role's effort pin fills an unstated effort and yields to a stated
+    /// one — the precedence reflection's operator posture depends on (#1847).
+    #[test]
+    fn a_stated_effort_outranks_the_role_pin() {
+        let unstated = with_role_bounds(
+            ModelCallRole::Reflection,
+            CompletionRequest {
+                effort: None,
+                ..request()
+            },
+        );
+        assert_eq!(unstated.effort, Some(ReasoningEffort::Low));
+        let stated = with_role_bounds(
+            ModelCallRole::Reflection,
+            CompletionRequest {
+                effort: Some(ReasoningEffort::High),
+                ..request()
+            },
+        );
+        assert_eq!(
+            stated.effort,
+            Some(ReasoningEffort::High),
+            "an operator's configured posture outranks the role's own default"
+        );
+    }
+
+    /// A role that does not dispatch through here is forwarded untouched — the
+    /// arm exists so adding one is a decision, not so it changes behaviour.
+    #[test]
+    fn a_role_outside_this_chokepoint_is_forwarded_unchanged() {
+        assert_eq!(role_output_cap(ModelCallRole::Triage, None), None);
+        assert_eq!(role_output_cap(ModelCallRole::Worker, None), None);
     }
 
     /// #2174 witness: a call whose whole budget went to reasoning is retried

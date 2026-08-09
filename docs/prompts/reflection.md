@@ -15,11 +15,15 @@ call — produces the self-review the deck shows the user.
 | Call role | `ModelCallRole::Reflection` (`"reflection"`) |
 | Dispatch | raw completion, `tools: []` |
 | Built in | `crates/stella-cli/src/memory/reflection.rs` |
-| Output cap | 4,096 written contract, plus `with_reasoning_headroom` on top |
+| Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Temperature | 0.0 |
 | Effort | pinned low, like every bounded management call |
 | Lessons per turn | at most `MAX_LESSONS_PER_TURN` (8) |
 | Override | none |
+
+The cap and the effort pin are declared by `standalone_bounds`
+(`crates/stella-cli/src/accounted_call.rs`), not by this call site — see
+[README.md](README.md#output-caps).
 
 ## Wire shape
 
@@ -206,10 +210,11 @@ deferred recall tier rather than into competition with facts that do.
 ## Why the written contract is 4,096
 
 `max_output_tokens` is **one** number on the wire covering **two** things, and
-each was undersized once with the same invisible symptom. The number sent is
-`with_reasoning_headroom(LESSONS_OUTPUT_CONTRACT)`: the contract below, plus
-`REASONING_HEADROOM_TOKENS` for whatever a reasoning model spends before it
-writes anything.
+each was undersized once with the same invisible symptom. This call site sends
+no number at all: `standalone_bounds` declares the role's written contract and
+`role_output_cap` adds `REASONING_HEADROOM_TOKENS` on top for whatever a
+reasoning model spends before it writes anything, so what reaches the wire is
+`with_reasoning_headroom(4096)`.
 
 The **contract** is what reflection is asked to write. 512 was enough for a
 model that answers with bare JSON and nothing else. A model that narrates first
