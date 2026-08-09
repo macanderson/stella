@@ -39,6 +39,7 @@ use stella_protocol::{
 };
 
 use super::probe;
+use super::progress::Progress;
 
 /// One document to extract from: its workspace-relative path, its text, and the
 /// tier the scan assigned it (which sets the eligibility reason).
@@ -54,7 +55,21 @@ pub(super) struct NamedDoc {
 /// The largest slice of a document handed to the model. A steering document that
 /// needs more than this is not what ingest is for; beyond the cap the tail is
 /// dropped with a note in the prompt rather than silently.
-const MAX_PROMPT_CHARS: usize = 24_000;
+///
+/// Five times the 24,000 this started at, because 24,000 was smaller than the
+/// documents the feature exists to read: this repository's own `AGENTS.md` is
+/// 44,545 characters, so it was extracted at 54% — the cut landed mid-table and
+/// the god-file rules, the glossary, the code-style conventions, the testing
+/// approach and the whole gotchas section could not produce a record. Every
+/// document named by the first-run dialog is the kind that exceeded the old cap.
+///
+/// This is a ceiling, not a target: [`starting_output_budget`] scales the reply
+/// budget to the text actually sent, so a short document is unaffected.
+///
+/// Visible to the parent module only so the scan's `MAX_READ_BYTES` can be
+/// asserted to sit above it — a scan that hides what extraction would accept is
+/// the failure the two constants have to be compared to rule out.
+pub(super) const MAX_PROMPT_CHARS: usize = 120_000;
 
 /// The system prompt: the extractor's whole contract, including the two rules
 /// that keep an untrusted document from becoming an attack — atomicity and
@@ -301,15 +316,41 @@ fn build_defaults(
     }
 }
 
-/// The starting output budget: 16k, not the 4k this used to carry. A document
-/// near the [`MAX_PROMPT_CHARS`] cap can atomize into dozens of records, each
-/// carrying every optional field in the schema — 4k truncated mid-object on
-/// real instruction files (AGENTS.md-sized documents) well before reaching the
-/// closing `]`, which `parse_claims` then reported as a JSON syntax error
-/// rather than what it actually was. 16k matches the ceiling `EngineConfig`
-/// already uses for the same reason, and sits within every seeded catalog
-/// model's output limit.
-const BASE_OUTPUT_TOKENS: u32 = 16_384;
+/// The floor for the output budget: 16k, not the 4k this used to carry. A
+/// document near the old [`MAX_PROMPT_CHARS`] cap can atomize into dozens of
+/// records, each carrying every optional field in the schema — 4k truncated
+/// mid-object on real instruction files well before reaching the closing `]`,
+/// which `parse_claims` then reported as a JSON syntax error rather than what it
+/// actually was. 16k matches the ceiling `EngineConfig` already uses for the
+/// same reason, and sits within every seeded catalog model's output limit.
+const MIN_OUTPUT_TOKENS: u32 = 16_384;
+
+/// The most this will ask any model to emit for one document.
+///
+/// The largest per-model ceiling in the seeded catalog is 384,000 and the
+/// smallest is 30,000, so no single number is right everywhere; 128k is the
+/// common ceiling among the frontier models people run extraction on, and a
+/// provider that caps lower rejects or clamps the request rather than silently
+/// producing less. Reaching this limit is reported, never absorbed.
+const MAX_OUTPUT_TOKENS: u32 = 131_072;
+
+/// The output budget to start with for `chars` characters of document.
+///
+/// One output token per input character, measured rather than guessed: 24,000
+/// characters of this repository's `AGENTS.md` filled a 16,384-token budget
+/// (`"finish_reason":"length"`) and finished inside 32,768. Every claim restates
+/// its sentence and carries a dozen schema fields, so the reply is roughly the
+/// size of the text that produced it.
+///
+/// Sizing the first request means a large document does not have to buy a
+/// cut-off attempt before it is allowed a big enough one — the wasted attempt on
+/// AGENTS.md cost $0.47 and 135 seconds and produced nothing. A short document
+/// keeps the floor and is unaffected.
+fn starting_output_budget(chars: usize) -> u32 {
+    u32::try_from(chars)
+        .unwrap_or(MAX_OUTPUT_TOKENS)
+        .clamp(MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
+}
 
 /// Call the model, tolerating prose and one bad reply. Mirrors `infer_domains`:
 /// bounded repair, then give up on this document rather than hammering.
@@ -320,7 +361,7 @@ async fn call_model(
     rel: &str,
     content: &str,
 ) -> Result<(Vec<Claim>, f64), String> {
-    let bounded = bounded_content(content);
+    let (bounded, _skipped) = bounded_content(content);
     let user = format!(
         "Extract atomic context records from `{rel}`. Return ONLY the JSON array.\n\n\
          --- {rel} ---\n{bounded}"
@@ -330,8 +371,11 @@ async fn call_model(
         CompletionMessage::user(&user),
     ];
     let mut total_cost = 0.0;
-    let mut max_output_tokens = BASE_OUTPUT_TOKENS;
-    const ATTEMPTS: usize = 2;
+    let mut max_output_tokens = starting_output_budget(bounded.chars().count());
+    // Three, not two: the budget ladder and the malformed-JSON repair share this
+    // counter, and with a right-sized first request a document large enough to
+    // need a doubling should still have a repair left.
+    const ATTEMPTS: usize = 3;
 
     for attempt in 0..ATTEMPTS {
         let request = CompletionRequest {
@@ -343,7 +387,13 @@ async fn call_model(
             reasoning: None,
             params: None,
         };
-        match crate::accounted_call::complete_standalone(
+        // The wait is narrated because it is long: this is a paid call that
+        // runs for minutes on a real instruction file, and an unnarrated one
+        // reads as a wedged process. `finish` runs on the statement after the
+        // `await`, before the result is inspected, so none of the several error
+        // paths below can leave a ticker drawing over later output.
+        let progress = Progress::start(attempt_label(rel, attempt, ATTEMPTS));
+        let outcome = crate::accounted_call::complete_standalone(
             root,
             provider,
             ModelCallRole::DomainInference,
@@ -352,20 +402,27 @@ async fn call_model(
             None,
             request,
         )
-        .await
-        {
+        .await;
+        progress.finish().await;
+        match outcome {
             Ok(accounted) => {
                 total_cost += accounted.cost_usd;
                 let cut_off = accounted.result.finish_reason == Some(FinishReason::Length);
                 match parse_claims(&accounted.result.text) {
                     Ok(claims) => return Ok((claims, total_cost)),
-                    // Last attempt: no more repairs, report why it failed.
-                    Err(err) if attempt + 1 == ATTEMPTS => {
+                    // Out of attempts, or cut off with no room left to grant:
+                    // either way there is nothing further to try, and the reason
+                    // is named rather than left as a serde error.
+                    Err(err)
+                        if attempt + 1 == ATTEMPTS
+                            || (cut_off && max_output_tokens >= MAX_OUTPUT_TOKENS) =>
+                    {
                         return Err(if cut_off {
                             format!(
                                 "the model's reply was cut off at {max_output_tokens} output \
-                                 tokens before finishing the record list — try a smaller or \
-                                 split document"
+                                 tokens before finishing the record list — this document needs \
+                                 more output than one call can carry, so split it and ingest \
+                                 the parts"
                             )
                         } else {
                             format!("could not parse the model's records: {err}")
@@ -376,8 +433,22 @@ async fn call_model(
                     // wouldn't fix a token budget, and at temperature 0 would likely
                     // just truncate at the same point — give it more room instead
                     // and repeat the same request rather than re-litigating it.
+                    // Clamped, because re-buying an identical call that already hit
+                    // the ceiling spends real money to fail the same way (the arm
+                    // above returns instead once there is no headroom left).
                     Err(_) if cut_off => {
-                        max_output_tokens = max_output_tokens.saturating_mul(2);
+                        let widened = max_output_tokens.saturating_mul(2).min(MAX_OUTPUT_TOKENS);
+                        // Said out loud because it is the difference between a
+                        // one-call wait and a two-call one, at twice the spend.
+                        println!(
+                            "    {}",
+                            format!(
+                                "the reply filled its {max_output_tokens}-token budget before \
+                                 the record list ended — retrying with {widened}"
+                            )
+                            .yellow()
+                        );
+                        max_output_tokens = widened;
                     }
                     Err(_) => {
                         // Feed the failure back once.
@@ -733,12 +804,43 @@ fn digest_of(content: &str) -> String {
 
 /// Cap the document at [`MAX_PROMPT_CHARS`], marking a truncation so the model
 /// (and a later reader of the prompt) can see the tail was dropped.
-fn bounded_content(content: &str) -> String {
-    if content.chars().count() <= MAX_PROMPT_CHARS {
-        return content.to_string();
+///
+/// Returns the bounded text and how many characters were dropped, because the
+/// marker in the prompt only tells the *model* that the tail is missing — the
+/// person who typed the command was told nothing at all. That silence is what
+/// made the old 24,000-character cap so costly: this repository's `AGENTS.md` is
+/// 44,545 characters, so 46% of it never reached the extractor and the run still
+/// reported success. The cap is now 120,000 and a document that still exceeds it
+/// says so.
+fn bounded_content(content: &str) -> (String, usize) {
+    let total = content.chars().count();
+    if total <= MAX_PROMPT_CHARS {
+        return (content.to_string(), 0);
     }
     let kept: String = content.chars().take(MAX_PROMPT_CHARS).collect();
-    format!("{kept}\n\n[... document truncated for extraction ...]")
+    (
+        format!("{kept}\n\n[... document truncated for extraction ...]"),
+        total - MAX_PROMPT_CHARS,
+    )
+}
+
+/// How many characters of `content` extraction will not read.
+///
+/// The cap belongs to this module, so the caller asks the question rather than
+/// holding a second copy of the number.
+pub(super) fn skipped_chars(content: &str) -> usize {
+    bounded_content(content).1
+}
+
+/// What the progress line says: the document, and which attempt this is once
+/// there has been more than one. A silent second attempt is the other half of
+/// why a cut-off document looked wedged — it doubles the wait and the spend.
+fn attempt_label(rel: &str, attempt: usize, attempts: usize) -> String {
+    if attempt == 0 {
+        format!("extracting {rel}")
+    } else {
+        format!("extracting {rel} (attempt {} of {attempts})", attempt + 1)
+    }
 }
 
 /// Lower-case, dash-separated slug keeping `[a-z0-9-]`; runs of other characters
