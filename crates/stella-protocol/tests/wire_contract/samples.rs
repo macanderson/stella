@@ -1,17 +1,3 @@
-//! The sample corpus the wire-contract proofs run over: one `AgentEvent` per
-//! known type tag, plus the extra samples that exercise every arm of every
-//! nested vocabulary and both shapes of each optional field.
-//!
-//! A child module of `wire_contract` so the vocabularies (`all_*`) and the
-//! parent's imports stay shared, split into its own file because the corpus
-//! grows every time the protocol does and was about to carry the proofs over
-//! the 1500-line ceiling with it.
-
-use super::*;
-
-/// One sample per `KNOWN_TYPE_TAGS` entry, plus extra samples that exercise
-/// every arm of the nested vocabularies and both optional-field shapes.
-pub fn sample_events() -> Vec<AgentEvent> {
 //! The sample values the [wire contract](super) validates: one per arm of
 //! every enum in the payload graph, plus the `AgentEvent` table itself.
 //!

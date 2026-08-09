@@ -1,14 +1,3 @@
-//! The worker's user message: recalled context, the goal, and what this run
-//! will accept as verification. Split out of `pipeline.rs` (a god file closed
-//! to growth) so the assembly can gain a channel without growing the
-//! orchestrator.
-//!
-//! Everything assembled here rides as a **volatile message after the
-//! byte-stable system prefix** (invariant 7, the L-E8 discipline documented on
-//! `super::Pipeline`), which is what lets this text change per turn without
-//! costing a prompt-cache hit.
-
-use super::*;
 //! The worker's opening user message: the volatile half of the pipeline's
 //! prompt to the model that does the work.
 //!
@@ -61,23 +50,6 @@ fn citable_id(frame: &RecalledFrame) -> Option<&str> {
         .flatten()
 }
 
-pub(super) fn assemble_user_message(
-    goal: &str,
-    frames: &[RecalledFrame],
-    contract: VerificationContract<'_>,
-) -> String {
-    if frames.is_empty() && contract == VerificationContract::None {
-        return goal.to_string();
-    }
-    let mut s = String::new();
-    if !frames.is_empty() {
-        s.push_str("## Recalled context\n");
-        for f in frames {
-            // Cite by human label (L-C4); include content as grounding. A
-            // materialized memory ALSO carries its stable id, because that is
-            // the handle `cite_memory` ties feedback to — see the citation ask
-            // below for why its absence was not a cosmetic omission.
-
 /// The worker's first user message: the recalled frames and research findings
 /// that ground the turn, the goal, and how this run will be verified.
 ///
@@ -120,7 +92,10 @@ pub(super) fn assemble_user_message(
     if !frames.is_empty() {
         s.push_str("## Recalled context\n");
         for f in frames {
-            // Cite by human label (L-C4); include content as grounding.
+            // Cite by human label (L-C4); include content as grounding. A
+            // materialized memory ALSO carries its stable id, because that is
+            // the handle `cite_memory` ties feedback to — see the citation ask
+            // below for why its absence was not a cosmetic omission.
             s.push_str("- [");
             s.push_str(&f.citation_label);
             s.push_str("] (");
@@ -282,6 +257,7 @@ mod tests {
         let msg = assemble_user_message(
             "fix the cache posture",
             &[memory_frame(Some(NOD))],
+            &[],
             VerificationContract::None,
         );
         assert!(
@@ -318,7 +294,8 @@ mod tests {
             }],
             vec![memory_frame(None)],
         ] {
-            let msg = assemble_user_message("do the thing", &frames, VerificationContract::None);
+            let msg =
+                assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
             assert!(
                 !msg.contains("cite_memory"),
                 "no citable frame, so no ask: {msg}"
