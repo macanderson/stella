@@ -467,3 +467,108 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
         "witness authoring is skipped, never attempted without an author"
     );
 }
+
+/// #2432 witness: a task deadline that has NOT passed, but is too near to fit
+/// the call about to be dispatched, stops the run before dispatching it.
+///
+/// The deadline is 500ms out and triage's own declared ceiling
+/// ([`PipelineConfig::triage_latency_ceiling`], 30s by default) is the reserve,
+/// so the seam can see the call cannot finish. Fails on `main`, where the rung
+/// consults `check_deadline` — `check_deadline_with_reserve(now, ZERO)` — so
+/// `DeadlineOutcome::Closing` is unreachable there and the call is dispatched
+/// anyway, to overrun the task clock by the difference. That is #2278's shape
+/// one layer up: the seam refuses only work that is already too late, never
+/// work it can see it cannot finish.
+///
+/// Dollar axes deliberately unarmed, as in the #2238 witness above: the only
+/// ceiling in this fixture is the wall clock.
+#[tokio::test]
+async fn a_deadline_too_near_to_fit_the_call_stops_the_run_before_dispatch() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("multi"),
+        text_result(r#"["plan must never run"]"#),
+        text_result("worker must never run"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    // Still ahead — this run has time left, just not enough of it.
+    budget.set_task_deadline(Some(
+        std::time::Instant::now() + std::time::Duration::from_millis(500),
+    ));
+
+    let outcome = pipeline
+        .run(
+            "Refactor the parser and update all callers",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("declining on the clock is a typed outcome, not a run error");
+
+    assert!(
+        matches!(
+            outcome.status,
+            PipelineStatus::Aborted {
+                kind: AbortKind::DeliberateStop,
+                ..
+            }
+        ),
+        "declining work the clock cannot fit is a deliberate stop: {:?}",
+        outcome.status
+    );
+    assert_eq!(
+        outcome.total_cost_usd, 0.0,
+        "nothing was dispatched, so nothing was spent"
+    );
+    assert_eq!(
+        provider.remaining().await,
+        3,
+        "the anticipatory rung refuses BEFORE dispatch: not one completion may be consumed"
+    );
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let anticipatory = events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Error { message, .. }
+            if message.contains("declining to start work") && !message.contains("exceeded")
+    ));
+    assert!(
+        anticipatory,
+        "the stop must read as anticipation, never as an overrun that never \
+         happened — the distinction `driver::settlement` draws for the same \
+         rung one layer down: {events:?}"
+    );
+}
