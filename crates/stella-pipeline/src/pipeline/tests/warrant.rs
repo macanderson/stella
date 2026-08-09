@@ -61,7 +61,7 @@ async fn a_docs_only_change_completes_without_buying_a_verifier_call() {
             // No test command and no witness writer: the ladder has nothing
             // deterministic to stand on, which is exactly the case that used
             // to escalate.
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -146,7 +146,7 @@ async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -218,7 +218,7 @@ async fn a_verifier_waiver_stands_where_the_warrant_agrees() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -315,7 +315,7 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -436,7 +436,7 @@ async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass
             // No independent witness author, as in the trace — the question
             // under test is what the warrant and the ladder conclude, not what
             // an author would have written.
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -578,7 +578,7 @@ async fn the_verifier_is_told_what_the_recorder_counted_not_zero() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );

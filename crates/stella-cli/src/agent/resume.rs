@@ -251,7 +251,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     &wiring.worker_model,
                 );
                 pipeline_config.role_overrides = wiring.role_overrides.clone();
-                pipeline_config.witness_writer = frame_config.witness_writer;
+                // The whole roster, not one enablement (#2458). Every ablation
+                // the run was launched under has to come back, or the resumed
+                // leg runs stages the operator removed and reports a pipeline
+                // that never existed.
+                pipeline_config.roster = frame_config.roster();
                 pipeline_config.max_revisions = frame_config.max_revisions;
                 let no_recall = NoContextRecall;
                 let approval_gate =

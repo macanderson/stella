@@ -462,7 +462,7 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );

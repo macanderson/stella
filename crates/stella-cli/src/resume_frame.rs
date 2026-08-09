@@ -39,7 +39,10 @@
 //! and opposite in consequence: guessing "bare turn" on an unreadable frame is
 //! precisely the silent degradation this module exists to end.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use stella_protocol::ModelCallRole;
 
 /// The frame format's version, bumped when a field's *meaning* changes.
 ///
@@ -69,8 +72,32 @@ pub struct PipelineFrame {
     pub test_command: Option<String>,
     /// Whether the witness stage would have had an independent model author a
     /// failing test up front — the flip oracle's whole input.
+    ///
+    /// **Derived, never authoritative** (#2458): written from the
+    /// `witness_author` row of [`Self::responsibilities`], and read back only
+    /// by [`PipelineFrame::roster`] when that field is absent, which is how a
+    /// frame written before the roster rode along is upgraded. Kept rather
+    /// than dropped so a build predating `responsibilities` still prints the
+    /// witness line in its advisory instead of silently losing it.
     #[serde(default)]
     pub witness_writer: bool,
+    /// The run's responsibility roster (#2381), as the override block that
+    /// reproduces it from `Roster::default` — the exact shape
+    /// [`stella_pipeline::Roster::apply`] reads, so the resume path and the
+    /// settings path decode a roster through one function rather than two.
+    ///
+    /// The **whole** roster and not just the witness enablement, because every
+    /// ablation has to survive a resume: before this, a run whose triage was
+    /// ablated and whose verdict was reassigned came back as neither, and the
+    /// resumed leg's transcript described a pipeline that had never run.
+    ///
+    /// Additive, so no [`FRAME_VERSION`] bump — an older frame reads it as an
+    /// empty map and is upgraded from [`Self::witness_writer`] alone, which is
+    /// the only ablation such a frame could express. A default roster
+    /// serializes to nothing at all, so the overwhelmingly common frame does
+    /// not grow.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub responsibilities: BTreeMap<String, stella_pipeline::AssignmentOverride>,
     /// Candidates the run was fanning out over (1 for the ordinary path).
     #[serde(default)]
     pub candidates: u32,
@@ -103,7 +130,11 @@ impl PipelineFrame {
         Self {
             version: FRAME_VERSION,
             test_command: config.test_command.clone(),
-            witness_writer: config.witness_writer,
+            // Both from the roster, which since #2458 is the only place the
+            // answer lives — the bool is a projection of the map beside it and
+            // cannot disagree with it.
+            witness_writer: config.roster.enabled(ModelCallRole::WitnessAuthor),
+            responsibilities: config.roster.overrides(),
             candidates: config.candidates.unwrap_or(1),
             isolation_possible: !matches!(
                 config.create_worktrees,
@@ -112,6 +143,39 @@ impl PipelineFrame {
             max_revisions: config.max_revisions,
             progress: None,
         }
+    }
+
+    /// The roster the recorded run was launched with (#2458).
+    ///
+    /// Decoded through [`stella_pipeline::Roster::apply`] — the same function
+    /// the settings path calls — so a stored roster and a configured one
+    /// cannot drift into meaning different things, and a roster is total by
+    /// construction here for the same reason it is there: it is built by
+    /// applying a diff to [`stella_pipeline::Roster::default`], never by
+    /// trusting a persisted table to still have a row for every
+    /// responsibility this build knows about.
+    ///
+    /// Rejections from `apply` are dropped rather than reported. The frame was
+    /// written from a roster that had already cleared `Pipeline::run`'s
+    /// pre-spend refusal, so a rejection here means the frame was hand-edited
+    /// — and the resumed leg re-validates before spending anyway
+    /// (`Pipeline::resume`), which is where that belongs.
+    #[must_use]
+    pub fn roster(&self) -> stella_pipeline::Roster {
+        let mut roster = stella_pipeline::Roster::default();
+        if self.responsibilities.is_empty() {
+            // Either a default-roster run — nothing to restore — or a frame
+            // written before `responsibilities` existed, whose bool is the one
+            // ablation it was able to express. `true` is the default, so only
+            // `false` is worth acting on, and the two cases need no telling
+            // apart: a modern default-roster frame derives `true`.
+            if !self.witness_writer {
+                roster.set_enabled(ModelCallRole::WitnessAuthor, false);
+            }
+            return roster;
+        }
+        let _ = roster.apply(self.responsibilities.clone());
+        roster
     }
 }
 
@@ -209,7 +273,11 @@ impl ResumeFrame {
                 "  the verifier will NOT re-read this work, and no verdict is recorded".to_string()
             }
         });
-        if frame.witness_writer {
+        // Through the roster, not the bool beside it, so this file reads the
+        // legacy field in exactly one place (#2458) — `PipelineFrame::roster`,
+        // which is also the only place that knows an old frame carries nothing
+        // else.
+        if frame.roster().enabled(ModelCallRole::WitnessAuthor) {
             lines.push(
                 "  the witness test's fail→pass flip is NOT credited — nothing proves this done"
                     .to_string(),
@@ -360,6 +428,7 @@ mod tests {
             version: FRAME_VERSION,
             test_command: Some("cargo test -p stella-core".into()),
             witness_writer: true,
+            responsibilities: BTreeMap::new(),
             candidates: 1,
             isolation_possible: true,
             max_revisions: 2,

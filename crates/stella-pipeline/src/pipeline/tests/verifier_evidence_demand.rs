@@ -135,7 +135,7 @@ async fn no_tracked_command_means_no_ask_at_all() {
         // No `test_command`, and no authored witness to supply one — the
         // Terminal-Bench shape the original measurement ran into.
         test_command: None,
-        witness_writer: false,
+        roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         ..PipelineConfig::default()
     };
