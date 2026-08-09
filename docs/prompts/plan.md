@@ -21,31 +21,36 @@ step loop the worker walks.
 | Timeout | `config.engine.model_timeout` |
 | Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Effort | inherited — plan quality rides the session's own reasoning posture |
-| Override | `agents.worker.prompt` — **not wired** (see below) |
+| Override | `agents.worker.prompt` — **wired**, prepended as a system message |
 
 ## Wire shape
 
-The planner is the **one raw pipeline role that is not a `ManagementPrompt`**.
-Everything — instructions and payload alike — goes as a single user message:
-
 ```
-[ user(build_planner_prompt(...)) ]
+[ system(agents.worker.prompt)?   ← config.role_overrides.worker
+  system(PLANNER_INSTRUCTIONS)    ← &'static str, byte-identical every call
+  user(payload) ]
 ```
 
-So the planner has no cacheable system prefix, and `agents.worker.prompt` never
-reaches it: `plan_stage` resolves its provider from the worker tier but hands
-`metered_raw_call` a `RoleCallOverrides::default()`. The model routing rides
-the worker's settings; the prompt does not. Both halves are tracked in **#2416**
-— including the in-code comment that claims the coupling exists.
+Until #2416 the planner was the **one raw pipeline role that was not a
+`ManagementPrompt`** — instructions and payload alike went as a single user
+message, so its fixed opener was re-billed as uncached user text on every plan
+call and again on every repair. Per #1855 the honest claim for the split is
+**stability**, not a cache hit: the instruction block alone does not clear
+Anthropic's ~1024-token minimum. A configured `agents.worker.prompt` joins the
+same system prefix, so a tuned planner clears it sooner, not later.
 
-## Prompt (template)
+## System message (verbatim)
+
+```text
+You are the planner for a coding agent. Produce a short ordered plan of concrete steps to accomplish the goal. Respond with a JSON array of step strings, e.g. ["step one", "step two"]. Keep it minimal — the fewest steps that fully accomplish the goal.
+```
+
+## User message (template)
 
 Sections are emitted in this exact order, and every one after the goal is
 conditional on having content.
 
 ```text
-You are the planner for a coding agent. Produce a short ordered plan of concrete steps to accomplish the goal. Respond with a JSON array of step strings, e.g. ["step one", "step two"]. Keep it minimal — the fewest steps that fully accomplish the goal.
-
 ## Goal
 {goal}
 
@@ -86,6 +91,38 @@ as grounding, so a plan step can name where its premise came from.
 **The transcript is never here.** That is the whole point of the split context
 (L-E6): the planner sees goal, recall, research and structure, and never the
 worker's running conversation.
+
+**Every section above is volatile, so all of it is payload.** The instruction
+block is a `&'static str` on purpose: byte-stability across calls is the entire
+point of the split, and a static is the strongest structural guarantee of it
+the type system offers.
+
+## Why `agents.worker.prompt` reaches the planner
+
+`plan_stage` resolves its provider from the worker tier and always said so in a
+comment — "Plan rides the worker's settings (same router tier, same tuning)" —
+while handing `metered_raw_call` a `RoleCallOverrides::default()`. The model
+routing rode the worker's settings; none of the request shaping did, and the
+comment was the real hazard, because it stated a coupling that did not exist.
+
+`prompt` is the field that needed the wire, and the reason is structural:
+`temperature`, `effort`, `reasoning` and `params` already reach this call
+through `PipelineConfig::engine`, which the CLI builds from the same
+`agents.worker` tuning, so `metered_raw_call`'s fallback serves them. A system
+prompt has no seat in an `EngineConfig` at all. So operator prose reached
+worker turns via `build_pipeline_system_prompt` and stopped at the planner
+that writes the worker's work order — a planner free to emit steps the
+worker's own instructions forbid.
+
+It is **prepended**, never substituted: the built-in block carries the
+JSON-array output contract `parse_plan` depends on, and an override that
+replaced it would break parsing on every turn it was set.
+
+The conversational fast path deliberately does *not* take this row. Its whole
+job is to replace the engineering persona with `CONVERSATIONAL_SYSTEM_PROMPT`
+("no tools, no code, no plan, no test"), and prepending the operator's worker
+prose would re-arm exactly what that replacement suppresses — on a turn that
+has no task.
 
 ## Parsing and the repair path
 

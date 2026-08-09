@@ -687,6 +687,11 @@ pub fn event_signature(event: &AgentEvent) -> String {
                 ProofStep::VerdictDegraded { candidate, .. } => {
                     format!("proof:verdict_degraded:{candidate}")
                 }
+                // Same reading as the verdict's: *that* the class came from
+                // the deterministic floor is structural, and the reason is
+                // prose about which outage caused it — a timeout and a
+                // provider error are the same shape of run.
+                ProofStep::TriageDegraded { .. } => "proof:triage_degraded".to_string(),
             }
         }
         AgentEvent::ToolStart { call } => format!("tool_start:{}", call.name),

@@ -1547,6 +1547,14 @@ export type ProofStep = {
    * The stated reason a model verdict could not be rendered.
    */
   reason: string;
+} | {
+  kind: "triage_degraded";
+  /**
+   * The stated reason no model classification was available: the call
+   * timed out at its ceiling, failed, could not be routed, or answered
+   * off-protocol.
+   */
+  reason: string;
 };
 
 /**

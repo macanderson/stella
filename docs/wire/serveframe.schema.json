@@ -2795,6 +2795,24 @@
             "reason"
           ],
           "type": "object"
+        },
+        {
+          "description": "This turn's task class came from the deterministic keyword floor\n(`triage::resolve_task_class` with no model answer), because the\ntriage call never produced one.\n\nEmitted for the same reason [`ProofStep::VerdictDegraded`] is, one\nstage earlier. The fallback itself is correct by design and\nload-bearing — triage must never fail a run — but it became the\n*common* case while staying completely invisible: across three\nTerminal-Bench arm runs, 27 of 34 triage calls burned the full 10s\nlatency ceiling and returned nothing, about four and a half minutes of\nwall clock purchasing zero bits, with nothing in the summary layer\nsaying so (#2414). Every downstream decision that reads the class —\nwhether to plan, whether a witness is warranted, whether research\nquestions are even asked — then looks like a decision and is a default.\n\nA bench conclusion must not be drawn from a triage that never ran, and\nthis is the record that makes that checkable.",
+          "properties": {
+            "kind": {
+              "const": "triage_degraded",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The stated reason no model classification was available: the call\ntimed out at its ceiling, failed, could not be routed, or answered\noff-protocol.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
         }
       ]
     },

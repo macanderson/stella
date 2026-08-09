@@ -41,8 +41,9 @@ In full: triage → recall → research → plan → scope review → execute �
 write-back after the verdict settles. Recall runs concurrently with triage
 but emits after it; research, plan, scope review, and witness are conditional
 — a simple lookup skips them, research runs only when triage names questions
-for a multi-step task (parallel read-only sub-agents answer them before the
-planner runs), scope review fires only above thresholds, and the
+for a multi-step task (parallel read-only sub-agents answer them before
+anything is prompted; their findings ride both the planner's prompt and the
+worker's), scope review fires only above thresholds, and the
 witness is authored only without `--test-command`, on demand *after*
 execution, once the warrant has read the diff and confirmed the change
 needs a test at all.
@@ -53,9 +54,11 @@ A fast, cheap classification call decides how much process the task deserves —
 a **lookup** ("what does this function do?") skips planning entirely, a
 **single concrete change** gets a light path (one execute turn, still verified), a
 **genuinely multi-step** task gets the full plan → scope-review → execute → verify → verdict
-pipeline. Triage runs under a hard latency ceiling (10 seconds); if the model
+pipeline. Triage runs under a hard latency ceiling (30 seconds); if the model
 doesn't answer in time, stella falls through to the full path rather than
-waiting. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —
+waiting — and says so, emitting a `triage_degraded` proof step so a turn whose
+class came from the deterministic keyword floor is never mistaken for one the
+model classified. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —
 typically the cheapest, fastest one you have.
 
 ### 2. Plan
