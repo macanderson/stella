@@ -36,7 +36,7 @@ impl Pipeline<'_> {
         // unresolvable triage already took: losing triage costs the turn its
         // classification, never the turn.
         if !self.responsibility_enabled(ModelCallRole::Triage) {
-            return Ok((self.triage_floor(goal), Vec::new()));
+            return Ok((self.triage_ablated(goal), Vec::new()));
         }
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
@@ -187,6 +187,37 @@ impl Pipeline<'_> {
         TaskAssessment {
             conversational: resolve_conversational(false, goal),
             ..TaskAssessment::from_class(resolve_task_class(None, goal))
+        }
+    }
+
+    /// The assessment a turn gets when triage was **deliberately ablated**
+    /// (#2381) — which is not the same thing as triage having failed, and the
+    /// difference is the whole point of the roster.
+    ///
+    /// [`Self::triage_floor`] is right for an outage: triage broke, so spend
+    /// as little as the evidence justifies. It is wrong for an ablation,
+    /// because the floor's cheapest class is [`TaskClass::SimpleLookup`],
+    /// which skips the verification ladder — so turning triage off would
+    /// silently turn *verification* off too on any goal whose keywords the
+    /// floor did not recognise. An operator ablating one stage to measure it
+    /// would have quietly ablated two, and the measurement would attribute
+    /// both effects to triage (#2374 F6).
+    ///
+    /// So the fast path — the thing triage *buys* — is what disappears with
+    /// triage, and the floor's own upward evidence is what survives it:
+    /// clamped at [`TaskClass::SingleTask`], a genuinely multi-step goal still
+    /// plans, and nothing routes down to the lookup path without a
+    /// classification that earned it.
+    ///
+    /// The conversational route is deliberately still resolved: it is
+    /// deterministic (`resolve_conversational(false, goal)` consults no model),
+    /// so a bare `hi` must not enter the work pipeline merely because triage
+    /// was ablated.
+    fn triage_ablated(&self, goal: &str) -> TaskAssessment {
+        let floor = self.triage_floor(goal);
+        TaskAssessment {
+            class: floor.class.max(TaskClass::SingleTask),
+            ..floor
         }
     }
 }

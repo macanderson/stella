@@ -1026,6 +1026,11 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        // Before triage, before recall, before a single paid call — for the
+        // same reason the two independence refusals above sit here.
+        if let Err(error) = self.roster_refusal() {
+            return Err(PipelineRunError::new(error, total_cost));
+        }
         self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
@@ -1673,28 +1678,8 @@ impl<'a> Pipeline<'a> {
         // `n == 1 && !authored_witness && !isolate`, so reaching here with
         // `n == 1 && !author_witness` means `isolate` was the only reason.
         let single_shot_isolation = n == 1 && !author_witness;
-        // `can_author_independent_witness` already gated `author_witness` and
-        // announced any degradation, so this is the invariant guard for that
-        // decision — silent on purpose, never a second warning.
-        let mut author_witness = author_witness;
-        let witness_author = match author_witness
-            .then(|| self.assigned(ModelCallRole::WitnessAuthor).ok())
-            .flatten()
-            // Unconditional, and NOT a roster question: a witness the worker
-            // wrote proves nothing about the worker's diff (#2381).
-            .filter(|author| author.model_ref != worker.model_ref)
-        {
-            Some(author) => {
-                if let Some(fallback) = &author.fallback {
-                    self.emit_fallback(fallback);
-                }
-                Some(author)
-            }
-            None => {
-                author_witness = false;
-                None
-            }
-        };
+        let witness_author = self.resolve_witness_author(author_witness, &worker);
+        let author_witness = witness_author.is_some();
 
         // Isolation is created in index order even when the candidates then
         // run together, and so is the second snapshot a witness author needs —

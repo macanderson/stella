@@ -78,6 +78,28 @@ impl<'a> Pipeline<'a> {
         self.config.roster.enabled(responsibility)
     }
 
+    /// Refuse the run if the roster says anything that cannot be honoured.
+    ///
+    /// One call over [`Roster::validate`], which is total — key-level
+    /// rejections are recorded on the roster itself — so this cannot miss a
+    /// problem by consulting the wrong half. Every problem is joined into one
+    /// message rather than reported one run at a time, because a hand-written
+    /// block usually carries more than one and each round trip costs the
+    /// operator a whole run.
+    pub(super) fn roster_refusal(&self) -> Result<(), PipelineError> {
+        let problems = self.config.roster.validate();
+        if problems.is_empty() {
+            return Ok(());
+        }
+        Err(PipelineError::InvalidRoster(
+            problems
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        ))
+    }
+
     /// State the run's roster posture, once, before any spend.
     ///
     /// Two kinds of fact, both of which must be *said* rather than inferred:
@@ -114,6 +136,41 @@ impl<'a> Pipeline<'a> {
                 loss.agent
             ));
         }
+    }
+
+    /// Resolve the agent that will author this run's witness, or `None` when
+    /// nobody may.
+    ///
+    /// Three conditions, and only the first is the roster's:
+    ///
+    /// - `wanted` is the caller's already-taken decision (triage asked for a
+    ///   witness, no `--test-command` pre-empted it, the roster enables
+    ///   authoring). `Pipeline::can_author_independent_witness` announced any
+    ///   degradation on the way to it, so this function is **silent** — a
+    ///   second warning here would double-report one fact.
+    /// - The assigned agent must resolve.
+    /// - It must not resolve to the worker's own model. That filter is
+    ///   unconditional and deliberately NOT a roster question: a witness the
+    ///   worker wrote proves nothing about the worker's diff, so a roster
+    ///   binding the two together loses authoring rather than producing a
+    ///   false proof — which `report_roster_posture` has already named.
+    ///
+    /// Returning `Option` rather than mutating a caller's flag is what lets
+    /// `run_best_of_n` derive "are we authoring" from "did an author resolve",
+    /// so the two can no longer disagree.
+    pub(super) fn resolve_witness_author(
+        &self,
+        wanted: bool,
+        worker: &ResolvedRole<'_>,
+    ) -> Option<ResolvedRole<'a>> {
+        let author = wanted
+            .then(|| self.assigned(ModelCallRole::WitnessAuthor).ok())
+            .flatten()
+            .filter(|author| author.model_ref != worker.model_ref)?;
+        if let Some(fallback) = &author.fallback {
+            self.emit_fallback(fallback);
+        }
+        Some(author)
     }
 
     /// Record that a disabled verdict left the ladder with nothing to escalate

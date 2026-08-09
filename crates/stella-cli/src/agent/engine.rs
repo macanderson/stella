@@ -404,6 +404,23 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     if let Some(demand) = engine.pipeline_verifier_evidence_demand {
         config.verifier_evidence_demand = demand.is_on();
     }
+    // #2381. The returned problems are deliberately dropped HERE and nowhere
+    // else: `Roster::apply` records every rejection on the roster itself, so
+    // `Pipeline::run`'s pre-spend refusal sees them whichever host built the
+    // config. Reporting them a second time from this pure tuning function
+    // would either duplicate the message or — worse — tempt a surface into
+    // handling them differently from the engine's refusal.
+    if let Some(rows) = &engine.responsibilities {
+        let _ = config.roster.apply(rows.iter().map(|(name, spec)| {
+            (
+                name.clone(),
+                stella_pipeline::AssignmentOverride {
+                    enabled: spec.enabled,
+                    agent: spec.agent.as_deref().map(stella_pipeline::AgentId::new),
+                },
+            )
+        }));
+    }
     config
 }
 

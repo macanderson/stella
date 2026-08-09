@@ -328,11 +328,22 @@ pub struct IndependenceLoss {
 pub struct Roster {
     /// One row per assignable responsibility, in [`ModelCallRole::ALL`] order.
     rows: Vec<Assignment>,
+    /// Configuration rows [`Self::apply`] could not turn into bindings.
+    ///
+    /// Carried on the roster rather than left to the caller so that
+    /// [`Self::validate`] is **total**: every reason this roster is
+    /// unrunnable — a key that named nothing as much as a binding that
+    /// resolves to nothing — is reachable from the value alone. That is what
+    /// lets the refusal live in `Pipeline::run`, where every host gets it,
+    /// instead of in whichever host remembered to check the return of
+    /// `apply`.
+    rejected: Vec<RosterError>,
 }
 
 impl Default for Roster {
     fn default() -> Self {
         Self {
+            rejected: Vec::new(),
             rows: ModelCallRole::ALL
                 .iter()
                 .filter_map(|&responsibility| {
@@ -438,35 +449,36 @@ impl Roster {
     /// copy — a second one in a host would be a second answer to "what does
     /// `actor = "verifer"` mean".
     ///
-    /// **Applies what it can and reports what it cannot.** A bad row leaves
+    /// **Applies what it can and records what it cannot.** A bad row leaves
     /// its binding at the default rather than aborting the block, so the
-    /// returned errors describe the *whole* configuration. The caller decides
-    /// what a non-empty result costs — `stella run` refuses before spend,
-    /// because a run under a roster the operator did not write is a result
-    /// described by the wrong posture (the same reasoning as
+    /// result describes the *whole* configuration rather than stopping at the
+    /// first typo. Every rejection is retained on the roster, so a caller that
+    /// discards this return value has not lost it: [`Self::validate`] still
+    /// reports it, and `Pipeline::run` refuses before spend — a run under a
+    /// roster the operator did not write is a result described by the wrong
+    /// posture (the same reasoning as
     /// [`crate::PipelineError::WitnessAuthorUnavailable`]).
     pub fn apply<I>(&mut self, overrides: I) -> Vec<RosterError>
     where
         I: IntoIterator<Item = (String, AssignmentOverride)>,
     {
-        let mut errors = Vec::new();
         for (name, spec) in overrides {
             let Some(responsibility) = parse_responsibility(&name) else {
-                errors.push(RosterError::UnknownResponsibility {
+                self.rejected.push(RosterError::UnknownResponsibility {
                     name,
                     assignable: assignable_tokens().join(", "),
                 });
                 continue;
             };
             if let Some(principal) = principal_of(responsibility) {
-                errors.push(RosterError::FollowsPrincipal {
+                self.rejected.push(RosterError::FollowsPrincipal {
                     responsibility: responsibility_token(responsibility),
                     principal: responsibility_token(principal),
                 });
                 continue;
             }
             if !Self::is_assignable(responsibility) {
-                errors.push(RosterError::NotAssignable {
+                self.rejected.push(RosterError::NotAssignable {
                     responsibility: responsibility_token(responsibility),
                 });
                 continue;
@@ -478,8 +490,7 @@ impl Roster {
                 self.set_agent(responsibility, agent);
             }
         }
-        errors.extend(self.validate());
-        errors
+        self.validate()
     }
 
     /// Every problem this roster has, in row order.
@@ -489,7 +500,7 @@ impl Roster {
     /// fix into five runs. Called once, before any spend.
     #[must_use]
     pub fn validate(&self) -> Vec<RosterError> {
-        let mut errors = Vec::new();
+        let mut errors = self.rejected.clone();
         for row in &self.rows {
             if row.responsibility == ModelCallRole::Worker && !row.enabled {
                 errors.push(RosterError::WorkerDisabled);
