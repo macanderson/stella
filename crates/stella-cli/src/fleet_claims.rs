@@ -26,8 +26,8 @@ use colored::Colorize;
 use serde::Serialize;
 use stella_fleet::{DispatchClaim, Ledger};
 
-use crate::query_format::{QueryFormat, Rows};
 use crate::plain;
+use crate::query_format::{QueryFormat, Rows};
 
 /// One claim, as `--format json` reports it.
 ///

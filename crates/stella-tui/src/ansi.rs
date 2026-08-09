@@ -349,7 +349,10 @@ mod tests {
     #[test]
     fn a_line_level_style_reaches_its_spans() {
         let line = Line::styled("whole", Style::new().fg(Color::Red));
-        assert_eq!(line_to_ansi(&line, &AnsiPalette::colored()), "\u{1b}[31mwhole\u{1b}[0m");
+        assert_eq!(
+            line_to_ansi(&line, &AnsiPalette::colored()),
+            "\u{1b}[31mwhole\u{1b}[0m"
+        );
     }
 
     #[test]

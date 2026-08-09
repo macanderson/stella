@@ -451,7 +451,10 @@ mod tests {
             Ink::Star.rgb(),
             Some(crate::plain::token_rgb(theme::TEXT_TERTIARY))
         );
-        assert_eq!(Ink::Shell.rgb(), Some(crate::plain::token_rgb(theme::VIOLET)));
+        assert_eq!(
+            Ink::Shell.rgb(),
+            Some(crate::plain::token_rgb(theme::VIOLET))
+        );
         // And the star/flame pair stays warm — the comet's Phosphor Gold is
         // r > g > b — so the cinematic can never drift back to the retired
         // electric blue while still passing. (This clause read "cool, not

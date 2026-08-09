@@ -933,7 +933,10 @@ mod tests {
         assert_eq!(visible.len(), THINKING_ROWS + 2, "preview is unbounded");
         assert!(visible[1].contains("step 1"));
         assert!(
-            visible.last().unwrap().contains(&format!("{} more", 12 - THINKING_ROWS)),
+            visible
+                .last()
+                .unwrap()
+                .contains(&format!("{} more", 12 - THINKING_ROWS)),
             "withheld count not stated: {:?}",
             visible.last()
         );

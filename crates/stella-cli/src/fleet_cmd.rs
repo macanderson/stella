@@ -61,8 +61,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::agent;
 use crate::config::Config;
-use crate::runtime::{SystemClock, TokioSleeper, WallClock};
 use crate::plain;
+use crate::runtime::{SystemClock, TokioSleeper, WallClock};
 
 /// Cap on the per-task summary line so the report table stays a table.
 const SUMMARY_CHARS: usize = 96;
