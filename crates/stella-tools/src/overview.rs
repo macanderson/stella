@@ -232,13 +232,17 @@ const OVERVIEW_COMMITS: usize = 10;
 /// full list is `repo_history`'s job.
 const OVERVIEW_BRANCHES: usize = 8;
 
-/// Run one `git` read and return its stdout lines, or `None` when git is
-/// absent, the directory is not a repository, or the command failed.
+/// Non-empty stdout lines from one `git` read, or `None` when git is absent,
+/// the directory is not a repository, or the command failed.
 ///
 /// Direct argv — no shell, nothing interpolated into a command string — and
 /// the full spawn-env policy, so an ambient `GIT_DIR` from a surrounding
 /// hook cannot re-aim these reads at another repository and have the
 /// overview report its branches as this workspace's.
+///
+/// Synchronous on purpose: every caller here already runs on the blocking
+/// pool (`build_overview` is dispatched there), and these are single ref
+/// reads.
 fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
     let mut command = std::process::Command::new("git");
     command
@@ -253,6 +257,7 @@ fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
     Some(
         String::from_utf8_lossy(&output.stdout)
             .lines()
+            .filter(|l| !l.trim().is_empty())
             .map(str::to_string)
             .collect(),
     )
@@ -273,12 +278,30 @@ fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
 /// nothing about git from it, and spent the next 45 seconds failing to find
 /// a tool that could tell it. `detached` alone would have ended that search.
 ///
-/// `{"tracked": false}` when this is not a repository — stated plainly,
+/// It also carries the remotes and the branch-naming convention the existing
+/// branches imply — one section, because two sibling keys each answering
+/// "what does git say about this tree" is the same false-orientation defect
+/// in a politer form. #2551 and this change arrived at the same payload from
+/// opposite ends and merged without a textual conflict; the union is stated
+/// once, here.
+///
+/// `{"repository": false}` when this is not a repository — stated plainly,
 /// because an absent key reads as "the overview forgot" rather than "there
 /// is no version control here".
-fn repository_section(root: &Path) -> Value {
-    if git_lines(root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
-        return json!({ "tracked": false });
+fn git_section(root: &Path) -> Value {
+    // `remote -v` doubles as the is-this-a-repository probe: it is the
+    // cheapest command that fails outside a work tree and is needed anyway.
+    let Some(remote_lines) = git_lines(root, &["remote", "-v"]) else {
+        return json!({ "repository": false });
+    };
+    let mut remotes: BTreeMap<String, String> = BTreeMap::new();
+    for line in &remote_lines {
+        let mut parts = line.split_whitespace();
+        if let (Some(name), Some(url)) = (parts.next(), parts.next()) {
+            remotes
+                .entry(name.to_string())
+                .or_insert_with(|| url.to_string());
+        }
     }
 
     let branch = git_lines(root, &["symbolic-ref", "-q", "--short", "HEAD"])
@@ -311,11 +334,12 @@ fn repository_section(root: &Path) -> Value {
     )
     .unwrap_or_default();
     let branch_total = names.len();
+    let convention = branch_convention(&names);
     let mut branches = Vec::new();
-    for name in names.into_iter().take(OVERVIEW_BRANCHES) {
-        let mut row = json!({ "name": name, "current": Some(&name) == branch.as_ref() });
+    for name in names.iter().take(OVERVIEW_BRANCHES) {
+        let mut row = json!({ "name": name, "current": Some(name) == branch.as_ref() });
         if let Some(base) = default_branch.as_deref()
-            && base != name
+            && base != name.as_str()
             && let Some(counts) = git_lines(
                 root,
                 &[
@@ -344,17 +368,21 @@ fn repository_section(root: &Path) -> Value {
         .unwrap_or(0);
 
     json!({
-        "tracked": true,
-        // The single most useful fact when work has gone missing, and the
-        // one `repo_status` never stated: a detached position is why a
-        // commit "vanished" after a checkout.
+        "repository": true,
+        // The single most useful fact when work has gone missing: a detached
+        // position is why a commit "vanished" after a checkout. `repo_status`
+        // states it too (#2551) — the point of repeating it here is *when*,
+        // not whether: this is the first call of a session.
         "detached": branch.is_none(),
         "branch": branch,
         "default_branch": default_branch,
         "uncommitted_files": uncommitted,
         "shelved": shelved,
+        "remotes": remotes.iter().map(|(n, u)| json!({"name": n, "url": u}))
+            .collect::<Vec<_>>(),
         "branches": branches,
-        "branches_total": branch_total,
+        "branch_count": branch_total,
+        "branch_convention": convention,
         "recent_commits": commits,
         "note": "orientation only — `repo_history` goes deeper (position log, \
                  full branch list) and `repo_recover` finds commits no branch points at",
@@ -375,8 +403,9 @@ pub fn build_overview(root: &Path) -> Value {
     let mut out = json!({
         "workspace": root.display().to_string(),
         "scripts": scripts_section(&scripts),
+        "manifests": manifests_section(&scripts),
+        "git": git_section(root),
         "domains": domains_section(root),
-        "repository": repository_section(root),
     });
 
     let map = out.as_object_mut().expect("object literal");
@@ -398,12 +427,104 @@ pub fn build_overview(root: &Path) -> Value {
                 json!({
                     "built": false,
                     "note": "no code graph index — run `stella init` to build one; \
-                             language, entry points, and storage are unavailable until then",
+                             entry points and storage are unavailable until then",
                 }),
             );
+            // Languages without the graph. `code_section` derives them from
+            // indexed files, so the one moment a caller most needs to know what
+            // kind of tree this is — the first call, before any index exists —
+            // was the one moment the field was missing entirely. Tracked files
+            // only, via git, so a vendored `node_modules` cannot rename the
+            // project's language.
+            let languages = tracked_languages(root);
+            if !languages.is_empty() {
+                map.insert("languages".into(), json!(languages));
+            }
         }
     }
     out
+}
+
+/// Every package-manager manifest the script index parsed, with its path.
+///
+/// `scripts_section` reports the *verbs* those manifests bind (`build`,
+/// `test`) and the runners behind them, which answers "how do I run this
+/// project". It cannot answer "what kind of project is this and where are its
+/// package boundaries" — a monorepo with a root `Cargo.toml`, three
+/// `package.json` files and a `pyproject.toml` renders as two runner names.
+///
+/// The paths come from `ScriptEntry::source`, which the index already
+/// resolved, so this is a projection rather than a second detection pass.
+/// `synthesized` entries are dropped: they name an ecosystem default
+/// (`cargo build --workspace`), not a file on disk, and a path that cannot be
+/// opened is worse than an absent one.
+fn manifests_section(scripts: &ScriptIndex) -> Value {
+    let mut paths: BTreeSet<&str> = BTreeSet::new();
+    for entry in &scripts.scripts {
+        if entry.source != "synthesized" {
+            paths.insert(entry.source.as_str());
+        }
+    }
+    json!(paths.into_iter().collect::<Vec<_>>())
+}
+
+/// The branch-name shape this repository already uses.
+///
+/// A new branch should look like the ones beside it, and the repository is the
+/// only place that answer lives when no context record states a convention.
+/// Reported as the dominant prefix segment (`feat/`, `fix/`, `worktree-`) plus
+/// the separator, with the share of branches that follow it — a convention two
+/// of nine branches use is a coincidence, and the count is what lets a reader
+/// tell the difference rather than trusting a bare string.
+///
+/// `None` when nothing dominates. Guessing a convention from noise is worse
+/// than admitting there is not one: a caller told "the convention is `x/`"
+/// will follow it.
+fn branch_convention(branches: &[String]) -> Value {
+    let mut prefixes: BTreeMap<String, usize> = BTreeMap::new();
+    for branch in branches {
+        // First separator only: `feat/auth/login` is the `feat/` convention,
+        // not a `feat/auth/` one.
+        if let Some(idx) = branch.find(['/', '-']) {
+            let sep = &branch[idx..idx + 1];
+            let head = &branch[..idx];
+            if !head.is_empty() {
+                *prefixes.entry(format!("{head}{sep}")).or_default() += 1;
+            }
+        }
+    }
+    let total = branches.len();
+    match prefixes.iter().max_by_key(|(_, n)| **n) {
+        // Two is the floor for a pattern: one branch is an example, not a rule.
+        Some((prefix, n)) if *n >= 2 => json!({
+            "prefix": prefix,
+            "branches_following": n,
+            "branches_total": total,
+        }),
+        _ => Value::Null,
+    }
+}
+
+/// Languages present among git-TRACKED files, for the pre-index case.
+///
+/// Tracked rather than walked, for the reason the code graph is indexed rather
+/// than globbed: a vendored `node_modules` or `target/` dwarfs the project and
+/// would rename its language. `git ls-files` already answers "what is actually
+/// ours", and honours `.gitignore` for free.
+///
+/// Reuses [`language_of`] so this fallback and the indexed answer can never
+/// disagree about what a `.rs` file is.
+fn tracked_languages(root: &Path) -> Vec<&'static str> {
+    let Some(files) = git_lines(root, &["ls-files"]) else {
+        return Vec::new();
+    };
+    let mut found: BTreeSet<&'static str> = BTreeSet::new();
+    for file in &files {
+        if let Some(language) = language_of(file) {
+            found.insert(language);
+        }
+    }
+    found.into_iter().collect()
 }
 
 fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
@@ -595,23 +716,27 @@ mod tests {
         assert_eq!(out["index"]["files"], serde_json::json!(0));
     }
 
-    /// A tree under no version control says so, rather than omitting the
-    /// section and leaving the reader to guess whether it was forgotten.
+    /// A tree under no version control says so *in the assembled payload*,
+    /// rather than omitting the section and leaving the reader to guess
+    /// whether it was forgotten. The sibling
+    /// `a_non_repository_says_so_rather_than_erroring` pins the same fact at
+    /// the section function; this one pins that the section reaches the
+    /// caller at all.
     #[test]
-    fn a_non_repository_reports_tracked_false() {
+    fn a_non_repository_says_so_in_the_assembled_overview() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
         assert_eq!(
-            build_overview(dir.path())["repository"],
-            json!({ "tracked": false })
+            build_overview(dir.path())["git"],
+            json!({ "repository": false })
         );
     }
 
     /// Witness: the first call of a session must be able to say that the
     /// working position is DETACHED, which is the answer to a large share of
-    /// "my changes are gone after a checkout". Before the `repository`
-    /// section existed there was no non-`bash` route to it at all — and a
-    /// read-only role has no `bash`.
+    /// "my changes are gone after a checkout". Before this the `git` section
+    /// named the remotes and the branch count and could not say where the
+    /// position *was* — and a read-only role has no `bash` to ask with.
     #[test]
     fn the_overview_reports_a_detached_position_and_recent_commits() {
         let dir = tempfile::tempdir().unwrap();
@@ -629,8 +754,8 @@ mod tests {
         git(&["commit", "-q", "-m", "first commit"]);
 
         let attached = build_overview(dir.path());
-        let repo = &attached["repository"];
-        assert_eq!(repo["tracked"], json!(true), "{repo}");
+        let repo = &attached["git"];
+        assert_eq!(repo["repository"], json!(true), "{repo}");
         assert_eq!(repo["detached"], json!(false), "{repo}");
         assert_eq!(repo["branch"], json!("main"), "{repo}");
         assert!(
@@ -646,8 +771,8 @@ mod tests {
             .to_string();
         git(&["checkout", "-q", &head]);
         let detached = build_overview(dir.path());
-        assert_eq!(detached["repository"]["detached"], json!(true));
-        assert_eq!(detached["repository"]["branch"], json!(null));
+        assert_eq!(detached["git"]["detached"], json!(true));
+        assert_eq!(detached["git"]["branch"], json!(null));
     }
 
     /// Uncommitted and shelved work are both counted — the two states a
@@ -674,12 +799,12 @@ mod tests {
 
         std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
         assert_eq!(
-            build_overview(dir.path())["repository"]["uncommitted_files"],
+            build_overview(dir.path())["git"]["uncommitted_files"],
             json!(1)
         );
 
         git(&["stash", "-q"]);
-        let repo = &build_overview(dir.path())["repository"];
+        let repo = &build_overview(dir.path())["git"];
         assert_eq!(repo["uncommitted_files"], json!(0), "{repo}");
         assert_eq!(
             repo["shelved"].as_array().map(Vec::len),
@@ -785,6 +910,53 @@ mod tests {
             out["domains"],
             serde_json::json!(["scheduling", "transport"])
         );
+    }
+
+    /// A new branch should look like the ones beside it, and when no context
+    /// record states a convention the repository is the only place that answer
+    /// lives.
+    #[test]
+    fn the_dominant_branch_prefix_is_reported_with_its_share() {
+        let branches: Vec<String> = ["feat/auth", "feat/billing", "feat/search", "main"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let out = branch_convention(&branches);
+        assert_eq!(out["prefix"], "feat/");
+        assert_eq!(out["branches_following"], 3);
+        assert_eq!(out["branches_total"], 4);
+    }
+
+    /// A nested branch evidences its FIRST segment's convention.
+    /// `feat/auth/login` is a `feat/` branch, never a `feat/auth/` rule.
+    #[test]
+    fn nesting_does_not_invent_a_deeper_convention() {
+        let branches: Vec<String> = ["feat/auth/login", "feat/auth/logout"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(branch_convention(&branches)["prefix"], "feat/");
+    }
+
+    /// Guessing from noise is worse than admitting there is no convention: a
+    /// caller told "the convention is `x/`" will follow it. One branch is an
+    /// example, not a rule.
+    #[test]
+    fn no_convention_is_reported_when_nothing_dominates() {
+        assert!(branch_convention(&["main".to_string()]).is_null());
+        assert!(branch_convention(&[]).is_null());
+        assert!(
+            branch_convention(&["feat/one".to_string(), "main".to_string()]).is_null(),
+            "a single prefixed branch is an example, not a convention"
+        );
+    }
+
+    /// A workspace that is not a git repository is an ordinary state, not an
+    /// error — the overview still assembles around it.
+    #[test]
+    fn a_non_repository_says_so_rather_than_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(git_section(dir.path())["repository"], false);
     }
 
     #[test]

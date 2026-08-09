@@ -198,9 +198,18 @@ EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
 #: The pipeline roles a contestant may configure independently. ``default`` is
 #: the interactive/step loop; ``worker`` does the task; ``verifier`` verifies it;
-#: ``triage`` classifies the request. Agents without a pipeline ignore all but
-#: ``default`` and say so in :attr:`AgentSpec.honours`.
-ROLES: tuple[str, ...] = ("default", "worker", "verifier", "triage")
+#: ``triage`` classifies the request; ``research`` answers triage's pre-plan
+#: questions as read-only sub-agents; ``plan`` writes the work order. Agents
+#: without a pipeline ignore all but ``default`` and say so in
+#: :attr:`AgentSpec.honours`.
+#:
+#: ``research`` and ``plan`` joined the set for #2374. Until then a seat could
+#: not turn either one down, so both ran at whatever the engine baseline was —
+#: on match ``7d025330abad`` that meant fifteen ``xhigh`` research calls for a
+#: few hundred reasoning tokens. Must match ``role_key()`` in
+#: ``crates/stella-cli/src/config_wiring.rs`` exactly; ``check-role-names.sh``
+#: is the guard.
+ROLES: tuple[str, ...] = ("default", "worker", "verifier", "triage", "research", "plan")
 
 #: Engine keys that once pinned a per-trial ceiling. Declaring one is now a
 #: template error, and no type in this module has a field to hold it.

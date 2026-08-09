@@ -145,3 +145,144 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 
 CREATE INDEX IF NOT EXISTS artifacts_trial_idx ON artifacts(trial_id);
+
+-- Step/turn/execution grading (docs/designs/step-grading-and-productive-ratio.md).
+-- A second pass over the tables above, run after ingest rather than during
+-- it: nothing here is raw fact `events`/`tool_calls`/`verifier_tests` don't
+-- already hold, and every `*_grades` row must be reproducible by re-running
+-- the grader against them. Like `trials.cost_usd_norm`, a grade is versioned
+-- rather than overwritten -- `grader_version` lets an improved ruleset add a
+-- new row set beside the old one instead of erasing what the old ruleset saw.
+
+-- One row per graded step-window: the span covered by one model call for one
+-- (trial, turn_instance, step, call_index). `call_index` disambiguates
+-- auxiliary calls sharing a step the same way the wire's own `StepManifest`
+-- key does (the worker call is 0; triage/plan/verifier/compaction calls
+-- riding the same step take 1, 2, ...).
+CREATE TABLE IF NOT EXISTS step_grades (
+    step_grade_id     TEXT PRIMARY KEY,
+    trial_id          TEXT NOT NULL REFERENCES trials(trial_id) ON DELETE CASCADE,
+    turn_instance     INTEGER NOT NULL,
+    step              INTEGER NOT NULL,
+    call_index        INTEGER NOT NULL DEFAULT 0,
+    -- The event range this grade covers, inclusive, into events(seq) for the
+    -- same trial_id -- the join key a report uses to pair a grade with the
+    -- transcript lines it judged.
+    event_seq_start   INTEGER NOT NULL,
+    event_seq_end     INTEGER NOT NULL,
+    -- Price-clocked timestamps: milliseconds from the trial's own first
+    -- stamped event, the same origin the live transcript reader anchors to.
+    -- Never wall-clock read time -- a trial read live and one read six
+    -- months later must grade identically.
+    ts_start_ms       INTEGER,
+    ts_end_ms         INTEGER,
+    wall_clock_ms     INTEGER,        -- ts_end_ms - ts_start_ms
+    -- Time actually inside the provider call, summed over this window --
+    -- distinct from wall_clock_ms, which also counts tool execution between
+    -- calls.
+    model_time_ms     INTEGER,
+    cost_usd          REAL,
+    -- Mirrors trials.cost_norm_status: 'priced' is the only state in which
+    -- cost_usd means anything; a query that aggregates it must filter here.
+    cost_norm_status  TEXT NOT NULL DEFAULT 'unmigrated',
+    tool_calls_count  INTEGER NOT NULL DEFAULT 0,
+    -- 'productive' | 'unproductive' | 'neutral'. Neutral is a real verdict,
+    -- not a default -- a step with no measurable effect is neither credit
+    -- nor blame.
+    direction         TEXT NOT NULL,
+    -- 'deterministic' | 'agent_judge' | 'escalated_human'. Which path
+    -- produced this row -- never inferred from direction alone.
+    direction_source  TEXT NOT NULL,
+    -- The specific rule or judge note that fired, e.g. 'verifier_delta:+2',
+    -- 'loop_detected', 'agent_judge:low_confidence'.
+    direction_reason  TEXT,
+    -- 1.0 for every deterministic rule (exact by construction); the agent
+    -- judge's self-reported confidence otherwise. NULL only for
+    -- escalated_human rows pending a decision.
+    confidence        REAL,
+    grader_version    TEXT NOT NULL,
+    graded_at         TEXT NOT NULL
+);
+
+-- One grader_version's grade for a given step-window is a single fact, never
+-- duplicated by re-running the same grader over the same trial.
+CREATE UNIQUE INDEX IF NOT EXISTS step_grades_identity_idx
+    ON step_grades(trial_id, turn_instance, step, call_index, grader_version);
+CREATE INDEX IF NOT EXISTS step_grades_trial_idx ON step_grades(trial_id);
+CREATE INDEX IF NOT EXISTS step_grades_turn_idx  ON step_grades(trial_id, turn_instance);
+
+-- One row per (trial, turn_instance, grader_version): the roll-up of that
+-- turn's step_grades. A turn is Stella's own unit (one run_turn / one
+-- LoopDetected turn_instance), matching the key the wire's StepManifest and
+-- LoopDetected events already carry.
+CREATE TABLE IF NOT EXISTS turn_grades (
+    turn_grade_id       TEXT PRIMARY KEY,
+    trial_id            TEXT NOT NULL REFERENCES trials(trial_id) ON DELETE CASCADE,
+    turn_instance       INTEGER NOT NULL,
+    ts_start_ms         INTEGER,
+    ts_end_ms           INTEGER,
+    wall_clock_ms       INTEGER,
+    model_time_ms       INTEGER,     -- sum of step_grades.model_time_ms
+    cost_usd            REAL,        -- sum of step_grades.cost_usd
+    cost_norm_status    TEXT NOT NULL DEFAULT 'unmigrated',
+    step_count          INTEGER NOT NULL DEFAULT 0,
+    productive_steps    INTEGER NOT NULL DEFAULT 0,
+    unproductive_steps  INTEGER NOT NULL DEFAULT 0,
+    neutral_steps       INTEGER NOT NULL DEFAULT 0,
+    -- productive_steps / step_count. NULL when step_count = 0 (never 0/0 --
+    -- an absent ratio must never render as a comparable zero).
+    productive_step_ratio REAL,
+    -- Mirrors how the turn ended on the wire: 'complete', 'error',
+    -- 'loop_aborted', or 'in_progress' for a prefix graded before the turn
+    -- closed.
+    outcome             TEXT,
+    grader_version      TEXT NOT NULL,
+    graded_at           TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS turn_grades_identity_idx
+    ON turn_grades(trial_id, turn_instance, grader_version);
+CREATE INDEX IF NOT EXISTS turn_grades_trial_idx ON turn_grades(trial_id);
+
+-- One row per (trial, grader_version): the roll-up of that trial's whole
+-- execution -- every turn it ran, start to finish or to whatever prefix was
+-- graded.
+CREATE TABLE IF NOT EXISTS execution_grades (
+    execution_grade_id  TEXT PRIMARY KEY,
+    trial_id            TEXT NOT NULL REFERENCES trials(trial_id) ON DELETE CASCADE,
+    -- Denormalized from trials.run_id so a cross-run rollup (e.g. "productive
+    -- ratio by model, across every run this month") is one scan of this
+    -- table rather than a join for every query.
+    run_id              TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    ts_start_ms         INTEGER,
+    ts_end_ms           INTEGER,
+    -- Derived independently from the graded events, not copied from
+    -- trials.wall_seconds -- the two are expected to agree, and a report
+    -- that shows both is a cheap cross-check on the ingester and the grader
+    -- agreeing about where a trial started and ended.
+    wall_clock_ms       INTEGER,
+    model_time_ms       INTEGER,
+    cost_usd            REAL,
+    cost_norm_status    TEXT NOT NULL DEFAULT 'unmigrated',
+    turn_count          INTEGER NOT NULL DEFAULT 0,
+    step_count          INTEGER NOT NULL DEFAULT 0,
+    productive_steps    INTEGER NOT NULL DEFAULT 0,
+    unproductive_steps  INTEGER NOT NULL DEFAULT 0,
+    neutral_steps       INTEGER NOT NULL DEFAULT 0,
+    -- THE metric: productive_steps / step_count over the whole execution.
+    -- NULL when step_count = 0, same rule as turn_grades.
+    agent_productive_step_ratio REAL,
+    -- Does the ratio's trend agree with trials.passed? One of 'consistent'
+    -- (high ratio + passed, or low ratio + failed), 'discordant' (passed
+    -- despite a low ratio, or failed despite a high one -- both worth a
+    -- human look), or NULL when trials.passed is itself NULL/unjudged. A
+    -- sanity signal only -- never fed back into pass/fail.
+    verdict_alignment   TEXT,
+    grader_version      TEXT NOT NULL,
+    graded_at           TEXT NOT NULL,
+    notes               TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS execution_grades_identity_idx
+    ON execution_grades(trial_id, grader_version);
+CREATE INDEX IF NOT EXISTS execution_grades_run_idx ON execution_grades(run_id);

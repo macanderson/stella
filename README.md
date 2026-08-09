@@ -258,8 +258,9 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 
 ### Agent engine config (`agent_engine_config`)
 
-The engine runs four configurable agents — **default** (the interactive /
-step-loop agent) and the pipeline's **worker**, **verifier**, and **triage**.
+The engine runs a configurable agent per role — **default** (the interactive /
+step-loop agent) and the pipeline's **worker**, **verifier**, **triage**,
+**research**, and **plan**.
 The `agent_engine_config` object in the same `settings.json` scope chain
 configures each one's model, gateway, system prompt, reasoning, and sampling
 parameters — and in the Command Deck, `/settings` opens the SETTINGS tab,
@@ -276,6 +277,9 @@ commands — the SETTINGS tab is the one place models are configured.
     "pipeline_worker_model": "zai/glm-5.2",
     "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
+    // Research and plan ride the WORKER when unset, not default_model.
+    "pipeline_research_model": "zai/glm-5.2",
+    "pipeline_plan_model": "zai/glm-5.2",
 
     // The model vocabulary the TUI pickers offer and auto_mode selects from.
     "allowed_models": [
@@ -288,10 +292,12 @@ commands — the SETTINGS tab is the one place models are configured.
     // different model family than the worker's, then the highest catalog
     // price tier. You never worry about it.
     "auto_mode": "off",
-    // "on" = per-agent effort is chosen for you (verifier high, worker
-    // medium, triage low), overriding any per-agent "effort".
+    // "on" = per-agent effort is chosen for you (verifier high, worker and
+    // plan medium, triage and research low), overriding any per-agent
+    // "effort".
     "effort_auto": "off",
-    // "on" = thinking mode chosen for you (on everywhere except triage).
+    // "on" = thinking mode chosen for you (on everywhere except triage and
+    // research, which read rather than deliberate).
     "reasoning_auto": "off",
 
     // Per-agent deep config. Every field is optional — set it and it goes
@@ -322,7 +328,11 @@ commands — the SETTINGS tab is the one place models are configured.
 ```
 
 Precedence per agent: `--model` flag > `agents.<agent>.model` >
-`pipeline_<agent>_model` > `default_model` > auto-detect. An agent's
+`pipeline_<agent>_model` > `default_model` > auto-detect. Research and plan
+end that chain at the **worker** instead of `default_model` — unset, they run
+whatever the worker runs, field by field, so a `--model` that re-points the
+worker for one invocation cannot split them onto a second model the run would
+buy without reporting. An agent's
 `provider` field routes its slug through that gateway verbatim, so the
 worker can run on your Anthropic key while the verifier routes
 `openai/gpt-5.5` through your OpenRouter key and triage hits Z.ai. Each
@@ -331,7 +341,9 @@ adapter forwards only the parameters its wire supports (`verbosity` and
 `thinking`, OpenRouter's `reasoning`, Anthropic extended thinking (with an
 effort-tiered budget), OpenAI `reasoning.effort`, and Gemini
 `thinkingLevel`. Custom prompts replace the built-in base instructions;
-workspace memories and rules still append. A verifier/triage model whose
+workspace memories and rules still append. `agents.research.prompt` is the one
+exception and is not honoured — a research child's built-in system prompt is
+the contract that makes it read-only, not a preference. A verifier/triage model whose
 provider has no resolvable key degrades softly — the role rides the worker
 and a notice says so.
 

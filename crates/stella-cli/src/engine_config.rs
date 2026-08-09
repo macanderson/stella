@@ -143,6 +143,35 @@ pub fn model_spec_for(
     }
 }
 
+/// [`model_spec_for`], but only when a setting **names this role** — no
+/// fallback to `default_model`.
+///
+/// For the two roles whose documented default is "run whatever the worker
+/// runs", [`EngineAgentKind::Research`] and [`EngineAgentKind::Plan`].
+/// `model_spec_for`'s fallthrough to `default_model` is right for a role with
+/// a standing identity (triage, the verifier: unpinned, they still have a
+/// model of their own) and wrong for these two, in a way that only shows up
+/// once something re-points the worker. `--model` is exactly that something:
+/// it pins the worker for one invocation and deliberately does not touch
+/// settings, so a research spec inherited from `default_model` would split
+/// research off onto the model the flag just overrode. The run would report
+/// one model and buy two, which is the class of quiet mismeasurement this
+/// repository treats as worse than a crash.
+///
+/// `None` therefore means "inherit", and the caller keeps the worker's pin.
+pub fn own_model_spec_for(
+    engine: &AgentEngineConfig,
+    kind: EngineAgentKind,
+    is_provider: &dyn Fn(&str) -> bool,
+) -> Option<ModelSpec> {
+    let named = flat_model(engine, kind).is_some()
+        || engine.agent(kind).is_some_and(|a| {
+            let set = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
+            set(&a.model) || set(&a.provider)
+        });
+    named.then(|| model_spec_for(engine, kind, is_provider))?
+}
+
 /// Cross-family grouping key for verifier diversity. Same-vendor providers
 /// count as ONE family (a Gemini verifier over Vertex-served Gemini work
 /// carries the same bias), and an OpenRouter spec's family is the routed
@@ -221,18 +250,29 @@ pub struct AgentTuning {
 /// `effort_auto: on` — the per-agent effort nobody has to think about:
 /// the verifier deliberates hard, the worker balances cost and quality, and
 /// triage (a one-token classification under a latency ceiling) stays low.
+///
+/// Research sits at the bottom with triage, and for the same reason rather
+/// than by analogy: a research sub-agent greps a tree and reports what it
+/// found, which is retrieval, not deliberation. Measured on `fix-git`, fifteen
+/// research calls at `xhigh` spent 76 seconds to emit a few hundred reasoning
+/// tokens between them (#2374). The planner stays at the worker's rung — it
+/// writes the work order every later stage is judged against, and that is the
+/// one short call where thinking is the product.
 fn auto_effort(kind: EngineAgentKind) -> ReasoningEffort {
     match kind {
         EngineAgentKind::Verifier => ReasoningEffort::High,
-        EngineAgentKind::Triage => ReasoningEffort::Low,
-        EngineAgentKind::Default | EngineAgentKind::Worker => ReasoningEffort::Medium,
+        EngineAgentKind::Triage | EngineAgentKind::Research => ReasoningEffort::Low,
+        EngineAgentKind::Default | EngineAgentKind::Worker | EngineAgentKind::Plan => {
+            ReasoningEffort::Medium
+        }
     }
 }
 
 /// `reasoning_auto: on` — thinking on wherever deliberation pays (verifier,
-/// worker, default), off for triage (latency-bound, one bare token out).
+/// worker, plan, default), off for triage (latency-bound, one bare token out)
+/// and for research (a read-only lookup reporting what it read).
 fn auto_reasoning(kind: EngineAgentKind) -> bool {
-    !matches!(kind, EngineAgentKind::Triage)
+    !matches!(kind, EngineAgentKind::Triage | EngineAgentKind::Research)
 }
 
 /// Resolve `kind`'s tuning from the merged config, applying the auto
@@ -588,6 +628,8 @@ fn kind_for(role: EngineRole) -> EngineAgentKind {
         EngineRole::Worker => EngineAgentKind::Worker,
         EngineRole::Verifier => EngineAgentKind::Verifier,
         EngineRole::Triage => EngineAgentKind::Triage,
+        EngineRole::Research => EngineAgentKind::Research,
+        EngineRole::Plan => EngineAgentKind::Plan,
     }
 }
 
@@ -599,6 +641,8 @@ fn flat_model(engine: &AgentEngineConfig, kind: EngineAgentKind) -> Option<&str>
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
         EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
+        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
+        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
     }
 }
 
@@ -706,6 +750,8 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             EngineAgentKind::Worker => engine.pipeline_worker_model = model,
             EngineAgentKind::Verifier => engine.pipeline_verifier_model = model,
             EngineAgentKind::Triage => engine.pipeline_triage_model = model,
+            EngineAgentKind::Research => engine.pipeline_research_model = model,
+            EngineAgentKind::Plan => engine.pipeline_plan_model = model,
         }
         let params = AgentEngineParams {
             temperature: edited.temperature,

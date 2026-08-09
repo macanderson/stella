@@ -27,7 +27,8 @@ fn call(provider: &ScriptedProvider, index: usize) -> Vec<(stella_protocol::Mess
 
 /// Drive one multi-step run through triage → plan → a one-step walk, with a
 /// tracked test command so verification never spends a model call the
-/// assertions would have to account for. `overrides` shapes the worker row.
+/// assertions would have to account for. `overrides` shapes the plan row the
+/// stage reads, and the worker row it is resolved from.
 async fn plan_call_with(
     overrides: RoleCallOverrides,
     plan_reply: CompletionResult,
@@ -73,6 +74,12 @@ async fn plan_call_with(
             test_command: Some("cargo test -p x".into()),
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
             role_overrides: PipelineRoleOverrides {
+                // Both rows, the same value — which is what the CLI hands down
+                // for an unconfigured `agents.plan`: the plan row is resolved
+                // as `agents.plan` over `agents.worker` field by field, so
+                // #2416's property survives research and plan getting rows of
+                // their own (#2374).
+                plan: overrides.clone(),
                 worker: overrides,
                 ..PipelineRoleOverrides::default()
             },

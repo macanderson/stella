@@ -121,18 +121,33 @@ cached prefix on every save. Turn-relevant recall rides as a volatile message
 ## Where an operator can intervene
 
 `agent_engine_config.agents.<kind>.prompt` in `.stella/settings.json`, where
-`<kind>` is one of the four `EngineAgentKind` variants
+`<kind>` is an `EngineAgentKind` variant
 (`crates/stella-cli/src/settings.rs`): `default`, `worker`, `verifier`,
-`triage`.
+`triage`, `research`, `plan`.
 
 The mapping to call roles is not one-to-one, and the gaps are real:
 
 | Setting | Reaches | Does not reach |
 |---|---|---|
 | `agents.default.prompt` | the interactive worker's base persona | anything in the pipeline |
-| `agents.worker.prompt` | the pipeline worker's base persona, `plan`, `plan_repair` | the conversational reply — by design, see below |
+| `agents.worker.prompt` | the pipeline worker's base persona, and `plan` / `plan_repair` whenever `agents.plan.prompt` is unset | the conversational reply — by design, see below |
+| `agents.plan.prompt` | `plan`, `plan_repair` | — |
 | `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` — by design, see below |
 | `agents.triage.prompt` | `triage` | — |
+| `agents.research.prompt` | — | `research` — by design, see below |
+
+`agents.plan` inherits `agents.worker` **field by field** at the caller
+(`resolve_engine_wiring`), which is what keeps #2416's property true after the
+planner got a row of its own: operator prose written for the worker still
+reaches the role that names the worker's steps, and an operator who has said
+something more specific is obeyed instead.
+
+The `research` row is the inverse — every other field of `agents.research`
+(`model`, `provider`, `effort`, `reasoning`, `params`) applies, and only
+`prompt` does not. A research child is an engine sub-agent turn, so the stage
+shapes its `EngineConfig` rather than a request; its system message is
+`RESEARCH_SYSTEM_PROMPT`, and that prompt is the contract that makes the child
+read-only rather than a preference to override.
 
 The witness row is a decision, not a gap. `apply_role_shaping`
 (`crates/stella-pipeline/src/pipeline/witness_stage.rs`) carries every *other*
@@ -155,8 +170,9 @@ that role is pinned to — deliberation bought for a greeting. The non-prompt
 tuning it *does* want still arrives via `PipelineConfig::engine`, which is
 already built from the worker's own settings.
 
-Six roles have no override door at all: `research`, `agent_author`,
-`skill_author`, `domain_inference`, `reflection`, `summarization`.
+These roles have no prompt override door at all: `research` (per the row
+above), `agent_author`, `skill_author`, `domain_inference`, `reflection`,
+`summarization`.
 
 ## Output caps
 

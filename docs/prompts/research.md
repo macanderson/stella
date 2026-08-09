@@ -14,7 +14,7 @@ files the planner inferred.
 | | |
 |---|---|
 | Call role | `ModelCallRole::Research` (`"research"`) |
-| Router tier | resolved by `research_stage` |
+| Router tier | `Role::Research` — the worker tier, and the worker's model unless `agents.research`/`pipeline_research_model` names another |
 | Dispatch | engine turn as a sub-agent (`SubAgentSpec`) |
 | Tools | read-only; `write_access: false` |
 | System prompt | `RESEARCH_SYSTEM_PROMPT`, `crates/stella-pipeline/src/research.rs` |
@@ -24,7 +24,8 @@ files the planner inferred.
 | Temperature | 0.0 |
 | Output cap | `None` — inherits the engine base |
 | Timeout | `research_latency_ceiling`, default 45s, **per child** |
-| Override | none — no `EngineAgentKind` maps here |
+| Effort | `low` under `effort_auto`, thinking off under `reasoning_auto` — retrieval, not deliberation |
+| Override | `agents.research` — every field **except** `prompt` |
 
 ## Wire shape
 
@@ -49,6 +50,14 @@ You are a read-only research agent inside a coding agent's planning phase. Answe
 `&'static str` for the same reason every management instruction block is: the
 child's system prompt is identical across the whole fan-out, so the adapters
 have one stable prefix to cache-mark across all of them.
+
+**`agents.research.prompt` is deliberately not wired.** This role is the one
+whose row shapes an `EngineConfig` rather than a request — `research_stage`
+applies it through `apply_role_shaping`, the same seam the witness author uses
+— and `prompt` has no seat there. The exclusion is also the point: read-only is
+what a research child *is*, and the system message above is where that is
+stated. `model`, `provider`, `effort`, `reasoning` and `params` all apply
+normally.
 
 ## User message (template)
 
