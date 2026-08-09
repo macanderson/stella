@@ -202,7 +202,7 @@ pub(crate) async fn run_raw_one_shot(
         && let Some(m) = &mut memory
     {
         // No friction ledger on this path yet: the raw step loop's events ride a
-        // bare `UnboundedSender`, so there is nothing to wrap (#2470). The
+        // bare `UnboundedSender`, so there is nothing to wrap (#2483). The
         // transcript here does carry every tool call and its typed result, which
         // is what the digest selects on.
         let mut report = crate::memory::reflect_routed(
@@ -394,7 +394,7 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        // Transcript-only evidence, as on the raw one-shot above (#2470).
+        // Transcript-only evidence, as on the raw one-shot above (#2483).
         let mut report = crate::memory::reflect_routed(
             m,
             cfg,

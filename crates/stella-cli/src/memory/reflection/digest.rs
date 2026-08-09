@@ -55,6 +55,12 @@
 //! reflection runs, so reading it here would race and the digest would stop
 //! being a function of the turn.
 
+/// The selection's mechanics, and the before/after cost measurement #2460's
+/// definition of done asks for. A child module so it can reach the private
+/// helpers (`clip`, `human_ms`) and the caps without widening their visibility.
+#[cfg(test)]
+mod tests;
+
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
