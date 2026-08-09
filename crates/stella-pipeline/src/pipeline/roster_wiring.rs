@@ -319,24 +319,6 @@ impl<'a> Pipeline<'a> {
         Some(author)
     }
 
-    /// Record that a disabled verdict left the ladder with nothing to escalate
-    /// to, and return the conservative deterministic verdict the run completes
-    /// on.
-    ///
-    /// **Not** [`Self::warn_verifier_fallback`]'s path, which says
-    /// "unavailable" and records a [`ProofStep::VerdictDegraded`]: nothing
-    /// degraded here, the operator removed the stage. This routes to the
-    /// abstention rung instead ([`Self::unverifiable`], #973), whose whole
-    /// contract is that the resulting `passed: true` means "nothing failed
-    /// this" and never "something proved it" — which is exactly what #2381
-    /// requires an ablated verifier to report.
-    pub(super) fn verdict_withheld(&self, inputs: &LadderInputs) -> ModelVerifierVerdict {
-        self.unverifiable(
-            "the `verdict` responsibility is disabled by configuration, so no model reviewed \
-             this turn",
-        );
-        heuristic_fallback(inputs)
-    }
 }
 
 /// A responsibility's configuration key, for prose an operator will act on.

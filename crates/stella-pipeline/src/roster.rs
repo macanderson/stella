@@ -11,33 +11,40 @@
 //! 1. **Whether a responsibility runs** — the ablation axis. Turning triage
 //!    off and leaving everything else running is how a measurement attributes
 //!    an effect to triage rather than to "the pipeline".
-//! 2. **Who performs it** — the assignment axis. Nothing about *authoring a
-//!    witness test* requires the verifier's model specifically; it requires a
-//!    model that is not the worker. Which one is a deployment choice.
+//! 2. **Who performs it** — the assignment axis. Nothing about *triaging* a
+//!    task requires one model specifically; which one is a deployment choice.
 //! 3. **What order they run in** — the topology axis.
 //!
 //! This module offers the first two and **deliberately refuses the third**,
 //! because in this pipeline the order is not a workflow, it is a proof
-//! protocol. The witness is authored in a pristine snapshot of the
-//! *pre-execution* tree by a model that is not the worker, and its fail→pass
-//! flip is credited only when the worker never touched the witness files
-//! (tamper exclusion, [`crate::witness`]). Move authoring after the worker has
-//! seen the diff, or bind it to the worker, and the flip oracle still *reports
-//! a flip* — it has simply stopped meaning anything. A configuration file that
-//! can silently convert a proof into a false proof is not a feature.
-//! [`crate::replay::stage_transition_legal`] encodes the same ordering for
-//! recorded streams, and an operator-authored graph would make replay
-//! validation undecidable rather than merely stricter.
+//! protocol: a flip is credited only against a baseline observed before
+//! execution, and only when the worker never touched the oracle's files
+//! (tamper exclusion, [`crate::witness`]). Reorder those and the flip oracle
+//! still *reports a flip* — it has simply stopped meaning anything. A
+//! configuration file that can silently convert a proof into a false proof is
+//! not a feature. [`crate::replay::stage_transition_legal`] encodes the same
+//! ordering for recorded streams, and an operator-authored graph would make
+//! replay validation undecidable rather than merely stricter.
 //!
 //! So: **the set of responsibilities and their order are code; the assignment
 //! and the enablement are configuration.**
+//!
+//! # Verification is not on either axis
+//!
+//! The one thing this module does *not* make configurable is whether a model
+//! participates in verification. It does not, and no key here can make it:
+//! [`default_agent`] answers `None` for the four responsibilities that used to
+//! be the verifier's, which removes their rows from every roster rather than
+//! defaulting them off. The reasoning is at that match arm; the short form is
+//! that verification's only value is that its answer cannot be talked into
+//! existence, so the ablation axis must not reach it in either direction.
 //!
 //! # Why [`ModelCallRole`] is the responsibility vocabulary
 //!
 //! It already is one. Every paid call in this crate names a
 //! [`ModelCallRole`] (what the call is *for*) beside a
-//! [`Role`] (who *serves* it) — `ModelCallRole::WitnessAuthor` beside
-//! `Role::Verifier`, `ModelCallRole::Triage` beside `Role::Triage`. That pair
+//! [`Role`] (who *serves* it) — `ModelCallRole::Research` beside
+//! `Role::Research`, `ModelCallRole::Triage` beside `Role::Triage`. That pair
 //! is the binding this module makes configurable; before it, the pair was a
 //! literal at each call site.
 //!
@@ -48,9 +55,9 @@
 //! by every reader. [`ModelCallRole`] is total by construction
 //! ([`ModelCallRole::ALL`] is macro-derived and compiler-checked), is already
 //! the unit the paid-call ledger attributes spend to, and is already the
-//! finest grain at which "who does this" is a real question — the witness
-//! author and the verdict are distinct responsibilities that happen to share
-//! an agent today.
+//! finest grain at which "who does this" is a real question — research and
+//! planning are distinct responsibilities that happen to share the worker's
+//! tier by default, and their costs are not alike.
 //!
 //! # What a new responsibility costs
 //!
@@ -185,15 +192,38 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
         ModelCallRole::Plan => Role::Plan,
         ModelCallRole::Research => Role::Research,
         ModelCallRole::Worker => Role::Worker,
-        // Three halves of the verifier's job (`Role::Verifier`'s docs): author
-        // the witness, steer a distressed worker, render the verdict. Distinct
-        // responsibilities that share one agent by default — which is
-        // precisely why they are separate rows here.
-        ModelCallRole::WitnessAuthor | ModelCallRole::DistressGuidance | ModelCallRole::Verdict => {
-            Role::Verifier
-        }
+        // **Verification buys no model call.** These four were the verifier's
+        // job — author the witness, repair it, steer a distressed worker,
+        // render the verdict — and the pipeline no longer issues any of them.
+        //
+        // `None` here is not "off by default"; it is the structural lock.
+        // `Roster::default` builds its rows by filtering `ModelCallRole::ALL`
+        // through this function, and `Roster::apply` rejects any configured key
+        // whose responsibility `is_assignable` denies. So an unassignable
+        // responsibility has no row to enable, no agent to rebind, and no
+        // settings spelling that reaches it — there is nothing for an operator
+        // or a future call site to switch back on.
+        //
+        // Why it had to be structural rather than a default: the thing being
+        // removed is *authority*, and an authority that a config key can
+        // restore is one a deployment will restore. Verification is the one
+        // stage whose whole value is that its answer cannot be talked into
+        // existence, and a model in that seam could — measurably: the verdict
+        // agreed with Terminal-Bench's grader 46% of the time, its false passes
+        // cost 5 tasks outright, and its prose fed back as instruction made a
+        // worker destroy a correctly-recovered commit on `fix-git`. What
+        // replaces it is not a weaker reviewer but a narrower claim: a
+        // fail→pass flip of one normalized command, or `LadderRung::Unverified`.
+        //
+        // The deterministic machinery is untouched and is what now carries the
+        // whole load: the flip oracle, the tamper exclusion, the mutation
+        // guard, and the worker's own `verify_done` shadow run.
+        ModelCallRole::WitnessAuthor
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Verdict => return None,
         // Repairs follow their principal — see `principal_of`.
-        ModelCallRole::PlanRepair | ModelCallRole::WitnessRepair => return None,
+        ModelCallRole::PlanRepair => return None,
         // Not this pipeline's calls. `Unknown` is the legacy-event default and
         // names no call at all; the rest are made by other drivers.
         ModelCallRole::Unknown
@@ -219,11 +249,17 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
 /// [`RosterError::FollowsPrincipal`] rather than a silently ignored key. This
 /// function exists to make that error name the row the operator actually
 /// wanted.
+///
+/// `WitnessRepair` is deliberately **not** listed, though it is still a repair
+/// in the wire vocabulary. Its principal is no longer assignable either, so
+/// answering `Some(WitnessAuthor)` here would send an operator to a key that
+/// also does not exist — a correct-sounding error pointing at nothing. Falling
+/// through to `None` reports it as [`RosterError::NotAssignable`], which is the
+/// true diagnosis: the pipeline does not issue that call at all.
 #[must_use]
 pub fn principal_of(responsibility: ModelCallRole) -> Option<ModelCallRole> {
     match responsibility {
         ModelCallRole::PlanRepair => Some(ModelCallRole::Plan),
-        ModelCallRole::WitnessRepair => Some(ModelCallRole::WitnessAuthor),
         _ => None,
     }
 }

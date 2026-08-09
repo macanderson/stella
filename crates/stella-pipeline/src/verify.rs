@@ -332,8 +332,13 @@ pub fn normalize_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The four ways the evidence ladder can resolve a turn *before* spending a
-/// model-verifier call (L-E11).
+/// The five ways the evidence ladder resolves a turn — all of them terminal,
+/// and all of them decided from deterministic observations alone (L-E11).
+///
+/// There is deliberately no "ask a model" arm. Every variant here is a
+/// conclusion the oracle reached itself; a turn the oracle cannot settle
+/// resolves to [`Self::Unverified`], which is an honest "not proven" rather
+/// than a second model's opinion wearing a verdict's clothes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LadderDecision {
     /// Deterministic pass: flip achieved + touched-tests-green + diff within
@@ -356,9 +361,27 @@ pub enum LadderDecision {
     /// or failed.
     Unverifiable,
     /// Inconclusive: no flip evidence, or diff over budget, or tests couldn't
-    /// be run — but at least one channel could still see something. Escalate to
-    /// the model verifier (a different model than the worker).
-    ModelVerdict,
+    /// be run — but at least one channel could still see something.
+    ///
+    /// **Terminal.** This is where the escalation to a model verifier used to
+    /// begin, and the reason it no longer does is that the escalation could not
+    /// answer the question it was asked. The evidence that reaches this rung is
+    /// by construction the evidence no oracle could settle; handing it to a
+    /// model does not add an observation, it adds an opinion, and the opinion
+    /// was measured: over an 89-task Terminal-Bench run it agreed with the
+    /// benchmark's grader 46% of the time, and 17 of its false passes cost 5
+    /// tasks outright.
+    ///
+    /// The cost was not only wrong answers. A verdict is prose, prose fed back
+    /// to a worker is an instruction, and on `fix-git` a reviewer's
+    /// unsubstantiated claim made the worker reset `master` and destroy a
+    /// correctly-recovered commit — twice. A rung that can do that has negative
+    /// value even when its accuracy is a coin flip.
+    ///
+    /// So the ladder stops here and says so. Scored `Unverified`: not a pass,
+    /// and explicitly not a failure — the work may well be correct, and nothing
+    /// available proved it either way.
+    Unverified,
 }
 
 /// The evidence gathered after execution, over which [`ladder_decision`]
@@ -592,10 +615,11 @@ impl LadderInputs {
 ///    them saw the work this run demonstrably dispatched. Nothing may be
 ///    claimed about it — in particular not a failure.
 /// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
-///    pass: verifier skipped.
-/// 5. **Otherwise → `ModelVerdict`.** Genuinely inconclusive: no flip, or the
-///    diff is over budget (large change deserves a second opinion even with
-///    green tests), or tests couldn't be run — but something could still see.
+///    pass.
+/// 5. **Otherwise → `Unverified`.** Genuinely inconclusive: no flip, or the
+///    diff is over budget, or tests couldn't be run — but something could still
+///    see. Terminal, and never an escalation: see [`LadderDecision::Unverified`]
+///    for why a model's opinion is not a rung on an evidence ladder.
 pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     // 1. A red touched-test is a deterministic failure — revise, no verifier.
     if inputs.touched_tests_passed == Some(false) {
@@ -649,26 +673,34 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     {
         return LadderDecision::SubmitFast;
     }
-    // 5. Inconclusive — escalate to the model verifier.
-    LadderDecision::ModelVerdict
+    // 5. Inconclusive, and that is the answer. Nothing below this line asks a
+    //    model: the evidence that reaches here is precisely the evidence no
+    //    oracle could settle, so a second model would be guessing at it too —
+    //    only with the authority of a verdict attached.
+    LadderDecision::Unverified
 }
 
 impl From<LadderDecision> for LadderRung {
     /// The wire name of a decision (#1043).
     ///
-    /// One-way on purpose, and the missing direction is the point: the wire
-    /// vocabulary is *wider* than this enum, because two of its rungs describe
-    /// what happened after the ladder said [`LadderDecision::ModelVerdict`] —
-    /// the verifier answered, the verifier was unavailable, or no reviewer was
-    /// bought at all. A `LadderRung -> LadderDecision` conversion would have
-    /// to invent that history backwards.
+    /// One-way on purpose, and the missing direction is still the point,
+    /// though for a narrower reason than it once was: the wire vocabulary
+    /// keeps [`LadderRung::Waived`], which describes a review nobody bought
+    /// rather than a decision this ladder reached, so a
+    /// `LadderRung -> LadderDecision` conversion would have to invent that
+    /// history backwards.
+    ///
+    /// Every other rung is now one-to-one with a decision, because the ladder
+    /// no longer has an arm whose outcome depends on something that happens
+    /// *after* it decides. That used to be the whole gap: `model_verdict` and
+    /// `heuristic_fallback` were two records of how one escalation resolved.
     fn from(decision: LadderDecision) -> Self {
         match decision {
             LadderDecision::SubmitFast => LadderRung::SubmitFast,
             LadderDecision::Revise => LadderRung::Revise,
             LadderDecision::NothingAttempted => LadderRung::NothingAttempted,
             LadderDecision::Unverifiable => LadderRung::Unverifiable,
-            LadderDecision::ModelVerdict => LadderRung::ModelVerdict,
+            LadderDecision::Unverified => LadderRung::Unverified,
         }
     }
 }
@@ -747,6 +779,62 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
     };
     VerdictEvidence {
         summary,
+        deterministic: false,
+        evidence_refs: Vec::new(),
+        ladder: None,
+    }
+}
+
+/// Build the `VerdictEvidence` for a [`LadderDecision::Unverified`] turn: the
+/// probes could look, they looked, and what they returned did not prove the
+/// outcome either way.
+///
+/// The distinction from [`unverifiable_evidence`] is the whole point of having
+/// two functions. That one reports *blindness* — no channel could observe the
+/// turn — and the repair it implies is to fix the probes. This one reports
+/// *insufficiency*: the channels worked and the evidence they produced does
+/// not add up to a proof, and the repair it implies is to produce the missing
+/// observation (a failing test that then passes). Telling a reader the probes
+/// were blind when they were not sends them to the wrong repair, which is the
+/// same class of error that made a verifier assert a file "likely does not
+/// exist" while it sat on disk (#973).
+///
+/// `deterministic: false`, because no deterministic result was reached. The
+/// summary leads with UNVERIFIED and names the specific channel that fell
+/// short, since "which one" is the only actionable content: a missing flip
+/// wants a test, an over-budget diff wants a smaller change, and an unrun test
+/// command wants a working toolchain.
+pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> VerdictEvidence {
+    let shortfall = if !inputs.flip_achieved {
+        match tracked_cmd {
+            Some(cmd) => format!(
+                "no fail→pass flip was observed for `{cmd}` — the only thing that can prove this \
+                 change is a test that failed before it and passes after it"
+            ),
+            None => "no test command was tracked, so no fail→pass flip could be observed — the \
+                     only thing that can prove this change is a test that failed before it and \
+                     passes after it"
+                .to_string(),
+        }
+    } else if inputs.diff_lines > inputs.diff_budget {
+        format!(
+            "a flip was observed, but the change is {} lines against a {}-line budget, so the \
+             flip does not account for all of it",
+            inputs.diff_lines, inputs.diff_budget
+        )
+    } else if inputs.touched_tests_passed.is_none() {
+        "a flip was observed, but the touched tests could not be run, so nothing confirmed the \
+         change left the rest of the suite green"
+            .to_string()
+    } else {
+        "the deterministic checks did not combine into a pass".to_string()
+    };
+    VerdictEvidence {
+        summary: format!(
+            "UNVERIFIED — {shortfall}. This is NOT a finding that the work is absent or wrong: no \
+             model was asked for an opinion, because an opinion is not evidence. Verify the \
+             result on its own merits."
+        ),
         deterministic: false,
         evidence_refs: Vec::new(),
         ladder: None,
@@ -852,13 +940,15 @@ pub struct Verdict {
 impl Verdict {
     /// Which rung this verdict came to rest on — the value the pipeline stamps
     /// onto the snapshot it attaches (#1043).
+    ///
+    /// Both former answers collapse to [`LadderRung::Unverified`], because that
+    /// is what they always meant: a model's opinion and a heuristic standing in
+    /// for an absent model are equally not proof of the work. The pipeline no
+    /// longer produces either — nothing constructs a `Verdict` on the live path
+    /// — and this impl survives only for the parsing helpers still under test.
     #[must_use]
     pub fn rung(&self) -> LadderRung {
-        if self.heuristic {
-            LadderRung::HeuristicFallback
-        } else {
-            LadderRung::ModelVerdict
-        }
+        LadderRung::Unverified
     }
 }
 

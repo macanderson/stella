@@ -257,6 +257,26 @@ impl<'a> Pipeline<'a> {
         });
     }
 
+    /// Record that verification was performed and did not prove the outcome:
+    /// the channels could look, they looked, and the evidence fell short.
+    ///
+    /// Both channels for the same reason as [`Self::unverifiable`], and a
+    /// *separate* method from it on purpose. That one says the instruments were
+    /// blind; this one says they worked and the answer was not enough. Merging
+    /// them would be the #973 conflation with the polarity flipped — a claim
+    /// about the evidence delivered as a claim about the instruments — and it
+    /// points a reader at the wrong repair.
+    ///
+    /// This is the path that replaced the escalated model verdict, so it is
+    /// also the most common non-deterministic outcome a run has. It must read
+    /// as a stated limit, never as a quiet pass.
+    pub(super) fn unproven_verdict(&self, reason: &str) {
+        self.warn(format!("verification did not prove this turn: {reason}"));
+        self.emit_proof(stella_protocol::ProofStep::VerificationUnproven {
+            reason: reason.to_string(),
+        });
+    }
+
     /// The witness author/repair engine tuning (#1785): the worker's engine
     /// config rebased into the authoring snapshot, with the VERIFIER's
     /// request shaping applied on top. The witness author rides the

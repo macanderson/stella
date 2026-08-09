@@ -61,12 +61,12 @@ impl<'a> Pipeline<'a> {
         &self,
         surface: CandidateSurface<'_>,
         state: &CandidateState,
-    ) -> (u32, u32, String) {
+    ) -> (u32, u32) {
         let Some(probe) = surface.lint else {
-            return (0, 0, String::new());
+            return (0, 0);
         };
         let Some(after) = probe.snapshot(surface.cwd).await else {
-            return (0, 0, String::new());
+            return (0, 0);
         };
         let baseline_owned;
         let baseline: &[LintRecord] = match (&state.lint_baseline, surface.workspace) {
@@ -79,35 +79,24 @@ impl<'a> Pipeline<'a> {
                     baseline_owned = records;
                     &baseline_owned
                 }
-                None => return (0, 0, String::new()),
+                None => return (0, 0),
             },
-            (None, None) => return (0, 0, String::new()),
+            (None, None) => return (0, 0),
         };
         let known: HashSet<&LintRecord> = baseline.iter().collect();
         let mut new_errors = 0u32;
         let mut new_warnings = 0u32;
-        let mut sample = String::new();
         for record in &after {
             if known.contains(record) {
                 continue;
             }
             if record.error {
                 new_errors += 1;
-                // Token discipline: the verifier gets at most three new-error
-                // lines, each capped — enough to see WHAT regressed without
-                // shipping a linter's whole opinion into the prompt.
-                if sample.lines().count() < 3 {
-                    let code = record.code.as_deref().unwrap_or("-");
-                    let mut line = format!("{}: {} [{}]", record.file, record.message, code);
-                    line.truncate(200);
-                    sample.push_str(&line);
-                    sample.push('\n');
-                }
             } else {
                 new_warnings += 1;
             }
         }
-        (new_errors, new_warnings, sample)
+        (new_errors, new_warnings)
     }
 
     /// Post-execute test observation for the flip oracle + the touched-tests
