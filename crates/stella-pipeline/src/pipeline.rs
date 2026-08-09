@@ -1444,7 +1444,7 @@ impl<'a> Pipeline<'a> {
 
         let resolved = match self.assigned(ModelCallRole::Plan) {
             Assigned::To(r) => r,
-            Assigned::Withheld | Assigned::Unresolvable(_) => return Ok(fallback_plan()),
+            Assigned::Withheld | Assigned::Unresolvable => return Ok(fallback_plan()),
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);

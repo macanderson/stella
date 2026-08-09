@@ -34,7 +34,13 @@ pub(super) enum Assigned<'p> {
     /// per-stage degradations were written for exactly this case and their
     /// wording ("unresolvable", "check the credential") would be a lie about
     /// a deliberate ablation.
-    Unresolvable(RoleResolveError),
+    ///
+    /// Carries no [`RoleResolveError`]: every site that reaches this variant
+    /// degrades softly and already discarded the cause before this type
+    /// existed. A payload nothing reads would be the unwired code AGENTS.md
+    /// asks not to ship — the hard-failure path keeps its typed error, via
+    /// [`Pipeline::resolve_provider`] and [`PipelineError::Routing`].
+    Unresolvable,
 }
 
 impl<'p> Assigned<'p> {
@@ -46,7 +52,7 @@ impl<'p> Assigned<'p> {
     pub(super) fn ok(self) -> Option<ResolvedRole<'p>> {
         match self {
             Self::To(resolved) => Some(resolved),
-            Self::Withheld | Self::Unresolvable(_) => None,
+            Self::Withheld | Self::Unresolvable => None,
         }
     }
 }
@@ -65,7 +71,7 @@ impl<'a> Pipeline<'a> {
         };
         match self.resolve_provider(role) {
             Ok(resolved) => Assigned::To(resolved),
-            Err(error) => Assigned::Unresolvable(error),
+            Err(_) => Assigned::Unresolvable,
         }
     }
 

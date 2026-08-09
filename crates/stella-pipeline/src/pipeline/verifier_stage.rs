@@ -138,7 +138,7 @@ impl<'a> Pipeline<'a> {
         let resolved = match self.assigned(ModelCallRole::Verdict) {
             Assigned::To(r) => r,
             // Verifier unresolvable → conservative heuristic verdict (L-E11).
-            Assigned::Withheld | Assigned::Unresolvable(_) => {
+            Assigned::Withheld | Assigned::Unresolvable => {
                 self.warn_verifier_fallback(
                     degradation,
                     "the verifier role is unresolvable (no routable provider); check the \

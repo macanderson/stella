@@ -32,9 +32,9 @@ impl Pipeline<'_> {
         // stage event is the point — an ablated stage must leave no frame in
         // `stella-events.jsonl`, so a reader sees the ablation rather than
         // inferring it from a stage that emitted but bought nothing. The
-        // fall-through is the deterministic floor, which is exactly the path an
-        // unresolvable triage already took: losing triage costs the turn its
-        // classification, never the turn.
+        // fall-through is `triage_ablated`, NOT the plain floor an outage
+        // takes: see that function for why an ablation must not also strip
+        // verification.
         if !self.responsibility_enabled(ModelCallRole::Triage) {
             return Ok((self.triage_ablated(goal), Vec::new()));
         }
@@ -68,7 +68,7 @@ impl Pipeline<'_> {
             // there — a bare greeting must route to chat even when the triage
             // provider can't be resolved, since it never depends on a model
             // answer.
-            Assigned::Withheld | Assigned::Unresolvable(_) => {
+            Assigned::Withheld | Assigned::Unresolvable => {
                 return Ok((self.triage_floor(goal), Vec::new()));
             }
         };
