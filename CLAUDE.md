@@ -43,6 +43,30 @@
     cannot have both, state which one you are giving up and why, and let a
     human choose. Deciding it silently is how a reference implementation
     stops being one.
+- **Every factual claim ships with the evidence that establishes it, or it is
+  not made.** This is the general rule the bench rule below is one instance of,
+  and it governs everything you say to a human: what a build contains, when a
+  commit landed, why a run behaved as it did, whether a fix is present, what a
+  test proves. State the claim, name the command or file and line that shows
+  it, and — this is the half that gets skipped — **check that the evidence can
+  actually distinguish the claim from its opposite.** Evidence consistent with
+  both answers is not evidence; it is a coincidence you found agreeable.
+  - **An inference is not an observation, and must be labelled.** "The JSON
+    shows X, so the build predates Y" is a chain with a premise in it. Say
+    which link you verified and which you assumed, every time.
+  - **A commit message is a claim, not a fact.** So is a doc page, a code
+    comment, a PR description, and anything this file says. On 2026-08-09 a
+    session read "#2531 made `flip_achieved` tri-state" in a commit body and
+    reported the fix as present; the field was still `pub flip_achieved: bool`
+    in `verify.rs`, and the two signals it cited to date a benchmark run were
+    both present on *either* side of that commit. The conclusion was
+    unfalsifiable by the evidence offered and stated as fact anyway. Read the
+    code the claim is about.
+  - **"I do not know" is a complete answer** and is always cheaper than the
+    alternative. When the evidence runs out, say where it ran out and what
+    would settle it. Guessing confidently at a question a human asked because
+    they already suspected the answer is the single fastest way to become
+    worthless to them.
 - **A bench conclusion comes from the trace, never from a surface signal.**
   The measurement machinery is younger than the thing it measures, and its
   summary layer is a set of projections that each have their own bugs. On
