@@ -184,6 +184,15 @@ got.
 
 ## Gotchas
 
+- **A tool's timings never go in its `ToolOutput`.** That value is what
+  `stella-core`'s loop detector keys on — `exact_repeat_threshold` counts identical
+  *(name + input + output)* calls and the stagnation rung counts byte-identical outputs
+  from one tool — so an elapsed time in a verdict makes both rungs permanently blind for
+  that tool. `verify_done` reports its per-phase wall clock to the diagnostic plane
+  instead (`tools.verify_done.phases`, `src/verify/phases.rs`, #2486), which the model
+  and the detector both never see. This crate's seam for that handle is
+  `RegistryOptions::diagnostics`; the codes it emits have no generated reference yet
+  (#2507), so they are listed here.
 - **`schemas()` is sorted by name deliberately.** The list is serialized verbatim at position 0
   of the prompt prefix and `HashMap` iteration order is per-process randomized. Prompt caching
   is a byte-level prefix match, so an unsorted list means every process writes a divergent cache
