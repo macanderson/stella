@@ -70,20 +70,18 @@ pub(super) fn emit_budget_warning(
     });
 }
 
+/// `now` is the caller's own boundary clock read — the tick reports the
+/// wall-clock axis too (#2240) and this module holds no clock of its own
+/// (invariant 2, and `crate::budget`'s module docs).
 pub(super) fn record_settled_cost(
     budget: &mut BudgetGuard,
     cost_usd: f64,
     warnings: &mut BudgetWarnings,
     events: &EventSender,
+    now: std::time::Instant,
 ) -> BudgetOutcome {
     let outcome = budget.record_spend(cost_usd);
-    let _ = events.send(AgentEvent::BudgetTick {
-        spent_usd: budget.spent_usd(),
-        limit_usd: budget.turn_limit_usd(),
-        mode: budget.mode(),
-        session_spent_usd: Some(budget.session_spent_usd()),
-        session_limit_usd: budget.session_limit_usd(),
-    });
+    let _ = events.send(budget.tick_event(now));
     emit_budget_warning(outcome, warnings, events);
     outcome
 }
@@ -127,6 +125,15 @@ impl super::Engine<'_> {
         state: &mut TurnState,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
+        // The one clock read on this path — `crate::budget`'s guard is pure
+        // and takes `now` as an owned parameter (module docs), mirroring how
+        // `run_step_inner` reads `state.started_at.elapsed()` for the
+        // existing per-turn `ContinuationBudget` rather than letting a pure
+        // decision function read the clock itself. Read once and shared with
+        // the settlement tick below, so the boundary's two answers — what is
+        // left on the clock, and whether that is already too little — cannot
+        // disagree about when "now" was.
+        let now = std::time::Instant::now();
         let child_spend = self.tools.drain_sub_agent_spend_usd();
         if child_spend > 0.0 {
             record_settled_cost(
@@ -134,21 +141,17 @@ impl super::Engine<'_> {
                 child_spend,
                 &mut state.memos.warnings,
                 events,
+                now,
             );
             state.total_cost_usd += child_spend;
         }
-        // The one clock read on this path — `crate::budget`'s guard is pure
-        // and takes `now` as an owned parameter (module docs), mirroring how
-        // `run_step_inner` reads `state.started_at.elapsed()` for the
-        // existing per-turn `ContinuationBudget` rather than letting a pure
-        // decision function read the clock itself.
         check_budget(
             &state.budget,
             state.total_cost_usd,
             state.last_step,
             &mut state.memos.warnings,
             events,
-            std::time::Instant::now(),
+            now,
         )
     }
 }

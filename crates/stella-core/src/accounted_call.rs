@@ -9,7 +9,7 @@ use stella_protocol::{
 };
 use tokio::time::timeout;
 
-use crate::budget::{BudgetGuard, BudgetOutcome};
+use crate::budget::{BudgetGuard, BudgetOutcome, DeadlineOutcome};
 use crate::event_sender::EventSender;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryPolicy, Sleeper, retry_with_backoff_observed};
@@ -97,6 +97,21 @@ pub enum AccountedCallError {
     /// [`AccountedCall::timeout`] expired before the call resolved.
     #[error("the call's deadline expired before the provider responded")]
     Timeout,
+    /// The task's wall-clock deadline (`BudgetGuard::set_task_deadline`) had
+    /// already passed when this call was reached, so nothing was dispatched
+    /// and nothing was spent (#2238).
+    ///
+    /// Distinct from [`Self::Timeout`], which is one call outrunning its own
+    /// per-call ceiling: this is the *task* being out of time, and it is a
+    /// fact about the run rather than about the provider. Distinct from
+    /// [`Self::Budget`] for the reason `DeadlineOutcome` is distinct from
+    /// `BudgetOutcome` — seconds are not dollars, and `Budget` carries a
+    /// committed result this variant by construction has none of.
+    #[error("the task deadline had already passed when this call was reached")]
+    Deadline {
+        /// How long ago the deadline passed.
+        overrun: Duration,
+    },
     /// The call succeeded, but settling its cost breached an enforced budget.
     #[error("the call committed, but settling its cost breached an enforced budget")]
     Budget {
@@ -110,6 +125,13 @@ pub enum AccountedCallError {
 /// Dispatch one provider call with retry, per-call timeout, budget metering,
 /// and the full accounting event trail (`UsageIncomplete` per failed attempt,
 /// `Retry` per committed retry, then `StepUsage` + `BudgetTick`).
+///
+/// Gated on the *task's* wall clock before anything is dispatched: a guard
+/// whose `task_deadline` has already passed returns
+/// [`AccountedCallError::Deadline`] having spent nothing and emitted nothing
+/// (#2238). Callers with a degraded path should take it — that stop is the
+/// run declining to buy work it has no time to use, not a failure of this
+/// call.
 ///
 /// Every failed attempt reports its own content-free `UsageIncomplete`
 /// envelope synchronously, before a later attempt can succeed: a successful
@@ -136,6 +158,28 @@ pub async fn run_accounted_call(
     sleeper: &dyn Sleeper,
 ) -> Result<CompletionResult, AccountedCallError> {
     let started = Instant::now();
+    // The task's wall clock, checked BEFORE the dispatch (#2238). This seam is
+    // between model calls by construction — an `AccountedCall` carries no
+    // tools, so there is never anything in flight to interrupt — which makes
+    // it the one place invariant 6 permits the check for every non-engine
+    // caller. The engine's own step loop has the equivalent rung in
+    // `crate::driver::settlement::check_budget`; until this existed, the
+    // engine stopped itself at its deadline and the pipeline plane above it
+    // ran triage, research, plan, scope, witness, verify and verdict straight
+    // through the ceiling, one paid call at a time.
+    //
+    // Reactive only (`check_deadline`, a zero reserve): this seam has no pace
+    // estimate to anticipate with, and inventing one here would be a second,
+    // invisible policy on top of the operator's — so the anticipatory rung
+    // lives wherever a basis for one does. The engine's step loop forecasts
+    // from `TurnState::last_step`, which it measures; `stella-pipeline`'s
+    // `dispatch_raw` reserves each management call's own declared `timeout`
+    // and refuses ahead of this seam (#2432). A caller holding no such basis
+    // gets this reactive check alone, which is the honest answer for it —
+    // never a margin this module guessed on its behalf.
+    if let DeadlineOutcome::Exceeded { overrun } = budget.check_deadline(started) {
+        return Err(AccountedCallError::Deadline { overrun });
+    }
     // True only while a provider dispatch is actually being polled — cleared
     // for the backoff sleeps between attempts. A per-call timeout wraps the
     // whole retry future (sleeps included), so its expiry must not attribute a
@@ -294,13 +338,7 @@ pub async fn run_accounted_call(
         finish_reason: result.finish_reason,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
-    let _ = events.send(AgentEvent::BudgetTick {
-        spent_usd: budget.spent_usd(),
-        limit_usd: budget.turn_limit_usd(),
-        mode: budget.mode(),
-        session_spent_usd: Some(budget.session_spent_usd()),
-        session_limit_usd: budget.session_limit_usd(),
-    });
+    let _ = events.send(budget.tick_event(Instant::now()));
     if let BudgetOutcome::Warn {
         spent_usd,
         limit_usd,
@@ -634,6 +672,149 @@ mod tests {
                 AgentEvent::StepManifest { .. } | AgentEvent::BlockRegistered { .. }
             )),
             "an opt-out caller records cost only, and never its prompt bytes"
+        );
+    }
+
+    /// A provider that fails the test if it is ever reached — the only honest
+    /// way to assert "nothing was dispatched".
+    struct NeverDispatched;
+
+    #[async_trait]
+    impl Provider for NeverDispatched {
+        fn id(&self) -> &str {
+            "never"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            panic!("no provider call may be dispatched after the task deadline has passed");
+        }
+    }
+
+    fn one_call(provider: &dyn Provider, role: ModelCallRole) -> AccountedCall<'_> {
+        AccountedCall {
+            provider,
+            role,
+            model_hint: "configured-model".into(),
+            request: CompletionRequest {
+                messages: vec![CompletionMessage::user("work")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: Vec::new(),
+                reasoning: None,
+                params: None,
+            },
+            retry_policy: RetryPolicy::new(1, 0, 0),
+            timeout: None,
+            estimated_input_tokens: 1,
+            receipt: None,
+        }
+    }
+
+    /// #2238 witness: the task's wall clock gates this seam, not just the
+    /// engine's step loop. Before this, `BudgetGuard::set_task_deadline` was
+    /// honoured in exactly one place — `driver::settlement::check_budget` —
+    /// so every management role the pipeline dispatches through here (triage,
+    /// plan, verdict, guidance) metered dollars and never the clock, and a run
+    /// whose deadline had already blown still bought all of them.
+    #[tokio::test]
+    async fn an_expired_task_deadline_refuses_the_call_before_it_is_dispatched() {
+        let provider = NeverDispatched;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        budget.set_task_deadline(Some(Instant::now() - Duration::from_secs(5)));
+
+        let result = run_accounted_call(
+            one_call(&provider, ModelCallRole::Triage),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        match result {
+            Err(AccountedCallError::Deadline { overrun }) => {
+                assert!(overrun >= Duration::from_secs(5), "overrun: {overrun:?}");
+            }
+            other => panic!("an expired deadline must refuse the call: {other:?}"),
+        }
+        assert_eq!(budget.spent_usd(), 0.0, "a refused call spends nothing");
+        // Not even a `UsageIncomplete`: nothing was in flight, so there is no
+        // unknown provider-side spend to account for. An envelope here would
+        // invent a failed attempt that never happened.
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            events.is_empty(),
+            "a call that never dispatched owes no accounting: {events:?}"
+        );
+    }
+
+    /// The other side of the same gate: a deadline still ahead is not a stop.
+    /// Without this, "refuse everything" would pass the witness above.
+    #[tokio::test]
+    async fn a_deadline_still_ahead_dispatches_normally() {
+        let provider = Succeeds;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        budget.set_task_deadline(Some(Instant::now() + Duration::from_secs(600)));
+
+        let result = run_accounted_call(
+            one_call(&provider, ModelCallRole::Triage),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        assert!(result.is_ok(), "an unexpired deadline gates nothing");
+        assert_eq!(budget.spent_usd(), 0.01);
+    }
+
+    /// #2240 witness: the tick states the wall-clock axis, so a journal can
+    /// answer "was a deadline armed?" without anyone reconstructing argv.
+    /// `None` and `Some(_)` are the two facts that used to be indistinguishable.
+    #[tokio::test]
+    async fn the_budget_tick_reports_whether_a_task_deadline_was_armed() {
+        async fn tick_for(deadline: Option<Instant>) -> Option<u64> {
+            let provider = Succeeds;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+            budget.set_task_deadline(deadline);
+            let _ = run_accounted_call(
+                one_call(&provider, ModelCallRole::Triage),
+                &mut budget,
+                &EventSender::new(tx),
+                &NoopSleeper,
+            )
+            .await;
+            let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+            match events
+                .iter()
+                .find(|event| matches!(event, AgentEvent::BudgetTick { .. }))
+                .expect("a settled call emits a tick")
+            {
+                AgentEvent::BudgetTick {
+                    deadline_remaining_ms,
+                    ..
+                } => *deadline_remaining_ms,
+                _ => unreachable!("filtered above"),
+            }
+        }
+
+        assert_eq!(
+            tick_for(None).await,
+            None,
+            "an unarmed deadline must be reported as unarmed, not as zero time left"
+        );
+        let armed = tick_for(Some(Instant::now() + Duration::from_secs(900)))
+            .await
+            .expect("an armed deadline reports its remaining clock");
+        assert!(
+            (800_000..=900_000).contains(&armed),
+            "the tick must report the real remaining clock, got {armed}ms"
         );
     }
 

@@ -233,6 +233,13 @@ impl ProofState {
             // heuristic degradation via its evidence summary, so no row folds
             // from it here.
             ProofStep::VerdictDegraded { .. } => {}
+            // Provenance for the traces view and the event stream (#2414),
+            // like `VerdictDegraded` above. No rail row folds from it: the
+            // rail states what assurance the turn bought, and a triage that
+            // fell to the keyword floor still declares its `Assurance` plan —
+            // what degraded is where the plan came from, which is a question
+            // for the trace, not a row.
+            ProofStep::TriageDegraded { .. } => {}
         }
     }
 
@@ -647,6 +654,7 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
         ProofStep::VerdictDegraded { candidate, reason } => {
             format!("verdict degraded (candidate {candidate}): {reason}")
         }
+        ProofStep::TriageDegraded { reason } => format!("triage degraded: {reason}"),
     }
 }
 

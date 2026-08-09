@@ -140,10 +140,22 @@ fn seeded_workspace() -> TempDir {
                produced_output INTEGER NOT NULL DEFAULT 0,
                wrote_files INTEGER NOT NULL DEFAULT 0,
                truncated INTEGER NOT NULL DEFAULT 0,
-               recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+               recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               -- Store schema v23 (#2175).
+               parse_error TEXT);
              INSERT INTO execution_reflection
                (execution_id, delivered, self_rating, what_to_improve)
              VALUES (1, 1, 8, 'read the failing test first');
+             -- Execution 2 reflected and its response would not parse: a row
+             -- with a `parse_error` and no assessment in it. Seeded in the
+             -- SHARED fixture on purpose (#2443) — it used to live only in a
+             -- private one because both readers of this table counted it as a
+             -- reflection, which is the bug. Every route below now sees a
+             -- store holding one graded turn and one ungraded one, so a
+             -- regression that conflates them fails here rather than in a test
+             -- written to look for it.
+             INSERT INTO execution_reflection (execution_id, parse_error)
+             VALUES (2, 'Let me analyze this turn. First, I should');
              CREATE TABLE rules (
                rule_id TEXT PRIMARY KEY, contents TEXT NOT NULL,
                source TEXT NOT NULL,
@@ -403,6 +415,10 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/explorations",
         "/api/rules",
         "/api/reflections",
+        // #2175: the lifecycle payload now also reads `store.db`'s
+        // `execution_reflection.parse_error`, a column that arrives in schema
+        // v23 — so an unmigrated store must blank that section, not 500.
+        "/api/context-lifecycle",
     ] {
         let response = respond(ws.path(), route);
         assert_eq!(response.status, "200 OK", "route {route}");
@@ -531,6 +547,106 @@ fn reflection_ratings_are_bounded_to_the_newest_rows() {
         newest - MAX_LISTED_REFLECTIONS as i64 + 1,
         "the seeded oldest reflection aged out of the window"
     );
+}
+
+/// #2443: "ratings" means the model graded the turn, not that a row exists.
+///
+/// `execution_reflection` has three producers writing disjoint columns, and
+/// only one of them records an assessment. A row left by finalize alone, or by
+/// a reflection whose response would not parse, carries NULL verdict, NULL
+/// rating and three empty strings — which the feed presented as a reflection
+/// the model looked at and declined to grade. The Improve tab already answers
+/// "did this turn reflect at all" from `parse_error` (#2175); this feed answers
+/// the narrower question its name promises.
+#[test]
+fn the_ratings_feed_lists_only_turns_the_model_graded() {
+    let ws = seeded_workspace();
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    // Two shapes the shared fixture does not carry, on either side of the line.
+    // Execution 3 is prose with no numeric grade: an assessment, and what the
+    // "what to improve" feed is built from, so the predicate must not key on
+    // `self_rating` alone. Execution 4 is prose that is only whitespace, which
+    // `SelfReviewRow::is_empty` trims before judging and the SQL mirror must
+    // too — unreachable through the writer, which refuses an empty review, and
+    // here because the mirror is the thing under test rather than the writer.
+    conn.execute_batch(
+        "INSERT INTO execution_reflection (execution_id, critique)
+         VALUES (3, 'landed, but the first diagnosis was wrong');
+         INSERT INTO execution_reflection (execution_id, what_went_well)
+         VALUES (4, '  \t\n ');",
+    )
+    .unwrap();
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
+    let ratings = v["ratings"].as_array().unwrap();
+    let listed: Vec<i64> = ratings
+        .iter()
+        .map(|r| r["execution_id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        listed,
+        vec![1, 3],
+        "execution 2 reflected unreadably and 4 said nothing — neither was \
+         graded, so neither is a rating; the prose-only row is one"
+    );
+
+    // The same row, through the other projection that reads this table. A
+    // Self-reflection panel of blanks in the execution drawer says the model
+    // looked at the turn and had nothing to say; `null` says it never graded it.
+    let ungraded: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/execution?id=2").body).unwrap();
+    assert!(
+        ungraded["reflection"].is_null(),
+        "a parse-failure row is not a self-reflection: {:?}",
+        ungraded["reflection"]
+    );
+    let graded: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/execution?id=1").body).unwrap();
+    assert_eq!(
+        graded["reflection"]["self_rating"], 8,
+        "and a real self-review still reaches the drawer"
+    );
+}
+
+/// The second-order half of #2443: an ungraded row must not spend the window.
+///
+/// The bound is applied by SQL `LIMIT`, so filtering after the fact would leave
+/// a workspace whose newest `MAX_LISTED_REFLECTIONS` rows are all parse
+/// failures — a plausible shape, since that is precisely what a broken
+/// reflection loop produces every turn — showing an empty ratings chart while
+/// real ratings sat one row past the horizon. The predicate runs before the
+/// limit, so the window means "the newest N ratings".
+#[test]
+fn ungraded_rows_do_not_spend_the_ratings_window() {
+    use crate::db::MAX_LISTED_REFLECTIONS;
+    let ws = seeded_workspace();
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch("BEGIN").unwrap();
+    {
+        // Ids from 1000, all newer than the seeded graded turn: enough of them
+        // to fill the window on their own.
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO execution_reflection (execution_id, parse_error)
+                 VALUES (?1, 'I will now analyze the turn. First,')",
+            )
+            .unwrap();
+        for i in 0..MAX_LISTED_REFLECTIONS {
+            stmt.execute([1000 + i as i64]).unwrap();
+        }
+    }
+    conn.execute_batch("COMMIT").unwrap();
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
+    let ratings = v["ratings"].as_array().unwrap();
+    assert_eq!(
+        ratings.len(),
+        1,
+        "500 unreadable reflections must not crowd out the one real rating"
+    );
+    assert_eq!(ratings[0]["execution_id"], 1);
 }
 
 /// The tool leaderboard is the hottest query (every poll, highest-
@@ -794,9 +910,68 @@ fn memories_rules_and_reflections_come_from_disk_and_db() {
         serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
     assert_eq!(refl["lessons"].as_array().unwrap().len(), 2);
     let ratings = refl["ratings"].as_array().unwrap();
-    assert_eq!(ratings.len(), 1);
+    assert_eq!(
+        ratings.len(),
+        1,
+        "one of the fixture's two reflection rows is a parse failure, which is \
+         not a rating (#2443)"
+    );
     assert_eq!(ratings[0]["self_rating"], 8);
     assert_eq!(ratings[0]["what_to_improve"], "read the failing test first");
+}
+
+/// #2175: the Improve tab must be able to tell a starved learning loop from a
+/// quiet one.
+///
+/// Both render an empty `proposals` list, and until this field existed that
+/// was the whole of what the dashboard knew — so a workspace whose reflection
+/// responses had been unparseable for nine days got the same "no proposals in
+/// the ledger" copy as one opened five minutes ago. Its own fixture rather
+/// than the shared one because it exercises the *absent* `context.db` path:
+/// this route reads two databases and must still name the starved loop when
+/// only `store.db` exists. (The shared fixture carries a parse-failure row
+/// too, since #2443 — the routes that must not count it as a rating now say
+/// so themselves.)
+#[test]
+fn the_lifecycle_payload_names_reflections_that_produced_no_readable_lessons() {
+    let ws = TempDir::new().unwrap();
+    let private = ws.path().join(".stella/private");
+    std::fs::create_dir_all(&private).unwrap();
+    let conn = Connection::open(private.join("store.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE execution_reflection (
+           execution_id INTEGER PRIMARY KEY,
+           recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           parse_error TEXT);
+         INSERT INTO execution_reflection (execution_id, parse_error) VALUES
+           (7, 'Let me analyze this turn step by step. First, I should'),
+           (9, NULL);",
+    )
+    .unwrap();
+
+    let body: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/context-lifecycle").body).unwrap();
+    let starved = body["unreadable_reflections"].as_array().unwrap();
+    assert_eq!(
+        starved.len(),
+        1,
+        "a NULL parse_error is a turn that reflected cleanly, not a failure"
+    );
+    assert_eq!(starved[0]["execution_id"], 7);
+    assert!(
+        starved[0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .starts_with("Let me analyze"),
+        "the excerpt is what tells an operator what shape the failure takes"
+    );
+    assert_eq!(
+        body["proposals"].as_array().unwrap().len(),
+        0,
+        "and the ledger is empty — which is exactly the ambiguity this field \
+         resolves: empty proposals PLUS a starved reflection is a broken loop, \
+         empty proposals alone is a new workspace"
+    );
 }
 
 #[test]

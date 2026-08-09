@@ -1,18 +1,26 @@
 //! Complete per-call accounting for pipeline roles that call providers directly.
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use stella_core::retry::RetryPolicy;
+// One home for the starvation arithmetic, shared with `stella-cli`'s
+// standalone-call chokepoint: #2128 fixed this path and left that one running
+// on a bare cap, which is how post-turn reflection starved for nine days
+// (#2174). Two copies of these numbers is what let the second caller miss the
+// first fix.
+use stella_core::budget::DeadlineOutcome;
+use stella_core::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, ReceiptContext, run_accounted_call,
 };
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, FinishReason, ModelCallRole,
-    ReasoningEffort,
+    CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole, ReasoningEffort,
 };
 
-use super::stage_budget::{PipelineBudgetAbort, budget_abort};
+use super::stage_budget::{
+    PipelineStageAbort, budget_abort, deadline_abort, deadline_closing_abort,
+};
 use super::{Pipeline, ResolvedRole, RoleCallOverrides};
 
 pub(super) struct RawCall<'r, 'a> {
@@ -43,38 +51,23 @@ pub(super) struct RawCall<'r, 'a> {
 pub(super) enum RawCallError {
     Provider,
     Timeout,
-    Budget(PipelineBudgetAbort),
+    Budget(PipelineStageAbort),
+    /// The task's wall clock stopped this call before dispatch, so it was
+    /// never dispatched and cost nothing: either the deadline had already
+    /// passed (#2238) or too little of it remained to fit the call at all
+    /// (#2432). One variant for both, because the consequence here is
+    /// identical; the difference that matters reaches the stream, where
+    /// `stage_budget` gives each stop its own sentence.
+    ///
+    /// Separate from [`Self::Budget`] because the two want opposite handling
+    /// *after* execute: a dollar breach is the run being unable to afford the
+    /// next call at all, while an expired clock on a run that has already
+    /// produced a diff wants a pivot — skip the remaining assurance stages and
+    /// settle the work that exists, so a partially-solved task is still
+    /// scorable. Every match site therefore states its own answer rather than
+    /// sharing the budget arm.
+    Deadline(PipelineStageAbort),
 }
-
-/// Headroom added to every management role's *visible-output* budget so a
-/// reasoning model can think before it answers (#2128).
-///
-/// `max_output_tokens` is one number on the wire and reasoning models bill
-/// their reasoning stream against it, so a cap sized for the role's written
-/// output contract is a cap the model spends entirely on thinking: in match
-/// `cc00894779ff` every triage call (512) and every verdict call (1024)
-/// returned `finish_reason: length` with `output_text: ""` — the reasoning
-/// token count matched or exceeded the cap in each one. Empty triage
-/// collapsed research/plan/scope/witness to defaults that looked like
-/// decisions; empty verdict degraded to the heuristic and re-opened finished
-/// work (#2129).
-///
-/// The number is a heuristic bound, and this comment is the honest place to
-/// say so: no posture axis reports a model's reasoning budget, and the value
-/// varies by model and prompt. It is deliberately generous relative to the
-/// contracts below (which are two to six lines) and still an order of
-/// magnitude under the 64k engine base, so a runaway role call is still
-/// bounded. [`starved_retry_cap`] is the actual guarantee — headroom only
-/// makes it rare.
-const REASONING_HEADROOM_TOKENS: u32 = 4_096;
-
-/// The cap a call that provably starved is retried at (#2128).
-///
-/// Reached only after a response came back empty with `finish_reason:
-/// length`, which is the provider stating that the budget ran out before the
-/// first visible token. Sized so one retry is enough for any reasoning
-/// budget observed in the wild rather than sized to a model.
-const STARVED_RETRY_CAP: u32 = 32_768;
 
 /// Role-shaped request bounds `(max_output_tokens, effort)` for the
 /// management chokepoint, applied between the caller's explicit overrides
@@ -89,7 +82,8 @@ const STARVED_RETRY_CAP: u32 = 32_768;
 /// (`stella-core`'s `run_compaction_pass`: 1,200 tokens, `effort: Low`).
 ///
 /// Each arm names the role's **visible-output** contract;
-/// [`REASONING_HEADROOM_TOKENS`] is added on top by [`role_output_cap`], so
+/// [`with_reasoning_headroom`] adds thinking room on top in
+/// [`role_output_cap`], so
 /// the numbers here stay readable against the prompts that justify them
 /// instead of silently encoding someone's guess at a thinking budget.
 ///
@@ -129,7 +123,7 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
 
 /// The wire cap for one management call: the caller's explicit override
 /// (which always wins, unchanged), else the role's visible-output contract
-/// plus [`REASONING_HEADROOM_TOKENS`], else the engine base.
+/// plus [`with_reasoning_headroom`]'s thinking room, else the engine base.
 ///
 /// The override is deliberately NOT given headroom. It is the most specific
 /// statement anyone made about this call — an operator who pinned 512 asked
@@ -145,35 +139,9 @@ fn role_output_cap(
         return Some(explicit);
     }
     match management_bounds(role).0 {
-        Some(contract) => Some(contract.saturating_add(REASONING_HEADROOM_TOKENS)),
+        Some(contract) => Some(with_reasoning_headroom(contract)),
         None => base,
     }
-}
-
-/// The cap to retry a provably starved call at, or `None` when a retry could
-/// not change the outcome (#2128).
-///
-/// `None` when the call already had at least [`STARVED_RETRY_CAP`] of room:
-/// the response was then empty for some reason more room cannot fix, and
-/// buying a second identical call to discover that again is waste.
-fn starved_retry_cap(previous: Option<u32>) -> Option<u32> {
-    match previous {
-        Some(cap) if cap < STARVED_RETRY_CAP => Some(STARVED_RETRY_CAP),
-        Some(_) => None,
-        // No cap was set at all, so the budget was never the binding
-        // constraint — nothing to raise.
-        None => None,
-    }
-}
-
-/// Whether a completion is the cap-starvation signature (#2128): the provider
-/// stopped at the token limit and no visible text was produced.
-///
-/// Both halves are required. `Length` with text is an ordinary truncation
-/// (the parsers handle a clipped reply), and empty text with any other finish
-/// reason is a model declining to answer — neither is fixed by more room.
-fn starved_of_output(result: &CompletionResult) -> bool {
-    result.text.trim().is_empty() && result.finish_reason == Some(FinishReason::Length)
 }
 
 impl<'a> Pipeline<'a> {
@@ -319,6 +287,48 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<CompletionResult, RawCallError> {
+        // The anticipatory rung (#2432). #2238 put a wall-clock check at
+        // `run_accounted_call`'s pre-dispatch seam, but a reactive one: it
+        // refuses only work that is ALREADY too late, so a verdict call
+        // dispatched with 2s of task clock left and taking 60s overruns by 58s.
+        //
+        // The reserve is supplied here rather than there because that seam
+        // measures nothing — no pace estimate, no per-role history — and a
+        // margin invented in a place with no basis is a second, invisible
+        // policy on top of the operator's `--turn-budget`, which
+        // `driver::settlement::check_budget` forbids itself for exactly this
+        // reason. This caller does have a basis, so it is the caller that
+        // anticipates. The engine's step loop does the same thing with the
+        // basis it has (`TurnState::last_step`, which it measures).
+        //
+        // Provenance of the number, stated because a reserve with none is the
+        // invented policy above: it is the measured wall clock of the LAST
+        // completed call of this same role (`super::role_pace`), the pipeline's
+        // equivalent of the `TurnState::last_step` the engine forecasts from.
+        // A role with no history yet reports `None` and is never refused —
+        // anticipation requires a measurement, and this seam makes none up.
+        //
+        // The call's own `timeout` was the cheaper candidate and is wrong: it
+        // is an IDLE ceiling (`model_timeout` defaults to 816s), so reserving
+        // it would refuse every management call on any run whose deadline is
+        // under ~14 minutes — a stop far larger than the overrun it prevents.
+        //
+        // An unarmed deadline is untouched: `check_deadline_with_reserve`
+        // answers `Continue` when none is set, so a run nobody is timing keeps
+        // #2238's behaviour exactly.
+        //
+        // Invariant 6 holds — this is still before dispatch, between model
+        // calls, with nothing in flight to interrupt. Invariant 2 holds: the
+        // clock is read here and handed in, never read inside the guard.
+        if let Some(reserve) = self.role_pace.forecast(meta.role)
+            && let DeadlineOutcome::Closing { remaining } =
+                budget.check_deadline_with_reserve(Instant::now(), reserve)
+        {
+            return Err(RawCallError::Deadline(deadline_closing_abort(
+                remaining, reserve,
+            )));
+        }
+        let dispatched_at = Instant::now();
         match run_accounted_call(
             AccountedCall {
                 provider: meta.provider,
@@ -349,10 +359,20 @@ impl<'a> Pipeline<'a> {
         {
             Ok(result) => {
                 *total += result.cost_usd;
+                // Only a completed call teaches the forecast anything (#2432).
+                // A refusal or an early death would report the failure's
+                // duration rather than the work's, talking the estimate down
+                // exactly when a run is in trouble.
+                self.role_pace.observe(meta.role, dispatched_at.elapsed());
                 Ok(result)
             }
             Err(AccountedCallError::Provider(_)) => Err(RawCallError::Provider),
             Err(AccountedCallError::Timeout) => Err(RawCallError::Timeout),
+            // Nothing was dispatched, so `total` is untouched — the run's
+            // settled cost stays exactly what it was before this call.
+            Err(AccountedCallError::Deadline { overrun }) => {
+                Err(RawCallError::Deadline(deadline_abort(overrun)))
+            }
             Err(AccountedCallError::Budget { result, outcome }) => {
                 *total += result.cost_usd;
                 Err(RawCallError::Budget(
@@ -405,7 +425,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{role:?} is a capped role"));
             assert_eq!(
                 cap,
-                contract + REASONING_HEADROOM_TOKENS,
+                with_reasoning_headroom(contract),
                 "{role:?} must budget its output contract PLUS thinking room"
             );
             assert!(
@@ -440,40 +460,5 @@ mod tests {
             role_output_cap(ModelCallRole::Reflection, &none, Some(64_000)),
             Some(64_000)
         );
-    }
-
-    /// The starvation signature requires BOTH halves: a truncated reply with
-    /// text is ordinary (the parsers cope), and an empty reply that stopped
-    /// for any other reason is a model declining, which more room cannot fix.
-    #[test]
-    fn only_an_empty_length_stop_counts_as_starvation() {
-        fn result(text: &str, finish_reason: Option<FinishReason>) -> CompletionResult {
-            CompletionResult {
-                text: text.to_string(),
-                tool_calls: Vec::new(),
-                usage: stella_protocol::CompletionUsage::default(),
-                model: "scripted".into(),
-                cost_usd: 0.0,
-                finish_reason,
-            }
-        }
-        let length = Some(FinishReason::Length);
-        assert!(starved_of_output(&result("", length)));
-        assert!(
-            starved_of_output(&result("   \n ", length)),
-            "whitespace is not an answer"
-        );
-        assert!(!starved_of_output(&result("PASS — looks right", length)));
-        assert!(!starved_of_output(&result("", Some(FinishReason::Stop))));
-        assert!(!starved_of_output(&result("", None)));
-    }
-
-    /// A retry is bought only when more room could change the answer.
-    #[test]
-    fn a_retry_is_declined_when_room_was_never_the_constraint() {
-        assert_eq!(starved_retry_cap(Some(1024)), Some(STARVED_RETRY_CAP));
-        assert_eq!(starved_retry_cap(Some(STARVED_RETRY_CAP)), None);
-        assert_eq!(starved_retry_cap(Some(64_000)), None);
-        assert_eq!(starved_retry_cap(None), None);
     }
 }

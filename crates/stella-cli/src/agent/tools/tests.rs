@@ -410,6 +410,31 @@ fn load_managed_config(
     (settings.unwrap(), cfg.unwrap(), options)
 }
 
+/// #2486: the diagnostic handle has to reach the registry, or `verify_done`
+/// measures every phase it crosses and reports them into a handle nobody
+/// wired — a measurement that silently does not exist.
+///
+/// Worth its own test because nothing else notices that line going missing:
+/// no build breaks, no verdict changes, and the only symptom is an empty
+/// census months later. `registry_options` is the single seam every session
+/// lane builds from, which is what makes one assertion here sufficient.
+#[test]
+fn registry_options_carry_the_diagnostic_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let workspace = dir.path().join("workspace");
+    let managed = dir.path().join("managed.json");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(&managed, "{}").unwrap();
+
+    let (_settings, _cfg, options) = load_managed_config(&workspace, &home, &managed);
+    assert!(
+        options.diagnostics.is_some(),
+        "without a handle here, verify_done's per-phase record goes nowhere"
+    );
+}
+
 #[tokio::test]
 async fn managed_media_ceiling_flows_through_config_into_registry_enforcement() {
     let dir = tempfile::tempdir().unwrap();

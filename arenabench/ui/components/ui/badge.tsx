@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/** The status pill: lowercase, letterspaced, tinted by match state. */
+/** The status pill: , letterspaced, tinted by match state. */
 export function StatusPill({
   status,
   className,
@@ -11,7 +11,7 @@ export function StatusPill({
 }) {
   const tone =
     status === "running"
-      ? "border-gold/45 bg-gold/8 text-accent"
+      ? "border-accent/45 bg-accent/8 text-accent"
       : status === "finished"
         ? "border-ok/40 bg-ok/7 text-ok"
         : status === "cancelled" || status === "failed"
@@ -20,7 +20,7 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        "rounded-full border px-2.5 py-1 font-mono text-[11px] lowercase tracking-[0.07em]",
+        " border px-2.5 py-1 font-mono text-[11px] tracking-[0.07em]",
         tone,
         className,
       )}

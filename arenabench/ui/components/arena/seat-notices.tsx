@@ -30,10 +30,10 @@ export function SeatNotices({ snapshot }: { snapshot: Snapshot }) {
         <div
           key={seat.id}
           style={seatStyle(seat.color)}
-          className="rounded-[10px] border border-line bg-panel px-3.5 py-2.5"
+          className=" border border-line bg-panel px-3.5 py-2.5"
         >
           <div className="flex items-center gap-2">
-            <span className="size-[7px] rounded-full bg-(--seat)" />
+            <span className="size-[7px] bg-(--seat)" />
             <span className="text-[12px] font-semibold">{seat.name}</span>
             <span className="font-mono text-[10.5px] text-dim">{seat.engine_label}</span>
             <span className="ml-auto font-mono text-[10.5px] text-dim">{seat.state}</span>

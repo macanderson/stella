@@ -7,8 +7,10 @@
 //! macOS, Linux, and Windows all resolve to the home directory.
 //!
 //! Overrides: `STELLA_HOME` moves the whole home; the narrower
-//! `STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` overrides still win where they
-//! always did (tests, sandboxes, org-managed layouts).
+//! `STELLA_DATA_DIR` moves the data tier alone and wins over it where it
+//! always did (tests, sandboxes, org-managed layouts). Those two are the
+//! entire list — see [`OVERRIDE_ENV_VARS`], which is exact in both
+//! directions on purpose.
 //!
 //! # Why this is its own crate
 //!
@@ -49,8 +51,6 @@ pub const STELLA_HOME_ENV: &str = "STELLA_HOME";
 /// Moves the user-tier data dir alone. Narrower than [`STELLA_HOME_ENV`], and
 /// wins over it.
 pub const STELLA_DATA_DIR_ENV: &str = "STELLA_DATA_DIR";
-/// Moves the user-tier config dir alone. Narrower than [`STELLA_HOME_ENV`].
-pub const STELLA_CONFIG_DIR_ENV: &str = "STELLA_CONFIG_DIR";
 
 /// The directory name stella keeps under the user's home.
 const DOT_STELLA: &str = ".stella";
@@ -68,8 +68,19 @@ const LEGACY_DOT_SELF_DRIVING_DIR: &str = ".fullauto";
 /// Every override that can point resolution away from the `~/.stella`
 /// defaults, in one list so a caller asking "is any of this redirected?"
 /// cannot answer with a stale subset.
-pub const OVERRIDE_ENV_VARS: [&str; 3] =
-    [STELLA_HOME_ENV, STELLA_DATA_DIR_ENV, STELLA_CONFIG_DIR_ENV];
+///
+/// Exact in **both** directions, and both are load-bearing. A redirecting
+/// variable missing from the list lets [`any_override_set`] answer `false`
+/// while resolution points elsewhere, which is how real user data gets moved
+/// out from under an override. A name on the list that redirects *nothing*
+/// is the opposite failure and is not merely cosmetic: it makes
+/// [`any_override_set`] answer `true` for a process whose paths all resolve
+/// to the defaults, silently declining work that should have run.
+/// `STELLA_CONFIG_DIR` sat here for its whole life without a resolver
+/// reading it and did exactly that to the legacy-layout migration (#2442).
+/// The soundness half is witnessed by
+/// `every_override_on_the_list_actually_redirects_a_resolved_path`.
+pub const OVERRIDE_ENV_VARS: [&str; 2] = [STELLA_HOME_ENV, STELLA_DATA_DIR_ENV];
 
 /// The user's home directory: `HOME`, else `USERPROFILE` (Windows).
 #[must_use]
@@ -228,6 +239,12 @@ pub fn resolve_legacy_self_driving_roots(
 /// The one-time legacy-layout migration consults this: moving real user data
 /// while an override redirects resolution would move it out from under
 /// whatever set the override.
+///
+/// The `i.e.` is the whole contract, and it was false for as long as
+/// `STELLA_CONFIG_DIR` was on the list (#2442): that name reached no
+/// resolver, so a process that set it declined the migration while every
+/// path it opened still resolved to the defaults. Keeping the list exact is
+/// what makes this predicate mean what it says.
 #[must_use]
 pub fn any_override_set() -> bool {
     OVERRIDE_ENV_VARS.iter().any(|var| read(var).is_some())
@@ -422,10 +439,60 @@ mod tests {
     fn the_override_list_names_every_redirecting_variable() {
         assert!(
             OVERRIDE_ENV_VARS.contains(&STELLA_HOME_ENV)
-                && OVERRIDE_ENV_VARS.contains(&STELLA_DATA_DIR_ENV)
-                && OVERRIDE_ENV_VARS.contains(&STELLA_CONFIG_DIR_ENV),
+                && OVERRIDE_ENV_VARS.contains(&STELLA_DATA_DIR_ENV),
             "a migration guard reading a stale subset would move data out from \
              under whichever override it forgot"
         );
+    }
+
+    /// Witness for #2442, and the direction the completeness test above cannot
+    /// see: a name on [`OVERRIDE_ENV_VARS`] must actually move a path some
+    /// resolver returns.
+    ///
+    /// `STELLA_CONFIG_DIR` was declared, documented as narrowing
+    /// `STELLA_HOME`, and listed there — but nothing ever read it to resolve a
+    /// path. Setting it therefore moved no file the CLI opens while still
+    /// making [`any_override_set`] answer `true`, which declined the
+    /// legacy-layout migration for a process sitting squarely on the defaults.
+    ///
+    /// Each entry is paired here with the resolution it claims to redirect,
+    /// driven through the pure halves. An entry with no pairing fails
+    /// outright: the unmatched arm *is* the assertion, not a gap in the cases.
+    #[test]
+    fn every_override_on_the_list_actually_redirects_a_resolved_path() {
+        const ELSEWHERE: &str = "/elsewhere";
+        let home = resolve_home_dir(os("/home/dev"), None);
+        let default_root = resolve_stella_home(None, home.clone());
+
+        for var in OVERRIDE_ENV_VARS {
+            let (tier, redirected, unset) = match var {
+                // The whole home — the root itself, and every tier under it.
+                STELLA_HOME_ENV => (
+                    "the stella root",
+                    resolve_stella_home(os(ELSEWHERE), home.clone()),
+                    default_root.clone(),
+                ),
+                // The data tier alone, over a root that has not moved.
+                STELLA_DATA_DIR_ENV => (
+                    "the data dir",
+                    Some(resolve_data_dir(os(ELSEWHERE), default_root.clone())),
+                    Some(resolve_data_dir(None, default_root.clone())),
+                ),
+                unread => panic!(
+                    "{unread} is listed as a redirecting override, but no \
+                     resolver in this crate reads it. Wire it to one, or take \
+                     it off OVERRIDE_ENV_VARS — a name on that list makes \
+                     `any_override_set` answer true, so an inert one declines \
+                     the legacy-layout migration for a process whose paths all \
+                     resolve to the defaults (#2442)."
+                ),
+            };
+            assert_eq!(
+                redirected,
+                Some(PathBuf::from(ELSEWHERE)),
+                "{var} is on OVERRIDE_ENV_VARS, so it must move {tier}, which \
+                 resolves to {unset:?} when it is unset"
+            );
+        }
     }
 }

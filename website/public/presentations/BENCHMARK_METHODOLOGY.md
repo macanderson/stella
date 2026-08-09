@@ -119,6 +119,73 @@ our run holds an open-weight model constant across both arms to isolate the
 harness. The two measurements answer different questions and the deck does
 not rank one against the other.
 
+### The GLM-5.1 row, and our 49.4% comparator
+
+One row on that board is about our own comparator, and it is nine points above
+what we measured, so it gets answered here rather than left for a reader to
+find:
+
+| Rank | Agent | Model | Accuracy |
+|---|---|---|---|
+| 17 | Claude Code | GLM-5.1 | **58.7% ± 1.2%** |
+
+*(tbench.ai, Terminal-Bench 2.1, re-checked 2026-08-09.)* We measured Claude
+Code at **44/89 = 49.44%**.
+
+**These are not the same measurement, and they do not disagree.** Three
+differences, of which the third is decisive:
+
+1. **A different model.** The row is GLM-5.1. Both of our arms ran `glm-5.2`,
+   because the design's binding rule was that the model is held constant across
+   the two arms, and the endpoint pair that makes a paired run possible —
+   OpenRouter for stella, z.ai's Anthropic-compatible endpoint for Claude Code —
+   served `glm-5.2`.
+
+2. **A different protocol.** Ours is one attempt per task, `max_retries = 0`,
+   all 89 tasks, one run, Harbor 0.6.1, our host, our timeouts at 1.0x,
+   concurrency 20, no per-trial budget cap. The leaderboard page publishes
+   neither the submission's harness configuration nor the metric behind its
+   percentage, so we cannot align ours to it even in principle.
+
+3. **A different precision — and this is the one that settles it.** 44 of 89 is
+   a single-run binomial estimate: its 95% exact interval is
+   **[38.67%, 60.25%]**, and 58.7% **falls inside it**. Symmetrically, ±1.2 is
+   not attainable from one 89-task pass@1 run — ours is roughly ±11 points, and
+   every row on that board carries ±1.2 to ±1.6 — so the published figures
+   aggregate more trials than we ran. **A single paired run cannot resolve a
+   nine-point difference in either direction, and this one does not claim to.**
+
+**What our comparator figure is, and is not.** It is the arm that ran beside
+stella's, on the same box, on the same day, against the same verifier. It is
+**not** an estimate of Claude Code's ceiling, and no claim in the deck should be
+read as one. The headline quantity is the **paired within-run difference** of
++15.73 points, which is what a matched design measures and the only thing it
+licenses.
+
+**Was the comparator arm handicapped?** We find no evidence of it, and the place
+to check is committed:
+
+- Every axis but the endpoint was matched (§ *Harness parity* above), and the
+  endpoint difference is forced, not chosen.
+- Neither arm carried a per-trial budget or token cap (`budget_usd_per_trial:
+  "unbounded"` in `run-manifest.json`); Claude Code ran at
+  `reasoning_effort: max` with thinking enabled, the same posture as stella's
+  worker.
+- Operational exceptions do not single out the comparator: **45 of 89** Arm A
+  trials and **48 of 89** Arm B trials recorded an exception, a near-identical
+  rate. (An exception does not imply a failed trial — a task can record one and
+  still pass.)
+
+If someone reads `comparator/trials.jsonl` and finds an asymmetry we missed,
+then the headline is wrong and we want to know; that file is committed for
+exactly that purpose.
+
+**Why we did not simply re-run the comparator on GLM-5.1.** Re-running one arm
+alone would produce a third, *unpaired* number with no contemporaneous stella arm
+beside it — the same unpaired comparison this whole section exists to refuse. A
+GLM-5.1 result worth reporting is a new paired run of both arms, which is a
+measurement to schedule, not a footnote to write.
+
 ## Raw results
 
 Everything needed to recompute the numbers is committed:

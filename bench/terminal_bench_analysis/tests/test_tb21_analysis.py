@@ -618,7 +618,7 @@ def _study_manifest(
             "agent_version": _AGENT_VERSION,
             "adapter_version": "0.6.0",
             "adapter_sha256": _ADAPTER_SHA256,
-            "budget_usd": 0.17,
+            "budget_usd": None,
             "disable_reflection": True,
             "base_url": CANONICAL_OPENROUTER_BASE_URL,
             "provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
@@ -779,7 +779,7 @@ def _intent_payload(
         "attempts_per_task": attempts_per_task,
         "n_concurrent_trials": concurrency,
         "retry_max_retries": 0,
-        "per_trial_budget_usd": 0.17,
+        "per_trial_forecast_usd": 0.17,
         "artifacts": {
             "binary_sha256": _BINARY_SHA256,
             "source_commit": _SOURCE_COMMIT,
@@ -898,7 +898,7 @@ def _receipt_public_intent_attestation(
         **intent["execution"],
         "provider_key_fingerprint_sha256": intent["provider_key"]["fingerprint_sha256"],
     }
-    projected = intent["requested_trials"] * intent["per_trial_budget_usd"]
+    projected = intent["requested_trials"] * intent["per_trial_forecast_usd"]
     remaining = intent["provider_key"]["limit_usd"] - usage_before
     return {
         "schema_version": analysis_module.PUBLIC_INTENT_ATTESTATION_SCHEMA,
@@ -1285,7 +1285,7 @@ def _write_complete_study_job(
                 "stella_binary_sha256_verified_in_container": True,
                 "stella_source_commit": _SOURCE_COMMIT,
                 "stella_source_commit_verified_in_binary": True,
-                "stella_budget_usd": 0.17,
+                "stella_budget_usd": "unbounded",
                 "stella_disable_reflection": "1",
                 "stella_base_url": CANONICAL_OPENROUTER_BASE_URL,
                 "stella_provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
@@ -1525,7 +1525,9 @@ def _synthetic_calibration_rows() -> list[dict]:
                     "adapter_version": "0.6.0",
                     "adapter_sha256": _ADAPTER_SHA256,
                     "analysis_sha256": ANALYSIS_CONTENT_SHA256,
-                    "budget_usd": 0.17,
+                    # The row spelling of "no cap" — the word, as the adapter
+                    # writes it; `sut.budget_usd` is the one that is `null`.
+                    "budget_usd": "unbounded",
                     "disable_reflection": True,
                     "base_url": CANONICAL_OPENROUTER_BASE_URL,
                     "provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
@@ -1708,7 +1710,10 @@ def _synthetic_calibration_ledger_rows() -> list[dict]:
         "atif_engine_posture_record_json": _READINESS_POSTURE_JSON,
         "atif_engine_posture_sha256": _READINESS_POSTURE_SHA256,
         "atif_valid": True,
-        "budget_usd": 0.17,
+        # A trial row spells "no cap" the way the adapter writes it, as the
+        # word rather than a null — the manifest's `sut.budget_usd` is what
+        # carries JSON `null` (#2411).
+        "budget_usd": "unbounded",
         "disable_reflection": True,
         "base_url": CANONICAL_OPENROUTER_BASE_URL,
         "provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
@@ -1868,7 +1873,7 @@ def test_secure_receipt_v2_exactly_binds_public_intent_preflight() -> None:
             expected_provider_key=intent["provider_key"],
             expected_prior_stage_outcome=public_intent["prior_stage_outcome"],
             expected_projected_spend_usd=(
-                intent["requested_trials"] * intent["per_trial_budget_usd"]
+                intent["requested_trials"] * intent["per_trial_forecast_usd"]
             ),
             label="Confirmatory Harbor job",
         )
@@ -1894,7 +1899,7 @@ def test_secure_receipt_v2_exactly_binds_public_intent_preflight() -> None:
         expected_provider_key=intent["provider_key"],
         expected_prior_stage_outcome=public_intent["prior_stage_outcome"],
         expected_projected_spend_usd=(
-            intent["requested_trials"] * intent["per_trial_budget_usd"]
+            intent["requested_trials"] * intent["per_trial_forecast_usd"]
         ),
         label="Confirmatory Harbor job",
     )
@@ -2134,7 +2139,7 @@ def _historical_intent(job_id: str, index: int) -> dict:
         "attempts_per_task": None,
         "n_concurrent_trials": None,
         "retry_max_retries": None,
-        "per_trial_budget_usd": None,
+        "per_trial_forecast_usd": None,
         "artifacts": {
             "binary_sha256": None,
             "source_commit": None,

@@ -24,14 +24,21 @@
 //!
 //! # Why the turn-boundary shapers are public
 //!
-//! `Engine::run_turn_with_sender` is not the only turn driver: a durable host
-//! loops over [`Engine::run_step`](super::Engine::run_step) itself, and owns
-//! the turn framing that loop does not carry ("The step-scoped facade" in
-//! `stella-engine`). `stella-serve` is that host. Its turn therefore has to
-//! emit the same two boundary events with the same payload shape, or an
-//! extension watching the bus can tell a served turn from a local one — which
-//! is precisely the drift the shared `run_step` exists to prevent. Sharing the
-//! shaper is what keeps it one contract rather than two spellings of one.
+//! A durable host may loop over [`Engine::run_step`](super::Engine::run_step)
+//! itself rather than calling [`Engine::drive`](super::Engine::drive) ("The
+//! step-scoped facade" in `stella-engine`). Such a host owns the turn framing
+//! its loop does not carry, and has to emit the same two boundary events with
+//! the same payload shape — or an extension watching the bus can tell its turn
+//! from a local one, which is precisely the drift the shared `run_step` exists
+//! to prevent. Sharing the shaper is what keeps that one contract rather than
+//! two spellings of one.
+//!
+//! `stella-serve` used to be exactly that host and is no longer: it hands its
+//! own `TurnState` to `Engine::drive`, which emits both boundaries itself
+//! (#2452). Nothing in this workspace calls these from outside `driver` today.
+//! They stay public for the host that frames its own turn, which is a supported
+//! shape rather than a hypothetical one — but note `stella-engine` does not
+//! re-export them, so such a host must depend on `stella-core` directly.
 
 use super::{StepOutcome, TurnOutcome};
 

@@ -47,7 +47,7 @@ pub(crate) fn run_tools_adopt(name: &str) -> Result<(), String> {
     let adopted = adopt_in(&root, &store, name)?;
     let (manifest, script) = adopted_paths(&root, name);
 
-    crate::tui::section_header("Tool adopted — still disabled");
+    crate::plain::section_header("Tool adopted — still disabled");
     println!(
         "  {} {}\n  {} {}",
         "·".green(),
@@ -72,7 +72,7 @@ pub(crate) fn run_tools_enable(name: &str, enabled: bool) -> Result<(), String> 
     set_enabled_in(&root, &store, name, enabled)?;
 
     if enabled {
-        crate::tui::section_header("Tool enabled");
+        crate::plain::section_header("Tool enabled");
         println!(
             "  {} {} {}",
             "·".green(),
@@ -80,7 +80,7 @@ pub(crate) fn run_tools_enable(name: &str, enabled: bool) -> Result<(), String> 
             "is now offered to the model".dimmed()
         );
     } else {
-        crate::tui::section_header("Tool disabled");
+        crate::plain::section_header("Tool disabled");
         println!(
             "  {} {} {}",
             "·".yellow(),
@@ -354,14 +354,15 @@ fn remove_pair(manifest_path: &Path, script_path: &Path) {
 /// consequence is a tool that never gets reached rather than one that
 /// silently replaces something.
 fn run_witness(root: &Path, candidate: &CustomTool) -> Result<WitnessVerdict, String> {
-    let home = crate::paths::home();
+    let user_root = crate::paths::user_extension_root();
     // World A is the surface as it really is, so these go through the gate
     // like any other registration — a withheld tool is not part of it.
-    let others: Vec<CustomTool> = gate_discovery(custom::discover_in(root, home.as_deref()), root)
-        .tools
-        .into_iter()
-        .filter(|tool| tool.name != candidate.name)
-        .collect();
+    let others: Vec<CustomTool> =
+        gate_discovery(custom::discover_in(root, user_root.as_deref()), root)
+            .tools
+            .into_iter()
+            .filter(|tool| tool.name != candidate.name)
+            .collect();
     let builtins = Builtins;
     let surface = CustomToolSet::new(&builtins, others, root.to_path_buf());
 

@@ -55,6 +55,7 @@ _ENGINE_ROOT_FIELDS = frozenset(
         "pipeline_max_revisions",
         "pipeline_candidates",
         "agents",
+        "responsibilities",
     }
 )
 
@@ -137,8 +138,13 @@ def arena_posture(
                 "effort": resolved.effort or "high",
                 "reasoning": "on" if resolved.reasoning else "off",
             }
-        if resolved.max_tokens:
-            entry["params"] = {"max_tokens": int(resolved.max_tokens)}
+        # No `params.max_tokens`. Omitting it is what asks for the model's own
+        # ceiling: the engine seeds `max_output_tokens` from the catalog entry
+        # and an explicit cap is the only thing that can lower it
+        # (`stella-cli/src/agent/engine.rs`, `tuned_engine_config` — "the
+        # DEFAULT is always the model's maximum"). Sending a number instead
+        # would require knowing every booked model's real ceiling, and picking
+        # one without knowing it is exactly what #2128 was.
         agents[role] = entry
 
         override_model = engine.role(role).model
@@ -156,6 +162,26 @@ def arena_posture(
 
     posture["agents"] = agents
     posture["allowed_models"] = allowed
+
+    # #2381. Emitted ONLY when the arm declared something, so the shipped
+    # pipeline stays byte-identical to what it was before this key existed —
+    # and, because the posture is what the digest covers, so does every
+    # recorded posture digest for an arm that ablates nothing.
+    #
+    # Only the fields the arm actually set are written: a row is an assertion
+    # about one axis, and spelling out `enabled: true` for a stage nobody
+    # touched would record a pin the operator never made.
+    rows: dict[str, dict[str, Any]] = {}
+    for name, row in engine.responsibilities.items():
+        entry: dict[str, Any] = {}
+        if row.enabled is not None:
+            entry["enabled"] = row.enabled
+        if row.agent:
+            entry["agent"] = row.agent
+        if entry:
+            rows[name] = entry
+    if rows:
+        posture["responsibilities"] = rows
 
     unknown = set(posture) - _ENGINE_ROOT_FIELDS
     if unknown:  # pragma: no cover - guards a future edit, not a runtime path

@@ -56,19 +56,21 @@ fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// The user-scope stella config dir (`~/.stella`) — `HOME` only, mirroring
-/// `stella_cli::settings::user_settings_path` (the source of truth, kept as a
-/// copy because the observatory deliberately links no `stella-*` crate), so
-/// the config tab names the file the CLI actually loads and the skills tab the
+/// The user-scope stella config dir — `$STELLA_HOME`, else `~/.stella`,
+/// mirroring `stella_cli::paths::stella_root` (the source of truth), so the
+/// config tab names the file the CLI actually loads and the skills tab the
 /// directory it actually scans.
 ///
-/// Deliberately `HOME` and nothing else: the CLI's settings loader reads
-/// neither `STELLA_CONFIG_DIR` nor `STELLA_HOME`, so honouring either here
-/// (as this once did for `STELLA_CONFIG_DIR`) made the tab claim a
-/// `settings.json` the CLI never opens. If the loader ever grows an override,
-/// mirror it here in the same order.
+/// Shared through `stella-home` rather than copied: this is the one resolver
+/// both sides must agree on, and the observatory may not link `stella-cli`.
+/// It honours `STELLA_HOME` because the loader does since #2178 — and only
+/// `STELLA_HOME`, which is the whole of what can move this path. This
+/// resolver used to honour `STELLA_CONFIG_DIR` too, which made the tab claim
+/// a `settings.json` the CLI never opens; that variable reached no resolver
+/// on either side and was retired in #2442. If the loader grows another
+/// override, mirror it here in the same order.
 pub fn user_config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella"))
+    stella_home::stella_home()
 }
 
 /// The org-managed settings path — mirrors `stella-cli`'s
@@ -1002,29 +1004,40 @@ tags       = ["testing", "pins"]
     }
 
     /// The config tab must name the settings file the CLI actually loads
-    /// (`stella_cli::settings::user_settings_path`, `$HOME/.stella`). The
-    /// loader reads neither `STELLA_CONFIG_DIR` nor `STELLA_HOME`, so this
-    /// resolver has to ignore both — honouring `STELLA_CONFIG_DIR` here once
-    /// pointed the tab at a `settings.json` the CLI never opens.
+    /// (`stella_cli::paths::stella_root`). Since #2178 that is `$STELLA_HOME`
+    /// when set, else `$HOME/.stella` — and since #2442 there is no second
+    /// override to mirror: this test used to set `STELLA_CONFIG_DIR` and
+    /// assert it was ignored, which stopped being a claim about anything once
+    /// the variable named no resolver on either side and was retired.
     #[test]
     fn user_config_dir_mirrors_the_cli_settings_loader() {
-        // The old note here reasoned that no parallel test could observe the
-        // transient value because nothing else reads STELLA_CONFIG_DIR. That
-        // is an argument about one variable, and the hazard is the shared
-        // environment: this test also reads HOME, which other crates' tests
-        // override, and stella-store's `any_override_set` reads
-        // STELLA_CONFIG_DIR. Take the crate-wide lock like every other
-        // env-mutating test here (#1137).
+        // The hazard is the shared environment, not any one variable: this
+        // test reads HOME, which other crates' tests override. Take the
+        // crate-wide lock like every other env-mutating test here (#1137).
         let _env = crate::test_env::lock();
-        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_CONFIG_DIR"]);
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_HOME"]);
         // SAFETY: the lock is held for the whole test, and `_restore` undoes
         // this on drop — including if `user_config_dir` panics.
-        unsafe { std::env::set_var("STELLA_CONFIG_DIR", "/tmp/elsewhere") };
-        let resolved = user_config_dir();
+        unsafe {
+            std::env::remove_var("STELLA_HOME");
+        }
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .expect("HOME set");
-        assert_eq!(resolved, Some(home.join(".stella")));
+        assert_eq!(
+            user_config_dir(),
+            Some(home.join(".stella")),
+            "with nothing overriding it, the tab names the loader's default"
+        );
+
+        // SAFETY: same lock, same guard.
+        unsafe { std::env::set_var("STELLA_HOME", "/tmp/stella-2178-observatory") };
+        assert_eq!(
+            user_config_dir(),
+            Some(PathBuf::from("/tmp/stella-2178-observatory")),
+            "STELLA_HOME does move the loader's root (#2178), so a dashboard \
+             that ignored it would name a settings file the CLI never opens"
+        );
     }
 
     /// A secret one container below the key that names it used to survive:

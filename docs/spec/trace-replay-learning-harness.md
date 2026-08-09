@@ -237,7 +237,7 @@ Each pins a mechanism that today has no end-to-end proof.
 | 1 | A lesson repeated across **≥3 distinct tasks** yields a rule proposal; the same lesson repeated across 3 turns of **one** task does not | distinct-task counting — the exact confusion `set_task_id` exists to fix |
 | 2 | A proposal reaching `auto_activate_at_confidence` (default **85**, `crates/stella-cli/src/settings/context.rs:130`) auto-activates as an **advisory** record — never blocking, never clobbering an existing file (#737) | promotion gating |
 | 3 | A repeated skill-shaped lesson produces a `SKILL.md` on disk; a one-off does not | `mine_skill_candidates` → `decide_auto_creation` threshold and session cap |
-| 4 | A shell shape recurring with **≥2 distinct argument sets** yields a foundry proposal; the same command with one argument set yields none | typed-hole normalization and the `min_occurrences < 2` disable path |
+| 4 | A shell shape recurring with **≥2 distinct argument sets, each retyped** yields a foundry proposal; the same command with one argument set yields none, and so does a shape whose arguments never repeat | typed-hole normalization, the `min_occurrences < 2` disable path, and the `min_reuse_ratio` floor that separates a reusable incantation from the shell itself (#2378) |
 | 5 | A tombstoned lesson is **never re-learned**, including when the corpus later restates it in different words | `retain_unforgotten` matches by restatement, not equality — so the corpus must paraphrase, or the assertion is vacuous |
 | 6 | A retired record stops rendering into the prompt | truth sweep + the volatile channel |
 | 7 | A corpus of `Unreadable` reflections builds **nothing** and the harness **says so loudly** | the starvation guard — a clean `recorded: 0` on every turn must not read as "the agent keeps getting things right" |
@@ -443,7 +443,7 @@ document stays true to the tree. **Everything here was measured by replaying the
 real loop; none of it is visible from reading any single module**, which is the
 harness earning its keep before it shipped.
 
-### 13.1 Four measurements that changed the fixtures
+### 13.1 Five measurements that changed the fixtures
 
 1. **The dedup filter and the skill miner used the same metric at the same
    threshold, so a corpus of natural repetitions built nothing.** Filed as
@@ -477,6 +477,15 @@ harness earning its keep before it shipped.
 4. **`Path::starts_with` is lexical**, so `root/../escaped.txt` satisfies it and
    the obvious seed-path guard passed a fixture that escapes. It walks
    components now.
+5. **A fixture that varies its arguments every single time proves nothing after
+   #2378.** The corpus's `rg -n "<pattern>" <path>` history had one distinct
+   argument set per invocation — the exact 1.0×-reuse shape the detector now
+   declines to propose, because pointed at a real 81,684-command history that
+   shape is what produced 2,073 unreadable proposals. Assertion 4 is stated on
+   both ends now (variation *and* reuse), and the committed corpus grew a
+   `git log --oneline -N` incantation retyped across sessions — a shape a
+   working engineer genuinely does retype — while the never-repeating `rg`
+   history stays exactly where it was, as the negative half.
 
 ### 13.2 Where the implementation diverges from §3, §4 and §5
 

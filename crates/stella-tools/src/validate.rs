@@ -110,22 +110,21 @@ impl ValidationReport {
 
 /// Validate the default discovery locations for `workspace_root`: the
 /// workspace `.stella/tools/` then the user-global `~/.stella/tools/`
-/// (read from `$HOME`), exactly the directories and order
-/// [`crate::custom::discover`] scans — so duplicate-name findings mirror the
-/// real workspace-wins shadowing. Thin env-reading wrapper over
-/// [`validate_default_in`], mirroring `discover`/`discover_in`.
+/// (resolved through `stella-home`, so `STELLA_HOME` moves it), exactly the
+/// directories and order [`crate::custom::discover`] scans — so duplicate-name
+/// findings mirror the real workspace-wins shadowing. Thin env-reading wrapper
+/// over [`validate_default_in`], mirroring `discover`/`discover_in`.
 pub fn validate_default(workspace_root: &Path) -> ValidationReport {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    validate_default_in(workspace_root, home.as_deref())
+    validate_default_in(workspace_root, stella_home::stella_home().as_deref())
 }
 
-/// [`validate_default`] with the home directory injected (tests pass a
-/// tempdir instead of mutating the process env). A `None` home skips the
+/// [`validate_default`] with the user-global stella root injected (tests pass
+/// a tempdir instead of mutating the process env). A `None` root skips the
 /// user-global scan, like [`crate::custom::discover_in`].
-pub fn validate_default_in(workspace_root: &Path, home: Option<&Path>) -> ValidationReport {
+pub fn validate_default_in(workspace_root: &Path, user_root: Option<&Path>) -> ValidationReport {
     let mut dirs: Vec<PathBuf> = vec![workspace_root.join(".stella").join("tools")];
-    if let Some(home) = home {
-        dirs.push(home.join(".stella").join("tools"));
+    if let Some(user_root) = user_root {
+        dirs.push(user_root.join("tools"));
     }
     validate_dirs(&dirs, workspace_root)
 }
@@ -356,8 +355,17 @@ mod tests {
         root.join(".stella").join("tools")
     }
 
+    /// The user-global tools dir under a fixture home. The API takes the
+    /// stella ROOT (`<home>/.stella`), so the fixture layout on disk is
+    /// unchanged and only what the caller passes moved (#2178).
     fn global_tools(home: &Path) -> PathBuf {
-        home.join(".stella").join("tools")
+        user_root(home).join("tools")
+    }
+
+    /// The stella root under a fixture home — what `validate_default_in` now
+    /// takes.
+    fn user_root(home: &Path) -> PathBuf {
+        home.join(".stella")
     }
 
     /// Drop an executable script at `root/name` so command[0] checks pass.
@@ -509,7 +517,7 @@ mod tests {
             "name = \"dup\"\ndescription = \"global\"\ncommand = [\"./w.sh\"]\ntimeout_ms = 1000",
         );
 
-        let report = validate_default_in(ws.path(), Some(home.path()));
+        let report = validate_default_in(ws.path(), Some(&user_root(home.path())));
         assert_eq!(report.manifests.len(), 2);
         // Workspace manifest scanned first — it wins, no findings.
         assert!(report.manifests[0].path.starts_with(ws.path()));

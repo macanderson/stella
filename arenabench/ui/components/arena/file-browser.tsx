@@ -67,7 +67,7 @@ function Row({
           onClick={() => setOpen((v) => !v)}
           disabled={empty}
           className={cn(
-            "flex w-full items-center gap-1.5 rounded px-1 py-[3px] text-left",
+            "flex w-full items-center gap-1.5 px-1 py-[3px] text-left",
             "hover:bg-surface-2 disabled:opacity-50 disabled:hover:bg-transparent",
           )}
           style={{ paddingLeft: `${depth * 12 + 4}px` }}
@@ -97,7 +97,7 @@ function Row({
       type="button"
       onClick={() => onSelect(node)}
       className={cn(
-        "flex w-full items-center gap-1.5 rounded px-1 py-[3px] text-left hover:bg-surface-2",
+        "flex w-full items-center gap-1.5 px-1 py-[3px] text-left hover:bg-surface-2",
         selected === node.path && "bg-surface-2 text-accent",
       )}
       style={{ paddingLeft: `${depth * 12 + 4}px` }}
@@ -135,12 +135,12 @@ function Viewer({ base, node }: { base: string; node: FileNode }) {
 
   if (node.kind === "video") {
     return (
-      <video controls preload="none" className="block w-full rounded-[7px] bg-black" src={url} />
+      <video controls preload="none" className="block w-full bg-black" src={url} />
     );
   }
   if (node.kind === "image") {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img alt={node.name} src={url} className="block max-w-full rounded-[7px]" />;
+    return <img alt={node.name} src={url} className="block max-w-full " />;
   }
   if (node.kind !== "text") {
     return (
@@ -207,7 +207,7 @@ export function FileBrowser({
 
   return (
     <div className="grid grid-cols-[minmax(150px,34%)_1fr] gap-2">
-      <div className="max-h-[46vh] overflow-auto rounded-[7px] border border-line-soft p-1 font-mono text-[11px]">
+      <div className="max-h-[46vh] overflow-auto border border-line-soft p-1 font-mono text-[11px]">
         {root.children?.length ? (
           root.children.map((child) => (
             <Row
@@ -222,7 +222,7 @@ export function FileBrowser({
           <div className="px-2 py-3 text-dim">no files yet</div>
         )}
       </div>
-      <div className="min-w-0 rounded-[7px] border border-line-soft">
+      <div className="min-w-0 border border-line-soft">
         {selected ? (
           <>
             <div className="flex items-center gap-2 border-b border-line-soft px-2 py-1">

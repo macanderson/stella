@@ -192,7 +192,13 @@ pub async fn infer_domains(
         let remaining_budget = budget_limit.map(|limit| (limit - total_cost_usd).max(0.0));
         let req = CompletionRequest {
             messages: messages.clone(),
-            max_output_tokens: Some(2048),
+            // Unstated on purpose: `DomainInference`'s output contract is
+            // declared once at the chokepoint
+            // (`accounted_call::standalone_bounds`), which keeps the 2,048 this
+            // call always sent and adds the reasoning headroom it never had —
+            // a reasoning model bills its thinking against the same number, so
+            // the bare contract could be spent before the first `[` (#2444).
+            max_output_tokens: None,
             temperature: Some(0.0),
             effort: None,
             tools: vec![],

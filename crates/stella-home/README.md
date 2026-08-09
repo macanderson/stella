@@ -11,6 +11,18 @@ stella_home::stella_home(); // $STELLA_HOME, else ~/.stella
 stella_home::data_dir();    // $STELLA_DATA_DIR, else the stella home, else "."
 ```
 
+`STELLA_HOME` moves the **whole** home, and "whole" is load-bearing: five
+seams used to resolve `$HOME/.stella/...` themselves, so a process pointed at a
+scratch home moved its data tier and still read the developer's real
+`settings.json`, `credentials.toml`, `integrations.json` and `web_auth.toml`
+(#2178). Isolation that half-works is worse than none, because nothing says so.
+Every one of them now resolves through this crate, which is why
+[`stella-model`](../stella-model) and [`stella-tools`](../stella-tools) depend
+on it alongside [`stella-store`](../stella-store),
+[`stella-observatory`](../stella-observatory) and
+[`stella-cli`](../stella-cli) — a dependency-free leaf is depend-able from
+anywhere, which is the property that makes "one answer" achievable at all.
+
 ## Boundary — does this change belong here?
 
 This crate owns one decision: what path a process should treat as the stella

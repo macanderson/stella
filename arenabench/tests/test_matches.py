@@ -24,7 +24,7 @@ import pytest
 
 from arenabench.agents import resolve_agent
 from arenabench.config import match_from_toml
-from arenabench.model import MatchSpec
+from arenabench.model import Engine, MatchSpec
 
 MATCHES = Path(__file__).resolve().parent.parent / "matches"
 
@@ -53,8 +53,8 @@ class TestCommittedMatches:
 
         `unhonoured` reports only knobs the operator actually set, so this
         fails exactly when a file describes a configuration its seat never
-        received — a `base_url` on an agent with nowhere to put one, a
-        `budget_usd` on an agent that honours no spend cap.
+        received — a `base_url` on an agent with nowhere to put one, or a
+        per-role pipeline on an agent that runs a single loop.
         """
         for seat in _spec(path).contestants:
             missed = resolve_agent(seat.agent).unhonoured(seat.engine)
@@ -76,3 +76,97 @@ class TestCommittedMatches:
                     f"{path.name}: seat {seat.id!r} runs the bare loop but pins "
                     f"roles {sorted(seat.engine.roles)}"
                 )
+
+    def test_no_committed_template_declares_a_per_trial_ceiling(
+        self, path: Path
+    ) -> None:
+        """The regression this repository actually shipped, checked on the files.
+
+        All four of these templates once carried the same asymmetry: a Claude
+        Code seat whose comment said the comparator honours no spend cap, and a
+        Stella seat a few lines below declaring `max_tokens` and `budget_usd`.
+        Match `5292a68cdabf` ran that shape, and all three of Stella's losses
+        were the budget guard firing rather than the agent failing (#2411).
+
+        `_engine_from_toml` refuses the keys now, so a template carrying one
+        fails `_spec` before reaching this assertion. What this adds is a check
+        on the *text*, which still catches the key arriving inside a table the
+        loader has not been taught to walk.
+        """
+        offenders = [
+            f"line {number}: {line.strip()}"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            # A commented mention is the file explaining the rule rather than
+            # breaking it, and every one of these templates now carries such a
+            # sentence.
+            if not line.lstrip().startswith("#")
+            and ("budget_usd" in line or "max_tokens" in line)
+        ]
+        assert not offenders, f"{path.name} declares a per-trial ceiling: {offenders}"
+
+
+class TestPerTrialCeilingsAreRefused:
+    """#2411: a ceiling one seat carries and the other does not is a handicap.
+
+    The witness for the change. Before it, every declaration below parsed into
+    an `Engine` field, was exported to the agent, and decided matches.
+    """
+
+    def _template(self, engine_extra: dict, *, role: bool = False) -> dict:
+        engine: dict = {"api": "openrouter", "model": "z-ai/glm-5.2"}
+        if role:
+            engine["roles"] = {"worker": engine_extra}
+        else:
+            engine.update(engine_extra)
+        return {
+            "match": {"dataset": "terminal-bench-2.1"},
+            "contestant": [
+                {"id": "stella", "name": "Stella", "agent": "stella", "engine": engine}
+            ],
+        }
+
+    @pytest.mark.parametrize(
+        "key, value", [("budget_usd", 1.0), ("max_tokens", 64000)]
+    )
+    def test_an_engine_level_ceiling_is_refused_by_name(
+        self, key: str, value: object
+    ) -> None:
+        with pytest.raises(Exception) as caught:
+            match_from_toml(self._template({key: value}))
+        assert key in str(caught.value)
+
+    def test_a_role_level_output_cap_is_refused_too(self) -> None:
+        """The hole an engine-level check alone would leave open."""
+        with pytest.raises(Exception) as caught:
+            match_from_toml(self._template({"max_tokens": 64000}, role=True))
+        assert "max_tokens" in str(caught.value)
+
+    def test_an_empty_ceiling_is_still_refused(self) -> None:
+        """`budget_usd = ""` reads as "no cap" to a loader and as a live knob to
+        the next person editing the file, so the word is what gets refused."""
+        with pytest.raises(Exception) as caught:
+            match_from_toml(self._template({"budget_usd": ""}))
+        assert "budget_usd" in str(caught.value)
+
+    def test_an_archived_spec_that_ran_capped_still_loads(self) -> None:
+        """Refusal is for authoring; reading history is not authoring.
+
+        `runner.py` restores a match from its `spec.json`, and the specs worth
+        reading most are precisely the ones that ran under a cap —
+        `5292a68cdabf` is the evidence for this change. Refusing them would
+        make the argument unreadable in support of its own conclusion.
+        """
+        engine = Engine.from_json(
+            {
+                "api": "openrouter",
+                "model": "z-ai/glm-5.2",
+                "budget_usd": 1.0,
+                "max_tokens": 32000,
+            }
+        )
+        assert engine.model == "z-ai/glm-5.2"
+        assert not hasattr(engine, "budget_usd")
+        assert "budget_usd" not in engine.to_json()
+        assert "max_tokens" not in engine.to_json()

@@ -251,7 +251,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     &wiring.worker_model,
                 );
                 pipeline_config.role_overrides = wiring.role_overrides.clone();
-                pipeline_config.witness_writer = frame_config.witness_writer;
+                // The whole roster, not one enablement (#2458). Every ablation
+                // the run was launched under has to come back, or the resumed
+                // leg runs stages the operator removed and reports a pipeline
+                // that never existed.
+                pipeline_config.roster = frame_config.roster();
                 pipeline_config.max_revisions = frame_config.max_revisions;
                 let no_recall = NoContextRecall;
                 let approval_gate =
@@ -419,7 +423,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     {
         warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
     }
-    tui::files_touched_panel(&files);
+    plain::files_touched_panel(&files);
     if let Some(set) = &mcp {
         set.close_all().await;
     }
@@ -432,7 +436,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         };
         println!("\n  {mark} {line}");
     }
-    tui::cost_summary(
+    plain::cost_summary(
         cost_usd,
         &format!("{}/{}", cfg.provider.id, cfg.model_id),
         turn_start.elapsed(),
@@ -452,19 +456,24 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
 
 /// Drive a checkpoint-restored turn to an ordinary end.
 ///
-/// A thin adapter over [`stella_core::Engine::drive_restored_turn`], which
-/// owns the loop and its obligations (persist on `Continue`, discard on
-/// every terminal path, the carried step cap, the turn-halt check). This
-/// crate used to carry its own copy of that loop — and, exactly as two
-/// copies predict, the copy here had silently dropped the halt obligation.
+/// A thin adapter over [`stella_core::Engine::drive`], which owns the loop and
+/// its obligations (persist on `Continue`, discard on every terminal path, the
+/// carried step cap, the turn-halt check). This crate used to carry its own
+/// copy of that loop — and, exactly as two copies predict, the copy here had
+/// silently dropped the halt obligation.
+///
+/// A restored turn needs no driver of its own: `drive` takes the state the
+/// caller minted, and [`TurnState::from_checkpoint`] is one of the three ways
+/// to mint it (#2452).
 ///
 /// [`TurnState`]: stella_core::step::TurnState
+/// [`TurnState::from_checkpoint`]: stella_core::step::TurnState::from_checkpoint
 pub(crate) async fn drive_resumed_turn(
     engine: &Engine<'_>,
     mut state: stella_core::step::TurnState,
     events: &stella_core::EventSender,
 ) -> TurnOutcome {
-    engine.drive_restored_turn(&mut state, events).await
+    engine.drive(&mut state, events).await
 }
 
 #[cfg(test)]

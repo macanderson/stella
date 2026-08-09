@@ -258,6 +258,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 mode: stella_protocol::BudgetMode::Observed,
                 session_spent_usd: Some(0.021),
                 session_limit_usd: Some(7.50),
+                deadline_remaining_ms: None,
             },
         ),
         // ── the witness is authored before the worker executes ──────────
@@ -382,6 +383,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 mode: stella_protocol::BudgetMode::Observed,
                 session_spent_usd: Some(0.039),
                 session_limit_usd: Some(7.50),
+                deadline_remaining_ms: None,
             },
         ),
         // ── the oracle replays against the patched tree ─────────────────
@@ -492,6 +494,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 mode: stella_protocol::BudgetMode::Observed,
                 session_spent_usd: None,
                 session_limit_usd: None,
+                deadline_remaining_ms: None,
             },
         ),
         ev(

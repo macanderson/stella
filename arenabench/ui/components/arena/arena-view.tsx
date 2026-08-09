@@ -81,7 +81,7 @@ export function ArenaView({
           <div className="font-mono text-[30px] font-light leading-none tracking-[-0.02em]">
             {fmtClock(snapshot.elapsed)}
           </div>
-          <div className="mt-1 text-[10px] lowercase tracking-[0.1em] text-dim">elapsed</div>
+          <div className="mt-1 text-[10px] tracking-[0.1em] text-dim">elapsed</div>
         </div>
         <div className="flex items-center gap-2.5">
           <StatusPill status={snapshot.status} />
@@ -101,13 +101,13 @@ export function ArenaView({
       />
 
       {cancelError && (
-        <div className="mb-[18px] rounded-lg border border-bad/40 bg-bad/7 px-3.5 py-2.5 text-[12.5px] text-bad">
+        <div className="mb-[18px] border border-bad/40 bg-bad/7 px-3.5 py-2.5 text-[12.5px] text-bad">
           {cancelError}
         </div>
       )}
 
       {snapshot.note && (
-        <div className="mb-[18px] rounded-lg border border-acc-citron/35 bg-acc-citron/6 px-3.5 py-2.5 text-[12.5px] text-acc-citron">
+        <div className="mb-[18px] border border-acc-citron/35 bg-acc-citron/6 px-3.5 py-2.5 text-[12.5px] text-acc-citron">
           {snapshot.note}
         </div>
       )}
@@ -125,7 +125,7 @@ export function ArenaView({
       <section className="grid items-start gap-4 lg:[grid-template-columns:3fr_1fr]">
         <TaskTable snapshot={snapshot} />
         <aside className="min-w-0">
-          <div className="mb-1.5 px-1 text-[10px] lowercase tracking-[0.1em] text-dim">
+          <div className="mb-1.5 px-1 text-[10px] tracking-[0.1em] text-dim">
             head to head
           </div>
           <Race snapshot={snapshot} />

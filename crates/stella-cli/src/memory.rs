@@ -138,29 +138,73 @@ pub struct ReflectionLesson {
     /// a log-format change.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
-    /// What sort of lesson this is: a durable fact about the codebase, or a
-    /// note about how the agent behaved.
+    /// When this lesson applies — the condition a future task has to satisfy
+    /// for it to be worth reading.
     ///
-    /// They are not equally useful and were previously indistinguishable. In a
-    /// measured run of ten mined lessons, eight were process self-critique
-    /// ("the agent should be more proactive", "when summarizing, list the
-    /// files modified") and **none** captured the repository conventions that
-    /// actually decided whether a task passed. Process notes describe one
-    /// turn; domain facts are still true next week, and only the second kind
-    /// can transfer to a task the agent has never seen.
+    /// Asked for because a lesson whose trigger the model cannot state is one
+    /// it has not finished learning: it has noticed something without working
+    /// out what the something is evidence *of*. Requiring the condition prunes
+    /// those where the transcript is still there to check them against,
+    /// instead of leaving them to be judged later by a reader who never saw
+    /// the turn.
+    ///
+    /// Recorded, mined, **and folded into the memory body recall scores on**
+    /// (#2459) — which is where it earns its keep a second time: a trigger is
+    /// written in the register a *goal* is written in, so it is the half of a
+    /// lesson that lives in the space the retrieval query is asked in.
+    ///
+    /// The fold is why it cannot be done naively: `partition_known`'s
+    /// restatement band (#2358) compares candidate lessons against stored
+    /// bodies, and moving that text would move every similarity score in the
+    /// comparison at once. `memory::learning::applicability` carries the
+    /// encoding that keeps the band's input byte-identical, and the argument
+    /// for why folding beat a separate scored field and a post-retrieval
+    /// filter.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub trigger: String,
+    /// What knowing this would have bought *in the turn that produced it* —
+    /// the wrong attempt it prevents, the wait it skips, the wrong answer it
+    /// stops being shipped.
+    ///
+    /// This is the field that makes a lesson checkable. A memory justified
+    /// only by the model asserting it would help is the same shape of claim
+    /// this project refuses everywhere else: a sentence standing in for
+    /// evidence. Naming the moment it would have changed is the cheapest proof
+    /// available that a lesson is about the turn's actual cost rather than
+    /// about how the turn felt from the inside.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub saves: String,
+    /// How far this lesson travels: to any task in this repository, or only to
+    /// the turn that produced it.
+    ///
+    /// The distinction is real and measured — in a run of ten mined lessons,
+    /// eight were process self-critique ("the agent should be more
+    /// proactive") and **none** captured a repository convention that decided
+    /// whether a task passed — and it is what [`LessonKind::recall_tier`]
+    /// spends the recall budget on.
+    ///
+    /// But it used to be *asked* as a question about subject matter ("a fact
+    /// about the codebase, or a note about the agent") and *read* as a
+    /// question about transfer, and those come apart on the useful cases:
+    /// "this repo's integration tests need the fixture server up first" is a
+    /// note about how to work, and it is true on every task here. Asking about
+    /// transfer directly gives the field the property it is actually read for.
     #[serde(default)]
     pub kind: LessonKind,
 }
 
-/// Whether a lesson is a durable fact about the code or a note about the turn.
+/// How far a lesson travels — to any task in this repository, or only to the
+/// turn that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LessonKind {
-    /// A convention, invariant, location or required step — true independent
-    /// of this turn, and the only kind that can help on an unseen task.
+    /// Still true on a task the agent has never seen — a convention, an
+    /// invariant, a required step, a trap. The only kind that can pay off
+    /// somewhere other than where it was learned.
     Domain,
-    /// How the agent went about the work. Kept, because a repeated failure
-    /// mode is worth knowing, but ranked below domain facts at recall.
+    /// True of this turn and not evidently of the next one. Kept, because a
+    /// repeated failure mode is worth knowing, but ranked below travelling
+    /// lessons at recall.
     #[default]
     Process,
 }
@@ -224,10 +268,11 @@ fn deterministic_task_id(clock: &dyn Clock) -> String {
 }
 
 mod reflection;
+pub(crate) use reflection::{ReflectionPosture, reflect_routed};
 pub use reflection::{
-    ReflectionReport, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, TurnEvidence, TurnFriction, reflect_on_turn, should_reflect_on,
+    turn_warrants_reflection,
 };
-pub(crate) use reflection::{reflect_routed, reflection_tail};
 
 /// Session-scoped memory state: the context store, the CGP host that
 /// routes every recall (workspace memory + code graph as in-process CGP

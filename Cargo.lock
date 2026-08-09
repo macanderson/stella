@@ -158,9 +158,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bit-set"
@@ -318,9 +318,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f84a88507dbd05c695f2cb5e8558e747179134005e9893882dec964190ed89"
+checksum = "3be2ad0423bdbbb0e25bc89add796f3559706d4a95e1bc98e4d9662a957b6a19"
 dependencies = [
  "clap",
 ]
@@ -3046,7 +3046,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-cli"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "clap",
@@ -3060,6 +3060,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "libc",
+ "proptest",
  "ratatui",
  "reqwest",
  "rpassword",
@@ -3093,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3109,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3127,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "proptest",
  "serde",
@@ -3138,11 +3139,11 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.8.0"
+version = "0.8.9"
 
 [[package]]
 name = "stella-engine"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "serde",
@@ -3155,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3174,7 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "contextgraph-types",
  "notify",
@@ -3201,14 +3202,14 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.8.0"
+version = "0.8.9"
 
 [[package]]
 name = "stella-mcp"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
- "base64 0.23.0",
+ "base64 0.23.1",
  "futures-util",
  "libc",
  "rand 0.10.2",
@@ -3227,10 +3228,10 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
- "base64 0.23.0",
+ "base64 0.23.1",
  "libc",
  "reqwest",
  "roxmltree",
@@ -3249,10 +3250,10 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
- "base64 0.23.0",
+ "base64 0.23.1",
  "futures-util",
  "hmac",
  "reqwest",
@@ -3260,6 +3261,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-home",
  "stella-protocol",
  "tempfile",
  "thiserror 2.0.19",
@@ -3271,7 +3273,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3291,14 +3293,14 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "stella-serve",
 ]
 
 [[package]]
 name = "stella-pipeline"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3315,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3327,7 +3329,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "serde",
@@ -3348,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3367,9 +3369,9 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
- "base64 0.23.0",
+ "base64 0.23.1",
  "libc",
  "rand 0.10.2",
  "rusqlite",
@@ -3384,10 +3386,10 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "async-trait",
- "base64 0.23.0",
+ "base64 0.23.1",
  "futures-util",
  "libc",
  "proptest",
@@ -3399,7 +3401,9 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-diag",
  "stella-graph",
+ "stella-home",
  "stella-media",
  "stella-protocol",
  "stella-store",
@@ -3412,7 +3416,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui"
-version = "0.8.0"
+version = "0.8.9"
 dependencies = [
  "arboard",
  "crossterm",
@@ -4060,9 +4064,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "trybuild"
-version = "1.0.118"
+version = "1.0.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06649c6f63d86604ba0c8950d5a1829fc9a17afd70fc6629f481d75b6a624c78"
+checksum = "1e605bf6b39357663d8ba4e984f8be8da8df6bb32e81031d6889024ea8fd68e4"
 dependencies = [
  "glob",
  "serde",

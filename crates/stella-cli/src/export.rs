@@ -170,7 +170,7 @@ fn redact_dump(json: &str) -> String {
 /// around. Generating the values means the export cannot disagree with the
 /// terminal it came from.
 fn css_hex(color: ratatui::style::Color) -> String {
-    let (r, g, b) = crate::tui::token_rgb(color);
+    let (r, g, b) = crate::plain::token_rgb(color);
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 

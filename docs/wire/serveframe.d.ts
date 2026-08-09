@@ -246,6 +246,26 @@ export type AgentEvent = {
   superseded_blocks?: string[];
   type: "compaction";
 } | {
+  /**
+   * Wall clock left before the task deadline at this tick — the third
+   * axis, and the only one a journal could not otherwise state (#2240).
+   *
+   * `None` means **no deadline was armed**, which is exactly the
+   * distinction that used to require reading argv: a trial killed by its
+   * harness emitted dozens of these against a dollar cap it never
+   * approached, while the 900s wall clock that actually stopped it
+   * appeared nowhere in the journal. `Some(0)` is the opposite fact — a
+   * deadline is armed and has already passed.
+   *
+   * Milliseconds rather than a `Duration` because this is a wire type
+   * (invariant 4): a whole-millisecond integer round-trips through JSON
+   * byte-for-byte, where a float of seconds would not.
+   *
+   * `serde(default)` — absent on every journal written before this
+   * field existed, where it reads as "unarmed". That is the honest
+   * decode: those journals genuinely could not say otherwise.
+   */
+  deadline_remaining_ms?: number | null;
   limit_usd?: number | null;
   mode: BudgetMode;
   /**
@@ -1165,6 +1185,21 @@ export interface LadderSnapshot {
    */
   diff_lines: number;
   /**
+   * Command chains this round that reported an error while exiting `0`
+   * (#2125) — the shape a cited measurement can silently stand on.
+   *
+   * Unlike [`Self::verify_done_flip`] and [`Self::no_test_surface`] this
+   * one never changes a verdict: an errored probe makes a cited quantity
+   * *unsubstantiated*, not
+   * *disproven*, so it informs the verifier's opinion and withholds
+   * nothing. It is here because the question it answers — how often a run
+   * cites a number that stood on a broken chain — is one only aggregate
+   * traces can answer, and aggregate traces read this snapshot. One-way:
+   * `0` is "the closed signature vocabulary matched nothing", never "this
+   * round's commands were clean".
+   */
+  errored_commands?: number;
+  /**
    * Mutating file touches the recorder observed.
    */
   file_change_events: number;
@@ -1191,6 +1226,19 @@ export interface LadderSnapshot {
    */
   new_diag_errors: number;
   new_diag_warnings: number;
+  /**
+   * Positive claim that this round had NO tracked test command at all
+   * (#2129) — neither a configured `--test-command` nor an authored
+   * witness — so "no flip" is a demand the task structurally cannot meet.
+   *
+   * On the wire for the same reason as [`Self::verify_done_flip`]: it turns
+   * a fallback FAIL into an upward abstention, and a reader auditing a pass
+   * that rests on nothing deterministic needs to see that the demand was
+   * unmeetable rather than unmet. `false` on snapshots recorded before
+   * this existed, which is the conservative reading — the dispensation is
+   * never assumed.
+   */
+  no_test_surface?: boolean;
   /**
    * The oracle's observations in order (baseline, candidate runs, the
    * pre-submit confirmation). Infra runs are absent by construction.
@@ -1238,6 +1286,22 @@ export interface LadderSnapshot {
    * recorded before this existed.
    */
   verifier_independent?: boolean | null;
+  /**
+   * The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
+   * this round (#2129): a deterministic fail-on-baseline / pass-on-new
+   * shadow observation the pipeline's flip oracle cannot make, because it
+   * tracks only its own command.
+   *
+   * On the wire because it **changes the verdict** and nothing else here
+   * records which channel carried it: it rescues the heuristic fallback
+   * from a verifier outage and counts as corroboration, so a reader of a
+   * stored verdict otherwise sees a pass whose reasoning cites
+   * `verify_done` with no structured field to count. `false` covers both
+   * "no confirmation was observed" and "recorded before this field
+   * existed"; like every other one-way channel here it is never a claim
+   * that the worker's witness failed.
+   */
+  verify_done_flip?: boolean;
   /**
    * The witness-tamper check's result: `None` when no witness was armed,
    * `Some(true)` when every witness artifact matched its pinned identity.
@@ -1525,6 +1589,14 @@ export type ProofStep = {
   kind: "verdict_degraded";
   /**
    * The stated reason a model verdict could not be rendered.
+   */
+  reason: string;
+} | {
+  kind: "triage_degraded";
+  /**
+   * The stated reason no model classification was available: the call
+   * timed out at its ceiling, failed, could not be routed, or answered
+   * off-protocol.
    */
   reason: string;
 };

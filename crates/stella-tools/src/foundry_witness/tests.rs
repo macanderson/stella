@@ -90,7 +90,12 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
 /// into `root`, exactly as `stella tools --author` does. Returns the parsed
 /// tool the witness will be run against.
 fn authored_in(root: &Path, commands: &[&str]) -> CustomTool {
-    let history: Vec<ShellInvocation> = commands.iter().map(|c| ShellInvocation::ok(*c)).collect();
+    // Each command retyped three times: the detector's shipping
+    // `min_reuse_ratio` asks that argument sets recur, not just vary (#2378),
+    // and what this fixture needs is a proposal from the real default.
+    let history: Vec<ShellInvocation> = (0..3)
+        .flat_map(|_| commands.iter().map(|c| ShellInvocation::ok(*c)))
+        .collect();
     let proposals = detect_tool_gaps(&history, GapDetectionConfig::default());
     assert_eq!(proposals.len(), 1, "expected exactly one proposal");
     let authored = foundry_author::author(&proposals[0]).expect("authorship succeeds");

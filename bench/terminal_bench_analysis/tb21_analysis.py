@@ -47,6 +47,12 @@ CANONICAL_DATASET_REF = (
 )
 CANONICAL_AGENT_IMPORT_PATH = "stella_harbor:StellaAgent"
 CANONICAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+#: How a trial row spells "this run had no per-trial spend cap" (#2411). Must
+#: match `_NO_BUDGET_CAP` in `stella_harbor/__init__.py`, which is the writer.
+#: A word rather than a null, because the metadata dict drops `None` values and
+#: an absent key would then read the same as a disclosed absence of a cap.
+_NO_BUDGET_CAP_DISCLOSURE = "unbounded"
 CANONICAL_PROVIDER_ROUTE_POLICY = "openrouter-auto"
 CANONICAL_HOST_CREDENTIAL_SOURCE = "anonymous-seekable-fd-v1"
 CANONICAL_HOST_CREDENTIAL_NAME = "OPENROUTER_API_KEY"
@@ -77,20 +83,20 @@ def canonical_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
         "reasoning_auto": "off",
         "headless_scope_bypass": "on",
         "agents": {
+            # No `params.max_tokens` on any role: omitting it is what asks for
+            # the model's own ceiling, and a number here would be a cap the
+            # comparator never carried (#2411).
             "default": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
             },
             "worker": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
             },
             "verifier": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
             },
             "triage": {"effort": "low", "reasoning": "off"},
         },
@@ -642,16 +648,18 @@ STUDY_MANIFEST_ENGINE_POSTURE_FIELDS = frozenset(
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES = frozenset(
     {"default", "worker", "verifier", "triage"}
 )
-# Per-role field shapes: the outcome-bearing roles carry the raised output cap
-# (`params.max_tokens`); triage deliberately keeps the engine default, so its
-# exact shape has no `params` key. One flat set cannot express both.
+# Per-role field shapes. Every role is now the same shape — `effort` and
+# `reasoning`, no `params` — because no role carries an output cap (#2411).
+# The split existed to let the outcome-bearing roles hold `params.max_tokens`
+# while triage kept the engine default; with the cap gone there is nothing for
+# `params` to contain, and a posture that grows one has to be reviewed rather
+# than accepted by a set that still permits the key.
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE: dict[str, frozenset[str]] = {
-    "default": frozenset({"effort", "reasoning", "params"}),
-    "worker": frozenset({"effort", "reasoning", "params"}),
-    "verifier": frozenset({"effort", "reasoning", "params"}),
+    "default": frozenset({"effort", "reasoning"}),
+    "worker": frozenset({"effort", "reasoning"}),
+    "verifier": frozenset({"effort", "reasoning"}),
     "triage": frozenset({"effort", "reasoning"}),
 }
-STUDY_MANIFEST_ENGINE_POSTURE_AGENT_PARAMS_FIELDS = frozenset({"max_tokens"})
 STUDY_MANIFEST_CONFIRMATORY_FIELDS = frozenset({"job_name", "n_concurrent_trials"})
 
 JOB_CONFIG_ALLOWED_FIELDS = frozenset(
@@ -803,7 +811,7 @@ INTENT_FIELDS = frozenset(
         "attempts_per_task",
         "n_concurrent_trials",
         "retry_max_retries",
-        "per_trial_budget_usd",
+        "per_trial_forecast_usd",
         "artifacts",
         "execution",
         "provider_key",
@@ -1984,7 +1992,13 @@ def _trial_row(
         "source_commit_verified_in_binary": _boolish(
             metadata.get("stella_source_commit_verified_in_binary")
         ),
-        "budget_usd": _nonnegative_float(metadata.get("stella_budget_usd")),
+        # Carried raw, not through `_nonnegative_float`. The adapter discloses
+        # "no cap" as the word `unbounded` exactly so it cannot be read as a
+        # ceiling that was in force, and a numeric normaliser maps that word to
+        # `None` — which every consumer here treats as "field missing". No cap
+        # and no record would then be the same reading, which is the confusion
+        # the sentinel exists to prevent (#2411).
+        "budget_usd": metadata.get("stella_budget_usd"),
         "disable_reflection": _boolish(metadata.get("stella_disable_reflection")),
         "base_url": metadata.get("stella_base_url"),
         "provider_route_policy": metadata.get("stella_provider_route_policy"),
@@ -2312,18 +2326,10 @@ def _validate_engine_posture_manifest_schema(
             f"{label}.agents.{role}",
             reasons,
         )
-        role_config = agents[role]
-        if (
-            isinstance(role_config, dict)
-            and "params" in STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE[role]
-            and "params" in role_config
-        ):
-            _require_exact_manifest_fields(
-                role_config["params"],
-                STUDY_MANIFEST_ENGINE_POSTURE_AGENT_PARAMS_FIELDS,
-                f"{label}.agents.{role}.params",
-                reasons,
-            )
+    # No `params` sub-shape is validated here any more, because no role may
+    # carry the key at all: `_require_exact_manifest_fields` above rejects it
+    # for every role (#2411). Validating its contents would only describe a
+    # posture the check above has already refused.
 
 
 def _matches_setting(actual: Any, expected: Any) -> bool:
@@ -4265,7 +4271,7 @@ def _validate_run_ledger(
                 "attempts_per_task",
                 "n_concurrent_trials",
                 "retry_max_retries",
-                "per_trial_budget_usd",
+                "per_trial_forecast_usd",
                 "preregistration_commit",
             }
             if any(intent.get(name) is not None for name in nullable_fields):
@@ -4412,13 +4418,20 @@ def _validate_run_ledger(
             reasons.append(f"Paid {stage} intent concurrency is not canonical.")
         if intent.get("retry_max_retries") != 0:
             reasons.append(f"Paid {stage} intent must freeze retry_max_retries=0.")
-        if not math.isclose(
-            _nonnegative_float(intent.get("per_trial_budget_usd")) or -1.0,
-            _nonnegative_float(sut.get("budget_usd")) or -2.0,
-            rel_tol=0,
-            abs_tol=1e-12,
-        ):
-            reasons.append(f"Paid {stage} intent budget differs from sut.budget_usd.")
+        # These two used to be required equal, because one number was both the
+        # projection and the enforced cap. They are now different kinds of
+        # thing: the intent forecasts what a trial should cost, and the SUT
+        # declares that no trial was capped (#2411). Equality would assert
+        # `None == 1.20`, so what is checked is that each is the right kind.
+        if _nonnegative_float(intent.get("per_trial_forecast_usd")) is None:
+            reasons.append(
+                f"Paid {stage} intent must declare a per_trial_forecast_usd."
+            )
+        if sut.get("budget_usd") is not None:
+            reasons.append(
+                f"Paid {stage} sut.budget_usd must be null: a trial that ran "
+                "under a spend cap is not the arm this study claims to measure."
+            )
         if intent.get("preregistration_commit") != expected_prereg_commit:
             reasons.append(
                 f"Paid {stage} intent binds the wrong preregistration commit."
@@ -4578,10 +4591,10 @@ def _validate_run_ledger(
                     "prior_stage_outcome": prior_stage_outcome,
                     "projected_spend_usd": (
                         _nonnegative_float(intent.get("requested_trials"))
-                        * _nonnegative_float(intent.get("per_trial_budget_usd"))
+                        * _nonnegative_float(intent.get("per_trial_forecast_usd"))
                         if _nonnegative_float(intent.get("requested_trials"))
                         is not None
-                        and _nonnegative_float(intent.get("per_trial_budget_usd"))
+                        and _nonnegative_float(intent.get("per_trial_forecast_usd"))
                         is not None
                         else None
                     ),
@@ -5477,7 +5490,13 @@ def _validate_calibration(
         "stella_agent_version": agent_version,
         "adapter_version": adapter_version,
         "adapter_sha256": adapter_sha256,
-        "budget_usd": _nonnegative_float(budget_usd),
+        # Matched against a trial row, which spells "no cap" as the word
+        # `unbounded` (#2411). `_nonnegative_float` would map both that word and
+        # the manifest's `null` to `None`, so the expectation is translated
+        # instead — otherwise the two sides agree only by both being unreadable.
+        "budget_usd": (
+            _NO_BUDGET_CAP_DISCLOSURE if budget_usd is None else budget_usd
+        ),
         "disable_reflection": disable_reflection,
         "base_url": base_url,
         "provider_route_policy": provider_route_policy,
@@ -6335,12 +6354,15 @@ def validate_study(
             "Study manifest field sut.source_commit must be a full 40-character "
             "Git commit."
         )
-    normalized_budget = _nonnegative_float(budget_usd)
-    if budget_usd is not _MISSING and (
-        normalized_budget is None or normalized_budget <= 0
-    ):
+    # `None` is the only value a present `sut.budget_usd` may now take, and it
+    # is a claim rather than an absence: the trials ran under no per-trial
+    # spend cap (#2411). A number here says the opposite, and the study's whole
+    # subject is an agent that was not stopped short of finishing.
+    if budget_usd is not _MISSING and budget_usd is not None:
         structural_reasons.append(
-            "Study manifest field sut.budget_usd must be a positive number."
+            "Study manifest field sut.budget_usd must be null — a per-trial "
+            "spend cap stops the agent where the work finishes, so a capped "
+            "run cannot support the claim this study publishes."
         )
     if disable_reflection is not _MISSING and not isinstance(disable_reflection, bool):
         structural_reasons.append(
@@ -6725,11 +6747,15 @@ def validate_study(
         True,
         normalize=_boolish,
     )
+    # The manifest declares no cap as JSON `null`; a trial row discloses the
+    # same fact as the word `unbounded`, so the expectation is translated
+    # rather than compared across the two spellings. A row that still carries a
+    # number fails here, which is the point: it ran under a ceiling this study
+    # does not describe (#2411).
     check_trial_field(
         "budget_usd",
         "per-trial budget_usd",
-        _MISSING if budget_usd is _MISSING else normalized_budget,
-        normalize=_nonnegative_float,
+        _NO_BUDGET_CAP_DISCLOSURE if budget_usd is None else budget_usd,
     )
     check_trial_field(
         "disable_reflection",

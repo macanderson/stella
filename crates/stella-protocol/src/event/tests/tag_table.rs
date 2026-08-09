@@ -75,6 +75,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             mode: BudgetMode::Off,
             session_spent_usd: None,
             session_limit_usd: None,
+            deadline_remaining_ms: None,
         },
         AgentEvent::UsageIncomplete {
             role: ModelCallRole::Worker,

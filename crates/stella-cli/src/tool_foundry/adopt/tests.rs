@@ -7,8 +7,15 @@ use stella_store::{ToolCallRow, ToolCallState};
 use super::*;
 use crate::tool_foundry::run_tools_author_in;
 
+/// How many times each seeded command is recorded. The detector's shipping
+/// `GapDetectionConfig::min_reuse_ratio` asks that *argument sets* recur, not
+/// just program names (#2378); these fixtures are about the adoption protocol,
+/// so each command is retyped three times the way a real incantation would be.
+const SEEDED_REPEATS: usize = 3;
+
 /// A workspace with a real on-disk store, seeded with the `bash` receipts the
-/// detector mines. Returns the root and the store.
+/// detector mines — each command recorded [`SEEDED_REPEATS`] times. Returns the
+/// root and the store.
 fn workspace(commands: &[&str]) -> (tempfile::TempDir, Store) {
     let ws = tempfile::tempdir().expect("tmp");
     let store = Store::open(ws.path()).expect("store");
@@ -17,6 +24,8 @@ fn workspace(commands: &[&str]) -> (tempfile::TempDir, Store) {
         .expect("execution");
     let rows: Vec<ToolCallRow> = commands
         .iter()
+        .cycle()
+        .take(commands.len() * SEEDED_REPEATS)
         .enumerate()
         .map(|(i, command)| ToolCallRow {
             call_id: format!("c{i}"),

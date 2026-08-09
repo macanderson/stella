@@ -32,12 +32,14 @@ __all__ = [
     "DIMENSIONS",
     "DIMENSIONS_BY_KEY",
     "EFFORTS",
+    "FORBIDDEN_CAP_KEYS",
     "ROLES",
     "Contestant",
     "Dimension",
     "Engine",
     "MatchSpec",
     "RoleConfig",
+    "declared_cap_keys",
     "is_credential_name",
     "parse_dotenv",
     "screen_env",
@@ -200,6 +202,47 @@ EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 #: ``default`` and say so in :attr:`AgentSpec.honours`.
 ROLES: tuple[str, ...] = ("default", "worker", "verifier", "triage")
 
+#: Engine keys that once pinned a per-trial ceiling. Declaring one is now a
+#: template error, and no type in this module has a field to hold it.
+#:
+#: A cap is not a tuning knob — it is a second experiment running inside the
+#: first, and it always terminates the run at the end, where the work finishes.
+#: Match ``5292a68cdabf`` is the witness (#2411): Stella was given
+#: ``budget_usd = 1.0`` while the comparator's was ``null``, and all three of
+#: its losses are the same event. Every one was killed by the guard at roughly
+#: a third of the 900s the task allowed, with the answer in reach —
+#: ``sqlite-with-gcov`` had already proved its instrumented build decoded real
+#: coverage counters and was denied on the step that put the binary on ``PATH``,
+#: which is the one assertion the grader then failed it for. Two ``git-multibranch``
+#: trials died at the moment they turned to verifying their own work. The
+#: scoreboard read 9/12 against 18/18 and was measuring the ceiling, not the agent.
+#:
+#: The rule the adapter already stated for output tokens — *never be the side
+#: that stops first* — is the same rule, and it generalises: a ceiling below
+#: what the other side may spend reports our own limit as their capability.
+#:
+#: This costs no spend protection. A wallet is guarded at the provider key,
+#: where exhaustion fails the run honestly and visibly, never mid-step inside a
+#: trial that then scores as a loss.
+FORBIDDEN_CAP_KEYS: tuple[str, ...] = ("budget_usd", "max_tokens")
+
+
+def declared_cap_keys(raw: Any) -> tuple[str, ...]:
+    """The :data:`FORBIDDEN_CAP_KEYS` a raw engine table declares.
+
+    Authoring surfaces call this and refuse what it returns; readers of
+    archived matches do not, because a spec that already ran capped must stay
+    loadable as the evidence it is.
+
+    A key present but empty still counts. ``budget_usd = ""`` reads as "no cap"
+    to the loaders below, so ignoring it here would let the word survive in a
+    committed template — and the next hand that fills the value in gets no
+    error at all.
+    """
+    if not isinstance(raw, dict):
+        return ()
+    return tuple(key for key in FORBIDDEN_CAP_KEYS if key in raw)
+
 
 @dataclass(frozen=True)
 class RoleConfig:
@@ -214,14 +257,12 @@ class RoleConfig:
     model: str | None = None
     reasoning: bool | None = None
     effort: str | None = None
-    max_tokens: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "model": self.model,
             "reasoning": self.reasoning,
             "effort": self.effort,
-            "max_tokens": self.max_tokens,
         }
 
     @classmethod
@@ -233,29 +274,66 @@ class RoleConfig:
                 return value.strip().lower() in ("on", "true", "yes", "1")
             return bool(value)
 
-        def _opt_int(value: Any) -> int | None:
-            if value in (None, ""):
-                return None
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-
         return cls(
             model=(str(raw["model"]).strip() or None) if raw.get("model") else None,
             reasoning=_opt_bool(raw.get("reasoning")),
             effort=(str(raw["effort"]).strip() or None) if raw.get("effort") else None,
-            max_tokens=_opt_int(raw.get("max_tokens")),
         )
 
     @property
     def is_empty(self) -> bool:
-        return (
-            self.model is None
-            and self.reasoning is None
-            and self.effort is None
-            and self.max_tokens is None
+        return self.model is None and self.reasoning is None and self.effort is None
+
+
+#: The pipeline responsibilities an arm may ablate or reassign, matching
+#: ``stella_pipeline::roster`` (#2381). Names are Stella's ``ModelCallRole``
+#: wire tokens, so a match template and the engine it configures spell each job
+#: identically — the same agreement :data:`ROLES` has with the settings keys.
+#:
+#: This is what makes a single-stage ablation expressible at all. ``bare_loop``
+#: settles triage, plan, witness and verify together because all four ARE the
+#: pipeline, so an arm using it can attribute a measured effect to "the
+#: pipeline" and to nothing smaller.
+RESPONSIBILITIES: tuple[str, ...] = (
+    "triage",
+    "research",
+    "plan",
+    "witness_author",
+    "worker",
+    "distress_guidance",
+    "verdict",
+)
+
+
+@dataclass(frozen=True)
+class ResponsibilityConfig:
+    """Whether one pipeline responsibility runs, and which agent performs it.
+
+    Both fields optional, and ``None`` means *leave the shipped binding
+    alone* — the same inherit-is-recorded-as-inherit honesty
+    :class:`RoleConfig` keeps. An arm that ablates triage says so in one field
+    and pins nothing else, so its posture cannot claim a reassignment it never
+    made.
+    """
+
+    enabled: bool | None = None
+    agent: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "agent": self.agent}
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> ResponsibilityConfig:
+        return cls(
+            enabled=declared_flag(raw.get("enabled"))
+            if raw.get("enabled") is not None
+            else None,
+            agent=(str(raw["agent"]).strip() or None) if raw.get("agent") else None,
         )
+
+    @property
+    def is_empty(self) -> bool:
+        return self.enabled is None and self.agent is None
 
 
 #: Stella's own truthy vocabulary (``crates/stella-cli/src/settings.rs``),
@@ -296,6 +374,27 @@ def declared_flag(value: Any) -> bool | None:
     return None
 
 
+def _responsibilities_from_json(raw: Any) -> dict[str, ResponsibilityConfig]:
+    """Read a round-tripped responsibilities block, dropping anything empty.
+
+    Keyed off :data:`RESPONSIBILITIES` rather than iterating the input, so a
+    key this build does not know cannot enter an ``Engine`` and reach a seat.
+    An unknown responsibility is not a harmless extra field here: it is an
+    ablation the operator believes is happening, and the engine would refuse
+    the run for it anyway (``PipelineError::InvalidRoster``). Dropping it on
+    the way in is what keeps the recorded posture equal to what actually ran.
+    """
+    rows = raw if isinstance(raw, dict) else {}
+    out: dict[str, ResponsibilityConfig] = {}
+    for name in RESPONSIBILITIES:
+        entry = rows.get(name)
+        if isinstance(entry, dict):
+            row = ResponsibilityConfig.from_json(entry)
+            if not row.is_empty:
+                out[name] = row
+    return out
+
+
 @dataclass(frozen=True)
 class Engine:
     """How one contestant's model calls are pinned — the full engine config.
@@ -320,17 +419,6 @@ class Engine:
     effort: str = "high"
     #: Explicit base URL override. ``None`` uses the api's default route.
     base_url: str | None = None
-    #: Per-trial USD target handed to the agent, if it supports one.
-    budget_usd: float | None = None
-    #: Output-token ceiling per step. Leave ``None`` to take the model's own
-    #: maximum, which is nearly always right. A model spends up to whatever
-    #: ceiling it is handed, so a cap pinned BELOW its real one cuts the step
-    #: off mid-reasoning and the call comes back ``length`` with no answer and
-    #: no tool call. That is what #2128 actually was: not effort overrunning a
-    #: budget the model was told about — it is not supposed to do that — but a
-    #: cap we chose without knowing the model's real ceiling. See the Stella
-    #: adapter's note in ``posture.py`` for the measurement.
-    max_tokens: int | None = None
     #: Run the agent's raw step loop instead of its staged pipeline. For Stella
     #: that is ``--no-pipeline``, which settles triage, witness and verify at
     #: once because all three ARE the pipeline. Declared on the engine rather
@@ -341,6 +429,15 @@ class Engine:
     bare_loop: bool = False
     #: Per-role overrides, keyed by a member of :data:`ROLES`.
     roles: dict[str, RoleConfig] = field(default_factory=dict)
+    #: Per-responsibility ablation/reassignment, keyed by a member of
+    #: :data:`RESPONSIBILITIES` (#2381). Empty is the shipped pipeline.
+    #:
+    #: The narrow instrument next to ``bare_loop``'s blunt one: this is how an
+    #: arm turns off exactly triage, or exactly the verifier, and leaves the
+    #: rest of the staged flow running — which is the only way a measured
+    #: difference can be attributed to one stage. Agents with no pipeline
+    #: ignore it, like the role overrides above.
+    responsibilities: dict[str, ResponsibilityConfig] = field(default_factory=dict)
 
     @property
     def qualified_model(self) -> str:
@@ -385,7 +482,6 @@ class Engine:
             model=override.model or None,
             reasoning=self.reasoning if override.reasoning is None else override.reasoning,
             effort=override.effort or self.effort,
-            max_tokens=override.max_tokens or self.max_tokens,
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -396,10 +492,11 @@ class Engine:
             "reasoning": self.reasoning,
             "effort": self.effort,
             "base_url": self.base_url,
-            "budget_usd": self.budget_usd,
-            "max_tokens": self.max_tokens,
             "bare_loop": self.bare_loop,
             "roles": {name: role.to_json() for name, role in self.roles.items()},
+            "responsibilities": {
+                name: row.to_json() for name, row in self.responsibilities.items()
+            },
         }
 
     @classmethod
@@ -422,17 +519,17 @@ class Engine:
             reasoning=declared_flag(raw.get("reasoning", True)) is not False,
             effort=str(raw.get("effort") or "high"),
             base_url=(str(raw["base_url"]) or None) if raw.get("base_url") else None,
-            budget_usd=(
-                float(raw["budget_usd"]) if raw.get("budget_usd") not in (None, "") else None
-            ),
-            max_tokens=(
-                int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
-            ),
+            # A cap key surviving in an archived `spec.json` is read past, never
+            # refused: `from_json` restores historical matches (`runner.py`'s
+            # match reload), and a match that RAN capped is exactly the evidence
+            # a reader needs. Refusal belongs on the authoring surfaces, which
+            # call `declared_cap_keys` — see that function for the split.
             # Closed on anything that does not declare a boolean: this side is
             # fed by round-tripped machine output, so a value neither `true`
             # nor `false` is corruption, and corruption must not select an arm.
             bare_loop=declared_flag(raw.get("bare_loop")) is True,
             roles=roles,
+            responsibilities=_responsibilities_from_json(raw.get("responsibilities")),
         )
 
     @property

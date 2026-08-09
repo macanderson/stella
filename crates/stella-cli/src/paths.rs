@@ -23,9 +23,9 @@
 //! rather than a behaviour change: there is no point in the process's life at
 //! which these answers legitimately differ. (Denying them is not a
 //! convenience for this module —
-//! the USER settings scope is `$HOME/.stella/settings.json` and is *trusted*,
-//! so a repository that could move `HOME` would walk straight through that
-//! trust boundary. See `env_files::DENIED_EXACT`.)
+//! the USER settings scope is `~/.stella/settings.json` and is *trusted*, so a
+//! repository that could move `HOME` — or, since #2178, `STELLA_HOME` — would
+//! walk straight through that trust boundary. See `env_files::DENIED_EXACT`.)
 //!
 //! # Redirecting without touching the process environment
 //!
@@ -52,15 +52,19 @@ const STELLA_NO_SETTINGS_ENV: &str = "STELLA_NO_SETTINGS";
 /// One value, built once, rather than a scatter of reads at arbitrary depths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UserPaths {
-    /// The OS user home (`$HOME`), or `None` on a machine without one.
+    /// The OS user home (`$HOME`, else `$USERPROFILE`), or `None` on a machine
+    /// without one.
     home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, else `$HOME/.local/state`.
     state_home: Option<PathBuf>,
+    /// The user-tier stella root — `$STELLA_HOME`, else `~/.stella`. Settings,
+    /// credentials, and every user-scope extension hang off it.
+    stella_root: Option<PathBuf>,
     /// The user-tier stella data dir — the `usage.db` hub, the session
     /// registry, notifications, the catalog, the enterprise spool.
     data_dir: PathBuf,
     /// Whether user-scope **extensions** (rules, skills, custom tools,
-    /// published context records) may be loaded from [`Self::home`].
+    /// published context records) may be loaded from [`Self::stella_root`].
     ///
     /// Production always says yes. A unit test says no until it installs a
     /// home of its own, because a suite that reads the developer's real
@@ -85,17 +89,34 @@ impl UserPaths {
     /// directory out of `std::env`.** Anything else that wants one asks the
     /// accessors below.
     pub(crate) fn from_environment() -> Self {
-        let home = std::env::var_os(stella_home::HOME_ENV).map(PathBuf::from);
+        // Every tier below is resolved from ONE reading of the anchors, through
+        // `stella-home`'s pure halves. Reading them per tier is what let the
+        // config tier and the data tier disagree inside a single process
+        // (#2178): `data_dir` honoured `STELLA_HOME` and the stella root did
+        // not, so a process pointed at a scratch home still merged the
+        // developer's real `~/.stella/settings.json` into its settings chain.
+        let home = stella_home::resolve_home_dir(
+            std::env::var_os(stella_home::HOME_ENV),
+            std::env::var_os(stella_home::USERPROFILE_ENV),
+        );
         let state_home = std::env::var_os(XDG_STATE_HOME_ENV)
             .map(PathBuf::from)
             .or_else(|| home.as_ref().map(|home| home.join(".local/state")));
+        // `stella-home` is the workspace's single implementation, shared with
+        // `stella-store` and `stella-observatory` (#1139), so the CLI cannot
+        // drift from the crates that own the files it names.
+        let stella_root = stella_home::resolve_stella_home(
+            std::env::var_os(stella_home::STELLA_HOME_ENV),
+            home.clone(),
+        );
         Self {
             home,
             state_home,
-            // `stella-home` is the workspace's single implementation, shared
-            // with `stella-store` and `stella-observatory` (#1139), so the CLI
-            // cannot drift from the crates that own the files it names.
-            data_dir: stella_home::data_dir(),
+            data_dir: stella_home::resolve_data_dir(
+                std::env::var_os(stella_home::STELLA_DATA_DIR_ENV),
+                stella_root.clone(),
+            ),
+            stella_root,
             extensions_visible: true,
             filesystem_isolated: crate::settings::env_flag(STELLA_NO_SETTINGS_ENV),
         }
@@ -108,6 +129,7 @@ impl UserPaths {
         Self {
             home: Some(home.to_path_buf()),
             state_home: Some(home.join(".local/state")),
+            stella_root: Some(home.join(".stella")),
             data_dir: home.join(".stella"),
             extensions_visible: true,
             filesystem_isolated: false,
@@ -166,20 +188,23 @@ fn with_paths<T>(read: impl FnOnce(&UserPaths) -> T) -> T {
     }
 }
 
-/// The OS user home (`$HOME`), or `None` on a machine without one.
+/// The OS user home (`$HOME`, else `$USERPROFILE`), or `None` on a machine
+/// without one.
 pub(crate) fn home() -> Option<PathBuf> {
     with_paths(|paths| paths.home.clone())
 }
 
-/// `~/.stella` — the user-global stella root.
+/// `$STELLA_HOME`, else `~/.stella` — the user-global stella root that
+/// settings, credentials, and every user-scope extension hang off.
 ///
-/// Deliberately **not** `stella_home::stella_home`: the CLI's user scope has
-/// always been `$HOME/.stella` and honours neither `STELLA_HOME` nor
-/// `STELLA_CONFIG_DIR`. `stella-observatory`'s settings tab mirrors that rule
-/// and has a test pinning it, so widening it here would make the dashboard
-/// name a settings file the loader never reads.
+/// This is `stella_home::stella_home`, which is the whole point: the data tier
+/// has always honoured `STELLA_HOME`, so a root that did not left one process
+/// resolving its two user tiers to two different homes, and made an isolated
+/// run silently merge the developer's real settings (#2178).
+/// `stella-observatory`'s config tab mirrors this resolver and has a test
+/// pinning the mirror, so the two must move together.
 pub(crate) fn stella_root() -> Option<PathBuf> {
-    with_paths(|paths| paths.home.as_ref().map(|home| home.join(".stella")))
+    with_paths(|paths| paths.stella_root.clone())
 }
 
 /// `$XDG_STATE_HOME`, else `$HOME/.local/state`.
@@ -193,17 +218,20 @@ pub(crate) fn data_dir() -> PathBuf {
     with_paths(|paths| paths.data_dir.clone())
 }
 
-/// The home that user-scope **extension** loaders resolve against — rules,
-/// skills, custom tools, published context records.
+/// The stella root that user-scope **extension** loaders resolve against —
+/// rules, skills, custom tools, published context records.
 ///
-/// Identical to [`home`] in production. In a test build it answers `None`
-/// until the test installs a home, so a suite never reads the developer's own
-/// `~/.stella`; see [`UserPaths::extensions_visible`].
-pub(crate) fn user_extension_home() -> Option<PathBuf> {
+/// Identical to [`stella_root`] in production, and it is the *root* rather
+/// than the OS home on purpose: every caller appended `.stella` itself, so
+/// returning the home left two spellings of one directory, and #2178 would
+/// have moved only the half that went through [`stella_root`]. In a test build
+/// it answers `None` until the test installs a home, so a suite never reads
+/// the developer's own `~/.stella`; see [`UserPaths::extensions_visible`].
+pub(crate) fn user_extension_root() -> Option<PathBuf> {
     with_paths(|paths| {
         paths
             .extensions_visible
-            .then(|| paths.home.clone())
+            .then(|| paths.stella_root.clone())
             .flatten()
     })
 }
@@ -248,6 +276,7 @@ pub(crate) fn test_paths(paths: UserPaths) -> TestPathsGuard {
 pub(crate) fn test_user_home(home: PathBuf) -> TestPathsGuard {
     amend(move |current| {
         current.state_home = Some(home.join(".local/state"));
+        current.stella_root = Some(home.join(".stella"));
         current.home = Some(home);
         current.extensions_visible = true;
     })
@@ -296,7 +325,7 @@ mod tests {
         assert_eq!(stella_root(), Some(home.join(".stella")));
         assert_eq!(data_dir(), home.join(".stella"));
         assert_eq!(state_home(), Some(home.join(".local/state")));
-        assert_eq!(user_extension_home(), Some(home));
+        assert_eq!(user_extension_root(), Some(home.join(".stella")));
         assert_eq!(
             std::env::var_os(stella_home::HOME_ENV),
             ambient,
@@ -343,7 +372,7 @@ mod tests {
         assert_eq!(super::home(), Some(home), "the outer guard still stands");
         drop(outer);
         assert_eq!(
-            user_extension_home(),
+            user_extension_root(),
             None,
             "back to the isolated default a unit test starts from"
         );
@@ -353,13 +382,155 @@ mod tests {
     /// suite never loads the developer's real `~/.stella/rules`.
     #[test]
     fn user_extensions_are_invisible_until_a_test_installs_a_home() {
-        assert_eq!(user_extension_home(), None);
+        assert_eq!(user_extension_root(), None);
         let _guard = test_user_home(PathBuf::from("/tmp/stella-paths-extensions"));
         assert_eq!(
-            user_extension_home(),
-            Some(PathBuf::from("/tmp/stella-paths-extensions")),
+            user_extension_root(),
+            Some(PathBuf::from("/tmp/stella-paths-extensions/.stella")),
             "installing a home is the opt-in"
         );
+    }
+
+    /// Witness for #2178: `STELLA_HOME` moves the **whole** home, not just the
+    /// data tier.
+    ///
+    /// Before this, `data_dir` went through `stella-home` (which honours the
+    /// variable) while `stella_root` was `$HOME/.stella` unconditionally, so a
+    /// process pointed at a scratch home wrote its catalog and usage hub there
+    /// and still merged the developer's real `~/.stella/settings.json` into the
+    /// settings chain — isolation that half-works, with no signal that it had.
+    /// The two tiers are asserted together on purpose: a later change must not
+    /// be able to fix one by breaking the other.
+    ///
+    /// This is one of the few genuinely env-shaped fixtures the module docs
+    /// reserve the binary-wide lock for — the question under test is literally
+    /// "what does the process environment resolve to".
+    #[test]
+    fn stella_home_moves_the_settings_tier_and_not_only_the_data_tier() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            stella_home::HOME_ENV,
+            stella_home::USERPROFILE_ENV,
+            stella_home::STELLA_HOME_ENV,
+            stella_home::STELLA_DATA_DIR_ENV,
+        ]);
+        let user_home = Path::new("/tmp/stella-2178-user-home");
+        let scratch = Path::new("/tmp/stella-2178-scratch");
+        // SAFETY: the binary-wide lock is held for the whole test, and
+        // `_restore` puts every name back on drop — an unwinding assertion
+        // included.
+        unsafe {
+            std::env::set_var(stella_home::HOME_ENV, user_home);
+            std::env::remove_var(stella_home::USERPROFILE_ENV);
+            std::env::set_var(stella_home::STELLA_HOME_ENV, scratch);
+            std::env::remove_var(stella_home::STELLA_DATA_DIR_ENV);
+        }
+        let _guard = test_paths(UserPaths::from_environment());
+
+        assert_eq!(
+            stella_root(),
+            Some(scratch.to_path_buf()),
+            "the stella root IS the redirected home"
+        );
+        assert_eq!(
+            data_dir(),
+            scratch.to_path_buf(),
+            "and the data tier still moves with it"
+        );
+        assert_eq!(
+            crate::settings::user_settings_path(),
+            Some(scratch.join("settings.json")),
+            "the first file of the settings chain must come from the scratch \
+             home — resolving it under $HOME is how an isolated run silently \
+             inherits the developer's model pins (#2178)"
+        );
+        assert_eq!(
+            super::home(),
+            Some(user_home.to_path_buf()),
+            "the OS home is NOT moved: `~` expansion and the XDG state home \
+             still anchor on it"
+        );
+    }
+
+    /// Witness for #2178's second half: the three secret-bearing user-tier
+    /// files that never went through this module move too.
+    ///
+    /// `credentials.toml` (`stella-model`), `integrations.json` and
+    /// `web_auth.toml` (`stella-tools`) each resolved `$HOME/.stella/...`
+    /// themselves, so repairing only [`UserPaths`] would have left the knob
+    /// half-working in a way that is *harder* to see, because the obvious seam
+    /// now looks fixed. `credentials.toml` in particular was unmovable by any
+    /// environment variable at all.
+    ///
+    /// It lives here, in the crate that owns the binary-wide env lock and
+    /// links all three, rather than as three tests in two crates that would
+    /// each have to invent their own lock to mutate a shared anchor safely.
+    #[test]
+    fn every_user_tier_secret_file_moves_with_the_stella_home() {
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            stella_home::STELLA_HOME_ENV,
+            "STELLA_INTEGRATIONS_FILE",
+            "STELLA_WEB_AUTH_FILE",
+        ]);
+        // SAFETY: the binary-wide lock is held for the whole test and
+        // `_restore` puts all three back on drop. The two narrow per-file
+        // overrides are cleared so the fallback under test is the one that
+        // runs.
+        unsafe {
+            std::env::set_var(stella_home::STELLA_HOME_ENV, scratch.path());
+            std::env::remove_var("STELLA_INTEGRATIONS_FILE");
+            std::env::remove_var("STELLA_WEB_AUTH_FILE");
+        }
+
+        assert_eq!(
+            stella_model::credential::CredentialsFile::default_path(),
+            Some(scratch.path().join("credentials.toml")),
+            "an isolated process must read the scratch home's API keys, not \
+             the developer's real ones"
+        );
+        assert_eq!(
+            stella_tools::tracker_auth::TrackerStore::default_path(),
+            Some(scratch.path().join("integrations.json"))
+        );
+
+        // `load_default` answers with a config, not a path, so the assertion
+        // is made observable: an unparseable file in the scratch home must be
+        // the file it reports on. Under the old resolver it would have read
+        // `$HOME/web_auth.toml`, found nothing, and returned the empty config.
+        std::fs::write(scratch.path().join("web_auth.toml"), "this is not toml\n")
+            .expect("write fixture");
+        let err = stella_tools::web::WebAuthConfig::load_default()
+            .expect_err("an unparseable web_auth.toml is reported, not skipped");
+        assert!(
+            err.contains(&scratch.path().join("web_auth.toml").display().to_string()),
+            "the error must name the scratch home's file: {err}"
+        );
+    }
+
+    /// The narrower `STELLA_DATA_DIR` keeps winning over the whole-home
+    /// override, so #2178 did not collapse two knobs into one.
+    #[test]
+    fn the_narrow_data_dir_override_still_wins_over_the_moved_home() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            stella_home::HOME_ENV,
+            stella_home::USERPROFILE_ENV,
+            stella_home::STELLA_HOME_ENV,
+            stella_home::STELLA_DATA_DIR_ENV,
+        ]);
+        // SAFETY: as above — lock held, `_restore` undoes all four on drop.
+        unsafe {
+            std::env::set_var(stella_home::HOME_ENV, "/tmp/stella-2178-home");
+            std::env::remove_var(stella_home::USERPROFILE_ENV);
+            std::env::set_var(stella_home::STELLA_HOME_ENV, "/tmp/stella-2178-root");
+            std::env::set_var(stella_home::STELLA_DATA_DIR_ENV, "/tmp/stella-2178-data");
+        }
+        let _guard = test_paths(UserPaths::from_environment());
+
+        assert_eq!(data_dir(), PathBuf::from("/tmp/stella-2178-data"));
+        assert_eq!(stella_root(), Some(PathBuf::from("/tmp/stella-2178-root")));
     }
 
     /// `from_environment` derives the XDG state home from `HOME` when the

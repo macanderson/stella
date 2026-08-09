@@ -97,6 +97,15 @@ all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
 
+A fourth workflow, `deck-fit.yml`, runs no gate step at all: it measures every
+slide of every deck under `website/public/presentations/` against the fixed
+1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`). It needs a
+browser, which is why it is not in `make gate`, and it has its own file rather
+than a job in `docs-guards.yml` because that workflow triggers on `**/*.rs` and
+would launch a browser on nearly every PR — the same disjoint-paths reasoning
+that gave `wire-schema.yml` its own file. It is deliberately not a required
+check yet (#2425).
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -421,7 +430,7 @@ the files you must plan around (see below).
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
-| Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
+| Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
@@ -549,8 +558,12 @@ error and leave the legacy files untouched.
 
 Everything **user-global** lives under `~/.stella` on every platform (like
 Claude Code's `~/.claude`) — no OS-specific data dir. `STELLA_HOME` moves the
-whole home; the narrower `STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` still win
-where they always did. Key entries: `settings.json`, `credentials.toml`,
+whole home; the narrower `STELLA_DATA_DIR` still wins for the data tier where
+it always did. Those two are the entire list of redirecting overrides
+(`stella_home::OVERRIDE_ENV_VARS`), which is exact in both directions — a name
+on it that resolves nothing declines the legacy-layout migration for a process
+sitting on the defaults, which is what `STELLA_CONFIG_DIR` did until #2442
+retired it. Key entries: `settings.json`, `credentials.toml`,
 `skills/`, `agents/`, `rules/`, `tools/` (config); `usage.db` (the
 cross-project telemetry hub), `sessions/`, `notifications/`, `catalog.db`,
 `enterprise-telemetry.db`, `installation-id`, `cloud.json` (data). On first

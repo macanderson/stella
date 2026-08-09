@@ -404,6 +404,11 @@ pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
 /// objective companions (`produced_output`, `wrote_files`, `truncated`) so a
 /// self-silent, zero-output turn is visibly a failure even if the model would
 /// rate itself kindly.
+///
+/// `parse_error` is the third producer's column (#2175): an excerpt of a
+/// reflection response the lesson parser could not read. NULL is the normal
+/// case and means "no parse failure recorded" — never "this turn had nothing
+/// to learn", which is the distinction the whole column exists to keep.
 pub(crate) const EXECUTION_REFLECTION_DDL: &str =
     "CREATE TABLE IF NOT EXISTS execution_reflection (
        execution_id INTEGER PRIMARY KEY,
@@ -416,7 +421,8 @@ pub(crate) const EXECUTION_REFLECTION_DDL: &str =
        produced_output INTEGER NOT NULL DEFAULT 0,
        wrote_files INTEGER NOT NULL DEFAULT 0,
        truncated INTEGER NOT NULL DEFAULT 0,
-       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       parse_error TEXT
      );";
 
 /// `reflections` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the durable, unified home for

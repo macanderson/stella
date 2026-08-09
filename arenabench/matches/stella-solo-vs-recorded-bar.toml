@@ -1,0 +1,83 @@
+# arenabench match — Stella ALONE, measured against a bar already on record
+#
+#   local:  arenabench run matches/stella-solo-vs-recorded-bar.toml --progress
+#   cloud:  arenabench cloud run matches/stella-solo-vs-recorded-bar.toml
+#
+# One seat. There is no Claude Code arm in this file, and that is the point.
+#
+# Claude Code is the number Stella has to beat, not a subject under study. A
+# bar only has to be established once; re-running it re-measures a constant,
+# and every trial spent on it is a trial Stella's arm did not get. The bar for
+# these four tasks was established by match `5292a68cdabf` and is quoted below
+# rather than re-earned.
+#
+#   THE BAR — Claude Code (Opus 5, xhigh), match 5292a68cdabf
+#
+#     git-multibranch            4/4 scored   (1 trial aborted, excluded)
+#     sqlite-with-gcov           5/5 scored   (1 trial aborted, excluded)
+#     regex-log                  5/5 scored
+#     large-scale-text-editing   4/4 scored   (2 trials aborted, excluded)
+#     ------------------------------------------------------------
+#     total                     18/18
+#
+#   Aborts are trials the rig killed, not trials the agent failed, and they are
+#   excluded from both the numerator and the denominator. A trial that never
+#   ran is not a win — see the "a dead arm scores as a win" defect class.
+#
+# Stella's arm in that same match scored 9/12, and that number is not usable as
+# a capability comparison: its seat carried `budget_usd = 1.0` while the
+# comparator's was `null`, and all three losses were the budget guard firing at
+# roughly a third of each task's 900s allowance, every one within a step or
+# four of finishing (#2411). Per-trial ceilings are refused now, which is why
+# this run is worth doing at all — it is the first measurement of these tasks
+# where nothing stops Stella before the work does.
+#
+# Re-run the comparator only when the task set, the worker model, or the
+# harness changes in a way that makes the recorded number inapplicable — and
+# say which, out loud, before spending.
+#
+# SIZING. Checked before writing, not after: the OpenRouter account had $35.72
+# remaining on 2026-08-08 ($1,110 purchased, $1,074.28 used). At the ~$1.20 a
+# trial measured in 5292a68cdabf, 24 trials is ~$29 and fits; the 6 attempts
+# below are chosen from that number, not from a preference for six. Re-check
+# the balance before running — if it has moved, move `attempts` with it.
+#
+# This file carries no secrets. Export OPENROUTER_API_KEY before running; in
+# the cloud it is read from an SSM parameter under /arenabench/, and a seat
+# whose credential is absent is refused at submit time rather than scored as a
+# loss.
+
+[match]
+name = "stella solo: opus 5, no ceilings, against the recorded bar"
+dataset = "terminal-bench-2.1"
+tasks = [
+  "sqlite-with-gcov",
+  "git-multibranch",
+  "regex-log",
+  "large-scale-text-editing",
+]
+# Six per task = 24 trials. Repeats go here, on the arm under test, because
+# this is where the variance is and where resolving it buys something.
+attempts = 6
+concurrency = 4
+
+[[contestant]]
+id = "stella"
+name = "Stella (Opus 5, xhigh)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "anthropic/claude-opus-5"
+  reasoning = true
+  # `xhigh` matches what the recorded bar ran at, which is the whole reason the
+  # bar is quotable instead of needing a fresh comparator.
+  effort = "xhigh"
+  # No `budget_usd` and no `max_tokens`: both are refused (#2411). Omitting the
+  # output ceiling is what asks for the model's own, which the engine seeds
+  # from the catalog.
+
+  [contestant.env]
+  # Names only — never values.
+  required = ["OPENROUTER_API_KEY"]

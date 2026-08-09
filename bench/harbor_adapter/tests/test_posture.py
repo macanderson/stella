@@ -42,11 +42,10 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     resolve_model_timeout,
 )
 
-# Imported from the module rather than the package: these two are internals of
-# the posture's ceiling policy, not part of what the adapter re-exports.
+# Imported from the module rather than the package: an internal of the
+# posture's ceiling policy, not part of what the adapter re-exports.
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
     _BENCHMARKED_SLUGS,
-    _SUB_CEILING_RATIONALE,
 )
 
 
@@ -335,14 +334,18 @@ class TestAttemptCountArms:
         """The one digest an external gate already checks by prefix.
 
         `bench/evidence/run/preflight_effort.sh` defaults `EXPECT_DIGEST` to
-        this value and `bench/READINESS.md` §8.4.3 registers it. Pinning it
+        this value and `bench/READINESS.md` §8.4.5 registers it. Pinning it
         here means a posture change is caught in unit tests rather than by a
         preflight on the rig, where the feedback costs a run.
+
+        It moved once, from `c8536200`, when the output cap left the posture
+        (#2411). That is the mechanism working: an arm that asks for a
+        different budget is a different arm and must not reuse the old hash.
         """
         _posture, _normalized, digest = _benchmark_engine_posture(
             "anthropic/claude-sonnet-5"
         )
-        assert digest.startswith("c8536200")
+        assert digest.startswith("6c7fc70c")
 
     def test_each_selector_moves_the_digest_and_only_its_own_key(self) -> None:
         """Two arms, two hashes — and neither disturbs the rest of the posture."""
@@ -490,7 +493,7 @@ class TestModelTimeoutArm:
         # again from this arm's own test so a regression here cannot be read as
         # someone else's failure.
         assert _benchmark_engine_posture("anthropic/claude-sonnet-5")[2].startswith(
-            "c8536200"
+            "6c7fc70c"
         )
 
     def test_a_selected_timeout_lands_in_the_digest_and_moves_nothing_else(
@@ -543,13 +546,15 @@ class TestModelTimeoutArm:
         with pytest.raises(ValueError, match="model timeout must be between"):
             resolve_model_timeout("86400")
 
-    def test_the_three_ceilings_can_be_selected_together(self) -> None:
-        """The point of the knob: one posture that scales the whole budget.
+    def test_selecting_the_silence_ceiling_adds_no_output_cap(self) -> None:
+        """The knob scales the one ceiling left, and cannot smuggle back another.
 
-        A Fable-class arm raises the output cap AND the silence ceiling that
-        has to absorb it. Expressing only one is how `16384 -> 32000 -> 64000`
-        each relocated the cliff instead of removing it — the recorded history
-        of this very posture.
+        It used to be checked as a set: a Fable-class arm raised the output cap
+        AND the silence ceiling that absorbs it, because expressing only one is
+        how `16384 -> 32000 -> 64000` each relocated the cliff instead of
+        removing it. Removing the cap ended that sequence (#2411), so what this
+        now pins is the other direction — selecting a timeout must not
+        reintroduce a `max_tokens` on any role.
         """
         posture, _normalized, _digest = _benchmark_engine_posture(
             self._MODEL, model_timeout_secs=1572
@@ -558,63 +563,69 @@ class TestModelTimeoutArm:
         capped = [
             role
             for role, agent in posture["agents"].items()
-            if "params" in agent and "max_tokens" in agent["params"]
+            if "max_tokens" in (agent.get("params") or {})
         ]
-        assert sorted(capped) == ["default", "verifier", "worker"]
+        assert capped == []
 
 
 class TestFableCeilingSet:
-    """The approved Fable ceiling set (#1211 §6.2): 128,000 output, 1,572s.
+    """What is left of the Fable ceiling set (#1211 §6.2) after #2411.
 
-    Both ceilings are properties of the model now, not one shared constant.
-    One shared number was only ever right by coincidence — it is the model's
-    own ceiling, and models differ. Fable 5 answers up to 128,000 output
-    tokens, so capping its trials at Sonnet's 64,000 stopped it at half the
-    height the comparator is allowed to fill, and the score reported that as
-    a capability difference rather than as our own ceiling.
+    It was two ceilings, 128,000 output and 1,572s of silence. The output
+    half is gone with every other cap: 128,000 was Fable's own maximum, which
+    is exactly what the engine takes from the catalog when nothing is sent, so
+    the posture was restating the authority and owning a copy that could drift.
+
+    The silence ceiling stays, and matters more rather than less. It is the
+    one per-generation ceiling still set here, and it now has to absorb a
+    generation nothing else bounds.
     """
 
-    def test_fable_gets_both_approved_ceilings(self) -> None:
+    def test_fable_keeps_its_silence_ceiling_and_asks_for_no_cap(self) -> None:
         posture, _normalized, _digest = _benchmark_engine_posture(
             "anthropic/claude-fable-5"
         )
         for role in ("default", "worker", "verifier"):
-            assert posture["agents"][role]["params"]["max_tokens"] == 128_000
+            assert "max_tokens" not in (posture["agents"][role].get("params") or {})
         assert posture["model_timeout_secs"] == 1_572
 
-    def test_the_timeout_is_never_left_behind_when_the_cap_moves(self) -> None:
-        """The two ceilings ship together or the raise does nothing.
+    def test_an_uncapped_generation_still_has_a_ceiling_to_absorb_it(self) -> None:
+        """The half of the old pairing that survives, and why it survives.
 
-        Raising the cap alone relocates the cliff instead of removing it: the
-        step stops on the timeout rather than the cap, which looks the same in
-        the results and is just as much us stopping first. This is the
-        recorded history of this posture — 16384 -> 32000 -> 64000 each moved
-        one ceiling while the others held — so it gets a test, not a comment.
+        The rule was that the cap and the timeout ship together, because
+        raising one alone relocates the cliff rather than removing it — the
+        recorded history of this posture, where 16384 -> 32000 -> 64000 each
+        moved one ceiling while the others held.
+
+        Removing the cap outright is the end of that sequence, not another
+        step in it: the generation is now bounded by the model's own maximum.
+        But Fable is the model whose maximum is large enough to have needed a
+        bespoke silence ceiling in the first place, so that row must not be
+        swept away with the cap it was derived from.
         """
         for model in ("anthropic/claude-fable-5", "openrouter/anthropic/claude-fable-5"):
             posture, _normalized, _digest = _benchmark_engine_posture(model)
-            raised = posture["agents"]["worker"]["params"]["max_tokens"] > 64_000
-            assert raised, f"{model} should carry the raised cap"
             assert posture.get("model_timeout_secs") is not None, (
-                f"{model} raised its output cap without raising the silence "
-                "ceiling that has to absorb it"
+                f"{model} lost the silence ceiling that has to absorb a "
+                "generation now bounded only by the model's own maximum"
             )
 
-    def test_sonnet_is_untouched_and_its_registered_digest_holds(self) -> None:
-        """The approval covered Fable. Sonnet's arm must be bit-identical.
+    def test_sonnet_asks_for_no_cap_and_its_new_digest_is_registered(self) -> None:
+        """Sonnet's arm moved too, and that is the point of the change.
 
-        Its comparator stops at 64,000 — Claude Code landed steps on exactly
-        that number twice and still emitted the tool call — so parity says
-        Sonnet stays. `c8536200…` is registered in `bench/READINESS.md` and
-        defaulted by `preflight_effort.sh`, so moving it would silently
-        invalidate an already-published number.
+        It used to pin 64,000 — where Claude Code's steps were measured
+        stopping — against a model that can write 128,000. That was the
+        best-argued cap in the file and still a cap: a number the comparator
+        was never given, imposed on the seat that was being measured against
+        it. `6c7fc70c…` is registered in `bench/READINESS.md` 8.4.5 and
+        defaulted by `preflight_effort.sh`.
         """
         posture, _normalized, digest = _benchmark_engine_posture(
             "anthropic/claude-sonnet-5"
         )
-        assert posture["agents"]["worker"]["params"]["max_tokens"] == 64_000
+        assert "max_tokens" not in (posture["agents"]["worker"].get("params") or {})
         assert "model_timeout_secs" not in posture
-        assert digest.startswith("c8536200")
+        assert digest.startswith("6c7fc70c")
 
     def test_the_booking_route_is_not_a_model_property(self) -> None:
         """Direct and gateway reach the same model, so the ceilings match.
@@ -648,10 +659,10 @@ class TestFableCeilingSet:
         describes a configuration nobody registered.
         """
         assert _benchmark_engine_posture("anthropic/claude-fable-5")[2] == (
-            "642746e411685b8c4018b6772e4def9478f1e2231713f315e6ecc90ceb1f276f"
+            "2099a1a48c0080974429964e13e0eee39e1f8af378c45e309318f34e03390e9b"
         )
         assert _benchmark_engine_posture("openrouter/anthropic/claude-fable-5")[2] == (
-            "e505909221f2da7aa41d5f9ea3b79761b38fb29cf4157e51629f517f66cc97a5"
+            "b5755ccf6a8cebe050606ffb8611fcc291d8b501efabcf222bf4159022bdaccc"
         )
 
 
@@ -855,7 +866,7 @@ class TestWitnessArmEndToEnd:
         """
         worker = "openrouter/z-ai/glm-5.1"
         author = "openrouter/deepseek/deepseek-v4-pro"
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.setenv(_WITNESS_AUTHOR_ENV, author)
 
@@ -929,7 +940,7 @@ class TestWitnessArmEndToEnd:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The disabled tier is a field, not a log line — the point of #1007."""
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
         reason = (
@@ -1297,56 +1308,59 @@ class TestOutputCeilingParity:
             f"(16384) instead of their own budget."
         )
 
-    def test_posture_caps_every_bookable_model_at_its_own_ceiling(self) -> None:
-        """The cap matches the model's ceiling, or the gap is declared.
+    def test_no_role_of_any_bookable_model_asks_for_an_output_cap(self) -> None:
+        """The posture sends no `max_tokens`, for any role, on any model.
 
-        Two distinct failures live here and only one of them is a bug:
+        This replaces a check that a cap EQUALLED the catalog ceiling unless a
+        rationale excused the gap. Both of that check's outcomes are now
+        wrong to write: matching the ceiling is a copy of a number the engine
+        already reads from the authority itself, and sitting under it is the
+        handicap #2411 measured — an arm stopped where the work finishes,
+        scored as the other arm being better.
 
-        - Capping ABOVE the ceiling is always wrong. It is not a longer
-          answer, it is a request the provider rejects.
-        - Capping BELOW the ceiling is sometimes right — matching a
-          comparator that stops lower is the point of a head-to-head — but it
-          must be a decision someone recorded, not a literal that drifted out
-          of step with the catalog and still looks deliberate.
-
-        So a gap is legal exactly when `_SUB_CEILING_RATIONALE` explains it.
-        That is what turns "both numbers look intentional" from the hazard
-        this class was written about into a property the suite can check.
+        Absence is what asks for the model's maximum. `tuned_engine_config`
+        seeds `max_output_tokens` from the catalog entry and only an explicit
+        cap can lower it, so the strongest thing this suite can assert is that
+        no explicit cap is ever sent.
         """
         checked = 0
-        for model, ceiling in _seeded_output_ceilings().items():
-            slug = model.rsplit("/", 1)[-1]
-            if slug not in _BENCHMARKED_SLUGS:
+        for model in _seeded_output_ceilings():
+            if model.rsplit("/", 1)[-1] not in _BENCHMARKED_SLUGS:
                 # Not bookable, so it has no posture to be wrong about; see
                 # `_BENCHMARKED_SLUGS` for why the scope is deliberate.
                 continue
             posture, _, _ = _benchmark_engine_posture(model)
             for role, agent in posture["agents"].items():
-                params = agent.get("params")
-                if params is None:
-                    # `triage` keeps the engine default deliberately: it emits
-                    # a three-line classification, so the cap never binds.
-                    assert role == "triage", f"{role} unexpectedly has no cap"
-                    continue
-                cap = params["max_tokens"]
                 checked += 1
-                assert cap <= ceiling, (
-                    f"{model} role {role}: the posture asks for {cap} but the "
-                    f"model's ceiling is {ceiling}. Over-asking is refused by "
-                    "the provider on every step, not answered at length."
-                )
-                if cap == ceiling:
-                    continue
-                assert _SUB_CEILING_RATIONALE.get(slug, "").strip(), (
-                    f"{model} role {role}: the posture caps at {cap} while the "
-                    f"catalog seeds the model's ceiling at {ceiling}, and "
-                    "nothing says why. If the benchmark should stop lower "
-                    "than the model can write, record the reason in "
-                    "`_SUB_CEILING_RATIONALE`; if it should not, raise the "
-                    "posture. An undeclared gap is the benchmark capping "
-                    "itself away from the comparator by accident."
+                assert "max_tokens" not in (agent.get("params") or {}), (
+                    f"{model} role {role} pins an output cap. Every value it "
+                    "could hold is either the catalog's number restated or a "
+                    "ceiling the comparator does not run under — delete the "
+                    "key and the engine takes the model's own maximum (#2411)."
                 )
         assert checked, "no bookable model was checked — the loop is inert"
+
+    def test_no_role_of_any_bookable_model_is_handed_a_spend_cap(self) -> None:
+        """The dollar axis of the same rule.
+
+        An output cap and a per-trial budget are one ceiling in two units, and
+        the budget is the one that actually decided a match: in
+        ``5292a68cdabf`` all three of the capped seat's losses were the guard
+        firing at roughly a third of the task's 900s, each within a step or
+        four of done. Nothing in a frozen posture may reintroduce it under
+        another spelling.
+        """
+        banned = {"budget", "budget_usd", "max_tokens", "turn_budget_usd"}
+        for model in _seeded_output_ceilings():
+            if model.rsplit("/", 1)[-1] not in _BENCHMARKED_SLUGS:
+                continue
+            posture, _, _ = _benchmark_engine_posture(model)
+            offenders = sorted(banned & set(posture)) + sorted(
+                f"agents.{role}.{key}"
+                for role, agent in posture["agents"].items()
+                for key in banned & set(agent)
+            )
+            assert not offenders, f"{model}: posture declares {offenders}"
 
 
 class TestLauncherVocabularyParity:

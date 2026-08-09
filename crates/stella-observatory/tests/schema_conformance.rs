@@ -118,10 +118,16 @@ const ROUTES: &[(&str, Option<&str>)] = &[
         "/api/session-turn-diff?id=ses-1700000000000-424242&turn=1",
         Some("/files/0/hunks/0/lines/0/op"),
     ),
-    // Empty in a store-only fixture: the lifecycle reads context.db, which
-    // this workspace deliberately does not build. Its own real-schema gate is
-    // `context_lifecycle_returns_the_promotion_lineage` below (#1871).
-    ("/api/context-lifecycle", None),
+    // The context.db half is empty in a store-only fixture — this workspace
+    // deliberately does not build that file, and its real-schema gate is
+    // `context_lifecycle_returns_the_promotion_lineage` below (#1871). The
+    // pointer covers the half that reads `store.db`: the `parse_error` column
+    // added in schema v23 (#2175), which is exactly the kind of new column
+    // this suite exists to prove resolvable.
+    (
+        "/api/context-lifecycle",
+        Some("/unreadable_reflections/0/execution_id"),
+    ),
 ];
 
 /// One tool call's full event round-trip — the announcement and its result.
@@ -390,9 +396,22 @@ fn real_store_workspace() -> tempfile::TempDir {
 
     // A last, unfinished execution: the observatory must render a run that
     // is still in flight (outcome NULL, finished_at NULL) without failing.
-    store
+    let unfinished = store
         .begin_execution("goal", "make tests pass", "local", "llama")
         .expect("begin unfinished");
+
+    // #2175: a turn whose reflection response the lesson parser could not
+    // read. Seeded through the real writer so this suite proves the
+    // `parse_error` column the lifecycle route selects — added in store schema
+    // v23 — is resolvable against a store built by the migration path. It is a
+    // different execution from the self-reviewed one above on purpose: the two
+    // producers write the same row and must not clobber each other.
+    store
+        .record_reflection_parse_failure(
+            unfinished,
+            "Let me think about this turn step by step. First,",
+        )
+        .expect("reflection parse failure");
     dir
 }
 
@@ -575,6 +594,62 @@ fn every_route_survives_the_real_store_schema() {
             body.pointer(pointer).is_some(),
             "{route} lost its seeded data at {pointer} — a column this crate reads \
              was very likely renamed or dropped in stella-store. Body: {body}"
+        );
+    }
+}
+
+/// #2443, against the real schema: the ratings feed counts what the model
+/// graded, and the Improve tab's two panels agree about the same turn.
+///
+/// `crates/stella-observatory/src/db.rs`'s `HAS_SELF_REVIEW` is a SQL mirror of
+/// `stella_store::SelfReviewRow::is_empty` — mirrored because this crate must
+/// not link `stella-store` in production. This suite is what keeps the mirror
+/// honest: the store below is built through the real migration path by the real
+/// writers, so a column renamed underneath the predicate fails here.
+///
+/// The ids are read out of the payloads rather than assumed, which is also the
+/// product statement: the turn the lifecycle route names as unreadable is
+/// exactly the one the ratings feed must not present as an unrated reflection.
+#[test]
+fn the_ratings_feed_counts_only_graded_turns_against_the_real_schema() {
+    let workspace = real_store_workspace();
+    let root: &Path = workspace.path();
+
+    let lifecycle: serde_json::Value =
+        serde_json::from_slice(&respond(root, "/api/context-lifecycle").body).expect("json");
+    let unreadable: Vec<i64> = lifecycle["unreadable_reflections"]
+        .as_array()
+        .expect("unreadable_reflections")
+        .iter()
+        .map(|r| r["execution_id"].as_i64().expect("execution_id"))
+        .collect();
+    assert!(
+        !unreadable.is_empty(),
+        "the fixture seeds a parse failure through the real writer: {lifecycle}"
+    );
+
+    let reflections: serde_json::Value =
+        serde_json::from_slice(&respond(root, "/api/reflections").body).expect("json");
+    let ratings = reflections["ratings"].as_array().expect("ratings");
+    assert!(
+        !ratings.is_empty(),
+        "and a real self-review, which must still be listed: {reflections}"
+    );
+    for rating in ratings {
+        let id = rating["execution_id"].as_i64().expect("execution_id");
+        assert!(
+            !unreadable.contains(&id),
+            "execution {id} reflected unreadably and was never graded, so it is \
+             not a rating: {rating}"
+        );
+        let prose = |key: &str| rating[key].as_str().is_some_and(|s| !s.trim().is_empty());
+        assert!(
+            !rating["self_rating"].is_null()
+                || !rating["delivered"].is_null()
+                || prose("what_went_well")
+                || prose("what_to_improve")
+                || prose("critique"),
+            "a listed rating carries an assessment: {rating}"
         );
     }
 }

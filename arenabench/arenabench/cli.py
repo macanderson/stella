@@ -323,7 +323,6 @@ def _cmd_template(args: argparse.Namespace) -> int:
                         "api": "openrouter",
                         "model": "z-ai/glm-5.2",
                         "effort": "medium",
-                        "max_tokens": 128000,
                         "roles": {
                             "judge": {"model": "openai/gpt-5.5", "effort": "xhigh"},
                             "triage": {"model": "z-ai/glm-4.7-flash", "effort": "low"},

@@ -197,9 +197,24 @@ raw trials, and disclosed comparator below.
 - Container utilities: the adapter uploads only the frozen Stella binary; it
   never provisions host `rg`, `fd`, or other convenience tools, so each trial
   retains the canonical task image's utility set
-- Per-trial target budget: `$0.17`, enforced after each completed model call;
-  the call that crosses the boundary can overshoot, so this is not called a
-  strict billing ceiling
+- Per-trial spend cap: **none**. A trial ends because the work finished or the
+  task's own wall clock expired, and for no other reason. The protocol
+  previously enforced a `$0.17` target after each completed model call; that
+  was withdrawn (#2411) after match `5292a68cdabf` showed what such a ceiling
+  measures. Three of that run's losses were the budget guard firing rather than
+  the agent failing — each at roughly a third of the task's 900s allowance and
+  within a step or four of done, including a `sqlite-with-gcov` trial that had
+  already proved its instrumented build decoded real coverage counters and was
+  denied on the step that would have put the binary on `PATH`. A cap stops an
+  agent where the work finishes, so the score reports our ceiling as its
+  capability. Spend is bounded at the provider key instead, where exhaustion
+  fails a run visibly rather than truncating a trial into a loss.
+- Per-trial spend **forecast**: `$1.20`, declared in the pre-registered intent
+  and enforced by nothing. It exists so a run states its expected cost in
+  advance and the analyzer can check the published claim against it. Derived
+  from measurement: the four `5292a68cdabf` trials that completed under the old
+  cap spent $0.6554–$0.9659 (mean $0.85), and the other eight are censored at
+  $1.00, so the true mean is above it
 - Reflection setting: `STELLA_DISABLE_REFLECTION=1`. This opt-out disables only
   Stella's post-answer headless memory-reflection call. Terminal-Bench trials
   are isolated and ephemeral, so that call cannot improve a later trial; the
@@ -354,17 +369,37 @@ operational ceiling.
 
 The conservative historical bound is frozen as `H_safe=$15.00`: it exceeds the
 known `$0.2429614978` plus nine canceled DeepSeek trials bounded by one completed
-`$0.17` call and one maximum-context `$0.9123` in-flight call apiece. The
-dedicated key therefore has one no-reset hard limit of `$180.00`, which is below
-`$200.00 - H_safe` and leaves at least `$5.00` further safety under the all-in
-authorization. An unknown cancellation charge is not silently treated as zero.
+call and one maximum-context `$0.9123` in-flight call apiece. An unknown
+cancellation charge is not silently treated as zero.
 
-| Stage | Planned model spend at the nominal $0.17 target |
+The dedicated key's no-reset hard limit was `$180.00`, chosen to sit below
+`$200.00 - H_safe`. It is now `$600.00`, for the reason given under the spend
+table below: with no per-trial cap the confirmatory stage projects `$534.00`,
+and the old figure only ever fit because trials were being cut short. It is the
+limit the key must be **provisioned** to; nothing about it authorizes spending,
+and the launcher gates on the key's live remaining credit rather than on this
+number.
+
+| Stage | Planned model spend at the $1.20 per-trial forecast |
 |---|---:|
-| One synthetic readiness attempt | $0.17 |
-| 60-trial calibration (3 models x 10 tasks x 2 x $0.17) | $10.20 |
-| Fixed GLM-5.1 primary (89 tasks x 5 x $0.17) | $75.65 |
-| **Executable v6 nominal new-call plan** | **$86.02** |
+| One synthetic readiness attempt | $1.20 |
+| 60-trial calibration (3 models x 10 tasks x 2 x $1.20) | $72.00 |
+| Fixed GLM-5.1 primary (89 tasks x 5 x $1.20) | $534.00 |
+| **Nominal new-call plan** | **$607.20** |
+
+This table is the clearest statement of what the withdrawn cap was actually
+doing. The same three stages planned to `$86.02` at `$0.17` — and that
+arithmetic was true only because trials were being stopped part-way through the
+work. The plan did not get seven times more expensive; it is the same plan,
+priced for the first time at what finishing the tasks costs.
+
+Two consequences follow, and both are decisions rather than details. The
+dedicated key's hard limit moves from `$180.00` to `$600.00`, which is a
+**provisioning requirement and not an authorization** — on 2026-08-08 the
+account behind it held `$35.72` of `$1,110.00`, so no confirmatory stage is
+runnable until it is funded. And the comparator arm is not re-run to produce
+these numbers: Claude Code is the bar, established once and quoted, so every
+trial in the plan above belongs to the arm actually under test.
 
 A possible selected-winner run would add up to `$75.65`, but v6 deliberately
 provides no executable contract for it. It is not part of this plan and cannot

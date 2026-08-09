@@ -404,6 +404,23 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     if let Some(demand) = engine.pipeline_verifier_evidence_demand {
         config.verifier_evidence_demand = demand.is_on();
     }
+    // #2381. The returned problems are deliberately dropped HERE and nowhere
+    // else: `Roster::apply` records every rejection on the roster itself, so
+    // `Pipeline::run`'s pre-spend refusal sees them whichever host built the
+    // config. Reporting them a second time from this pure tuning function
+    // would either duplicate the message or — worse — tempt a surface into
+    // handling them differently from the engine's refusal.
+    if let Some(rows) = &engine.responsibilities {
+        let _ = config.roster.apply(rows.iter().map(|(name, spec)| {
+            (
+                name.clone(),
+                stella_pipeline::AssignmentOverride {
+                    enabled: spec.enabled,
+                    agent: spec.agent.as_deref().map(stella_pipeline::AgentId::new),
+                },
+            )
+        }));
+    }
     config
 }
 
@@ -715,6 +732,21 @@ pub(crate) fn resolve_engine_wiring(
 
     let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
     let verifier_tuning = tuning_for(&engine, EngineAgentKind::Verifier);
+    // The worker row, which the pipeline's PLAN stage consumes (#2416). Plan
+    // is pinned to the worker's model above; this is the other half of "plan
+    // rides the worker" — the request shaping, and above all `prompt`, which
+    // is the one field `pipeline_engine_config_for` structurally cannot carry
+    // (an `EngineConfig` has no system-message seat, so `agents.worker.prompt`
+    // reached worker turns and stopped at the planner).
+    let worker_tuning = tuning_for(&engine, EngineAgentKind::Worker);
+    wiring.role_overrides.worker = stella_pipeline::RoleCallOverrides {
+        prompt: worker_tuning.prompt,
+        effort: worker_tuning.effort,
+        reasoning: worker_tuning.reasoning,
+        temperature: worker_tuning.temperature,
+        max_output_tokens: worker_tuning.max_output_tokens,
+        params: worker_tuning.params,
+    };
     wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
         prompt: triage_tuning.prompt,
         effort: triage_tuning.effort,
@@ -778,6 +810,10 @@ pub(crate) fn resolve_engine_wiring(
         };
         clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
         clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
+        // `None` resolves to the ACTUAL (possibly overridden) worker model,
+        // which is what the plan role is pinned to — so a non-reasoning worker
+        // model clamps the plan call's effort exactly as it clamps its own.
+        clamp(&mut wiring.role_overrides.worker, None);
     }
 
     let role_specs = [
@@ -1054,6 +1090,18 @@ pub(crate) fn resolve_cross_family_verifier(
     Some((verifier, decision.model_ref.provider))
 }
 
+/// Where post-turn reflection dispatches, and on what posture.
+///
+/// [`Self::provider`] is `None` in the one case that is still a route: the
+/// triage pin resolved to the model the worker adapter already serves. The
+/// call rides that adapter, and the posture below still applies.
+pub(crate) struct ReflectionRoute {
+    /// The dedicated adapter for the triage-pinned model, when one was built.
+    pub(crate) provider: Option<(ModelRef, Box<dyn Provider>)>,
+    /// The triage agent's configured thinking posture.
+    pub(crate) posture: crate::memory::ReflectionPosture,
+}
+
 /// Resolve where post-turn reflection dispatches (#1847): the configured
 /// triage model when it is routable, else `None` — ride the worker.
 ///
@@ -1069,14 +1117,24 @@ pub(crate) fn resolve_cross_family_verifier(
 /// `pin_role`: no engine settings, no triage spec, an uncredentialed
 /// provider, or an adapter that will not build all yield `None`, and the
 /// caller keeps dispatching on the worker exactly as every reflection call
-/// always has. A triage spec that resolves to the session default model also
-/// yields `None` — the worker adapter already serves that exact model, and a
-/// second instance would buy only a second connection pool (the same "no
-/// duplicate adapter" rule the wiring's `pin_role` applies).
+/// always has. A triage spec that resolves to the session default model is
+/// the one near-miss that is still a route: [`ReflectionRoute::provider`] is
+/// `None` because the worker adapter already serves that exact model and a
+/// second instance would buy only a second connection pool (the "no duplicate
+/// adapter" rule the wiring's `pin_role` applies) — but the pin still chose
+/// that model, so its posture still rides out.
+///
+/// Returns the triage agent's **posture** alongside the adapter, and returns
+/// it even in the same-model case where no adapter is needed. Reflection runs
+/// on the model this pin selected, so `agents.triage.reasoning` /
+/// `agents.triage.effort` are the settings that govern the call — before
+/// #2174 they chose the model and then could not reach it, so an operator who
+/// switched thinking off still paid for a reasoning stream billed against
+/// reflection's output cap.
 pub(crate) fn reflection_route(
     cfg: &Config,
     configured: &[crate::config::ConfiguredProvider],
-) -> Option<(ModelRef, Box<dyn Provider>)> {
+) -> Option<ReflectionRoute> {
     let engine = cfg.engine_settings.as_ref()?;
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
     let spec = crate::engine_config::model_spec_for(
@@ -1093,8 +1151,23 @@ pub(crate) fn reflection_route(
         spec.model
     };
     let routed = ModelRef::new(entry.config.id, slug.clone());
+    // The triage agent's own tuning, resolved through the same helper the
+    // worker path uses so the auto modes apply identically. It rides out even
+    // when no adapter is built below, because the posture is a fact about the
+    // pin, not about whether the pin needed a second connection pool.
+    let tuning = crate::engine_config::tuning_for(engine, crate::settings::EngineAgentKind::Triage);
+    let posture = crate::memory::ReflectionPosture {
+        reasoning: tuning.reasoning,
+        effort: tuning.effort,
+    };
     if routed == ModelRef::new(cfg.provider.id, cfg.model_id.clone()) {
-        return None;
+        // Same instance the primary resolver already serves: no new adapter
+        // (the "no duplicate adapter" rule `pin_role` applies), but this is
+        // still the model the triage pin chose, so its posture still governs.
+        return Some(ReflectionRoute {
+            provider: None,
+            posture,
+        });
     }
     let provider = build_provider_parts(
         &entry.config,
@@ -1108,5 +1181,8 @@ pub(crate) fn reflection_route(
         stella_model::CacheTtl::default(),
     )
     .ok()?;
-    Some((routed, provider))
+    Some(ReflectionRoute {
+        provider: Some((routed, provider)),
+        posture,
+    })
 }

@@ -545,6 +545,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "errored_commands": {
+          "default": 0,
+          "description": "Command chains this round that reported an error while exiting `0`\n(#2125) — the shape a cited measurement can silently stand on.\n\nUnlike [`Self::verify_done_flip`] and [`Self::no_test_surface`] this\none never changes a verdict: an errored probe makes a cited quantity\n*unsubstantiated*, not\n*disproven*, so it informs the verifier's opinion and withholds\nnothing. It is here because the question it answers — how often a run\ncites a number that stood on a broken chain — is one only aggregate\ntraces can answer, and aggregate traces read this snapshot. One-way:\n`0` is \"the closed signature vocabulary matched nothing\", never \"this\nround's commands were clean\".",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "file_change_events": {
           "description": "Mutating file touches the recorder observed.",
           "format": "uint32",
@@ -576,6 +583,11 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "no_test_surface": {
+          "default": false,
+          "description": "Positive claim that this round had NO tracked test command at all\n(#2129) — neither a configured `--test-command` nor an authored\nwitness — so \"no flip\" is a demand the task structurally cannot meet.\n\nOn the wire for the same reason as [`Self::verify_done_flip`]: it turns\na fallback FAIL into an upward abstention, and a reader auditing a pass\nthat rests on nothing deterministic needs to see that the demand was\nunmeetable rather than unmet. `false` on snapshots recorded before\nthis existed, which is the conservative reading — the dispensation is\nnever assumed.",
+          "type": "boolean"
         },
         "oracle_trace": {
           "description": "The oracle's observations in order (baseline, candidate runs, the\npre-submit confirmation). Infra runs are absent by construction.",
@@ -626,6 +638,11 @@
             "boolean",
             "null"
           ]
+        },
+        "verify_done_flip": {
+          "default": false,
+          "description": "The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`\nthis round (#2129): a deterministic fail-on-baseline / pass-on-new\nshadow observation the pipeline's flip oracle cannot make, because it\ntracks only its own command.\n\nOn the wire because it **changes the verdict** and nothing else here\nrecords which channel carried it: it rescues the heuristic fallback\nfrom a verifier outage and counts as corroboration, so a reader of a\nstored verdict otherwise sees a pass whose reasoning cites\n`verify_done` with no structured field to count. `false` covers both\n\"no confirmation was observed\" and \"recorded before this field\nexisted\"; like every other one-way channel here it is never a claim\nthat the worker's witness failed.",
+          "type": "boolean"
         },
         "witness_intact": {
           "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
@@ -1172,6 +1189,24 @@
           "required": [
             "kind",
             "candidate",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "This turn's task class came from the deterministic keyword floor\n(`triage::resolve_task_class` with no model answer), because the\ntriage call never produced one.\n\nEmitted for the same reason [`ProofStep::VerdictDegraded`] is, one\nstage earlier. The fallback itself is correct by design and\nload-bearing — triage must never fail a run — but it became the\n*common* case while staying completely invisible: across three\nTerminal-Bench arm runs, 27 of 34 triage calls burned the full 10s\nlatency ceiling and returned nothing, about four and a half minutes of\nwall clock purchasing zero bits, with nothing in the summary layer\nsaying so (#2414). Every downstream decision that reads the class —\nwhether to plan, whether a witness is warranted, whether research\nquestions are even asked — then looks like a decision and is a default.\n\nA bench conclusion must not be drawn from a triage that never ran, and\nthis is the record that makes that checkable.",
+          "properties": {
+            "kind": {
+              "const": "triage_degraded",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The stated reason no model classification was available: the call\ntimed out at its ceiling, failed, could not be routed, or answered\noff-protocol.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
             "reason"
           ],
           "type": "object"
@@ -2298,6 +2333,16 @@
     {
       "description": "Emitted after every provider/media call that spends money. The TUI HUD\nrenders spend live from this stream; nothing user-visible about spend\nis derived from state that isn't also in this event.",
       "properties": {
+        "deadline_remaining_ms": {
+          "default": null,
+          "description": "Wall clock left before the task deadline at this tick — the third\naxis, and the only one a journal could not otherwise state (#2240).\n\n`None` means **no deadline was armed**, which is exactly the\ndistinction that used to require reading argv: a trial killed by its\nharness emitted dozens of these against a dollar cap it never\napproached, while the 900s wall clock that actually stopped it\nappeared nowhere in the journal. `Some(0)` is the opposite fact — a\ndeadline is armed and has already passed.\n\nMilliseconds rather than a `Duration` because this is a wire type\n(invariant 4): a whole-millisecond integer round-trips through JSON\nbyte-for-byte, where a float of seconds would not.\n\n`serde(default)` — absent on every journal written before this\nfield existed, where it reads as \"unarmed\". That is the honest\ndecode: those journals genuinely could not say otherwise.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "limit_usd": {
           "format": "double",
           "type": [

@@ -119,8 +119,15 @@ pub const UNWITNESSED_BASELINE: usize = 3;
 pub static CAPABILITIES: &[Capability] = &[
     Capability {
         id: "turn.run",
-        engine_home: "stella-core driver: one bounded agent turn (run_turn as a loop over run_step)",
-        engine_entries: &["run_turn", "run_turn_with_sender", "run_step", "new_turn"],
+        engine_home: "stella-core driver: one bounded agent turn (drive as a loop over run_step; \
+                      run_turn is drive over an adopted transcript)",
+        engine_entries: &[
+            "run_turn",
+            "run_turn_with_sender",
+            "drive",
+            "run_step",
+            "new_turn",
+        ],
         cli: SurfacePosture::Shipped {
             mechanism: "`stella run` / deck turns via agent::run_turn and the pipeline drivers",
             witness: "non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review",
@@ -722,6 +729,40 @@ mod tests {
         }
     }
 
+    /// The engine sources both sweeps read: the driver and goal modules, plus
+    /// every driver **submodule**.
+    ///
+    /// `Engine`'s inherent methods are spread across `driver/*.rs` — the turn
+    /// loop itself is `driver/drive.rs` — and a fixed list of `include_str!`
+    /// paths stops covering the tree the moment a submodule is added. That was
+    /// not hypothetical: `drive_restored_turn` was a public `Engine` method
+    /// living in `driver/resume.rs`, claimed by no row, and invisible to this
+    /// guard for its entire life (#2452). Read from `CARGO_MANIFEST_DIR` at
+    /// test time so a new sibling is swept the day it lands rather than the day
+    /// someone remembers to add a line here.
+    ///
+    /// Test sources are excluded: a helper inside `#[cfg(test)] mod tests` is
+    /// not an engine entry point, and sweeping them would demand matrix rows
+    /// for test scaffolding.
+    fn engine_sources() -> Vec<String> {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../stella-core/src");
+        let read = |path: std::path::PathBuf| {
+            std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+        };
+        let mut sources = vec![read(src.join("driver.rs")), read(src.join("goal.rs"))];
+        let mut submodules: Vec<_> = std::fs::read_dir(src.join("driver"))
+            .expect("stella-core/src/driver/ — did the driver sources move?")
+            .map(|entry| entry.expect("a readable driver/ entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .filter(|path| path.file_stem().is_some_and(|stem| stem != "tests"))
+            .collect();
+        // Sorted so a failure names the same file on every machine; `read_dir`
+        // yields in filesystem order, which differs across them.
+        submodules.sort();
+        sources.extend(submodules.into_iter().map(read));
+        sources
+    }
+
     /// Engine-side completeness: every public `Engine` entry point in the
     /// driver and goal modules must be claimed by a row's `engine_entries`
     /// or by [`COMPOSITION_SEAMS`]. A new engine capability added without a
@@ -732,12 +773,9 @@ mod tests {
     /// `pub(crate)` internals and module-level free functions.
     #[test]
     fn every_public_engine_entry_point_is_claimed() {
-        let sources = [
-            include_str!("../../stella-core/src/driver.rs"),
-            include_str!("../../stella-core/src/goal.rs"),
-        ];
+        let sources = engine_sources();
         let mut swept: Vec<&str> = Vec::new();
-        for source in sources {
+        for source in &sources {
             for line in source.lines() {
                 let Some(rest) = line
                     .strip_prefix("    pub fn ")
@@ -775,10 +813,7 @@ mod tests {
     /// row pointing at nothing.
     #[test]
     fn every_claimed_engine_entry_exists() {
-        let sources = [
-            include_str!("../../stella-core/src/driver.rs"),
-            include_str!("../../stella-core/src/goal.rs"),
-        ];
+        let sources = engine_sources();
         for row in CAPABILITIES {
             for entry in row.engine_entries {
                 let plain = format!("pub fn {entry}");

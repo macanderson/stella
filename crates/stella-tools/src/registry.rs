@@ -202,6 +202,9 @@ pub struct ToolRegistry {
     /// construction so no capture can race a reconfiguration. See
     /// [`RegistryOptions::probe_ignore_policy`].
     probe_ignore_policy: crate::shell_touch::IgnorePolicy,
+    /// The turn-scoped shadow-run memo shared with the registered
+    /// `verify_done`, armed and cleared by the turn bracket in `turn_probe`.
+    shadow_memo: crate::verify::ShadowMemoHandle,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -420,6 +423,7 @@ impl ToolRegistry {
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
         let sub_agent_dispatcher: crate::subagent::DispatcherSlot = Arc::default();
         let sub_agent_spend: stella_core::subagent::SubAgentSpendLedger = Arc::default();
+        let shadow_memo: crate::verify::ShadowMemoHandle = Arc::default();
         // One read-state ledger per registry (#331): `read_file` and
         // `read_symbol` (which reads through the same instance) record what
         // the model saw; `edit_file` attributes match failures against it and
@@ -468,6 +472,8 @@ impl ToolRegistry {
             entries.extend(process_tools::builtins(
                 task_board.clone(),
                 spawn_queue.clone(),
+                shadow_memo.clone(),
+                options.diagnostics.clone(),
             ));
             // The web family registers by default, like every other built-in.
             // A fetched page is untrusted input and an egress channel, which is
@@ -577,6 +583,7 @@ impl ToolRegistry {
             mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
             probe_ignore_policy: options.effective_probe_ignore_policy(process_free),
+            shadow_memo,
         }
     }
 

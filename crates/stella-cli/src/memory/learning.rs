@@ -14,12 +14,17 @@ use stella_core::skills::appraisal::EvalEvidence;
 use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
-use stella_protocol::{CompletionMessage, Provider};
+use stella_protocol::Provider;
 
 use super::{
-    LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn,
+    LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
     skill_paths_on_disk,
 };
+
+/// Where a lesson's `trigger` participates in retrieval (#2459), and the
+/// encoding that keeps [`SessionMemory::partition_known`]'s restatement band
+/// comparing exactly what it compared before.
+mod applicability;
 
 /// Spec §8 behavior-compatibility tests, written against the pre-migration
 /// loop. A child module rather than a sibling so it can reach
@@ -45,8 +50,8 @@ impl SessionMemory {
     /// in whichever output format it speaks; the report distinguishes a genuine
     /// model-call failure from the common, correct "nothing worth recording."
     ///
-    /// `succeeded` controls the reflection prompt template (Proposal 1):
-    /// a failed turn gets a failure-analysis prompt that asks the model to
+    /// `evidence.succeeded` controls the reflection prompt template (Proposal
+    /// 1): a failed turn gets a failure-analysis prompt that asks the model to
     /// identify the root cause — the highest-value learning signal in the
     /// system. A succeeded turn gets the conventional "what worked?" prompt.
     ///
@@ -59,19 +64,19 @@ impl SessionMemory {
         &mut self,
         provider: &dyn Provider,
         model_hint: &str,
-        transcript: &[CompletionMessage],
+        evidence: TurnEvidence<'_>,
         quiet: bool,
-        succeeded: bool,
         budget_limit: Option<f64>,
+        posture: crate::memory::ReflectionPosture,
     ) -> ReflectionReport {
         let reflected = match reflect_on_turn(
             provider,
             model_hint,
             &self.workspace_root,
-            transcript,
+            evidence,
             &self.domains.names(),
-            succeeded,
             budget_limit,
+            posture,
         )
         .await
         {
@@ -118,6 +123,17 @@ impl SessionMemory {
         let lessons = match parsed {
             crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
             crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
+                // Durably, not just to stderr (#2175). The reflection execution
+                // itself closes as `outcome = 'completed'` — the model call DID
+                // complete; only the parse failed — so without this row there
+                // is no artifact anywhere saying the learning loop lost this
+                // turn, and once the scrollback is gone a starved lifecycle and
+                // a workspace that has never learned anything are the same
+                // picture. Best-effort like every store write on this path.
+                if let (Some(store), Some(execution_id)) = (turn_store.as_ref(), self.execution_id)
+                {
+                    let _ = store.record_reflection_parse_failure(execution_id, &excerpt);
+                }
                 return ReflectionReport {
                     recorded: 0,
                     model_error: Some(format!(
@@ -204,12 +220,30 @@ impl SessionMemory {
                 memories: novel
                     .iter()
                     .map(|l| {
-                        MemoryInput::reflection(&l.lesson, l.domains.iter().cloned())
-                            .with_recall_tier(l.kind.recall_tier())
-                            .with_anchors(crate::memory::anchors::resolve_anchors(
+                        // The lesson AND its trigger (#2459). `content` is what
+                        // `ContextStore::upsert` hashes to key a vector, so this
+                        // is the only string in a memory that recall can score —
+                        // and the trigger is the half of a lesson written in the
+                        // register a goal is written in. See
+                        // `applicability::recall_text` for why folding beats a
+                        // separate scored field or a post-retrieval filter, and
+                        // for why the restatement band above is unaffected.
+                        MemoryInput::reflection(
+                            applicability::recall_text(&l.lesson, &l.trigger),
+                            l.domains.iter().cloned(),
+                        )
+                        .with_recall_tier(l.kind.recall_tier())
+                        // Anchors resolve against the lesson alone: a trigger
+                        // names the *situation* a lesson applies in, not the
+                        // files it is about, so letting it anchor would claim
+                        // `verify.rs` is the subject of every lesson whose
+                        // condition merely mentions it.
+                        .with_anchors(
+                            crate::memory::anchors::resolve_anchors(
                                 &self.workspace_root,
                                 &l.lesson,
-                            ))
+                            ),
+                        )
                     })
                     .collect(),
                 ..Default::default()
@@ -360,9 +394,12 @@ impl SessionMemory {
     /// it here was what starved the skill and rule miners (#2358): a lesson
     /// that never reaches `reflections.jsonl` never becomes an observation and
     /// can never contribute an occurrence. A within-batch repeat is different —
-    /// one reflection call returns up to three lessons and routinely says the
+    /// one reflection call returns several lessons and routinely says the
     /// same thing twice, which is the model stuttering, not the codebase
-    /// recurring — so it lands in neither half.
+    /// recurring — so it lands in neither half. The stutter matters more since
+    /// the per-turn cap rose to `MAX_LESSONS_PER_TURN`: a wider allowance is
+    /// exactly a wider opportunity to repeat oneself, and this split is what
+    /// keeps that from reaching the store.
     ///
     /// Restatement matching is fuzzy by construction (`SIMILARITY_THRESHOLD`
     /// over token sets, the same predicate [`stella_store::is_suppressed`]
@@ -378,7 +415,20 @@ impl SessionMemory {
         let known: Vec<String> = match self.store.memory_nodes() {
             // Compare against the memory's own text, which is what a later
             // recall would inject — the display label is truncated.
-            Ok(nodes) => nodes.into_iter().map(|n| n.content).collect(),
+            //
+            // Bodies only, on both sides: since #2459 a stored memory's content
+            // also carries the lesson's trigger, so that it reaches the vector
+            // recall scores on. Comparing a bare candidate against that composed
+            // text would grow the union on one side alone and read every
+            // paraphrase as novel; comparing composed to composed would let
+            // trigger verbosity decide a question about facts (worked through in
+            // `applicability`). `lesson_body` is `recall_text`'s exact inverse,
+            // so the strings below are byte-for-byte the ones this band was
+            // tuned on in #2358 — the reason no re-measurement is owed.
+            Ok(nodes) => nodes
+                .into_iter()
+                .map(|n| applicability::lesson_body(&n.content).to_string())
+                .collect(),
             // A store we cannot read is not evidence that nothing is stored, so
             // keep the lessons rather than risk dropping the first ones a fresh
             // workspace ever learns.

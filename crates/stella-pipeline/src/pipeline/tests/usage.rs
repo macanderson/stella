@@ -64,16 +64,38 @@ impl Provider for SlowProvider {
     }
 }
 
+/// A resolver that routes nothing, so every responsibility comes back
+/// [`Assigned::Unresolvable`] — a missing credential or an unknown model slug,
+/// as seen from the call site.
+struct NoProviderResolver;
+
+impl ProviderResolver for NoProviderResolver {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        None
+    }
+}
+
 async fn run_triage_only(
     provider: &dyn Provider,
     config: PipelineConfig,
     budget: &mut BudgetGuard,
 ) -> (
-    Result<TaskAssessment, PipelineBudgetAbort>,
+    Result<TaskAssessment, PipelineStageAbort>,
     f64,
     Vec<AgentEvent>,
 ) {
-    let resolver = AnyProvider(provider);
+    run_triage_with_resolver(&AnyProvider(provider), config, budget).await
+}
+
+async fn run_triage_with_resolver(
+    resolver: &dyn ProviderResolver,
+    config: PipelineConfig,
+    budget: &mut BudgetGuard,
+) -> (
+    Result<TaskAssessment, PipelineStageAbort>,
+    f64,
+    Vec<AgentEvent>,
+) {
     let tools = EmptyTools;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
@@ -86,7 +108,7 @@ async fn run_triage_only(
     let pipeline = Pipeline::new(
         PipelinePorts {
             router: &router,
-            providers: &resolver,
+            providers: resolver,
             tools: &tools,
             recall: &recall,
             repo: &repo,
@@ -462,7 +484,7 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         },
         tx,
         PipelineConfig {
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -479,5 +501,158 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         // conflated them here. Two `worker` steps: the tool-dispatching call
         // and the completion after its result.
         ["triage", "worker", "worker", "verdict"]
+    );
+}
+
+/// Every [`ProofStep::TriageDegraded`] reason in a stream, in order.
+fn triage_degraded_reasons(events: &[AgentEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::TriageDegraded { reason },
+            } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// #2414's witness. A triage call that burns its whole ceiling and returns
+/// nothing is *correctly* handled — the class falls to the deterministic
+/// keyword floor and the run proceeds — and was completely invisible: 27 of
+/// 34 triage calls across three Terminal-Bench arm runs took this path,
+/// about four and a half minutes of wall clock purchasing zero bits, with
+/// nothing in the summary layer saying so. A bench conclusion must not be
+/// drawable from a triage that never ran.
+///
+/// The record names the ceiling, because "triage timed out" and "triage timed
+/// out at 30s" are different facts to whoever is deciding whether the ceiling
+/// is the problem.
+#[tokio::test]
+async fn a_timed_out_triage_records_that_the_class_came_from_the_floor() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let config = PipelineConfig {
+        triage_latency_ceiling: Duration::from_millis(1),
+        ..PipelineConfig::default()
+    };
+    let (result, _, events) = run_triage_only(&SlowProvider, config, &mut budget).await;
+
+    // The fallback itself is unchanged and load-bearing: never fail a run on
+    // triage.
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "exactly one record per degraded triage");
+    assert!(
+        reasons[0].contains("timed out") && reasons[0].contains("1ms"),
+        "the record must name the ceiling it hit: {reasons:?}"
+    );
+    // Both channels, like `unproven`/`unverifiable`: the prose account a
+    // human reads and the structured record a census counts.
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. } if message.contains("deterministic keyword floor")
+        )),
+        "the degradation is also stated in prose: {events:?}"
+    );
+}
+
+/// A provider error is the same outcome — no class from a model — but a
+/// different fact about the run, and it costs no dead air. Naming them apart
+/// is what makes a census of these records mean anything.
+#[tokio::test]
+async fn a_failed_triage_call_records_a_provider_failure_not_a_timeout() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, _, events) =
+        run_triage_only(&ErrorProvider, PipelineConfig::default(), &mut budget).await;
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1);
+    assert!(
+        reasons[0].contains("failed at the provider") && !reasons[0].contains("timed out"),
+        "{reasons:?}"
+    );
+}
+
+/// A response that arrived and said nothing the protocol recognizes lands on
+/// the same floor, so it is the same record — and exactly one, not one for
+/// the call plus one for the parse.
+#[tokio::test]
+async fn an_off_protocol_triage_response_records_the_same_degradation() {
+    let provider = ScriptedProvider::new(vec![text_result("Sure — happy to help.")]);
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, _, events) =
+        run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("did not follow the classification protocol"));
+}
+
+/// The silence that matters: a triage that answered on protocol records
+/// nothing at all. A degradation marker on a healthy turn would make the
+/// census useless in the other direction.
+#[tokio::test]
+async fn a_triage_that_answers_records_no_degradation() {
+    let provider = ScriptedProvider::new(vec![text_result("lookup")]);
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (_result, _, events) =
+        run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
+    assert!(triage_degraded_reasons(&events).is_empty(), "{events:?}");
+}
+
+/// The fourth degradation path, and the one with no paid call behind it:
+/// triage resolved to no provider at all (a missing credential, an unknown
+/// model slug). The class comes from the deterministic floor exactly as it
+/// does for a timeout, so it is the same kind of record — and it was silent.
+///
+/// **Witness.** #2430 added this emit site; #2462's rewrite of the branch to
+/// introduce `Assigned` carried a version without it over the top, so on
+/// `main` an unroutable triage falls to the floor recording nothing. A census
+/// of `triage_degraded` (#2414, #2429) would attribute those turns to a triage
+/// that ran and answered, which is the one reading the record exists to
+/// prevent.
+#[tokio::test]
+async fn an_unroutable_triage_records_that_it_could_not_be_routed() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, total, events) =
+        run_triage_with_resolver(&NoProviderResolver, PipelineConfig::default(), &mut budget).await;
+
+    // The fallback is unchanged and load-bearing: never fail a run on triage.
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    assert_eq!(total, 0.0, "an unroutable triage buys nothing");
+
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "exactly one record, got {reasons:?}");
+    assert!(
+        reasons[0].contains("could not be routed"),
+        "the record must name routing, not a timeout it never waited for: {reasons:?}"
+    );
+}
+
+/// **Witness for the ceiling itself.** #2414 moved this from 10s to 30s
+/// because the old bound sat *inside* the answering distribution: 27 of 34
+/// calls burned the full 10,000ms and returned nothing, while the 7 that
+/// answered took 4,684-8,587ms — so the bound was converting slow-but-correct
+/// answers into no answer at all, and paying the full ceiling to do it.
+///
+/// It is asserted here because it was silently reverted once already. #2462
+/// rewrote `PipelineConfig::default` from a branch that predated #2430 and
+/// carried the stale `10` over the top, leaving the field's own doc comment —
+/// which explains the move in full, and names the 7-sample caveat — describing
+/// a value the struct no longer had. A merge that does that again fails this
+/// test instead of quietly halving the ceiling.
+///
+/// This asserts the number, not its correctness: 30s is sized from 7 answering
+/// samples and #2429 is open to re-measure it. Moving it deliberately means
+/// editing this line and saying which side of the distribution the new bound
+/// buys.
+#[test]
+fn the_default_triage_ceiling_is_the_one_the_doc_comment_describes() {
+    assert_eq!(
+        PipelineConfig::default().triage_latency_ceiling,
+        Duration::from_secs(30),
+        "triage's ceiling regressed away from the measured value (#2414, #2429)"
     );
 }
