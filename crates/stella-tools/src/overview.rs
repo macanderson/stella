@@ -230,6 +230,8 @@ pub fn build_overview(root: &Path) -> Value {
     let mut out = json!({
         "workspace": root.display().to_string(),
         "scripts": scripts_section(&scripts),
+        "manifests": manifests_section(&scripts),
+        "git": git_section(root),
         "domains": domains_section(root),
     });
 
@@ -258,6 +260,122 @@ pub fn build_overview(root: &Path) -> Value {
         }
     }
     out
+}
+
+/// Every package-manager manifest the script index parsed, with its path.
+///
+/// `scripts_section` reports the *verbs* those manifests bind (`build`,
+/// `test`) and the runners behind them, which answers "how do I run this
+/// project". It cannot answer "what kind of project is this and where are its
+/// package boundaries" — a monorepo with a root `Cargo.toml`, three
+/// `package.json` files and a `pyproject.toml` renders as two runner names.
+///
+/// The paths come from `ScriptEntry::source`, which the index already
+/// resolved, so this is a projection rather than a second detection pass.
+/// `synthesized` entries are dropped: they name an ecosystem default
+/// (`cargo build --workspace`), not a file on disk, and a path that cannot be
+/// opened is worse than an absent one.
+fn manifests_section(scripts: &ScriptIndex) -> Value {
+    let mut paths: BTreeSet<&str> = BTreeSet::new();
+    for entry in &scripts.scripts {
+        if entry.source != "synthesized" {
+            paths.insert(entry.source.as_str());
+        }
+    }
+    json!(paths.into_iter().collect::<Vec<_>>())
+}
+
+/// Remotes, branches, and the naming convention the existing branches imply.
+///
+/// Read with `git` rather than a library for the reason the rest of this
+/// module assembles rather than computes: these are facts git already knows,
+/// and a second implementation of ref parsing is a second thing to be wrong.
+/// Absent or unreadable git state degrades to `{"repository": false}` — a
+/// workspace that is not a repository is an ordinary state, not an error.
+fn git_section(root: &Path) -> Value {
+    let Some(remotes) = git_lines(root, &["remote", "-v"]) else {
+        return json!({ "repository": false });
+    };
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    for line in &remotes {
+        let mut parts = line.split_whitespace();
+        if let (Some(name), Some(url)) = (parts.next(), parts.next()) {
+            seen.entry(name.to_string())
+                .or_insert_with(|| url.to_string());
+        }
+    }
+    let branches = git_lines(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .unwrap_or_default();
+
+    json!({
+        "repository": true,
+        "remotes": seen.iter().map(|(n, u)| json!({"name": n, "url": u}))
+            .collect::<Vec<_>>(),
+        "branch_count": branches.len(),
+        "branch_convention": branch_convention(&branches),
+    })
+}
+
+/// The branch-name shape this repository already uses.
+///
+/// A new branch should look like the ones beside it, and the repository is the
+/// only place that answer lives when no context record states a convention.
+/// Reported as the dominant prefix segment (`feat/`, `fix/`, `worktree-`) plus
+/// the separator, with the share of branches that follow it — a convention two
+/// of nine branches use is a coincidence, and the count is what lets a reader
+/// tell the difference rather than trusting a bare string.
+///
+/// `None` when nothing dominates. Guessing a convention from noise is worse
+/// than admitting there is not one: a caller told "the convention is `x/`"
+/// will follow it.
+fn branch_convention(branches: &[String]) -> Value {
+    let mut prefixes: BTreeMap<String, usize> = BTreeMap::new();
+    for branch in branches {
+        // First separator only: `feat/auth/login` is the `feat/` convention,
+        // not a `feat/auth/` one.
+        if let Some(idx) = branch.find(['/', '-']) {
+            let sep = &branch[idx..idx + 1];
+            let head = &branch[..idx];
+            if !head.is_empty() {
+                *prefixes.entry(format!("{head}{sep}")).or_default() += 1;
+            }
+        }
+    }
+    let total = branches.len();
+    match prefixes.iter().max_by_key(|(_, n)| **n) {
+        // Two is the floor for a pattern: one branch is an example, not a rule.
+        Some((prefix, n)) if *n >= 2 => json!({
+            "prefix": prefix,
+            "branches_following": n,
+            "branches_total": total,
+        }),
+        _ => Value::Null,
+    }
+}
+
+/// Non-empty stdout lines from a `git` invocation, or `None` when git failed.
+///
+/// Synchronous on purpose: every caller here already runs on the blocking pool
+/// (`build_overview` is dispatched there), and these are single ref reads.
+fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
@@ -546,6 +664,53 @@ mod tests {
             out["domains"],
             serde_json::json!(["scheduling", "transport"])
         );
+    }
+
+    /// A new branch should look like the ones beside it, and when no context
+    /// record states a convention the repository is the only place that answer
+    /// lives.
+    #[test]
+    fn the_dominant_branch_prefix_is_reported_with_its_share() {
+        let branches: Vec<String> = ["feat/auth", "feat/billing", "feat/search", "main"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let out = branch_convention(&branches);
+        assert_eq!(out["prefix"], "feat/");
+        assert_eq!(out["branches_following"], 3);
+        assert_eq!(out["branches_total"], 4);
+    }
+
+    /// A nested branch evidences its FIRST segment's convention.
+    /// `feat/auth/login` is a `feat/` branch, never a `feat/auth/` rule.
+    #[test]
+    fn nesting_does_not_invent_a_deeper_convention() {
+        let branches: Vec<String> = ["feat/auth/login", "feat/auth/logout"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(branch_convention(&branches)["prefix"], "feat/");
+    }
+
+    /// Guessing from noise is worse than admitting there is no convention: a
+    /// caller told "the convention is `x/`" will follow it. One branch is an
+    /// example, not a rule.
+    #[test]
+    fn no_convention_is_reported_when_nothing_dominates() {
+        assert!(branch_convention(&["main".to_string()]).is_null());
+        assert!(branch_convention(&[]).is_null());
+        assert!(
+            branch_convention(&["feat/one".to_string(), "main".to_string()]).is_null(),
+            "a single prefixed branch is an example, not a convention"
+        );
+    }
+
+    /// A workspace that is not a git repository is an ordinary state, not an
+    /// error — the overview still assembles around it.
+    #[test]
+    fn a_non_repository_says_so_rather_than_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(git_section(dir.path())["repository"], false);
     }
 
     #[test]
