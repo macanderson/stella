@@ -55,6 +55,7 @@ _ENGINE_ROOT_FIELDS = frozenset(
         "pipeline_max_revisions",
         "pipeline_candidates",
         "agents",
+        "responsibilities",
     }
 )
 
@@ -161,6 +162,26 @@ def arena_posture(
 
     posture["agents"] = agents
     posture["allowed_models"] = allowed
+
+    # #2381. Emitted ONLY when the arm declared something, so the shipped
+    # pipeline stays byte-identical to what it was before this key existed —
+    # and, because the posture is what the digest covers, so does every
+    # recorded posture digest for an arm that ablates nothing.
+    #
+    # Only the fields the arm actually set are written: a row is an assertion
+    # about one axis, and spelling out `enabled: true` for a stage nobody
+    # touched would record a pin the operator never made.
+    rows: dict[str, dict[str, Any]] = {}
+    for name, row in engine.responsibilities.items():
+        entry: dict[str, Any] = {}
+        if row.enabled is not None:
+            entry["enabled"] = row.enabled
+        if row.agent:
+            entry["agent"] = row.agent
+        if entry:
+            rows[name] = entry
+    if rows:
+        posture["responsibilities"] = rows
 
     unknown = set(posture) - _ENGINE_ROOT_FIELDS
     if unknown:  # pragma: no cover - guards a future edit, not a runtime path

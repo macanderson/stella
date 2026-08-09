@@ -1525,7 +1525,9 @@ def _synthetic_calibration_rows() -> list[dict]:
                     "adapter_version": "0.6.0",
                     "adapter_sha256": _ADAPTER_SHA256,
                     "analysis_sha256": ANALYSIS_CONTENT_SHA256,
-                    "budget_usd": None,
+                    # The row spelling of "no cap" — the word, as the adapter
+                    # writes it; `sut.budget_usd` is the one that is `null`.
+                    "budget_usd": "unbounded",
                     "disable_reflection": True,
                     "base_url": CANONICAL_OPENROUTER_BASE_URL,
                     "provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
@@ -1708,7 +1710,10 @@ def _synthetic_calibration_ledger_rows() -> list[dict]:
         "atif_engine_posture_record_json": _READINESS_POSTURE_JSON,
         "atif_engine_posture_sha256": _READINESS_POSTURE_SHA256,
         "atif_valid": True,
-        "budget_usd": None,
+        # A trial row spells "no cap" the way the adapter writes it, as the
+        # word rather than a null — the manifest's `sut.budget_usd` is what
+        # carries JSON `null` (#2411).
+        "budget_usd": "unbounded",
         "disable_reflection": True,
         "base_url": CANONICAL_OPENROUTER_BASE_URL,
         "provider_route_policy": CANONICAL_PROVIDER_ROUTE_POLICY,
