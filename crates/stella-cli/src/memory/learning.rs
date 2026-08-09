@@ -360,9 +360,12 @@ impl SessionMemory {
     /// it here was what starved the skill and rule miners (#2358): a lesson
     /// that never reaches `reflections.jsonl` never becomes an observation and
     /// can never contribute an occurrence. A within-batch repeat is different —
-    /// one reflection call returns up to three lessons and routinely says the
+    /// one reflection call returns several lessons and routinely says the
     /// same thing twice, which is the model stuttering, not the codebase
-    /// recurring — so it lands in neither half.
+    /// recurring — so it lands in neither half. The stutter matters more since
+    /// the per-turn cap rose to `MAX_LESSONS_PER_TURN`: a wider allowance is
+    /// exactly a wider opportunity to repeat oneself, and this split is what
+    /// keeps that from reaching the store.
     ///
     /// Restatement matching is fuzzy by construction (`SIMILARITY_THRESHOLD`
     /// over token sets, the same predicate [`stella_store::is_suppressed`]

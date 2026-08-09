@@ -15,9 +15,10 @@ call — produces the self-review the deck shows the user.
 | Call role | `ModelCallRole::Reflection` (`"reflection"`) |
 | Dispatch | raw completion, `tools: []` |
 | Built in | `crates/stella-cli/src/memory/reflection.rs` |
-| Output cap | 2,048 |
+| Output cap | 4,096 |
 | Temperature | 0.0 |
 | Effort | pinned low, like every bounded management call |
+| Lessons per turn | at most `MAX_LESSONS_PER_TURN` (8) |
 | Override | none |
 
 ## Wire shape
@@ -26,6 +27,19 @@ call — produces the self-review the deck shows the user.
 [ system("You are a self-reflection module. Respond with only a JSON object.")
   user(prompt) ]
 ```
+
+## The question it asks
+
+The prompt asks one thing, and everything else in it exists to keep the answer
+honest:
+
+> You are about to be handed a task like this one again, with no memory of
+> anything that happened here. What do you want to have been told before you
+> start?
+
+That is the objective itself rather than a proxy for it, which is the whole
+history of this prompt in one sentence. See
+[Three failures, one mistake](#three-failures-one-mistake) below.
 
 ## User message (template)
 
@@ -36,37 +50,94 @@ Success frame:
 
 ```text
 This turn SUCCEEDED.
-What SURPRISED you? Record only what you could NOT have predicted by reading the code — something that contradicted a reasonable assumption, cost you a wrong attempt, or that you only know because you ran it and watched what happened. If nothing surprised you, return an empty list. Most successful turns teach nothing worth keeping, and saying so is the correct answer.
+You are about to be handed a task like this one again, in this same repository, with no memory of anything that happened here. What do you want to have been told before you start, so that the next attempt is faster, costs less, and gets more of it right than this one did?
 ```
 
 Failure frame:
 
 ```text
 This turn FAILED.
-What did the code expect that reading it did not tell you? A failure is the cheapest evidence there is that something was not discoverable by inspection — a helper that looks usable and is not, an ordering that matters and is not stated, a check that fires from somewhere unobvious. Record that, as a flat statement of fact.
-If the failure was your own carelessness on something the code stated plainly, there is no lesson: return an empty list.
+You are about to be handed a task like this one again, in this same repository, with no memory of anything that happened here. A failure is the cheapest evidence there is about what you did not know going in. What do you want to have been told before you start, so that the next attempt gets where this one did not?
 ```
 
 Full body:
 
 ```text
-Review this coding-agent turn transcript and reflect on the agent's performance. {task_frame}
+Review this coding-agent turn transcript. {task_frame}
 
 Respond with ONLY a JSON object:
-{"lessons": [{"lesson": "...", "kind": "domain", "domains": ["..."]}], "self_review": {"delivered": true, "rating": 7, "went_well": "...", "to_improve": "...", "critique": "..."}}
-`lessons` holds at most 3, most useful first. `kind` is "domain" for a fact about the codebase that holds independent of this turn, or "process" for a note about how you worked. Prefer domain.
-THE TEST, applied to every candidate before you write it: could a competent engineer find this in under a minute by reading the code or grepping? If YES, DISCARD IT. It is cheaper to look up than to carry, and every remembered fact costs room in a future prompt.
-So do NOT record: where files live, what a module is called, a function's signature, the directory layout, which helper exists, or anything a README or a type definition already states. These are the most tempting lessons and the most worthless.
-DO record what inspection cannot reveal: a helper that looks correct and is subtly wrong, an ordering that matters but is not written down, a step that silently does nothing if skipped, a check that fires from somewhere unrelated, a stated rule that the code does not actually follow, or an explicit preference the user expressed.
-Good: "util/amounts.to_cents parses through float and loses a cent on values like 1.15; money.parse_amount is the correct one despite both looking current" — you can only know that by getting it wrong.
-Bad: "commands are registered in registry.py" — one grep away, worthless to carry.
-A lesson that begins "the agent should" is a process lesson, and if you cannot state something that survives the test, return an empty list rather than padding it.
-`self_review` is your account of THIS turn alone and is never a substitute for a lesson — omit it entirely rather than let it crowd out a codebase fact. `delivered` is whether you actually did what was asked, `rating` is 0-10 for this turn's work, `to_improve` is the one thing you would do differently. One sentence per field. This is shown to the user as your own assessment, so do not flatter yourself: a turn that produced no output or left the work unfinished did not deliver.
+{"lessons": [{"lesson": "...", "trigger": "...", "saves": "...", "kind": "domain", "domains": ["..."]}], "self_review": {"delivered": true, "rating": 7, "went_well": "...", "to_improve": "...", "critique": "..."}}
+There is no approved list of topics and no house style. A command, a constraint, an assumption that turned out to be wrong, an ordering, a dead end not worth walking twice, a number, a name, something the user told you they wanted — if you want it, write it down. You are the only one who watched this turn, and nobody has decided in advance what counts.
+ONE TEST, applied to every candidate before you write it: WOULD KNOWING THIS HAVE CHANGED WHAT YOU ACTUALLY DID? Not whether it is true, interesting, or hard to find — whether it would have changed an action. A fact you would have looked up in three seconds anyway changes nothing and is worth nothing, however true it is. A fact you COULD have looked up in three seconds and did not, and paid twenty minutes for, is worth everything: cheap to find and cheap to be without are not the same thing, and it is the second one that matters.
+`saves` is what knowing it would have bought you HERE, pointing at the moment in this transcript it would have changed — the wrong attempt it prevents, the wait it skips, the wrong answer it stops you shipping. If you cannot name the moment, do not record the lesson: you are guessing at what helps, and guessing is the one thing this is not for.
+`trigger` is what has to be true of a future task for this to matter, written so that a future you can tell at a glance whether it applies. A lesson whose trigger you cannot state is one you have not finished learning.
+`kind` is "domain" if it will still be true on a DIFFERENT task in this repository, "process" if it only describes how this particular turn went. That is a question about how far it travels, not about what it is about.
+Good: "util/amounts.to_cents parses through float and loses a cent on values like 1.15; money.parse_amount is the correct one despite both looking current" — a wrong answer was shipped and then found; nothing short of getting it wrong would have taught it.
+Good: "the full suite takes ~20 minutes and the scoped run covering these files takes ~40 seconds" — one grep away, and it still cost three turns of waiting, because nobody greps for what they do not know to ask.
+Bad: "commands are registered in registry.py" — you would have grepped that in three seconds. Knowing it in advance changes not one action you took.
+Write as many as pass the test and no more. Padding the list with candidates that failed it is how the list stops being read; an empty list is a complete answer when nothing passes, and at most {max} are kept.
+`self_review` is your account of THIS turn alone and is never a substitute for a lesson — omit it entirely rather than let it crowd out one. `delivered` is whether you actually did what was asked, `rating` is 0-10 for this turn's work, `to_improve` is the one thing you would do differently. One sentence per field. This is shown to the user as your own assessment, so do not flatter yourself: a turn that produced no output or left the work unfinished did not deliver.
 Allowed domain tags (use only these, or []): {domain_names}
 
 Transcript:
 {digest}
 ```
+
+## Three failures, one mistake
+
+Every previous version of this prompt asked for a **proxy** instead of for the
+thing itself, and each one got exactly the class of answer its proxy described.
+
+| | The proxy it asked for | What came back |
+|---|---|---|
+| #768 | "what should change next time to avoid repeating this failure?" | a question about the agent, answered about the agent — eight of ten mined lessons were process self-critique, none a repository convention |
+| #944 | "where things live" | 23 memories encoding six facts, every one a single file-read away; "commands are registered in registry.py" held seven times. The proving ground measured their worth as **negative** — hand-delivering those conventions, perfectly worded, did not improve the pass rate and cost steps |
+| the repair for #944 | a rediscovery-cost test ("could a competent engineer find this in under a minute? If YES, DISCARD IT"), operationalized as surprise | right about one class, blind to another — see below |
+
+The third is the subtle one. **Surprise measures novelty; what a memory is worth
+is savings.** The two agree on most facts and come apart exactly where the money
+is: on a fact that is trivial to look up and expensive not to know. "The whole
+suite takes twenty minutes; the scoped run takes forty seconds" is one grep into
+a Makefile, so the rediscovery test orders it discarded — after it has already
+cost three turns of waiting, and while it goes on costing them in every future
+session, because nobody greps for what they do not know to ask.
+
+The test is now the counterfactual itself, settled against the only thing that
+can settle it: **whether knowing the fact would have changed an action.** That
+subsumes the rediscovery rule without inheriting the blind spot — a fact you
+would have looked up anyway changes no action and is still discarded — while
+admitting the class the rediscovery rule threw away.
+
+## No topics, but a required argument
+
+The prompt no longer tells the model what a lesson may be *about*: the "do NOT
+record / DO record" enumerations are gone, and nothing replaced them. Each of
+the three failures above was a topic guess made by whoever wrote the prompt, and
+the model that just ran the turn is better placed than the prompt's author to
+know what the turn cost it.
+
+What is constrained instead is the **shape of the argument**. A lesson arrives
+with:
+
+- **`trigger`** — what has to be true of a future task for it to matter. A
+  lesson whose trigger the model cannot state is one it has not finished
+  learning; requiring the condition prunes those where the transcript is still
+  there to check them against. Recorded and mined today, **not yet consulted at
+  recall** — that wiring is #2459.
+- **`saves`** — what knowing it would have bought in the turn that produced it,
+  pointing at the moment it would have changed. This is what makes a lesson
+  refutable rather than merely asserted, and it is refutable against the very
+  transcript in front of the model.
+
+Freeing the topic without requiring the argument would only move the guess from
+the prompt's author to the model. The argument is what makes it checkable.
+
+`kind` survives the topic cull because it is not a topic question: it decides
+the recall tier a lesson competes in (`LessonKind::recall_tier`). It used to be
+*asked* as subject matter ("a fact about the codebase, or a note about the
+agent") and *read* as transfer, and those come apart on the useful cases — "this
+repo's integration tests need the fixture server up first" is a note about how
+to work and is true on every task here. It is now asked as transfer directly.
 
 ## Why the self-review is asked for last
 
@@ -77,35 +148,71 @@ the model has the transcript in front of it either way. But it is deliberately
 This prompt already lost one fight against self-commentary: asking about the
 *agent* produced eight process notes and zero codebase facts. A self-review
 field is exactly the kind of invitation that can re-open that, so the lesson
-instruction keeps the front of the prompt and its "prefer domain" rule intact,
-and the self-review is fenced off as being about **this turn only** — the one
-place a note about the agent genuinely belongs, because it is stored against
-this execution and never recalled as a lesson.
+instruction keeps the front of the prompt, and the self-review is fenced off as
+being about **this turn only** — the one place a note about the agent genuinely
+belongs, because it is stored against this execution and never recalled as a
+lesson.
 
-## Why the cap is 2,048
+The fence matters more now, not less. With no topic list, the pressure that
+produced those eight process notes has nothing topical holding it back. What
+holds it back instead is `saves`, which a self-critique cannot fill in without
+naming a moment, and `kind`, which sends anything that does not travel to a
+deferred recall tier rather than into competition with facts that do.
 
-512 was enough for a model that answers with bare JSON and nothing else. A
-model that narrates first spends the whole allowance on prose and is cut off
-before it reaches the array — so **every lesson from every turn is lost,
-silently**, because a truncated response parses to zero lessons exactly like an
-empty one. The array itself is at most three short objects; the extra headroom
-is only ever spent by models that were going to be cut off.
+## Why the cap is 4,096
+
+512 was enough for a model that answers with bare JSON and nothing else. A model
+that narrates first spends the whole allowance on prose and is cut off before it
+reaches the array — so **every lesson from every turn is lost, silently**,
+because a truncated response parses to zero lessons exactly like an empty one.
+That is why 2,048 followed, and why it is no longer the right number: a lesson
+is now three prose fields rather than one, and up to `MAX_LESSONS_PER_TURN` of
+them may be returned. The headroom is only ever spent by responses that were
+going to be truncated, and a truncation here is invisible.
+
+The per-turn cap of 8 is a backstop, not a decision. The previous limit of 3 was
+below the number of distinct things a busy turn teaches, so on those turns the
+cap was what decided — by arithmetic, after the model had already done the work
+of finding them. It is not unbounded either: reflection memories ride the recall
+channel, where `max_frames` defaults to 5, so every stored lesson competes for
+five slots and a turn permitted to file twenty would dilute recall rather than
+add to it.
 
 ## Partial responses are kept
 
-`SelfReviewJson` marks every field `#[serde(default)]`. A model that offers
-only `to_improve` has said the one thing the "what to improve" panel exists to
-show, and rejecting the whole object over a missing `rating` would discard it.
+`SelfReviewJson` marks every field `#[serde(default)]`. A model that offers only
+`to_improve` has said the one thing the "what to improve" panel exists to show,
+and rejecting the whole object over a missing `rating` would discard it.
 
 ## Where the output goes
 
 Lessons are parsed by `parse_lessons_checked` against the workspace's allowed
-domain tags, then written to `.stella/memories/*.md` via the `save_memory`
-path — where they join the **next** session's byte-stable prompt prefix, never
-this one. The per-turn mining log is `.stella/private/reflections.jsonl`.
+domain tags, then — for the half `partition_known` judges novel — upserted into
+the **context store** as recallable, domain-tagged, anchor-resolved reflection
+memories, at the recall tier their `kind` selects. Both halves, novel and
+restatement, are appended to the per-turn mining log
+`.stella/private/reflections.jsonl` and mirrored into `store.db`'s `reflections`
+table, because a re-learned lesson is the recurrence the skill and rule miners
+count (#2358).
+
+Reflection does **not** write `.stella/memories/*.md`. That directory is the
+byte-stable prompt prefix and its only writer is the `save_memory` tool, called
+by the worker in-turn; a lesson mined here reaches a future prompt through
+recall, not through the prefix. The distinction is the whole cost model: prefix
+memories are paid for on every model call in every session whether relevant or
+not, while recalled ones are paid for only when retrieved.
+
+## Known limits
+
+The digest this prompt reasons over is the last 12 messages, each truncated to
+300 characters. The expensive part of a turn is usually in its middle, and the
+middle is what the tail window drops — so the model is asked what would have
+made the turn faster by a witness that cannot see where it was slow. This caps
+how good any wording here can be; #2460 tracks selecting the digest from the
+event stream instead.
 
 ## Related
 
-- [worker.md](worker.md) — whose transcript is mined, and whose next-session
-  prefix the lessons join
+- [worker.md](worker.md) — whose transcript is mined, and whose `save_memory`
+  calls write the prefix this prompt does not
 - [domain-inference.md](domain-inference.md) — produces the allowed tag list

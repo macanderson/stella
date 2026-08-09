@@ -638,16 +638,26 @@ fn untrusted_project_skill_bodies_are_absent_while_recalled_context_still_render
 }
 
 #[test]
-fn parse_lessons_drops_invented_domains_and_caps_at_three() {
+fn parse_lessons_drops_invented_domains_and_caps_at_the_per_turn_limit() {
     let allowed = vec!["api".to_string(), "cli".to_string()];
-    let text = r#"Sure! [
-            {"lesson": "prefer tables", "domains": ["cli", "made-up"]},
-            {"lesson": "b", "domains": []},
-            {"lesson": "c", "domains": ["API"]},
-            {"lesson": "d", "domains": []}
-        ]"#;
-    let lessons = lessons_with(text, &allowed);
-    assert_eq!(lessons.len(), 3, "capped at 3");
+    let mut entries = vec![
+        r#"{"lesson": "prefer tables", "domains": ["cli", "made-up"]}"#.to_string(),
+        r#"{"lesson": "b", "domains": []}"#.to_string(),
+        r#"{"lesson": "c", "domains": ["API"]}"#.to_string(),
+    ];
+    // Two past the cap, whatever the cap currently is: the assertion below is
+    // about the limit being enforced, and hard-coding the overflow count means
+    // raising the cap silently turns this into a test of nothing.
+    while entries.len() < crate::memory::reflection::MAX_LESSONS_PER_TURN + 2 {
+        entries.push(format!(r#"{{"lesson": "filler {}"}}"#, entries.len()));
+    }
+    let text = format!("Sure! [{}]", entries.join(","));
+    let lessons = lessons_with(&text, &allowed);
+    assert_eq!(
+        lessons.len(),
+        crate::memory::reflection::MAX_LESSONS_PER_TURN,
+        "capped at the per-turn limit"
+    );
     assert_eq!(lessons[0].domains, vec!["cli"], "invented domain dropped");
     assert_eq!(
         lessons[2].domains,
