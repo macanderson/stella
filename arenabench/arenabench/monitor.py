@@ -313,7 +313,7 @@ _RULES: dict[str, Callable[[TrialMetrics, Thresholds], Detection | None]] = {
 class MatchWatcher:
     """Applies the armed rules to a match directory, once or repeatedly.
 
-    Stateful for the same reason :class:`~arenabench.telemetry.TranscriptReader`
+    Stateful for the same reason :class:`~arenabench.transcript.TranscriptReader`
     is: a subscription wants *new* facts. Each :meth:`scan` re-reads whatever
     trial directories currently exist (cheap — the metrics reader caches by
     file size) and returns only detections not yet reported, so a follow loop

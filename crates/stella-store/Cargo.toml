@@ -20,6 +20,9 @@ serde_json = { workspace = true }
 base64.workspace = true
 sha2.workspace = true
 rand.workspace = true
+# Derives the named error types invariant #5 requires; already the workspace's
+# one error-derive crate, used by ten sibling crates.
+thiserror.workspace = true
 
 # Session-registry liveness checks (`kill(pid, 0)`), unix only.
 [target.'cfg(unix)'.dependencies]

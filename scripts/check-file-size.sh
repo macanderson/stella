@@ -82,6 +82,17 @@
 # ceiling raised deliberately via `--update` still passes exactly as before:
 # the regenerated ceiling equals the current size.
 #
+# `ceiling` here means the file's own limit, whichever kind it has: the baseline
+# entry for a grandfathered file, and LIMIT for every other. The rule was first
+# written for grandfathered files alone, and a file with no baseline entry went
+# on failing on sight — so the very first crossing of the 1500-line limit on
+# `main` turned every open PR red, byte-identical trees included, which is the
+# exact failure #2004 exists to prevent (#2397). What differs between the two
+# kinds is only the remedy the report names, not the arithmetic: a drifted
+# ceiling is cleared by regenerating the baseline, while a first-time crossing
+# is cleared by splitting the file. A first-time crossing is never grandfathered
+# on the way past — inherited drift is reported and survived, not absorbed.
+#
 # The base is the same pair `scripts/check-deleted-tests.sh` uses, for the same
 # reason: on a `pull_request` event the checkout is `refs/pull/N/merge`, so HEAD
 # is the merge commit and HEAD^1 is the base branch tip. That asks "does this
@@ -222,10 +233,10 @@ size_at_base() {
 # Single awk pass: read the baseline into a map, then judge each current file.
 # Baseline lines are tagged B, current sizes C, so one awk sees both streams.
 #
-# A file over its ceiling is emitted as a CANDIDATE, not a verdict: awk sees one
+# A file over its limit is emitted as a CANDIDATE, not a verdict: awk sees one
 # tree and so cannot tell growth from inherited drift. The classification needs
-# the base tree and happens below. Candidates are emitted in GREW's position so
-# the assembled report keeps its original section order.
+# the base tree and happens below. Candidates are emitted in their section's
+# position so the assembled report keeps its original section order.
 raw_report="$(
   {
     grep -v '^#' "$baseline" | sed 's/^/B /'
@@ -240,14 +251,14 @@ raw_report="$(
         else if (n > ceiling[path])
           grew = grew sprintf("GREWCAND %s %d %d\n", path, n, ceiling[path])
       } else if (n > limit) {
-        newover = newover sprintf("  %s is %d lines, over the %d-line limit\n", path, n, limit)
+        newover = newover sprintf("NEWCAND %s %d\n", path, n)
       }
     }
     END {
       for (p in ceiling)
         if (!(p in seen))
           stale = stale sprintf("  %s (baseline entry, file no longer tracked)\n", p)
-      if (newover) printf "NEWOVER\n%s", newover
+      if (newover) printf "%s", newover
       if (grew) printf "%s", grew
       if (obsolete) printf "OBSOLETE\n%s", obsolete
       if (stale) printf "STALE\n%s", stale
@@ -255,16 +266,52 @@ raw_report="$(
   '
 )"
 
+# max($2, size of $1 at the base): the largest this change may leave the file
+# at, given the limit $2 it is held to. With no base commit the second term is
+# absent and this is that limit alone — the original whole-tree check.
+#
+# Shared by both candidate kinds because the arithmetic is the same rule; only
+# the limit passed in and the remedy reported differ (#2397).
+effective_limit() {
+  local own="$2" at_base
+  if [ -n "$base_commit" ]; then
+    at_base="$(size_at_base "$1")"
+    if [ "$at_base" -gt "$own" ]; then
+      own="$at_base"
+    fi
+  fi
+  printf '%s\n' "$own"
+}
+
 # Classify each candidate against the base tree, preserving the stream order so
 # the GREW section still lands between NEWOVER and OBSOLETE.
-#
-# `current > max(ceiling, size at base)` — see the header. With no base commit
-# the second term is absent and this is the original whole-tree check.
 report=""
 drift=""
+newover_header_emitted=0
 grew_header_emitted=0
 while IFS= read -r line; do
   case "$line" in
+  "NEWCAND "*)
+    # Deliberate word split, as for GREWCAND below.
+    # shellcheck disable=SC2086
+    set -- $line
+    cand_path="$2"
+    cand_now="$3"
+    if [ "$cand_now" -gt "$(effective_limit "$cand_path" "$LIMIT")" ]; then
+      if [ "$newover_header_emitted" -eq 0 ]; then
+        report="${report}NEWOVER
+"
+        newover_header_emitted=1
+      fi
+      report="$report$(printf '  %s is %d lines, over the %d-line limit' \
+        "$cand_path" "$cand_now" "$LIMIT")
+"
+    else
+      drift="$drift$(printf '  %s is %d lines, over the %d-line limit — already so at the base; split it' \
+        "$cand_path" "$cand_now" "$LIMIT")
+"
+    fi
+    ;;
   "GREWCAND "*)
     # Deliberate word split: these are this script's own awk-formatted records,
     # and the baseline format has never admitted a path containing a space.
@@ -273,14 +320,7 @@ while IFS= read -r line; do
     cand_path="$2"
     cand_now="$3"
     cand_ceiling="$4"
-    cand_effective="$cand_ceiling"
-    if [ -n "$base_commit" ]; then
-      cand_base="$(size_at_base "$cand_path")"
-      if [ "$cand_base" -gt "$cand_effective" ]; then
-        cand_effective="$cand_base"
-      fi
-    fi
-    if [ "$cand_now" -gt "$cand_effective" ]; then
+    if [ "$cand_now" -gt "$(effective_limit "$cand_path" "$cand_ceiling")" ]; then
       if [ "$grew_header_emitted" -eq 0 ]; then
         report="${report}GREW
 "
@@ -290,7 +330,7 @@ while IFS= read -r line; do
         "$cand_path" "$cand_now" "$cand_ceiling" "$((cand_now - cand_ceiling))")
 "
     else
-      drift="$drift$(printf '  %s is %d lines against a ceiling of %d — already so at the base' \
+      drift="$drift$(printf '  %s is %d lines against a ceiling of %d — already so at the base; regenerate' \
         "$cand_path" "$cand_now" "$cand_ceiling")
 "
     fi
@@ -312,10 +352,13 @@ if [ -n "$drift" ]; then
     echo "check-file-size: baseline drift (not caused by this change, not fatal)"
     printf '%s' "$drift"
     echo ""
-    echo "These files were already over their recorded ceiling in the base tree,"
-    echo "so another change put them there and this one only inherited it. Run"
-    echo "\"make file-size-update\" on a fresh main and land the baseline diff on"
-    echo "its own to clear it."
+    echo "These files were already over the line in the base tree, so another change"
+    echo "put them there and this one only inherited it. Each line above names its"
+    echo "own remedy, and they differ: \"regenerate\" is a grandfathered file whose"
+    echo "ceiling drifted below it, cleared by \"make file-size-update\"; \"split it\" is"
+    echo "a file that crossed the ${LIMIT}-line limit for the first time, which is never"
+    echo "given a baseline entry. Either way it is that file's own change, landed on"
+    echo "its own from a fresh main — not folded into this one."
   } >&2
 fi
 
@@ -361,4 +404,4 @@ else
   mode_note=" No base resolved — strict whole-tree check."
 fi
 trap '' PIPE
-echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew by this change).${mode_note}${drift_note}" || true
+echo "check-file-size: OK — $tracked Rust/Python/shell files, $grandfathered grandfathered over $LIMIT lines, and nothing went over by this change.${mode_note}${drift_note}" || true

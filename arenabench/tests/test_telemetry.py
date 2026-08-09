@@ -20,12 +20,12 @@ import pytest
 
 from arenabench.telemetry import (
     MetricsReader,
-    TranscriptReader,
     TrialMetrics,
     aggregate,
     leaders,
     seat_manifest_path,
 )
+from arenabench.transcript import TranscriptReader
 
 # --------------------------------------------------------------------------
 # fixtures

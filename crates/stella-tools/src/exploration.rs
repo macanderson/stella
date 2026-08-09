@@ -648,7 +648,11 @@ impl Tool for SaveExploration {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let slice = match crate::input::required_str(input, "slice") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         if !valid_slice(slice) {
             return ToolOutput::Error {

@@ -79,7 +79,7 @@ from .runner import MatchRunner
 from .series import series_payload
 from .sut import SutUnavailableError, list_branches, sut_problem_for, sut_status
 from .sut_build import SutBuilder
-from .telemetry import TranscriptReader
+from .transcript import TranscriptReader
 
 __all__ = ["ArenaServer", "serve"]
 

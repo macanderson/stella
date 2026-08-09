@@ -349,7 +349,11 @@ impl Tool for VerifyDone {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let test_cmd = match crate::input::required_str(input, "test_cmd") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let test_files: Vec<String> = input
             .get("test_files")

@@ -112,6 +112,37 @@ pub struct GoalVerifierVerdict {
     pub feedback: String,
 }
 
+/// Why an assessment round produced no verdict.
+///
+/// A partial judgement is not a judgement: both variants end the loop rather
+/// than salvaging text, which is what keeps [`Engine::assess`] from ever
+/// fabricating a verdict. They stay apart because they are different facts
+/// about the run — `Incomplete` is a verifier that stopped before answering
+/// (budget, truncation, a dropped stream), `Refused` is one that declined to
+/// answer at all. A caller deciding whether to retry wants only the first, and
+/// invariant #5 is what says it may not learn that by grepping the reason.
+///
+/// `Display` is the bare reason, unchanged from the `String` this replaced:
+/// both callers wrap it in their own "verifier unavailable: {}" prefix, so
+/// giving the variants distinct wording here would only stutter in the message
+/// a user actually reads.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GoalAssessError {
+    /// The verifier stopped before delivering a verdict.
+    #[error("{reason}")]
+    Incomplete {
+        /// The sub-agent's own account of why it stopped.
+        reason: String,
+    },
+
+    /// The verifier declined to assess.
+    #[error("{reason}")]
+    Refused {
+        /// The sub-agent's own account of why it declined.
+        reason: String,
+    },
+}
+
 /// The kickoff message every goal loop opens with.
 ///
 /// Shared by [`Engine::run_goal`], the CLI's staged-pipeline goal loop, and
@@ -310,7 +341,7 @@ impl Engine<'_> {
         budget: &mut BudgetGuard,
         events: &UnboundedSender<AgentEvent>,
         goal_config: &GoalConfig,
-    ) -> Result<(GoalVerifierVerdict, f64), String> {
+    ) -> Result<(GoalVerifierVerdict, f64), GoalAssessError> {
         let transcript = render_transcript_tail(messages, goal_config.verifier_transcript_chars);
         // The odd slot beside this engine's turn: the verifier's own step loop
         // restarts at step 0 with call_seq 0, so without a turn of its own
@@ -369,9 +400,10 @@ impl Engine<'_> {
             // that it never fabricates a verdict, so salvaged text is
             // deliberately NOT parsed here — an assessment that did not
             // finish ends the loop with its reason instead.
-            SubAgentOutcome::Incomplete { reason, .. } | SubAgentOutcome::Refused { reason } => {
-                Err(reason)
+            SubAgentOutcome::Incomplete { reason, .. } => {
+                Err(GoalAssessError::Incomplete { reason })
             }
+            SubAgentOutcome::Refused { reason } => Err(GoalAssessError::Refused { reason }),
         }
     }
 }

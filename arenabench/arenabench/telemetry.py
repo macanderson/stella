@@ -32,11 +32,12 @@ no model id the agent or Harbor records can carry that fact (the launch
 spelling differs by route), and pricing needs it (#1498). A job without one —
 every archive predating the record — is read exactly as before.
 
-Two readers sit on top. :class:`MetricsReader` reduces a trial to the
-scoreboard's dimensions and re-parses a file only when its size changes, so an
-idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
-offset per file and yields only what is new, which is what the SSE endpoint
-streams.
+:class:`MetricsReader` sits on top, reducing a trial to the scoreboard's
+dimensions and re-parsing a file only when its size changes, so an idle
+dashboard costs ``stat()`` calls. Its counterpart :class:`~arenabench.transcript.TranscriptReader`
+reads the same artifacts for a human rather than for a scoreboard, and lives in
+:mod:`arenabench.transcript` — it shares no name with this module, so the two
+were only ever one file by habit (#2397).
 
 :mod:`arenabench.monitor` reduces the same metrics one step further, to
 failure detections a supervising process can act on while the match runs.
@@ -64,7 +65,6 @@ __all__ = [
     "LIVENESS_NAMES",
     "TRAJECTORY_NAME",
     "MetricsReader",
-    "TranscriptReader",
     "TrialMetrics",
     "aggregate",
     "leaders",
