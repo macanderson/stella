@@ -71,9 +71,10 @@
 //! # Where the wall clock goes
 //!
 //! Neither half, as it turns out. Every boundary a call crosses is timed and
-//! reported to the diagnostic plane as one [`phases`] record — see that
-//! module for why the measurement was needed (#2486) and why it cannot ride
-//! the tool's own output.
+//! reported to the diagnostic plane as one `tools.verify_done.phases` record.
+//! The `phases` submodule beside this one (`src/verify/phases.rs`) carries
+//! why the measurement was needed (#2486) and why it cannot ride the tool's
+//! own output.
 
 mod memo;
 mod phases;
@@ -511,8 +512,9 @@ impl Tool for VerifyDone {
         }
     }
 
-    /// Time the whole call, then report one [`Phases`] record — whatever the
-    /// verdict, including the refusals that never build a shadow at all.
+    /// Time the whole call, then report one `tools.verify_done.phases` record
+    /// — whatever the verdict, including the refusals that never build a
+    /// shadow at all.
     /// Reporting only the calls that got far enough to be slow would censor
     /// the fast end of the distribution and flatter every percentile #2486
     /// exists to measure.
