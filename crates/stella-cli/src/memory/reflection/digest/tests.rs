@@ -168,6 +168,137 @@ fn a_short_turn_carries_no_selection_notice() {
     );
 }
 
+/// The whole rendering, spelled out — a golden a reviewer can read.
+///
+/// Every other test here asserts one property and would pass over a digest that
+/// was correct and unreadable. This one is the shape itself: the friction section
+/// first, then the transcript, one line per message part. If it fails, read the
+/// diff and decide whether the new shape is better; do not re-bless it unread.
+///
+/// The elided form is `elisions_are_declared_and_counted`; this turn fits, and a
+/// turn that fits carries no selection notice.
+#[test]
+fn the_whole_rendering_reads_like_this() {
+    let mut friction = TurnFriction::default();
+    friction.observe(&step_usage(3, ModelCallRole::Worker, 0.0812, 31_400));
+    friction.observe(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c2".into(),
+            name: "bash".into(),
+            input: serde_json::json!({}),
+        },
+    });
+    friction.observe(&AgentEvent::ToolResult {
+        call_id: "c2".into(),
+        output: failed("error[E0599]: no method named `parse_amount`"),
+        duration_ms: 12_800,
+        speculated: false,
+    });
+
+    let transcript = vec![
+        user("make the money test pass"),
+        calls(
+            "c0",
+            "read_file",
+            serde_json::json!({"path": "src/money.rs"}),
+        ),
+        answers(
+            "c0",
+            ok("pub fn to_cents(v: f64) -> i64 { (v * 100.0) as i64 }"),
+        ),
+        calls("c1", "read_file", serde_json::json!({"path": "src/lib.rs"})),
+        answers("c1", ok("pub mod money;")),
+        calls(
+            "c2",
+            "bash",
+            serde_json::json!({"cmd": "cargo test -p money"}),
+        ),
+        answers("c2", failed("error[E0599]: no method named `parse_amount`")),
+        calls(
+            "c3",
+            "edit_file",
+            serde_json::json!({"path": "src/money.rs"}),
+        ),
+        answers("c3", ok("1 replacement")),
+        assistant("used money::parse_amount; the test is green"),
+    ];
+
+    let out = build(TurnEvidence {
+        transcript: &transcript,
+        friction: &friction,
+        succeeded: true,
+    });
+    // Ten messages under a 6k budget: nothing is elided, so there is no
+    // selection notice and no gap marker. That is the point of the pairing with
+    // `elisions_are_declared_and_counted` — the notice appears when, and only
+    // when, something was actually dropped.
+    //
+    // Tool arguments render as the JSON the model produced, not as a bare value.
+    // The key is the readable half: `{"cmd": …}` and `{"path": …}` say what kind
+    // of mistake an argument was, which is the whole reason the arguments are
+    // here instead of the old `[called: bash]`.
+    let expected = "\
+Where this turn spent itself (from its event stream):
+- 1 model calls, $0.0812, 31.4s of model wall clock
+- costliest: step 3 (worker) $0.0812, 31.4s, 2 tool calls
+- slowest tool: bash (c2) took 12.8s
+- 1 tool calls FAILED:
+  - bash (c2): error[E0599]: no method named `parse_amount`
+
+user: make the money test pass
+assistant: → calls read_file({\"path\":\"src/money.rs\"})
+tool: read_file ok: pub fn to_cents(v: f64) -> i64 { (v * 100.0) as i64 }
+assistant: → calls read_file({\"path\":\"src/lib.rs\"})
+tool: read_file ok: pub mod money;
+assistant: → calls bash({\"cmd\":\"cargo test -p money\"})
+tool: bash FAILED: error[E0599]: no method named `parse_amount`
+assistant: → calls edit_file({\"path\":\"src/money.rs\"})
+tool: edit_file ok: 1 replacement
+assistant: used money::parse_amount; the test is green";
+    assert_eq!(out, expected, "\n--- actual ---\n{out}\n--- end ---");
+}
+
+/// A credential in a tool argument or a tool result never reaches the digest.
+///
+/// This is not inherited caution. The old tail digest carried tool *names* and no
+/// tool output at all, so it could not leak a token; this one renders arguments
+/// and results, which is precisely where one appears — a `read_file` of `.env`, a
+/// `bash` that printed `env`. Reflection also dispatches on the triage route,
+/// which may be a different vendor than the worker, so "that provider has seen it
+/// already" does not hold. Mirrors the dataset exporter's own planted-key test.
+#[test]
+fn a_planted_credential_never_reaches_the_digest() {
+    const PLANTED: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let transcript = vec![
+        user("why is auth failing"),
+        calls("c1", "read_file", serde_json::json!({"path": ".env"})),
+        answers("c1", ok(&format!("ANTHROPIC_API_KEY={PLANTED}"))),
+        calls(
+            "c2",
+            "bash",
+            serde_json::json!({"cmd": format!("curl -H 'x-api-key: {PLANTED}' https://api")}),
+        ),
+        answers("c2", failed(&format!("401 unauthorized for {PLANTED}"))),
+        assistant("the key is revoked"),
+    ];
+    let out = build(TurnEvidence::from_transcript(&transcript, false));
+    assert!(
+        !out.contains(PLANTED),
+        "a credential reached the reflection prompt, which routes to the triage \
+         model and not necessarily to the provider that already saw it\n\n{out}"
+    );
+    assert!(
+        out.contains(stella_core::redact::PLACEHOLDER),
+        "the redaction must be visible where it happened, so a reader knows the \
+         digest was edited rather than that the turn said nothing\n\n{out}"
+    );
+    assert!(
+        out.contains("ANTHROPIC_API_KEY=") && out.contains("401 unauthorized for"),
+        "only the secret is replaced — the surrounding evidence is the whole \
+         point of showing the tool result\n\n{out}"
+    );
+}
+
 /// The budget is the cost control, and it binds. Measured on a turn far larger
 /// than any real one so the ceiling is the thing under test, not the fixture.
 #[test]

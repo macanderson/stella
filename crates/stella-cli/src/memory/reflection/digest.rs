@@ -485,6 +485,17 @@ impl Priority {
 }
 
 /// Build the digest reflection reads. Deterministic in `evidence` alone.
+///
+/// The result passes through [`stella_core::redact::redact_secrets`] before it is
+/// returned. That is new here and it is required by this change rather than
+/// inherited from it: the old tail digest carried tool *names* and no tool output
+/// whatsoever, so it could not carry a credential. This one renders tool
+/// arguments and tool results, which is exactly where one shows up — a
+/// `read_file` of `.env`, a `bash` that printed `env`, a token echoed in an error
+/// message. Reflection also dispatches on the **triage** route (#1847), which may
+/// be a different vendor than the worker the turn ran on, so "the provider has
+/// seen it already" is not a safe assumption. Redaction is a pure function over
+/// the string, so it costs the module none of its testability.
 pub(crate) fn build(evidence: TurnEvidence<'_>) -> String {
     let transcript = evidence.transcript;
     let names = call_names(evidence);
@@ -512,7 +523,7 @@ pub(crate) fn build(evidence: TurnEvidence<'_>) -> String {
             kept[index] = Some(body);
         }
     }
-    stitch(&kept, evidence.friction)
+    stella_core::redact::redact_secrets(&stitch(&kept, evidence.friction)).text
 }
 
 /// Join the kept renderings in transcript order, replacing each run of dropped
