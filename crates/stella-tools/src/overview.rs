@@ -527,6 +527,50 @@ fn tracked_languages(root: &Path) -> Vec<&'static str> {
     found.into_iter().collect()
 }
 
+/// Non-empty stdout lines from a `git` invocation, or `None` when git failed.
+///
+/// Synchronous on purpose: every caller here already runs on the blocking pool
+/// (`build_overview` is dispatched there), and these are single ref reads.
+///
+/// `current_dir` is **not** sufficient to say which repository this reads.
+/// `GIT_DIR` overrides it, and git *exports* `GIT_DIR` to every hook it runs —
+/// so an overview assembled from inside a pre-push hook would report the outer
+/// repository's branches, remotes and languages as this workspace's, silently
+/// and with no error to notice.
+///
+/// Both scrubs are needed and neither subsumes the other, which is easy to get
+/// wrong: `scrub_sensitive_std_env` drops credentials and the *ambient
+/// authority* set — `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF` and friends, the
+/// vars that make git run someone else's code — but the *retargeting* vars
+/// live in [`crate::exec::GIT_REPO_ENV_VARS`] and are removed by name. A first
+/// draft of this used only the former and still read the wrong repository;
+/// `an_ambient_git_dir_cannot_retarget_the_overview` is what caught it.
+fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
+    let mut command = std::process::Command::new("git");
+    command
+        .args(args)
+        .current_dir(root)
+        // Nothing here reads stdin; inheriting it lets a git that decides to
+        // prompt (a credential helper on a remote URL) hang the overview.
+        .stdin(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0");
+    crate::subprocess_env::scrub_sensitive_std_env(&mut command);
+    for var in crate::exec::GIT_REPO_ENV_VARS {
+        command.env_remove(var);
+    }
+    let out = command.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
     // Build on first use, the same path `graph_query` takes: project_overview
     // is meant to be the FIRST call in a session, before the background index
@@ -957,6 +1001,53 @@ mod tests {
     fn a_non_repository_says_so_rather_than_erroring() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(git_section(dir.path())["repository"], false);
+    }
+
+    /// An ambient `GIT_DIR` must not re-aim the overview at another repository.
+    ///
+    /// `current_dir` does not decide which repo git reads — `GIT_DIR` overrides
+    /// it, and git EXPORTS `GIT_DIR` to every hook it runs. So an overview
+    /// assembled from inside a pre-push hook would report the outer
+    /// repository's branches and remotes as this workspace's, with no error to
+    /// notice. The failure is silent and the answer is confidently wrong, which
+    /// is the worst combination a orientation tool can have.
+    ///
+    /// Set on the *process*, because that is how a hook delivers it.
+    #[test]
+    fn an_ambient_git_dir_cannot_retarget_the_overview() {
+        // Serialised against nothing else: this mutates process env, so it must
+        // restore it before returning even on failure.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let here = tempfile::tempdir().unwrap();
+
+        let init = |dir: &Path, remote: &str| {
+            for args in [
+                vec!["init", "--quiet"],
+                vec!["remote", "add", "origin", remote],
+            ] {
+                let _ = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(dir)
+                    .output();
+            }
+        };
+        init(elsewhere.path(), "https://example.invalid/OUTER.git");
+        init(here.path(), "https://example.invalid/INNER.git");
+
+        let previous = std::env::var_os("GIT_DIR");
+        // SAFETY: single-threaded test body; restored below before returning.
+        unsafe { std::env::set_var("GIT_DIR", elsewhere.path().join(".git")) };
+        let section = git_section(here.path());
+        match previous {
+            Some(value) => unsafe { std::env::set_var("GIT_DIR", value) },
+            None => unsafe { std::env::remove_var("GIT_DIR") },
+        }
+
+        let rendered = section.to_string();
+        assert!(
+            !rendered.contains("OUTER"),
+            "an ambient GIT_DIR re-aimed the overview at another repository: {rendered}"
+        );
     }
 
     #[test]
