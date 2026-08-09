@@ -12,8 +12,13 @@
 //! backwards, and a run in which the right lesson wins is a run in which
 //! something other than the body decided. There is no arrangement of body-only
 //! scores that passes this by luck — which is what makes it a witness rather
-//! than a plausible assertion (verified by reverting `recall_text` to the bare
-//! lesson: both assertions below fail).
+//! than a plausible assertion.
+//!
+//! Checked, not assumed. Reverting the one call that folds the trigger in
+//! (`learning.rs`, `recall_text` → the bare lesson) fails both tests below, and
+//! fails them the predicted way: the resize goal comes back holding *the ledger
+//! lesson*, because "resize" appears in that lesson's body. The third test —
+//! the restatement band — passes on both sides, which is the point of it.
 //!
 //! Everything reaches the store through `reflect_and_record`, the production
 //! write path, so what is pinned is the wiring and not a helper.
