@@ -15,7 +15,7 @@ import { Tip } from "@/components/ui/tooltip";
 export function Race({ snapshot }: { snapshot: Snapshot }) {
   const leaders = snapshot.leaders || {};
   return (
-    <section className="rounded-[10px] border border-line bg-panel px-3 py-2">
+    <section className=" border border-line bg-panel px-3 py-2">
       {snapshot.dimensions.map((dim) => {
         // A dimension nobody has a number for has nothing to race: wasted
         // time without a single `arenabench flip` replay, cost without a
@@ -35,7 +35,7 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
              a ratio off. The label sits above its own bars instead. */
           <div key={dim.key} className="py-1.5">
             <Tip content={dim.blurb}>
-              <div className="mb-1 text-[10.5px] lowercase tracking-[0.07em] text-dim">
+              <div className="mb-1 text-[10.5px] tracking-[0.07em] text-dim">
                 {dim.label} <i className="not-italic text-line">{arrow}</i>
               </div>
             </Tip>
@@ -58,11 +58,11 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
                     style={seatStyle(c.color)}
                     className="grid items-center gap-2 [grid-template-columns:1fr_64px]"
                   >
-                    <div className="h-[9px] overflow-hidden rounded-[3px] bg-line-soft">
+                    <div className="h-[9px] overflow-hidden bg-line-soft">
                       <i
                         className={cn(
-                          "block h-full rounded-[3px] bg-(--seat) transition-[width,opacity] duration-500",
-                          isBest ? "opacity-100 shadow-[0_0_12px_-2px_var(--seat)]" : "opacity-55",
+                          "block h-full bg-(--seat) transition-[width,opacity] duration-500",
+                          isBest ? "opacity-100 " : "opacity-55",
                         )}
                         style={{ width: `${Math.max(2, Math.min(100, width))}%` }}
                       />

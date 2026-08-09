@@ -110,14 +110,14 @@ export function SutPanel({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="text-[11px] lowercase text-muted" htmlFor="sut-ref">
+        <label className="text-[11px] text-muted" htmlFor="sut-ref">
           build from
         </label>
         <select
           id="sut-ref"
           value={sutRef}
           onChange={(event) => onChangeRef(event.target.value)}
-          className="min-w-[240px] rounded-[7px] border border-line bg-panel px-2 py-1.5 font-mono text-[12px]"
+          className="min-w-[240px] border border-line bg-panel px-2 py-1.5 font-mono text-[12px]"
         >
           {/* A pin can be an exact commit rather than a branch — that is what
               a finished build leaves behind. Without an option carrying that
@@ -149,7 +149,7 @@ export function SutPanel({
       {branchProblem && <ErrorBox>{branchProblem}</ErrorBox>}
 
       {!pinned && (
-        <div className="rounded-[10px] border border-warn/35 bg-warn/6 px-[13px] py-2.5 text-[12.5px] text-warn">
+        <div className=" border border-warn/35 bg-warn/6 px-[13px] py-2.5 text-[12.5px] text-warn">
           This match will run whatever binary is staged, without checking which
           commit it is. Results are recorded as an <strong>unverified</strong> SUT
           and cannot be attributed to a Stella revision.
@@ -159,7 +159,7 @@ export function SutPanel({
       {pinned && status && (
         <div
           className={cn(
-            "rounded-[10px] border px-[13px] py-2.5 text-[12.5px]",
+            " border px-[13px] py-2.5 text-[12.5px]",
             ready
               ? "border-ok/35 bg-ok/6 text-ok"
               : "border-warn/35 bg-warn/6 text-warn",
@@ -190,7 +190,7 @@ export function SutPanel({
       )}
 
       {build && (
-        <div className="rounded-[10px] border border-line bg-panel px-[13px] py-2.5 text-[12px]">
+        <div className=" border border-line bg-panel px-[13px] py-2.5 text-[12px]">
           <div className="flex items-center gap-2">
             <span className="font-mono">{build.short || build.ref}</span>
             <span className="text-muted">
