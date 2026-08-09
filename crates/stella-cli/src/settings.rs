@@ -297,24 +297,35 @@ impl Toggle {
     }
 }
 
-/// The four configurable engine agents. `Default` is the interactive /
-/// step-loop agent; the other three are the staged pipeline's roles
-/// (`stella_protocol::Role::{Worker, Verifier, Triage}` — `Plan` rides the
-/// worker's settings, matching the router's tiering).
+/// The configurable engine agents. `Default` is the interactive /
+/// step-loop agent; the rest are the staged pipeline's roles, one per
+/// `stella_protocol::Role` that serves a pipeline responsibility.
+///
+/// `Research` and `Plan` were the last two to get their own rows (#2374).
+/// Both used to ride the worker's settings, which read as harmless while the
+/// worker's posture was the only one anybody tuned — and then a benchmark seat
+/// pinned the worker to `xhigh` and silently bought fifteen `xhigh` research
+/// calls that emitted a few hundred reasoning tokens between them. A role that
+/// cannot be turned down is a role that is always billed at the most expensive
+/// setting in the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineAgentKind {
     Default,
     Worker,
     Verifier,
     Triage,
+    Research,
+    Plan,
 }
 
 impl EngineAgentKind {
-    pub const ALL: [EngineAgentKind; 4] = [
+    pub const ALL: [EngineAgentKind; 6] = [
         EngineAgentKind::Default,
         EngineAgentKind::Worker,
         EngineAgentKind::Verifier,
         EngineAgentKind::Triage,
+        EngineAgentKind::Research,
+        EngineAgentKind::Plan,
     ];
 }
 
@@ -364,6 +375,13 @@ pub struct AgentEngineConfig {
     pub pipeline_worker_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_triage_model: Option<String>,
+    /// The read-only research sub-agents' model. Unset, they ride the worker's
+    /// — which is the tier they have always run at, not a tier anyone chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_research_model: Option<String>,
+    /// The planner's model. Unset, it rides the worker's, per `Role::Plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_plan_model: Option<String>,
     /// The model vocabulary the TUI pickers offer and `auto_mode` selects
     /// from. Entries are `provider/slug` strings. Empty/absent = no
     /// restriction (pickers fall back to the seed catalog).
@@ -634,6 +652,10 @@ pub struct AgentEngineAgents {
     pub verifier: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<AgentEngineAgent>,
 }
 
 impl AgentEngineAgents {
@@ -643,6 +665,8 @@ impl AgentEngineAgents {
             EngineAgentKind::Worker => self.worker.as_ref(),
             EngineAgentKind::Verifier => self.verifier.as_ref(),
             EngineAgentKind::Triage => self.triage.as_ref(),
+            EngineAgentKind::Research => self.research.as_ref(),
+            EngineAgentKind::Plan => self.plan.as_ref(),
         }
     }
 
@@ -652,6 +676,8 @@ impl AgentEngineAgents {
             EngineAgentKind::Worker => &mut self.worker,
             EngineAgentKind::Verifier => &mut self.verifier,
             EngineAgentKind::Triage => &mut self.triage,
+            EngineAgentKind::Research => &mut self.research,
+            EngineAgentKind::Plan => &mut self.plan,
         }
     }
 }
@@ -782,6 +808,8 @@ impl AgentEngineConfig {
         take!(pipeline_verifier_model);
         take!(pipeline_worker_model);
         take!(pipeline_triage_model);
+        take!(pipeline_research_model);
+        take!(pipeline_plan_model);
         take!(allowed_models);
         // Per KEY, not wholesale — the deliberate opposite of
         // `allowed_models` two lines up, and the contrast is the reason
@@ -863,6 +891,12 @@ impl AgentEngineConfig {
             EngineAgentKind::Worker => self.pipeline_worker_model.as_deref(),
             EngineAgentKind::Verifier => self.pipeline_verifier_model.as_deref(),
             EngineAgentKind::Triage => self.pipeline_triage_model.as_deref(),
+            // Both fall through to `default_model` below when unset, which is
+            // where they have always landed — the worker's flat key is not
+            // consulted for them, since a worker pin says nothing about what
+            // a read-only research call or a single planning call should run.
+            EngineAgentKind::Research => self.pipeline_research_model.as_deref(),
+            EngineAgentKind::Plan => self.pipeline_plan_model.as_deref(),
         };
         flat.or(self.default_model.as_deref())
     }

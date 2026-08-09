@@ -13,7 +13,7 @@ step loop the worker walks.
 | | |
 |---|---|
 | Call role | `ModelCallRole::Plan` (`"plan"`) |
-| Router tier | `Role::Plan` — the worker tier, matching the router's tiering |
+| Router tier | `Role::Plan` — the worker tier, and the worker's model unless `agents.plan`/`pipeline_plan_model` names another |
 | Dispatch | raw completion, `tools: []` |
 | Built by | `build_planner_prompt`, `crates/stella-pipeline/src/plan.rs` |
 | Sent from | `Pipeline::plan_stage`, `crates/stella-pipeline/src/pipeline.rs` |
@@ -21,12 +21,12 @@ step loop the worker walks.
 | Timeout | `config.engine.model_timeout` |
 | Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Effort | inherited — plan quality rides the session's own reasoning posture |
-| Override | `agents.worker.prompt` — **wired**, prepended as a system message |
+| Override | `agents.plan.prompt`, falling back to `agents.worker.prompt` — **wired**, prepended as a system message |
 
 ## Wire shape
 
 ```
-[ system(agents.worker.prompt)?   ← config.role_overrides.worker
+[ system(agents.plan.prompt ?? agents.worker.prompt)?   ← config.role_overrides.plan
   system(PLANNER_INSTRUCTIONS)    ← &'static str, byte-identical every call
   user(payload) ]
 ```
@@ -117,6 +117,12 @@ worker's own instructions forbid.
 It is **prepended**, never substituted: the built-in block carries the
 JSON-array output contract `parse_plan` depends on, and an override that
 replaced it would break parsing on every turn it was set.
+
+The planner has since gained a row of its own (`agents.plan`, #2374), and that
+did not cost this property. The caller resolves `agents.plan` over
+`agents.worker` field by field before the pipeline ever sees it, so an unset
+`agents.plan.prompt` still arrives here carrying the worker's — and an operator
+who wants the planner steered separately now has somewhere to say so.
 
 The conversational fast path deliberately does *not* take this row. Its whole
 job is to replace the engineering persona with `CONVERSATIONAL_SYSTEM_PROMPT`

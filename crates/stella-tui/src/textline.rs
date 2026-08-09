@@ -337,17 +337,72 @@ pub fn file_change(path: &str, kind: FileChangeKind) -> EventLine {
     }
 }
 
-/// `cited` is the citation tail each surface owns the data for: the plain
-/// surface passes the provider mix ([`provider_mix_label`]), the deck the
-/// frames' human citation labels (L-C4).
-pub fn context_recall(frames: usize, tokens: u32, cited: &str) -> EventLine {
+/// One recall, on a surface that gets exactly one line for it.
+///
+/// The deck renders a recall as a table (`render::entry`); this surface prints
+/// one line per event and cannot fold, so it states the same *facts* in the
+/// order they answer questions: how much did the model get, what did it cost,
+/// was recall the reason the turn felt slow, what kinds came back, and from
+/// which legs.
+///
+/// The two surfaces used to disagree about what a recall even is — this one
+/// named the provider mix and no labels, the deck named the labels and no
+/// provider mix, and neither said the latency the wire had carried since #875.
+/// `kinds` and `cited` are both passed in so the wording stays here, in the one
+/// module that owns wording.
+///
+/// `latency_ms` of `0` means *not measured* on the wire, so it is omitted
+/// rather than printed as `0ms`.
+pub fn context_recall(
+    frames: usize,
+    tokens: u32,
+    latency_ms: u32,
+    kinds: &str,
+    cited: &str,
+) -> EventLine {
+    let mut body = format!("recalled {frames} frames · {tokens} tok");
+    if latency_ms > 0 {
+        body.push_str(&format!(" · {latency_ms}ms"));
+    }
+    if !kinds.is_empty() {
+        body.push_str(&format!(" · {kinds}"));
+    }
     EventLine {
         glyph: "◈",
         tone: Tone::Info,
         strong: false,
-        body: format!("recalled {frames} frames ({tokens} tokens: {cited})"),
-        detail: None,
+        body,
+        detail: (!cited.is_empty()).then(|| format!("via {cited}")),
     }
+}
+
+/// `4 symbol, 1 episode` — the recall's kind histogram, in the frames' own
+/// order of first appearance.
+///
+/// Kind is the field that changes how a recall row is *read*: four graph
+/// symbols and one episodic memory cost the prompt the same tokens and say
+/// entirely different things about what retrieval did. Ordering by first
+/// appearance rather than by count keeps the string stable across turns that
+/// recall the same mix in a different quantity.
+#[must_use]
+pub fn frame_kind_label(frames: &[stella_protocol::ContextFrameRef]) -> String {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for frame in frames {
+        let kind = if frame.kind.is_empty() {
+            "frame"
+        } else {
+            frame.kind.as_str()
+        };
+        match counts.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((kind, 1)),
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(kind, n)| format!("{n} {kind}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn context_write(provider: &str, upserts: u32, superseded: u32) -> EventLine {
@@ -645,10 +700,13 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             frames,
             provider_mix,
             tokens,
+            latency_ms,
             ..
         } => Some(context_recall(
             frames.len(),
             *tokens,
+            *latency_ms,
+            &frame_kind_label(frames),
             &provider_mix_label(provider_mix),
         )),
         AgentEvent::ContextWrite {
@@ -864,8 +922,14 @@ mod tests {
             "± modified src/lib.rs"
         );
         assert_eq!(
-            context_recall(2, 120, "2×code-graph").text(),
-            "◈ recalled 2 frames (120 tokens: 2×code-graph)"
+            context_recall(2, 120, 34, "2 symbol", "2×code-graph").text(),
+            "◈ recalled 2 frames · 120 tok · 34ms · 2 symbol via 2×code-graph"
+        );
+        // `latency_ms: 0` means *not measured* on the wire, never "instant" —
+        // so it is omitted rather than rendered as a `0ms` nobody measured.
+        assert_eq!(
+            context_recall(2, 120, 0, "2 symbol", "2×code-graph").text(),
+            "◈ recalled 2 frames · 120 tok · 2 symbol via 2×code-graph"
         );
         assert_eq!(
             context_write("mem0", 3, 1).text(),
@@ -1207,34 +1271,69 @@ mod tests {
         }
     }
 
+    fn recall_frame(label: &str, provider: &str, kind: &str, tokens: u32) -> ContextFrameRef {
+        ContextFrameRef {
+            id: None,
+            citation_label: label.into(),
+            provider: provider.into(),
+            source: provider.into(),
+            kind: kind.into(),
+            uri: None,
+            method: None,
+            token_cost: tokens,
+            block_id: None,
+            content_digest: None,
+        }
+    }
+
+    /// The one-line surface names the kind mix, the cost, the latency, and the
+    /// provider legs — all four, from the event alone.
+    ///
+    /// It used to name the provider mix and nothing else, while the deck named
+    /// the citation labels and nothing else, so the two surfaces disagreed
+    /// about what a recall *is* and neither reported the `latency_ms` the wire
+    /// has carried since #875. The witness is that this string now answers
+    /// "what came back, what did it cost, was it slow, and from where".
     #[test]
-    fn event_line_recall_cites_the_provider_mix_on_the_event_path() {
+    fn event_line_recall_names_kinds_cost_latency_and_legs() {
         let line = event_line(&AgentEvent::ContextRecall {
-            frames: vec![ContextFrameRef {
-                id: None,
-                citation_label: "driver.rs".into(),
-                provider: "code-graph".into(),
-                source: "code-graph".into(),
-                kind: "symbol".into(),
-                uri: None,
-                method: None,
-                token_cost: 120,
-                block_id: None,
-                content_digest: None,
-            }],
-            provider_mix: vec![ProviderShare {
-                provider: "code-graph".into(),
-                frames: 1,
-            }],
+            frames: vec![
+                recall_frame("driver.rs", "code-graph", "symbol", 80),
+                recall_frame("release 0.8.0", "workspace-memory", "episode", 40),
+            ],
+            provider_mix: vec![
+                ProviderShare {
+                    provider: "code-graph".into(),
+                    frames: 1,
+                },
+                ProviderShare {
+                    provider: "workspace-memory".into(),
+                    frames: 1,
+                },
+            ],
             tokens: 120,
             usage: None,
-            latency_ms: 0,
+            latency_ms: 34,
             used_ann_index: None,
         })
         .expect("recall is an annotation");
         assert_eq!(
             line.text(),
-            "◈ recalled 1 frames (120 tokens: 1×code-graph)"
+            "◈ recalled 2 frames · 120 tok · 34ms · 1 symbol, 1 episode \
+             via 1×code-graph, 1×workspace-memory"
+        );
+    }
+
+    /// A kind the emitter did not set renders as `frame`, not as a blank.
+    ///
+    /// Streams recorded before `ContextFrameRef::kind` existed carry an empty
+    /// string, and an empty kind column reads as a rendering bug rather than
+    /// as the missing field it is.
+    #[test]
+    fn frame_kind_label_names_an_absent_kind_rather_than_blanking_it() {
+        assert_eq!(
+            frame_kind_label(&[recall_frame("old", "code-graph", "", 10)]),
+            "1 frame"
         );
     }
 }

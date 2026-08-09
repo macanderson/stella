@@ -652,7 +652,7 @@ pub(crate) fn resolve_engine_wiring(
     configured: &[crate::config::ConfiguredProvider],
 ) -> EngineWiring {
     use crate::engine_config::{
-        ModelSpec, auto_verifier_spec, model_spec_for, spec_family, tuning_for,
+        ModelSpec, auto_verifier_spec, model_spec_for, own_model_spec_for, spec_family, tuning_for,
     };
     use crate::settings::EngineAgentKind;
 
@@ -686,12 +686,14 @@ pub(crate) fn resolve_engine_wiring(
     // Issue #276: resolve the WORKER's own override first, before anything
     // that needs to know the worker's actual model (verifier cross-family
     // selection, the capability clamp's "rides the worker" fallback below).
-    // `Role::Plan` is pinned alongside `Role::Worker` to the same model —
-    // unpinned, it shares the worker's tier (`resolve_tier` treats
-    // `Worker`/`Plan` identically), so leaving it out would silently revert
-    // plan/witness turns to the session default the moment the worker is
-    // overridden, defeating "plan rides the worker" (`pipeline_engine_config_for`'s
-    // doc comment).
+    // `Role::Plan` and `Role::Research` are pinned alongside `Role::Worker` to
+    // the same model — unpinned, they share the worker's tier (`resolve_tier`
+    // treats all three identically), so leaving them out would silently revert
+    // plan/research/witness turns to the session default the moment the worker
+    // is overridden, defeating "plan rides the worker"
+    // (`pipeline_engine_config_for`'s doc comment). A role that names its own
+    // model re-pins over this a few lines down; this is the floor, not the
+    // final answer.
     // ...unless the invocation carries an explicit `--model`. That flag's
     // documented job IS pinning the worker model for one run, so settings
     // must lose to it — otherwise the pin is not merely ignored but
@@ -718,7 +720,7 @@ pub(crate) fn resolve_engine_wiring(
     let effective_worker_ref = match &worker_spec {
         Some(spec) => pin_role(
             &mut wiring,
-            &[Role::Worker, Role::Plan],
+            &[Role::Worker, Role::Plan, Role::Research],
             "worker",
             spec,
             worker_ref,
@@ -739,6 +741,22 @@ pub(crate) fn resolve_engine_wiring(
     // (an `EngineConfig` has no system-message seat, so `agents.worker.prompt`
     // reached worker turns and stopped at the planner).
     let worker_tuning = tuning_for(&engine, EngineAgentKind::Worker);
+    // Plan and research over the worker, field by field. The inheritance is
+    // what keeps "rides the worker" true — an absent `agents.plan` leaves the
+    // planner shaped exactly as it was, including the `prompt` #2416 routes
+    // there — while a field the operator did set wins for that field alone.
+    // Resolved HERE, not in the pipeline, so `stella config`'s report and the
+    // request path read one precedence rather than two.
+    let over_worker = |own: crate::engine_config::AgentTuning| stella_pipeline::RoleCallOverrides {
+        prompt: own.prompt.or_else(|| worker_tuning.prompt.clone()),
+        effort: own.effort.or(worker_tuning.effort),
+        reasoning: own.reasoning.or(worker_tuning.reasoning),
+        temperature: own.temperature.or(worker_tuning.temperature),
+        max_output_tokens: own.max_output_tokens.or(worker_tuning.max_output_tokens),
+        params: own.params.or(worker_tuning.params),
+    };
+    wiring.role_overrides.plan = over_worker(tuning_for(&engine, EngineAgentKind::Plan));
+    wiring.role_overrides.research = over_worker(tuning_for(&engine, EngineAgentKind::Research));
     wiring.role_overrides.worker = stella_pipeline::RoleCallOverrides {
         prompt: worker_tuning.prompt,
         effort: worker_tuning.effort,
@@ -780,6 +798,11 @@ pub(crate) fn resolve_engine_wiring(
         model_spec_for(&engine, EngineAgentKind::Verifier, &is_provider)
     };
     let triage_spec = model_spec_for(&engine, EngineAgentKind::Triage, &is_provider);
+    // `own_model_spec_for`, not `model_spec_for`: these two inherit the worker
+    // rather than `default_model` (see that function's doc), so `None` here
+    // means "leave the worker pin from above standing".
+    let research_spec = own_model_spec_for(&engine, EngineAgentKind::Research, &is_provider);
+    let plan_spec = own_model_spec_for(&engine, EngineAgentKind::Plan, &is_provider);
 
     // Capability clamp, mirroring `tuned_engine_config`: a role whose
     // model (pinned, provider-default, or riding the worker) is a
@@ -810,15 +833,22 @@ pub(crate) fn resolve_engine_wiring(
         };
         clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
         clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
-        // `None` resolves to the ACTUAL (possibly overridden) worker model,
-        // which is what the plan role is pinned to — so a non-reasoning worker
-        // model clamps the plan call's effort exactly as it clamps its own.
+        // `None` resolves to the ACTUAL (possibly overridden) worker model —
+        // which is exactly what plan and research fall back to when they name
+        // no model of their own, so passing their spec here clamps against
+        // whichever of the two actually serves them.
         clamp(&mut wiring.role_overrides.worker, None);
+        clamp(&mut wiring.role_overrides.plan, plan_spec.as_ref());
+        clamp(&mut wiring.role_overrides.research, research_spec.as_ref());
     }
 
     let role_specs = [
         (Role::Triage, "triage", triage_spec),
         (Role::Verifier, "verifier", verifier_spec),
+        // After the worker pin above, so a role that names its own model
+        // replaces the inherited one rather than racing it.
+        (Role::Plan, "plan", plan_spec),
+        (Role::Research, "research", research_spec),
     ];
 
     let mut verifier_pin: Option<ModelRef> = None;

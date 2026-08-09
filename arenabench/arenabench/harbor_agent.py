@@ -47,6 +47,8 @@ _ENGINE_ROOT_FIELDS = frozenset(
         "pipeline_verifier_model",
         "pipeline_worker_model",
         "pipeline_triage_model",
+        "pipeline_research_model",
+        "pipeline_plan_model",
         "allowed_models",
         "auto_mode",
         "effort_auto",
@@ -63,7 +65,21 @@ _ROLE_TO_ROOT_MODEL_KEY = {
     "worker": "pipeline_worker_model",
     "verifier": "pipeline_verifier_model",
     "triage": "pipeline_triage_model",
+    "research": "pipeline_research_model",
+    "plan": "pipeline_plan_model",
 }
+
+#: Roles whose documented default is "run whatever the worker runs", so an
+#: undeclared one must emit NO ``agents`` row at all.
+#:
+#: Same rule as the ``responsibilities`` block below, for the same reason: the
+#: posture is what the digest covers, so a row emitted for a role the seat
+#: never mentioned would re-hash every already-registered arm and make two runs
+#: of the same configuration incomparable. It would also be a lie — writing
+#: ``{"effort": "xhigh"}`` for research because the engine baseline says xhigh
+#: states a choice nobody made, and freezes it against the inheritance the
+#: engine would otherwise apply.
+_INHERIT_THE_WORKER = frozenset({"research", "plan"})
 
 
 def _canonical(posture: dict[str, Any]) -> tuple[str, str]:
@@ -121,10 +137,19 @@ def arena_posture(
     }
 
     agents: dict[str, dict[str, Any]] = {}
-    for role in ("default", "worker", "verifier", "triage"):
+    for role in ("default", "worker", "verifier", "triage", "research", "plan"):
         override = engine.role(role)
         resolved = engine.effective_role(role)
-        if role == "triage" and override.effort is None and override.reasoning is None:
+        if (
+            role in _INHERIT_THE_WORKER
+            and override.effort is None
+            and override.reasoning is None
+        ):
+            # No row — the engine inherits the worker's, field by field. See
+            # `_INHERIT_THE_WORKER`. A model pin below still applies: naming a
+            # model is a declaration even when the posture is not.
+            entry: dict[str, Any] | None = None
+        elif role == "triage" and override.effort is None and override.reasoning is None:
             # Triage does not inherit the engine baseline. It emits a
             # three-line classification and never touches the workspace, so
             # raising it changes what the agent *is* rather than what it was
@@ -132,7 +157,7 @@ def arena_posture(
             # reasoning pass per turn for a decision that needs none. An
             # operator who genuinely wants an expensive triage still gets it
             # by setting the role explicitly; this only governs the default.
-            entry: dict[str, Any] = {"effort": "low", "reasoning": "off"}
+            entry = {"effort": "low", "reasoning": "off"}
         else:
             entry = {
                 "effort": resolved.effort or "high",
@@ -145,7 +170,8 @@ def arena_posture(
         # DEFAULT is always the model's maximum"). Sending a number instead
         # would require knowing every booked model's real ceiling, and picking
         # one without knowing it is exactly what #2128 was.
-        agents[role] = entry
+        if entry is not None:
+            agents[role] = entry
 
         override_model = engine.role(role).model
         if override_model:

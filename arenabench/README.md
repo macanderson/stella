@@ -157,6 +157,13 @@ agent = "stella"
     model = "z-ai/glm-4.7-flash"
     effort = "low"
 
+    [contestant.engine.roles.research]   # read-only pre-plan lookups, fanned out
+    effort = "low"
+    reasoning = "off"
+
+    [contestant.engine.roles.plan]       # one call, writes the work order
+    effort = "medium"
+
   [contestant.env]
   required = ["OPENROUTER_API_KEY"]        # NAMES only — never values
 
@@ -185,6 +192,16 @@ own work. It is *not* the benchmark's verifier, which is Harbor's and decides
 the reward. The file and the Stella wire key agree on the name
 (`pipeline_verifier_model`); a template written against the older `judge`
 spelling still loads.
+
+**`research` and `plan` ride the worker unless the seat declares them.** They
+take `model`, `effort`, and `reasoning` like any other role, and they are the
+two a seat could not turn down before: research is a fan-out of short
+read-only lookups, so a worker pinned to `xhigh` bought an `xhigh`
+deliberation pass for every child triage asked a question of. An **undeclared**
+role emits no `agents` row into the container posture at all — not a row
+restating the engine baseline — so every arm registered before these blocks
+existed keeps a byte-identical posture digest, and a row that is present always
+states a choice somebody made rather than one nobody did.
 
 **Seating one agent on another vendor's model.** Set `base_url` and the runner
 routes that seat there — Claude Code reads `ANTHROPIC_BASE_URL`, and because

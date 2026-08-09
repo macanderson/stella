@@ -106,7 +106,15 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         // token are numbers-adjacent chrome.
         E::Parked { description, .. } => vec![description],
         E::ProviderFallback { from, to, reason } => vec![from, to, reason],
-        E::ContextRecall { labels, .. } => labels.iter().map(String::as_str).collect(),
+        // The citation label *and* the frame's URI: "which turn recalled
+        // hunk_gate.rs?" is the question a reader actually brings to a
+        // transcript search, and the path only ever lived in the URI. The
+        // provider/method/digest stay out — those are audit fields, not
+        // things anyone types into a find box.
+        E::ContextRecall { frames, .. } => frames
+            .iter()
+            .flat_map(|f| std::iter::once(f.label.as_str()).chain(f.uri.as_deref()))
+            .collect(),
         E::ContextWrite { provider, .. } => vec![provider],
         E::MediaComplete { label, path, .. } => vec![label, path],
         E::Verdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],

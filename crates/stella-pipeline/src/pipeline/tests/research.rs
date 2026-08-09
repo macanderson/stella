@@ -71,6 +71,176 @@ macro_rules! research_scenario {
 const TRIAGE_WITH_QUESTIONS: &str = "CLASS: multi\nWITNESS: yes\nVERIFIER: yes\n\
      RESEARCH: Which module owns retries? | Where are the retry tests?";
 
+/// A provider that records the `effort` of every request beside its text.
+///
+/// [`ScriptedProvider`] records messages only, which is enough for every other
+/// question this file asks and not enough for the one below: `agents.research`
+/// is a claim about what goes ON THE WIRE, and a knob that resolves correctly
+/// in `stella-cli` and never reaches a request is exactly the "parses but
+/// wires nothing" failure. Local to this file rather than folded into
+/// `ScriptedProvider` because that fixture's module sits at its file-size
+/// ceiling.
+struct EffortRecordingProvider {
+    script: TokioMutex<VecDeque<CompletionResult>>,
+    calls: std::sync::Mutex<Vec<(Option<stella_protocol::ReasoningEffort>, String)>>,
+}
+
+impl EffortRecordingProvider {
+    fn new(results: Vec<CompletionResult>) -> Self {
+        Self {
+            script: TokioMutex::new(results.into_iter().collect()),
+            calls: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The effort of every call whose prompt contains `needle`.
+    fn efforts_for(&self, needle: &str) -> Vec<Option<stella_protocol::ReasoningEffort>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, text)| text.contains(needle))
+            .map(|(effort, _)| *effort)
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Provider for EffortRecordingProvider {
+    fn id(&self) -> &str {
+        "effort-recording"
+    }
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.calls.lock().unwrap().push((
+            req.effort,
+            req.messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+        let mut q = self.script.lock().await;
+        q.pop_front()
+            .ok_or_else(|| ProviderError::Terminal("scripted provider exhausted".into()))
+    }
+}
+
+struct OneEffortProvider<'p>(&'p EffortRecordingProvider);
+impl ProviderResolver for OneEffortProvider<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        Some(self.0)
+    }
+}
+
+/// **The pipeline half of #2374's witness.** `agents.research` must reach the
+/// research children's requests, and must not disturb the worker's.
+///
+/// The reason this needs its own test rather than riding the CLI's: a research
+/// child is an engine SUB-AGENT turn, not a raw call, so it never passes
+/// through `metered_raw_call` where every other role's overrides are applied.
+/// Its shaping has to be written onto the `EngineConfig` the stage builds, and
+/// nothing but a recorded request proves that happened.
+#[tokio::test]
+async fn the_research_row_reaches_the_childrens_requests_and_not_the_workers() {
+    let provider = EffortRecordingProvider::new(vec![
+        text_result(TRIAGE_WITH_QUESTIONS),
+        text_result("driver.rs owns retries."),
+        text_result("The retry tests live in driver/tests.rs."),
+        text_result(r#"["update retry.rs"]"#),
+        text_result("PLAN COMPLETE: retry layer refactored."),
+    ]);
+    let resolver = OneEffortProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true, true], "@@ -1 +1 @@\n-old\n+new");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            test_command: Some("cargo test -p x".into()),
+            diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+            // The worker's own effort rides `engine`, which is what the CLI
+            // builds from `agents.worker` — so this pair is the posture the
+            // `fix-git` trace showed, with research turned down.
+            engine: EngineConfig {
+                effort: Some(stella_protocol::ReasoningEffort::Xhigh),
+                ..EngineConfig::default()
+            },
+            role_overrides: PipelineRoleOverrides {
+                research: RoleCallOverrides {
+                    effort: Some(stella_protocol::ReasoningEffort::Low),
+                    ..RoleCallOverrides::default()
+                },
+                ..PipelineRoleOverrides::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run(
+            "Refactor the retry layer end to end",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run succeeds");
+    drop(pipeline);
+
+    // Matched on the child's own system prompt, not on the question text: the
+    // planner and worker messages quote the question back inside their
+    // findings section, so a needle of "Which module owns retries?" also
+    // catches two calls that are emphatically not research children.
+    let research = provider.efforts_for("You are a read-only research agent");
+    assert!(
+        !research.is_empty(),
+        "a research child must have been called"
+    );
+    assert!(
+        research
+            .iter()
+            .all(|e| *e == Some(stella_protocol::ReasoningEffort::Low)),
+        "every research child must carry the pinned effort, got {research:?}"
+    );
+
+    let worker = provider.efforts_for("## Plan (JSON array of step strings)");
+    assert!(
+        worker
+            .iter()
+            .all(|e| *e == Some(stella_protocol::ReasoningEffort::Xhigh)),
+        "turning research down must leave every other role where it was, got {worker:?}"
+    );
+}
+
 /// The planner prompt of a run, from the recorded per-call shapes: the one
 /// user message carrying the `## Plan` instruction.
 fn planner_prompt(shapes: &[Vec<(stella_protocol::MessageRole, String)>]) -> String {

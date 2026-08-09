@@ -4,6 +4,8 @@ use super::*;
 // unused import in every non-test build.
 use super::providers::COMMON_KEY_ENV_VARS;
 
+mod trusted_engine;
+
 /// Every provider's `default_model` here must resolve against
 /// `stella_model::catalog::Catalog::seed()`, or `build_provider`'s
 /// catalog check (`agent.rs`) would hard-error on first use of a
@@ -446,90 +448,6 @@ fn cache_ttl_pin_resolves_and_the_interactive_default_never_overrides_it() {
     );
     unpinned.adopt_interactive_cache_ttl();
     assert_eq!(unpinned.effective_cache_ttl(), CacheTtl::OneHour);
-}
-
-#[test]
-fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
-    use crate::settings::EngineAgentKind;
-    use stella_protocol::ReasoningEffort;
-
-    let settings = settings_from(
-        r#"{
-            "providers": {"openrouter": {"api_key": "sk-or-test"}},
-            "agent_engine_config": {
-                "default_model": "anthropic/task-chosen-model",
-                "pipeline_worker_model": "zai/task-worker",
-                "auto_mode": "on",
-                "effort_auto": "on",
-                "reasoning_auto": "on",
-                "agents": {
-                    "default": {"provider": "anthropic", "model": "task-default"},
-                    "worker": {"provider": "zai", "model": "task-worker"},
-                    "verifier": {"provider": "openai", "model": "task-verifier"},
-                    "triage": {"provider": "deepseek", "model": "task-triage"}
-                }
-            }
-        }"#,
-    );
-    let trusted = r#"{
-        "default_model":"openrouter/deepseek/deepseek-v4-pro",
-        "allowed_models":["openrouter/deepseek/deepseek-v4-pro"],
-        "auto_mode":"off",
-        "effort_auto":"off",
-        "reasoning_auto":"off",
-        "agents":{
-            "default":{"effort":"high","reasoning":"on"},
-            "worker":{"effort":"high","reasoning":"on"},
-            "verifier":{"effort":"high","reasoning":"on"},
-            "triage":{"effort":"low","reasoning":"off"}
-        }
-    }"#;
-
-    let _env = crate::test_env::lock();
-    // SAFETY: test-only process environment mutation serialized by test_env.
-    unsafe { std::env::set_var(TRUSTED_ENGINE_CONFIG_ENV, trusted) };
-    let cfg = Config::load_with_settings(
-        Some("openrouter/deepseek/deepseek-v4-pro"),
-        None,
-        Some("https://openrouter.ai/api/v1"),
-        &settings,
-        std::path::PathBuf::from("/tmp/ws"),
-    )
-    .expect("trusted engine posture should replace project settings");
-    unsafe { std::env::remove_var(TRUSTED_ENGINE_CONFIG_ENV) };
-
-    let engine = cfg
-        .engine_settings
-        .expect("trusted engine config is stamped");
-    assert_eq!(
-        engine.default_model.as_deref(),
-        Some("openrouter/deepseek/deepseek-v4-pro")
-    );
-    assert!(engine.pipeline_worker_model.is_none());
-    assert!(engine.pipeline_verifier_model.is_none());
-    assert!(engine.pipeline_triage_model.is_none());
-    assert!(!engine.auto_mode_on());
-    assert!(!engine.effort_auto_on());
-    assert!(!engine.reasoning_auto_on());
-    for kind in EngineAgentKind::ALL {
-        let spec = crate::engine_config::model_spec_for(&engine, kind, &|id| id == "openrouter")
-            .expect("every role inherits the trusted default model");
-        assert_eq!(spec.provider, "openrouter");
-        assert_eq!(spec.model, "deepseek/deepseek-v4-pro");
-        let tuning = crate::engine_config::tuning_for(&engine, kind);
-        if kind == EngineAgentKind::Triage {
-            assert_eq!(tuning.effort, Some(ReasoningEffort::Low));
-            assert_eq!(tuning.reasoning, Some(false));
-        } else {
-            assert_eq!(tuning.effort, Some(ReasoningEffort::High));
-            assert_eq!(tuning.reasoning, Some(true));
-        }
-        let agent = engine.agent(kind).expect("all four tuning rows are pinned");
-        assert!(agent.model.is_none());
-        assert!(agent.provider.is_none());
-        assert!(agent.prompt.is_none());
-        assert!(agent.params.is_none());
-    }
 }
 
 #[test]

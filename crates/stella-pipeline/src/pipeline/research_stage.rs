@@ -69,10 +69,19 @@ impl Pipeline<'_> {
             self.emit_fallback(fb);
         }
 
+        // The research row, over the worker-derived engine base. A research
+        // child is a sub-agent TURN, not a raw call, so its effort/reasoning
+        // have to be written onto the `EngineConfig` it runs under — there is
+        // no request for `metered_raw_call` to shape. Without this the row
+        // would parse and steer nothing, and research would go on being billed
+        // at whatever the worker was pinned to (#2374).
         let mut engine = Engine::with_sleeper(
             resolved.provider,
             self.tools,
-            self.config.engine.clone(),
+            super::witness_stage::apply_role_shaping(
+                self.config.engine.clone(),
+                &self.config.role_overrides.research,
+            ),
             self.sleeper,
         );
         if let Some((hooks, runner)) = self.hooks {

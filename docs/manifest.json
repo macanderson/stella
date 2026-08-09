@@ -587,6 +587,23 @@
       "status": "living",
       "title": "Stella: A Defensible Technology Position"
     },
+    "step-grading-and-productive-ratio": {
+      "path": "docs/designs/step-grading-and-productive-ratio.md",
+      "sections": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "status": "proposed",
+      "title": "Step grading and the agent productive step ratio"
+    },
     "storage-map": {
       "path": "docs/spec/storage-map.md",
       "sections": [

@@ -28,9 +28,11 @@ use std::collections::VecDeque;
 
 mod error_rows;
 pub mod file_state;
+pub mod recall;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
+pub use recall::{RecallBudget, RecalledFrameRow};
 
 /// How many characters of a tool input / output summary we retain on a
 /// transcript line before eliding — the full payload is never needed on the
@@ -306,10 +308,35 @@ pub enum TranscriptEntry {
     },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).
+    ///
+    /// The frames are kept **whole** rather than projected to a label list.
+    /// A recall is five-or-so records with four attributes each — a small
+    /// table — and this entry used to hold `{ frames: usize, tokens: u32,
+    /// labels: Vec<String> }`, which is a table with three of its four
+    /// columns deleted. Every surface downstream then had no choice but to
+    /// comma-join the labels into a paragraph that wrapped mid-word at the
+    /// pane edge: a symbol frame and an episodic memory rendered identically,
+    /// the per-frame cost was unrepresentable, and `ctrl+o` had nothing left
+    /// to reveal. Keeping the row means the renderer decides what to elide,
+    /// which is the only layer that knows the width.
     ContextRecall {
-        frames: usize,
+        frames: Vec<RecalledFrameRow>,
+        /// Sum of the frames' token costs — the turn's context bill.
         tokens: u32,
-        labels: Vec<String>,
+        /// Wall-clock milliseconds recall took. `0` means *not measured*, not
+        /// "instant" (the wire contract, `AgentEvent::ContextRecall`), so the
+        /// renderer omits it at `0` rather than printing a false `0ms`.
+        latency_ms: u32,
+        /// Whether the ANN index fired; `None` when the recall path did not
+        /// report it. Tri-state on the wire for a reason — see the protocol
+        /// event — and carried tri-state here so the deck can say "nobody
+        /// said" instead of "the index never fires".
+        used_ann_index: Option<bool>,
+        /// `(provider, frames)` — the recall's provider mix, already folded
+        /// on the wire.
+        providers: Vec<(String, u32)>,
+        /// The CGP budget report, when a host produced one.
+        budget: Option<RecallBudget>,
     },
     /// Context write-back completed.
     ContextWrite {
@@ -779,17 +806,29 @@ impl SessionModel {
                 removed,
                 diff,
             } => self.touch_file(path, *kind, *added, *removed, diff),
+            // Every field is carried through. The old fold projected the
+            // frames down to their labels here, which is where the deck's
+            // recall row lost the ability to be anything but a paragraph —
+            // and it is also how `latency_ms` and `used_ann_index`, both added
+            // to the wire precisely because recall sits on the first-token
+            // path (#875), never reached a surface at all.
             AgentEvent::ContextRecall {
                 frames,
-                provider_mix: _,
+                provider_mix,
                 tokens,
-                ..
+                usage,
+                latency_ms,
+                used_ann_index,
             } => {
-                let labels = frames.iter().map(|f| f.citation_label.clone()).collect();
+                let (frames, providers, budget) =
+                    recall::project(frames, provider_mix, usage.as_ref());
                 self.transcript.push(TranscriptEntry::ContextRecall {
-                    frames: frames.len(),
+                    frames,
                     tokens: *tokens,
-                    labels,
+                    latency_ms: *latency_ms,
+                    used_ann_index: *used_ann_index,
+                    providers,
+                    budget,
                 });
             }
             AgentEvent::ContextWrite {

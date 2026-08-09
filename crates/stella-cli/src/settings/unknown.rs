@@ -90,6 +90,8 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "pipeline_verifier_model",
     "pipeline_worker_model",
     "pipeline_triage_model",
+    "pipeline_research_model",
+    "pipeline_plan_model",
     "allowed_models",
     "model_output_caps",
     "auto_mode",
@@ -109,7 +111,9 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
 ];
 
 /// `agent_engine_config.agents` — [`super::AgentEngineAgents`].
-pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &["default", "worker", "verifier", "triage"];
+pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &[
+    "default", "worker", "verifier", "triage", "research", "plan",
+];
 
 /// `agent_engine_config.agents.<kind>` — [`super::AgentEngineAgent`].
 pub(crate) const ENGINE_AGENT_FIELDS: &[&str] = &[
@@ -195,6 +199,8 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "pipeline_verifier_model",
     "pipeline_worker_model",
     "pipeline_triage_model",
+    "pipeline_research_model",
+    "pipeline_plan_model",
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
@@ -208,6 +214,8 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "worker",
     "verifier",
     "triage",
+    "research",
+    "plan",
 ];
 
 /// The unrecognized keys in the `stella.toml` at `path`.

@@ -92,7 +92,8 @@ impl AgentId {
     /// Not derived from [`Role`]: that enum also carries `Embed`, `Vision`,
     /// `Image` and `Video`, which serve no pipeline responsibility and must
     /// not become bindable by being adjacent.
-    pub const BUILTIN: &'static [&'static str] = &["worker", "triage", "plan", "verifier"];
+    pub const BUILTIN: &'static [&'static str] =
+        &["worker", "triage", "plan", "research", "verifier"];
 
     /// Name an agent. Accepts anything; resolution is
     /// [`Self::role`]'s job and unresolvable names are reported by
@@ -110,6 +111,7 @@ impl AgentId {
                 Role::Worker => "worker",
                 Role::Triage => "triage",
                 Role::Plan => "plan",
+                Role::Research => "research",
                 Role::Verifier => "verifier",
                 // Unreachable through this module — `default_agent` never
                 // yields one and `role()` never resolves to one — but stated
@@ -139,6 +141,7 @@ impl AgentId {
             "worker" => Some(Role::Worker),
             "triage" => Some(Role::Triage),
             "plan" => Some(Role::Plan),
+            "research" => Some(Role::Research),
             "verifier" => Some(Role::Verifier),
             _ => None,
         }
@@ -174,10 +177,13 @@ impl fmt::Display for AgentId {
 pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
     let role = match responsibility {
         ModelCallRole::Triage => Role::Triage,
-        // The planner rides the worker's tier by default (`Role::Plan`'s own
-        // docs), and the research children ride the planner: the findings
-        // exist to be read by the plan prompt.
-        ModelCallRole::Plan | ModelCallRole::Research => Role::Plan,
+        // Both ride the worker's tier by default (`Role::Plan`'s own docs), so
+        // an unconfigured run resolves them exactly where it always did. They
+        // are separate agents rather than one because their costs are not
+        // alike: research is a fan-out of many short read-only calls, planning
+        // is one call that writes the work order (#2374).
+        ModelCallRole::Plan => Role::Plan,
+        ModelCallRole::Research => Role::Research,
         ModelCallRole::Worker => Role::Worker,
         // Three halves of the verifier's job (`Role::Verifier`'s docs): author
         // the witness, steer a distressed worker, render the verdict. Distinct

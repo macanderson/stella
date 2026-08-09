@@ -359,7 +359,10 @@ it runs at all** — as configuration rather than as a literal at each call site
 
 Keys are the same names the paid-call ledger uses (`triage`, `research`,
 `plan`, `witness_author`, `worker`, `distress_guidance`, `verdict`), so a row
-here and a line in your usage report spell the same job the same way:
+here and a line in your usage report spell the same job the same way. The
+`agent` a row binds to is one of the built-in agents — `worker`, `triage`,
+`plan`, `research`, `verifier` — the same names
+[agent engine config](/docs/configuration/agent-engine-config) configures:
 
 ```json
 {

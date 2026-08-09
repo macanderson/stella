@@ -580,12 +580,103 @@ fn context_recall_cites_by_label_never_id() {
         used_ann_index: None,
     });
     match model.transcript.last() {
-        Some(TranscriptEntry::ContextRecall { labels, .. }) => {
-            assert_eq!(labels, &vec!["driver.rs step-driver".to_string()]);
-            assert!(!labels.iter().any(|l| l.contains("uuid")));
+        Some(TranscriptEntry::ContextRecall { frames, .. }) => {
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].label, "driver.rs step-driver");
+            // L-C4 is a rule about the *primary* identifier a surface shows,
+            // not about what the read-model may hold: the id "belongs only in
+            // inspectable detail views". So it is carried — the deck's ctrl+o
+            // provenance line is exactly such a view — and it is the renderer
+            // that must keep it out of the collapsed row. That half is pinned
+            // by `render::tests::collapsed_recall_cites_by_label_never_id`.
+            assert!(!frames[0].label.contains("uuid"));
+            assert_eq!(frames[0].id.as_deref(), Some("913d6df1-uuid"));
         }
         other => panic!("expected a context recall entry, got {other:?}"),
     }
+}
+
+/// Every field the wire carries about a recall survives the fold.
+///
+/// The read-model used to keep `{ frames: usize, tokens: u32, labels }` and
+/// drop the rest, which is why no surface ever rendered the per-frame cost, the
+/// frame kind, the recall latency (#875) or the ANN flag — the data was gone
+/// two layers before the renderer. A fold that silently narrows is invisible
+/// until someone asks the UI a question it can no longer answer, so it is
+/// pinned here rather than left to the render tests.
+#[test]
+fn context_recall_fold_keeps_every_wire_field() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ContextRecall {
+        frames: vec![ContextFrameRef {
+            id: Some("nod_01H".into()),
+            citation_label: "fn review".into(),
+            provider: "code-graph".into(),
+            source: "stella-graph".into(),
+            kind: "symbol".into(),
+            uri: Some("crates/stella-cli/src/command_deck/hunk_gate.rs:32".into()),
+            method: Some("symbol-name".into()),
+            token_cost: 104,
+            block_id: None,
+            content_digest: Some("sha256:9f2c1abdeadbeef".into()),
+        }],
+        provider_mix: vec![ProviderShare {
+            provider: "code-graph".into(),
+            frames: 1,
+        }],
+        tokens: 104,
+        usage: Some(stella_protocol::ContextUsage {
+            budget_requested: 4000,
+            budget_consumed: 104,
+            as_of: "2026-08-09T00:00:00Z".into(),
+            providers: vec![stella_protocol::ContextProviderUsage {
+                provider_id: "code-graph".into(),
+                frames_served: 1,
+                frames_rejected: 2,
+                token_cost: 104,
+            }],
+        }),
+        latency_ms: 34,
+        used_ann_index: Some(true),
+    });
+    let Some(TranscriptEntry::ContextRecall {
+        frames,
+        tokens,
+        latency_ms,
+        used_ann_index,
+        providers,
+        budget,
+    }) = model.transcript.last()
+    else {
+        panic!("expected a context recall entry");
+    };
+    assert_eq!(*tokens, 104);
+    assert_eq!(*latency_ms, 34);
+    assert_eq!(*used_ann_index, Some(true));
+    assert_eq!(providers, &vec![("code-graph".to_string(), 1)]);
+
+    let f = &frames[0];
+    assert_eq!(f.kind, "symbol");
+    assert_eq!(f.tokens, 104);
+    assert_eq!(f.provider, "code-graph");
+    assert_eq!(f.source, "stella-graph");
+    assert_eq!(f.method.as_deref(), Some("symbol-name"));
+    assert_eq!(
+        f.uri.as_deref(),
+        Some("crates/stella-cli/src/command_deck/hunk_gate.rs:32")
+    );
+    assert_eq!(f.digest.as_deref(), Some("sha256:9f2c1abdeadbeef"));
+
+    // `frames_rejected` is the number the frame list cannot show — a rejected
+    // frame never reaches it — so losing the budget report loses the only
+    // evidence of a provider misdeclaring cost.
+    let budget = budget.as_ref().expect("the usage report must survive");
+    assert_eq!(budget.requested, 4000);
+    assert_eq!(budget.consumed, 104);
+    assert_eq!(
+        budget.providers,
+        vec![("code-graph".to_string(), 1, 2, 104)]
+    );
 }
 
 #[test]

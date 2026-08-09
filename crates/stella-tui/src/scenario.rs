@@ -102,14 +102,20 @@ fn tool_start(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
     }
 }
 
-/// One recalled context frame. The scenario only varies the citation label, the
-/// provider/source pair, the frame kind and the token cost — every demo frame
-/// is unmaterialized (`id: None`) and carries no receipt.
+/// One recalled context frame.
+///
+/// `uri` and `method` are populated — a symbol frame without its `path:line`
+/// renders a blank location column, which is exactly the case the golden frames
+/// must *not* pin as normal: locating the recalled symbol in the tree is the
+/// reason the column exists. Every demo frame stays unmaterialized (`id: None`)
+/// and carries no receipt, so the deck's "unverifiable (no digest)" path is
+/// what the scenario exercises.
 fn frame(
     citation_label: &str,
     provider: &str,
     source: &str,
     kind: &str,
+    uri: Option<&str>,
     token_cost: u32,
 ) -> ContextFrameRef {
     ContextFrameRef {
@@ -118,8 +124,12 @@ fn frame(
         provider: provider.into(),
         source: source.into(),
         kind: kind.into(),
-        uri: None,
-        method: None,
+        uri: uri.map(str::to_string),
+        method: Some(if provider == "code-graph" {
+            "symbol-name".into()
+        } else {
+            "embedding".into()
+        }),
         token_cost,
         block_id: None,
         content_digest: None,
@@ -186,21 +196,23 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::ContextRecall {
                 frames: vec![
                     frame(
-                        "engine step-driver (driver.rs)",
+                        "engine step-driver",
                         "code-graph",
-                        "code-graph",
+                        "stella-graph",
                         "symbol",
+                        Some("crates/stella-core/src/driver.rs:88"),
                         120,
                     ),
                     frame(
-                        "event-log REPL (stella-tui)",
+                        "event-log REPL",
                         "workspace-memory",
                         "stella-context",
                         "memory",
+                        None,
                         90,
                     ),
                 ],
-                provider_mix: vec![share("code-graph", 1), share("memory", 1)],
+                provider_mix: vec![share("code-graph", 1), share("workspace-memory", 1)],
                 tokens: 210,
                 usage: None,
                 latency_ms: 34,
@@ -597,11 +609,16 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
 ///
 /// The real deck holds one of these from session start, so without it every
 /// `/models` surface — the demo, the goldens — would pin the honest empty
-/// state instead of the dialog. Deliberately not four identical rows: the
-/// three ways a role gets its model (its own `agents.<role>.model`, a flat
-/// `pipeline_<role>_model`, the shared `default_model`) each appear once, and
-/// the verifier carries the `effort_auto` disclosure that is the longest and
-/// most easily-truncated line the dialog can draw.
+/// state instead of the dialog. Deliberately not identical rows: the three
+/// ways a role gets its model (its own `agents.<role>.model`, a flat
+/// `pipeline_<role>_model`, the shared `default_model`) each appear at least
+/// once, and the verifier carries the `effort_auto` disclosure that is the
+/// longest and most easily-truncated line the dialog can draw.
+///
+/// Research and plan ride `default_model` here, which is the ordinary posture
+/// for them and the one worth pinning in a golden: they inherit the worker's
+/// model, and — since #2374 — say so on their own row rather than being
+/// invisible inside the worker's.
 pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
     use crate::envelope::RoleWiringRow;
     let row = |role: &str, model: &str, effort: &str, thinking: &str, source: &str| RoleWiringRow {
@@ -644,6 +661,20 @@ pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
                 "low",
                 "thinking off",
                 "agents.triage.model",
+            ),
+            row(
+                "research",
+                "zai/glm-5.2-air",
+                "low",
+                "thinking off",
+                "default_model",
+            ),
+            row(
+                "plan",
+                "zai/glm-5.2-air",
+                "medium",
+                "thinking on",
+                "default_model",
             ),
         ],
         ..Default::default()

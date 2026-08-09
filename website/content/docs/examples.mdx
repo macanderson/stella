@@ -114,9 +114,9 @@ high effort:
 }
 ```
 
-`reasoning_auto: "on"` puts thinking on for worker, verifier, and default agents and off for
-triage, so per-agent `reasoning` is left out on purpose — the auto would override it.
-`effort_auto` stays off, which is what lets the per-agent `effort` values apply.
+`reasoning_auto: "on"` puts thinking on for worker, verifier, plan, and default agents and
+off for triage and research, so per-agent `reasoning` is left out on purpose — the auto would
+override it. `effort_auto` stays off, which is what lets the per-agent `effort` values apply.
 
 To use another provider, swap the four model strings and `allowed_models`:
 
@@ -226,8 +226,9 @@ stella run "add pagination to the /orders endpoint and update its tests" \
   --test-command "pnpm test orders"
 ```
 
-The autos encode the sensible mapping — verifier high, worker medium, triage low; thinking on
-everywhere except triage — and they *override* any per-agent `effort`/`reasoning`, which
+The autos encode the sensible mapping — verifier high, worker and plan medium, triage and
+research low; thinking on everywhere except triage and research — and they *override* any
+per-agent `effort`/`reasoning`, which
 is why this profile carries no `agents` block. Roughly 5–7× cheaper than
 [maximum quality](#maximum-quality) with the same class of verifier watching the result.
 
@@ -271,7 +272,8 @@ thinking high. For gnarly multi-file changes and unfamiliar codebases.
         "prompt": "You are a strict, evidence-first code verifier. Claimed success without deterministic evidence is a FAIL.",
         "params": { "service_tier": "priority" }
       },
-      "triage": { "effort": "low", "reasoning": "off" }
+      "triage": { "effort": "low", "reasoning": "off" },
+      "research": { "effort": "low", "reasoning": "off" }
     }
   }
 }
@@ -290,6 +292,12 @@ stella --budget 8.00 run \
 The verifier is GPT-5.5 rather than another Claude because cross-family judging is the point.
 `service_tier: "priority"` is only worth setting here — OpenAI's is the one dialect that
 puts it on the wire. Autos are off so the per-agent values stand.
+
+The `research` row is what stops `xhigh` from being paid many times over. Research inherits
+the **worker** when it sets nothing, and it is a fan-out — one read-only child per question
+triage asked — so an `xhigh` worker silently buys an `xhigh` deliberation pass for every
+child, on calls whose job is to grep a tree and report the paths. Turning it down here does
+not touch the model: unset, `pipeline_research_model` still rides whatever the worker runs.
 
 <Callout type="info">
   If Fable 5 resolves in one attempt what cheaper models need three for, this profile can

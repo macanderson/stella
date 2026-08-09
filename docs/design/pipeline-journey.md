@@ -367,15 +367,27 @@ verdict *auditable* after the fact.
 
 ## Who runs on which model
 
-Four roles, all configured through `agent_engine_config` (see the README's
+Every role is configured through `agent_engine_config` (see the README's
 "Agent engine config" section):
 
 | Role | What it does in the journey | Default resolution |
 |---|---|---|
 | **triage** | Stage 1 classification call | `pipeline_triage_model` → `default_model` |
-| **worker** | Execute turns, revise turns (plan and conversational ride this tier too) | `pipeline_worker_model` → `default_model` |
+| **worker** | Execute turns, revise turns (conversational rides this tier too) | `pipeline_worker_model` → `default_model` |
+| **research** | The read-only sub-agents answering triage's pre-plan questions, one child per question | `pipeline_research_model` → **the worker**, never `default_model` |
+| **plan** | The planner writing the ordered work order | `pipeline_plan_model` → **the worker**, never `default_model` |
 | **verifier** | Verifier verdicts, distress guidance | `pipeline_verifier_model` → `default_model`; prefers a different model *family* than the worker |
 | **witness author** | Authors the failing witness test | Resolves from the verifier slot; **degrades to no authored witness** if it would equal the worker's model (refused outright only under `require_independent_witness`) — Stella will not let the worker write the test that proves the worker |
+
+Research and plan end their chain at the worker rather than `default_model`
+because `--model` re-points the worker for one invocation and deliberately
+leaves settings alone: inheriting `default_model` would split them onto the
+model the flag just overrode, and the run would report one model while buying
+two. The inheritance is field by field and covers request shaping as well —
+`agents.worker.prompt` still reaches the planner while `agents.plan.prompt` is
+unset. `agents.research.prompt` is the one field that does not apply: a
+research child is an engine sub-agent turn whose built-in read-only system
+prompt is the contract that makes it read-only.
 
 A configured role model whose provider has no resolvable key degrades softly
 to the worker with a notice — configuration can never turn a runnable

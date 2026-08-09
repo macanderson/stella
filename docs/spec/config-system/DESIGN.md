@@ -196,8 +196,9 @@ benchmark run, not a missing warning.
 
 ### 4.1 Open the agent set
 
-Today `AgentEngineAgents` is a struct with four fields: `default`, `worker`,
-`verifier`, `triage`. A misspelled agent key is silently ignored.
+Today `AgentEngineAgents` is a struct with a field per built-in agent:
+`default`, `worker`, `verifier`, `triage`, `research`, `plan`. A misspelled
+agent key is silently ignored.
 
 Two things already exist that this closed set strands:
 
@@ -212,9 +213,9 @@ Opening the set joins them: `[agents.<name>]` becomes a real engine posture,
 and `task` gains an `agent_type` parameter that selects one.
 
 **Migration:** `AgentEngineAgents` becomes `BTreeMap<String, AgentEngineAgent>`
-with the four built-in names **reserved**. `EngineAgentKind` stays for the
-built-ins (the router tiers on it, and `Role::Plan` rides the worker's
-settings), gaining a `Custom(String)` variant.
+with the built-in names **reserved**. `EngineAgentKind` stays for the
+built-ins (the router tiers on it, and `research`/`plan` inherit the worker's
+settings rather than `default_model`), gaining a `Custom(String)` variant.
 
 **Cost of opening it:** the silent-ignore tolerance becomes a liability — a
 misspelled `[agents.wrker]` currently does nothing loudly, and after this
@@ -460,13 +461,15 @@ The JSON nests per-agent config one level below the flat model fields
 `[agents.agents.verifier]`, which reads badly.
 
 Flattening to `[agents.verifier]` is safe **only while the agent set is closed**
-— four struct fields cannot collide with a root field. §4.1 opens that set.
+— a fixed set of struct fields cannot collide with a root field. §4.1 opens
+that set.
 
 **Decision:** flatten, and reserve the root field names as illegal agent
 names, enforced at load with a named error. The list is exactly
 `ENGINE_ROOT_FIELDS` minus `agents` (which disappears in the flattening):
 `default_model`, `pipeline_verifier_model`, `pipeline_worker_model`,
-`pipeline_triage_model`, `allowed_models`, `auto_mode`, `effort_auto`,
+`pipeline_triage_model`, `pipeline_research_model`, `pipeline_plan_model`,
+`allowed_models`, `auto_mode`, `effort_auto`,
 `reasoning_auto`, `headless_scope_bypass`.
 
 `allowed_models` stays reserved even though §6.1 moves it to

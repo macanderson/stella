@@ -124,7 +124,7 @@ Four things changed shape in the port. Everything else kept its name.
 | --- | --- | --- |
 | `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it — move one line in the file and it silently reassigns. Every scalar gets a table home; there are no bare keys at the document root. |
 | `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the Rust struct rather than the thing it configures. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `verifier`, `triage` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `verifier`, `triage`, `research`, `plan` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
 
 `trace_capture`, `create_worktrees`, and `ignore_gitignore` needed no such move: all
@@ -221,14 +221,15 @@ The flattened, closed-set engine config — see
 [Agent engine config](/docs/configuration/agent-engine-config) for the full schema, model
 precedence, auto modes, and generation parameters, all unchanged. Flattening
 `[agents.verifier]` (rather than the JSON nesting's `[agents.agents.verifier]`) is safe only
-because exactly four names exist and none of them can collide with a root scalar like
-`default_model`.
+because the set of agent names is closed and none of them can collide with a root scalar
+like `default_model`.
 
 ```toml title="stella.toml"
 [agents]
 default_model         = "zai/glm-5.2"
 pipeline_verifier_model  = "anthropic/claude-fable-5"
 pipeline_triage_model = "deepseek/deepseek-chat"
+pipeline_research_model = "deepseek/deepseek-chat"
 auto_mode             = "off"
 effort_auto           = "on"
 
@@ -241,6 +242,12 @@ reasoning = "on"
   [agents.verifier.params]
   temperature = 0.2
   max_tokens  = 4096
+
+# Research and plan inherit `[agents.worker]` field by field when unset — the
+# worker, not `default_model`, so a `--model` pin cannot split them off.
+[agents.research]
+effort    = "low"
+reasoning = "off"
 ```
 
 ### `[tools]`

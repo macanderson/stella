@@ -447,7 +447,13 @@ For every selected model, the normalized posture is:
 }
 ```
 
-No role has a provider or model override; all four inherit `default_model`.
+No role has a provider or model override; every row above inherits
+`default_model`. The engine's `research` and `plan` roles get **no row here**,
+which leaves them inheriting `worker` field by field — the same model and the
+same `xhigh` posture the worker row states. This adapter has no selector for
+either; a trial that needs them tuned separately runs through ArenaBench's
+seat TOML, whose `[contestant.engine.roles.research]` /
+`[contestant.engine.roles.plan]` blocks emit a row only when declared.
 Repository/user settings therefore cannot change routing, reasoning, effort,
 prompts, or generation parameters for a benchmark trial. The exact canonical
 JSON, parsed object, schema version, and SHA-256 are emitted in both Harbor
