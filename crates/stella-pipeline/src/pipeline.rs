@@ -61,6 +61,7 @@ use stella_protocol::{
     ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
 };
 
+use self::revision::{RevisionCause, revision_prompt};
 use crate::candidate::{
     CandidateScore, CandidateSummary, score_from_verification, select_best_candidate,
 };
@@ -112,7 +113,9 @@ use crate::witness::{
 };
 pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 mod attachments;
-mod authored;
+// `pub(crate)` for one constant: `verify`'s instruction block names the
+// authored section's header so the prompt and the header cannot drift apart.
+pub(crate) mod authored;
 mod candidate_result;
 mod disclosure;
 mod evidence;
@@ -123,6 +126,7 @@ mod raw_usage;
 mod repair_gate;
 mod research_stage;
 mod resume_stage;
+mod revision;
 mod role_pace;
 mod roster_wiring;
 use roster_wiring::Assigned;
@@ -2419,7 +2423,7 @@ impl<'a> Pipeline<'a> {
                         .revise_candidate(
                             engine,
                             surface,
-                            NOTHING_ATTEMPTED_NUDGE,
+                            RevisionCause::Deterministic(NOTHING_ATTEMPTED_NUDGE),
                             spend,
                             &mut state,
                         )
@@ -2538,8 +2542,9 @@ impl<'a> Pipeline<'a> {
                             }
                         }
                     }
+                    let cause = RevisionCause::Deterministic(&reason);
                     if let Err(abort) = self
-                        .revise_candidate(engine, surface, &reason, spend, &mut state)
+                        .revise_candidate(engine, surface, cause, spend, &mut state)
                         .await
                     {
                         return CandidateResult::turn_aborted(state.messages, abort);
@@ -2706,8 +2711,9 @@ impl<'a> Pipeline<'a> {
                             {
                                 state.evidence_demands += 1;
                                 let ask = crate::verify::evidence_demand_prompt(cmd.command);
+                                let cause = RevisionCause::EvidenceRequest(&ask);
                                 if let Err(abort) = self
-                                    .revise_candidate(engine, surface, &ask, spend, &mut state)
+                                    .revise_candidate(engine, surface, cause, spend, &mut state)
                                     .await
                                 {
                                     return CandidateResult::turn_aborted(state.messages, abort);
@@ -2754,8 +2760,9 @@ impl<'a> Pipeline<'a> {
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
                         .map(|text| crate::verify::bound_forwarded_reasoning(&text))
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
+                    let cause = RevisionCause::ReviewerClaim(&feedback);
                     if let Err(abort) = self
-                        .revise_candidate(engine, surface, &feedback, spend, &mut state)
+                        .revise_candidate(engine, surface, cause, spend, &mut state)
                         .await
                     {
                         return CandidateResult::turn_aborted(state.messages, abort);
@@ -2792,12 +2799,12 @@ impl<'a> Pipeline<'a> {
         &self,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        reason: &str,
+        cause: RevisionCause<'_>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
         let probe = self
-            .revise_turn(engine, surface, reason, spend, state)
+            .revise_turn(engine, surface, cause, spend, state)
             .await?;
         self.absorb_probe(state, probe);
         state.revisions += 1;
@@ -2812,13 +2819,13 @@ impl<'a> Pipeline<'a> {
         &self,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        reason: &str,
+        cause: RevisionCause<'_>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<DiffProbe, TurnAbort> {
         state
             .messages
-            .push(CompletionMessage::user(revision_prompt(reason)));
+            .push(CompletionMessage::user(revision_prompt(cause)));
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
         });
@@ -3097,15 +3104,6 @@ fn verdict_inputs_digest(goal: &str, diff: &str, evidence_summary: &str) -> u64 
     diff.hash(&mut hasher);
     evidence_summary.hash(&mut hasher);
     hasher.finish()
-}
-
-/// The instruction appended to a revision turn, carrying the failing
-/// verification evidence so the worker can fix it.
-fn revision_prompt(reason: &str) -> String {
-    format!(
-        "Verification did not pass. Evidence:\n{}\n\nFix the issue and complete the task.",
-        reason.trim()
-    )
 }
 
 /// Count changed lines in a unified diff: lines beginning with `+`/`-` but not

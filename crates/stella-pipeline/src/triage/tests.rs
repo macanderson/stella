@@ -671,9 +671,42 @@ fn an_oversized_listing_is_truncated_at_the_triage_budget() {
 fn the_instructions_ground_the_listing_as_evidence_not_the_ask() {
     let p = triage_prompt("anything", "src/lib.rs").rendered();
     assert!(p.contains("Classify the message, never the listing"));
-    // The witness call is the decision the listing exists to inform: a
-    // workspace that cannot run a test should not buy witness authoring.
-    assert!(p.contains("whether a test could even run"));
+    // The listing informs the witness call, but it must not be read as
+    // settling it. This assertion used to require the opposite — that the
+    // listing decide "whether a test could even run" — and the wording it
+    // pinned told triage a workspace with no test files warrants
+    // `WITNESS: no`. See the test below for what that cost.
+    assert!(p.contains("Do NOT read an absent test framework as an absent witness"));
+}
+
+/// #2064 put `sh` in the runner vocabulary precisely so a workspace with no
+/// language toolchain — its doc names "an nginx config task, git surgery, a
+/// system service" — could still carry a witness, because the contract is a
+/// command's exit status and every container has a shell. The triage prompt
+/// was never updated to match, and went on telling the model that a workspace
+/// with no test files warrants `WITNESS: no`.
+///
+/// So the capability existed and the guidance that gates it suppressed the
+/// exact tasks it was built for. Terminal-Bench `fix-git` is one: triage
+/// waived the witness, the waiver is committed before execution and
+/// `witness_on_demand` returns `Ok(None)` without one, so the run could never
+/// reconsider once it knew the task was a git recovery. The verifier was left
+/// to judge git ancestry from a diff and a handful of counters, and guessed.
+#[test]
+fn a_workspace_without_a_test_framework_is_still_witness_eligible() {
+    let p = triage_prompt("recover my lost commit", "README.md").rendered();
+    assert!(
+        p.contains("does NOT require a test framework"),
+        "triage must not equate 'no test framework' with 'no witness'"
+    );
+    assert!(
+        p.contains("git merge-base --is-ancestor"),
+        "the state-invariant case is named concretely, not left to inference"
+    );
+    assert!(
+        !p.contains("no test files or build manifest usually"),
+        "the waiver that suppressed shell witnesses is gone"
+    );
 }
 
 // Pre-plan research questions (#1778)

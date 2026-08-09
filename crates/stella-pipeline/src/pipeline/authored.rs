@@ -20,7 +20,7 @@
 /// `verify::mutation` reads `+`-prefixed lines as mutable content — a header in
 /// either shape would be parsed as a bogus path or a bogus mutation target. A
 /// comment prefix is inert to every parser that reads this text.
-const AUTHORED_SECTION_HEADER: &str =
+pub(crate) const AUTHORED_SECTION_HEADER: &str =
     "# --- changes recorded by the file tools at write time (authorship, not tree state) ---";
 
 /// Join what the tree says with what the tools recorded.
