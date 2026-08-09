@@ -394,6 +394,57 @@ mod tests {
         assert!(SessionDurability::default().sink().is_none());
     }
 
+    /// #2177 witness: every driver that ends a turn marks it.
+    ///
+    /// [`SessionDurability::mark_turn_end`] had exactly ONE production caller
+    /// — `run_deck_session`, reached only from a real TTY or `stella resume`.
+    /// So `session_turn_diffs` was written by the interactive surface and by
+    /// nothing else, while the observatory's read side
+    /// (`/api/session-turn-diff`, the Sessions tab's turn drill) looked
+    /// universal. Every headless surface — `stella run`, CI, benchmarks,
+    /// fleet workers — showed a permanently empty drill, and a dashboard that
+    /// is silently partial is the shape that makes it lie.
+    ///
+    /// A source fence rather than an end-to-end run, and that choice is worth
+    /// naming: the behavioural difference lives inside two ~400-line async
+    /// driver functions that need a provider, a journal-bound session and a
+    /// file-touching turn to reach. What actually decays is the *call site* —
+    /// exactly as it decayed here — so the call site is what is pinned. The
+    /// write itself is covered end-to-end by `crate::turn_diff`'s tests, which
+    /// drive `record_turn_diff` against a real journal and store.
+    #[test]
+    fn every_turn_boundary_in_the_crate_marks_the_turn_it_ended() {
+        // Built rather than written out, so this file is not its own match.
+        let mark = format!("mark_turn_{}", "end(");
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for (file, marker, boundary) in [
+            // `stella run`'s pipeline path and the shared raw turn (the
+            // `--no-pipeline` one-shot, the plain REPL, `/goal`) both close
+            // through `turn_close::close_turn`, which cannot settle an
+            // execution row without also marking the turn.
+            (
+                "agent.rs",
+                "turn_close::close_turn(",
+                "run_pipeline_one_shot / run_turn",
+            ),
+            // The interactive deck — the original, and for a long time only,
+            // caller.
+            ("command_deck.rs", mark.as_str(), "run_deck_session"),
+        ] {
+            let body = std::fs::read_to_string(src.join(file))
+                .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+            assert!(
+                body.contains(marker),
+                "{file} ({boundary}) ends turns and no longer marks them. The \
+                 turn-diff projection is written by whoever owns the turn — \
+                 the observatory reads artifacts and never opens the work \
+                 journal itself (#1870) — so a boundary that stops marking \
+                 does not degrade, it silently empties one surface's drill \
+                 while every other surface keeps working (#2177)."
+            );
+        }
+    }
+
     #[test]
     fn a_bound_handle_round_trips_a_checkpoint() {
         let store = tempfile::tempdir().unwrap();

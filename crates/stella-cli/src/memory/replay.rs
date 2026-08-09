@@ -326,7 +326,15 @@ impl<'a> Replayer<'a> {
                 .map(CompletionMessage::from)
                 .collect();
             memory
-                .reflect_and_record(&provider, "replay", &transcript, true, turn.succeeded, None)
+                .reflect_and_record(
+                    &provider,
+                    "replay",
+                    &transcript,
+                    true,
+                    turn.succeeded,
+                    None,
+                    crate::memory::ReflectionPosture::default(),
+                )
                 .await
         } else {
             crate::memory::ReflectionReport::default()

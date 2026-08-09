@@ -126,6 +126,46 @@ impl Store {
         Ok(())
     }
 
+    /// Record that this turn's reflection response could not be parsed into a
+    /// lessons array, touching *only* the `parse_error` column (#2175).
+    ///
+    /// Narrow for the same reason [`Store::record_self_review`] is: three
+    /// producers write this row at different times, and a whole-row write from
+    /// any of them discards the others' work.
+    ///
+    /// The excerpt is model output about the user's own transcript. It belongs
+    /// in the workspace-local `store.db`, which already holds prompts and tool
+    /// payloads, and must never become an exportable telemetry column —
+    /// `content_free.rs` holds the reviewed hub allowlist and will fail the
+    /// gate if one is added without a human answering "is this content?".
+    pub fn record_reflection_parse_failure(&self, execution_id: i64, excerpt: &str) -> Result<()> {
+        self.lock().execute(
+            "INSERT INTO execution_reflection (execution_id, parse_error) VALUES (?1, ?2) \
+             ON CONFLICT(execution_id) DO UPDATE SET parse_error = excluded.parse_error",
+            params![execution_id, excerpt],
+        )?;
+        Ok(())
+    }
+
+    /// The recorded parse failure for one turn, if reflection had one.
+    ///
+    /// Three answers, and they are genuinely different: `None` for an
+    /// execution with no reflection row at all, `Some(None)` for a turn that
+    /// reflected cleanly, and `Some(Some(excerpt))` for a turn whose response
+    /// could not be read. Collapsing the last two is the defect this exists to
+    /// end — "nothing to learn yet" and "the learning loop has been broken for
+    /// nine days" looked identical from every surface.
+    pub fn reflection_parse_failure(&self, execution_id: i64) -> Result<Option<Option<String>>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT parse_error FROM execution_reflection WHERE execution_id = ?1",
+                params![execution_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?)
+    }
+
     /// Read back one turn's self-review, if the model recorded one.
     ///
     /// `None` for an execution with no row at all; `Some` with an
@@ -298,6 +338,84 @@ mod tests {
             .unwrap();
         store.record_self_review(id, &a_review()).unwrap();
         assert_eq!(row(&store, id).1, Some(8));
+    }
+
+    /// #2175 witness: a turn whose reflection response could not be parsed
+    /// leaves a durable record, and a turn that reflected cleanly does not.
+    ///
+    /// The two states are the whole point. Before this column, both wrote
+    /// nothing to the store — an unreadable response was `eprintln!`'d and the
+    /// reflection execution still closed `completed`, because the *model call*
+    /// did complete. Once the scrollback was gone, a learning loop that had
+    /// been broken for nine days and a workspace that had simply never learned
+    /// anything were the same picture from every surface.
+    #[test]
+    fn a_parse_failure_is_durable_and_a_clean_reflection_is_not_marked_as_one() {
+        let store = Store::in_memory().unwrap();
+        let unreadable = store
+            .begin_execution("reflection", "ship it", "zai", "glm-5.2")
+            .unwrap();
+        let clean = store
+            .begin_execution("reflection", "ship it again", "zai", "glm-5.2")
+            .unwrap();
+
+        store
+            .record_reflection_parse_failure(unreadable, "I will now analyze the turn. First,")
+            .unwrap();
+        store.record_self_review(clean, &a_review()).unwrap();
+
+        assert_eq!(
+            store.reflection_parse_failure(unreadable).unwrap(),
+            Some(Some("I will now analyze the turn. First,".into())),
+            "the excerpt is what tells an operator WHY the loop is starving"
+        );
+        assert_eq!(
+            store.reflection_parse_failure(clean).unwrap(),
+            Some(None),
+            "a turn that reflected cleanly has a row and no parse failure — \
+             recording one here would make every healthy turn look broken"
+        );
+        assert_eq!(
+            store.reflection_parse_failure(unreadable + 1_000).unwrap(),
+            None,
+            "and an execution that never reflected has no row at all: three \
+             states, three answers"
+        );
+    }
+
+    /// The third producer must not clobber the other two, in either order —
+    /// the same order-independence `record_self_review` and
+    /// `finalize_execution_reflection` already hold to.
+    #[test]
+    fn a_parse_failure_and_the_other_producers_do_not_clobber_each_other() {
+        for parse_first in [true, false] {
+            let store = Store::in_memory().unwrap();
+            let id = store
+                .begin_execution("deck-pipeline", "ship it", "zai", "glm-5.2")
+                .unwrap();
+            let record_parse = || {
+                store
+                    .record_reflection_parse_failure(id, "unreadable")
+                    .unwrap()
+            };
+            if parse_first {
+                record_parse();
+                store.record_self_review(id, &a_review()).unwrap();
+                store.finalize_execution_reflection(id).unwrap();
+            } else {
+                store.record_self_review(id, &a_review()).unwrap();
+                store.finalize_execution_reflection(id).unwrap();
+                record_parse();
+            }
+            let (_, rating, _, prompt, _) = row(&store, id);
+            assert_eq!(rating, Some(8), "parse_first={parse_first}: self-review");
+            assert_eq!(prompt, "ship it", "parse_first={parse_first}: derived");
+            assert_eq!(
+                store.reflection_parse_failure(id).unwrap(),
+                Some(Some("unreadable".into())),
+                "parse_first={parse_first}: the parse failure"
+            );
+        }
     }
 
     #[test]

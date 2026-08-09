@@ -1,8 +1,21 @@
 //! Durable adapter for paid one-shot calls that are not part of an engine turn.
+//!
+//! This is the standalone counterpart to `stella-pipeline`'s `metered_raw_call`
+//! chokepoint, and it carries the same reasoning-starvation recovery for the
+//! same reason. Every call through here is a bounded call with a written output
+//! contract — a JSON lessons array, an authored manifest, a domain list — and a
+//! reasoning model bills its thinking against the one `max_output_tokens`
+//! number on the wire. #2128 taught the pipeline to notice that and left this
+//! path untouched, so post-turn reflection kept dispatching a reasoning model
+//! against a bare 2,048-token cap; it came back empty with
+//! `finish_reason: length`, which parses to zero lessons exactly like a turn
+//! with nothing to learn, and the context lifecycle sat frozen for nine days
+//! (#2174).
 
 use std::path::Path;
 use std::time::Duration;
 
+use stella_core::starvation::{starved_of_output, starved_retry_cap};
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, RetryPolicy, run_accounted_call,
 };
@@ -55,22 +68,65 @@ pub(crate) async fn complete_standalone(
         })?;
     let mut budget: BudgetGuard = agent::build_budget_guard(budget_limit);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let outcome = run_accounted_call(
-        AccountedCall {
+    let events = stella_core::EventSender::new(tx.clone());
+    // Kept for the starvation retry, and ONLY when one could change the
+    // outcome — the same trade `metered_raw_call` makes: one `Vec` copy of a
+    // bounded prompt against a provider round trip whose result would
+    // otherwise be discarded as "the model had nothing to say".
+    let raised = starved_retry_cap(request.max_output_tokens);
+    let retry = raised.map(|raised| {
+        // The retry is the SAME request with one number changed. Every tuning
+        // field rides along: a retry that quietly dropped the pinned effort
+        // would be a different call answering a different question.
+        (
+            raised,
+            request.messages.clone(),
+            request.tools.clone(),
+            (request.temperature, request.effort, request.reasoning),
+            request.params,
+        )
+    });
+    let mut outcome = dispatch(provider, role, model_hint, request, &mut budget, &events).await;
+    // What a superseded attempt already spent. Every arm below adds it, because
+    // the retry is a real paid call: reporting only the surviving attempt's
+    // cost would understate the turn by exactly the amount the starvation cost
+    // us, which is the number an operator most wants to see.
+    let mut superseded_cost = 0.0;
+    // A provider that stopped at the token limit with nothing visible to show
+    // for it has stated that the budget ran out before the first answer token.
+    // Every other outcome falls through unchanged. The retry emits its own
+    // `StepUsage` — the honest record, since it is not free and the telemetry
+    // must not imply it was.
+    if let (Ok(result), Some((raised, messages, tools, (temperature, effort, reasoning), params))) =
+        (&outcome, retry)
+        && starved_of_output(result)
+    {
+        superseded_cost = result.cost_usd;
+        outcome = dispatch(
             provider,
             role,
-            model_hint: model_hint.to_string(),
-            request,
-            retry_policy: RetryPolicy::deterministic(),
-            timeout: Some(Duration::from_secs(120)),
-            estimated_input_tokens: 0,
-            receipt: None,
-        },
-        &mut budget,
-        &stella_core::EventSender::new(tx.clone()),
-        &TokioSleeper,
-    )
-    .await;
+            model_hint,
+            CompletionRequest {
+                messages,
+                max_output_tokens: Some(raised),
+                temperature,
+                effort,
+                tools,
+                reasoning,
+                params,
+            },
+            &mut budget,
+            &events,
+        )
+        .await;
+    }
+    // BOTH senders, and the order is not cosmetic: `events` holds a clone of
+    // `tx`, so dropping only `tx` leaves the channel open and the drain below
+    // blocks forever on a `recv()` that can never return `None`. Before the
+    // starvation retry the sender was built inline at the single dispatch and
+    // died with that statement; naming it so two dispatches can share it is
+    // what made the lifetime explicit — and this the explicit end of it.
+    drop(events);
     drop(tx);
     let mut persistence_complete = true;
     let mut seq = 0;
@@ -83,7 +139,7 @@ pub(crate) async fn complete_standalone(
     }
     match outcome {
         Ok(result) => {
-            let cost_usd = result.cost_usd;
+            let cost_usd = superseded_cost + result.cost_usd;
             let complete = persistence_complete
                 && store
                     .finish_execution_accounted(
@@ -107,7 +163,7 @@ pub(crate) async fn complete_standalone(
             })
         }
         Err(AccountedCallError::Budget { result, .. }) => {
-            let cost_usd = result.cost_usd;
+            let cost_usd = superseded_cost + result.cost_usd;
             let _ = store.finish_execution_accounted(
                 execution_id,
                 "aborted",
@@ -121,22 +177,52 @@ pub(crate) async fn complete_standalone(
             })
         }
         Err(AccountedCallError::Provider(error)) => {
-            let _ = store.finish_execution_accounted(execution_id, "failed", 0.0, false);
+            let _ =
+                store.finish_execution_accounted(execution_id, "failed", superseded_cost, false);
             Err(StandaloneCallError {
                 message: error.to_string(),
-                cost_usd: 0.0,
+                cost_usd: superseded_cost,
                 events: settled_events,
             })
         }
         Err(AccountedCallError::Timeout) => {
-            let _ = store.finish_execution_accounted(execution_id, "failed", 0.0, false);
+            let _ =
+                store.finish_execution_accounted(execution_id, "failed", superseded_cost, false);
             Err(StandaloneCallError {
                 message: "model call timed out".into(),
-                cost_usd: 0.0,
+                cost_usd: superseded_cost,
                 events: settled_events,
             })
         }
     }
+}
+
+/// One metered dispatch, so the starvation retry re-sends through exactly the
+/// accounting seam the first attempt used.
+async fn dispatch(
+    provider: &dyn Provider,
+    role: ModelCallRole,
+    model_hint: &str,
+    request: CompletionRequest,
+    budget: &mut BudgetGuard,
+    events: &stella_core::EventSender,
+) -> Result<CompletionResult, AccountedCallError> {
+    run_accounted_call(
+        AccountedCall {
+            provider,
+            role,
+            model_hint: model_hint.to_string(),
+            request,
+            retry_policy: RetryPolicy::deterministic(),
+            timeout: Some(Duration::from_secs(120)),
+            estimated_input_tokens: 0,
+            receipt: None,
+        },
+        budget,
+        events,
+        &TokioSleeper,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -229,6 +315,97 @@ mod tests {
         ] {
             assert!(json.contains(role), "missing persisted role {role}: {json}");
         }
+    }
+
+    /// #2174 witness: a call whose whole budget went to reasoning is retried
+    /// with real room, and both attempts are paid for honestly.
+    ///
+    /// The provider here reproduces the shape execution 63 actually returned:
+    /// empty text with `finish_reason: length`, which every caller reads as
+    /// "the model had nothing to say". `metered_raw_call` learned to recognise
+    /// it in #2128; this chokepoint did not, so post-turn reflection kept
+    /// discarding a recoverable call and the context lifecycle sat frozen for
+    /// nine days with every surface reporting health.
+    #[tokio::test]
+    async fn a_call_starved_by_its_own_reasoning_is_retried_with_room() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        /// Starves on the first attempt, answers on the second — and records
+        /// the cap it was asked for each time.
+        #[derive(Default)]
+        struct StarvingProvider {
+            attempts: AtomicU32,
+            caps: std::sync::Mutex<Vec<Option<u32>>>,
+        }
+
+        #[async_trait]
+        impl Provider for StarvingProvider {
+            fn id(&self) -> &str {
+                "starving"
+            }
+
+            async fn complete_ref(
+                &self,
+                request: CompletionRequestRef<'_>,
+            ) -> Result<CompletionResult, ProviderError> {
+                self.caps
+                    .lock()
+                    .expect("caps lock")
+                    .push(request.max_output_tokens);
+                let first = self.attempts.fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(CompletionResult {
+                    text: if first { String::new() } else { "[]".into() },
+                    tool_calls: Vec::new(),
+                    usage: CompletionUsage {
+                        reported: true,
+                        output_tokens: 2,
+                        ..CompletionUsage::default()
+                    },
+                    model: "starving-model".into(),
+                    cost_usd: 0.01,
+                    finish_reason: first.then_some(stella_protocol::FinishReason::Length),
+                })
+            }
+        }
+
+        let root = tempfile::tempdir().expect("root");
+        let provider = StarvingProvider::default();
+        let outcome = complete_standalone(
+            root.path(),
+            &provider,
+            ModelCallRole::Reflection,
+            "reflection",
+            "starving-model",
+            None,
+            CompletionRequest {
+                max_output_tokens: Some(6_144),
+                ..request()
+            },
+        )
+        .await
+        .expect("the retry answers");
+
+        assert_eq!(
+            outcome.result.text, "[]",
+            "the caller must receive the RETRY's answer, not the empty first \
+             one — an empty lessons array and an unread one are the same bytes"
+        );
+        assert_eq!(
+            *provider.caps.lock().expect("caps lock"),
+            vec![
+                Some(6_144),
+                Some(stella_core::starvation::STARVED_RETRY_CAP)
+            ],
+            "the retry must buy real room; re-sending the same cap would only \
+             starve again"
+        );
+        assert!(
+            (outcome.cost_usd - 0.02).abs() < f64::EPSILON,
+            "both attempts are paid calls and the reported cost must say so — \
+             charging for one understates the turn by exactly what the \
+             starvation cost: {}",
+            outcome.cost_usd
+        );
     }
 
     #[tokio::test]

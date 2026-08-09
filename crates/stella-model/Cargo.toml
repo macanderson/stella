@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
+# The single implementation of `~/.stella` resolution, so `credentials.toml`
+# moves with `STELLA_HOME` like every other user-tier file (#2178). A leaf with
+# an empty `[dependencies]` block, which is what makes it depend-able here.
+stella-home = { path = "../stella-home" }
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true

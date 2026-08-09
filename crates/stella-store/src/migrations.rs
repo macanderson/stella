@@ -33,7 +33,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 22] = [
+pub(crate) const MIGRATIONS: [Migration; 23] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -136,6 +136,13 @@ pub(crate) const MIGRATIONS: [Migration; 22] = [
     // every existing row backfills to era 0, which is exactly what it is: a
     // journal written before compaction recorded its replacement bytes.
     migrate_v21_to_v22,
+    // v22 → v23: `execution_reflection` grows `parse_error` — the excerpt of a
+    // reflection response the lesson parser could not read (#2175). Additive,
+    // column-guarded ADD COLUMN, nullable: NULL means "no parse failure
+    // recorded", which is exactly what every pre-existing row means. There is
+    // no backfill to do — the fact was only ever printed to stderr before, so
+    // it does not exist anywhere to recover.
+    migrate_v22_to_v23,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -164,7 +171,9 @@ pub(crate) const MIGRATIONS: [Migration; 22] = [
     //
     //   v21 → v22: CLAIMED above by the journal-era stamp (#1981).
     //
-    // Nothing is reserved now: take v22 → v23 and add your own line here.
+    //   v22 → v23: CLAIMED above by the reflection parse-failure record.
+    //
+    // Nothing is reserved now: take v23 → v24 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -474,6 +483,24 @@ fn migrate_v21_to_v22(tx: &rusqlite::Transaction<'_>) -> Result<()> {
         tx.execute_batch(
             "ALTER TABLE executions ADD COLUMN journal_era INTEGER NOT NULL DEFAULT 0;",
         )?;
+    }
+    Ok(())
+}
+
+/// v22 → v23: `execution_reflection` grows the nullable `parse_error` column
+/// (#2175) — the excerpt of a reflection response whose lessons array could
+/// not be read.
+///
+/// A reflection whose *model call* succeeded and whose *parse* failed closed
+/// its execution row as `outcome = 'completed'`, wrote no `reflections` rows,
+/// and said so only in an `eprintln!`. Once the scrollback was gone, a starved
+/// learning loop and a workspace that has simply never learned anything were
+/// the same picture: both render the Improve tab's "no proposals in the
+/// ledger" empty state. This column is the smallest durable difference between
+/// them.
+fn migrate_v22_to_v23(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "execution_reflection", "parse_error")? {
+        tx.execute_batch("ALTER TABLE execution_reflection ADD COLUMN parse_error TEXT;")?;
     }
     Ok(())
 }

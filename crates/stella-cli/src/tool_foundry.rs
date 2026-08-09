@@ -267,10 +267,10 @@ fn run_tools_author_in(
         "·".green(),
         script_path.display()
     );
-    let home = crate::paths::home();
+    let user_root = crate::paths::user_extension_root();
     // Names, not tools, and deliberately ungated: a withheld manifest still
     // occupies its filename, so it still makes this one a duplicate.
-    let live = stella_tools::custom::discover_in(root, home.as_deref());
+    let live = stella_tools::custom::discover_in(root, user_root.as_deref());
     if live.names().contains(&authored.name.as_str()) {
         println!(
             "  {} {}",
