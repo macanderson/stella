@@ -24,6 +24,17 @@ from github_public_timing import (
 from github_public_timing import FIXED_REPOSITORY, LivePublicTimingAudit
 from github_public_timing import verify_public_timing as verify_github_public_timing
 
+# Re-exported, not merely used: callers reach these through `tb21_analysis`, and
+# the split that gave them a module (#2549) is a size boundary, not a new address.
+from tb21_posture_schema import (
+    STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE,
+    STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES,
+    STUDY_MANIFEST_ENGINE_POSTURE_FIELDS,
+    STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_AGENT_ROLES,
+    STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_FIELDS,
+    STUDY_MANIFEST_ENGINE_POSTURE_RECORD_FIELDS,
+)
+
 try:
     from harbor.models.trajectories import Trajectory
 except ImportError:  # pragma: no cover - the pinned runtime dependency supplies it.
@@ -631,35 +642,6 @@ STUDY_MANIFEST_CALIBRATION_FIELDS = frozenset(
         "excluded_ledger_sha256",
     }
 )
-STUDY_MANIFEST_ENGINE_POSTURE_RECORD_FIELDS = frozenset(
-    {"version", "posture", "sha256"}
-)
-STUDY_MANIFEST_ENGINE_POSTURE_FIELDS = frozenset(
-    {
-        "default_model",
-        "allowed_models",
-        "auto_mode",
-        "effort_auto",
-        "reasoning_auto",
-        "headless_scope_bypass",
-        "agents",
-    }
-)
-STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES = frozenset(
-    {"default", "worker", "verifier", "triage"}
-)
-# Per-role field shapes. Every role is now the same shape — `effort` and
-# `reasoning`, no `params` — because no role carries an output cap (#2411).
-# The split existed to let the outcome-bearing roles hold `params.max_tokens`
-# while triage kept the engine default; with the cap gone there is nothing for
-# `params` to contain, and a posture that grows one has to be reviewed rather
-# than accepted by a set that still permits the key.
-STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE: dict[str, frozenset[str]] = {
-    "default": frozenset({"effort", "reasoning"}),
-    "worker": frozenset({"effort", "reasoning"}),
-    "verifier": frozenset({"effort", "reasoning"}),
-    "triage": frozenset({"effort", "reasoning"}),
-}
 STUDY_MANIFEST_CONFIRMATORY_FIELDS = frozenset({"job_name", "n_concurrent_trials"})
 
 JOB_CONFIG_ALLOWED_FIELDS = frozenset(
@@ -2277,18 +2259,31 @@ def _require_exact_manifest_fields(
     expected_fields: frozenset[str],
     label: str,
     reasons: list[str],
+    optional_fields: frozenset[str] = frozenset(),
 ) -> None:
-    """Reject both extension fields and omissions from the frozen v6 contract."""
+    """Reject both extension fields and omissions from the frozen v6 contract.
+
+    ``optional_fields`` names keys that may be present or absent and nothing
+    else: an unlisted key is still "extra", a missing *required* key is still
+    "missing". Empty by default, so every existing caller keeps the exact
+    equality it had.
+
+    It exists for the one case where exact equality cannot express the contract
+    — a selectable arm whose unset state must stay byte-identical to the
+    postures registered before the arm existed, so its key cannot be required,
+    and whose set state is a real configuration, so its key cannot be rejected
+    (#2549).
+    """
     if not isinstance(section, dict):
         reasons.append(
             f"Study manifest {label} must be an object with the exact v6 fields."
         )
         return
     observed_fields = set(section)
-    if observed_fields == expected_fields:
-        return
     missing = sorted(expected_fields - observed_fields)
-    extra = sorted(observed_fields - expected_fields)
+    extra = sorted(observed_fields - expected_fields - optional_fields)
+    if not missing and not extra:
+        return
     reasons.append(
         f"Study manifest {label} fields differ from the exact v6 schema; "
         f"missing={missing!r}; extra={extra!r}."
@@ -2305,6 +2300,7 @@ def _validate_engine_posture_manifest_schema(
         STUDY_MANIFEST_ENGINE_POSTURE_FIELDS,
         label,
         reasons,
+        optional_fields=STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_FIELDS,
     )
     if not isinstance(posture, dict):
         return
@@ -2314,10 +2310,14 @@ def _validate_engine_posture_manifest_schema(
         STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES,
         f"{label}.agents",
         reasons,
+        optional_fields=STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_AGENT_ROLES,
     )
     if not isinstance(agents, dict):
         return
-    for role in sorted(STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES):
+    for role in sorted(
+        STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES
+        | STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_AGENT_ROLES
+    ):
         if role not in agents:
             continue
         _require_exact_manifest_fields(

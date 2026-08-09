@@ -36,16 +36,19 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     _stream_to_envelope,
-    resolve_candidates,
-    resolve_verifier_evidence_demand,
-    resolve_max_revisions,
-    resolve_model_timeout,
 )
 
-# Imported from the module rather than the package: an internal of the
-# posture's ceiling policy, not part of what the adapter re-exports.
+# Imported from the module rather than the package: internals of the posture's
+# ceiling and selector policy, not part of what the adapter re-exports. The
+# selector resolvers joined them when the adapter stopped calling them one by
+# one — `read_posture_selectors` is the package-level entry point now, and a
+# re-export kept alive only for a test is a public surface nobody asked for.
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
     _BENCHMARKED_SLUGS,
+    resolve_candidates,
+    resolve_max_revisions,
+    resolve_model_timeout,
+    resolve_verifier_evidence_demand,
 )
 
 
@@ -293,7 +296,7 @@ class TestWorkerEffortAndTriageArms:
         # authority's 20 keys, failing a legitimate `model_timeout_secs`
         # posture while claiming the launcher would refuse it.
         assert set(posture) <= _engine_root_fields()
-        assert set(posture["agents"]) <= {"default", "worker", "verifier", "triage"}
+        assert set(posture["agents"]) <= _engine_agent_names()
         # Every pinned role is in the whitelist, or it cannot be resolved.
         for role_key in ("pipeline_verifier_model", "pipeline_triage_model"):
             assert posture[role_key] in posture["allowed_models"]
@@ -1039,6 +1042,29 @@ def _engine_root_fields() -> frozenset[str]:
     fields = _parse_rust_str_slice(source, "ENGINE_ROOT_FIELDS")
     assert fields, "ENGINE_ROOT_FIELDS parsed to zero entries"
     return fields
+
+
+def _engine_agent_names() -> frozenset[str]:
+    """`ENGINE_AGENT_NAMES` out of `unknown.rs` — the role vocabulary.
+
+    Parsed for the same reason `_engine_root_fields` is, and against the same
+    failure: the literal this replaced named the four roles the posture happened
+    to emit, so it could only ever agree with the posture — it could not answer
+    the question it looked like it was answering, which is whether the launcher
+    would accept a role the posture newly emits (#2549).
+    """
+    try:
+        source = _UNKNOWN_RS.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssertionError(
+            f"cannot read the launcher vocabulary at {_UNKNOWN_RS}: "
+            f"{exc.strerror}. That path is a literal in this file, not a "
+            "resolved crate location — if the crate moved, update "
+            "`_UNKNOWN_RS` to match."
+        ) from exc
+    names = _parse_rust_str_slice(source, "ENGINE_AGENT_NAMES")
+    assert names, "ENGINE_AGENT_NAMES parsed to zero entries"
+    return names
 
 
 def _parse_output_ceilings(source: str) -> dict[str, int]:

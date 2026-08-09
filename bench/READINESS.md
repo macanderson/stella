@@ -599,6 +599,65 @@ What this does and does not invalidate:
 - `preflight_effort.sh` now defaults `EXPECT_DIGEST` to `6c7fc70c`. A rig still
   holding `c8536200` will fail preflight — that is the gate working.
 
+#### 8.4.6 The read-only roles became selectable and no digest moved (#2549)
+
+The fourth boundary, and the first that is not one: a capability was added to
+the posture and **every registered arm keeps the digest it was registered
+under**. It is recorded here anyway, because "did anything move?" is the
+question this section exists to answer, and a silent no is indistinguishable
+from nobody having checked.
+
+`research` and `plan` became configurable engine roles in #2553, and this
+harness could not reach them. It could not simply start emitting them either.
+The two roles inherit the **worker** field by field — `AgentEngineAgents::get`
+is a straight per-role lookup with no fallback, and `over_worker`
+(`crates/stella-cli/src/agent/engine.rs`) merges each role's own tuning over the
+worker's — so a claim run pinning `agents.worker.effort = xhigh` pinned research
+to `xhigh` with it. On match `7d025330abad` that was 76s across 15 research
+calls to emit a few hundred reasoning tokens, against 8.5s for the single plan
+call.
+
+Emitting `agents.research` and `agents.plan` unconditionally would have fixed
+the reachability and re-hashed every arm in 8.4.2 to describe postures that
+behave exactly as the recorded ones already do — spending the comparability
+8.4.4 shows is expensive, for no measurement. So the rows are **opt-in**, the
+same rule every selector in `_benchmark_engine_posture` follows:
+
+- Unset — the default, and what a tree merely *carrying* this code produces —
+  emits no `agents` row and no flat key, so the canonical JSON is byte-identical
+  and so is its SHA-256.
+- Selected, the row is emitted whole (`effort` and `reasoning`, like every other
+  role), with the unselected half filled from what the role already inherits:
+  the run's own worker tier, and the worker's `reasoning: on`. Materialising the
+  row is therefore a behavioural no-op, and only a field an operator chose moves
+  anything. A one-knob arm is a one-variable change.
+
+| model | on `main` before this change | with this change, unset |
+|---|---|---|
+| `anthropic/claude-sonnet-5` | `6c7fc70c…` | `6c7fc70c…` |
+| `openrouter/deepseek/deepseek-v4-pro` | `1191911e…` | `1191911e…` |
+| `openrouter/z-ai/glm-5.1` | `20de1e34…` | `20de1e34…` |
+| `openrouter/anthropic/claude-sonnet-5` | `da82edd0…` | `da82edd0…` |
+
+Both columns were recomputed from `_benchmark_engine_posture` itself, on either
+side of this change, in the control arm *and* with a pinned verifier — eight
+pairs, all equal. The first row is the value 8.4.5 left standing, which is what
+ties this table to the one above it. `preflight_effort.sh` keeps
+`EXPECT_DIGEST=6c7fc70c`; there is nothing to re-freeze and no rig to update.
+
+What this does and does not invalidate:
+
+- **Nothing is invalidated.** Every published number keeps describing the
+  posture that produced it, and cross-boundary digest equality — the thing
+  8.4.4 lost — is preserved across this one.
+- **A run that selects an arm is a new arm**, as always: the row lands in the
+  hash and the manifest states it. Registering one means quoting its digest,
+  not reusing a row above.
+- The selectors are `STELLA_RESEARCH_EFFORT` / `_REASONING` / `_MODEL` and
+  `STELLA_PLAN_EFFORT` / `_REASONING` / `_MODEL`, host-only like every other
+  one: read on the host, reaching Stella only inside the hashed posture, never
+  forwarded into the container.
+
 ### 8.5 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
