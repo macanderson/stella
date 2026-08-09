@@ -145,8 +145,23 @@ def _provenance_for(
         version, binary = resolved.version, resolved.binary
 
     sut_seats: dict[str, dict[str, str]] = {}
+    agent_seats: dict[str, dict[str, Any]] = {}
     for contestant in match.spec.contestants:
         if contestant.agent != "stella":
+            # A pinned release is knowable *before* the trials, unlike an
+            # observed one, so it is recorded at launch alongside the SUT.
+            # `stamp_agent_versions` will not overwrite it: the pin is what the
+            # installer was told to fetch, which outranks a reading taken from
+            # one trial's artifacts.
+            if contestant.agent_version:
+                agent_seats[contestant.id] = {
+                    "agent": contestant.agent,
+                    "name": contestant.name,
+                    "versions": [contestant.agent_version],
+                    "source": provenance.AGENT_SOURCE_PINNED,
+                    "trials": 0,
+                    "unversioned": 0,
+                }
             continue
         pin = match.sut_pin_for(contestant)
         sut_seats[contestant.id] = {
@@ -175,6 +190,7 @@ def _provenance_for(
         sut_commit=sut_commit,
         sut_sha256=sut_sha256,
         sut_seats=sut_seats,
+        agent_seats=agent_seats,
         arenabench_version=__version__,
         source=provenance.SOURCE_RECORDED,
     )
@@ -791,6 +807,14 @@ class MatchRunner:
                 "--agent-timeout-multiplier",
                 str(match.spec.agent_timeout_multiplier),
             ]
+        if contestant.agent_version:
+            # The opponent's `sut_ref`. Harbor's installed-agent base takes a
+            # `version` kwarg and hands it to the vendor's installer, so this
+            # is the difference between "we ran Claude Code" and "we ran Claude
+            # Code 2.1.226" — and, across a series, between a trend and a
+            # sequence of measurements of different products.
+            command += ["--agent-kwarg", f"version={contestant.agent_version}"]
+            run.notes.append(f"{contestant.agent} pinned to {contestant.agent_version}")
         # Task names are namespaced by the *registry*, not by the task itself.
         # Filtering a ref'd dataset therefore needs `<namespace>/<task>`, while
         # an export on disk is just directories and answers to the bare name.

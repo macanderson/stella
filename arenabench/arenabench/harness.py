@@ -296,14 +296,14 @@ class _StreamState:
     """Everything a drain must remember between two reads of one file."""
 
     __slots__ = (
+        "counted_calls",
+        "credited",
         "offset",
+        "open_calls",
         "pending",
         "profile",
-        "totals",
-        "open_calls",
         "seen_models",
-        "credited",
-        "counted_calls",
+        "totals",
     )
 
     def __init__(self) -> None:
@@ -323,8 +323,8 @@ class _StreamState:
         #: Usage already credited per assistant message id. **The stream emits
         #: one event per content block of the same message**, each carrying
         #: that message's full usage — 48 events for 20 messages in a measured
-        #: trial — so summing every event over-counts tokens by 1.76× and
-        #: over-counts steps by 2.4×. Both are the shape of bug this repository
+        #: trial — so summing every event over-counts tokens by 1.76x and
+        #: over-counts steps by 2.4x. Both are the shape of bug this repository
         #: treats as worse than a crash: a plausible number nobody questions.
         #:
         #: Credited as a *delta* against what this id was last charged rather
@@ -441,7 +441,7 @@ def _apply(event: dict[str, Any], state: _StreamState) -> None:
                 int(usage.get(wire) or 0) for wire, _ in _USAGE_FIELDS
             )
             before = state.credited.get(message_id, (0, 0, 0, 0))
-            for (_, attr), now, was in zip(_USAGE_FIELDS, current, before):
+            for (_, attr), now, was in zip(_USAGE_FIELDS, current, before, strict=True):
                 # `max(0, …)` because a revision must never *subtract*. A
                 # provider that reports a smaller figure on a later chunk is
                 # correcting itself, and un-crediting tokens the trial really

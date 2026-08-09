@@ -190,9 +190,18 @@ class Provenance:
         blend is its own apparatus and must never collapse into the key of
         either half. A seat with no observed version gets a trailing ``?`` —
         unknown, and visibly so.
+
+        A seat whose **pin was violated** is labelled by what ran, never by
+        what was asked for. The pin is the intent and the observation is the
+        apparatus; a key that reported the intent would group a match with
+        others that genuinely ran that release, which is the precise error the
+        pin was added to prevent.
         """
         agent = str(seat.get("agent") or "agent")
-        versions = [str(v) for v in (seat.get("versions") or []) if v]
+        source = seat.get("versions") or []
+        if seat.get("pin_violated"):
+            source = seat.get("observed") or seat["pin_violated"]
+        versions = [str(v) for v in source if v]
         if not versions:
             return f"{agent}?"
         label = f"{agent}{'+'.join(sorted(versions))}"
@@ -222,11 +231,29 @@ class Provenance:
         return tuple(
             seat_id
             for seat_id in sorted(self.agent_seats)
-            if len(
-                {v for v in (self.agent_seats[seat_id].get("versions") or []) if v}
-            )
-            > 1
+            if len(self._observed_versions(self.agent_seats[seat_id])) > 1
         )
+
+    @property
+    def violated_pins(self) -> dict[str, list[str]]:
+        """Seats told to run one release that ran another, and what they ran.
+
+        Empty is the normal case, including for every unpinned seat — a seat
+        with no pin cannot violate one. Non-empty means a match believed it was
+        holding the opponent fixed and was not, which is worse than never
+        pinning, because the belief is what makes the comparison quotable.
+        """
+        return {
+            seat_id: list(seat["pin_violated"])
+            for seat_id, seat in sorted(self.agent_seats.items())
+            if seat.get("pin_violated")
+        }
+
+    @staticmethod
+    def _observed_versions(seat: dict[str, Any]) -> set[str]:
+        """What a seat actually ran, preferring evidence over intent."""
+        source = seat.get("observed") or seat.get("versions") or []
+        return {str(v) for v in source if v}
 
     @property
     def sut_commits(self) -> tuple[str, ...]:
@@ -314,6 +341,7 @@ class Provenance:
         if self.agent_seats:
             out["agent_products"] = list(self.agent_products)
             out["mixed_version_seats"] = list(self.mixed_version_seats)
+            out["violated_pins"] = self.violated_pins
         return out
 
     @classmethod
@@ -459,10 +487,15 @@ def stamp_agent_versions(match_dir: Path) -> Provenance | None:
     completes.
 
     Returns the updated record, or ``None`` when there is no record to update
-    or nothing new to say. Never *removes* a version already recorded: a
-    pinned version outranks an observation, and a re-stamp against a
-    half-deleted archive must not silently downgrade a known apparatus to an
-    unknown one.
+    or nothing new to say. Never *downgrades*: a re-stamp against a
+    half-deleted archive must not turn a known apparatus into an unknown one.
+
+    A **pinned** seat keeps its pin but is still checked against what ran. A
+    pin is an instruction to an installer, not evidence — the installer can
+    fall back, resolve a range, or fail to a cached build — and a pin believed
+    without checking is worth less than no pin at all, because it is believed.
+    A disagreement is recorded on the seat as ``pin_violated`` rather than
+    quietly resolved in either direction.
     """
     record = read_match(match_dir)
     if record is None:
@@ -474,6 +507,13 @@ def stamp_agent_versions(match_dir: Path) -> Provenance | None:
     for seat_id, seat in observed.items():
         existing = record.agent_seats.get(seat_id)
         if existing and existing.get("source") == AGENT_SOURCE_PINNED:
+            pinned = {str(v) for v in (existing.get("versions") or []) if v}
+            actually = {str(v) for v in (seat.get("versions") or []) if v}
+            violated = sorted(actually - pinned)
+            if violated and existing.get("pin_violated") != violated:
+                existing["pin_violated"] = violated
+                existing["observed"] = sorted(actually)
+                changed = True
             continue
         if existing == seat:
             continue
