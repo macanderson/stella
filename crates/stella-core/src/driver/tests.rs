@@ -20,9 +20,8 @@ impl Sleeper for NoopSleeper {
     async fn sleep(&self, _duration_ms: u64) {}
 }
 
-/// A `ToolExecutor` that always succeeds and counts real invocations —
-/// the counter is what `retry_never_re_executes_a_tool_call` asserts
-/// against.
+/// A `ToolExecutor` that always succeeds and counts real invocations — the
+/// counter is what `retry_never_re_executes_a_tool_call` asserts against.
 struct CountingTools {
     calls: Arc<AtomicU32>,
 }
@@ -3077,6 +3076,7 @@ mod loop_abort;
 mod parked_wait;
 mod provider_outcomes;
 mod steer_midturn;
+mod usage_anchor;
 mod usage_completeness;
 mod zero_copy_request;
 
