@@ -491,9 +491,9 @@ pub(crate) enum Command {
 
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
-        /// a change that flips a failing test to passing can submit without
-        /// a model-verifier call. Omitted, verification always escalates to the
-        /// verifier.
+        /// a change that flips a failing test to passing is proven done.
+        /// Omitted, the only proof left is the worker's own verify_done, and
+        /// a turn that reaches neither is reported unverified — not passed.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 

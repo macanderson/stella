@@ -37,8 +37,8 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
   <OptionCard name="--test-command <CMD>">
     The test command the pipeline's verify stage runs deterministically — e.g.
     `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
-    failing test to passing can submit without a model-verifier call. Omitted, verification
-    always escalates to the verifier.
+    failing test to passing is proven done. Omitted, the only proof left is the worker's
+    own `verify_done`, and a turn that reaches neither is reported unverified — not passed.
   </OptionCard>
   <OptionCard name="--keep-witness">
     Keep the authored witness test as a file in your working tree. By default the witness
