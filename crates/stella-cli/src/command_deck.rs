@@ -447,7 +447,9 @@ pub async fn run_deck_session(
         .unwrap_or(true);
     let system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
-            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+            // Assembled once per session, before any turn resolves wiring: no
+            // model line rather than a possibly-false one (#2721).
+            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
         } else {
             agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
         },
