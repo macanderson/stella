@@ -285,6 +285,9 @@ impl Tool for Bash {
         // GIT_DIR or a forced-color override must not reach the shell either
         // (same families `exec::drive` removes for every other runner).
         crate::subprocess_env::scrub_spawn_env(&mut cmd);
+        // Inject the session scratch directory path AFTER the scrub, so the
+        // scrub cannot remove it. All tool spawns get this.
+        crate::subprocess_env::inject_scratch_env(&mut cmd);
         // No stdin. An inherited stdin is the TUI's terminal: a command that
         // reads it (`cat`, an interactive prompt, a confirmation `read`)
         // silently steals the user's keystrokes and then blocks until the

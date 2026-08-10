@@ -56,6 +56,7 @@
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
 /// Environment variables that re-target git at a specific repository. Tool
@@ -179,6 +180,24 @@ pub const GITHUB_CLI_AUTH_ENV_VARS: &[&str] = &[
 ];
 
 static REGISTERED_CREDENTIAL_ENV_VARS: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+/// Thread-local storage for the session scratch directory path. Each session
+/// runs in one thread, so this is safe.
+thread_local! {
+    static SCRATCH_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
+}
+
+/// Set the session scratch directory path for the current thread.
+pub fn set_scratch_path(path: &std::path::Path) {
+    SCRATCH_DIR_PATH.with(|s| {
+        let _ = s.set(path.to_path_buf());
+    });
+}
+
+/// Get the session scratch directory path for the current thread, if set.
+fn scratch_path() -> Option<PathBuf> {
+    SCRATCH_DIR_PATH.with(|s| s.get().cloned())
+}
 
 /// Register exact credential environment names learned from trusted provider
 /// configuration.
@@ -355,6 +374,22 @@ pub fn scrub_spawn_std_env_except(command: &mut std::process::Command, preserved
         command.env_remove(var);
     }
     scrub_sensitive_std_env_except(command, preserved_names);
+}
+
+/// Inject the session scratch directory path into a command's environment.
+/// Called AFTER the scrub, so the scrub cannot remove it. Uses the path set
+/// via [`set_scratch_path`]; if no path is set, does nothing.
+pub fn inject_scratch_env(command: &mut tokio::process::Command) {
+    if let Some(path) = scratch_path() {
+        command.env("STELLA_SCRATCH", path);
+    }
+}
+
+/// Synchronous counterpart of [`inject_scratch_env`].
+pub fn inject_scratch_std_env(command: &mut std::process::Command) {
+    if let Some(path) = scratch_path() {
+        command.env("STELLA_SCRATCH", path);
+    }
 }
 
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].

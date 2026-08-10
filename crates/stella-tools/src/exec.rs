@@ -447,6 +447,9 @@ async fn drive_split(
 ) -> Result<(i32, String, String), String> {
     cmd.current_dir(dir);
     crate::subprocess_env::scrub_spawn_env_except(&mut cmd, preserved_sensitive_env);
+    // Inject the session scratch directory path AFTER the scrub, so the
+    // scrub cannot remove it.
+    crate::subprocess_env::inject_scratch_env(&mut cmd);
     // No stdin: everything driven through here is non-interactive, and an
     // inherited stdin is the TUI's terminal — a build or test that prompts
     // would consume the user's keystrokes and then hang until the timeout

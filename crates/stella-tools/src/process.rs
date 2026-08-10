@@ -433,6 +433,9 @@ impl Tool for StartProcess {
         // are scrubbed along with credentials, exactly like `exec::drive` —
         // a server's output lands in the captured buffer, never a terminal.
         crate::subprocess_env::scrub_spawn_env(&mut cmd);
+        // Inject the session scratch directory path AFTER the scrub, so the
+        // scrub cannot remove it.
+        crate::subprocess_env::inject_scratch_env(&mut cmd);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
