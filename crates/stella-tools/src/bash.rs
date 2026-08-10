@@ -469,6 +469,40 @@ mod tests {
         }
     }
 
+    /// Witness for #2666: a command that backgrounds a child (`sleep 5 &`,
+    /// same shape as `nohup server &`) used to make `bash` hang until the
+    /// FULL `timeout_secs` — the backgrounded child still holds this call's
+    /// copy of the pipe open, so `wait_with_capped_output` waited for a true
+    /// EOF that could not arrive until the child itself exited. The command
+    /// the model actually asked for (`echo done_immediately`) finishes in
+    /// milliseconds; the tool call must return in roughly that time, not in
+    /// however long the backgrounded child happens to run.
+    #[tokio::test]
+    async fn does_not_block_on_a_backgrounded_child_holding_the_pipe_open() {
+        let dir = std::env::temp_dir();
+        let started = std::time::Instant::now();
+        let result = Bash::new(None)
+            .execute(
+                &serde_json::json!({
+                    "command": "sleep 5 & echo done_immediately",
+                    "timeout_secs": 10
+                }),
+                &dir,
+            )
+            .await;
+        let elapsed = started.elapsed();
+        match result {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("done_immediately"), "{content}")
+            }
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "bash blocked on a backgrounded child holding the pipe open: {elapsed:?}"
+        );
+    }
+
     #[tokio::test]
     async fn captures_stderr() {
         let dir = std::env::temp_dir();
