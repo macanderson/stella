@@ -75,19 +75,21 @@ fn every_seeded_provider_declares_a_reasoning_posture() {
     }
 }
 
-/// The stream-fallback sibling (#2686): every seeded provider must declare
-/// how it recovers when its streaming path is broken — a unary fallback
-/// (with the witness proving the retried attempt goes out non-streaming), a
-/// declared streaming-only gap, or an adapter that is already unary. Same
-/// completeness contract as the other two axes.
+/// The overflow-axis sibling (#2680): every seeded provider must declare how
+/// it signals a context-window overflow — either a verified wire signature
+/// with a witness test (`Detected`), or an explicit note that detection is
+/// best-effort through the shared funnel (`BestEffort`). Without a row, a
+/// provider's overflow rejections silently miss the engine's reactive
+/// recovery and abort the turn with nothing enforcing that the omission was
+/// deliberate.
 #[test]
-fn every_seeded_provider_declares_a_stream_fallback_posture() {
+fn every_seeded_provider_declares_an_overflow_posture() {
     for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
         assert!(
-            stella_model::provider_parity::stream_fallback_posture(provider.id).is_some(),
-            "provider `{}` has no StreamFallbackPosture row in \
+            stella_model::provider_parity::overflow_posture(provider.id).is_some(),
+            "provider `{}` has no OverflowPosture row in \
              stella-model/src/provider_parity.rs — add it (with a witness test for a \
-             UnaryFallback row, or a note for a no-fallback posture) in this PR",
+             Detected signature, or a note for a BestEffort row) in this PR",
             provider.id
         );
     }

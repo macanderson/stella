@@ -2334,6 +2334,9 @@ export type ProviderErrorWire = {
 } | {
   kind: "cancelled";
 } | {
+  kind: "context_overflow";
+  message: string;
+} | {
   kind: "terminal";
   message: string;
 };

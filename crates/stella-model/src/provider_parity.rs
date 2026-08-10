@@ -21,10 +21,12 @@
 //!   honored a reasoning preference on the shared chat-completions adapter,
 //!   so a pinned `effort` was *silently dropped* for xAI, DeepSeek, and local
 //!   — the exact "nothing enforces the omission stays deliberate" gap.
-//! - [`StreamFallbackPosture`] — how a provider recovers when its streaming
-//!   path is broken (hung before the first byte, or an empty stream): a
-//!   unary fallback (#2686), a declared streaming-only gap, or an adapter
-//!   that is already unary.
+//! - [`OverflowPosture`] — how a provider signals that a request exceeds the
+//!   model's context window (#2680). There is no wire standard: each vendor
+//!   spells it as its own 400 body, and an unrecognized spelling degrades to
+//!   `ProviderError::Terminal` — safe (the turn aborts exactly as before the
+//!   overflow-recovery path existed) but unrecovered, so which spellings are
+//!   *detected* is a declared per-provider fact, not an assumption.
 //!
 //! **The law for new providers:** adding a provider id means adding a row on
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
@@ -325,6 +327,127 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
     ),
 ];
 
+/// How a provider signals a context-window overflow on the wire, and whether
+/// the shared classifier (`crate::http::classify_http_status`) detects it as
+/// [`stella_protocol::ProviderError::ContextOverflow`] — the classification
+/// the engine's reactive overflow recovery keys on (#2680).
+#[derive(Debug)]
+pub enum OverflowPosture {
+    /// The provider's documented overflow signature is matched by the shared
+    /// classifier, so an overflow rejection reaches the engine as
+    /// `ContextOverflow` and recovery fires.
+    Detected {
+        /// The wire signature, for humans reading the matrix.
+        signature: &'static str,
+        /// Name of the test function that proves this provider's exact body
+        /// shape classifies as `ContextOverflow`; checked for existence by
+        /// this module's tests.
+        witness: &'static str,
+    },
+    /// No signature verified against this provider's own wire. Its errors
+    /// still funnel through the shared classifier, so an overflow phrased in
+    /// one of the detected dialects is caught opportunistically; anything
+    /// else degrades to `Terminal` — today's abort, safe but unrecovered.
+    /// Verifying the real wire shape upgrades the row to [`Detected`].
+    ///
+    /// [`Detected`]: OverflowPosture::Detected
+    BestEffort { note: &'static str },
+}
+
+/// One overflow row per provider id constructible by the CLI — same
+/// completeness contract as [`CACHE_POSTURE`] (enforced by `stella-cli`'s
+/// config tests). Settings-defined custom providers inherit the shared
+/// OpenAI-compatible adapter and behave as `openai`-signature best-effort;
+/// they need no row of their own.
+pub static OVERFLOW_POSTURE: &[(&str, OverflowPosture)] = &[
+    (
+        "anthropic",
+        OverflowPosture::Detected {
+            signature: "HTTP 400 invalid_request_error, message \
+                        `prompt is too long: N tokens > M maximum`",
+            witness: "an_anthropic_prompt_too_long_400_classifies_as_context_overflow",
+        },
+    ),
+    (
+        "openai",
+        OverflowPosture::Detected {
+            signature: "HTTP 400 with error.code `context_length_exceeded` (chat completions) \
+                        or message `...exceeds the context window` (Responses API)",
+            witness: "an_openai_context_length_exceeded_400_classifies_as_context_overflow",
+        },
+    ),
+    (
+        "gemini",
+        OverflowPosture::Detected {
+            signature: "HTTP 400 INVALID_ARGUMENT, message `The input token count (N) exceeds \
+                        the maximum number of tokens allowed (M)`",
+            witness: "a_gemini_token_count_overflow_400_classifies_as_context_overflow",
+        },
+    ),
+    (
+        "vertex",
+        OverflowPosture::Detected {
+            signature: "same INVALID_ARGUMENT prose as gemini (shared error funnel)",
+            witness: "a_gemini_token_count_overflow_400_classifies_as_context_overflow",
+        },
+    ),
+    (
+        "bedrock",
+        OverflowPosture::Detected {
+            signature: "HTTP 400 ValidationException, flat top-level message \
+                        `Input is too long for requested model` / `too many input tokens`",
+            witness: "a_bedrock_input_too_long_validation_400_classifies_as_context_overflow",
+        },
+    ),
+    (
+        "openrouter",
+        OverflowPosture::BestEffort {
+            note: "the gateway forwards the routed upstream vendor's own error body, so the \
+                   anthropic/openai signatures usually match via the shared funnel — but the \
+                   passthrough is not verified against the live gateway per upstream",
+        },
+    ),
+    (
+        "zai",
+        OverflowPosture::BestEffort {
+            note: "OpenAI-compatible error dialect on the shared funnel; GLM's exact overflow \
+                   phrase is unverified on the wire",
+        },
+    ),
+    (
+        "xai",
+        OverflowPosture::BestEffort {
+            note: "OpenAI-compatible error dialect on the shared funnel; xAI's exact overflow \
+                   phrase is unverified on the wire",
+        },
+    ),
+    (
+        "deepseek",
+        OverflowPosture::BestEffort {
+            note: "OpenAI-compatible error dialect on the shared funnel; DeepSeek's exact \
+                   overflow phrase is unverified on the wire",
+        },
+    ),
+    (
+        "local",
+        OverflowPosture::BestEffort {
+            note: "local OpenAI-compatible servers each spell overflow their own way \
+                   (llama.cpp, vLLM, ollama); the OpenAI signatures catch the compatible \
+                   ones and the rest abort exactly as before",
+        },
+    ),
+];
+
+/// The declared overflow posture for `provider_id`, or `None` for an id the
+/// matrix doesn't know — which the `stella-cli` completeness test turns into
+/// a hard failure for any seeded provider.
+pub fn overflow_posture(provider_id: &str) -> Option<&'static OverflowPosture> {
+    OVERFLOW_POSTURE
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, posture)| posture)
+}
+
 /// The declared reasoning posture for `provider_id`, or `None` for an id the
 /// matrix doesn't know — which the `stella-cli` completeness test turns into a
 /// hard failure for any seeded provider.
@@ -490,8 +613,19 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 15] {
-        [
+    /// Returned as a slice, not a sized array: the array length was one
+    /// shared cell every PR adding a source file had to write, and two green
+    /// PRs (#2748 adding `zai/tests/stream_fallback.rs`, #2752 adding
+    /// `http.rs`) composed into a red `main` when the merge kept both
+    /// entries and one length — the same shape that removed the spelled-out
+    /// total from `GATE_STEPS` (#1883).
+    fn adapter_sources() -> &'static [&'static str] {
+        &[
+            // The overflow axis's witnesses live beside the classifier they
+            // prove: overflow detection is shared plumbing
+            // (`http::classify_http_status`), and its per-dialect tests
+            // exercise each provider's exact body shape there.
+            include_str!("http.rs"),
             include_str!("anthropic/tests.rs"),
             include_str!("anthropic/tests/cache_breakpoints.rs"),
             include_str!("anthropic/tests/thinking.rs"),
@@ -625,35 +759,31 @@ mod tests {
         }
     }
 
-    /// The stream-fallback sibling: every `UnaryFallback` row must name a
-    /// test that exists in the adapter sources, proving the retried attempt
-    /// really goes out non-streaming. The no-fallback variants carry a note,
-    /// not a witness.
+    /// The overflow-axis sibling: every `Detected` row must name a test that
+    /// exists in the adapter sources, proving that provider's exact overflow
+    /// body classifies as `ContextOverflow`. `BestEffort` rows carry a note,
+    /// not a witness — they declare the absence of wire verification.
     #[test]
-    fn every_stream_fallback_witness_test_exists_in_the_adapter_sources() {
+    fn every_overflow_witness_test_exists_in_the_adapter_sources() {
         let sources = adapter_sources();
-        for (id, posture) in STREAM_FALLBACK_POSTURE {
+        for (id, posture) in OVERFLOW_POSTURE {
             let witness = match posture {
-                StreamFallbackPosture::UnaryFallback { witness, .. } => witness,
-                StreamFallbackPosture::StreamingOnly { .. }
-                | StreamFallbackPosture::AlwaysUnary { .. } => continue,
+                OverflowPosture::Detected { witness, .. } => witness,
+                OverflowPosture::BestEffort { .. } => continue,
             };
             let needle = format!("fn {witness}(");
             assert!(
                 sources.iter().any(|source| source.contains(&needle)),
-                "stream-fallback witness for `{id}` not found in adapter sources: {witness}"
+                "overflow-posture witness for `{id}` not found in adapter sources: {witness}"
             );
         }
     }
 
     #[test]
-    fn stream_fallback_provider_ids_are_unique() {
+    fn overflow_provider_ids_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
-        for (id, _) in STREAM_FALLBACK_POSTURE {
-            assert!(
-                seen.insert(id),
-                "duplicate stream-fallback-posture row for `{id}`"
-            );
+        for (id, _) in OVERFLOW_POSTURE {
+            assert!(seen.insert(id), "duplicate overflow-posture row for `{id}`");
         }
     }
 
@@ -676,23 +806,23 @@ mod tests {
         }
     }
 
-    /// Every axis must cover exactly the same set of provider ids — a
-    /// provider present on one axis but not another is a matrix hole.
+    /// All axes must cover exactly the same set of provider ids — a provider
+    /// present on one axis but not another is a matrix hole.
     #[test]
     fn all_axes_cover_the_same_provider_ids() {
         let cache: std::collections::BTreeSet<_> =
             CACHE_POSTURE.iter().map(|(id, _)| *id).collect();
         let reasoning: std::collections::BTreeSet<_> =
             REASONING_POSTURE.iter().map(|(id, _)| *id).collect();
-        let fallback: std::collections::BTreeSet<_> =
-            STREAM_FALLBACK_POSTURE.iter().map(|(id, _)| *id).collect();
+        let overflow: std::collections::BTreeSet<_> =
+            OVERFLOW_POSTURE.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             cache, reasoning,
             "cache and reasoning matrices cover different provider ids"
         );
         assert_eq!(
-            cache, fallback,
-            "cache and stream-fallback matrices cover different provider ids"
+            cache, overflow,
+            "cache and overflow matrices cover different provider ids"
         );
     }
 
@@ -706,9 +836,9 @@ mod tests {
             assert!(reasoning_posture(id).is_some());
         }
         assert!(reasoning_posture("no-such-provider").is_none());
-        for (id, _) in STREAM_FALLBACK_POSTURE {
-            assert!(stream_fallback_posture(id).is_some());
+        for (id, _) in OVERFLOW_POSTURE {
+            assert!(overflow_posture(id).is_some());
         }
-        assert!(stream_fallback_posture("no-such-provider").is_none());
+        assert!(overflow_posture("no-such-provider").is_none());
     }
 }
