@@ -178,18 +178,16 @@ impl<'a> Pipeline<'a> {
         signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> TurnOutcome {
-        let (filtered, tallies) = self.filtered_turn_events(flip_halt.clone());
-        // A halted engine only when there is something to watch, so a turn
-        // with no armed flip runs on exactly the engine it always did.
-        let halted;
-        let engine = match flip_halt {
-            Some(halt) => {
-                halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
-                &halted
-            }
-            None => engine,
-        };
-        let outcome = engine
+        // Every execute turn gets a halt now (#2661): armed with the tracked
+        // command when `run_candidate` observed a failing baseline, otherwise
+        // watching only for a confirmed `verify_done` — the deterministic
+        // done-signal that needs no configured command. An unfired latch
+        // answers `None` at every consult, so an ordinary turn still runs
+        // exactly as it always did.
+        let halt = flip_halt.unwrap_or_else(|| Arc::new(FlipHalt::watching_verify_done_only()));
+        let (filtered, tallies) = self.filtered_turn_events(Some(halt.clone()));
+        let halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
+        let outcome = halted
             .run_turn_with_sender(messages, budget, &filtered)
             .await;
         tallies.fold_into(signals);
@@ -212,18 +210,14 @@ impl<'a> Pipeline<'a> {
         signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> (TurnOutcome, Vec<CompletionMessage>, BudgetGuard) {
-        let (filtered, tallies) = self.filtered_turn_events(flip_halt.clone());
-        let halted;
-        let engine = match flip_halt {
-            Some(halt) => {
-                halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
-                &halted
-            }
-            None => engine,
-        };
+        // Same always-on halt as `run_engine_turn` (#2661) — the resumed
+        // path must not be the copy that forgot it.
+        let halt = flip_halt.unwrap_or_else(|| Arc::new(FlipHalt::watching_verify_done_only()));
+        let (filtered, tallies) = self.filtered_turn_events(Some(halt.clone()));
+        let halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
         let mut state =
             stella_core::step::TurnState::from_checkpoint(checkpoint, &self.config.engine);
-        let outcome = engine.drive(&mut state, &filtered).await;
+        let outcome = halted.drive(&mut state, &filtered).await;
         tallies.fold_into(signals);
         let budget = stella_core::step::BudgetSnapshot::of(state.budget()).restore();
         (outcome, state.into_messages(), budget)
@@ -315,9 +309,13 @@ impl<'a> Pipeline<'a> {
                         }
                     }
                     // Remember the command line so its result can be scored
-                    // against the tracked test. Only when a halt is armed —
-                    // otherwise this map is pure overhead on every turn.
-                    if halt_for_events.is_some()
+                    // against the tracked test. Only when the halt actually
+                    // watches a command — a verify_done-only latch (#2661)
+                    // has nothing to match, and this map would be pure
+                    // overhead on every turn.
+                    if halt_for_events
+                        .as_ref()
+                        .is_some_and(|halt| !halt.tracked().is_empty())
                         && let Some(command) = command_of(&call.input)
                         && let Ok(mut pending) = commands.lock()
                     {
@@ -372,6 +370,16 @@ impl<'a> Pipeline<'a> {
                         && content.starts_with(WITNESS_CONFIRMED_MARKER)
                     {
                         verify.fetch_add(1, Ordering::Relaxed);
+                        // A confirmed verify_done is deterministic proof the
+                        // goal is met (#2129) — the second live done-signal,
+                        // and the only one a turn with no tracked command has
+                        // (#2661). Firing the halt here is what lets the
+                        // engine's mid-dispatch consult kill anything still
+                        // in flight instead of spending the rest of the
+                        // ceiling against a solved task.
+                        if let Some(halt) = halt_for_events.as_ref() {
+                            halt.confirm_verify_done();
+                        }
                     }
                     // Scored off the result alone (#2125) — no call-id
                     // correlation, because the marker the census reads is the
