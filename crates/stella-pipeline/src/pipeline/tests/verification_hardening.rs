@@ -35,6 +35,13 @@ mod untracked_render_bound;
 /// beside the only tests that script it.
 mod diff_coverage;
 
+/// The wiring guard for the two mechanical checks on the deterministic rung
+/// (#2607) — a child module for the same two reasons `flip_halt_arming` is,
+/// and because it is the only place both probes are wired on one run. Its
+/// module doc states what it is protecting and why a verdict assertion alone
+/// cannot.
+mod guard_wiring;
+
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
 /// must escalate to the model verifier, never credit `DeterministicPass`. Before
@@ -509,6 +516,52 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);
     assert!(!stages(&events).contains(&StageKind::Verdict));
+}
+
+/// A scripted coverage probe (#1291): answers with a fixed report, or `None`
+/// for "no tooling could measure this", and counts the runs it was asked for.
+///
+/// Lives beside [`ScriptedMutation`] rather than in `diff_coverage` because
+/// two child modules script it — `guard_wiring` wires both probes on one run
+/// to pin that neither guard has stopped being fed (#2607).
+pub(super) struct ScriptedCoverage {
+    report: Option<crate::verify::coverage::CoverageReport>,
+    calls: std::sync::atomic::AtomicU32,
+}
+
+impl ScriptedCoverage {
+    pub(super) fn measuring(entries: &[(&str, &[u32])]) -> Self {
+        Self {
+            report: Some(
+                entries
+                    .iter()
+                    .map(|(path, lines)| ((*path).to_string(), lines.iter().copied().collect()))
+                    .collect(),
+            ),
+            calls: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+    pub(super) fn unavailable() -> Self {
+        Self {
+            report: None,
+            calls: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+    pub(super) fn calls(&self) -> u32 {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl crate::ports::CoverageProbe for ScriptedCoverage {
+    async fn covered_lines(
+        &self,
+        _root: Option<&str>,
+        _invocation: &TestInvocation,
+    ) -> Option<crate::verify::coverage::CoverageReport> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.report.clone()
+    }
 }
 
 /// A scripted mutation probe (#870): every mutant gets the same outcome,

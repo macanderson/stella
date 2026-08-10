@@ -956,7 +956,7 @@ fn a_tautological_witness_blocks_the_fast_submit() {
     };
     assert_eq!(ladder_decision(&sound), LadderDecision::SubmitFast);
     let tautological = LadderInputs {
-        witness_tautological: true,
+        witness_mutation: crate::verify::mutation::MutationAudit::Tautological,
         ..sound
     };
     assert_eq!(

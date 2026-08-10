@@ -323,7 +323,7 @@ impl<'a> Pipeline<'a> {
             // The pre-execution lint snapshot died with the process; the
             // regression veto (#861) sits out a resumed run (module docs).
             lint_baseline: None,
-            witness_mutation: None,
+            witness_mutation: MutationAudit::Unmeasured,
             diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
             evidence_demands: 0,
