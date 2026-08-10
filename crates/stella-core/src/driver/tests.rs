@@ -2828,10 +2828,12 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
 }
 
 #[tokio::test]
-async fn session_start_hooks_run_via_the_helper_not_per_turn() {
-    // SessionStart is exposed as an explicit once-per-session helper
-    // (Engine::run_session_start_hooks); run_turn must never fire it, so
-    // a REPL calling run_turn repeatedly does not re-run session setup.
+async fn run_turn_never_fires_session_start_hooks() {
+    // SessionStart is a session-level event and a host obligation (#2674):
+    // the host fires it once, via `hooks::run_hooks`, while assembling the
+    // system prompt. run_turn is per-turn — a REPL calls it many times per
+    // session — so it must never fire SessionStart, or every turn would
+    // re-run session setup.
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![Ok(text_result("hi there"))]),
@@ -2858,12 +2860,6 @@ async fn session_start_hooks_run_via_the_helper_not_per_turn() {
     let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
         .with_hooks(&hooks, &runner);
 
-    // The helper fires SessionStart once and returns its stdout as the
-    // additional system-prompt context.
-    let context = engine.run_session_start_hooks().await;
-    assert_eq!(context.as_deref(), Some("on-call: alice"));
-
-    // A full turn must NOT fire SessionStart a second time.
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -2874,12 +2870,12 @@ async fn session_start_hooks_run_via_the_helper_not_per_turn() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
     let payloads = payloads.lock().await.clone();
-    assert_eq!(
-        payloads.len(),
-        1,
-        "run_turn must not fire SessionStart — only the helper does"
+    assert!(
+        !payloads
+            .iter()
+            .any(|p| p.contains("\"event\":\"SessionStart\"")),
+        "run_turn fired SessionStart — session setup would re-run on every turn"
     );
-    assert!(payloads[0].contains("\"event\":\"SessionStart\""));
 }
 
 #[test]

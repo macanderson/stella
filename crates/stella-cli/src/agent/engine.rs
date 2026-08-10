@@ -453,6 +453,13 @@ pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
 /// session context `stella_core::hooks` documents. `None` when no hooks are
 /// configured or they printed nothing. Called once per session by each
 /// driver, never per turn.
+///
+/// This is the single owner of `SessionStart` firing (#2674). The engine
+/// deliberately has no method for it: every driver fires hooks here, while
+/// assembling the system prompt — before any `Engine` exists — and the
+/// diagnostics below must reach stderr, which the no-I/O engine cannot do.
+/// `stella-parity`'s `hooks.lifecycle` row pins that no second owner grows
+/// back.
 pub(crate) async fn session_start_hook_context(cfg: &Config) -> Option<String> {
     let hooks = cfg.hooks.as_ref()?;
     let outcome = stella_core::hooks::run_hooks(

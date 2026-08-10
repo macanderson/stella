@@ -759,34 +759,6 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Fire `SessionStart` hooks once and return any stdout they produced —
-    /// the additional system-prompt context described in `crate::hooks`.
-    ///
-    /// This is deliberately NOT called from [`Engine::run_turn`].
-    /// `SessionStart` is a session-level event ("runs once before the
-    /// turn"), but `run_turn` is per-turn and a REPL or fleet worker calls
-    /// it many times per session — firing it inside would re-run session
-    /// setup on every turn. Prompt assembly is the caller's concern anyway
-    /// (`run_turn` takes history by `&mut` and never owns the system
-    /// prompt), so the caller invokes this once, before the first turn, and
-    /// folds the returned context into the system message it builds.
-    /// Returns `None` when no hooks are attached or the hooks printed
-    /// nothing.
-    pub async fn run_session_start_hooks(&self) -> Option<String> {
-        let handle = self.hooks?;
-        let outcome = run_hooks(
-            handle.runner,
-            Some(handle.hooks),
-            &HookPayload::session_start(self.config.cwd.clone()),
-        )
-        .await;
-        if outcome.output.is_empty() {
-            None
-        } else {
-            Some(outcome.output)
-        }
-    }
-
     /// Drive one turn to completion or a clean abort, appending every
     /// message to `messages` and streaming an `AgentEvent` for every
     /// boundary over `events`. `budget` is `&mut` because spend
