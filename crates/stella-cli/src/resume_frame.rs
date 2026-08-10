@@ -4,8 +4,8 @@
 //! What a killed turn was running *inside*, so a resume cannot silently give
 //! it back as something smaller (#1615).
 //!
-//! `stella run` drives the staged pipeline — triage, plan, witness, execute,
-//! verify, verdict — and the engine checkpoint that `stella daemon resume`
+//! `stella run` drives the staged pipeline — triage, plan, execute, witness,
+//! verify — and the engine checkpoint that `stella daemon resume`
 //! restores describes only the innermost of those: one worker turn. Resuming
 //! from it alone therefore hands the operator a run that answers but was never
 //! verified, which is the one thing this repository refuses to call done. The
@@ -66,8 +66,9 @@ pub struct PipelineFrame {
     /// See [`FRAME_VERSION`].
     pub version: u32,
     /// The deterministic verify ladder's command, when `--test-command` armed
-    /// it. `None` means every verification would have escalated to the model
-    /// verifier.
+    /// it. `None` means the run configured none, so the only command the
+    /// ladder could ever have observed was the one the witness stage authored
+    /// (`Pipeline::effective_test_command`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_command: Option<String>,
     /// Whether the witness stage would have had an independent model author a
@@ -88,8 +89,9 @@ pub struct PipelineFrame {
     ///
     /// The **whole** roster and not just the witness enablement, because every
     /// ablation has to survive a resume: before this, a run whose triage was
-    /// ablated and whose verdict was reassigned came back as neither, and the
-    /// resumed leg's transcript described a pipeline that had never run.
+    /// ablated and whose witness author was reassigned came back as neither,
+    /// and the resumed leg's transcript described a pipeline that had never
+    /// run.
     ///
     /// Additive, so no [`FRAME_VERSION`] bump — an older frame reads it as an
     /// empty map and is upgraded from [`Self::witness_writer`] alone, which is
@@ -111,7 +113,8 @@ pub struct PipelineFrame {
     /// turn writes into the workspace instead.
     #[serde(default)]
     pub isolation_possible: bool,
-    /// Revision rounds the verifier could still have demanded.
+    /// Revision rounds the deterministic verify ladder could still have
+    /// demanded (`stella_pipeline::verify::ladder_decision`'s `Revise` rung).
     #[serde(default)]
     pub max_revisions: u32,
     /// The facts the pipeline learned while running — task class, plan,
@@ -246,8 +249,13 @@ impl ResumeFrame {
     ///
     /// Written as a list of what will *not* run rather than a single sentence,
     /// because "the pipeline does not resume" is the summary an operator
-    /// already assumed was false; naming the verdict, the flip credit and the
-    /// candidate workspace individually is what makes it actionable.
+    /// already assumed was false; naming the verify stage, the flip credit and
+    /// the candidate workspace individually is what makes it actionable.
+    ///
+    /// Every line naming a *model call* is emitted by
+    /// [`unrestored_guarantee`] and reached only through a row of the run's
+    /// roster, so the set is derived rather than written out — see that
+    /// function for why (#2608).
     pub fn advisory(&self) -> Option<Vec<String>> {
         let frame = match self {
             Self::BareTurn => return None,
@@ -267,25 +275,30 @@ impl ResumeFrame {
         ];
         lines.push(match &frame.test_command {
             Some(command) => format!(
-                "  the verify stage will NOT re-run `{command}`, and no verdict is recorded"
+                "  the verify stage will NOT re-run `{command}`, so no evidence is recorded for \
+                 this work"
             ),
-            None => {
-                "  the verifier will NOT re-read this work, and no verdict is recorded".to_string()
-            }
+            None => "  the verify stage will NOT observe this work, so no evidence is recorded \
+                     for it"
+                .to_string(),
         });
-        // Through the roster, not the bool beside it, so this file reads the
-        // legacy field in exactly one place (#2458) — `PipelineFrame::roster`,
-        // which is also the only place that knows an old frame carries nothing
-        // else.
-        if frame.roster().enabled(ModelCallRole::WitnessAuthor) {
-            lines.push(
-                "  the witness test's fail→pass flip is NOT credited — nothing proves this done"
-                    .to_string(),
-            );
-        }
+        // The model calls, derived. Through the roster, not the bool beside it,
+        // so this file reads the legacy field in exactly one place (#2458) —
+        // `PipelineFrame::roster`, which is also the only place that knows an
+        // old frame carries nothing else. `assignments()` is in
+        // `ModelCallRole::ALL` order, so the advisory's order is fixed.
+        lines.extend(
+            frame
+                .roster()
+                .assignments()
+                .iter()
+                .filter(|row| row.enabled)
+                .filter_map(|row| unrestored_guarantee(row.responsibility))
+                .map(str::to_string),
+        );
         if frame.max_revisions > 0 {
             lines.push(format!(
-                "  up to {} revision round(s) the verifier could have demanded will NOT happen",
+                "  up to {} revision round(s) the verify ladder could have demanded will NOT happen",
                 frame.max_revisions
             ));
         }
@@ -331,6 +344,65 @@ impl ResumeFrame {
     }
 }
 
+/// The guarantee a bare-turn resume gives up by not re-running
+/// `responsibility`, or `None` when losing it costs the operator nothing they
+/// can act on.
+///
+/// **This is the join the advisory used to lack** (#2608). Every line of
+/// [`ResumeFrame::advisory`] that names a model call comes from here, and is
+/// reached only through a row of the run's [`stella_pipeline::Roster`] — so a
+/// responsibility the pipeline stops issuing loses its row in
+/// [`stella_pipeline::default_agent`] and its sentence disappears with it, in
+/// the same commit and with nothing to remember. Written as literals instead,
+/// the set of guarantees lived in two places: the pipeline that issues the
+/// stages and a string in this crate, joined by nothing. That is how this
+/// advisory came to describe a model verifier rendering a verdict on a `main`
+/// whose pipeline had stopped issuing either — with no compiler and no test
+/// able to see it, because each half was internally consistent.
+///
+/// The [`ModelCallRole::Verdict`] arm is the shape's own witness: a sentence
+/// **is** declared for it, and no advisory prints it, because
+/// `default_agent` answers `None` and no roster carries the row. Deleting the
+/// arm would make that indistinguishable from having forgotten it — the same
+/// reason invariant 8's parity matrix keeps a row per provider per axis rather
+/// than only the rows that are interesting today. If judgement ever returns to
+/// the pipeline, the sentence describing its loss returns with it.
+///
+/// Exhaustive over [`ModelCallRole`] for the other direction: a responsibility
+/// added to the pipeline fails to compile here with `E0004` until someone
+/// states what its absence costs — the same maintenance contract
+/// [`stella_pipeline::default_agent`] imposes one layer down.
+fn unrestored_guarantee(responsibility: ModelCallRole) -> Option<&'static str> {
+    match responsibility {
+        ModelCallRole::WitnessAuthor => {
+            Some("  the witness test's fail→pass flip is NOT credited — nothing proves this done")
+        }
+        ModelCallRole::Verdict => Some("  no verdict is recorded for the work this turn produced"),
+        // The stages the checkpoint already sits downstream of. Triage
+        // classified, research answered and the plan was authored before the
+        // turn that died, and the resumed turn continues the worker's own loop
+        // rather than replacing it — so not re-running any of these is what a
+        // resume is *for*, not something it loses.
+        ModelCallRole::Triage
+        | ModelCallRole::Research
+        | ModelCallRole::Plan
+        | ModelCallRole::Worker => None,
+        // Not on any roster (`default_agent` answers `None`), so unreachable
+        // through `assignments()`. Named rather than swept up by a wildcard so
+        // that a responsibility added to the pipeline cannot slip past this
+        // match by resembling one of them.
+        ModelCallRole::PlanRepair
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Unknown
+        | ModelCallRole::AgentAuthor
+        | ModelCallRole::SkillAuthor
+        | ModelCallRole::DomainInference
+        | ModelCallRole::Reflection
+        | ModelCallRole::Summarization => None,
+    }
+}
+
 /// What a resume can restore from `frame`, or `None` for the bare-turn path
 /// (#1671): a validated [`stella_pipeline::PipelineResume`] plus the frame's
 /// configuration half, which re-arms the pipeline with the run's *original*
@@ -358,7 +430,7 @@ pub fn restoration(
 pub fn restored_advisory() -> Vec<String> {
     vec![
         "this was a staged pipeline run — resuming INTO it: the interrupted turn \
-         continues, then the witness/verify/verdict stages run on the completed work"
+         continues, then the witness and verify stages run on the completed work"
             .to_string(),
         "  the pre-crash lint baseline is gone, so the lint-regression veto (#861) \
          sits out this run"
@@ -475,10 +547,25 @@ mod tests {
             text.contains("cargo test -p stella-core"),
             "the verify command that will not re-run is named: {text}"
         );
-        assert!(text.contains("no verdict is recorded"), "{text}");
-        assert!(text.contains("flip is NOT credited"), "{text}");
+        assert!(text.contains("no evidence is recorded"), "{text}");
         assert!(text.contains("revision round"), "{text}");
         assert!(text.contains("candidate worktree"), "{text}");
+
+        // The model-call half is asserted as the *derived* set, not as fixed
+        // strings (#2608): every responsibility this run's roster enables
+        // contributes its sentence, and every one it does not is absent. A
+        // literal here would re-create the drift the derivation removed.
+        let roster = pipeline_frame().roster();
+        for &responsibility in ModelCallRole::ALL {
+            let Some(sentence) = unrestored_guarantee(responsibility) else {
+                continue;
+            };
+            assert_eq!(
+                text.contains(sentence),
+                roster.enabled(responsibility),
+                "the advisory must name {responsibility:?} exactly when the roster runs it: {text}"
+            );
+        }
 
         // The delta: a plain engine turn is untouched by any of this.
         let bare = ResumeFrame::BareTurn;
@@ -486,6 +573,80 @@ mod tests {
         assert_eq!(bare.advisory(), None);
         assert_eq!(bare.completed_label(), "resumed_complete");
         assert!(!bare.completed_banner(7).contains("UNVERIFIED"));
+    }
+
+    /// **The #2608 witness.** The advisory names only responsibilities the
+    /// pipeline can actually issue, and it learns that from the roster rather
+    /// than from the sentences it was written with.
+    ///
+    /// On `main` this fails on the first assertion: the advisory prints
+    /// "and no verdict is recorded" unconditionally, while
+    /// `Roster::is_assignable(Verdict)` has been `false` since verification
+    /// went model-free — the two had drifted apart and nothing joined them.
+    ///
+    /// Both directions are checked, because a set that is derived has to be
+    /// derived *both* ways: a responsibility the pipeline cannot issue must
+    /// not be named even though [`unrestored_guarantee`] still declares its
+    /// sentence, and one it can issue must lose its sentence the moment the
+    /// run ablates it.
+    #[test]
+    fn the_advisory_names_no_responsibility_the_pipeline_cannot_issue() {
+        for test_command in [Some("cargo test".to_string()), None] {
+            let frame = ResumeFrame::Pipeline(Box::new(PipelineFrame {
+                test_command,
+                ..pipeline_frame()
+            }));
+            let text = frame
+                .advisory()
+                .expect("a pipeline frame advises")
+                .join("\n");
+            for &responsibility in ModelCallRole::ALL {
+                if stella_pipeline::Roster::is_assignable(responsibility) {
+                    continue;
+                }
+                let token = serde_json::to_value(responsibility)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .expect("a fieldless role serializes to its wire token");
+                assert!(
+                    !text.contains(&token),
+                    "the advisory names `{token}`, which the staged pipeline does not issue — \
+                     an operator is being told a check was skipped that no longer exists: {text}"
+                );
+            }
+        }
+
+        // The sentence for the responsibility above IS declared; the roster is
+        // what keeps it off the page. Deleting the arm would make a removed
+        // guarantee indistinguishable from a forgotten one.
+        assert!(
+            unrestored_guarantee(ModelCallRole::Verdict).is_some(),
+            "the verdict's loss stays declared, so its return is one roster row away"
+        );
+
+        // The other direction: an ablation the run was launched with drops the
+        // sentence for what it ablated, and nothing else.
+        let witness_sentence =
+            unrestored_guarantee(ModelCallRole::WitnessAuthor).expect("the witness author advises");
+        let ablated = ResumeFrame::Pipeline(Box::new(PipelineFrame {
+            responsibilities: stella_pipeline::Roster::default()
+                .with_enabled(ModelCallRole::WitnessAuthor, false)
+                .overrides(),
+            witness_writer: false,
+            ..pipeline_frame()
+        }));
+        let text = ablated
+            .advisory()
+            .expect("a pipeline frame advises")
+            .join("\n");
+        assert!(
+            !text.contains(witness_sentence),
+            "a run that authored no witness must not be told its flip went uncredited: {text}"
+        );
+        assert!(
+            text.contains("revision round"),
+            "and nothing else may vanish with it: {text}"
+        );
     }
 
     /// A frame present but unreadable must never read as "no frame": the two
