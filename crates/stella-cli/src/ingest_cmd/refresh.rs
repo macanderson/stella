@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 use stella_core::ingest::record::SCHEMA_TAG;
 use stella_core::ingest::refresh::{AssertedClaim, PublishedClaim, RefreshPlan, plan};
-use stella_core::ingest::{ContextFile, Defaults};
+use stella_core::ingest::ContextFile;
 
 use crate::context_records::RULES_DIR;
 
@@ -164,7 +164,7 @@ fn published_from_source(root: &Path, rel: &str) -> Vec<PublishedFile> {
 /// not truncate.
 fn retire(entry: &PublishedFile) -> Result<(), String> {
     let mut file = entry.file.clone();
-    let defaults = file.defaults.clone().unwrap_or_else(Defaults::default);
+    let defaults = file.defaults.clone().unwrap_or_default();
     for record in &mut file.records {
         if record.record_id.as_deref() != Some(entry.claim.record_id.as_str()) {
             continue;
