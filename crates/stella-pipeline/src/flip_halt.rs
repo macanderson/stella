@@ -34,6 +34,26 @@
 //! test runs, the ones that tell it the work is finished, were invisible to
 //! it. This watches those runs as they happen.
 //!
+//! # How hard the stop lands
+//!
+//! The latch is read by the engine at two depths. The step boundary
+//! (`driver/drive.rs`) ends the turn without another model call. Since #2661
+//! the dispatch loop also consults it — between barrier groups and after each
+//! settled tool call — and a fired latch there *kills* the still-running
+//! sibling tools: their futures are dropped, `kill_on_drop` and the setsid'd
+//! SIGKILL group guard in `stella-tools` take the child processes with them,
+//! and the refused calls are answered synthetically so the transcript stays
+//! well-paired. Before that, a flip landing while a long tool was in flight
+//! waited for it — minutes on a `pytest` or a build, which on Terminal-Bench
+//! is exactly the `solved_then_timeout` window: proven done, still billed to
+//! the 900s ceiling.
+//!
+//! This is deliberately not a breach of the "aborts at safe boundaries only"
+//! discipline (invariant #6): that rule guards *budget* aborts, where an
+//! interrupt loses work someone still wants. A confirmed flip is the opposite
+//! state — the tracked test has already proven the goal, so what the kill
+//! discards is, by that proof, not work.
+//!
 //! # What it deliberately does not do
 //!
 //! It does not decide the verdict. The authoritative oracle in

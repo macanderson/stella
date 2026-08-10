@@ -334,9 +334,14 @@ pub trait TurnHalt: Send + Sync + std::fmt::Debug {
     /// `Some(reason)` ends the turn cleanly at the next step boundary;
     /// `None` lets it continue.
     ///
-    /// Called once per committed step, so it must be cheap and must not
-    /// block. It is asked *between* steps and never mid-tool, which is what
-    /// lets the turn end with a well-paired transcript.
+    /// Called once per committed step AND from inside the dispatch loop —
+    /// between barrier groups and after each settled tool call (#2661) — so
+    /// it must be cheap and must not block. A predicate that fires
+    /// mid-dispatch kills the still-in-flight sibling tools (their process
+    /// groups die with their dropped futures) and answers every remaining
+    /// call synthetically, so the turn still ends with a well-paired
+    /// transcript; the work a fired predicate discards is, by the
+    /// predicate's own claim, already proven unnecessary.
     fn halt_reason(&self) -> Option<String>;
 }
 
