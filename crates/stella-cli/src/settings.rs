@@ -506,24 +506,6 @@ pub struct AgentEngineConfig {
     /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    /// Legacy (#1795), retained so existing settings files keep decoding:
-    /// **setting it changes nothing about a run.**
-    ///
-    /// It once refused a run whose VERDICT call would resolve to the worker's
-    /// own model. Verification makes no model calls now, so there is no
-    /// self-graded verdict left to refuse, and `PipelineConfig` no longer
-    /// carries the field this fed — the accessor that read it went with it.
-    /// The surviving independence question is about the *witness author*, and
-    /// it is answered by `pipeline_require_independent_witness` via
-    /// `agent::engine::trusted_posture_requires_independent_witness`, not by
-    /// this key.
-    ///
-    /// Deliberately still parsed rather than rejected, because a key that
-    /// hard-errors would break settings files written against a shipped
-    /// release. Retiring it — silently accepting a no-op key is its own defect
-    /// — is tracked in #2616.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -593,17 +575,22 @@ pub struct AgentEngineConfig {
     /// Who performs each pipeline responsibility, and whether it runs at all
     /// (`stella_pipeline::Roster`, #2381).
     ///
-    /// Keys are `stella_protocol::ModelCallRole` wire tokens — `triage`,
-    /// `research`, `plan`, `witness_author`, `worker`, `distress_guidance`,
-    /// `verdict` — because that enum is already the vocabulary every paid call
-    /// in the pipeline names itself by, so a row here and a row in the
-    /// paid-call ledger spell the same job the same way.
+    /// Keys are `stella_protocol::ModelCallRole` wire tokens, because that enum
+    /// is already the vocabulary every paid call in the pipeline names itself
+    /// by, so a row here and a row in the paid-call ledger spell the same job
+    /// the same way. The assignable set is exactly the calls the pipeline still
+    /// issues — `triage`, `research`, `plan`, `worker`, `witness_author`.
+    /// `verdict` and `distress_guidance` are **not** assignable: #2584 removed
+    /// both calls, and `stella_pipeline::Roster::apply` rejects either key as
+    /// `NotAssignable` rather than accepting a row that would steer nothing.
+    /// That is structural, not a default — what was removed is authority, and
+    /// an authority a config key can restore is one a deployment will restore.
     ///
     /// ```jsonc
     /// "responsibilities": {
     ///   "triage": { "enabled": false },              // ablate the stage
-    ///   "witness_author": { "agent": "triage" },     // reassign it
-    ///   "verdict": { "agent": "worker" }             // self-grade, and be told so
+    ///   "witness_author": { "agent": "worker" },     // self-grade, and be told so
+    ///   "research": { "agent": "plan" }              // reassign it
     /// }
     /// ```
     ///
@@ -844,7 +831,6 @@ impl AgentEngineConfig {
         take!(pipeline_candidates);
         take!(pipeline_verifier_evidence_demand);
         take!(pipeline_require_diff_coverage);
-        take!(pipeline_require_independent_verifier);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
@@ -1245,27 +1231,20 @@ impl ToolsSettings {
 /// it becomes a training label (#1043).
 ///
 /// Every field optional, and an absent field means the stated default rather
-/// than zero: a workspace that only wants to distrust its verifier writes
-/// `verifier_weight` alone and inherits the rest.
+/// than zero: a workspace that only wants a cheaper step price writes
+/// `per_step` alone and inherits the rest.
 ///
-/// The reason this is configurable at all is that `verifier_weight`'s default of
-/// `0.5` describes *one* verifier's measured accuracy, and a workspace pointing a
-/// weaker model at the verifier role — or working in a domain where the verifier keeps
-/// mistaking house style for a defect — is entitled to trust it less. Lower is
-/// supported; higher than `deterministic_weight` is refused, because there a
-/// model's opinion would outrank a test's observation. See
-/// [`stella_pipeline::reward`] for the full argument.
+/// `verifier_weight` used to live here, scaling a model verifier's opinion
+/// against a test's observation. Verification makes no model call, so no rung
+/// carries that magnitude and the key is retired — named as such by
+/// `unknown::retirement` at load rather than parsed into a number nothing
+/// multiplies. See [`stella_pipeline::reward`] for the full argument.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct RewardSettings {
     /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit
-    /// every other weight is measured against.
+    /// the whole reward scale is expressed in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic_weight: Option<f64>,
-    /// Magnitude of a model verifier's pass or fail. Default `0.5`. `0.0` discards
-    /// judged turns instead of scoring them — which is a different record from
-    /// a `0.0` score, deliberately.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verifier_weight: Option<f64>,
     /// Reward subtracted per model call. Default `0.02`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_step: Option<f64>,
@@ -1290,7 +1269,6 @@ impl RewardSettings {
                 deterministic: self
                     .deterministic_weight
                     .unwrap_or(defaults.outcome.deterministic),
-                judged: self.verifier_weight.unwrap_or(defaults.outcome.judged),
             },
             shaping: RewardShaping {
                 per_step: self.per_step.unwrap_or(defaults.shaping.per_step),

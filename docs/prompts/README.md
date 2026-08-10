@@ -25,8 +25,8 @@ exhaustive `match` at compile time. If a role exists, it has a page here.
 | `witness_author` | [witness-author.md](witness-author.md) | `doc:prompt-witness-author` | engine | witness set | the failing test that arms the flip oracle |
 | `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
 | `worker` | [worker.md](worker.md) | `doc:prompt-worker` | engine / raw | full registry | the change itself |
-| `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | raw | none | course-correction for a stuck worker |
-| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | raw | none | PASS/FAIL on inconclusive evidence |
+| `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | **none** | — | retired (#2584) — no call, no prompt |
+| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | six read-only | `stella goal`'s outer assessor: is the objective met |
 | `agent_author` | [agent-author.md](agent-author.md) | `doc:prompt-agent-author` | raw | none | a generated agent definition |
 | `skill_author` | [skill-author.md](skill-author.md) | `doc:prompt-skill-author` | raw | none | a generated `SKILL.md` |
 | `domain_inference` | [domain-inference.md](domain-inference.md) | `doc:prompt-domain-inference` | raw | none | the workspace's domain taxonomy |
@@ -38,6 +38,13 @@ document`) — these files will move before they stop being true.
 
 `unknown` has no page: it is the `serde(default)` for an *absent* `role` field
 on a legacy event, never a call anything dispatches.
+
+**A variant is not a promise that a call happens.** `distress_guidance` is a
+retired role: #2584 removed the pipeline's judgement calls, and the token remains
+only so sessions recorded before it still decode. Its page says so instead of
+transcribing constants that no longer exist. `verdict` moved rather than
+retired — the pipeline's raw `PASS`/`FAIL` call is gone, and only `stella goal`'s
+outer assessor still issues the role.
 
 ## The two dispatch shapes
 
@@ -77,10 +84,11 @@ into the instruction block would have to change the type to do it.
 
 **The split buys stability, not a guaranteed cache hit, and the distinction is
 the honest one.** Measured in #1786: no fixed block clears Anthropic's ~1024
-token prefix minimum on its own — verdict instructions estimate ~520 tokens,
-triage and guidance less, the witness author's ~620. For the raw roles the
-cache win is real only when an `agents.<role>.prompt` override pads the prefix
-past the minimum. The witness author is the exception: it runs an engine turn,
+token prefix minimum on its own — triage's is well under it, the witness
+author's ~620 (the verdict and guidance blocks measured there, ~520 and less,
+are gone with the calls). For the raw roles the cache win is real only when an
+`agents.<role>.prompt` override pads the prefix past the minimum. The witness
+author is the exception: it runs an engine turn,
 where the prefix is system prompt *plus* conversation, which crosses the
 minimum inside the first tool round-trip.
 
@@ -132,7 +140,7 @@ The mapping to call roles is not one-to-one, and the gaps are real:
 | `agents.default.prompt` | the interactive worker's base persona | anything in the pipeline |
 | `agents.worker.prompt` | the pipeline worker's base persona, and `plan` / `plan_repair` whenever `agents.plan.prompt` is unset | the conversational reply — by design, see below |
 | `agents.plan.prompt` | `plan`, `plan_repair` | — |
-| `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` — by design, see below |
+| `agents.verifier.prompt` | **nothing** — the two raw calls it was scoped to are gone (#2584) | `witness_author`, `witness_repair` — by design, see below |
 | `agents.triage.prompt` | `triage` | — |
 | `agents.research.prompt` | — | `research` — by design, see below |
 
@@ -190,12 +198,17 @@ new role has to decide its bounds rather than inherit a ceiling by omission.
 |---|---|---|---|
 | `triage` | 512 | `Low` (pinned) | `management_bounds` |
 | `worker` (conversational only) | 2,048 | `Low` (pinned) | `management_bounds` |
-| `verdict`, `distress_guidance` | 1,024 | inherited | `management_bounds` |
+| `verdict`, `distress_guidance` | 1,024 | inherited | `management_bounds` — **unreached**, see below |
 | `plan`, `plan_repair` | 4,096 | inherited | `management_bounds` |
 | `agent_author`, `skill_author` | 4,096 | inherited | `standalone_bounds` |
 | `domain_inference` | 2,048 | inherited | `standalone_bounds` |
 | `reflection` | 4,096 | `Low` (pinned) | `standalone_bounds` |
 | everything else | engine base | inherited | — |
+
+The `verdict` / `distress_guidance` row is retained rather than removed because
+both matches are exhaustive over `ModelCallRole` — a variant must state bounds
+even when nothing dispatches it. No pipeline call reaches those numbers today,
+and goal mode's `verdict` states its own cap from `GoalConfig`.
 
 The two authoring rows inherit effort rather than pinning it low, which is a
 decision: triage writes a three-line classification whose value is the routing

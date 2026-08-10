@@ -319,7 +319,7 @@ would make the journal's `SubAgent` brackets unmatchable (#1852).
 ## Related
 
 - [plan.md](plan.md) — authors the steps this walks
-- [distress-guidance.md](distress-guidance.md) — what a stuck worker receives
-- [verdict.md](verdict.md) — judges the result, on a different model (L-E11)
+- [distress-guidance.md](distress-guidance.md) — retired (#2584); a stuck worker now receives the sealed failure brief alone
+- [verdict.md](verdict.md) — no longer judges a pipeline result; the ladder settles it deterministically
 - [summarization.md](summarization.md) — compacts this transcript on overflow
 - [reflection.md](reflection.md) — mines this transcript after the turn

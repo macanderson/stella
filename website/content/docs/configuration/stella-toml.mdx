@@ -316,19 +316,13 @@ theme = "stella-light"
 
 What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,
 like `[ui]`; carries no credential or egress authority, so a project setting a weight is
-stating an opinion about its own verifier, not borrowing permission.
+stating an opinion about its own scale, not borrowing permission.
 
 <CardGrid size="sm">
   <OptionCard name="reward.deterministic_weight" defaultValue="1.0">
-    Magnitude of a deterministic pass or fail — the unit every other weight is measured
-    against.
-  </OptionCard>
-  <OptionCard name="reward.verifier_weight" defaultValue="0.5">
-    Magnitude of a model verifier's pass or fail. `0.0` **discards** judged turns from
-    training rather than scoring them as zero — a discard is a refusal to claim anything; a
-    zero is a claim that a neutral outcome was observed. A value above
-    `deterministic_weight` is refused: a model's opinion may never outrank a test's
-    observation.
+    Magnitude of a deterministic pass or fail — the unit the whole reward scale is
+    expressed in, and the only outcome magnitude there is. Zero or negative is refused
+    at launch rather than clamped.
   </OptionCard>
   <OptionCard name="reward.per_step" defaultValue="0.02">
     Subtracted per model call.
@@ -343,8 +337,15 @@ stating an opinion about its own verifier, not borrowing permission.
 
 ```toml title="stella.toml"
 [reward]
-verifier_weight = 0.3   # trust this workspace's verifier less than the 0.5 default
+per_usd = 1.0   # price a dollar of spend twice as dearly as the default
 ```
+
+<Callout type="warn">
+  **`reward.verifier_weight` is retired.** It scaled a model verifier's opinion against a
+  test's observation. Verification makes no model call, so no rung carries that magnitude —
+  a label is priced by `deterministic_weight` alone. A file that still sets the key loads,
+  and stella names it at startup as retired rather than as a misspelling. Delete it.
+</Callout>
 
 ### `[authority]` — managed scope only
 

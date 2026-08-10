@@ -530,9 +530,24 @@ fn render_dashboard(
        `default-src 'none'`, so an @font-face with a URL would be a page that
        silently renders in the fallback. */
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    --fs-micro: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 15px; --fs-xl: 28px;
-    /* One 8px unit; every gutter, gap and pad is a multiple of it. */
-    --sp1: 8px; --sp2: 16px; --sp3: 24px; --sp4: 32px;
+    --fs-micro: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 15px;
+    --fs-lg: 22px; --fs-xl: 28px; --fs-metric: 40px;
+    --fw-prose: 300; --fw-ui: 500; --fw-metric: 600;
+    --tr-label: .16em; --tr-heading: -.01em; --tr-display: -.02em;
+    --measure: 68ch;
+    /* One 8px unit; every gutter, gap and pad is a multiple of it. The nine
+       Instrument steps are named by value so a rule spelling `var(--sp-12)`
+       documents itself; --sp1..--sp4 stay as aliases because the rules below
+       spell them, and renaming a token that the chart JS also names inside a
+       string literal is how this page once shipped a colourless chart. */
+    --sp-4: 4px;   --sp-8: 8px;   --sp-12: 12px; --sp-16: 16px; --sp-24: 24px;
+    --sp-32: 32px; --sp-48: 48px; --sp-64: 64px; --sp-96: 96px;
+    --sp1: var(--sp-8); --sp2: var(--sp-16); --sp3: var(--sp-24); --sp4: var(--sp-32);
+    /* Motion reports progress or it does not exist: 120ms linear for a state
+       change, because the eye should not be able to watch a hover happen, and
+       240ms on the Instrument easing for a reveal. There is no third. */
+    --dur-state: 120ms; --dur-reveal: 240ms;
+    --ease-reveal: cubic-bezier(.2,0,0,1);
     /* Square. A rounded corner says "surface" where a hairline says
        "boundary", and a telemetry report is all boundaries. Kept as a token
        rather than deleted so the rules below stay honest about where a corner
@@ -725,6 +740,32 @@ fn render_dashboard(
     .lbl {{ min-width: 0; display: block; margin: 0 0 2px; }}
     .meta, .ev .prose {{ margin-left: 0; }}
     .ev pre {{ padding-left: 10px; }}
+  }}
+
+  /* A stated preference for less motion wins. Every transition on this page
+     reports a state change rather than carrying information, so removing them
+     costs the reader nothing — and this is a report people stare at. */
+  @media (prefers-reduced-motion: reduce) {{
+    * {{ animation: none !important; transition: none !important; }}
+  }}
+
+  /* Print. The module doc tells you to attach this to a PR or email it, and a
+     dark instrument printed on paper is a black rectangle that empties a
+     cartridge. The panels are forced open because `display:none` cannot be
+     paged: without this, printing the report gives you whichever single tab
+     happened to be selected. */
+  @media print {{
+    :root {{
+      --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
+      --hairline: #D4D4D4; --hairline-strong: #8F8F8F;
+      --text: #0A0A0A; --text-2: #333333; --text-3: #555555;
+      --accent: #0A0A0A; --ink: #FFFFFF; --identity: #795500;
+      --accent-wash: transparent;
+    }}
+    body {{ padding: 0; }}
+    .tabs {{ display: none; }}
+    .panel {{ display: block !important; }}
+    .ev, table, .chart-container {{ break-inside: avoid; }}
   }}
 </style>
 </head>

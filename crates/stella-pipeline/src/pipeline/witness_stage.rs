@@ -289,8 +289,10 @@ impl<'a> Pipeline<'a> {
     /// `RoleCallOverrides::prompt` is deliberately NOT applied here: it is
     /// operator prose written against the reviewer instructions, and
     /// injecting it into a test-authoring engine would steer the wrong role.
-    /// It stays scoped to the raw verdict/guidance calls
-    /// (`metered_raw_call`).
+    /// Since #2584 deleted the raw verdict and guidance calls it was scoped to,
+    /// `agents.verifier.prompt` now reaches no role at all — left unapplied
+    /// rather than repurposed, for the same reason: prose aimed at a reviewer
+    /// is not a system message for a test author.
     pub(super) fn witness_engine_config(&self, surface: CandidateSurface<'_>) -> EngineConfig {
         // The output ceiling (#2141) is applied *after* role shaping so it
         // caps whatever the verifier overrides resolved to — an override can

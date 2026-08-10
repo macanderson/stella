@@ -39,9 +39,10 @@
 //! - **The feedback airlock** — the one channel from verification back to the
 //!   worker. A deterministic failure no longer replays the raw test-runner
 //!   output into the revision prompt: it is disclosed at a grain (`L0`–`L3`)
-//!   that tightens when the same failure repeats, and every model-authored
-//!   text crossing inbound (distress guidance, verifier reasoning) is scrubbed
-//!   against the sealed material first. The operator still sees the real
+//!   that tightens when the same failure repeats, and every field that could
+//!   carry sealed material is scrubbed before it reaches the worker. Since
+//!   #2584 no model-authored text crosses inbound at all — the verdict and
+//!   distress-guidance calls are gone. The operator still sees the real
 //!   output; only the worker's prompt is redacted.
 //!   [`witness::airlock`]. Design: `docs/spec/witness-protocol.md` §4.
 //! - **Proportionate verification** — escalate on evidence, never on a

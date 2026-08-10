@@ -150,7 +150,7 @@ fn seeded_workspace() -> (tempfile::TempDir, i64, i64) {
     let store = Store::open(dir.path()).expect("store");
     std::fs::write(
         dir.path().join(".stella").join("settings.json"),
-        r#"{"reward":{"deterministic_weight":1.0,"verifier_weight":0.5,"per_step":0.02,"per_usd":0.5,"per_revision":0.1}}"#,
+        r#"{"reward":{"deterministic_weight":1.0,"per_step":0.02,"per_usd":0.5,"per_revision":0.1}}"#,
     )
     .expect("settings");
 
