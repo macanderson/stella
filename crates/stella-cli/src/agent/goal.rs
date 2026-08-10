@@ -7,39 +7,68 @@
 
 use super::*;
 
+/// The caller's config with the task board withheld — what the bare step loop
+/// actually runs on.
+///
+/// The board is what makes a long autonomous run legible and resumable — and a
+/// one-shot turn has nothing to resume, so here it is pure overhead charged at
+/// the most expensive rate there is: a model round trip per card. Measured over
+/// nine solved Terminal-Bench trials, 26% of every tool call this loop made was
+/// board bookkeeping and 14% of its steps did nothing else — steps that read
+/// nothing, changed no file, and still paid for a full request under a 900s
+/// ceiling.
+///
+/// Narrowed rather than switched off at construction:
+/// [`narrow_with`](stella_tools::policy::ToolPolicy::narrow_with) can only ever
+/// remove capability, so an operator who has already disabled something keeps
+/// it disabled, and this cannot grant anything back. It is the same seam
+/// `tools.bash: "off"` travels through, which is why the board disappears from
+/// MCP-wrapped and custom tool stacks too rather than only from the built-in
+/// registry.
+///
+/// # Blast radius
+///
+/// `task` is a **group** key, and the catalog puts sub-agent delegation (the
+/// tool literally named `task`) in that group alongside the six `task_*` board
+/// tools — so the bare loop loses delegation too. That is #2410's shipped
+/// behaviour, pinned by a test below rather than left to be rediscovered; #2580
+/// asks whether it was intended, since the measurement above is about
+/// bookkeeping, not about spend.
+///
+/// # Why this is a function
+///
+/// Both the bare loop and its witnesses must run *this* expression. When the
+/// narrowing was four inline lines and the tests re-implemented it in a local
+/// helper, all three passed with the production narrowing deleted: they
+/// witnessed `narrow_with`, a `stella-tools` property that was already true
+/// (#2511).
+fn bare_loop_config(cfg: &Config) -> Config {
+    let mut bare = cfg.clone();
+    bare.tool_policy
+        .narrow_with(&stella_tools::policy::ToolPolicy::from_switches([(
+            "task".to_string(),
+            false,
+        )]));
+    bare
+}
+
 /// Run a one-shot prompt through the raw step-loop (Engine::run_turn).
 /// Selected via `--no-pipeline`.
+///
+/// The parameter is `full_cfg`, not `cfg`, deliberately: the loop below runs on
+/// the narrowed [`bare_loop_config`] and nothing else, so dropping that call
+/// leaves `cfg` unbound and fails to compile. A shadowing `let cfg = …` would
+/// have let the same deletion fall silently back to the un-narrowed argument —
+/// the half of #2511 no unit test can reach, since this function builds a
+/// provider, connects MCP and opens the store.
 pub(crate) async fn run_raw_one_shot(
-    cfg: &Config,
+    full_cfg: &Config,
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
 ) -> Result<(), crate::failure::CliFailure> {
-    // The bare step loop withholds the task board.
-    //
-    // The board is what makes a long autonomous run legible and resumable —
-    // and a one-shot turn has nothing to resume, so here it is pure overhead
-    // charged at the most expensive rate there is: a model round trip per
-    // card. Measured over nine solved Terminal-Bench trials, 26% of every tool
-    // call this loop made was board bookkeeping and 14% of its steps did
-    // nothing else — steps that read nothing, changed no file, and still paid
-    // for a full request under a 900s ceiling.
-    //
-    // Narrowed rather than switched off at construction: `narrow_with` can
-    // only ever remove capability, so an operator who has already disabled
-    // something keeps it disabled, and this cannot grant anything back. It is
-    // the same seam `tools.bash: "off"` travels through, which is why the
-    // board disappears from MCP-wrapped and custom tool stacks too rather than
-    // only from the built-in registry.
-    let cfg = &{
-        let mut bare = cfg.clone();
-        bare.tool_policy
-            .narrow_with(&stella_tools::policy::ToolPolicy::from_switches([(
-                "task".to_string(),
-                false,
-            )]));
-        bare
-    };
+    let bare = bare_loop_config(full_cfg);
+    let cfg = &bare;
     let provider = build_provider(cfg)?;
     let registry_options = registry_options(cfg);
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
@@ -996,19 +1025,33 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
 
 #[cfg(test)]
 mod bare_loop_board_tests {
+    use super::*;
+    use crate::config::PROVIDERS;
     use stella_tools::policy::ToolPolicy;
 
-    /// The narrowing `run_raw_one_shot` applies, asserted at the seam it uses.
+    /// The policy the bare step loop ends up running under, given whatever the
+    /// operator configured.
     ///
-    /// Fails on main, where the bare loop narrowed nothing and every board
-    /// tool was offered: 26% of its tool calls and 14% of its steps went on
-    /// bookkeeping that a one-shot turn can never resume.
-    fn bare_loop_policy(base: ToolPolicy) -> ToolPolicy {
-        let mut policy = base;
-        policy.narrow_with(&ToolPolicy::from_switches([("task".to_string(), false)]));
-        policy
+    /// This calls the production [`bare_loop_config`], which is the entire
+    /// point of these three tests. The previous version re-applied
+    /// `narrow_with` in a local helper, so it witnessed
+    /// [`ToolPolicy::narrow_with`] — a `stella-tools` property true long before
+    /// the bare loop ever narrowed anything — and stayed green with the
+    /// narrowing deleted from production (#2511).
+    ///
+    /// The provider row is arbitrary: nothing below the narrowing reads it, and
+    /// [`Config::for_tests`] needs one only because [`Config`] has the field.
+    fn bare_loop_policy(operator: ToolPolicy) -> ToolPolicy {
+        let provider = PROVIDERS[0].clone();
+        let model_id = provider.default_model.to_string();
+        let mut cfg = Config::for_tests(provider, model_id);
+        cfg.tool_policy = operator;
+        bare_loop_config(&cfg).tool_policy
     }
 
+    /// All six tools `stella_tools::tasks` registers, not the five that were
+    /// listed while `task_assign` shipped: the assertion has to name the whole
+    /// board, or regrouping the one tool it omits goes unnoticed (#2511).
     #[test]
     fn the_bare_loop_withholds_every_board_tool() {
         let policy = bare_loop_policy(ToolPolicy::allow_all());
@@ -1018,9 +1061,27 @@ mod bare_loop_board_tests {
             "task_start",
             "task_complete",
             "task_cancel",
+            "task_assign",
         ] {
             assert!(!policy.allows(tool), "{tool} should be withheld");
         }
+    }
+
+    /// The switch is the `task` **group**, and the catalog files sub-agent
+    /// delegation — the tool named `task` — in it, so the bare loop loses
+    /// delegation along with the board.
+    ///
+    /// Pinned rather than merely true: it is a real capability difference that
+    /// #2410's measurement (board bookkeeping) does not by itself justify, so
+    /// changing it should have to change a test. #2580 asks whether it was
+    /// intended.
+    #[test]
+    fn withholding_the_board_also_withholds_sub_agent_delegation() {
+        let policy = bare_loop_policy(ToolPolicy::allow_all());
+        assert!(
+            !policy.allows("task"),
+            "the `task` group key takes sub-agent delegation with the board"
+        );
     }
 
     #[test]
