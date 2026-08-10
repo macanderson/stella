@@ -470,7 +470,7 @@ async fn run_script_tool_executes_indexed_entries_only() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "Makefile", "greet:\n\t@echo hello-from-make\n");
 
-    let out = RunScript
+    let out = RunScript { scratch: None }
         .execute(&serde_json::json!({"script": "make:greet"}), dir.path())
         .await;
     match &out {
@@ -481,7 +481,7 @@ async fn run_script_tool_executes_indexed_entries_only() {
         other => panic!("{other:?}"),
     }
 
-    let out = RunScript
+    let out = RunScript { scratch: None }
         .execute(&serde_json::json!({"script": "rm -rf /"}), dir.path())
         .await;
     assert!(out.is_error(), "non-indexed input must be refused: {out:?}");

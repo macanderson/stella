@@ -656,7 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_captures_exit_code_and_output() {
-        let (code, out) = run("echo hi; exit 3", std::path::Path::new("/tmp"), 30)
+        let (code, out) = run("echo hi; exit 3", std::path::Path::new("/tmp"), 30, None)
             .await
             .unwrap();
         assert_eq!(code, 3);
@@ -684,7 +684,7 @@ mod tests {
         let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
         let probe = crate::subprocess_env::test_support::PROBE_COMMAND;
 
-        let (shell_code, shell_out) = run(probe, std::path::Path::new("/tmp"), 30)
+        let (shell_code, shell_out) = run(probe, std::path::Path::new("/tmp"), 30, None)
             .await
             .expect("shell runner");
         assert_eq!(shell_code, 0);
@@ -707,7 +707,7 @@ mod tests {
         let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
         let probe = crate::subprocess_env::test_support::PROBE_COMMAND;
 
-        let (code, output) = run_github(probe, std::path::Path::new("/tmp"), 30)
+        let (code, output) = run_github(probe, std::path::Path::new("/tmp"), 30, None)
             .await
             .expect("GitHub runner");
         assert_eq!(code, 0);
@@ -752,7 +752,7 @@ mod tests {
         // sleep is reaped by init, so a surviving pid means a real leak.
         let cmd = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
         let dir_path = dir.path().to_path_buf();
-        let handle = tokio::spawn(async move { run(&cmd, &dir_path, 60).await });
+        let handle = tokio::spawn(async move { run(&cmd, &dir_path, 60, None).await });
         let mut pid = None;
         for _ in 0..250 {
             if let Some(p) = std::fs::read_to_string(&pidfile)
@@ -788,6 +788,7 @@ mod tests {
             "echo \"force=${CLICOLOR_FORCE-unset}\"",
             std::path::Path::new("/tmp"),
             30,
+            None,
         )
         .await;
         unsafe { std::env::remove_var("CLICOLOR_FORCE") };
@@ -798,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_times_out_and_kills() {
-        let err = run("sleep 30", std::path::Path::new("/tmp"), 1)
+        let err = run("sleep 30", std::path::Path::new("/tmp"), 1, None)
             .await
             .unwrap_err();
         assert!(err.contains("timed out"), "{err}");
@@ -874,6 +875,7 @@ mod tests {
             "yes stella | head -c 20000000; exit 7",
             std::path::Path::new("/tmp"),
             120,
+            None,
         )
         .await
         .expect("runner");

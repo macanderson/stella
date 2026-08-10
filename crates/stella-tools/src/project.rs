@@ -678,7 +678,7 @@ mod tests {
         let hostile = format!("x; touch {}", sentinel.display());
 
         // Pre-PR shape: the filter is interpolated raw.
-        let _ = crate::exec::run(&format!("echo {hostile}"), dir.path(), 30).await;
+        let _ = crate::exec::run(&format!("echo {hostile}"), dir.path(), 30, None).await;
         assert!(
             sentinel.exists(),
             "precondition: a raw interpolation must be injectable, or this test proves nothing"
@@ -687,7 +687,7 @@ mod tests {
 
         // Fixed shape: same filter, quoted per token.
         let safe = SafeFilter::from_input(&hostile);
-        let _ = crate::exec::run(&format!("echo {safe}"), dir.path(), 30).await;
+        let _ = crate::exec::run(&format!("echo {safe}"), dir.path(), 30, None).await;
         assert!(
             !sentinel.exists(),
             "SafeFilter let `{hostile}` escape its word and start a new command"
@@ -702,7 +702,7 @@ mod tests {
         let safe = SafeFilter::from_input("alpha beta gamma");
         // `printf '%s\n'` prints one line per argument, so the line count
         // IS the argument count the runner would have received.
-        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30, None)
             .await
             .unwrap();
         let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
@@ -716,7 +716,7 @@ mod tests {
     async fn impact_selection_keeps_a_spaced_path_whole() {
         let dir = tempfile::tempdir().unwrap();
         let safe = SafeFilter::from_tokens(["tests/a b.rs", "tests/c.rs"]);
-        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30, None)
             .await
             .unwrap();
         let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();

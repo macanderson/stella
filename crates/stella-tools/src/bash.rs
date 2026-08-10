@@ -417,7 +417,7 @@ mod tests {
     #[tokio::test]
     async fn runs_echo_command() {
         let dir = std::env::temp_dir();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(&serde_json::json!({"command": "echo hello_stella"}), &dir)
             .await;
         match result {
@@ -429,7 +429,7 @@ mod tests {
     #[tokio::test]
     async fn bash_tool_scrubs_inherited_credentials() {
         let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(
                 &serde_json::json!({
                     "command": crate::subprocess_env::test_support::PROBE_COMMAND
@@ -452,7 +452,7 @@ mod tests {
     #[tokio::test]
     async fn bash_tool_scrubs_git_repo_and_forced_color_env() {
         let _fixture = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(
                 &serde_json::json!({
                     "command": crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
@@ -472,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn captures_stderr() {
         let dir = std::env::temp_dir();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(&serde_json::json!({"command": "echo err >&2"}), &dir)
             .await;
         match result {
@@ -484,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn nonzero_exit_is_error() {
         let dir = std::env::temp_dir();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(&serde_json::json!({"command": "exit 42"}), &dir)
             .await;
         assert!(result.is_error());
@@ -496,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_kills_command() {
         let dir = std::env::temp_dir();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "sleep 30", "timeout_secs": 1}),
                 &dir,
@@ -523,11 +523,12 @@ mod tests {
         let command = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
         let root = dir.path().to_path_buf();
         let handle = tokio::spawn(async move {
-            Bash.execute(
-                &serde_json::json!({"command": command, "timeout_secs": 60}),
-                &root,
-            )
-            .await
+            Bash::new(None)
+                .execute(
+                    &serde_json::json!({"command": command, "timeout_secs": 60}),
+                    &root,
+                )
+                .await
         });
         let mut pid = None;
         for _ in 0..250 {
@@ -560,7 +561,7 @@ mod tests {
         // Emit well over MAX_OUTPUT_BYTES of a 3-byte UTF-8 char, with no
         // newlines, so the middle cut lands inside a char. A raw byte slice
         // at that offset would panic; the boundary-safe path must not.
-        let result = Bash
+        let result = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "yes '€' | tr -d '\\n' | head -c 200000"}),
                 &dir,
@@ -587,7 +588,7 @@ mod tests {
              head -c {MAX_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'; \
              printf '\\nLAST_SENTINEL_LINE\\n'"
         );
-        let result = Bash
+        let result = Bash::new(None)
             .execute(&serde_json::json!({ "command": command }), &dir)
             .await;
         let content = match result {
@@ -621,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn runs_in_workspace_root() {
         let dir = std::env::temp_dir();
-        let result = Bash
+        let result = Bash::new(None)
             .execute(&serde_json::json!({"command": "pwd"}), &dir)
             .await;
         match result {
@@ -739,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn a_cross_root_cd_warns_when_indexed() {
         let dir = indexed_tempdir();
-        let out = Bash
+        let out = Bash::new(None)
             .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
             .await;
         let text = text_of(out);
@@ -759,7 +760,7 @@ mod tests {
         // Grep /dev/null (instant, hermetic) — the advisory keys off the
         // command string's `cd` + grep pattern, not what grep actually reads,
         // so this exercises the precedence without walking `/`.
-        let out = Bash
+        let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "cd / && grep -rn \"struct Greeter\" /dev/null"}),
                 dir.path(),
@@ -781,7 +782,7 @@ mod tests {
     #[tokio::test]
     async fn a_symbol_shaped_bash_grep_gets_the_graph_tip_when_indexed() {
         let dir = indexed_tempdir();
-        let out = Bash
+        let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "grep -rn \"struct Greeter\" ."}),
                 dir.path(),
@@ -795,7 +796,8 @@ mod tests {
     async fn a_plain_command_gets_no_advisory() {
         let dir = indexed_tempdir();
         let text = text_of(
-            Bash.execute(&serde_json::json!({"command": "echo hi"}), dir.path())
+            Bash::new(None)
+                .execute(&serde_json::json!({"command": "echo hi"}), dir.path())
                 .await,
         );
         assert!(!text.contains("graph_query"), "{text}");
@@ -809,11 +811,12 @@ mod tests {
     async fn no_index_still_warns_on_a_cross_root_cd() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
-            Bash.execute(
-                &serde_json::json!({"command": "grep -rn \"struct Foo\" . ; cd /"}),
-                dir.path(),
-            )
-            .await,
+            Bash::new(None)
+                .execute(
+                    &serde_json::json!({"command": "grep -rn \"struct Foo\" . ; cd /"}),
+                    dir.path(),
+                )
+                .await,
         );
         assert!(
             text.contains("outside the session root"),
@@ -834,7 +837,8 @@ mod tests {
     async fn the_drift_warning_says_the_work_is_not_collected() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
-            Bash.execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
+            Bash::new(None)
+                .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
                 .await,
         );
         assert!(
@@ -848,7 +852,8 @@ mod tests {
     async fn a_plain_command_gets_no_advisory_without_an_index() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
-            Bash.execute(&serde_json::json!({"command": "echo hi"}), dir.path())
+            Bash::new(None)
+                .execute(&serde_json::json!({"command": "echo hi"}), dir.path())
                 .await,
         );
         assert!(!text.contains("graph_query"), "{text}");
@@ -871,7 +876,7 @@ mod tests {
             )
             .await;
         let exported = match result {
-            ToolOutput::Ok { content } => content.trim().to_string(),
+            ToolOutput::Ok { content } => content.lines().next().unwrap_or_default().to_string(),
             ToolOutput::Error { message } => panic!("bash: {message}"),
         };
         assert_eq!(exported, scratch_path.to_string_lossy().to_string());
