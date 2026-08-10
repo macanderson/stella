@@ -698,6 +698,13 @@ impl Engine<'_> {
             // provider — the breaker they feed is session state, like the
             // calibration map above (#2673).
             outcomes: self.outcomes,
+            // Deliberately NOT inherited: the child's provider is the spec's
+            // explicit choice (possibly a pinned cross-family adapter), so a
+            // mid-turn re-route is not the engine's call to make here — a
+            // child that exhausts its ladder surfaces the failure into the
+            // parent's tool result instead (#2679).
+            fallback: None,
+            provider_override: std::sync::OnceLock::new(),
         };
 
         // The child's private transcript. It is a local: nothing outside

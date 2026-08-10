@@ -46,6 +46,7 @@ use crate::runtime::{SystemClock, TokioSleeper};
 use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
 
+mod budget;
 mod coverage;
 mod diagnostics;
 mod engine;
@@ -61,6 +62,7 @@ pub(crate) mod resume;
 mod skill_usage;
 mod tools;
 mod turn_close;
+pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
 
 pub(crate) use engine::*;
 pub(crate) use goal::*;
@@ -1829,60 +1831,6 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
     }
 }
 
-/// Construct the budget guard from `--budget`. The limit lands on the
-/// session axis, capping cumulative spend across every turn and goal round
-/// of the run — `begin_turn` resets only the turn-scoped counter. The turn
-/// axis is left unset on purpose: turn spend is a reset-to-zero subset of
-/// session spend, so an equal turn limit could never trip first and would
-/// only mislabel a session breach as a turn one. No limit at all still
-/// meters spend (`BudgetMode::Observed`) so the cost summary and
-/// `BudgetTick` events stay meaningful even when nothing is enforced.
-pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
-    stella_runtime::budget_guard(budget_limit)
-}
-
-/// Headroom before the next configured cap trips, in USD — the smaller of
-/// the turn- and session-axis remainders when both are set, so the reported
-/// value is always the binding constraint. `None` when neither axis has a
-/// limit.
-pub(crate) fn remaining_budget(guard: &BudgetGuard) -> Option<f64> {
-    let turn = guard
-        .turn_limit_usd()
-        .map(|limit| (limit - guard.spent_usd()).max(0.0));
-    let session = guard
-        .session_limit_usd()
-        .map(|limit| (limit - guard.session_spent_usd()).max(0.0));
-    match (turn, session) {
-        (Some(turn), Some(session)) => Some(turn.min(session)),
-        (Some(remaining), None) | (None, Some(remaining)) => Some(remaining),
-        (None, None) => None,
-    }
-}
-
-pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mut BudgetGuard) {
-    let had_accounting = report.events.iter().any(|event| {
-        matches!(
-            event,
-            AgentEvent::StepUsage { .. }
-                | AgentEvent::UsageIncomplete { .. }
-                | AgentEvent::BudgetTick { .. }
-        )
-    });
-    report
-        .events
-        .retain(|event| !matches!(event, AgentEvent::BudgetTick { .. }));
-    if report.cost_usd > 0.0 {
-        let _ = guard.record_spend(report.cost_usd);
-    }
-    if had_accounting {
-        // Through the guard's own constructor, not a literal: the session axis
-        // was hardcoded `None` here while this very guard tracked one, and the
-        // wall-clock axis (#2240) would have gone missing the same way.
-        report
-            .events
-            .push(guard.tick_event(std::time::Instant::now()));
-    }
-}
 /// Open the workspace SQLite store (`.stella/private/store.db`). Persistence is
 /// observability, not a work dependency: a store that won't open warns once
 /// and the session runs on without it — never a startup failure.
@@ -2010,6 +1958,9 @@ async fn run_turn(
         let _ = tx.send(event);
     }
 
+    // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
+    // re-resolves the worker role through this session router.
+    let fallback = engine::SessionFallback::new(router);
     // The scoped tool set must drop its tx clone before awaiting the renderer.
     let outcome = if crate::enterprise_telemetry::process_free_authority_active() {
         // Even when process-free authority strips the MCP/custom/interactive
@@ -2021,7 +1972,8 @@ async fn run_turn(
         let config = engine::engine_config_for_kind(cfg, kind);
         let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
-            .with_provider_outcomes(router);
+            .with_provider_outcomes(router)
+            .with_fallback_resolver(&fallback);
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         let customs = CustomToolSet::new(
@@ -2048,7 +2000,8 @@ async fn run_turn(
         let config = engine::engine_config_for_kind(cfg, kind);
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
             .with_calibration(calibration)
-            .with_provider_outcomes(router);
+            .with_provider_outcomes(router)
+            .with_fallback_resolver(&fallback);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

@@ -3077,6 +3077,7 @@ mod context_efficiency;
 mod context_overflow;
 mod lifecycle_bus;
 mod loop_abort;
+mod model_fallback;
 mod parked_wait;
 mod provider_outcomes;
 mod steer_midturn;
