@@ -510,6 +510,7 @@ fn record_from_markdown(rule: &Rule, trust: Trust) -> LoadedRecord {
         supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
+            tier: None,
             force: Force::Must,
             precedence: Some(50),
             applies_to: None,

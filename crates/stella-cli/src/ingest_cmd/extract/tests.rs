@@ -573,3 +573,54 @@ fn only_a_retry_names_its_attempt() {
         "extracting AGENTS.md (attempt 2 of 2)"
     );
 }
+
+/// Witness for #2709: the classifier's promotion tier is stamped explicitly
+/// on every proposal — visible in the TOML a reviewer reads, overridable at
+/// review — and restates force + scope: binding forces pin, a trigger scopes,
+/// the rest ride recall.
+#[test]
+fn the_promotion_tier_is_stamped_explicitly_on_every_proposal() {
+    let root = temp_root("tier-stamp");
+    let pinned = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "no-force-push",
+            "kind": "constraint",
+            "statement": "Never force-push to main.",
+            "force": "must"
+        }),
+    );
+    assert_eq!(
+        pinned.record.steering.as_ref().and_then(|s| s.tier),
+        Some(stella_core::ingest::record::Tier::Pinned)
+    );
+
+    let scoped = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "api-style",
+            "kind": "preference",
+            "statement": "Handlers under src/api use the builder pattern.",
+            "force": "may",
+            "paths": ["src/api/**"]
+        }),
+    );
+    assert_eq!(
+        scoped.record.steering.as_ref().and_then(|s| s.tier),
+        Some(stella_core::ingest::record::Tier::Scoped)
+    );
+
+    let retrieved = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "staging-url",
+            "kind": "fact",
+            "statement": "The staging URL is https://stage.example.",
+            "force": "info"
+        }),
+    );
+    assert_eq!(
+        retrieved.record.steering.as_ref().and_then(|s| s.tier),
+        Some(stella_core::ingest::record::Tier::Retrieved)
+    );
+}

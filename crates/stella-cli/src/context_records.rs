@@ -722,6 +722,7 @@ pub(crate) fn inferred_rule_record(
         steering: Some(rec::Steering {
             force: rec::Force::Should,
             precedence: None,
+            tier: None,
             applies_to: None,
         }),
         enforcement: None,

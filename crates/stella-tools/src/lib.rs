@@ -22,6 +22,7 @@ pub mod delete;
 pub mod diagnostics;
 pub mod durable_write;
 pub mod edit;
+pub mod environment;
 pub mod exec;
 pub mod exploration;
 pub mod file_touch;

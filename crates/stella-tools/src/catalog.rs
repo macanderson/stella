@@ -209,6 +209,9 @@ catalog! {
     "get_state"           => (true, true, Always, "scratch"),
     "list_state"          => (true, true, Always, "scratch"),
     "delete_state"        => (false, false, Always, "scratch"),
+    // One-shot environment report: workspace root, git/worktree bit,
+    // platform, OS release, shell dialect, scratch dir (#2697).
+    "get_environment"     => (true, true, Always, "environment"),
     // The key-free web tools: read-only for the workspace, but every run is
     // real traffic against someone's server — never speculated (#923).
     "web_fetch"           => (true, false, Always, "web"),

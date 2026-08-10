@@ -24,6 +24,7 @@ fn constraint_record() -> Record {
         supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
+            tier: None,
             force: Force::Must,
             precedence: Some(100),
             applies_to: Some(AppliesTo {
@@ -398,4 +399,57 @@ fn record_kind_maps_to_the_right_proposal_kind() {
         RecordKind::Constraint.proposal_kind(),
         RecordProposalKind::Directive
     );
+}
+
+/// Witness for #2709: the tier derives from `force` + `applies_to` exactly as
+/// the channels always behaved — binding forces pin, a trigger scopes, the
+/// rest ride recall — and an explicit declaration outranks the derivation.
+#[test]
+fn tier_derives_from_force_and_scope_and_an_explicit_tier_wins() {
+    let mut record = constraint_record();
+    assert_eq!(record.tier(), Tier::Pinned, "must + scope derives pinned");
+    record.steering.as_mut().unwrap().force = Force::May;
+    assert_eq!(record.tier(), Tier::Scoped, "may + trigger derives scoped");
+    record.steering.as_mut().unwrap().applies_to = None;
+    assert_eq!(
+        record.tier(),
+        Tier::Retrieved,
+        "unscoped may derives retrieved"
+    );
+    record.steering.as_mut().unwrap().tier = Some(Tier::Pinned);
+    assert_eq!(
+        record.tier(),
+        Tier::Pinned,
+        "an explicit tier outranks the derivation"
+    );
+    record.steering = None;
+    assert_eq!(
+        record.tier(),
+        Tier::Retrieved,
+        "no steering at all is retrieved"
+    );
+}
+
+/// Witness for #2709's hash-stability constraint: a record that declares no
+/// tier serializes without the key — so the canonical hash of every record
+/// published before the field existed is unchanged by its existence — while a
+/// declared tier round-trips.
+#[test]
+fn an_absent_tier_never_reaches_the_serialized_record() {
+    let record = constraint_record();
+    let toml = toml::to_string(&record).expect("serializes");
+    assert!(
+        !toml.contains("tier"),
+        "an undeclared tier must not appear in the canonical form: {toml}"
+    );
+
+    let mut declared = constraint_record();
+    declared.steering.as_mut().unwrap().tier = Some(Tier::Scoped);
+    let toml = toml::to_string(&declared).expect("serializes");
+    assert!(
+        toml.contains("tier = \"scoped\""),
+        "a declared tier is written: {toml}"
+    );
+    let parsed: Record = toml::from_str(&toml).expect("parses back");
+    assert_eq!(parsed.steering.unwrap().tier, Some(Tier::Scoped));
 }

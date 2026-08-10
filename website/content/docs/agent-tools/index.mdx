@@ -21,7 +21,7 @@ Each tool is either **read-only** (it only observes your workspace and environme
 
 A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice. A web search burns a metered API call on every run, an issue lookup spends a rate-limited API, and the graph-backed tools write catch-up state to `codegraph.db` on the read path — so those reads run only at dispatch, exactly once per committed call. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
-The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `get_state`, `list_state`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
+The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 
@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 55 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 56 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -256,10 +256,18 @@ These 55 tools register in every session — no configuration, no prerequisites.
   </ToolCard>
 </CardGrid>
 
+#### Environment
+
+<CardGrid size="md">
+  <ToolCard name="get_environment" access="read">
+    Report this session's environment in one call: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, and the scratch directory path. Reads the same facts the system prompt's "Session environment" block already states, minus the model line — that is the CLI prompt layer's job alone.
+  </ToolCard>
+</CardGrid>
+
 <Callout type="info">
 `verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `probe_capability`, `get_state`, `list_state`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
+The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered
@@ -451,7 +459,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 55 always-on tools, up to 67 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 56 always-on tools, up to 68 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 
