@@ -18,7 +18,7 @@
 //! and tool output are exactly the places #817 masks credentials out of, so
 //! **every string this module takes off an event goes through
 //! [`redact`](stella_core::redact::redact_secrets) before it is escaped** (see
-//! [`clean`]). An unredacted transcript would have quietly reopened #817 in an
+//! [`Fold::clean`]). An unredacted transcript would have quietly reopened #817 in an
 //! artifact whose whole purpose is to be mailed to someone.
 //!
 //! **2. The elapsed clock has one-second resolution and may not pretend
