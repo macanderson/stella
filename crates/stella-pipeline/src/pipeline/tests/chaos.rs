@@ -203,9 +203,11 @@ impl ProviderResolver for OneChaosProvider<'_> {
 
 /// Run one scenario over WORKING session ports (so execution can actually
 /// happen when it should) and a scenario-shaped candidate port. Returns
-/// everything the invariant checker needs.
+/// everything the invariant checker needs. The router is caller-supplied so
+/// a test can inspect its breaker state after the run (#2673).
 async fn run_scenario(
     scenario: &Scenario,
+    router: &Router,
 ) -> (
     Result<PipelineOutcome, PipelineRunError>,
     Vec<AgentEvent>,
@@ -221,7 +223,6 @@ async fn run_scenario(
     let repo = NoRepoStructure;
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
-    let router = scenario.router();
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
 
     // Build the candidate port lazily so `Absent` wires none at all.
@@ -260,7 +261,7 @@ async fn run_scenario(
     let (tx, mut rx) = mpsc::unbounded_channel();
     let pipeline = Pipeline::new(
         PipelinePorts {
-            router: &router,
+            router,
             providers: &resolver,
             tools: &tools,
             recall: &recall,
@@ -441,9 +442,58 @@ async fn the_loop_never_chooses_nothing_across_the_config_environment_matrix() {
         scenarios.len()
     );
     for scenario in &scenarios {
-        let (outcome, events, base_len, final_len) = run_scenario(scenario).await;
+        let router = scenario.router();
+        let (outcome, events, base_len, final_len) = run_scenario(scenario, &router).await;
         // Reaching here at all proves the run neither panicked nor hung
         // (NoopSleeper + the step cap make a hang impossible).
         assert_loop_invariant(scenario, &outcome, &events, base_len, final_len);
+    }
+}
+
+/// The #2673 witness for the pipeline path: a run's observed call outcomes
+/// reach the breaker of the router it resolved from — on both the management
+/// chokepoint (triage, a raw call through `raw_usage`) and the engine turn
+/// (the worker, attached via `attach`). A threshold-1 breaker makes one
+/// terminal failure decisive: after the run, the sole provider's breaker is
+/// open and `resolve` refuses it, where before this wiring the breaker never
+/// heard about any outcome and kept resolving forever.
+#[tokio::test]
+async fn pipeline_call_outcomes_reach_the_router_breaker() {
+    for provider in [ProviderShape::TriageErrors, ProviderShape::WorkerErrors] {
+        let scenario = Scenario {
+            provider,
+            port: PortShape::Absent,
+            class: "single",
+            single_model: true,
+            authors_witness: false,
+            tiny_budget: false,
+            headless_bypass: true,
+        };
+        let only = ModelRef::new("chaos", "only");
+        let router = Router::new(
+            RoleTable::new(),
+            vec![ProviderProfile::new(
+                "chaos",
+                only.clone(),
+                only.clone(),
+                only,
+            )],
+            CircuitBreaker::with_thresholds(Box::new(ZeroClock), 1, 60_000),
+        );
+        assert!(
+            router.resolve(Role::Worker).is_ok(),
+            "[{}] the provider must start healthy",
+            scenario.label()
+        );
+
+        let (outcome, ..) = run_scenario(&scenario, &router).await;
+        drop(outcome);
+
+        assert!(
+            router.resolve(Role::Worker).is_err(),
+            "[{}] a terminal call failure must reach the breaker: the next \
+             resolve has to refuse the provider the run watched fail",
+            scenario.label()
+        );
     }
 }

@@ -11,7 +11,11 @@ With **no arguments** it scans the workspace and shows you what it found, groupe
 
 ```bash
 stella ingest [--all]
-stella ingest <path>... 
+stella ingest [--keep-dismissed] <path>...
+stella ingest --refresh <path>...
+stella ingest alerts list
+stella ingest alerts dismiss <path>
+stella ingest alerts restore <path>
 ```
 
 ## What it does
@@ -90,6 +94,74 @@ stella ingest docs/spec/storage-map.md ~/notes/deploy-runbook.md
 <Callout type="info">
 Extraction makes a model call, so it needs a resolvable credential — the same chain every other model call uses. The scan half does not. A document whose extraction fails (no key configured, an unparseable reply, a write error) is reported and skipped; one bad document never aborts the others.
 </Callout>
+
+## Lineages and staleness alerts
+
+Every extracted file leaves a **lineage** behind, in `.stella/private/ingest-lineages.json`: the content hash the file had when it was read (git's own blob hash where git can compute one, a plain sha256 otherwise), the commit it was read at, the ingest run id, and the candidate ids the run produced. Nothing about this is keyed to any particular filename — an agent-instruction file, a runbook, and a scratch note you wrote purely to be ingested are all just *ingested source files*.
+
+At session start — asynchronously, off the turn path — stella compares each lineage against the source's current hash. A file that **changed** or **disappeared** since its ingest produces a non-blocking inbox notification. The alert never enters the model's prompt, never blocks a turn, and never mutates anything: re-ingesting stays a deliberate act.
+
+Whether an alert matters is entirely your call, **per file**. A file authored as scaffolding — ingested, then deleted, because the records were the product — should never nag you:
+
+<CardGrid size="md">
+  <OptionCard name="alerts list">
+    Every tracked source file: when it was ingested, how many records it produced, its alert
+    state, and whether it has drifted.
+  </OptionCard>
+  <OptionCard name="alerts dismiss <path>">
+    Permanently silence staleness alerts for one file — not next session, not ever. Scoped to
+    exactly that file; every other lineage keeps alerting. Says nothing about the records:
+    they stay live, recallable, and re-ingestable.
+  </OptionCard>
+  <OptionCard name="alerts restore <path>">
+    Re-arm alerts for a dismissed file.
+  </OptionCard>
+  <OptionCard name="--keep-dismissed">
+    On re-ingest, keep an existing dismissal. By default a fresh ingest of the same path
+    re-arms alerts — re-ingesting re-declares the file a live source, which contradicts the
+    dismissal.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# What changed under my records?
+stella ingest alerts list
+
+# This file was scaffolding; the records are the product. Never tell me again.
+stella ingest alerts dismiss docs/onboarding-notes.md
+
+# The file changed — reconcile the published records with what it says now
+stella ingest --refresh docs/onboarding-notes.md
+```
+
+## `--refresh` — re-ingest as a bitemporal diff
+
+Records are never edited in place, so "the file changed" is not an overwrite. `stella ingest --refresh <path>` re-extracts the file and reconciles every **published** record whose provenance cites it, each landing in exactly one bucket:
+
+<CardGrid size="md">
+  <SpecCard title="Unchanged — kept">
+    The new text still asserts the claim (whitespace-insensitive, and robust to the extractor
+    re-slugging an identical sentence). The published record is left byte-identical — its age,
+    appraisal history, and recall stats survive. A one-line edit retires one record, not
+    hundreds.
+  </SpecCard>
+  <SpecCard title="Changed — proposed, superseded on keep">
+    The same anchor now says something different. The new claim becomes an ordinary proposal;
+    nothing is retired yet, because retiring before the replacement is reviewed would open a
+    steering gap. When you `stella context keep` it, the new revision replaces the file
+    carrying a `supersedes_record_id` link to the revision it retires — selection can never
+    surface both, and the old revision stays readable in git history.
+  </SpecCard>
+  <SpecCard title="Dropped — retired now">
+    The file no longer asserts the claim at all. The record is rewritten as an archived
+    revision immediately: you asked for the refresh, and the source it cites no longer says
+    it. Archived records leave selection at once; reverting is a `git checkout` away, because
+    `.stella/rules/` is Git-tracked and the repository history is the record's transaction
+    time.
+  </SpecCard>
+</CardGrid>
+
+The same supersession applies outside `--refresh`: `stella context keep` on a candidate whose lineage is already published refuses when the claim is identical, and supersedes — with the link, and a ledger entry saying so — when it differs.
 
 ## The safety gate is not in the prompt
 

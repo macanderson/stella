@@ -94,7 +94,7 @@ A server entry needs a `transport` discriminant — `stdio` or `http` — and th
   </OptionCard>
 </CardGrid>
 
-Either way, stella merges the tools the server reports for the session. Each is advertised as `mcp__<server>__<tool>`, so two servers exposing a `search` tool never collide, and the entry's name in `mcp.toml` is what shows up in the middle segment.
+Either way, stella merges the tools the server reports for the session. Each is advertised as `mcp__<server>__<tool>`, so two servers exposing a `search` tool never collide, and the entry's name in `mcp.toml` is what shows up in the middle segment. To keep that encoding unambiguous, an entry name may not contain `__` and may not begin or end with `_` — a name that breaks the rule is reported as unavailable rather than risking one server's tools shadowing another's.
 
 <Callout type="warn">
 A stdio MCP subprocess runs with a **scrubbed environment** — ambient shell variables (including credentials like `ANTHROPIC_API_KEY` or `GITHUB_TOKEN`) are **not** inherited. Any variable the server needs must be listed explicitly in the entry's `env` table, e.g. `env = { GITHUB_TOKEN = "…" }`. The single exception is `PATH`, which is inherited so a bare runner (`npx`, `uvx`, `docker`) can resolve at all; an `env` entry named `PATH` overrides it.

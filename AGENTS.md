@@ -66,6 +66,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + typed-errors
+                         #   + diagnostic-codes
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
@@ -317,12 +318,19 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    ran Claude models with ZERO prompt caching for months because nothing
    enforced the cache axis; the reasoning axis was added after the same
    silent-drop shape recurred for pinned `effort`.
-9. *(reserved for the tool-first single-purpose invariant, PR #2710 /
-   issue #2700, open at the time of writing. This entry takes #10 rather than
-   colliding on #9: two PRs writing one number is how a citation silently
-   resolves to the wrong invariant, and the numbering is an address. If #2710
-   closes without merging, renumber this to 9 before merge — no code cites the
-   number, deliberately, so that edit is one line.)*
+9. **Tool-first, single-purpose.** Every capability the agent has is a tool,
+   and a tool does exactly one thing. A parameter may *scope* the operation
+   (a key, a path, an offset); it may never *select* the operation —
+   `update_task(delete=true)` is two tools wearing one schema and gets split
+   (`edit_task` + `delete_task`). Enforced at review for two reasons: the
+   model decides whether to call a tool on `ToolSchema::description` alone,
+   and a two-verb tool teaches neither verb well; and per-tool policy
+   (`tools.<name>` toggles, the `command.started` gate) must be able to
+   withhold the destructive verb without withholding the benign one. A read
+   tool with a mutating arm also cannot declare `read_only` honestly, which
+   corrupts the engine's concurrency contract. The scratch state plane
+   (`save_state` / `get_state` / `list_state` / `delete_state`) is the
+   reference shape.
 10. **Every emitted signal names its consumer.** An `AgentEvent` variant that
    nothing reads is allowed, but only as a **declared, issue-cited gap** —
    never as a silence nobody noticed. The ledger is
@@ -348,7 +356,6 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    at live code. That string is prose for a reviewer. The enforced half is
    totality, uniqueness, issue citation, and posture coherence — enough to
    make a PR author answer "what reads this?" before the merge.
-
 ---
 
 ## The definition of done: witness tests
@@ -581,7 +588,7 @@ editing Stella's own code should know what lives where:
 |---|---|
 | `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Write side: the `save_memory` tool.) |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
-| `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants; `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
+| `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "off"` withholds the shell tool — every built-in, the shell included, is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |

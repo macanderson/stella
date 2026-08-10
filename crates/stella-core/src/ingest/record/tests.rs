@@ -21,6 +21,7 @@ fn constraint_record() -> Record {
         origin: None,
         sharing_scope: None,
         status: None,
+        supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
             force: Force::Must,
@@ -109,6 +110,36 @@ fn stamp_is_deterministic_and_content_derived() {
     c.statement = "This repository uses pnpm exclusively.".to_string();
     c.stamp(&defaults).expect("stamp c");
     assert_ne!(a.record_id, c.record_id);
+}
+
+/// The supersession link is canonical content: a revision that supersedes
+/// another is a different record than the same text standing alone, and an
+/// absent link leaves both the serialization and the identity of every
+/// pre-existing record untouched.
+#[test]
+fn a_supersession_link_is_inside_the_identity_and_absent_when_none() {
+    let defaults = repository_defaults();
+
+    let mut plain = constraint_record();
+    plain.stamp(&defaults).expect("stamp plain");
+    let toml = toml::to_string(&plain).expect("serializes");
+    assert!(
+        !toml.contains("supersedes_record_id"),
+        "an absent link must not appear on the wire (hash neutrality): {toml}"
+    );
+
+    let mut superseding = constraint_record();
+    superseding.supersedes_record_id = Some("rec_acme_web_pkg_manager_000000000000".to_string());
+    superseding.stamp(&defaults).expect("stamp superseding");
+    assert_ne!(plain.record_id, superseding.record_id);
+    assert_ne!(plain.record_hash, superseding.record_hash);
+
+    let reparsed: Record =
+        toml::from_str(&toml::to_string(&superseding).expect("serializes")).expect("parses");
+    assert_eq!(
+        reparsed.supersedes_record_id,
+        superseding.supersedes_record_id
+    );
 }
 
 #[test]

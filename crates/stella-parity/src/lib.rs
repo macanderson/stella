@@ -113,7 +113,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 3;
+pub const UNWITNESSED_BASELINE: usize = 4;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -394,9 +394,13 @@ pub static CAPABILITIES: &[Capability] = &[
     Capability {
         id: "hooks.lifecycle",
         engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart) and the observer-only HookBus",
-        engine_entries: &["with_hooks", "run_session_start_hooks", "with_bus"],
+        engine_entries: &["with_hooks", "with_bus"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "workspace hooks wired via with_session_hook_context on every driver path",
+            mechanism: "workspace hooks wired via with_session_hook_context on every driver \
+                        path. SessionStart firing is a HOST obligation (#2674): the engine \
+                        deliberately has no method for it — a host fires hooks::run_hooks once \
+                        while it assembles the system prompt, before any Engine exists, and \
+                        owns surfacing the diagnostics the no-I/O engine cannot print",
             missing: "a CLI-side test pinning that a configured workspace hook actually fires \
                       through agent wiring (core has hook tests; the CLI wiring has none)",
         },
@@ -539,6 +543,34 @@ pub static CAPABILITIES: &[Capability] = &[
                         (#1165), tool_request frames on \
                         POST /v1/turns/{id}/tool-result — the host owns keys and execution",
             witness: "an_unanswered_provider_request_fails_on_the_deadline",
+        },
+    },
+    Capability {
+        id: "provider.breaker_feedback",
+        engine_home: "stella-core router CircuitBreaker + the ProviderOutcomes port: every \
+                      logical model call's terminal verdict feeds the breaker, so `resolve` \
+                      fails over from observed outcomes, not configuration (#2673)",
+        engine_entries: &["with_provider_outcomes"],
+        cli: SurfacePosture::ShippedUnwitnessed {
+            mechanism: "the pipeline paths feed the router in PipelinePorts (attach() wires \
+                        every engine; raw_usage records management calls) — witnessed in \
+                        stella-pipeline by `pipeline_call_outcomes_reach_the_router_breaker`, \
+                        which this sweep cannot see — and the bare loops feed a session-scoped \
+                        `session_router` (run_interactive/run_raw_one_shot via run_turn, the \
+                        goal loop's round verifier)",
+            missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
+                      session router (the stella-pipeline and stella-core witnesses prove the \
+                      layers below; the run_turn attachment itself has no witness because the \
+                      engine assembly is inline in a function that drives a full turn)",
+        },
+        api: SurfacePosture::NotApplicable {
+            reason: "a served run remotes every model call to the host, which owns keys and \
+                     real provider selection — Stella-side failover between BYOK providers \
+                     has nothing to fail over TO (the served router carries one profile per \
+                     role). The pipeline still feeds that breaker, so a host failing the \
+                     threshold of consecutive calls surfaces as AllProvidersUnavailable until \
+                     the cooldown's half-open trial (see stella-serve pipeline_run's WallClock \
+                     doc), but cross-provider failover is the host's concern by design",
         },
     },
     Capability {
@@ -806,6 +838,43 @@ mod tests {
                  record it"
             );
         }
+    }
+
+    /// SessionStart firing is a host obligation, never an engine entry
+    /// (#2674). `Engine::run_session_start_hooks` shipped with no production
+    /// caller: every CLI driver fires SessionStart while assembling the
+    /// system prompt — before any Engine exists (the pipeline and fleet
+    /// paths never construct one; `Pipeline::run` builds its own, per
+    /// stage) — and must surface the hook diagnostics the no-I/O engine
+    /// cannot print (#373), while the serve host deliberately keeps shell
+    /// hooks unreachable. Two owners of one obligation is the drift the
+    /// consolidated turn loop exists to end, so the dead engine copy was
+    /// deleted; this pins both halves so a second owner cannot grow back
+    /// silently, and that the row keeps naming who does own the firing.
+    #[test]
+    fn session_start_is_a_host_obligation_not_an_engine_entry() {
+        let row = capability("hooks.lifecycle").expect("the row is declared");
+        assert!(
+            !row.engine_entries.contains(&"run_session_start_hooks"),
+            "hooks.lifecycle claims run_session_start_hooks again — SessionStart firing is a \
+             host obligation (#2674); an engine-side owner is the duplication that PR removed"
+        );
+        let (SurfacePosture::Shipped { mechanism, .. }
+        | SurfacePosture::ShippedUnwitnessed { mechanism, .. }) = &row.cli
+        else {
+            panic!("hooks.lifecycle's CLI posture moved — keep naming the SessionStart owner");
+        };
+        assert!(
+            mechanism.contains("with_session_hook_context") && mechanism.contains("obligation"),
+            "the row no longer names the single host owner of SessionStart firing"
+        );
+        assert!(
+            !engine_sources()
+                .iter()
+                .any(|source| source.contains("fn run_session_start_hooks")),
+            "an engine source defines run_session_start_hooks again — the host obligation has \
+             grown a second, engine-side owner (#2674)"
+        );
     }
 
     /// Every claimed engine entry actually exists in the swept sources —

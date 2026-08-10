@@ -723,7 +723,7 @@ async fn run_task(
         // fleet workers never carried.
         agent::with_session_hook_context(
             if use_pipeline {
-                agent::build_pipeline_system_prompt(&cfg, root, &active_rules)
+                agent::build_pipeline_system_prompt(&cfg, root, &active_rules, None)
             } else {
                 agent::build_system_prompt(&cfg, root, &active_rules)
             },

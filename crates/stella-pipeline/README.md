@@ -247,11 +247,13 @@ ran. Execution aborts (budget, loop, step-cap) keep their stop — the worker di
 - **A review waived by triage scores `Unverified`, not `DeterministicPass`** — claiming the
   strongest score would let a waived candidate tie a flip-verified sibling in best-of-N and
   then win the smaller-diff tiebreak.
-- **The pipeline holds `&Router`, so it reads resolutions but never feeds the breaker.**
-  `record_success`/`record_failure` need `&mut Router`; that feedback belongs to the glue
-  that owns the router. A headless run crossing the scope thresholds with no bypass is
-  likewise a named error (`PipelineError::ScopeReviewRequiredHeadless`), never a silent
-  auto-approve.
+- **The pipeline holds `&Router` and feeds its breaker through it (#2673).**
+  `record_success`/`record_failure` take `&self`, and both halves of the loop run here:
+  every engine the pipeline builds reports call outcomes via `attach`, and the management
+  chokepoint (`raw_usage`) records each raw call's verdict, so consecutive observed
+  failures actually trip failover at the next resolution. A headless run crossing the
+  scope thresholds with no bypass is a named error
+  (`PipelineError::ScopeReviewRequiredHeadless`), never a silent auto-approve.
 - **`docs/*.md` paths cited from rustdoc here are gated.** `make doc-citations` fails if a
   cited path — or a cited `§N` — does not resolve; `src/replay.rs` and
   `src/replay/golden.rs` both cite `docs/spec/replay-golden-trajectories.md`.

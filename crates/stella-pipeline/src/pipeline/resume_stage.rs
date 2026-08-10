@@ -252,9 +252,11 @@ impl<'a> Pipeline<'a> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, runner);
         }
-        if let Some(gate) = self.turn_gate {
-            engine = engine.with_gate(gate);
-        }
+        // `attach` rather than a hand-rolled gate line: this site predated it
+        // and was quietly missing the calibration (and now breaker-feedback)
+        // attachments every other pipeline engine gets — exactly the drift
+        // `attach`'s doc says it exists to prevent.
+        engine = self.attach(engine);
         // No steering view: a resume is headless by construction (the
         // interactive session it might have belonged to died with the
         // process), matching the goal and fleet pipelines.

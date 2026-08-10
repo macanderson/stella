@@ -347,6 +347,7 @@ pub(crate) fn build_upserts(fetched: &FetchedCatalog) -> Vec<ModelUpsert> {
                     last_updated: model.last_updated.clone(),
                     supports_reasoning: model.reasoning,
                     supports_tools: model.tool_call,
+                    knowledge: model.knowledge.clone(),
                 },
                 aliases: alias_forms(api_provider, &model.id),
             });
@@ -378,6 +379,7 @@ fn seed_upserts() -> Vec<ModelUpsert> {
                 last_updated: None,
                 supports_reasoning: None,
                 supports_tools: None,
+                knowledge: None,
             },
             aliases: alias_forms(&entry.provider, &entry.id),
         })
@@ -476,6 +478,9 @@ fn native_upserts(
                     last_updated: prior.last_updated,
                     supports_reasoning: m.supports_reasoning.or(prior.supports_reasoning),
                     supports_tools: m.supports_tools.or(prior.supports_tools),
+                    // Provider-native /models endpoints carry no cutoff;
+                    // preserve the master list's, same as the dates above.
+                    knowledge: prior.knowledge,
                 },
                 aliases: alias_forms(provider.id, &m.id),
             }
@@ -716,6 +721,18 @@ fn install_runtime_catalog(store: &CatalogStore) {
         for listing in listings {
             let key = (listing.api_provider.clone(), listing.slug.clone());
             if known.contains(&key) {
+                // The seed row keeps the card (pricing must not ping-pong
+                // between seed and live values), but the knowledge cutoff is
+                // synced data the seed never carries — backfill just that
+                // field so the default models still name one (#2718).
+                if let Some(cutoff) = listing.pricing.knowledge.clone()
+                    && let Some(entry) = entries
+                        .iter_mut()
+                        .find(|e| e.provider == key.0 && e.id == key.1)
+                    && entry.knowledge_cutoff.is_none()
+                {
+                    entry.knowledge_cutoff = Some(cutoff);
+                }
                 continue;
             }
             let family = listing
@@ -774,7 +791,8 @@ fn install_runtime_catalog(store: &CatalogStore) {
                         .pricing
                         .max_output_tokens
                         .and_then(|v| u32::try_from(v).ok()),
-                ),
+                )
+                .with_knowledge_cutoff(listing.pricing.knowledge),
             );
             known.insert(key);
         }
@@ -1300,6 +1318,7 @@ mod tests {
                 }),
                 release_date: Some("2025-11-18".to_string()),
                 last_updated: None,
+                knowledge: Some("2025-08".to_string()),
                 reasoning: Some(true),
                 tool_call: Some(true),
             },
@@ -1333,6 +1352,7 @@ mod tests {
         assert_eq!(up.version.cached_input_usd_per_mtok, Some(0.31));
         assert_eq!(up.version.context_window, Some(1_000_000));
         assert_eq!(up.version.release_date.as_deref(), Some("2025-11-18"));
+        assert_eq!(up.version.knowledge.as_deref(), Some("2025-08"));
         assert_eq!(up.version.supports_reasoning, Some(true));
         assert_eq!(up.version.supports_tools, Some(true));
         assert!(up.aliases.iter().any(|a| a.alias == "gemini/gemini-3-pro"));
@@ -1367,6 +1387,7 @@ mod tests {
                     last_updated: None,
                     supports_reasoning: Some(true),
                     supports_tools: Some(true),
+                    knowledge: Some("2026-01".to_string()),
                 },
                 aliases: alias_forms("anthropic", "claude-fable-5"),
             }])
@@ -1385,6 +1406,11 @@ mod tests {
         assert_eq!(ups[0].version.input_usd_per_mtok, Some(3.0));
         assert_eq!(ups[0].version.supports_reasoning, Some(true));
         assert_eq!(ups[0].version.release_date.as_deref(), Some("2026-01-15"));
+        assert_eq!(
+            ups[0].version.knowledge.as_deref(),
+            Some("2026-01"),
+            "a native re-sync must preserve the master list's cutoff"
+        );
         // …which also means the merged version hashes identically and a
         // native re-sync appends NO new pricing version.
         let counts = store.apply_batch(&ups).expect("native apply");

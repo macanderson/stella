@@ -314,3 +314,46 @@ fn nothing_is_latched_while_the_model_is_still_unknown() {
     let latched = state.latch_effective_budget((118_000, 1.27));
     assert_eq!(state.latch_effective_budget((75_000, 2.0)), latched);
 }
+
+/// The usage anchor's turn-state lifecycle (#2681): a reported envelope
+/// anchors, an empty one keeps the previous anchor (the transcript has only
+/// been appended to, so the report still describes a live prefix), and any
+/// in-place rewrite drops it — the report names bytes that no longer exist.
+#[test]
+fn the_usage_anchor_survives_appends_and_dies_with_a_rewrite() {
+    let mut state = TurnState::new(
+        vec![CompletionMessage::system("sys")],
+        BudgetGuard::new(BudgetMode::Observed, None, None),
+        &EngineConfig::default(),
+    );
+    let latched = (150_000, 1.0);
+    assert_eq!(
+        state.anchored_budget(latched, 150_000),
+        latched,
+        "no report yet — the latched pair passes through untouched"
+    );
+
+    let mut usage = CompletionUsage::reported_zero();
+    usage.input_tokens = 200_000; // over the whole configured budget
+    state.anchor_usage(&usage, 1_000);
+    let (anchored, factor) = state.anchored_budget(latched, 150_000);
+    assert!(
+        anchored < latched.0,
+        "the report exceeds the budget, so the handed budget must tighten"
+    );
+    assert_eq!(factor, latched.1, "the factor rides along for the manifest");
+
+    state.anchor_usage(&CompletionUsage::reported_zero(), 1_000);
+    assert_eq!(
+        state.anchored_budget(latched, 150_000),
+        (anchored, factor),
+        "a signal-less envelope keeps the previous anchor"
+    );
+
+    state.mark_transcript_rewritten();
+    assert_eq!(
+        state.anchored_budget(latched, 150_000),
+        latched,
+        "a rewrite invalidates the report's prefix — back to the estimator"
+    );
+}

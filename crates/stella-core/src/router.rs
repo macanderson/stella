@@ -23,10 +23,11 @@
 //! fully working set of role resolutions).
 
 use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use stella_protocol::{ModelRef, Role};
 
-use crate::ports::Clock;
+use crate::ports::{Clock, ProviderOutcomes};
 
 // Provider profiles
 
@@ -351,16 +352,21 @@ pub enum RouterError {
 /// 2. Scenario defaults over the configured `ProviderProfile`s, in
 ///    preference order, skipping any whose circuit breaker is open.
 ///
-/// Construction is the only mutation-free step; `resolve` takes `&self` and
-/// is a pure query. Only `record_success`/`record_failure` mutate breaker
-/// state.
+/// `resolve` takes `&self` and is a pure query. Only
+/// `record_success`/`record_failure` mutate breaker state — through `&self`
+/// as well, so the call sites that observe outcomes (the engine's model-call
+/// boundary, the pipeline's management calls) can feed the breaker over the
+/// same shared reference resolution already uses (#2673). The
+/// [`CircuitBreaker`] itself stays a plain `&mut self` state machine; the
+/// `Mutex` here is only the sharing shell around it, never held across an
+/// await (every breaker operation is synchronous).
 pub struct Router {
     role_table: RoleTable,
     /// Configured providers in preference order — first = most preferred,
     /// mirroring `stella-cli::config::PROVIDERS`'s existing preference
     /// ordering.
     profiles: Vec<ProviderProfile>,
-    breaker: CircuitBreaker,
+    breaker: Mutex<CircuitBreaker>,
 }
 
 impl Router {
@@ -372,8 +378,17 @@ impl Router {
         Self {
             role_table,
             profiles,
-            breaker,
+            breaker: Mutex::new(breaker),
         }
+    }
+
+    /// The breaker guard, poison-proof: every mutation under this lock is a
+    /// single `HashMap` operation that cannot be observed half-done, so a
+    /// panicked peer cannot leave breaker state inconsistent — recovering
+    /// the inner value is strictly better than poisoning every later
+    /// resolution for the rest of the session.
+    fn breaker(&self) -> MutexGuard<'_, CircuitBreaker> {
+        self.breaker.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Read access to the explicit pins, e.g. for `stella config model get`.
@@ -387,28 +402,39 @@ impl Router {
     }
 
     /// Feed a successful call outcome into the breaker for `provider_id`.
-    pub fn record_success(&mut self, provider_id: &str) {
-        self.breaker.record_success(provider_id);
+    pub fn record_success(&self, provider_id: &str) {
+        self.breaker().record_success(provider_id);
     }
 
     /// Feed a failed (transport-class) call outcome into the breaker for
     /// `provider_id`; may trip it open (§2, §7; L-M7).
-    pub fn record_failure(&mut self, provider_id: &str) {
-        self.breaker.record_failure(provider_id);
+    pub fn record_failure(&self, provider_id: &str) {
+        self.breaker().record_failure(provider_id);
     }
 
     /// Resolve `role` to a model per the precedence documented on `Router`.
     pub fn resolve(&self, role: Role) -> Result<RouterDecision, RouterError> {
+        self.resolve_with(&self.breaker(), role)
+    }
+
+    /// [`Router::resolve`] against an already-taken breaker guard — one lock
+    /// per resolution, and the verifier's recursive Worker resolution reuses
+    /// the guard instead of deadlocking on a second acquisition.
+    fn resolve_with(
+        &self,
+        breaker: &CircuitBreaker,
+        role: Role,
+    ) -> Result<RouterDecision, RouterError> {
         if let Some(pinned) = self.role_table.get(role) {
             return Ok(RouterDecision::plain(pinned.clone()));
         }
 
         match role {
             Role::Worker | Role::Plan | Role::Research => {
-                self.resolve_tier(role, |p| &p.worker_model)
+                self.resolve_tier(breaker, role, |p| &p.worker_model)
             }
-            Role::Triage => self.resolve_tier(role, |p| &p.triage_model),
-            Role::Verifier => self.resolve_verifier(),
+            Role::Triage => self.resolve_tier(breaker, role, |p| &p.triage_model),
+            Role::Verifier => self.resolve_verifier(breaker),
             Role::Embed | Role::Vision | Role::Image | Role::Video => {
                 Err(RouterError::NoDefaultForRole { role })
             }
@@ -420,6 +446,7 @@ impl Router {
     /// one (and reporting it) when the preferred provider is breaker-open.
     fn resolve_tier(
         &self,
+        breaker: &CircuitBreaker,
         role: Role,
         pick: impl Fn(&ProviderProfile) -> &ModelRef,
     ) -> Result<RouterDecision, RouterError> {
@@ -428,15 +455,15 @@ impl Router {
         }
 
         let preferred = &self.profiles[0];
-        if self.breaker.is_available(&preferred.id) {
+        if breaker.is_available(&preferred.id) {
             return Ok(RouterDecision::plain(pick(preferred).clone()));
         }
 
         for candidate in &self.profiles[1..] {
-            if self.breaker.is_available(&candidate.id) {
+            if breaker.is_available(&candidate.id) {
                 return Ok(RouterDecision {
                     model_ref: pick(candidate).clone(),
-                    fallback: Some(self.fallback_from(preferred, candidate)),
+                    fallback: Some(fallback_from(breaker, preferred, candidate)),
                     caveat: None,
                 });
             }
@@ -458,7 +485,7 @@ impl Router {
     /// separate call, not a separate model. When that happens the `caveat` says
     /// so, so "different model than the worker" is a preference the router
     /// reports on, never a guarantee it can make from one key.
-    fn resolve_verifier(&self) -> Result<RouterDecision, RouterError> {
+    fn resolve_verifier(&self, breaker: &CircuitBreaker) -> Result<RouterDecision, RouterError> {
         if self.profiles.is_empty() {
             return Err(RouterError::NoProvidersConfigured {
                 role: Role::Verifier,
@@ -472,7 +499,7 @@ impl Router {
         let available: Vec<&ProviderProfile> = self
             .profiles
             .iter()
-            .filter(|p| self.breaker.is_available(&p.id))
+            .filter(|p| breaker.is_available(&p.id))
             .collect();
         let Some(&first_healthy) = available.first() else {
             return Err(RouterError::AllProvidersUnavailable {
@@ -482,7 +509,7 @@ impl Router {
 
         // What Worker actually resolves to right now (pin included) — the
         // instance Verifier must never repeat.
-        let worker_decision = self.resolve(Role::Worker)?;
+        let worker_decision = self.resolve_with(breaker, Role::Worker)?;
         let worker_family = self
             .profiles
             .iter()
@@ -507,8 +534,8 @@ impl Router {
         // because its breaker is open (L-M7: fallback events are for
         // breaker-forced substitutions, never for ordinary verifier routing).
         let preferred = &self.profiles[0];
-        let fallback = if !self.breaker.is_available(&preferred.id) && chosen.id != preferred.id {
-            Some(self.fallback_from(preferred, chosen))
+        let fallback = if !breaker.is_available(&preferred.id) && chosen.id != preferred.id {
+            Some(fallback_from(breaker, preferred, chosen))
         } else {
             None
         };
@@ -528,17 +555,37 @@ impl Router {
             caveat,
         })
     }
+}
 
-    fn fallback_from(&self, from: &ProviderProfile, to: &ProviderProfile) -> FallbackInfo {
-        FallbackInfo {
-            from: from.id.clone(),
-            to: to.id.clone(),
-            reason: format!(
-                "circuit breaker open for `{}` after {} consecutive transport failures",
-                from.id,
-                self.breaker.failure_threshold()
-            ),
-        }
+/// The [`FallbackInfo`] for a breaker-forced substitution, built against the
+/// resolution's already-taken breaker guard (see [`Router::resolve_with`]).
+fn fallback_from(
+    breaker: &CircuitBreaker,
+    from: &ProviderProfile,
+    to: &ProviderProfile,
+) -> FallbackInfo {
+    FallbackInfo {
+        from: from.id.clone(),
+        to: to.id.clone(),
+        reason: format!(
+            "circuit breaker open for `{}` after {} consecutive transport failures",
+            from.id,
+            breaker.failure_threshold()
+        ),
+    }
+}
+
+/// The router *is* the engine's outcome sink: feeding the breaker takes the
+/// same shared reference resolution reads through, so every holder of
+/// `&Router` — the pipeline's ports, a served run, the CLI's session loop —
+/// inherits breaker feedback without owning the router (#2673).
+impl ProviderOutcomes for Router {
+    fn record_success(&self, provider_id: &str) {
+        Router::record_success(self, provider_id);
+    }
+
+    fn record_failure(&self, provider_id: &str) {
+        Router::record_failure(self, provider_id);
     }
 }
 
@@ -878,6 +925,28 @@ mod tests {
         // The trial call fails — reopen without needing 3 more failures.
         breaker.record_failure("zai");
         assert_eq!(breaker.status("zai"), BreakerStatus::Open);
+    }
+
+    #[test]
+    fn breaker_feedback_flows_through_a_shared_router_reference() {
+        // The #2673 seam: outcome feedback must need only `&Router`, the
+        // same shared reference the pipeline and any host already hold —
+        // requiring `&mut` is exactly what left the breaker unwired.
+        let router = Router::new(
+            RoleTable::new(),
+            vec![zai_profile(), anthropic_profile()],
+            breaker_with_clock(ManualClock::new(0)),
+        );
+        let shared: &Router = &router;
+        for _ in 0..CircuitBreaker::DEFAULT_FAILURE_THRESHOLD {
+            shared.record_failure("zai");
+        }
+        let decision = shared.resolve(Role::Worker).expect("fallback resolves");
+        assert_eq!(decision.model_ref, model("anthropic", "claude-fable-5"));
+        assert!(decision.fallback.is_some(), "fallback must be reported");
+        shared.record_success("zai");
+        let healed = shared.resolve(Role::Worker).expect("healed resolves");
+        assert_eq!(healed.model_ref, model("zai", "glm-5.2"));
     }
 
     #[test]

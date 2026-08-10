@@ -231,10 +231,10 @@ impl std::fmt::Display for LedgerViolation {
             Self::MissingRow { type_tag } => write!(
                 f,
                 "`{type_tag}` is an AgentEvent wire tag with no row in \
-                 SIGNAL_CONSUMERS — every emitted signal names its consumer \
-                 (every emitted signal names its consumer). Add a row saying what reads it; if the honest \
-                 answer is \"nobody has looked\", that is \
-                 ConsumerPosture::Unclassified with a tracking issue, not an omission"
+                 SIGNAL_CONSUMERS — every emitted signal names its consumer. \
+                 Add a row saying what reads it; if the honest answer is \
+                 \"nobody has looked\", that is ConsumerPosture::Unclassified \
+                 with a tracking issue, not an omission"
             ),
             Self::DuplicateRow { type_tag } => write!(
                 f,

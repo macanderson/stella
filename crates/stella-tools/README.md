@@ -277,6 +277,7 @@ Adding a built-in tool:
 5. Document it in [`../../website/content/docs/agent-tools/index.mdx`](../../website/content/docs/agent-tools/index.mdx)
    with the matching Read-only/Mutating marker.
 6. Write the witness test.
+7. Ensure the tool follows AGENTS.md invariant #9 (tool-first, single-purpose) — one thing, no mode flags. See #2699 for the retroactive audit of existing tools.
 
 Until steps 4 and 5 are done these fail, by name rather than by an off-by-one:
 `registry_advertises_exactly_the_catalog_tool_set`, `an_undeclared_tool_fails_the_catalog_pin_by_name`,

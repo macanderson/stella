@@ -49,11 +49,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stella_protocol::{
-    AgentEvent, BudgetMode, CompletionMessage, CompletionResult, MessageRole, ProviderError,
-    ToolCall, ToolOutput, ToolResult,
+    AgentEvent, BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, MessageRole,
+    ProviderError, ToolCall, ToolOutput, ToolResult,
 };
 
 use crate::budget::BudgetGuard;
+use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
 use crate::event_sender::EventSender;
 use crate::loop_detect::LoopIdentity;
@@ -305,6 +306,17 @@ pub struct TurnState {
     /// for entire 40-step turns while the calibration underneath converged on
     /// 2×+ drift (#2133); see [`Self::latch_effective_budget`].
     pub(crate) effective_budget: Option<(u64, f64)>,
+    /// The last committed step's provider-attested prompt size, paired with
+    /// the estimator's view of the same transcript prefix
+    /// (`crate::driver::usage_anchor`, #2681). Applied on top of the latched
+    /// pair above by [`Self::anchored_budget`], so the estimator only ever
+    /// prices the tail appended since the report; dropped by
+    /// [`Self::mark_transcript_rewritten`] because a rewrite makes the
+    /// report describe bytes that no longer exist. Unlike the latch this
+    /// moves every committed step — it tracks a measurement of the growing
+    /// prefix, not a converging correction, so re-reading it cannot
+    /// oscillate the way #2133's factor did.
+    pub(crate) usage_anchor: Option<UsageAnchor>,
     /// The loop this turn's one stuck-loop steering warning was issued about
     /// (`driver::loop_escalation`), or `None` while the warning is unspent.
     /// The next detection after `Some` aborts instead of warning again;
@@ -364,6 +376,7 @@ impl TurnState {
             total_cost_usd: 0.0,
             calibration_model: None,
             effective_budget: None,
+            usage_anchor: None,
             loop_steered: None,
             transcript_rewrites: 0,
             step: 0,
@@ -390,6 +403,10 @@ impl TurnState {
             // the snapshot. Restoring it would pin the resumed turn to a
             // budget computed before that.
             effective_budget: None,
+            // Same reasoning: the resumed turn's first committed step
+            // re-anchors from a fresh provider report over the transcript
+            // as it is NOW, which a snapshot could only be staler than.
+            usage_anchor: None,
             loop_steered: checkpoint.loop_steered.then_some(LoopIdentity {
                 tools: checkpoint.loop_steered_pattern,
                 inputs: checkpoint.loop_steered_inputs,
@@ -428,6 +445,41 @@ impl TurnState {
             return fresh;
         }
         *self.effective_budget.get_or_insert(fresh)
+    }
+
+    /// Anchor the context measure to a just-committed step's usage report:
+    /// `self.messages` is the transcript exactly as sent (the caller invokes
+    /// this before dispatch appends the reply), and `estimated_input_tokens`
+    /// is the same pre-call estimate `StepUsage` reports. An envelope with
+    /// no signal keeps the previous anchor — the transcript has only been
+    /// appended to since it was taken, so it still describes a live prefix
+    /// and its tail simply grows.
+    pub(crate) fn anchor_usage(&mut self, usage: &CompletionUsage, estimated_input_tokens: u64) {
+        if let Some(anchor) =
+            UsageAnchor::from_report(usage, &self.messages, estimated_input_tokens)
+        {
+            self.usage_anchor = Some(anchor);
+        }
+    }
+
+    /// The compaction budget after re-basing on the last usage report
+    /// (`crate::driver::usage_anchor`, #2681): [`Self::latch_effective_budget`]'s
+    /// answer passes through untouched until a report anchors, then the
+    /// anchored budget replaces its token count while the factor — now
+    /// correcting only the tail estimate — rides along unchanged for the
+    /// manifest.
+    pub(crate) fn anchored_budget(
+        &self,
+        latched: (u64, f64),
+        configured_budget: u64,
+    ) -> (u64, f64) {
+        match &self.usage_anchor {
+            Some(anchor) => (
+                anchor.effective_budget(configured_budget, latched.1),
+                latched.1,
+            ),
+            None => latched,
+        }
     }
 
     /// Snapshot this turn for durable storage. Cheap-ish (it clones the
@@ -477,11 +529,14 @@ impl TurnState {
     }
 
     /// Declare that the transcript was rewritten in place rather than appended
-    /// to, invalidating both position-keyed memos. The engine calls this for
-    /// every rewrite it performs; a host only needs it after its own.
+    /// to, invalidating both position-keyed memos — and the usage anchor,
+    /// whose provider report describes a prefix that no longer exists. The
+    /// engine calls this for every rewrite it performs; a host only needs it
+    /// after its own.
     pub fn mark_transcript_rewritten(&mut self) {
         self.memos.mark_rewritten();
         self.transcript_rewrites = self.transcript_rewrites.saturating_add(1);
+        self.usage_anchor = None;
     }
 
     /// The money meter, including session-scoped spend.

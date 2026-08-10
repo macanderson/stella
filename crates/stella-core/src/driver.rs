@@ -1,72 +1,69 @@
-//! The step-driver: `Engine::run_turn`. One
-//! model call per step, message accumulation, `AgentEvent` emission at
-//! every boundary, retry+backoff, compaction, tool-output budget checks,
-//! loop detection, and (a first, structural cut of) malformed-call repair —
-//! wiring together every other module in this crate.
+//! The step-driver: `Engine::run_turn`. One model call per step, message
+//! accumulation, `AgentEvent` emission at every boundary, retry+backoff,
+//! compaction, tool-output budget checks, loop detection, and (a first,
+//! structural cut of) malformed-call repair — wiring together every other
+//! module in this crate.
 //!
 //! `Engine` drives through `&dyn Provider` (`stella_protocol`) and
 //! `&dyn ToolExecutor` (`crate::ports`) — no adapter-specific code and no
-//! direct filesystem access live here. Everything
-//! *inside* one step (compaction, loop detection, budget evaluation) is the
-//! plain synchronous logic from the other modules in this crate; `run_turn`
-//! is the one place that sequences them against real I/O.
+//! direct filesystem access live here. Everything *inside* one step
+//! (compaction, loop detection, budget evaluation) is the plain synchronous
+//! logic from the other modules in this crate; `run_turn` is the one place
+//! that sequences them against real I/O.
 //!
 //! # Deferred-flush events (L-E10)
 //!
-//! `retry_with_backoff_observed` returns committed retry
-//! history while synchronously exposing each failed provider attempt to the
-//! accounting path. Ordinary retry narration stays deferred until success;
-//! content-free `UsageIncomplete` envelopes are durable immediately because
-//! a later successful attempt cannot recover the failed call's usage. A
-//! caller-side hard cancel that drops the turn while an attempt is still in
-//! flight emits one `Cancelled` envelope from a drop guard
-//! (`CancelUsageGuard`) armed for exactly that window.
+//! `retry_with_backoff_observed` returns committed retry history while
+//! synchronously exposing each failed provider attempt to the accounting
+//! path. Ordinary retry narration stays deferred until success; content-free
+//! `UsageIncomplete` envelopes are durable immediately because a later
+//! successful attempt cannot recover the failed call's usage. A caller-side
+//! hard cancel that drops the turn while an attempt is still in flight emits
+//! one `Cancelled` envelope from a drop guard (`CancelUsageGuard`) armed for
+//! exactly that window.
 //!
 //! # Retry re-executes only speculation-safe read-only calls, never a mutating one
 //!
 //! `retry_with_backoff_observed` wraps the model call
 //! (`Provider::complete_observed`) together with that attempt's speculation
 //! pump (`crate::speculation`). The exactly-once guarantee is scoped to
-//! MUTATING tools: a mutating call runs once, after a model call has
-//! already succeeded and returned tool calls to run — never inside the
-//! retried closure — so a retried step structurally cannot re-execute a
-//! non-idempotent tool. See the test
-//! `retry_never_re_executes_a_tool_call` below, which proves it by counting
-//! real executions against a flaky scripted provider.
+//! MUTATING tools: a mutating call runs once, after a model call has already
+//! succeeded and returned tool calls to run — never inside the retried
+//! closure — so a retried step structurally cannot re-execute a
+//! non-idempotent tool (proven by `retry_never_re_executes_a_tool_call`
+//! below, which counts real executions against a flaky scripted provider).
 //!
-//! SPECULATED tools carry no such guarantee: a call announced by the
-//! stream DOES execute inside the retried attempt closure and can run
-//! more than once per step (a failed attempt runs it, the retry re-announces
-//! and runs it again). Which is why eligibility takes two schema claims,
-//! not one (#923): `read_only` (safe for the *workspace* — the call
-//! mutates nothing) AND `speculation_safe` (safe to run twice — no
-//! metered network read, no rate-limited API, no write to internal state
-//! like `codegraph.db` on the read path). A tool that is read-only but
-//! not speculation-safe runs only at dispatch, exactly once per committed
-//! call, with no hook to attach and nothing to remember. See
-//! `crate::speculation` for the overlap semantics: user hooks are
-//! excluded from that overlap so they still fire exactly once per committed
-//! call, and every speculative execution that never commits is reported as a
-//! `SpeculationDiscarded` event so the I/O it ran stays accountable (#370).
+//! SPECULATED tools carry no such guarantee: a call announced by the stream
+//! DOES execute inside the retried attempt closure and can run more than
+//! once per step (a failed attempt runs it, the retry re-announces and runs
+//! it again). Which is why eligibility takes two schema claims, not one
+//! (#923): `read_only` (the call mutates nothing in the workspace) AND
+//! `speculation_safe` (safe to run twice — no metered network read, no
+//! rate-limited API, no write to internal state like `codegraph.db` on the
+//! read path). A tool that is read-only but not speculation-safe runs only
+//! at dispatch, exactly once per committed call. See `crate::speculation`
+//! for the overlap semantics: user hooks are excluded from that overlap so
+//! they still fire exactly once per committed call, and every speculative
+//! execution that never commits is reported as a `SpeculationDiscarded`
+//! event so the I/O it ran stays accountable (#370).
 //!
 //! # Budget is checked between steps, never mid-tool
 //!
 //! Per [`crate::budget`]'s module contract, `run_turn` only consults
-//! [`crate::budget::BudgetGuard::evaluate`]/`record_spend` immediately
-//! after a model call completes and before the next one (or before
-//! executing this step's tool calls) — an `AbortTurn` outcome ends the turn
-//! cleanly, it never interrupts a tool already in flight.
+//! [`crate::budget::BudgetGuard::evaluate`]/`record_spend` immediately after
+//! a model call completes and before the next one (or before executing this
+//! step's tool calls) — an `AbortTurn` outcome ends the turn cleanly, it
+//! never interrupts a tool already in flight.
 //!
 //! # Malformed-call repair
 //!
 //! Every adapter's stream aggregator in `stella-model` falls back to
 //! `serde_json::Value::Null` when a tool call's streamed argument JSON
-//! doesn't parse. `run_turn`
-//! recognizes that sentinel structurally: rather than handing `Null` to a
-//! tool that expects an object, it short-circuits to a named
-//! `ToolOutput::Error` telling the model its own JSON was malformed, so the
-//! model can retry with corrected syntax on the next step. This is a real,
-//! if first-cut, repair — dialect-specific tuning
+//! doesn't parse. `run_turn` recognizes that sentinel structurally: rather
+//! than handing `Null` to a tool that expects an object, it short-circuits
+//! to a named `ToolOutput::Error` telling the model its own JSON was
+//! malformed, so the model can retry with corrected syntax on the next
+//! step. This is a real, if first-cut, repair — dialect-specific tuning
 //! ("malformed-call repair tuned to the failure shapes GLM actually
 //! produces") is a documented follow-up, not faked here.
 
@@ -133,6 +130,7 @@ use tokio::sync::mpsc::UnboundedSender;
 mod dispatch;
 mod drive;
 mod settlement;
+pub(crate) mod usage_anchor;
 mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
@@ -409,17 +407,15 @@ pub enum TurnOutcome {
 }
 
 /// The per-turn memos a step mutates but a [`crate::step::Checkpoint`]
-/// deliberately does not carry.
-///
-/// All four exist to make repeated work cheap or repeated noise quiet within
-/// one turn: the receipt ledger remembers which blocks it already registered,
-/// the warning ledger claims the first observed-mode breach per axis, the
-/// result identities remember what a call really produced before compaction
-/// stubbed it (#554), and the summarizer latch stops a failing cheap model
-/// re-firing every step. They live in one struct, held by
-/// [`crate::step::TurnState`], because that is the whole set of per-turn state
-/// whose types are internal to this module — a resumed turn rebuilds them
-/// rather than deserializing four private caches out of a wire format.
+/// deliberately does not carry. All four make repeated work cheap or
+/// repeated noise quiet within one turn: the receipt ledger remembers which
+/// blocks it already registered, the warning ledger claims the first
+/// observed-mode breach per axis, the result identities remember what a call
+/// really produced before compaction stubbed it (#554), and the summarizer
+/// latch stops a failing cheap model re-firing every step. One struct, held
+/// by [`crate::step::TurnState`], because that is the whole set of per-turn
+/// state whose types are internal to this module — a resumed turn rebuilds
+/// them rather than deserializing four private caches out of a wire format.
 pub(crate) struct TurnMemos {
     /// Block registry + residency for this turn's context receipts.
     receipts: ReceiptLedger,
@@ -460,11 +456,10 @@ impl TurnMemos {
 
 /// The two references a turn needs to fire lifecycle hooks: the parsed
 /// workspace [`Hooks`] config and the [`HookRunner`] execution port that
-/// actually spawns the commands (the real process I/O `stella-core` never
-/// performs — see `crate::hooks`). Bundled so the engine carries a single
-/// `Option`: `None` means hooks are entirely off and the turn path is
-/// byte-for-byte the same as before this seam existed. `Copy` because both
-/// fields are shared references.
+/// spawns the commands (the process I/O `stella-core` never performs — see
+/// `crate::hooks`). Bundled so the engine carries a single `Option`: `None`
+/// means hooks are entirely off and the turn path is byte-for-byte the same
+/// as before this seam existed. `Copy`: both fields are shared references.
 #[derive(Clone, Copy)]
 pub(crate) struct HooksHandle<'a> {
     hooks: &'a Hooks,
@@ -487,11 +482,10 @@ pub struct Engine<'a> {
     pub(crate) hooks: Option<HooksHandle<'a>>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
-    /// the map across turns (and seeds it from persisted telemetry at
-    /// session start), the engine feeds it every committed step's
-    /// (estimated, actual) pair and reads the correction back into the
-    /// compaction decision. When `None` the turn path is exactly the
-    /// uncalibrated engine.
+    /// the map across turns (seeded from persisted telemetry at session
+    /// start), the engine feeds it every committed step's (estimated,
+    /// actual) pair and reads the correction back into the compaction
+    /// decision. When `None` the turn path is the uncalibrated engine.
     pub(crate) calibration: Option<&'a CalibrationMap>,
     /// Boundary pause gate ([`crate::ports::TurnGate`]), off by default.
     /// Attached via [`Engine::with_gate`]; consulted once per step, before
@@ -515,15 +509,19 @@ pub struct Engine<'a> {
     /// extension can watch a step begin, it cannot veto one. The interception
     /// points stay where they already are, on the tool-call path.
     pub(crate) bus: Option<&'a crate::bus::HookBus>,
+    /// Call-outcome feedback ([`crate::ports::ProviderOutcomes`]), off by
+    /// default. Attached via [`Engine::with_provider_outcomes`]; each logical
+    /// model call reports its terminal verdict against `provider.id()` so a
+    /// router's circuit breaker trips from observed outcomes (#2673).
+    pub(crate) outcomes: Option<&'a dyn crate::ports::ProviderOutcomes>,
 }
 
-/// Why a turn that never produced a terminal step ends.
-///
-/// A function rather than an inline `format!` because it is now written by
-/// two loops: [`Engine::run_turn_with_sender`] and any host driving
-/// [`Engine::run_step`] itself (`stella-serve`, #1129). This string reaches a
-/// transcript, a log, and a user's terminal — two copies of it would drift,
-/// and the drift would read as two different failures.
+/// Why a turn that never produced a terminal step ends. A function rather
+/// than an inline `format!` because it is written by two loops —
+/// [`Engine::run_turn_with_sender`] and any host driving
+/// [`Engine::run_step`] itself (`stella-serve`, #1129) — and this string
+/// reaches transcripts and terminals, where two drifting copies would read
+/// as two different failures.
 #[must_use]
 pub fn step_cap_reason(max_steps: usize) -> String {
     format!(
@@ -562,10 +560,9 @@ const SOFT_STOP_TOOL_RESULT: &str = "not executed — turn stopped by user at a 
 /// it consume: the pre-call raw token estimate (drift feedback + telemetry
 /// — raw, never calibrated, attachments excluded, see
 /// [`Engine::run_model_call`]) and the read-only tool set for dispatch
-/// scheduling. The step's `StepUsage`
-/// metering record (retry and duration figures included) was already
-/// emitted by [`Engine::run_model_call`] at the no-await settlement
-/// boundary — it is deliberately NOT carried here.
+/// scheduling. The step's `StepUsage` metering record was already emitted by
+/// [`Engine::run_model_call`] at the no-await settlement boundary — it is
+/// deliberately NOT carried here.
 struct CommittedStep {
     result: CompletionResultAlias,
     budget_outcome: BudgetOutcome,
@@ -603,6 +600,7 @@ impl<'a> Engine<'a> {
             gate: None,
             steering: None,
             bus: None,
+            outcomes: None,
         }
     }
 
@@ -651,24 +649,23 @@ impl<'a> Engine<'a> {
             gate: self.gate,
             steering: self.steering,
             bus: self.bus,
+            outcomes: self.outcomes,
         }
     }
 
     /// A shallow copy of this engine that consults `halt` at every step
     /// boundary and ends the turn as [`TurnOutcome::Completed`] when it
-    /// fires.
-    ///
-    /// Takes `&self` and returns a new engine — the [`Self::with_turn_instance`]
-    /// shape rather than the consuming-builder shape — because the caller that
-    /// knows the goal is met is `stella-pipeline`, which is handed an
-    /// `&Engine` it does not own and needs a per-candidate variant of it.
+    /// fires. Takes `&self` and returns a new engine — the
+    /// [`Self::with_turn_instance`] shape, not the consuming-builder shape —
+    /// because the caller that knows the goal is met is `stella-pipeline`,
+    /// which is handed an `&Engine` it does not own and needs a
+    /// per-candidate variant of it.
     ///
     /// Deliberately NOT expressed through [`crate::ports::TurnSteering`]'s
-    /// soft stop, which is the other step-boundary exit: that one is a *user*
-    /// asking to stop and returns `Aborted`, which reaches the CLI as a
-    /// non-zero exit and is scored by benchmark harnesses as the agent
-    /// crashing. "The goal is met" is a success, and has to end the turn as
-    /// one.
+    /// soft stop, the other step-boundary exit: that one is a *user* asking
+    /// to stop and returns `Aborted`, which reaches the CLI as a non-zero
+    /// exit and is scored by benchmark harnesses as the agent crashing.
+    /// "The goal is met" is a success, and has to end the turn as one.
     pub fn with_turn_halt(&self, halt: Arc<dyn TurnHalt>) -> Engine<'a> {
         Engine {
             provider: self.provider,
@@ -684,6 +681,7 @@ impl<'a> Engine<'a> {
             gate: self.gate,
             steering: self.steering,
             bus: self.bus,
+            outcomes: self.outcomes,
         }
     }
 
@@ -706,6 +704,18 @@ impl<'a> Engine<'a> {
     /// built without this estimates exactly as before.
     pub fn with_calibration(mut self, calibration: &'a CalibrationMap) -> Self {
         self.calibration = Some(calibration);
+        self
+    }
+
+    /// Attach call-outcome feedback, opt-in: every logical model call
+    /// (retries collapsed) reports success or terminal failure against
+    /// `provider.id()`, so a [`crate::router::Router`]'s circuit breaker
+    /// trips failover from observed outcomes, not configuration (#2673).
+    pub fn with_provider_outcomes(
+        mut self,
+        outcomes: &'a dyn crate::ports::ProviderOutcomes,
+    ) -> Self {
+        self.outcomes = Some(outcomes);
         self
     }
 
@@ -734,13 +744,9 @@ impl<'a> Engine<'a> {
 
     /// Attach an extension hook bus, so the turn, step and model-call
     /// boundaries this engine already crosses become observable (#1133).
-    ///
-    /// Before this, the only production emitter on the bus was the tool
-    /// registry: an extension could see every tool call and nothing about the
-    /// turn that made them — not that a turn started, not that a model call
-    /// began or what it cost. The catalog and `emit_named` both already
-    /// existed; what was missing was the call sites, which are here because
-    /// this is where the boundaries are.
+    /// Before this the only production emitter on the bus was the tool
+    /// registry — the catalog and `emit_named` existed, the call sites did
+    /// not, and they are here because this is where the boundaries are.
     ///
     /// Observer-only, by construction: see the `bus` field.
     pub fn with_bus(mut self, bus: &'a crate::bus::HookBus) -> Self {
@@ -756,34 +762,6 @@ impl<'a> Engine<'a> {
     pub(crate) fn emit_lifecycle(&self, name: &str, payload: impl FnOnce() -> serde_json::Value) {
         if let Some(bus) = self.bus {
             bus.emit_named(name, payload());
-        }
-    }
-
-    /// Fire `SessionStart` hooks once and return any stdout they produced —
-    /// the additional system-prompt context described in `crate::hooks`.
-    ///
-    /// This is deliberately NOT called from [`Engine::run_turn`].
-    /// `SessionStart` is a session-level event ("runs once before the
-    /// turn"), but `run_turn` is per-turn and a REPL or fleet worker calls
-    /// it many times per session — firing it inside would re-run session
-    /// setup on every turn. Prompt assembly is the caller's concern anyway
-    /// (`run_turn` takes history by `&mut` and never owns the system
-    /// prompt), so the caller invokes this once, before the first turn, and
-    /// folds the returned context into the system message it builds.
-    /// Returns `None` when no hooks are attached or the hooks printed
-    /// nothing.
-    pub async fn run_session_start_hooks(&self) -> Option<String> {
-        let handle = self.hooks?;
-        let outcome = run_hooks(
-            handle.runner,
-            Some(handle.hooks),
-            &HookPayload::session_start(self.config.cwd.clone()),
-        )
-        .await;
-        if outcome.output.is_empty() {
-            None
-        } else {
-            Some(outcome.output)
         }
     }
 
@@ -1010,9 +988,12 @@ impl<'a> Engine<'a> {
         snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
         // Live while the calibration still answers identity, then latched at
         // the first corrected value (#1841, #2133): compaction and the
-        // manifest below always compare against the same settled number.
+        // manifest below compare against the same settled number. On top of
+        // that pair, the last usage report re-bases the budget so the
+        // estimator prices only the tail since it (#2681, `usage_anchor`).
         let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
-        let sized = state.latch_effective_budget(fresh);
+        let latched = state.latch_effective_budget(fresh);
+        let sized = state.anchored_budget(latched, self.config.compaction_budget_tokens);
         let pass = self
             .run_compaction_pass(
                 &mut state.messages,
@@ -1028,8 +1009,7 @@ impl<'a> Engine<'a> {
             state.mark_transcript_rewritten();
         }
         // The manifest reports the budget compaction just compared against —
-        // now the same latched value, not a second computation that happened
-        // to agree.
+        // the same anchored value, never a second computation.
         state.memos.receipts.set_effective_budget(sized.0, sized.1);
         // Set immediately after the pass that may have rewritten the
         // transcript, so the ledger's digest memo cannot serve a stale block.
@@ -1101,6 +1081,9 @@ impl<'a> Engine<'a> {
         });
         state.last_step = Some(step_started.elapsed());
         state.calibration_model = Some(committed.result.model.clone());
+        // Anchor the context measure to what the provider just attested for
+        // this exact prefix — before dispatch appends the reply to it.
+        state.anchor_usage(&committed.result.usage, committed.estimated_input_tokens);
         state.total_cost_usd += committed.result.cost_usd;
 
         if let Some(aborted) = self.handle_committed_result(
@@ -1126,8 +1109,7 @@ impl<'a> Engine<'a> {
         }
 
         // Only meaningful once a step has been timed and a budget configured:
-        // the forecast for one more continuation is what the last one cost, and
-        // without a deadline there is nothing to compare it against.
+        // the forecast for one more continuation is what the last one cost.
         let continuation_budget =
             self.config
                 .turn_budget
@@ -1179,47 +1161,40 @@ impl<'a> Engine<'a> {
     /// # Who calls this, and who deliberately does not
     ///
     /// This is for a host that continues an interrupted turn: it hands back a
-    /// state to keep stepping, which the host either passes to [`Self::drive`]
-    /// — the ordinary case, and what `stella-pipeline`'s resumed execute stage
-    /// does — or steps itself through [`Self::run_step`]. Neither shipping
-    /// surface accepts one from the outside today, and that is a declaration
-    /// rather than an oversight:
-    ///
-    /// - **The CLI** resumes an interrupted turn at *transcript* granularity
-    ///   instead. Its turns are dispatched through `stella-pipeline`, which
-    ///   owns turn framing and builds its own state via `run_turn`, so there is
-    ///   no seam to hand a resumed `TurnState` to without threading a
-    ///   checkpoint through the entire verification ladder. What it does do is
-    ///   reopen the conversation at the checkpoint's step boundary, so the
-    ///   completed steps' work is not re-run — see `stella-parity`'s
-    ///   `turn.checkpoint_resume` row.
-    /// - **`stella-serve`** stores one and hands it back on request but accepts
-    ///   none in return, so continuing is the host's call (same row, API side).
-    ///
-    /// So the production callers are embedders, and the in-tree exercise of it
-    /// is `stella-engine`'s test suite. Anything that changes on either surface
-    /// should change that row in the same PR.
+    /// state to keep stepping, via [`Self::drive`] (the ordinary case, and
+    /// what `stella-pipeline`'s resumed execute stage does) or
+    /// [`Self::run_step`]. Neither shipping surface accepts one from the
+    /// outside today, and that is a declaration rather than an oversight:
+    /// the CLI resumes at *transcript* granularity instead (its turns are
+    /// dispatched through `stella-pipeline`, which owns turn framing and
+    /// builds its own state via `run_turn`; it reopens the conversation at
+    /// the checkpoint's step boundary so completed steps' work is not re-run
+    /// — see `stella-parity`'s `turn.checkpoint_resume` row), and
+    /// `stella-serve` stores one and hands it back on request but accepts
+    /// none in return (same row, API side). So the production callers are
+    /// embedders, and the in-tree exercise is `stella-engine`'s test suite.
+    /// Anything that changes on either surface changes that row in the same
+    /// PR.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
         TurnState::from_checkpoint(checkpoint, &self.config)
     }
 
-    /// The compaction budget this turn's next step will actually compare
-    /// against, and the calibration factor that produced it. Single source of
-    /// truth for both the compaction pass and the step manifest, so the
-    /// receipt's `effective_budget_tokens` is exactly the number the decision
-    /// used (#364 item 1). Returns the configured budget with factor `1.0`
-    /// when calibration is off.
+    /// The calibrated compaction budget and the factor that produced it —
+    /// the configured budget with factor `1.0` when calibration is off.
+    /// `TurnState::anchored_budget` then re-bases this on the last usage
+    /// report, and THAT value is the single source of truth for both the
+    /// compaction pass and the step manifest, so the receipt's
+    /// `effective_budget_tokens` is exactly the number the decision used
+    /// (#364 item 1).
     ///
     /// Drift correction enters here: `compact` compares the RAW estimate
-    /// against the budget it is given, so dividing the configured budget
-    /// by the correction factor is exactly comparing the CALIBRATED
-    /// estimate (raw × factor) against the configured budget — including
-    /// the eviction loop's stopping condition — without threading a factor
-    /// through compaction's incremental bookkeeping. A factor > 1 (we
-    /// under-estimate this model's tokenizer) shrinks the effective budget
-    /// and compacts earlier; the factor's clamp (`crate::estimator`)
-    /// bounds how far either way a noisy sample can move this.
+    /// against the budget it is given, so dividing the configured budget by
+    /// the correction factor is exactly comparing the CALIBRATED estimate
+    /// (raw × factor) against the configured budget, without threading a
+    /// factor through compaction's bookkeeping. A factor > 1 (we
+    /// under-estimate this model's tokenizer) compacts earlier; the clamp
+    /// (`crate::estimator`) bounds how far a noisy sample can move this.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
             // Solves for the conversation size the budget allows, subtracting
@@ -1232,10 +1207,9 @@ impl<'a> Engine<'a> {
     }
 
     /// Compaction, before every model call, per the running estimate
-    /// (L-E3 dedup+evict, stable system prefix — the system message is
-    /// index 0 and `compact()` never touches it). The budget it compares
-    /// against is [`Self::effective_compaction_budget`]'s, so the pass and
-    /// the step manifest can never disagree about which number was used.
+    /// (L-E3 dedup+evict; the system message is index 0 and `compact()`
+    /// never touches it), against the caller's settled `sized` budget —
+    /// the same number the step manifest reports.
     ///
     /// Returns the summarizer's spend (0.0 on the overwhelmingly common
     /// no-summarization path) so `run_turn` folds it into the turn total.
@@ -1634,8 +1608,7 @@ impl<'a> Engine<'a> {
         // see `estimate_conversation_attachment_tokens`), and this value is
         // what StepUsage persists as the drift sample and what
         // `handle_committed_result` records. The compaction decision keeps
-        // the full attachment-weighted estimate via its own walk in
-        // `run_compaction_pass`.
+        // the full estimate via its own walk in `run_compaction_pass`.
         let estimated_input_tokens = estimate_conversation_tokens(messages).saturating_sub(
             crate::estimator::estimate_conversation_attachment_tokens(messages),
         );
@@ -1679,16 +1652,14 @@ impl<'a> Engine<'a> {
         // Each attempt runs the provider call and the speculation pump
         // concurrently: the pump executes read-only calls the moment the
         // adapter announces them (`crate::speculation`), so their wall-clock
-        // overlaps the stream instead of following it. The gate (and with
-        // it the channel's send half) drops when the provider call resolves,
-        // which is what lets the pump finish draining. A failed attempt
-        // drops its pool with the attempt — safe to waste for the workspace,
-        // but each completed entry emits a `SpeculationDiscarded` event on
-        // the way out (#370) — and the retry builds a fresh channel and pool.
-        // Stored true exactly around each attempt's dispatch, so the drop
-        // guard below can tell "a paid call may be in flight" apart from "the
-        // ladder is asleep between attempts" — the failed attempt before a
-        // sleep already reported its own envelope through the observer.
+        // overlaps the stream. The gate (and the channel's send half) drops
+        // when the provider call resolves, letting the pump finish draining.
+        // A failed attempt drops its pool with the attempt — safe to waste,
+        // though each completed entry emits `SpeculationDiscarded` on the
+        // way out (#370) — and the retry builds a fresh channel and pool.
+        // The latch is true exactly around each attempt's dispatch, so the
+        // drop guard below can tell "a paid call may be in flight" apart
+        // from "the ladder is asleep between attempts".
         let attempt_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let attempt_in_flight_latch = attempt_in_flight.clone();
         let attempt: RetryAttemptFn = Box::new(move || {
@@ -1713,17 +1684,15 @@ impl<'a> Engine<'a> {
                 });
                 let result = tokio::select! {
                     // `biased` makes the invariant below structural rather
-                    // than incidental: `complete` owns the gate (and with
-                    // it the channel's send half), so the pump can only
-                    // finish after `complete` has. Polling `complete`
-                    // first means the pump arm cannot be taken by an
-                    // unlucky randomized poll order (#560).
-                    //
-                    // That arm is believed unreachable, but it reports a
-                    // typed terminal error rather than panicking: this is
-                    // library code on a provider-driven path, where
-                    // invariant 5 (no panics on runtime data) outranks
-                    // asserting a structural claim (#618 item 17).
+                    // than incidental: `complete` owns the gate (and the
+                    // channel's send half), so the pump can only finish
+                    // after `complete` has, and polling `complete` first
+                    // keeps an unlucky randomized poll order from taking the
+                    // pump arm (#560). That arm is believed unreachable, but
+                    // it reports a typed terminal error rather than
+                    // panicking: this is library code on a provider-driven
+                    // path, where invariant 5 (no panics on runtime data)
+                    // outranks asserting a structural claim (#618 item 17).
                     biased;
                     result = bounded_generation(self.config.model_timeout, &progress, &mut complete) => result,
                     _ = &mut pump => Err(ProviderError::Terminal(
@@ -1744,11 +1713,9 @@ impl<'a> Engine<'a> {
         // flight: a caller-side hard cancel that drops this future mid-await
         // still leaves one content-free `Cancelled` envelope behind.
         // Disarmed on BOTH normal exits — a success reports through its
-        // `StepUsage`, and a terminal failure's attempts already reported
-        // through the per-attempt observer below. The shared latch narrows
-        // "in flight" to the dispatch itself: a drop landing in a backoff
-        // sleep emits nothing, because the failed attempt before the sleep
-        // already reported its own envelope.
+        // `StepUsage`, a terminal failure through the per-attempt observer
+        // below. The shared latch narrows "in flight" to the dispatch
+        // itself: a drop landing in a backoff sleep emits nothing.
         let mut cancel_guard = CancelUsageGuard {
             events: events.clone(),
             role: self.call_role,
@@ -1824,9 +1791,15 @@ impl<'a> Engine<'a> {
                     message: message.clone(),
                     retryable,
                 });
+                if let Some(outcomes) = self.outcomes {
+                    outcomes.record_failure(self.provider.id());
+                }
                 return Err(format!("model call failed: {message}"));
             }
         };
+        if let Some(outcomes) = self.outcomes {
+            outcomes.record_success(self.provider.id());
+        }
         // One boundary read: the call's duration and the tick's clock axis.
         let now = std::time::Instant::now();
         let call_duration_ms = now.duration_since(call_started).as_millis() as u64;

@@ -20,9 +20,8 @@ impl Sleeper for NoopSleeper {
     async fn sleep(&self, _duration_ms: u64) {}
 }
 
-/// A `ToolExecutor` that always succeeds and counts real invocations —
-/// the counter is what `retry_never_re_executes_a_tool_call` asserts
-/// against.
+/// A `ToolExecutor` that always succeeds and counts real invocations — the
+/// counter is what `retry_never_re_executes_a_tool_call` asserts against.
 struct CountingTools {
     calls: Arc<AtomicU32>,
 }
@@ -1414,19 +1413,17 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
 #[tokio::test]
 async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_aborting() {
     // The same empty length-truncated shape as the test above, and the opposite
-    // ending, because the reason for stopping is opposite. Above, the model
+    // ending, because the reason for stopping is opposite: above, the model
     // burned every continuation and still produced nothing — a failure, and the
-    // abort says so. Here the turn simply ran out of wall clock on its FIRST cap
-    // hit, with its whole allowance untouched.
-    //
-    // Both used to return `None` from `plan_continuation` and land on the same
-    // abort. That made `--turn-budget` self-defeating: it exists to stop a turn
-    // before a harness kills it, and a nonzero exit is scored as the agent dying
-    // just as a kill is. Four of the five nonzero exits on a ten-task
-    // Terminal-Bench 2.1 gate were this, each with zero continuations spent.
-    //
-    // A zero budget makes `remaining` zero however fast the step ran, so the
-    // decline is deterministic rather than a race against the test's own clock.
+    // abort says so — while here the turn simply ran out of wall clock on its
+    // FIRST cap hit, allowance untouched. Both used to return `None` from
+    // `plan_continuation` and land on the same abort, which made
+    // `--turn-budget` self-defeating: it exists to stop a turn before a harness
+    // kills it, and a nonzero exit is scored as the agent dying just as a kill
+    // is. Four of the five nonzero exits on a ten-task Terminal-Bench 2.1 gate
+    // were this, each with zero continuations spent. A zero budget makes
+    // `remaining` zero however fast the step ran, so the decline is
+    // deterministic rather than a race against the test's own clock.
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![Ok(empty_result(Some(FinishReason::Length)))]),
@@ -2828,10 +2825,12 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
 }
 
 #[tokio::test]
-async fn session_start_hooks_run_via_the_helper_not_per_turn() {
-    // SessionStart is exposed as an explicit once-per-session helper
-    // (Engine::run_session_start_hooks); run_turn must never fire it, so
-    // a REPL calling run_turn repeatedly does not re-run session setup.
+async fn run_turn_never_fires_session_start_hooks() {
+    // SessionStart is a session-level event and a host obligation (#2674):
+    // the host fires it once, via `hooks::run_hooks`, while assembling the
+    // system prompt. run_turn is per-turn — a REPL calls it many times per
+    // session — so it must never fire SessionStart, or every turn would
+    // re-run session setup.
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![Ok(text_result("hi there"))]),
@@ -2858,12 +2857,6 @@ async fn session_start_hooks_run_via_the_helper_not_per_turn() {
     let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
         .with_hooks(&hooks, &runner);
 
-    // The helper fires SessionStart once and returns its stdout as the
-    // additional system-prompt context.
-    let context = engine.run_session_start_hooks().await;
-    assert_eq!(context.as_deref(), Some("on-call: alice"));
-
-    // A full turn must NOT fire SessionStart a second time.
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -2874,12 +2867,12 @@ async fn session_start_hooks_run_via_the_helper_not_per_turn() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
     let payloads = payloads.lock().await.clone();
-    assert_eq!(
-        payloads.len(),
-        1,
-        "run_turn must not fire SessionStart — only the helper does"
+    assert!(
+        !payloads
+            .iter()
+            .any(|p| p.contains("\"event\":\"SessionStart\"")),
+        "run_turn fired SessionStart — session setup would re-run on every turn"
     );
-    assert!(payloads[0].contains("\"event\":\"SessionStart\""));
 }
 
 #[test]
@@ -3081,7 +3074,9 @@ mod context_efficiency;
 mod lifecycle_bus;
 mod loop_abort;
 mod parked_wait;
+mod provider_outcomes;
 mod steer_midturn;
+mod usage_anchor;
 mod usage_completeness;
 mod zero_copy_request;
 

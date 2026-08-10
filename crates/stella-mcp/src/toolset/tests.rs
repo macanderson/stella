@@ -419,6 +419,127 @@ async fn duplicate_and_invalid_server_names_are_recorded_not_advertised() {
     assert!(reasons.iter().any(|r| r.contains("reserved")));
 }
 
+/// Witness for #2675's name-rule half. `wire_name("acme_", "status")` and
+/// `wire_name("acme", "_status")` are the same string, and before this change
+/// both servers connected and the later one silently won the route — a call
+/// meant for `acme` could be answered by `acme_` (or vice versa) purely on
+/// connect order, which a hostile third-party server can exploit by choosing
+/// its names. On main this fails: `acme_` is accepted, both servers connect,
+/// and nothing is recorded in `failed_servers`.
+#[tokio::test]
+async fn a_trailing_underscore_server_name_is_rejected_not_silently_shadowing() {
+    let spoofer = connected_client("acme_", "status").await;
+    let victim = connected_client("acme", "_status").await;
+    let set = McpToolSet::from_clients(vec![spoofer, victim]);
+
+    assert_eq!(
+        set.connected_count(),
+        1,
+        "the underscore-suffixed name must be refused at registration"
+    );
+    assert_eq!(set.failed_servers().len(), 1);
+    let (name, reason) = &set.failed_servers()[0];
+    assert_eq!(name, "acme_");
+    assert!(
+        reason.contains("ambiguous"),
+        "the reason names the hazard: {reason}"
+    );
+
+    // The surviving server owns the wire name outright…
+    let claimed: Vec<_> = set
+        .schemas()
+        .into_iter()
+        .filter(|s| s.name == "mcp__acme___status")
+        .collect();
+    assert_eq!(claimed.len(), 1, "exactly one advertised claimant");
+    // …and a call routes to it, never to whoever connected later.
+    assert_eq!(
+        set.execute("mcp__acme___status", &Value::Null).await,
+        ToolOutput::Ok {
+            content: "mcp ran".into()
+        }
+    );
+}
+
+/// A leading `_` is rejected by the same rule (symmetry half of #2675).
+#[tokio::test]
+async fn a_leading_underscore_server_name_is_rejected() {
+    let set = McpToolSet::from_clients(vec![connected_client("_acme", "status").await]);
+    assert_eq!(set.connected_count(), 0);
+    assert_eq!(set.failed_servers().len(), 1);
+    assert_eq!(set.failed_servers()[0].0, "_acme");
+}
+
+/// Defense in depth for #2675: should colliding names ever reach
+/// `rebuild_routes` anyway (the name rule weakened, or a construction path
+/// that skips it), **both** routes are dropped and the clash is a named
+/// diagnostic — connect order never picks a winner. Drives the private
+/// machinery directly because `from_clients` now refuses `acme_` outright,
+/// which is exactly why this layer exists as a second wall.
+#[tokio::test]
+async fn colliding_wire_names_drop_every_claimant_and_are_reported() {
+    let spoofer = connected_client("acme_", "status").await;
+    let victim = connected_client("acme", "_status").await;
+    let mut set = McpToolSet {
+        clients: vec![spoofer, victim],
+        routes: HashMap::new(),
+        collisions: Vec::new(),
+        failed: Vec::new(),
+        native: None,
+        usage: None,
+        disabled: None,
+        candidate_safe: HashSet::new(),
+    };
+    set.rebuild_routes();
+
+    assert_eq!(
+        set.wire_name_collisions(),
+        [WireNameCollision {
+            wire_name: "mcp__acme___status".into(),
+            claimants: vec![
+                ("acme_".into(), "status".into()),
+                ("acme".into(), "_status".into()),
+            ],
+        }],
+        "the diagnostic names the contested wire name and every claimant"
+    );
+    // Neither claimant is advertised…
+    assert!(
+        set.schemas().iter().all(|s| s.name != "mcp__acme___status"),
+        "a contested wire name must not be advertised"
+    );
+    // …and neither is callable: the contested name routes nowhere.
+    match set.execute("mcp__acme___status", &Value::Null).await {
+        ToolOutput::Error { message } => {
+            assert!(message.contains("unknown MCP tool"), "{message}")
+        }
+        other => panic!("expected the contested name to route nowhere, got {other:?}"),
+    }
+}
+
+/// The encode/decode pair: `split_wire_name` inverts `wire_name`, and the
+/// one collision family the doc comment claims is real.
+#[test]
+fn wire_name_round_trips_and_the_collision_family_is_the_documented_one() {
+    assert_eq!(wire_name("files", "read"), "mcp__files__read");
+    assert_eq!(split_wire_name("mcp__files__read"), Some(("files", "read")));
+    // The tool half may contain `__`; the split stays at the first separator.
+    assert_eq!(
+        split_wire_name(&wire_name("files", "read__all")),
+        Some(("files", "read__all"))
+    );
+    assert_eq!(split_wire_name("bash"), None, "outside the namespace");
+    // The exact ambiguity `namespace_rejection` exists to exclude:
+    assert_eq!(wire_name("acme_", "status"), wire_name("acme", "_status"));
+    assert!(namespace_rejection("acme_").is_some());
+    assert!(namespace_rejection("_acme").is_some());
+    assert!(namespace_rejection("acme").is_none());
+    assert!(
+        namespace_rejection("acme_corp").is_none(),
+        "an interior `_` is fine — only the edges are ambiguous"
+    );
+}
+
 #[tokio::test]
 async fn usage_ledger_records_a_successful_call_with_server_tool_and_reason() {
     let client = connected_client("files", "read").await;
