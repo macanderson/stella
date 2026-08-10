@@ -27,6 +27,23 @@
 //! was, a user edit or a candidate that wrote outside its snapshot (see
 //! [`adopt::PathDivergence`]).
 //!
+//! # What isolation does NOT cover: the ref namespace (#2541)
+//!
+//! A shadow worktree isolates the working **tree**, not the **ref**
+//! namespace: it shares one `.git` with the graded tree, so `refs/heads/*`,
+//! `refs/tags/*` and `refs/stash` are the same objects the user's checkout
+//! reads. Git's own interlock refuses to check out a branch another worktree
+//! holds, but a worker can defeat it (`git checkout
+//! --ignore-other-worktrees`) and then move the graded tree's branch out from
+//! under its index. Two guards close the observed hole, both on the seal:
+//! [`ref_escape::detach_head`] re-detaches a `HEAD` the worker attached, so a
+//! machinery commit — witness scaffolding included — can never land in a
+//! history the user keeps; and [`GitCandidateWorkspace::escaped_refs_inner`]
+//! refuses to seal a candidate whose work has reached a shared ref, naming
+//! what moved and how to put it back. Detection and refusal, not repair:
+//! nothing here writes to the real repository. The structural fix — a
+//! substrate that cannot reach those refs at all — is #1383.
+//!
 //! # What a candidate's engine can reach
 //!
 //! Candidates drive the built-in [`stella_tools::ToolRegistry`] PLUS the session's custom
@@ -75,7 +92,7 @@
 //! `InteractiveToolSet` in a candidate's stack for either MCP phase to
 //! reintroduce it through.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -97,6 +114,7 @@ use crate::agent::{
 
 mod adopt;
 mod escape;
+mod ref_escape;
 mod snapshot_gaps;
 mod task_events;
 mod witness_tools;
@@ -345,6 +363,9 @@ impl GitCandidateWorkspaces {
         let dir_str = dir
             .to_str()
             .ok_or_else(|| snap("temp dir path is not valid UTF-8".to_string()))?;
+        // The ref namespace this candidate is about to share with the graded
+        // tree, recorded before it can move (#2541) — see [`ref_escape`].
+        let refs_at_create = ref_escape::shared_refs(&toplevel).await;
         git(&toplevel, &["worktree", "add", "--detach", dir_str, &head])
             .await
             .map_err(snap)?;
@@ -429,6 +450,7 @@ impl GitCandidateWorkspaces {
                     dir: dir.clone(),
                     root: ws_root.display().to_string(),
                     baseline,
+                    refs_at_create,
                     sealed: Mutex::new(None),
                     tools,
                     witness_tools,
@@ -640,6 +662,11 @@ pub(crate) struct GitCandidateWorkspace {
     root: String,
     /// Immutable baseline commit representing the session tree at creation.
     baseline: String,
+    /// The real repository's refs, and their values, as of this candidate's
+    /// creation. A candidate worktree shares `.git` with the graded tree, so
+    /// this is the only record of what the shared ref namespace looked like
+    /// before the worker could reach it (#2541) — see [`ref_escape`].
+    refs_at_create: BTreeMap<String, String>,
     /// Latest candidate commit whose exact bytes were verified.
     sealed: Mutex<Option<String>>,
     /// The candidate's tool surface: snapshot-rooted registry + custom tools,
@@ -675,6 +702,21 @@ impl GitCandidateWorkspace {
             reason,
             workspace: self.dir.display().to_string(),
         };
+        // #2541: the seal is the moment this candidate's bytes are certified,
+        // so it is also where a candidate that wrote into the GRADED tree's
+        // ref namespace is refused. A worktree isolates files, not refs; the
+        // audit runs before anything else so a candidate that already escaped
+        // never gets a further commit built on top of the damage.
+        let escaped_refs = self.escaped_refs_inner().await;
+        if !escaped_refs.is_empty() {
+            return Err(fail(ref_escape::refusal(&escaped_refs)));
+        }
+        // And the other half: a worker may have attached HEAD to a branch the
+        // user keeps, which would land this machinery commit — witness
+        // scaffolding included — in a history nobody asked to change.
+        // Detaching rewrites HEAD only; the candidate's tree and index are
+        // exactly as the worker left them.
+        ref_escape::detach_head(&self.dir).await.map_err(fail)?;
         git(&self.dir, &["add", "-A"]).await.map_err(fail)?;
         let mut commit_args: Vec<&str> = SNAPSHOT_IDENT.to_vec();
         commit_args.extend([
