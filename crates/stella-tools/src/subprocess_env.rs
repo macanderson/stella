@@ -181,8 +181,8 @@ pub const GITHUB_CLI_AUTH_ENV_VARS: &[&str] = &[
 
 static REGISTERED_CREDENTIAL_ENV_VARS: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
 
-/// Thread-local storage for the session scratch directory path. Each session
-/// runs in one thread, so this is safe.
+// Thread-local storage for the session scratch directory path. Each session
+// runs in one thread, so this is safe.
 thread_local! {
     static SCRATCH_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
 }

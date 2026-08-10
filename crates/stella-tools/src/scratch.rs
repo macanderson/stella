@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -52,7 +52,9 @@ pub struct ScratchDir {
 impl ScratchDir {
     /// Create the session scratch directory in the OS temp root.
     pub fn new() -> std::io::Result<Self> {
-        Ok(Self { dir: tempfile::TempDir::with_prefix("stella-scratch-")? })
+        Ok(Self {
+            dir: tempfile::TempDir::with_prefix("stella-scratch-")?,
+        })
     }
 
     /// The directory path, for the `STELLA_SCRATCH` export.
@@ -108,6 +110,7 @@ impl Tool for SaveState {
                 "required": ["key", "content"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -134,7 +137,9 @@ impl Tool for SaveState {
             Ok(()) => ToolOutput::Ok {
                 content: format!("saved {key} ({} bytes)", content.len()),
             },
-            Err(e) => ToolOutput::Error { message: format!("failed to save {key}: {e}") },
+            Err(e) => ToolOutput::Error {
+                message: format!("failed to save {key}: {e}"),
+            },
         }
     }
 }
@@ -162,6 +167,7 @@ impl Tool for GetState {
                 "required": ["key"]
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -185,12 +191,14 @@ impl Tool for GetState {
             Err(_) => {
                 return ToolOutput::Error {
                     message: format!("no state saved under {key:?} — list_state shows what exists"),
-                }
+                };
             }
         };
         let total = file.metadata().map(|m| m.len()).unwrap_or(0);
         if let Err(e) = file.seek(SeekFrom::Start(offset)) {
-            return ToolOutput::Error { message: format!("seek failed on {key}: {e}") };
+            return ToolOutput::Error {
+                message: format!("seek failed on {key}: {e}"),
+            };
         }
         let mut buf = vec![0u8; limit];
         let mut read = 0usize;
@@ -198,7 +206,11 @@ impl Tool for GetState {
             match file.read(&mut buf[read..]) {
                 Ok(0) => break,
                 Ok(n) => read += n,
-                Err(e) => return ToolOutput::Error { message: format!("read failed on {key}: {e}") },
+                Err(e) => {
+                    return ToolOutput::Error {
+                        message: format!("read failed on {key}: {e}"),
+                    };
+                }
             }
             if read == buf.len() {
                 break;
@@ -208,11 +220,16 @@ impl Tool for GetState {
         let body = String::from_utf8_lossy(&buf);
         let end = offset + read as u64;
         let header = if end < total {
-            format!("[{key}: bytes {offset}..{end} of {total}; {} remain]\n", total - end)
+            format!(
+                "[{key}: bytes {offset}..{end} of {total}; {} remain]\n",
+                total - end
+            )
         } else {
             format!("[{key}: bytes {offset}..{end} of {total}; end]\n")
         };
-        ToolOutput::Ok { content: format!("{header}{body}") }
+        ToolOutput::Ok {
+            content: format!("{header}{body}"),
+        }
     }
 }
 
@@ -230,6 +247,7 @@ impl Tool for ListState {
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -237,7 +255,11 @@ impl Tool for ListState {
         let mut rows = Vec::new();
         let entries = match std::fs::read_dir(self.0.path()) {
             Ok(e) => e,
-            Err(e) => return ToolOutput::Error { message: format!("scratch dir unreadable: {e}") },
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("scratch dir unreadable: {e}"),
+                };
+            }
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -246,9 +268,13 @@ impl Tool for ListState {
         }
         rows.sort();
         if rows.is_empty() {
-            return ToolOutput::Ok { content: "no scratch state saved this session".into() };
+            return ToolOutput::Ok {
+                content: "no scratch state saved this session".into(),
+            };
         }
-        ToolOutput::Ok { content: rows.join("\n") }
+        ToolOutput::Ok {
+            content: rows.join("\n"),
+        }
     }
 }
 
@@ -271,6 +297,7 @@ impl Tool for DeleteState {
                 "required": ["key"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -284,7 +311,9 @@ impl Tool for DeleteState {
             Err(message) => return ToolOutput::Error { message },
         };
         match std::fs::remove_file(&path) {
-            Ok(()) => ToolOutput::Ok { content: format!("deleted {key}") },
+            Ok(()) => ToolOutput::Ok {
+                content: format!("deleted {key}"),
+            },
             Err(_) => ToolOutput::Error {
                 message: format!("no state saved under {key:?} — nothing deleted"),
             },
