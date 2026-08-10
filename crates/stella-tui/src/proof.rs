@@ -264,12 +264,16 @@ pub struct ProofState {
     /// Outranks the verdict: a turn nothing could observe must not read
     /// `proved` just because nothing failed it either.
     pub unverifiable: Option<String>,
-    /// Set when verification ran and did not prove the turn — the ladder's
-    /// `Unverified` rung. Outranks the verdict on the rail for the same
-    /// reason [`Self::unverifiable`] does, and is a separate field from it
-    /// because the two imply opposite repairs: that one says the probes were
-    /// blind (fix the probes), this one says they worked and the evidence
-    /// fell short (produce the missing observation).
+    /// Set when verification RAN and did not prove the turn — the ladder's
+    /// `Unverified` rung, which is where inconclusive evidence now comes to
+    /// rest instead of buying a model's opinion.
+    ///
+    /// A separate channel from [`Self::unverifiable`] rather than a shade of
+    /// it, for the reason that one exists: "no probe could look" and "the
+    /// probes looked and it was not enough" imply opposite repairs — fix the
+    /// instrument, versus produce the missing observation. They land on
+    /// different standings for the same reason ([`Standing::CouldNotCheck`] vs
+    /// [`Standing::NotProved`]).
     pub unproven: Option<String>,
     /// The witness-tamper check's stated result, from the verdict's ladder
     /// snapshot: `Some(true)` = every witness artifact matched its pinned
@@ -288,18 +292,12 @@ pub struct ProofState {
 }
 
 impl ProofState {
-    /// Nothing observed yet — the rail stays hidden rather than showing five
-    /// rows of dashes on a turn that never reaches verification (a greeting, a
-    /// cancelled turn before triage answered).
-    pub fn is_empty(&self) -> bool {
-        self.assurance.is_none()
-            && self.warrant.is_none()
-            && self.witness.is_none()
-            && self.verdict.is_none()
-            && self.unverifiable.is_none()
-            && self.unproven.is_none()
-            && self.flip == Flip::default()
-    }
+    // There is deliberately no `is_empty`. One existed, for surfaces that would
+    // rather hide than show a panel about a turn that never reaches
+    // verification — and it had no callers, because the panel became
+    // unconditional and "nothing observed yet" now has a word of its own
+    // (`checking`). A predicate whose only remaining purpose is to be available
+    // is a second answer to a question this module already answers once.
 
     /// The turn ended. Anything still in flight becomes *never reported* — a
     /// statement, where a spinner would be a promise the turn cannot keep.
@@ -406,42 +404,16 @@ impl ProofState {
 
     /// Where the proof stands, in one word.
     ///
-    /// The rail used to claim seven rows the moment [`ProofStep::Assurance`]
-    /// landed — which is the *first* step triage emits, before any work exists.
-    /// On the most common turn by far (triage waives the witness) that bought
-    /// five rows of dashes and two of border to say *nothing was owed here*,
-    /// for the whole turn, in the space the transcript needed. Relevance, not
-    /// existence, is what should raise a panel.
-    ///
-    /// The test is deliberately the *same tone scan* the border already does
-    /// (`views::proof::border_style`), so "the frame is warning" and "the rail
-    /// is up" cannot disagree — one predicate, two consumers. The single
-    /// exception is `bought_nothing`: a turn that purchased no
-    /// assurance and received none has nothing to report, and must not promote
-    /// itself on the *absence* of a report it was never owed.
-    pub fn is_notable(&self) -> bool {
-        if self.bought_nothing() {
-            return false;
+    /// Every row resolves: `checking` and `proving` only while the turn runs,
+    /// and never once [`Self::finish`] has been called — see the module docs.
+    pub fn standing(&self) -> Standing {
+        let live = self.live_standing();
+        // The invariant, in one branch over the whole state machine: a turn
+        // that has ended cannot still be working on it.
+        if self.finished && !live.is_settled() {
+            return Standing::NeverReported;
         }
-        self.rows()
-            .iter()
-            .any(|r| matches!(r.tone, Tone::Warn | Tone::Error))
-    }
-
-    /// Triage declared this turn buys neither a witness nor a verifier, *and*
-    /// nothing arrived regardless.
-    ///
-    /// Both halves are load-bearing. The first alone would let a turn that
-    /// bought nothing but then failed a verdict anyway suppress the failure;
-    /// requiring that every channel is also empty means anything that actually
-    /// happened is still judged on its own tones.
-    fn bought_nothing(&self) -> bool {
-        self.assurance.is_some_and(|a| !a.witness && !a.verifier)
-            && self.witness.is_none()
-            && self.verdict.is_none()
-            && self.unverifiable.is_none()
-            && self.unproven.is_none()
-            && self.flip == Flip::default()
+        live
     }
 
     /// The plain sentences behind [`Self::standing`], most important first.
@@ -483,6 +455,12 @@ impl ProofState {
         if self.unverifiable.is_some() {
             return Standing::CouldNotCheck;
         }
+        // Verification ran and did not settle it. Checked here for exactly the
+        // reason above: this turn also closes with `passed: true` — an unproven
+        // run is not a failed one — so the verdict alone would read `proved`.
+        if self.unproven.is_some() {
+            return Standing::NotProved;
+        }
         // The worker edited the very test meant to judge it. Outranks
         // everything below including a green flip, because a flip observed on a
         // tampered artifact is not evidence at all.
@@ -494,9 +472,6 @@ impl ProofState {
         // most dangerous value in the type to fall through to `Proved`.
         if self.witness_intact == Some(false) {
             return Standing::NotProved;
-        }
-        if let Some(reason) = &self.unproven {
-            return ProofRow::new("proof", format!("unproven · {reason}"), Tone::Warn);
         }
         if matches!(self.witness, Some(WitnessStanding::Unavailable { .. })) {
             return Standing::NotProved;
@@ -552,6 +527,7 @@ impl ProofState {
             && self.witness.is_none()
             && self.verdict.is_none()
             && self.unverifiable.is_none()
+            && self.unproven.is_none()
             && self.flip == Flip::default()
     }
 
@@ -629,6 +605,9 @@ impl ProofState {
         if self.flip.candidate_passed == Some(false) {
             return "the test still fails with this change".into();
         }
+        if self.unproven.is_some() && self.flip.command.is_none() {
+            return "no test was run that could have proven this change".into();
+        }
         "the test passes, but it was never run without the change".into()
     }
 
@@ -645,68 +624,12 @@ impl ProofState {
         lines
     }
 
-    fn tamper_row(&self) -> ProofRow {
-        match &self.witness {
-            Some(WitnessStanding::Authored { fingerprint, .. }) => ProofRow::new(
-                "tamper",
-                format!("pinned  {}", short(fingerprint)),
-                Tone::Muted,
-            ),
-            // No artifact means nothing to pin, which is a complete answer —
-            // not a missing one.
-            _ if self.triage_waived_the_witness() || self.warrant_says_not_required() => {
-                ProofRow::new("tamper", "— no artifact to pin", Tone::Muted)
-            }
-            Some(WitnessStanding::Unavailable { .. }) => {
-                ProofRow::new("tamper", "— no artifact to pin", Tone::Muted)
-            }
-            _ => self.unanswered("tamper"),
-        }
-    }
-
-    fn verdict_row(&self) -> ProofRow {
-        // Checked before the verdict, because the pipeline emits BOTH: an
-        // abstention still closes the turn with a `Verdict` (the event
-        // that carries the evidence), and that verdict is `passed: true` —
-        // a run is not failed by the absence of a way to check it. Read off
-        // `verdict` alone the rail would say `✓ passed`, which is the exact
-        // conflation of "nothing objected" with "something was proven" that
-        // this rung exists to break.
-        if let Some(reason) = &self.unverifiable {
-            return ProofRow::new("verdict", format!("unverifiable · {reason}"), Tone::Warn);
-        }
-        if let Some(reason) = &self.unproven {
-            return ProofRow::new("verdict", format!("unproven · {reason}"), Tone::Warn);
-        }
-        match &self.verdict {
-            // A turn can end without a verdict — cancelled, aborted on budget,
-            // a lookup that verified nothing. The rail says which of "no
-            // verdict yet" and "no verdict, ever" applies.
-            None if self.finished => ProofRow::new(
-                "verdict",
-                "none — the turn ended unverified".to_string(),
-                Tone::Warn,
-            ),
-            None => self.unanswered("verdict"),
-            Some(v) => ProofRow::new(
-                "verdict",
-                format!(
-                    "{} · {}",
-                    if v.passed { "✓ passed" } else { "✗ failed" },
-                    if v.deterministic {
-                        "deterministic"
-                    } else {
-                        "model verifier"
-                    }
-                ),
-                match (v.passed, v.deterministic) {
-                    (true, true) => Tone::Success,
-                    // A pass nobody checked deterministically is not the same
-                    // colour as a proven one.
-                    (true, false) => Tone::Info,
-                    (false, _) => Tone::Error,
-                },
-            ),
+    fn accepted_because(&self) -> Vec<String> {
+        let mut lines = vec!["a model reviewed this change — no test ran".to_string()];
+        if let Some(v) = &self.verdict
+            && !v.summary.is_empty()
+        {
+            lines.push(v.summary.clone());
         }
         lines
     }
