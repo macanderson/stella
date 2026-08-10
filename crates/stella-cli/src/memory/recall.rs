@@ -74,15 +74,39 @@ impl SessionMemory {
     /// names. `None` when nothing applies — an empty section would only burn
     /// tokens (the channel is opt-out by emptiness, not by flag).
     fn turn_record_section(&self, prompt: &str) -> Option<String> {
+        self.turn_record_section_reporting(prompt, |message| {
+            eprintln!("  {} {message}", "!".yellow())
+        })
+    }
+
+    /// [`Self::turn_record_section`] with an injectable diagnostic sink, the
+    /// same split as [`Self::recalled_frames_reporting`] and for the same
+    /// reason: the eviction report must be testable without capturing global
+    /// stderr. A record reported here MATCHED this turn's facts — the
+    /// selector chose it and the budget evicted it — which is the coverage
+    /// gap #2709 requires to be observable rather than silent: a scoped rule
+    /// that systematically loses its seat looks exactly like a rule that
+    /// never applied, unless someone says otherwise.
+    fn turn_record_section_reporting(
+        &self,
+        prompt: &str,
+        mut report: impl FnMut(String),
+    ) -> Option<String> {
         let registry = self.record_registry.as_ref()?;
         let paths = turn_path_tokens(prompt);
         let facts = stella_core::records::TurnFacts {
             text: prompt,
             paths: &paths,
         };
-        let text = registry
-            .render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET))
-            .text;
+        let rendered = registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET));
+        for handle in &rendered.dropped {
+            report(format!(
+                "a record applying to this turn did not fit the {RECORD_CHANNEL_BUDGET}-char \
+                 record budget: ^{handle} — raise its precedence, or trim the records that \
+                 outrank it"
+            ));
+        }
+        let text = rendered.text;
         (!text.trim().is_empty()).then(|| text.trim_start().to_string())
     }
 

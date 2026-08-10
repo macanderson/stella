@@ -69,6 +69,18 @@ use super::sweep::Disposition;
 /// that made grouping by force worth doing.
 const CACHED_HEADING: &str = "\n## Workspace rules (cite the ^handle of any you apply)";
 
+/// The default budget for the cached record channel, in characters (#2709).
+///
+/// One constant, consumed by BOTH the prompt assembler (which caps the
+/// `## Workspace rules` block it bakes into the prefix) and the ingest-time
+/// pinned-footprint diagnostic (which warns when an ingest's pinned records
+/// cannot all fit) — a second copy of this number is how the warning and the
+/// truncation would drift apart. Sized to match the workspace-memory budget
+/// that shares the same prefix: generous enough that no real record set has
+/// hit it, small enough that a runaway ingest cannot flood every future
+/// prompt.
+pub const CACHED_RECORD_BUDGET_CHARS: usize = 16_000;
+
 /// Which of the two prompt channels a record renders into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
@@ -116,15 +128,24 @@ pub struct RenderedChannel {
 
 /// Which channel a record renders into, or `None` when it does not render at all.
 ///
-/// A sweep demotion outranks the declared force: a record whose freshness is in
-/// question cannot sit in a block that must stay byte-identical, because the reason
-/// it was demoted is per-turn information even when the renderer declines to print
-/// it.
-pub fn channel_of(force: Force, disposition: &Disposition) -> Option<Channel> {
+/// The promotion tier decides (#2709): `pinned` rides the cached prefix,
+/// `scoped` and `retrieved` ride the volatile block. A record with no explicit
+/// tier derives one from `force` + `applies_to` ([`Record::tier`][t]), which
+/// reproduces the pre-tier contract exactly — `must`/`should` cached,
+/// `may`/`info` volatile.
+///
+/// A sweep demotion outranks the tier, exactly as it outranked the declared
+/// force: a record whose freshness is in question cannot sit in a block that
+/// must stay byte-identical, because the reason it was demoted is per-turn
+/// information even when the renderer declines to print it. A stale-demoted
+/// pinned record therefore never enters the stable prefix.
+///
+/// [t]: super::super::ingest::record::Record::tier
+pub fn channel_of(tier: Tier, disposition: &Disposition) -> Option<Channel> {
     if !disposition.is_selected() {
         return None;
     }
-    if disposition.forces_volatile() || !force.is_always_injected() {
+    if disposition.forces_volatile() || tier != Tier::Pinned {
         return Some(Channel::Volatile);
     }
     Some(Channel::Cached)
@@ -169,12 +190,7 @@ pub fn render_channel(
 ) -> RenderedChannel {
     let mine: Vec<&RenderInput<'_>> = inputs
         .iter()
-        .filter(|input| {
-            channel_of(
-                effective_force(input.record, input.disposition),
-                input.disposition,
-            ) == Some(channel)
-        })
+        .filter(|input| channel_of(input.record.record.tier(), input.disposition) == Some(channel))
         .collect();
     if mine.is_empty() {
         return RenderedChannel::default();
@@ -197,11 +213,19 @@ fn render_cached(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> Re
         text: CACHED_HEADING.to_string(),
         ..RenderedChannel::default()
     };
-    for (force, heading) in [(Force::Must, "### Must"), (Force::Should, "### Should")] {
+    for (forces, heading) in [
+        (&[Force::Must][..], "### Must"),
+        (&[Force::Should][..], "### Should"),
+        // Explicitly-pinned records below `should` strength (#2709). Only an
+        // explicit `tier = "pinned"` can put a `may`/`info` record in this
+        // channel, so the heading never appears for a pre-tier record set and
+        // every existing prompt keeps its exact bytes.
+        (&[Force::May, Force::Info][..], "### Pinned"),
+    ] {
         let group: Vec<&RenderInput<'_>> = inputs
             .iter()
             .copied()
-            .filter(|input| effective_force(input.record, input.disposition) == force)
+            .filter(|input| forces.contains(&effective_force(input.record, input.disposition)))
             .collect();
         if group.is_empty() {
             continue;

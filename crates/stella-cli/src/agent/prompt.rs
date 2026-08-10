@@ -349,13 +349,33 @@ pub(crate) fn assemble_system_prompt(
     // construction — the truth sweep already demoted or dropped anything whose
     // freshness is in question, so no clock and no per-turn text enters here
     // (docs/spec/adaptive-context/context-record-examples/07-agent-projection.md).
-    let rules_section = active_rules
-        .registry()
-        .render(stella_core::records::Channel::Cached, None)
-        .text;
-    if !rules_section.is_empty() {
+    let rules_section = active_rules.registry().render(
+        stella_core::records::Channel::Cached,
+        // Capped since #2709: a pinned record is guaranteed a prefix seat
+        // only while the set fits, and a runaway ingest must not flood every
+        // future prompt. No real record set has approached this budget.
+        Some(stella_core::records::CACHED_RECORD_BUDGET_CHARS),
+    );
+    if !rules_section.text.is_empty() {
         prompt.push('\n');
-        prompt.push_str(&rules_section);
+        prompt.push_str(&rules_section.text);
+    }
+    // Overflow is named, never silent — the same contract the memory budget
+    // above keeps, and the render-time half of the ingest-time pinned-overflow
+    // diagnostic. Deterministic for a given record set (the drop list comes
+    // from the same stable render), so the prefix stays byte-stable (L-E8).
+    if !rules_section.dropped.is_empty() {
+        let handles: Vec<String> = rules_section
+            .dropped
+            .iter()
+            .map(|handle| format!("^{handle}"))
+            .collect();
+        prompt.push_str(&format!(
+            "\n({} pinned record(s) exceeded the prefix budget and were omitted: {} — \
+             retier or trim them via `stella context review`)",
+            rules_section.dropped.len(),
+            handles.join(" ")
+        ));
     }
     prompt
 }
