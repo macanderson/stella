@@ -414,9 +414,7 @@ fn every_web_surface_carries_the_instrument_scale() {
         // A stated preference for less motion wins on every surface. All four
         // are pages people watch while a run is in flight.
         if !text.contains("prefers-reduced-motion") {
-            missing.push(format!(
-                "{file}: does not honour `prefers-reduced-motion`."
-            ));
+            missing.push(format!("{file}: does not honour `prefers-reduced-motion`."));
         }
     }
 
@@ -490,7 +488,9 @@ fn no_web_surface_ships_a_rounded_corner() {
         let text = without_comments(&read(file));
         for (index, _) in text.match_indices("border-radius") {
             let rest = &text[index..];
-            let Some(colon) = rest.find(':') else { continue };
+            let Some(colon) = rest.find(':') else {
+                continue;
+            };
             let value = rest[colon + 1..]
                 .split([';', '\n', '}'])
                 .next()
@@ -502,9 +502,9 @@ fn no_web_surface_ships_a_rounded_corner() {
             // the tree that uses it is `0 var(--radius-sm) var(--radius-sm) 0`,
             // which is square in all four corners and which a whole-value
             // comparison reads as rounded.
-            let square = value.split_whitespace().all(|part| {
-                part == "0" || part.starts_with("var(--radius")
-            });
+            let square = value
+                .split_whitespace()
+                .all(|part| part == "0" || part.starts_with("var(--radius"));
             if !square {
                 let line = text[..index].matches('\n').count() + 1;
                 rounded.push(format!("{file}:{line}: `border-radius: {value}`"));
