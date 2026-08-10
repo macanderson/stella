@@ -6,7 +6,11 @@
 //! Same endpoint, same payload, `stream: false`: the response is one JSON
 //! `chat.completion` object instead of an SSE body, dispatched through the
 //! [`crate::http::unary_client`] read bound (the whole generation must fit
-//! inside a single read — #547). Assembly reuses [`super::stream`]'s shared
+//! inside a single read — #547) with #547's classification to match: a
+//! unary read-timeout consumed the whole bound and re-issuing the identical
+//! request just waits it out again, so it surfaces as non-retryable
+//! `Terminal`, never as the retryable `Transport` that turned one wedged
+//! Bedrock call into four full 600s attempts. Assembly reuses [`super::stream`]'s shared
 //! rules verbatim, so the two paths cannot disagree on argument-JSON repair,
 //! the reasoning-only promotion, usage folding, or the finish reason. The
 //! price of this path is the loss of mid-stream observation: no text/
@@ -90,7 +94,7 @@ impl ZaiProvider {
     ) -> Result<CompletionResult, ProviderError> {
         let body = self.build_body(req, force_default_reasoning, false);
         let outcome = async {
-            let response = self.dispatch(&self.unary_client, &body).await?;
+            let response = self.dispatch(&self.unary_client, &body, true).await?;
             let payload = response
                 .text()
                 .await

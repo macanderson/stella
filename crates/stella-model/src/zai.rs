@@ -1082,7 +1082,7 @@ impl ZaiProvider {
                 .await;
         }
         let body = self.build_body(req, force_default_reasoning, true);
-        let response = self.dispatch(&self.client, &body).await?;
+        let response = self.dispatch(&self.client, &body, false).await?;
         let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
             stream::aggregate_zai_stream(
                 response,
@@ -1214,12 +1214,22 @@ impl ZaiProvider {
 
     /// POST `body` and run the shared non-success ladder (vendor 429
     /// pre-check first). Returns the successful response for the caller —
-    /// streaming or unary — to consume. The two delivery paths differ only
-    /// in their client's read bound, so `client` is a parameter.
+    /// streaming or unary — to consume. The two delivery paths differ in
+    /// their client's read bound AND in what that bound's expiry means, so
+    /// both ride as parameters.
+    ///
+    /// `unary` selects the send-error classification (#547's other half): on
+    /// the unary client the read bound covers the ENTIRE generation, so its
+    /// expiry means the request was too long to serve — Terminal, because
+    /// re-issuing the identical request just waits out the full bound again
+    /// once per retry. On the streaming client the same expiry is only a
+    /// header stall (the first token would have reset the clock), which the
+    /// next attempt may well clear — retryable, as it always was.
     async fn dispatch(
         &self,
         client: &reqwest::Client,
         body: &ZaiRequest<'_>,
+        unary: bool,
     ) -> Result<reqwest::Response, ProviderError> {
         let mut request = client
             .post(format!("{}/chat/completions", self.base_url))
@@ -1227,11 +1237,13 @@ impl ZaiProvider {
         for (name, value) in &self.extra_headers {
             request = request.header(*name, value);
         }
-        let response = request
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::transport(e.to_string()))?;
+        let response = request.json(body).send().await.map_err(|e| {
+            if unary {
+                http::classify_unary_dispatch_error(&self.label, &e)
+            } else {
+                ProviderError::transport(e.to_string())
+            }
+        })?;
 
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             // Vendor pre-check ahead of the shared ladder — Z.ai overloads

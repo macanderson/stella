@@ -250,6 +250,61 @@ async fn a_stream_that_died_after_content_is_retried_as_a_stream_not_unary() {
     }
 }
 
+/// #547's other half, applied to the fallback path: on the unary client the
+/// read bound covers the ENTIRE generation, so its expiry means the request
+/// was too long to serve — re-issuing it identically just waits out the full
+/// bound again once per retry (the exact storm #547 documented on Bedrock).
+/// The unary dispatch must classify a read-timeout as non-retryable
+/// `Terminal`, while the SAME expiry on the streaming dispatch stays
+/// retryable (there it is only a header stall the next attempt may clear).
+/// Exercised in milliseconds by handing `dispatch` a client with a tiny read
+/// bound against a server that accepts and then stalls.
+#[tokio::test]
+async fn a_unary_read_timeout_is_terminal_never_a_retry_storm() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        // Accept, then hold the response — the stalled-generation shape,
+        // compressed so the test costs milliseconds instead of 600s.
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+        .mount(&server)
+        .await;
+
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+    let stalled_client = reqwest::Client::builder()
+        .read_timeout(Duration::from_millis(50))
+        .build()
+        .expect("client builds");
+    let request = plain_request();
+    let body = provider.build_body(request.as_borrowed(), false, false);
+
+    let error = provider
+        .dispatch(&stalled_client, &body, true)
+        .await
+        .expect_err("the stalled unary dispatch must time out");
+    assert!(
+        matches!(error, ProviderError::Terminal(_)),
+        "a unary read timeout must be Terminal, got {error:?}"
+    );
+    assert!(
+        !error.is_retryable(),
+        "a retryable unary read timeout re-issues the identical too-long \
+         request until the budget dies (#547): {error:?}"
+    );
+
+    // The converse, so the fix cannot over-reach: the same expiry on the
+    // STREAMING dispatch is a header stall and stays retryable.
+    let error = provider
+        .dispatch(&stalled_client, &body, false)
+        .await
+        .expect_err("the stalled streaming dispatch must time out");
+    assert!(
+        error.is_retryable(),
+        "a streaming header stall generated nothing and must stay retryable: {error:?}"
+    );
+}
+
 /// A probe that fails reverts the latch: when the unary retry ALSO fails,
 /// the fault evidently wasn't the streaming path's, and the session must
 /// not stay pinned to a transport it has no evidence for. The wire
