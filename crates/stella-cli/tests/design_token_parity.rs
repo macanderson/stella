@@ -1,25 +1,35 @@
 //! The web instrument surfaces carry one palette, and this test is what makes
 //! that true rather than merely intended.
 //!
-//! Three files describe the same instrument design system in three vocabularies:
+//! Four files describe the same instrument design system in three vocabularies:
 //!
 //! | file | names it uses |
 //! |---|---|
 //! | `crates/stella-observatory/src/assets/index.html` | `--ground` `--text-2` `--accent` |
+//! | `crates/stella-cli/src/export.rs` | the same (adopted deliberately) |
 //! | `arenabench/ui/app/globals.css` | `--background` `--muted` `--accent` |
 //! | `arenabench/web/app/globals.css` | `--bg` `--dim` `--accent` |
 //!
 //! The Observatory's delimited palette block is the single definition; the
-//! other two are derivations. Until this test existed the contract was a
+//! other three are derivations. Until this test existed the contract was a
 //! sentence in a comment — "a value that differs between them is a bug in
 //! whichever moved last" — which is a description of drift, not a defence
-//! against it.
+//! against it, and the export dashboard had already drifted two whole
+//! recolours behind while nothing failed.
 //!
-//! The standalone `/export` document is deliberately outside this matrix.
-//! Unlike the live instrument surfaces, it follows the transcript reference's
-//! compact row grammar and derives its dark palette from `stella_tui::theme`.
-//! Its own tests enforce that derivation and ensure every referenced custom
-//! property is defined.
+//! `/export` was briefly dropped from this matrix (#2614), on the stated
+//! ground that it "derives its dark palette from `stella_tui::theme`". That
+//! was true of #2606's file and is not true of the one shipping: the same
+//! commit that dropped it also removed `dark_tokens()` entirely and wrote the
+//! instrument palette into `:root` literally. So the row is restored, and it
+//! passed on the very commit that removed it — nothing had to change in
+//! `export.rs` to put it back. Dropping a row is how the drift that motivated
+//! this file happens: the dashboard is a standalone artifact users mail
+//! around, it cannot be eyeballed beside the Observatory, and it is the copy
+//! of the product most readers ever see.
+//!
+//! Its *grammar* is genuinely its own — the compact transcript row, the tabs —
+//! and nothing here constrains that. This matrix is about colour values only.
 //!
 //! Why a test and not a `make gate` step: a gate step is five coupled edits
 //! (`GATE_STEPS`, the AGENTS.md block, the CONTRIBUTING.md block, the script,
@@ -29,9 +39,11 @@
 //! `crates/stella-model/src/provider_parity.rs`, which enforces invariant #8
 //! the same way: a matrix, checked from both sides, in a plain test.
 //!
-//! Why it lives in `stella-cli`: this is a workspace-level integration test
-//! that reads all three files as text rather than linking any of them. It
-//! needs no crate `stella-cli` does not already have.
+//! Why it lives in `stella-cli`: the export dashboard is the surface that
+//! drifted, `stella-cli` is a binary crate with no `lib.rs` (so an in-crate
+//! test cannot be imported from elsewhere), and this test reads all four files
+//! as text rather than linking any of them. It needs no crate it does not
+//! already have.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -150,6 +162,22 @@ struct Surface {
 
 fn surfaces() -> Vec<Surface> {
     vec![
+        Surface {
+            file: "crates/stella-cli/src/export.rs",
+            dark: (":root {{", "  }}"),
+            light: (r#":root[data-theme="light"] {{"#, "  }}"),
+            names: &[
+                ("ground", "--ground"),
+                ("surface", "--surface"),
+                ("text", "--text"),
+                ("text-2", "--text-2"),
+                ("text-3", "--text-3"),
+                ("ok", "--ok"),
+                ("bad", "--bad"),
+                ("warn", "--warn"),
+                ("identity", "--identity"),
+            ],
+        },
         Surface {
             file: "arenabench/ui/app/globals.css",
             dark: (".dark {", "\n}"),
@@ -312,6 +340,243 @@ fn the_auth_landing_pages_use_the_instrument_palette() {
             "auth landing page light `{token}` disagrees with the observatory"
         );
     }
+}
+
+/// The four surfaces carry the Instrument system's craft layer, not only its
+/// colours.
+///
+/// The palette contract above was written first and caught nothing when the
+/// export dashboard was reverted, because a revert does not stop at the hexes:
+/// #2606 restored the pre-design-system stylesheet wholesale and took the mono
+/// stack, the square corners and the wordmark with it. Every one of those is a
+/// visible property of the shipped page and none of them was anybody's
+/// contract, so the only thing that failed was a marker lookup — and it failed
+/// with `marker not found`, which reads as a broken test rather than a
+/// reverted design.
+///
+/// So the properties are asserted directly. Each is one a reader can see, each
+/// has actually regressed, and each is spelled per-surface because the four
+/// files legitimately say the same thing four ways.
+#[test]
+fn every_web_surface_carries_the_instrument_scale() {
+    // `(file, how this file names the face, how it pins the corner)`.
+    let surfaces: [(&str, &str, &str); 4] = [
+        (
+            "crates/stella-observatory/src/assets/index.html",
+            "\"JetBrains Mono\"",
+            "--radius:0",
+        ),
+        (
+            "crates/stella-cli/src/export.rs",
+            "\"JetBrains Mono\"",
+            "--radius: 0",
+        ),
+        (
+            "arenabench/ui/app/globals.css",
+            "\"JetBrains Mono\"",
+            "--radius-sm: 0",
+        ),
+        (
+            "arenabench/web/app/globals.css",
+            "\"JetBrains Mono\"",
+            "border-radius: 0",
+        ),
+    ];
+
+    let mut missing = Vec::new();
+    for (file, face, corner) in surfaces {
+        let text = read(file);
+        if !text.contains(face) {
+            missing.push(format!(
+                "{file}: does not name the brand's mono face. One face is the \
+                 whole type system, and this page is a measurement — a \
+                 proportional digit in a column of costs is a defect."
+            ));
+        }
+        if !text.contains(corner) {
+            missing.push(format!(
+                "{file}: does not pin `{corner}`. A rounded corner says \
+                 \"surface\" where a hairline says \"boundary\", and these \
+                 pages are all boundaries."
+            ));
+        }
+        // Figures are measurements and may not change width between renders.
+        // In a mono face this is already true; the declaration is what keeps
+        // it true when the stack degrades to the platform fallback, which the
+        // Observatory and the export both do by design (they may not fetch a
+        // font).
+        if !text.contains("tabular-nums") {
+            missing.push(format!(
+                "{file}: never declares `tabular-nums`, so a figure may reflow \
+                 between renders once the mono face is unavailable."
+            ));
+        }
+        // A stated preference for less motion wins on every surface. All four
+        // are pages people watch while a run is in flight.
+        if !text.contains("prefers-reduced-motion") {
+            missing.push(format!(
+                "{file}: does not honour `prefers-reduced-motion`."
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "the web instrument surfaces have lost part of the design system:\n  {}",
+        missing.join("\n  ")
+    );
+}
+
+/// `text` with every comment blanked out, newlines preserved.
+///
+/// Blanked rather than removed so a reported line number still points at the
+/// line a reader will open. Both comment syntaxes are covered because the four
+/// surfaces are two HTML/CSS files, one CSS-in-Rust file, and one Tailwind
+/// stylesheet: `/* … */` spans the CSS in all four, and `//` catches Rust doc
+/// comments in `export.rs`.
+///
+/// This exists because these files DOCUMENT the rules they follow. The
+/// Observatory explains its square corners in a comment that spells
+/// `border-radius:var(--radius)`, and a scanner reading raw text reports that
+/// sentence as a violation of the rule it is describing. A guard that fires on
+/// its own documentation trains a reader to ignore it.
+fn without_comments(text: &str) -> String {
+    let bytes: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let two: String = bytes[index..(index + 2).min(bytes.len())].iter().collect();
+        if two == "/*" {
+            while index < bytes.len() {
+                let closing: String = bytes[index..(index + 2).min(bytes.len())].iter().collect();
+                if closing == "*/" {
+                    out.push_str("  ");
+                    index += 2;
+                    break;
+                }
+                out.push(if bytes[index] == '\n' { '\n' } else { ' ' });
+                index += 1;
+            }
+        } else if two == "//" {
+            while index < bytes.len() && bytes[index] != '\n' {
+                out.push(' ');
+                index += 1;
+            }
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    out
+}
+
+/// No surface ships a rounded corner.
+///
+/// Separate from the test above because that one asks whether the *decision*
+/// is recorded (`--radius: 0` is present) and this one asks whether it is
+/// *honoured*. #2606 shipped both at once: the token was gone and 8px, 6px,
+/// 3px and 2px corners were back, and a test that only checked for the token
+/// would have passed on a page with the token and a stray `border-radius: 6px`
+/// underneath it.
+#[test]
+fn no_web_surface_ships_a_rounded_corner() {
+    let mut rounded = Vec::new();
+    for file in [
+        "crates/stella-observatory/src/assets/index.html",
+        "crates/stella-cli/src/export.rs",
+        "arenabench/ui/app/globals.css",
+        "arenabench/web/app/globals.css",
+    ] {
+        let text = without_comments(&read(file));
+        for (index, _) in text.match_indices("border-radius") {
+            let rest = &text[index..];
+            let Some(colon) = rest.find(':') else { continue };
+            let value = rest[colon + 1..]
+                .split([';', '\n', '}'])
+                .next()
+                .unwrap_or("")
+                .trim();
+            // Zero in any spelling, or a radius token — those are pinned to 0
+            // by the test above, so a rule that defers to one is honest. The
+            // per-corner form has to be checked part by part: the one rule in
+            // the tree that uses it is `0 var(--radius-sm) var(--radius-sm) 0`,
+            // which is square in all four corners and which a whole-value
+            // comparison reads as rounded.
+            let square = value.split_whitespace().all(|part| {
+                part == "0" || part.starts_with("var(--radius")
+            });
+            if !square {
+                let line = text[..index].matches('\n').count() + 1;
+                rounded.push(format!("{file}:{line}: `border-radius: {value}`"));
+            }
+        }
+    }
+
+    assert!(
+        rounded.is_empty(),
+        "a rounded corner is a soft edge on an instrument:\n  {}",
+        rounded.join("\n  ")
+    );
+}
+
+/// Every custom property the Observatory references is one it defines.
+///
+/// The Observatory is the single definition, and it is also the file most
+/// likely to grow a reference to a token that was renamed somewhere else. A
+/// `var(--x)` with no `--x` paints nothing at all — the rule does not fall
+/// back, it silently drops — and neither rustc nor any test that checks the
+/// palette block for expected NAMES can see it. Enumerating the references
+/// rather than listing the expected names is what makes this catch the next
+/// rename too; `export/tests.rs` carries the same check for the same reason,
+/// after a rename there shipped three elements painted with nothing.
+#[test]
+fn the_observatory_defines_every_token_it_references() {
+    let raw = read("crates/stella-observatory/src/assets/index.html");
+    // Definitions are looked up in the raw text (a token may legitimately be
+    // introduced beside a comment), but references are read from the
+    // comment-free text — see `without_comments`.
+    let html = without_comments(&raw);
+
+    // A name is ASCII letters, digits and dashes, and nothing else. Belt and
+    // braces with the comment stripping above: a `var(--…)` written in prose
+    // outside a comment — in a string, or in the page's own help text — would
+    // otherwise be read as a custom property named `--…` and reported as
+    // undefined. A predicate meeting typographic punctuation in prose it was
+    // only meant to read code through is a recurring shape in this repo.
+    let mut referenced: Vec<String> = Vec::new();
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("var(--") {
+        rest = &rest[start + 4..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        // `var(--x` must be followed by `)` or `,` (a fallback) to be a real
+        // reference; anything else is prose that happens to start the same way.
+        let next = rest[name.len()..].chars().next();
+        if name.len() > 2 && matches!(next, Some(')') | Some(',')) {
+            referenced.push(name);
+        }
+    }
+    referenced.sort();
+    referenced.dedup();
+
+    assert!(
+        !referenced.is_empty(),
+        "the Observatory uses custom properties; this test read none, so it \
+         is measuring the wrong thing"
+    );
+
+    let undefined: Vec<&String> = referenced
+        .iter()
+        .filter(|name| !html.contains(&format!("{name}:")))
+        .collect();
+
+    assert!(
+        undefined.is_empty(),
+        "the Observatory references custom properties it never defines, so \
+         those rules paint nothing: {undefined:?}"
+    );
 }
 
 /// Identity gold is the brand's own value, not one mixed at the call site.
