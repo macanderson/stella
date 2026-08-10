@@ -12,61 +12,18 @@ export interface ConnState {
 }
 
 /*
- * The lockup: the stella wordmark from the brand kit, a hairline pipe, and
- * the arena's domain. The artwork is a byte-copy of
- * docs/brand/logo/svg/wordmark-color-{dark,light}.svg served from
- * public/brand/ — never redrawn here, so the kit stays the single source of
- * the mark. Two fixed cuts swap with the scheme because next-themes stamps
- * `.dark` on <html>; the kit's *-adaptive.svg follows only the OS media
- * query and would ignore the in-app toggle.
- *
- * The COLOUR cuts. This reverses the note that stood here, which chose the
- * mono cuts because "the wordmark is the largest thing on the page — a gold
- * mark here would reintroduce, at the top of every view, exactly the
- * competition with the data that removing the gold accent was for." That
- * argument was about *area*, and it measured the wrong area: only the comet
- * star is gold in these cuts (one fill each, #FFB000), while the six glyphs
- * of the lockup stay Paper on ink and Ink on paper. What sits at the top of
- * every view is a mark, not a gold field.
- *
- * The governing rule is now the one stated in
- * crates/stella-observatory/src/assets/index.html: gold is permitted on
- * identity — the wordmark, the favicon mark, one primary action — and
- * nowhere else, and it may never encode a state. The chrome is unchanged:
- * "active" is still an --accent inversion, and --ok/--bad still own the only
- * other colour on the page. What it costs is honest to name — a gold star
- * does now sit above every view, which is a cost the mono cuts did not pay.
- * What it buys is that stella's instruments and stella's identity stop being
- * two different products to anyone who sees both.
+ * The arena's domain, on its own. The stella wordmark used to sit to the left
+ * of a hairline pipe here, and was removed deliberately: this arena scores
+ * stella as one seat among several, so its mark does not belong in the chrome
+ * every seat is judged under. The pipe went with it — it separated two things
+ * and there is now one — as did the four cuts under public/brand/ and the
+ * `.brand-mark` entrance in globals.css, which nothing else used.
  */
 function Brand() {
   return (
-    <div className="flex items-center gap-3.5">
-      {/*
-       * h-[57px] is 2.25x the height of the lockup this one replaced. The
-       * artwork carries a 9-unit left bearing in its 264-wide viewBox (~5px
-       * at this size); the negative margin sets the glyphs, not the
-       * transparent frame, on the content edge.
-       */}
-      <img
-        src="/brand/wordmark-color-light.svg"
-        alt="stella"
-        width={157}
-        height={57}
-        className="brand-mark -ml-[5px] block h-[57px] w-auto flex-none dark:hidden"
-      />
-      <img
-        src="/brand/wordmark-color-dark.svg"
-        alt="stella"
-        width={157}
-        height={57}
-        className="brand-mark -ml-[5px] hidden h-[57px] w-auto flex-none dark:block"
-      />
-      <span aria-hidden="true" className="h-7 w-px flex-none bg-line" />
-      <span className="whitespace-nowrap text-[20px] font-bold tracking-[0.04em]">
-        ARENABENCH.ORG
-      </span>
-    </div>
+    <span className="whitespace-nowrap text-[20px] font-bold tracking-[0.04em]">
+      ARENABENCH.ORG
+    </span>
   );
 }
 
@@ -94,8 +51,10 @@ export function Topbar({
        * The bar itself spans the viewport (so the border does too); this
        * inner rail mirrors the active view's container — setup is
        * mx-auto max-w-[1180px] px-5, arena max-w-[1600px] px-5 sm:px-7 —
-       * so the wordmark's left edge lands on the content's left edge, not
-       * the page's.
+       * so the lockup's left edge lands on the content's left edge, not the
+       * page's. It needs no optical correction now that the lockup is type:
+       * the wordmark it replaced carried a 9-unit left bearing in its
+       * 264-wide viewBox and was pulled back -5px to compensate.
        */}
       <div
         className={cn(

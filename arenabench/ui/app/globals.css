@@ -78,19 +78,20 @@
   --bad:        #a32f1f;
   --warn:       #7a5c00;
 
-  /* Identity — the one hue outside the semantic three, and the only one
-     permitted to be decorative. It may appear on the wordmark, the favicon
-     mark, and at most one primary action per page; it may never encode a
-     state. --identity #ffb000 against --warn #c9a227 is 1.32:1 on the dark
-     scheme, so a reader asked to tell "active" from "warning" by hue would be
-     reading a difference that is not there. That measurement, not taste, is
-     why active states stay an --accent inversion.
-     Values come from docs/brand/css/tokens.css: --stella-gold-500 on ink,
-     --stella-gold-800 on paper. NOT --stella-gold-deep (#a37200), which that
-     file documents for "small gold text on light surfaces" and which measures
-     4.05:1 on --panel-2 — under AA. Gold-800 is 6.46:1 (#2591). */
-  --identity:    #795500;
-  --on-identity: #ffffff;
+  /* NO --identity token here, deliberately. stella's other web surfaces —
+     the observatory, the telemetry export, the loopback auth pages — carry
+     one, because the rule that governs them permits the brand's gold on
+     identity (wordmark, favicon mark, one primary action) and nowhere else.
+     This surface carries no stella identity at all: the arena scores stella
+     as one seat among several, so its mark does not belong in the chrome
+     every seat is judged under (#2577, which removed the wordmark from the
+     topbar and the four cuts under public/brand/ with it).
+
+     That is a posture, not an omission, and it is declared as one:
+     crates/stella-cli/tests/design_token_parity.rs holds this file to the
+     observatory's values for every role it DOES carry, and simply does not
+     list `identity` among them. A role a surface legitimately does not have
+     is different from a role it forgot. */
 
   /* Categorical marks: a lightness ramp, not a hue wheel. Lightness is the
      one channel that survives greyscale printing, colour-vision deficiency
@@ -127,12 +128,6 @@
   --bad:        #e5715f;
   --warn:       #c9a227;
 
-  /* Phosphor Gold at 10.31:1 on --panel; the ink under it is the brand's
-     own #0b0b0c rather than --background, because an identity fill is a
-     brand surface and does not flip with the scheme's ground. */
-  --identity:    #ffb000;
-  --on-identity: #0b0b0c;
-
   --acc-cyan:   #ededed;
   --acc-violet: #a1a1a1;
   --acc-rose:   #6e6e6e;
@@ -151,8 +146,6 @@
   --color-muted: var(--muted);
   --color-dim: var(--dim);
   --color-accent: var(--accent);
-  --color-identity: var(--identity);
-  --color-on-identity: var(--on-identity);
   --color-ok: var(--ok);
   --color-bad: var(--bad);
   --color-warn: var(--warn);
@@ -216,12 +209,6 @@ code {
 }
 
 ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-
-/* Assemble on load: the wordmark arrives along its own flight line. */
-@media (prefers-reduced-motion: no-preference) {
-  .brand-mark { animation: mark-in 220ms var(--ease-arrive) both; }
-}
-@keyframes mark-in { from { opacity: 0; transform: translateX(-6px); } }
 
 @keyframes cell-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 

@@ -400,8 +400,16 @@ fn git_section(root: &Path) -> Value {
         "branch_count": branch_total,
         "branch_convention": convention,
         "recent_commits": commits,
-        "note": "orientation only — `repo_history` goes deeper (position log, \
-                 full branch list) and `repo_recover` finds commits no branch points at",
+        // The routing hint, and this is the first call of a session, so it is
+        // the earliest chance to get the ladder right. It named the two deeper
+        // rungs and skipped the cheapest one (#2575) — `repo_status` costs a
+        // single git call, needs no arguments, and already answers the
+        // question the other two are usually reached for.
+        "note": "orientation only — `repo_status` is the next step for live state \
+                 (ahead/behind, changed files, shelved count, commits no ref points at); \
+                 `repo_history` goes deeper (position log, full branch list); \
+                 `repo_recover` searches the object store for commits even the reflog \
+                 has forgotten",
     })
 }
 

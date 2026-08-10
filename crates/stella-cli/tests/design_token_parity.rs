@@ -179,7 +179,12 @@ fn surfaces() -> Vec<Surface> {
                 ("ok", "--ok"),
                 ("bad", "--bad"),
                 ("warn", "--warn"),
-                ("identity", "--identity"),
+                // No `identity`. Not an omission — a posture. The arena scores
+                // stella as one seat among several, so its mark does not
+                // belong in the chrome every seat is judged under; #2577
+                // removed the wordmark from the topbar and the four brand cuts
+                // with it. Both arenabench files say so where the token would
+                // otherwise sit.
             ],
         },
         Surface {
@@ -192,10 +197,35 @@ fn surfaces() -> Vec<Surface> {
                 ("text-3", "--dim"),
                 ("ok", "--ok"),
                 ("bad", "--bad"),
-                ("identity", "--identity"),
+                // No `identity`, for the same reason as the client above.
             ],
         },
     ]
+}
+
+/// The arena carries no stella identity, and that stays true on purpose.
+///
+/// A posture recorded only as an absence in `surfaces()` is a posture nobody
+/// can see being broken: adding `--identity` back to either arenabench file
+/// would make every existing assertion pass, because the parity test only
+/// checks roles a surface claims. This asserts the absence itself, so the
+/// decision in #2577 — stella's mark does not belong in the chrome every seat
+/// is judged under — cannot be undone by accident while restyling.
+#[test]
+fn the_arena_carries_no_stella_identity() {
+    for file in [
+        "arenabench/ui/app/globals.css",
+        "arenabench/web/app/globals.css",
+    ] {
+        let css = read(file);
+        assert!(
+            !declarations(&css).contains_key("--identity"),
+            "{file} declares --identity. The arena judges stella as one seat \
+             among several, so it carries no stella identity (#2577). If that \
+             decision is being reversed, reverse it here too — do not let a \
+             restyle do it silently."
+        );
+    }
 }
 
 /// Every surface agrees with the Observatory on every role it carries, in both

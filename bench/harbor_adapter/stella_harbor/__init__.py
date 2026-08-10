@@ -97,24 +97,14 @@ from .loop_mode import is_truthy as _is_truthy
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
-    _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
-    _VERIFIER_EVIDENCE_DEMAND_ENV,
-    _MAX_REVISIONS_ENV,
-    _MODEL_TIMEOUT_ENV,
-    _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
-    _WORKER_EFFORT_ENV,
+    POSTURE_SELECTOR_ENV,
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     assurance_tiers_from_posture,
-    resolve_candidates,
-    resolve_verifier_evidence_demand,
-    resolve_max_revisions,
-    resolve_model_timeout,
-    resolve_triage_model,
-    resolve_worker_effort,
+    read_posture_selectors,
 )
 from .stream_envelope import (
     _extract_metrics,
@@ -242,23 +232,16 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # the run rather than enabling the policy. See `turn_budget`.
         _TURN_BUDGET_ENV,
         _WITNESS_AUTHOR_ENV,
-        # Worker effort and triage author: host-only like the witness author,
-        # reaching Stella only inside the hashed posture. Registering them is
-        # load-bearing, not tidy — the ambient check fails closed, and an
-        # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run.
-        _WORKER_EFFORT_ENV,
-        _TRIAGE_MODEL_ENV,
-        # The attempt-count selectors (#1211 §6.7, §6.8). Same bucket and same
-        # reason as the three above: read on the host, expressed only inside
-        # the hashed posture, never forwarded into the container. Registering
-        # them is the load-bearing half — the ambient check fails closed, so an
-        # unlisted selector refuses the run instead of enabling the arm.
-        _MAX_REVISIONS_ENV,
-        _CANDIDATES_ENV,
-        _VERIFIER_EVIDENCE_DEMAND_ENV,
-        # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
-        # host, reaching Stella only inside the hashed posture.
-        _MODEL_TIMEOUT_ENV,
+        # Every posture selector — worker effort, the triage/research/plan pins,
+        # the attempt counts, the coupled ceiling. Host-only like the witness
+        # author: read here, expressed only inside the hashed posture, never
+        # forwarded into the container. Unpacked from the tuple `posture.py`
+        # defines beside the selectors themselves, because registering them is
+        # load-bearing rather than tidy — the ambient check fails closed, and an
+        # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run. A
+        # hand-kept second copy of this list is how a new selector (#1211 §6.2,
+        # §6.7, §6.8; the read-only roles of #2549) arrives unregistered.
+        *POSTURE_SELECTOR_ENV,
         # The bare-loop selector; :mod:`loop_mode` says why it is host-only.
         NO_PIPELINE_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
@@ -1239,22 +1222,7 @@ class StellaAgent(BaseInstalledAgent):
         return _benchmark_engine_posture(
             model,
             verifier=verifier,
-            worker_effort=resolve_worker_effort(
-                self._configured_value(_WORKER_EFFORT_ENV)
-            ),
-            triage_model=resolve_triage_model(
-                self._configured_value(_TRIAGE_MODEL_ENV)
-            ),
-            max_revisions=resolve_max_revisions(
-                self._configured_value(_MAX_REVISIONS_ENV)
-            ),
-            candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
-            verifier_evidence_demand=resolve_verifier_evidence_demand(
-                self._configured_value(_VERIFIER_EVIDENCE_DEMAND_ENV)
-            ),
-            model_timeout_secs=resolve_model_timeout(
-                self._configured_value(_MODEL_TIMEOUT_ENV)
-            ),
+            **read_posture_selectors(self._configured_value),
         )
 
     def _verifier_model(self) -> str | None:
