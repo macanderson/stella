@@ -73,7 +73,6 @@ as a helper module `execute` calls, with only the call site landing in `registry
 you touch in either is a candidate to extract.
 
 - [`src/registry.rs`](src/registry.rs)
-- [`src/scripts.rs`](src/scripts.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a reviewable baseline diff
 justified like any other change — treat it as an escape hatch for an irreducible line (a new

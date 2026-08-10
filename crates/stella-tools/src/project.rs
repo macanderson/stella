@@ -56,14 +56,14 @@ impl Tool for BuildProject {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-            return run_and_report(command, root, timeout_secs).await;
+            return run_and_report(command, root, timeout_secs, None).await;
         }
         let index = ScriptIndex::detect(root).await;
         if index.is_empty() {
             return no_toolchain_error();
         }
         match index.verb_entry("build") {
-            Some(entry) => run_and_report(&entry.command, root, timeout_secs).await,
+            Some(entry) => run_and_report(&entry.command, root, timeout_secs, None).await,
             None => ToolOutput::Error {
                 message: "no `build` script detected in this workspace (see list_scripts) — \
                           pass `command`"
@@ -117,7 +117,7 @@ impl Tool for RunTests {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-            return run_and_report(command, root, timeout_secs).await;
+            return run_and_report(command, root, timeout_secs, None).await;
         }
         let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("all");
         let filter = input.get("filter").and_then(|v| v.as_str()).unwrap_or("");
@@ -188,7 +188,7 @@ impl Tool for RunTests {
                                 let command = cargo_impacted_command(kind, &packages);
                                 return with_note(
                                     &note,
-                                    run_and_report(&command, root, timeout_secs).await,
+                                    run_and_report(&command, root, timeout_secs, None).await,
                                 );
                             }
                             _ => {
@@ -220,7 +220,10 @@ impl Tool for RunTests {
         }
 
         match test_command(&index, primary, kind, &filter) {
-            Ok(command) => with_note(&note, run_and_report(&command, root, timeout_secs).await),
+            Ok(command) => with_note(
+                &note,
+                run_and_report(&command, root, timeout_secs, None).await,
+            ),
             Err(message) => with_note(&note, ToolOutput::Error { message }),
         }
     }
@@ -675,7 +678,7 @@ mod tests {
         let hostile = format!("x; touch {}", sentinel.display());
 
         // Pre-PR shape: the filter is interpolated raw.
-        let _ = crate::exec::run(&format!("echo {hostile}"), dir.path(), 30).await;
+        let _ = crate::exec::run(&format!("echo {hostile}"), dir.path(), 30, None).await;
         assert!(
             sentinel.exists(),
             "precondition: a raw interpolation must be injectable, or this test proves nothing"
@@ -684,7 +687,7 @@ mod tests {
 
         // Fixed shape: same filter, quoted per token.
         let safe = SafeFilter::from_input(&hostile);
-        let _ = crate::exec::run(&format!("echo {safe}"), dir.path(), 30).await;
+        let _ = crate::exec::run(&format!("echo {safe}"), dir.path(), 30, None).await;
         assert!(
             !sentinel.exists(),
             "SafeFilter let `{hostile}` escape its word and start a new command"
@@ -699,7 +702,7 @@ mod tests {
         let safe = SafeFilter::from_input("alpha beta gamma");
         // `printf '%s\n'` prints one line per argument, so the line count
         // IS the argument count the runner would have received.
-        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30, None)
             .await
             .unwrap();
         let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
@@ -713,7 +716,7 @@ mod tests {
     async fn impact_selection_keeps_a_spaced_path_whole() {
         let dir = tempfile::tempdir().unwrap();
         let safe = SafeFilter::from_tokens(["tests/a b.rs", "tests/c.rs"]);
-        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30, None)
             .await
             .unwrap();
         let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();

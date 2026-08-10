@@ -24,6 +24,21 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// the turn forever.
 pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How long to wait for the **first** chunk of a stream's body before
+/// treating the stream itself as broken. Distinct from — and shorter than —
+/// [`STREAM_IDLE_TIMEOUT`], because the two waits mean different things: a
+/// gap *between* fragments is a model thinking, while a response that has
+/// sent its headers and then not one body byte is the signature of a proxy
+/// buffering the SSE body — a path fault the same request completes fine
+/// over a non-streaming call (issue #2686). 90 seconds matches the zappy
+/// comparator's stream watchdog and sits well above any observed
+/// time-to-first-token (which grows with prompt-processing time on large
+/// cache writes, not with generation length), while discovering a buffering
+/// proxy 30s sooner than the idle bound and ~13x sooner than the engine's
+/// 816s model deadline. A trip is fallback-eligible: see
+/// `crate::stream_recovery`.
+pub(crate) const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// A `reqwest::Client` with [`CONNECT_TIMEOUT`] applied, plus a per-read
 /// stall bound of [`STREAM_IDLE_TIMEOUT`]. The read timeout closes the gap
 /// [`next_with_timeout`] cannot see: the wait between a successful connect
@@ -509,13 +524,43 @@ pub(crate) fn classify_http_status(
     }
 }
 
+/// One bounded stream read, with the four outcomes kept distinct. The
+/// distinction [`next_with_timeout`] collapses — a stall versus a transport
+/// fault — is exactly the bit the streaming→non-streaming fallback needs: a
+/// stall before the first byte is a broken *streaming path* (fallback
+/// material), while a reset says nothing about streaming specifically.
+pub(crate) enum StreamRead<T> {
+    /// The next item arrived within the bound.
+    Item(T),
+    /// Clean end of stream.
+    End,
+    /// Nothing arrived within the bound — the stream is stalled.
+    Idle,
+    /// The transport failed mid-read.
+    Failed(String),
+}
+
+/// Await the next stream item, bounded by `idle`, reporting the outcome as a
+/// [`StreamRead`]. `idle` is a parameter (rather than reading
+/// [`STREAM_IDLE_TIMEOUT`] directly) purely so the timeout path is
+/// unit-testable in milliseconds.
+pub(crate) async fn next_stream_read<S, T>(stream: &mut S, idle: Duration) -> StreamRead<T>
+where
+    S: Stream<Item = reqwest::Result<T>> + Unpin,
+{
+    match tokio::time::timeout(idle, stream.next()).await {
+        Ok(Some(Ok(item))) => StreamRead::Item(item),
+        Ok(Some(Err(e))) => StreamRead::Failed(e.to_string()),
+        Ok(None) => StreamRead::End,
+        Err(_elapsed) => StreamRead::Idle,
+    }
+}
+
 /// Await the next stream item, bounded by `idle`. Maps a stalled stream (no
 /// item within `idle`) and any transport error to a **retryable**
 /// `ProviderError::Transport`, and a clean end-of-stream to `Ok(None)`.
-///
-/// `idle` is a parameter (rather than reading [`STREAM_IDLE_TIMEOUT`]
-/// directly) purely so the timeout path is unit-testable in milliseconds;
-/// adapters always pass [`STREAM_IDLE_TIMEOUT`].
+/// A thin classification over [`next_stream_read`] for the adapters that
+/// don't need to tell the two failure shapes apart.
 pub(crate) async fn next_with_timeout<S, T>(
     stream: &mut S,
     idle: Duration,
@@ -523,11 +568,11 @@ pub(crate) async fn next_with_timeout<S, T>(
 where
     S: Stream<Item = reqwest::Result<T>> + Unpin,
 {
-    match tokio::time::timeout(idle, stream.next()).await {
-        Ok(Some(Ok(item))) => Ok(Some(item)),
-        Ok(Some(Err(e))) => Err(ProviderError::transport(e.to_string())),
-        Ok(None) => Ok(None),
-        Err(_elapsed) => Err(ProviderError::transport(format!(
+    match next_stream_read(stream, idle).await {
+        StreamRead::Item(item) => Ok(Some(item)),
+        StreamRead::End => Ok(None),
+        StreamRead::Failed(message) => Err(ProviderError::transport(message)),
+        StreamRead::Idle => Err(ProviderError::transport(format!(
             "stream idle timeout: no data for {}s",
             idle.as_secs()
         ))),

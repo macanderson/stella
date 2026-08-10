@@ -458,6 +458,122 @@ pub fn reasoning_posture(provider_id: &str) -> Option<&'static ReasoningPosture>
         .map(|(_, posture)| posture)
 }
 
+/// How a provider recovers when its *streaming path* is broken — the stream
+/// hangs before its first byte (a proxy buffering the SSE body) or comes
+/// back empty (a gateway answering 200 with no data). The third axis of the
+/// matrix (#2686), with the same law as the other two: behavior that
+/// diverges per provider is declared, never assumed.
+#[derive(Debug)]
+pub enum StreamFallbackPosture {
+    /// The adapter arms a bounded per-session latch on a fallback-eligible
+    /// stream fault and re-issues the retried attempt as a unary
+    /// (non-streaming) request for the same payload — see
+    /// `crate::stream_recovery` for the state machine.
+    UnaryFallback {
+        /// The wire mechanism, for humans reading the matrix.
+        mechanism: &'static str,
+        /// Name of the test function that proves the fallback: the faulted
+        /// streaming attempt fails retryably and the retry completes over
+        /// `stream: false`. Checked for existence by this module's tests.
+        witness: &'static str,
+    },
+    /// The adapter streams and has no unary fallback path (yet): a broken
+    /// streaming path fails the attempt with its ordinary classification.
+    /// Allowed only with a note a reviewer can check.
+    StreamingOnly { note: &'static str },
+    /// The adapter is already unary — there is no stream to fall back from.
+    AlwaysUnary { note: &'static str },
+}
+
+/// One stream-fallback row per provider id constructible by the CLI — same
+/// completeness contract as the other two axes. Settings-defined custom
+/// providers inherit the shared OpenAI-compatible adapter and its fallback,
+/// so they need no row of their own.
+pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
+    (
+        "anthropic",
+        StreamFallbackPosture::StreamingOnly {
+            note: "the Messages adapter has no unary parse path yet; extending the shared \
+                   fallback latch to this dialect is tracked in #2746",
+        },
+    ),
+    (
+        "bedrock",
+        StreamFallbackPosture::AlwaysUnary {
+            note: "the adapter calls Converse, not ConverseStream — every completion is \
+                   already unary, so there is no stream to fall back from",
+        },
+    ),
+    (
+        "openrouter",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter: retried attempt re-issues the \
+                        byte-identical body with stream: false through the unary read bound",
+            witness: "an_empty_stream_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "openai",
+        StreamFallbackPosture::StreamingOnly {
+            note: "the Responses adapter has no unary parse path yet; extending the shared \
+                   fallback latch to this dialect is tracked in #2746",
+        },
+    ),
+    (
+        "gemini",
+        StreamFallbackPosture::StreamingOnly {
+            note: "streamGenerateContent has no unary parse path yet (generateContent would \
+                   be the fallback); tracked in #2746",
+        },
+    ),
+    (
+        "vertex",
+        StreamFallbackPosture::StreamingOnly {
+            note: "shares gemini's streaming aggregator and its gap; tracked in #2746",
+        },
+    ),
+    (
+        "zai",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "retried attempt re-issues the byte-identical body with stream: false \
+                        through the unary read bound (http::unary_client)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "xai",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "deepseek",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "local",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row) — local \
+                        gateways and proxies are where SSE buffering is most likely",
+            witness: "an_empty_stream_falls_back_to_a_non_streaming_request",
+        },
+    ),
+];
+
+/// The declared stream-fallback posture for `provider_id`, or `None` for an
+/// id the matrix doesn't know — which the `stella-cli` completeness test
+/// turns into a hard failure for any seeded provider.
+pub fn stream_fallback_posture(provider_id: &str) -> Option<&'static StreamFallbackPosture> {
+    STREAM_FALLBACK_POSTURE
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, posture)| posture)
+}
+
 /// The tier `effort` is really served as by `provider_id`, when the adapter
 /// cannot put that tier on the wire distinctly — `None` when it reaches the
 /// wire as itself.
@@ -515,6 +631,7 @@ mod tests {
             include_str!("zai/tests/error_classify.rs"),
             include_str!("zai/tests/openrouter_effort.rs"),
             include_str!("zai/tests/openrouter_stream.rs"),
+            include_str!("zai/tests/stream_fallback.rs"),
             include_str!("zai/tests/stream_frame.rs"),
             include_str!("zai/tests/vision.rs"),
             include_str!("zai/tests/zai_effort.rs"),

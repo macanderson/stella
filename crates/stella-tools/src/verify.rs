@@ -135,7 +135,7 @@ async fn run(
     dir: &std::path::Path,
     timeout_secs: u64,
 ) -> Result<(i32, String), String> {
-    crate::exec::run(command, dir, timeout_secs).await
+    crate::exec::run(command, dir, timeout_secs, None).await
 }
 
 fn tail(s: &str) -> &str {

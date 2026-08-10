@@ -201,6 +201,11 @@ catalog! {
     // The shell. No prerequisite — it is on unless `"tools": {"bash": "off"}`
     // says otherwise, exactly like every other row in this block.
     "bash"                => (false, false, Always, "bash"),
+    // Session scratch state (tempfile::TempDir, self-deleting)
+    "save_state"          => (false, false, Always, "scratch"),
+    "get_state"           => (true, true, Always, "scratch"),
+    "list_state"          => (true, true, Always, "scratch"),
+    "delete_state"        => (false, false, Always, "scratch"),
     // The key-free web tools: read-only for the workspace, but every run is
     // real traffic against someone's server — never speculated (#923).
     "web_fetch"           => (true, false, Always, "web"),

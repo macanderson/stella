@@ -96,11 +96,11 @@ use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matche
 use crate::loop_detect::LoopDetectionConfig;
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
-use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observed};
+use crate::retry::{RetryOutcome, RetryPolicy, Sleeper};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 use crate::step::{
-    AbortKind, BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
-    StreamProgress, SummarizerHealth, TurnState, bounded_generation,
+    AbortKind, BorrowedTurn, CompactionPass, SpeculationDropGuard, StepOutcome, StreamProgress,
+    SummarizerHealth, TurnState, bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
 use truncation::{ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL, plan_continuation};
@@ -1709,30 +1709,14 @@ impl<'a> Engine<'a> {
             })
         });
 
-        let call_started = std::time::Instant::now();
-        // Armed for exactly the interval where a paid attempt may be in
-        // flight: a caller-side hard cancel that drops this future mid-await
-        // still leaves one content-free `Cancelled` envelope behind.
-        // Disarmed on BOTH normal exits — a success reports through its
-        // `StepUsage`, a terminal failure through the per-attempt observer
-        // below. The shared latch narrows "in flight" to the dispatch
-        // itself: a drop landing in a backoff sleep emits nothing.
-        let mut cancel_guard = CancelUsageGuard {
-            events: events.clone(),
-            role: self.call_role,
-            provider: self.provider.id().to_string(),
-            started: call_started,
-            armed: true,
-            attempt_in_flight,
-        };
-        let incomplete_events = events.clone();
-        // Every failed attempt's reason, accumulated through the observer:
-        // retry.rs returns retry history only for calls that COMMIT, so on
-        // exhaustion this is the sole record of the doomed attempts
-        // (receipts spec §6.3 — RetriesExhausted). A std Mutex, never held
-        // across an await and contention-free — the observer runs serially
-        // within this call.
-        let attempt_reasons: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        // The ladder itself — the cancellation usage guard, per-attempt
+        // incompleteness envelopes, parked rate-limit recovery (#2677),
+        // provider-outcome feedback (#2673), and the exhaustion event pair —
+        // lives in `driver/
+      .rs`.
+        let (call_started, outcome) = self
+            .drive_attempt_ladder(attempt, attempt_in_flight, budget, events)
+            .await?;
         let RetryOutcome {
             value: (result, speculation_future),
             retries,
@@ -2431,8 +2415,8 @@ impl<'a> Engine<'a> {
     }
 }
 
-/// The boxed-future shape [`retry_with_backoff_observed`] needs from its
-/// `attempt_fn` — named here purely to keep the call site in
+/// The boxed-future shape [`crate::retry::retry_with_backoff_observed`]
+/// needs from its `attempt_fn` — named here purely to keep the call site in
 /// [`Engine::run_model_call`] readable. Each attempt yields the completion
 /// AND its still-live speculation future as one value. The caller settles the billed completion synchronously before
 /// awaiting that future, closing the cancellation window without moving the

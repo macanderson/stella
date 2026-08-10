@@ -294,7 +294,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
-   in sneaky ways, and this is guarded on **two axes** today in
+   in sneaky ways, and this is guarded on **three axes** today in
    `crates/stella-model/src/provider_parity.rs`:
    - **`CachePosture`** — how the prompt cache is engaged/observed
      (Anthropic's cache is explicit opt-in; DeepSeek spells its cache-hit
@@ -307,10 +307,16 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      (`reasoning[_]effort`) honor a pinned effort; the shared adapter drops
      it for `Unsupported` providers (bedrock/deepseek/local) — and a pinned
      effort against one surfaces a one-line boot notice, never a silent drop.
+   - **`StreamFallbackPosture`** — how a provider recovers when its
+     streaming path is broken (a stream hung before its first byte, or a
+     200 with an empty stream). The shared chat-completions adapter arms a
+     bounded per-session latch and re-issues the retried attempt as a unary
+     request (#2686); the other streaming dialects declare the gap; Bedrock
+     is already unary.
 
    Each provider id declares a posture on **every** axis and, for a
-   controllable/opt-in/implicit posture, names the **witness test** proving
-   it on the wire. Tests enforce each matrix from both sides: `stella-cli`'s
+   controllable/opt-in/implicit/fallback posture, names the **witness test**
+   proving it on the wire. Tests enforce each matrix from both sides: `stella-cli`'s
    config tests fail if a seeded provider lacks a row on either axis, and
    `stella-model`'s parity tests fail if a row's witness test no longer
    exists. Adding a provider — or a new divergent feature axis — means
@@ -331,7 +337,31 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    corrupts the engine's concurrency contract. The scratch state plane
    (`save_state` / `get_state` / `list_state` / `delete_state`) is the
    reference shape.
+10. **Every emitted signal names its consumer.** An `AgentEvent` variant that
+   nothing reads is allowed, but only as a **declared, issue-cited gap** —
+   never as a silence nobody noticed. The ledger is
+   `crates/stella-protocol/src/event/consumers.rs`: one row per wire tag, each
+   declaring a `ConsumerPosture` (`Behavioral` names the code that branches on
+   it, `Surfaced` names the surfaces that select it, `RecordedOnly` and
+   `Unclassified` each cite the issue where the gap is being decided). Tests
+   enforce totality against `KNOWN_TYPE_TAGS` from both sides, so adding a
+   variant without declaring what consumes it is a red test, and
+   `MAX_UNCLASSIFIED` is a down-only ratchet on the unaudited backlog.
 
+   Born from a repeated real defect, every instance of which was found by a
+   bench run paying for it rather than by a test: `flip.json` written with
+   nothing reading it (#1536); `verify_done` confirmations tallied but not
+   feeding the halt, which cost `solved_then_timeout` four times on one
+   certification panel before #2661 wired it; the flip transition still
+   emitting nothing durable, so a shipped halt cannot be measured in the
+   field. This is invariant #3's discipline pointed at consumption instead of
+   egress — a reviewed table plus tests that enforce it from both sides
+   (#2701).
+
+   What it does **not** prove: that a `Behavioral` row's `site` still points
+   at live code. That string is prose for a reviewer. The enforced half is
+   totality, uniqueness, issue citation, and posture coherence — enough to
+   make a PR author answer "what reads this?" before the merge.
 ---
 
 ## The definition of done: witness tests
@@ -523,10 +553,10 @@ a plan needs and the part that rarely changes:
 |---|---|
 | `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs`, `src/fleet_cmd.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
-| `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
+| `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tools` | `src/registry.rs`, `src/scripts.rs` |
+| `stella-tools` | `src/registry.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
 The other fourteen crates carry no god files — keep it that way. Each crate's

@@ -52,6 +52,7 @@ pub mod registry;
 pub mod repo;
 pub mod rootfd;
 pub mod schema_gate;
+pub mod scratch;
 pub mod screenshot;
 pub mod scripts;
 pub mod shell_touch;

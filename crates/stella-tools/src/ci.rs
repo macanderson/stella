@@ -71,7 +71,7 @@ impl Tool for CiStatus {
         let timeout_secs = ci_timeout(input);
         let wait = input.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
 
-        if exec::run_github("command -v gh", root, 10)
+        if exec::run_github("command -v gh", root, 10, None)
             .await
             .map(|(c, _)| c)
             != Ok(0)
@@ -97,7 +97,8 @@ impl Tool for CiStatus {
                 None => None,
             };
             let scope = gh_run_scope(input, pr_head.as_ref());
-            return match exec::run_github(&settled_command(&scope), root, timeout_secs).await {
+            return match exec::run_github(&settled_command(&scope), root, timeout_secs, None).await
+            {
                 Ok((0, out)) => ToolOutput::Ok {
                     content: out.trim().to_string(),
                 },
@@ -110,7 +111,7 @@ impl Tool for CiStatus {
 
         let list_cmd = primary_command(input);
 
-        let (code, report) = match exec::run_github(&list_cmd, root, timeout_secs).await {
+        let (code, report) = match exec::run_github(&list_cmd, root, timeout_secs, None).await {
             Ok(pair) => pair,
             Err(e) => return ToolOutput::Error { message: e },
         };
@@ -146,7 +147,8 @@ impl Tool for CiStatus {
         // whole-incomplete-set semantics) and the model wakes exactly once,
         // to the fresh status the `on_wake` replay fetches.
         if wait {
-            let settled = exec::run_github(&settled_command(&scope), root, timeout_secs).await;
+            let settled =
+                exec::run_github(&settled_command(&scope), root, timeout_secs, None).await;
             if matches!(&settled, Ok((0, out)) if out.trim() == "pending") {
                 *self
                     .pending_wait
@@ -171,6 +173,7 @@ impl Tool for CiStatus {
             &failure_log_command(&scope, input, pr_head.as_ref()),
             root,
             timeout_secs,
+            None,
         )
         .await
         .unwrap_or((0, String::new()));
@@ -319,7 +322,9 @@ struct PrHead {
 /// optional half of its answer.
 async fn resolve_pr_head(pr: u64, root: &std::path::Path, timeout_secs: u64) -> Option<PrHead> {
     let cmd = format!("gh pr view {pr} --json headRefName,headRefOid");
-    let (code, out) = exec::run_github(&cmd, root, timeout_secs).await.ok()?;
+    let (code, out) = exec::run_github(&cmd, root, timeout_secs, None)
+        .await
+        .ok()?;
     if code != 0 {
         return None;
     }
