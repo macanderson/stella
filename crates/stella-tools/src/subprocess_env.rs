@@ -56,7 +56,6 @@
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
 /// Environment variables that re-target git at a specific repository. Tool

@@ -155,7 +155,7 @@ pub(crate) async fn run_argv_untruncated(
         .chain(args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    drive(cmd, &display, dir, timeout_secs, &[]).await
+    drive(cmd, &display, dir, timeout_secs, &[], None).await
 }
 
 /// Outcome of [`run_captured`].
@@ -537,7 +537,7 @@ pub(crate) async fn run_argv_split(
         .chain(args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    drive_split(cmd, &display, dir, timeout_secs, &[]).await
+    drive_split(cmd, &display, dir, timeout_secs, &[], None).await
 }
 
 /// `run` with the PASSED/FAILED framing shared by `build_project`,

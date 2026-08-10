@@ -63,7 +63,7 @@ impl Tool for BuildProject {
             return no_toolchain_error();
         }
         match index.verb_entry("build") {
-            Some(entry) => run_and_report(&entry.command, root, timeout_secs).await,
+            Some(entry) => run_and_report(&entry.command, root, timeout_secs, None).await,
             None => ToolOutput::Error {
                 message: "no `build` script detected in this workspace (see list_scripts) — \
                           pass `command`"
@@ -188,7 +188,7 @@ impl Tool for RunTests {
                                 let command = cargo_impacted_command(kind, &packages);
                                 return with_note(
                                     &note,
-                                    run_and_report(&command, root, timeout_secs).await,
+                                    run_and_report(&command, root, timeout_secs, None).await,
                                 );
                             }
                             _ => {
@@ -220,7 +220,10 @@ impl Tool for RunTests {
         }
 
         match test_command(&index, primary, kind, &filter) {
-            Ok(command) => with_note(&note, run_and_report(&command, root, timeout_secs).await),
+            Ok(command) => with_note(
+                &note,
+                run_and_report(&command, root, timeout_secs, None).await,
+            ),
             Err(message) => with_note(&note, ToolOutput::Error { message }),
         }
     }

@@ -865,7 +865,10 @@ mod tests {
         let bash_tool = Bash::new(Some(scratch_path.clone()));
         let dir = std::env::temp_dir();
         let result = bash_tool
-            .execute(&serde_json::json!({"command": "echo $STELLA_SCRATCH"}), &dir)
+            .execute(
+                &serde_json::json!({"command": "echo $STELLA_SCRATCH"}),
+                &dir,
+            )
             .await;
         let exported = match result {
             ToolOutput::Ok { content } => content.trim().to_string(),

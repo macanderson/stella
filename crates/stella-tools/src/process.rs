@@ -473,7 +473,7 @@ impl Tool for StartProcess {
         }
 
         let display = argv.join(" ");
-        let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
         table.next_id += 1;
         let handle = format!("proc-{}", table.next_id);
         table.entries.insert(
