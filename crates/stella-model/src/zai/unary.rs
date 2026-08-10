@@ -95,10 +95,13 @@ impl ZaiProvider {
         let body = self.build_body(req, force_default_reasoning, false);
         let outcome = async {
             let response = self.dispatch(&self.unary_client, &body, true).await?;
+            // The body arrives inside the same 600s read bound as the head,
+            // so a timeout here is #547 too — classify it terminal rather than
+            // retryable, matching the dispatch send path.
             let payload = response
                 .text()
                 .await
-                .map_err(|e| ProviderError::transport(e.to_string()))?;
+                .map_err(|e| crate::http::classify_unary_dispatch_error(&self.label, &e))?;
             self.assemble_unary(&payload)
         }
         .await;
