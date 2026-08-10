@@ -357,6 +357,28 @@ pub fn scrub_spawn_std_env_except(command: &mut std::process::Command, preserved
     scrub_sensitive_std_env_except(command, preserved_names);
 }
 
+/// Inject the session scratch directory path into a command's environment.
+/// Called AFTER the scrub, so the scrub cannot remove it. If `scratch` is None,
+/// does nothing.
+pub fn inject_scratch_env(
+    command: &mut tokio::process::Command,
+    scratch: Option<&std::path::Path>,
+) {
+    if let Some(path) = scratch {
+        command.env("STELLA_SCRATCH", path);
+    }
+}
+
+/// Synchronous counterpart of [`inject_scratch_env`].
+pub fn inject_scratch_std_env(
+    command: &mut std::process::Command,
+    scratch: Option<&std::path::Path>,
+) {
+    if let Some(path) = scratch {
+        command.env("STELLA_SCRATCH", path);
+    }
+}
+
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].
 pub fn scrub_sensitive_std_env_except(
     command: &mut std::process::Command,

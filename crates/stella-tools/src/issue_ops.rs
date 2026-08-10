@@ -116,7 +116,7 @@ pub(crate) fn quote(s: &str) -> String {
 }
 
 async fn gh_json(args: String, root: &std::path::Path) -> Result<Value, String> {
-    let (code, output) = exec::run_github(&args, root, TIMEOUT_SECS).await?;
+    let (code, output) = exec::run_github(&args, root, TIMEOUT_SECS, None).await?;
     if code != 0 {
         return Err(format!("gh failed (exit {code}): {output}"));
     }
@@ -165,7 +165,7 @@ fn strip_ansi(s: &str) -> String {
 }
 
 async fn gh_run(args: String, root: &std::path::Path) -> Result<String, String> {
-    let (code, output) = exec::run_github(&args, root, TIMEOUT_SECS).await?;
+    let (code, output) = exec::run_github(&args, root, TIMEOUT_SECS, None).await?;
     if code != 0 {
         return Err(format!("gh failed (exit {code}): {output}"));
     }

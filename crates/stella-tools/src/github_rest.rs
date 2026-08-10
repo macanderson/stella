@@ -139,7 +139,7 @@ pub async fn repo_slug(root: &std::path::Path) -> Result<String, String> {
     {
         return Ok(slug);
     }
-    let (code, output) = exec::run("git remote get-url origin", root, 10).await?;
+    let (code, output) = exec::run("git remote get-url origin", root, 10, None).await?;
     if code != 0 {
         return Err(format!(
             "cannot resolve the GitHub repository: `git remote get-url origin` \

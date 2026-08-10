@@ -587,7 +587,7 @@ impl Tool for StartWorkOnIssue {
         match self.0.as_ref() {
             IssueBackend::GitHub => {
                 let cmd = develop_command(&issue, input);
-                match exec::run_github(&cmd, root, 60).await {
+                match exec::run_github(&cmd, root, 60, None).await {
                     Ok((0, output)) => ToolOutput::Ok { content: output },
                     Ok((code, output)) => ToolOutput::Error {
                         message: format!("gh failed (exit {code}): {output}"),
@@ -717,7 +717,7 @@ fn checkout_command(branch: &str) -> String {
 /// (dirty tree, protected branch) must not be silently ignored.
 async fn checkout_branch(branch: &str, root: &std::path::Path) -> Result<(), String> {
     let checkout = checkout_command(branch);
-    match exec::run(&checkout, root, 30).await {
+    match exec::run(&checkout, root, 30, None).await {
         Ok((0, _)) => Ok(()),
         Ok((code, output)) => Err(format!(
             "git checkout of `{branch}` failed (exit {code}) — issue left unchanged: {output}"
