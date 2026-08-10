@@ -168,6 +168,64 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     );
 }
 
+/// The deterministic-authority counterpart of the spend/wait witnesses. The
+/// production decorator stack must preserve both halves of the typed
+/// `verify_done` capability; dropping either silently turns a real flip into
+/// an abstention (while ordinary tool text remains non-authoritative).
+#[tokio::test]
+async fn the_production_tool_stack_forwards_verification_replay() {
+    struct VerificationBase(std::sync::Mutex<Vec<Value>>);
+
+    #[async_trait]
+    impl ToolExecutor for VerificationBase {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn drain_verification_requests(&self) -> Vec<Value> {
+            std::mem::take(&mut *self.0.lock().unwrap())
+        }
+        async fn replay_verification_request(
+            &self,
+            _input: &Value,
+        ) -> Option<stella_core::VerificationOracleResult> {
+            Some(stella_core::VerificationOracleResult::Confirmed {
+                summary: "final-state flip".into(),
+            })
+        }
+    }
+
+    let request = json!({"test_cmd": "cargo test -p x", "test_files": ["tests/x.rs"]});
+    let base = VerificationBase(std::sync::Mutex::new(vec![request.clone()]));
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert_eq!(
+        discovery.drain_verification_requests(),
+        vec![request.clone()]
+    );
+    assert!(discovery.drain_verification_requests().is_empty());
+    assert_eq!(
+        discovery.replay_verification_request(&request).await,
+        Some(stella_core::VerificationOracleResult::Confirmed {
+            summary: "final-state flip".into(),
+        })
+    );
+}
+
 /// **The parallel-dispatch counterpart of the spend witness above.**
 ///
 /// `parallel_safe_names` has an empty default, so any decorator that forgets

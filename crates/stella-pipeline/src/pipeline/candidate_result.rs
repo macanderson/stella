@@ -68,16 +68,6 @@ pub(super) struct CandidateResult {
     pub(super) score: CandidateScore,
     pub(super) diff_lines: u32,
     pub(super) revisions: u32,
-    /// Workspace-relative paths of the witness artifact this candidate had
-    /// grafted into it, withheld from adoption unless
-    /// [`crate::PipelineConfig::keep_witness`]. Empty when no witness was
-    /// warranted, which under demand-driven authoring is the common case.
-    ///
-    /// These ride on the result rather than beside the workspace because
-    /// authoring now happens *inside* the candidate, after execution: the
-    /// paths are an output of the run, and the caller indexes them by the same
-    /// index it already uses to find the workspace.
-    pub(super) witness_paths: Vec<String>,
 }
 
 impl CandidateResult {
@@ -115,7 +105,6 @@ impl CandidateResult {
             score: CandidateScore::Failed,
             diff_lines: 0,
             revisions: 0,
-            witness_paths: Vec::new(),
         }
     }
 

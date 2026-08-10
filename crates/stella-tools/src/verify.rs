@@ -78,6 +78,7 @@
 
 mod memo;
 mod phases;
+mod report;
 
 use std::sync::Arc;
 
@@ -89,6 +90,7 @@ use tokio::process::Command;
 use memo::{ShadowKey, ShadowObservation};
 pub use memo::{ShadowMemo, ShadowMemoHandle};
 use phases::{Phase, Phases, Verdict};
+use report::{CandidateFailure, CommandRun, VerifyReport};
 
 use crate::registry::Tool;
 
@@ -134,8 +136,14 @@ async fn run(
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
-) -> Result<(i32, String), String> {
-    crate::exec::run(command, dir, timeout_secs).await
+) -> Result<CommandRun, String> {
+    crate::exec::run_split(command, dir, timeout_secs)
+        .await
+        .map(|(exit_code, stdout, stderr)| CommandRun {
+            exit_code,
+            stdout: crate::exec::truncate_middle(stdout),
+            stderr: crate::exec::truncate_middle(stderr),
+        })
 }
 
 fn tail(s: &str) -> &str {
@@ -457,7 +465,9 @@ async fn run_against_baseline(
     let teardown = Phase::start();
     cleanup_shadow(root, &shadow).await;
     phases.cleanup = teardown.stop();
-    shadow_run.map_err(|e| format!("shadow run against the previous version failed to run: {e}"))
+    shadow_run
+        .map(|run| (run.exit_code, run.combined()))
+        .map_err(|e| format!("shadow run against the previous version failed to run: {e}"))
 }
 
 /// Layer ONLY the test files onto the previous version.
@@ -519,23 +529,27 @@ impl Tool for VerifyDone {
     /// the fast end of the distribution and flatter every percentile #2486
     /// exists to measure.
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
+        self.run_report(input, root).await.output
+    }
+}
+
+impl VerifyDone {
+    async fn run_report(&self, input: &Value, root: &std::path::Path) -> VerifyReport {
         let call = Phase::start();
         let mut phases = Phases::default();
-        let (output, verdict) = match self.verify(input, root, &mut phases).await {
-            Ok(pair) => pair,
-            Err(message) => (ToolOutput::Error { message }, Verdict::Error),
+        let report = match self.verify(input, root, &mut phases).await {
+            Ok(report) => report,
+            Err(message) => VerifyReport::new(ToolOutput::Error { message }, Verdict::Error),
         };
-        phases.verdict = verdict;
+        phases.verdict = report.verdict;
         // Last, so it spans everything above it including the teardown.
         phases.total = call.stop();
         if let Some(dx) = &self.diagnostics {
             phases.emit(dx);
         }
-        output
+        report
     }
-}
 
-impl VerifyDone {
     /// The call itself, with each phase's wall clock written into `phases`.
     ///
     /// `Err` is a named refusal — an input this tool cannot act on, or a
@@ -550,7 +564,7 @@ impl VerifyDone {
         input: &Value,
         root: &std::path::Path,
         phases: &mut Phases,
-    ) -> Result<(ToolOutput, Verdict), String> {
+    ) -> Result<VerifyReport, String> {
         let setup = Phase::start();
         let test_cmd = crate::input::required_str(input, "test_cmd").map_err(|e| e.to_string())?;
         let test_files: Vec<String> = input
@@ -692,19 +706,28 @@ impl VerifyDone {
         let half_one = Phase::start();
         let new_run = run(test_cmd, root, timeout_secs).await;
         phases.working_tree_run = half_one.stop();
-        let (new_exit, new_output) = new_run?;
-        if new_exit != 0 {
-            return Ok((
-                ToolOutput::Error {
-                    message: format!(
-                        "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). \
+        let new_run = new_run?;
+        let new_output = new_run.combined();
+        if new_run.exit_code != 0 {
+            let output = ToolOutput::Error {
+                message: format!(
+                    "NOT DONE — the witness test fails on your NEW code (exit {}). \
                          Fix the implementation (or the test) and retry.\n--- output tail \
                          ---\n{}",
-                        tail(&new_output)
-                    ),
-                },
-                Verdict::NotDone,
-            ));
+                    new_run.exit_code,
+                    tail(&new_output)
+                ),
+            };
+            return Ok(VerifyReport {
+                output,
+                verdict: Verdict::NotDone,
+                candidate_failure: Some(CandidateFailure {
+                    command: test_cmd.to_string(),
+                    exit_code: new_run.exit_code,
+                    stdout: new_run.stdout,
+                    stderr: new_run.stderr,
+                }),
+            });
         }
 
         // Half 2: the previous code (the baseline + your new tests) must fail.
@@ -763,7 +786,7 @@ impl VerifyDone {
         };
 
         if old_exit == 0 {
-            return Ok((
+            return Ok(VerifyReport::new(
                 ToolOutput::Error {
                     message: format!(
                         "VACUOUS TEST — the witness test ALSO PASSES on the previous code \
@@ -784,7 +807,7 @@ impl VerifyDone {
         // classify before crediting, so a missing build artifact in the fresh
         // shadow checkout cannot fake a flip (#2067).
         if let Some(label) = import_failure_signature(&old_output) {
-            return Ok((
+            return Ok(VerifyReport::new(
                 ToolOutput::Error {
                     message: format!(
                         "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
@@ -811,7 +834,7 @@ impl VerifyDone {
             ));
         }
 
-        Ok((
+        Ok(VerifyReport::new(
             ToolOutput::Ok {
                 content: format!(
                     "WITNESS CONFIRMED — deterministic definition of done met:\n\

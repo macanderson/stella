@@ -26,6 +26,26 @@
 
 use super::*;
 
+/// Overlay the research responsibility's request shaping onto its engine.
+fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -> EngineConfig {
+    if let Some(effort) = overrides.effort {
+        config.effort = Some(effort);
+    }
+    if let Some(reasoning) = overrides.reasoning {
+        config.reasoning = Some(reasoning);
+    }
+    if let Some(temperature) = overrides.temperature {
+        config.temperature = Some(temperature);
+    }
+    if let Some(max_output_tokens) = overrides.max_output_tokens {
+        config.max_output_tokens = Some(max_output_tokens);
+    }
+    if let Some(params) = overrides.params {
+        config.params = Some(params);
+    }
+    config
+}
+
 use stella_core::subagent::{SubAgentHost, SubAgentOutcome, SubAgentSpec};
 
 use crate::candidate_fanout::FanOutBudget;
@@ -78,7 +98,7 @@ impl Pipeline<'_> {
         let mut engine = Engine::with_sleeper(
             resolved.provider,
             self.tools,
-            super::witness_stage::apply_role_shaping(
+            apply_role_shaping(
                 self.config.engine.clone(),
                 &self.config.role_overrides.research,
             ),

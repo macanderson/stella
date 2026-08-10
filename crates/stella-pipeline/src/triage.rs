@@ -7,9 +7,8 @@
 //!
 //! # Fast paths and correct downgrade (L-E2)
 //!
-//! - [`TaskClass::SimpleLookup`] skips both the planner and the verifier — but
-//!   that verifier-skip *self-revokes* if execution unexpectedly touches files
-//!   (the zero-diff guard, enforced in [`crate::pipeline`]).
+//! - [`TaskClass::SimpleLookup`] skips planning and verification unless
+//!   execution unexpectedly touches files (the zero-diff guard).
 //! - [`TaskClass::SingleTask`] skips DAG planning (one execute turn) but is
 //!   still verified.
 //! - [`TaskClass::MultiStep`] takes the full plan → scope-review → execute →
@@ -36,14 +35,13 @@ use crate::management_prompt::ManagementPrompt;
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 pub enum TaskClass {
-    /// A lookup/read/explain prompt: no plan, no verifier. Self-revoking on
+    /// A lookup/read/explain prompt: no plan. Self-revoking on
     /// unexpected file mutations (zero-diff guard).
     SimpleLookup,
     /// One concrete change: skip DAG planning, one execute turn, still
     /// verified.
     SingleTask,
-    /// Genuinely multi-step: full plan → scope review → execute → verify →
-    /// verifier.
+    /// Genuinely multi-step: full plan → scope review → execute → verify.
     MultiStep,
 }
 
@@ -98,7 +96,8 @@ pub struct TaskAssessment {
     pub conversational: bool,
     /// Whether an independently authored witness test is warranted.
     pub require_witness: Option<bool>,
-    /// Whether a separate model reviewing the result is warranted.
+    /// Legacy parser field retained for old triage responses and resume data.
+    /// It has no execution effect: verification never dispatches a model.
     pub require_verifier: Option<bool>,
 }
 
@@ -121,25 +120,11 @@ impl TaskAssessment {
             .unwrap_or_else(|| self.class.verifies_unconditionally())
     }
 
-    /// Whether a model verifier is warranted.
-    ///
-    /// Defaults to `true`, unlike [`Self::wants_witness`]: this is only ever
-    /// consulted once the verification ladder has already run and come back
-    /// *inconclusive*, so the class has had its say. Skipping the verifier there
-    /// has to be an explicit call from triage — a class-derived default would
-    /// silently drop the verifier on exactly the path the zero-diff guard exists
-    /// to catch (a "lookup" that turned out to touch files).
-    ///
-    /// An explicit `no` is a *request*, not a decision: by the time it is
-    /// consulted the ladder is inconclusive, which falsifies the premise the
-    /// triage prompt offered for saying no ("success is self-evident or a
-    /// test already proves it"). So the pipeline honors the waiver only when
-    /// the post-execution warrant agrees the change has nothing a reviewer
-    /// could catch (`Pipeline::verifier_waiver_stands`) — the same
-    /// evidence-over-prediction rule `resolve_witness`'s ceiling applies in
-    /// the other direction.
+    /// Always false. Kept as a compatibility method for callers compiled
+    /// against the old assessment API; a triage model cannot authorize a
+    /// reviewer because no model participates in verification.
     pub fn wants_verifier(&self) -> bool {
-        self.require_verifier.unwrap_or(true)
+        false
     }
 }
 
@@ -962,8 +947,8 @@ fn has_action_request(goal: &str) -> bool {
 }
 
 /// The prompt handed to the Role::Triage model to classify a user message. A
-/// tiny, fixed instruction for a cheap/fast tier: it asks for three labeled
-/// lines (`CLASS`/`WITNESS`/`VERIFIER`), but the parser tolerates a bare class
+/// tiny, fixed instruction for a cheap/fast tier: it asks for two labeled
+/// lines (`CLASS`/`WITNESS`), but the parser tolerates a bare class
 /// token too ([`parse_triage_response`]). The first line offers `chat` so a
 /// non-task (a greeting, small talk) has somewhere to land instead of being
 /// forced onto the work path.
@@ -1031,11 +1016,10 @@ fn bounded_structure(structure: &str) -> String {
 /// system message the provider adapters can cache-mark.
 const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and decide what assurance its \
      result actually warrants. Do NOT assume it is a software task — it may \
-     just be conversation. Answer with EXACTLY these three lines — plus, for \
-     `multi` only, an optional fourth — and nothing else:\n\
+     just be conversation. Answer with EXACTLY these two lines — plus, for \
+     `multi` only, an optional third — and nothing else:\n\
      CLASS: chat|lookup|single|multi\n\
      WITNESS: yes|no\n\
-     VERIFIER: yes|no\n\
      RESEARCH: <question> | <question>\n\n\
      RESEARCH (optional, `multi` only): up to 4 self-contained questions \
      about THIS workspace whose answers a planner would need before naming \
@@ -1079,11 +1063,7 @@ const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and deci
      when the ask is to DELETE something — a witness must fail on the old \
      code and pass on the new, and a removal leaves nothing to write that \
      against. Prefer `no` on small, self-evident work — ceremony that \
-     proves nothing costs the user time and money.\n\
-     VERIFIER is whether a separate model should review the result. It is \
-     only consulted when no test settled the outcome, so say no ONLY \
-     when a test will already prove the change or the result is \
-     trivially checkable from its diff; when unsure, say yes.";
+     proves nothing costs the user time and money.";
 
 #[cfg(test)]
 mod tests;

@@ -493,30 +493,12 @@ pub struct AgentEngineConfig {
     /// said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
-    /// Whether a model verifier's pass with nothing deterministic behind it buys
-    /// one revision demanding corroboration
-    /// (`stella_pipeline::PipelineConfig::verifier_evidence_demand`, #1295).
-    /// Absent keeps the pipeline's own default.
-    ///
-    /// Reachable as a setting because the question it answers is empirical and
-    /// per-workload: the ask is only ever raised where a tracked command could
-    /// answer it, so on a workload that has one it converts near-misses, and
-    /// on one that does not it costs literally nothing. A benchmark arm that
-    /// wants to measure the difference sets it here rather than rebuilding,
-    /// which is what makes the two arms one binary and one posture key apart.
+    /// Legacy model-verifier setting retained for configuration decoding.
+    /// Live verification is deterministic-only, so this has no effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    /// Refuse a run whose VERDICT call would resolve to the worker's own
-    /// model (`stella_pipeline::PipelineConfig::require_independent_verifier`,
-    /// #1795). Absent is off.
-    ///
-    /// Off is the right default for a single-provider BYOK seat, where the
-    /// verifier legitimately rides the worker and the verdict records that
-    /// fact on its ladder snapshot instead. Turn it on where the posture
-    /// claims an independent reviewer — a benchmark arm, a policy that treats
-    /// a self-graded PASS as no verdict at all — and a run that cannot honour
-    /// the claim should refuse before spending rather than produce a number
-    /// the configuration misdescribes.
+    /// Legacy verifier-independence setting retained for configuration
+    /// decoding. Live verification dispatches no model, so this has no effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation

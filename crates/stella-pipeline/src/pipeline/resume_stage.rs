@@ -11,8 +11,8 @@
 //! pipeline learns while running that a resume cannot re-derive — and the
 //! seam that spends them: [`Pipeline::resume`] finishes the interrupted
 //! turn, walks the plan steps the crash never reached, and then flows into
-//! the same witness → verify → verdict tail every ordinary candidate takes,
-//! so a resumed run ends with a real [`Verdict`] instead of an honest shrug.
+//! the same deterministic verification tail every ordinary candidate takes,
+//! so a resumed run ends with an evidence-grounded [`Verdict`].
 //!
 //! # What still does not come back (and why that is stated, not hidden)
 //!
@@ -20,11 +20,6 @@
 //!   ran inside an isolated workspace; that workspace died with the process,
 //!   so [`PipelineResume::from_progress`] declines and the caller keeps the
 //!   honest bare-turn path. Reattachment/recreation is the tracked follow-up.
-//! - **An authored witness.** Authoring requires a pristine baseline snapshot
-//!   of the *pre-execution* tree, which no post-crash process can take. The
-//!   resumed tail runs with `authoring = None`, exactly the degradation the
-//!   unauthored ladder already handles — the verdict escalates to the model
-//!   verifier rather than crediting an unprovable flip.
 //! - **The lint baseline (#861).** Same reason: it was a pre-execution
 //!   observation held in process memory. The regression veto sits out a
 //!   resumed run.
@@ -60,7 +55,7 @@ pub struct FrameProgress {
     pub task_class: Option<TaskClass>,
     /// The goal, verbatim. The frame's configuration half deliberately
     /// carries decisions only, but restoration needs this one piece of
-    /// content: the verifier judges the work *against the goal*, and the
+    /// content: the pipeline reports the work *against the goal*, and the
     /// transcript holds it only embedded in the assembled recall message.
     /// It lives where the full transcript already does (`.stella/private/`),
     /// so nothing new is exposed.
@@ -120,7 +115,7 @@ pub struct RecordedBaseline {
 pub struct PipelineResume {
     /// The interrupted turn, as the engine checkpointed it.
     pub checkpoint: Checkpoint,
-    /// The goal the verifier judges against, restored verbatim.
+    /// The goal the worker and outcome report against, restored verbatim.
     pub goal: String,
     /// Triage's class, restored — gates verification exactly as it did live.
     pub task_class: TaskClass,
@@ -189,7 +184,7 @@ impl<'a> Pipeline<'a> {
 
     /// Re-enter the pipeline over an interrupted execute-stage turn: finish
     /// the turn, walk any plan steps the crash never reached, then run the
-    /// same witness → verify → verdict tail an ordinary candidate takes.
+    /// same deterministic verification tail an ordinary candidate takes.
     ///
     /// The returned outcome's `total_cost_usd` includes the interrupted
     /// turn's pre-crash spend (the checkpoint carries it, and the resumed
@@ -264,14 +259,14 @@ impl<'a> Pipeline<'a> {
         // command, so a `--test-command` changed across the crash discards
         // the stale observation instead of crediting a flip on the wrong
         // test. With no usable baseline the oracle stays unarmed and the
-        // ladder escalates to the model verifier rather than fast-submitting.
+        // ladder abstains rather than crediting a flip on insufficient evidence.
         let mut oracle = FlipOracle::new();
         let mut oracle_trace = Vec::new();
         let mut flip_halt: Option<Arc<FlipHalt>> = None;
         if task_class.verifies_unconditionally()
-            && let Some(cmd) = self.effective_test_command(None)
+            && let Some(cmd) = self.effective_test_command()
             && let Some(recorded) = &resume.baseline
-            && recorded.command == cmd.command
+            && normalize_command(&recorded.command) == normalize_command(cmd.command)
         {
             oracle.observe_run(cmd.command, recorded.passed, &recorded.output_tail);
             oracle_trace.push(OracleObservation {
@@ -304,10 +299,7 @@ impl<'a> Pipeline<'a> {
             messages,
             final_text: String::new(),
             signals,
-            // Ordinal 1: a resume re-enters exactly one candidate — the fan-out
-            // it may have belonged to died with the process, and only the
-            // checkpointed turn comes back (#1787's per-candidate record).
-            degradation: VerdictDegradation::new(1),
+            verify_done_request: None,
             flip_halt,
             oracle,
             oracle_trace,
@@ -321,18 +313,8 @@ impl<'a> Pipeline<'a> {
                 self.touches.begin_workspace_probe();
                 self.touches.mutations_recorded()
             },
-            // The pre-execution lint snapshot died with the process; the
-            // regression veto (#861) sits out a resumed run (module docs).
-            lint_baseline: None,
-            witness_mutation: None,
-            diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
-            evidence_demands: 0,
-            witness_paths: Vec::new(),
-            witness_baseline_symptom: None,
             failures: Vec::new(),
-            last_verdict: None,
-            last_verdict_diff: None,
         };
         match outcome {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -392,11 +374,9 @@ impl<'a> Pipeline<'a> {
 
         // --- The ordinary post-execute tail (mirrors `run_candidate`). -----
         let surface = CandidateSurface {
+            tools: self.tools,
             diagnostics: self.diagnostics,
             tests: self.tests,
-            lint: self.lint,
-            mutation: self.mutation,
-            coverage: self.coverage,
             repo_status: self.repo_status,
             cwd: None,
             hook_runner: None,
@@ -428,7 +408,6 @@ impl<'a> Pipeline<'a> {
 
         let base_messages: Vec<CompletionMessage> = Vec::new();
         let frame = TaskFrame {
-            goal,
             base_messages: &base_messages,
             plan: resume.plan.as_deref(),
             assessment: TaskAssessment::from_class(task_class),
@@ -438,27 +417,7 @@ impl<'a> Pipeline<'a> {
                 budget: &mut budget,
                 total: &mut total_cost,
             };
-            // `authoring: None` — no pristine pre-execution snapshot exists
-            // to author in (module docs), the same degradation every
-            // shared-tree candidate already takes.
-            let witness = match self
-                .witness_on_demand(goal, None, surface, &mut state, &mut spend)
-                .await
-            {
-                Ok(witness) => witness,
-                Err(reason) => {
-                    let best =
-                        CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
-                    return Ok(self.settle_outcome(
-                        best,
-                        task_class,
-                        total_cost,
-                        Some(worker_label),
-                        1,
-                    ));
-                }
-            };
-            self.verify_candidate(frame, witness.as_ref(), &engine, surface, &mut spend, state)
+            self.verify_candidate(frame, &engine, surface, &mut spend, state)
                 .await
         };
         Ok(self.settle_outcome(best, task_class, total_cost, Some(worker_label), 1))
