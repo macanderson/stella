@@ -12,7 +12,7 @@
 //! row is missing (`stella-cli` config tests), duplicated, or names a witness
 //! test that no longer exists in the adapter sources.
 //!
-//! Two axes are guarded today, both born from the same shape of silent
+//! Three axes are guarded today, all born from the same shape of silent
 //! per-provider divergence:
 //! - [`CachePosture`] — how a provider's prompt cache is engaged and observed.
 //! - [`ReasoningPosture`] — how a provider's reasoning/thinking budget is
@@ -21,6 +21,10 @@
 //!   honored a reasoning preference on the shared chat-completions adapter,
 //!   so a pinned `effort` was *silently dropped* for xAI, DeepSeek, and local
 //!   — the exact "nothing enforces the omission stays deliberate" gap.
+//! - [`StreamFallbackPosture`] — how a provider recovers when its streaming
+//!   path is broken (hung before the first byte, or an empty stream): a
+//!   unary fallback (#2686), a declared streaming-only gap, or an adapter
+//!   that is already unary.
 //!
 //! **The law for new providers:** adding a provider id means adding a row on
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
@@ -331,6 +335,122 @@ pub fn reasoning_posture(provider_id: &str) -> Option<&'static ReasoningPosture>
         .map(|(_, posture)| posture)
 }
 
+/// How a provider recovers when its *streaming path* is broken — the stream
+/// hangs before its first byte (a proxy buffering the SSE body) or comes
+/// back empty (a gateway answering 200 with no data). The third axis of the
+/// matrix (#2686), with the same law as the other two: behavior that
+/// diverges per provider is declared, never assumed.
+#[derive(Debug)]
+pub enum StreamFallbackPosture {
+    /// The adapter arms a bounded per-session latch on a fallback-eligible
+    /// stream fault and re-issues the retried attempt as a unary
+    /// (non-streaming) request for the same payload — see
+    /// `crate::stream_recovery` for the state machine.
+    UnaryFallback {
+        /// The wire mechanism, for humans reading the matrix.
+        mechanism: &'static str,
+        /// Name of the test function that proves the fallback: the faulted
+        /// streaming attempt fails retryably and the retry completes over
+        /// `stream: false`. Checked for existence by this module's tests.
+        witness: &'static str,
+    },
+    /// The adapter streams and has no unary fallback path (yet): a broken
+    /// streaming path fails the attempt with its ordinary classification.
+    /// Allowed only with a note a reviewer can check.
+    StreamingOnly { note: &'static str },
+    /// The adapter is already unary — there is no stream to fall back from.
+    AlwaysUnary { note: &'static str },
+}
+
+/// One stream-fallback row per provider id constructible by the CLI — same
+/// completeness contract as the other two axes. Settings-defined custom
+/// providers inherit the shared OpenAI-compatible adapter and its fallback,
+/// so they need no row of their own.
+pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
+    (
+        "anthropic",
+        StreamFallbackPosture::StreamingOnly {
+            note: "the Messages adapter has no unary parse path yet; extending the shared \
+                   fallback latch to this dialect is tracked in #2746",
+        },
+    ),
+    (
+        "bedrock",
+        StreamFallbackPosture::AlwaysUnary {
+            note: "the adapter calls Converse, not ConverseStream — every completion is \
+                   already unary, so there is no stream to fall back from",
+        },
+    ),
+    (
+        "openrouter",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter: retried attempt re-issues the \
+                        byte-identical body with stream: false through the unary read bound",
+            witness: "an_empty_stream_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "openai",
+        StreamFallbackPosture::StreamingOnly {
+            note: "the Responses adapter has no unary parse path yet; extending the shared \
+                   fallback latch to this dialect is tracked in #2746",
+        },
+    ),
+    (
+        "gemini",
+        StreamFallbackPosture::StreamingOnly {
+            note: "streamGenerateContent has no unary parse path yet (generateContent would \
+                   be the fallback); tracked in #2746",
+        },
+    ),
+    (
+        "vertex",
+        StreamFallbackPosture::StreamingOnly {
+            note: "shares gemini's streaming aggregator and its gap; tracked in #2746",
+        },
+    ),
+    (
+        "zai",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "retried attempt re-issues the byte-identical body with stream: false \
+                        through the unary read bound (http::unary_client)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "xai",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "deepseek",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row)",
+            witness: "a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request",
+        },
+    ),
+    (
+        "local",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shared chat-completions adapter fallback (see the zai row) — local \
+                        gateways and proxies are where SSE buffering is most likely",
+            witness: "an_empty_stream_falls_back_to_a_non_streaming_request",
+        },
+    ),
+];
+
+/// The declared stream-fallback posture for `provider_id`, or `None` for an
+/// id the matrix doesn't know — which the `stella-cli` completeness test
+/// turns into a hard failure for any seeded provider.
+pub fn stream_fallback_posture(provider_id: &str) -> Option<&'static StreamFallbackPosture> {
+    STREAM_FALLBACK_POSTURE
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, posture)| posture)
+}
+
 /// The tier `effort` is really served as by `provider_id`, when the adapter
 /// cannot put that tier on the wire distinctly — `None` when it reaches the
 /// wire as itself.
@@ -370,7 +490,7 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 14] {
+    fn adapter_sources() -> [&'static str; 15] {
         [
             include_str!("anthropic/tests.rs"),
             include_str!("anthropic/tests/cache_breakpoints.rs"),
@@ -383,6 +503,7 @@ mod tests {
             include_str!("zai/tests/error_classify.rs"),
             include_str!("zai/tests/openrouter_effort.rs"),
             include_str!("zai/tests/openrouter_stream.rs"),
+            include_str!("zai/tests/stream_fallback.rs"),
             include_str!("zai/tests/stream_frame.rs"),
             include_str!("zai/tests/vision.rs"),
             include_str!("zai/tests/zai_effort.rs"),
@@ -504,6 +625,38 @@ mod tests {
         }
     }
 
+    /// The stream-fallback sibling: every `UnaryFallback` row must name a
+    /// test that exists in the adapter sources, proving the retried attempt
+    /// really goes out non-streaming. The no-fallback variants carry a note,
+    /// not a witness.
+    #[test]
+    fn every_stream_fallback_witness_test_exists_in_the_adapter_sources() {
+        let sources = adapter_sources();
+        for (id, posture) in STREAM_FALLBACK_POSTURE {
+            let witness = match posture {
+                StreamFallbackPosture::UnaryFallback { witness, .. } => witness,
+                StreamFallbackPosture::StreamingOnly { .. }
+                | StreamFallbackPosture::AlwaysUnary { .. } => continue,
+            };
+            let needle = format!("fn {witness}(");
+            assert!(
+                sources.iter().any(|source| source.contains(&needle)),
+                "stream-fallback witness for `{id}` not found in adapter sources: {witness}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_fallback_provider_ids_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, _) in STREAM_FALLBACK_POSTURE {
+            assert!(
+                seen.insert(id),
+                "duplicate stream-fallback-posture row for `{id}`"
+            );
+        }
+    }
+
     #[test]
     fn provider_ids_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
@@ -523,17 +676,23 @@ mod tests {
         }
     }
 
-    /// Both axes must cover exactly the same set of provider ids — a provider
-    /// present on one axis but not the other is a matrix hole.
+    /// Every axis must cover exactly the same set of provider ids — a
+    /// provider present on one axis but not another is a matrix hole.
     #[test]
-    fn both_axes_cover_the_same_provider_ids() {
+    fn all_axes_cover_the_same_provider_ids() {
         let cache: std::collections::BTreeSet<_> =
             CACHE_POSTURE.iter().map(|(id, _)| *id).collect();
         let reasoning: std::collections::BTreeSet<_> =
             REASONING_POSTURE.iter().map(|(id, _)| *id).collect();
+        let fallback: std::collections::BTreeSet<_> =
+            STREAM_FALLBACK_POSTURE.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             cache, reasoning,
             "cache and reasoning matrices cover different provider ids"
+        );
+        assert_eq!(
+            cache, fallback,
+            "cache and stream-fallback matrices cover different provider ids"
         );
     }
 
@@ -547,5 +706,9 @@ mod tests {
             assert!(reasoning_posture(id).is_some());
         }
         assert!(reasoning_posture("no-such-provider").is_none());
+        for (id, _) in STREAM_FALLBACK_POSTURE {
+            assert!(stream_fallback_posture(id).is_some());
+        }
+        assert!(stream_fallback_posture("no-such-provider").is_none());
     }
 }

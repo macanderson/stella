@@ -2,24 +2,30 @@
 //! 5.2's tool-call dialect (`openai-json`: an accumulating `tool_calls`
 //! array keyed by index, arguments streamed as string fragments).
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ReasoningEffort, ToolCall,
+    CompletionMessage, CompletionRequestRef, CompletionResult, MessageRole, ProviderError,
+    ReasoningEffort,
 };
+// Used by the assembled result the delivery-path modules now own, but still
+// named unqualified throughout the test tree, which imports `super::*`.
+#[cfg(test)]
+use stella_protocol::{CompletionUsage, FinishReason, ToolCall};
 
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
-use crate::sse::SseDecoder;
+use crate::stream_recovery::{StreamFault, StreamRecovery};
 
 pub(crate) mod effort;
+mod stream;
+mod unary;
 use effort::{xai_reasoning_effort, xai_supports_reasoning_effort, zai_reasoning_effort};
 // `map_zai_effort` is asserted on directly by the wire tests, which reach it
 // through this module's namespace like every other helper here. Its xAI sibling
@@ -69,6 +75,23 @@ pub struct ZaiProvider {
     /// the OpenAI adapter's `prompt_cache_key` lifecycle. Volatile by design:
     /// it rides as a request parameter and never enters the cached bytes.
     session_id: String,
+    /// The streaming→non-streaming fallback latch (#2686): armed when a
+    /// stream hangs before its first byte or comes back empty, consulted per
+    /// attempt so the retry of a faulted attempt goes out unary. See
+    /// [`crate::stream_recovery`] for the state machine and its bounds.
+    recovery: StreamRecovery,
+    /// The client the unary fallback dispatches through. Separate from
+    /// [`Self::client`] because a non-streaming call has no first token to
+    /// reset the per-read clock: the whole generation must fit inside one
+    /// read, so it needs [`http::unary_client`]'s 600s bound where the
+    /// streaming client's 120s per-chunk bound would fail every completion
+    /// slower than two minutes as retryable Transport (#547's lesson,
+    /// learned on Bedrock).
+    unary_client: reqwest::Client,
+    /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the
+    /// hung-stream path is testable in milliseconds (the same reason
+    /// `next_with_timeout` takes `idle` as a parameter).
+    first_byte_deadline: Duration,
 }
 
 /// Process-wide monotonic suffix guaranteeing two [`ZaiProvider`]
@@ -136,7 +159,18 @@ impl ZaiProvider {
             extra_headers: Vec::new(),
             usage_accounting: false,
             session_id: new_session_id(),
+            recovery: StreamRecovery::default(),
+            unary_client: http::unary_client(),
+            first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
         }
+    }
+
+    /// Shrink the first-byte deadline so the hung-stream fallback is
+    /// testable in milliseconds instead of 90 seconds of wall clock.
+    #[cfg(test)]
+    pub(crate) fn with_first_byte_deadline(mut self, deadline: Duration) -> Self {
+        self.first_byte_deadline = deadline;
+        self
     }
 
     /// The session-stable sticky-routing id minted for this construction.
@@ -1030,20 +1064,88 @@ impl ZaiProvider {
     /// One request/stream/aggregate cycle. `force_default_reasoning` drops the
     /// `reasoning` object from the body so an endpoint that mandates reasoning
     /// applies its own default instead of rejecting the request.
+    ///
+    /// Streams by default, but consults the fallback latch first: the retry
+    /// of an attempt whose stream hung before its first byte or came back
+    /// empty goes out as a **unary** request for the same payload instead
+    /// (#2686) — see [`crate::stream_recovery`] for the latch's states and
+    /// bounds, and [`unary`] for that path.
     async fn complete_attempt(
         &self,
         req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
         force_default_reasoning: bool,
     ) -> Result<CompletionResult, ProviderError> {
+        if self.recovery.use_unary() {
+            return self
+                .complete_unary_attempt(req, force_default_reasoning)
+                .await;
+        }
+        let body = self.build_body(req, force_default_reasoning, true);
+        let response = self.dispatch(&self.client, &body).await?;
+        let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
+            stream::aggregate_zai_stream(
+                response,
+                &self.label,
+                observer,
+                self.pricing.as_ref(),
+                self.first_byte_deadline,
+            )
+            .await
+            .map_err(|fault| self.absorb_stream_fault(fault))?;
+        // A gateway-reported cost (OpenRouter usage accounting) is
+        // authoritative; catalog list pricing is the estimate for providers
+        // that don't report one.
+        let cost_usd = reported_cost_usd
+            .unwrap_or_else(|| self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0));
+        Ok(CompletionResult {
+            text,
+            tool_calls,
+            usage,
+            model: self.model.clone(),
+            cost_usd,
+            finish_reason,
+        })
+    }
+
+    /// Route a [`StreamFault`] back into the retry ladder. An eligible fault
+    /// (hung before its first byte / empty stream) arms the fallback latch —
+    /// the caller's retry of this attempt will go out unary — and its error
+    /// is retryable Transport, so the ordinary retry machinery both drives
+    /// that switch and bills this discarded attempt through its
+    /// `UsageIncomplete` observer, exactly like every other doomed attempt.
+    /// The message names the switch only when THIS fault armed the latch, so
+    /// an error never promises a fallback some other attempt already made.
+    fn absorb_stream_fault(&self, fault: StreamFault) -> ProviderError {
+        if fault.fallback_eligible && self.recovery.note_stream_fault() {
+            return match fault.error {
+                ProviderError::Transport { message, partial } => ProviderError::Transport {
+                    message: format!("{message}; retrying this attempt as a non-streaming request"),
+                    partial,
+                },
+                other => other,
+            };
+        }
+        fault.error
+    }
+
+    /// The one request body both delivery paths serialize — `stream` is the
+    /// only field on which they differ, so the unary fallback re-issues the
+    /// byte-identical payload minus the stream flag.
+    fn build_body(
+        &self,
+        req: CompletionRequestRef<'_>,
+        force_default_reasoning: bool,
+        stream: bool,
+    ) -> ZaiRequest<'_> {
         // "Include" semantics: every override is `None` unless the caller
         // set it, and `None` never reaches the wire — a request without
         // params serializes byte-identical to the pre-params body.
         let params = req.params.unwrap_or_default();
-        let body = ZaiRequest {
+        ZaiRequest {
             model: &self.model,
             messages: to_zai_messages(req.messages, &self.model),
-            stream: true,
+            stream,
             max_tokens: reasoning_aware_max_tokens(req.max_output_tokens, req.reasoning),
             temperature: req.temperature,
             top_p: params.top_p,
@@ -1107,17 +1209,26 @@ impl ZaiProvider {
                 .serves_openrouter()
                 .then_some(ZaiCacheControl { kind: "ephemeral" }),
             session_id: self.serves_openrouter().then_some(self.session_id.as_str()),
-        };
+        }
+    }
 
-        let mut request = self
-            .client
+    /// POST `body` and run the shared non-success ladder (vendor 429
+    /// pre-check first). Returns the successful response for the caller —
+    /// streaming or unary — to consume. The two delivery paths differ only
+    /// in their client's read bound, so `client` is a parameter.
+    async fn dispatch(
+        &self,
+        client: &reqwest::Client,
+        body: &ZaiRequest<'_>,
+    ) -> Result<reqwest::Response, ProviderError> {
+        let mut request = client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(self.api_key.reveal());
         for (name, value) in &self.extra_headers {
             request = request.header(*name, value);
         }
         let response = request
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(|e| ProviderError::transport(e.to_string()))?;
@@ -1153,412 +1264,8 @@ impl ZaiProvider {
                 &self.model,
             ));
         }
-
-        let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
-            aggregate_zai_stream(response, &self.label, observer, self.pricing.as_ref()).await?;
-        // A gateway-reported cost (OpenRouter usage accounting) is
-        // authoritative; catalog list pricing is the estimate for providers
-        // that don't report one.
-        let cost_usd = reported_cost_usd
-            .unwrap_or_else(|| self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0));
-        Ok(CompletionResult {
-            text,
-            tool_calls,
-            usage,
-            model: self.model.clone(),
-            cost_usd,
-            finish_reason,
-        })
+        Ok(response)
     }
-}
-
-/// Accumulator for one in-progress streamed tool call, keyed by the
-/// provider's `index` field until it's complete.
-#[derive(Default)]
-struct ToolCallAccumulator {
-    id: String,
-    name: String,
-    arguments: String,
-    /// Whether this call was already announced to a [`ToolCallObserver`].
-    /// OpenAI-style tool calls stream sequentially by index, so a call is
-    /// complete the moment a HIGHER index appears — that boundary announces
-    /// it exactly once.
-    ///
-    /// The stream's LAST call has no higher index behind it, so its boundary
-    /// is the chunk that carries `finish_reason: "tool_calls"` instead —
-    /// which arrives before the final usage frame and `[DONE]`, with an
-    /// end-of-stream fallback for a server that jumps straight to `[DONE]`.
-    /// Without that boundary a turn that makes exactly one tool call — the
-    /// common shape for this agent — was never announced at all, and
-    /// `stella-core`'s speculative execution never fired for any single-call
-    /// turn on this dialect. The window is smaller than what the dialects
-    /// with a per-call terminator get (`response.function_call_arguments.done`
-    /// on `openai.rs`, `content_block_stop` on `anthropic.rs`, whole
-    /// `functionCall` parts on `gemini.rs`), but not empty. This flag is what
-    /// keeps every boundary exactly-once: a call announced at one boundary is
-    /// skipped at every later one.
-    announced: bool,
-}
-
-/// Announce every un-announced accumulator below `next_index` to the
-/// observer. Only calls whose arguments already parse are announced — a
-/// call the end-of-stream assembly would hand the `Null` repair sentinel
-/// must never reach speculative execution. Announced calls re-parse the
-/// same bytes at final assembly, so an announced call and its committed
-/// twin are structurally identical.
-fn announce_completed_below(
-    observer: &dyn ToolCallObserver,
-    tool_calls: &mut BTreeMap<usize, ToolCallAccumulator>,
-    next_index: usize,
-) {
-    for (_, acc) in tool_calls.range_mut(..next_index) {
-        if acc.announced {
-            continue;
-        }
-        acc.announced = true;
-        if acc.id.is_empty() {
-            continue;
-        }
-        let trimmed = acc.arguments.trim();
-        let input = if trimmed.is_empty() {
-            Some(Value::Object(serde_json::Map::new()))
-        } else {
-            serde_json::from_str(trimmed).ok()
-        };
-        if let Some(input) = input {
-            observer.tool_call_streamed(&ToolCall {
-                call_id: acc.id.clone(),
-                name: acc.name.clone(),
-                input,
-            });
-        }
-    }
-}
-
-async fn aggregate_zai_stream(
-    response: reqwest::Response,
-    label: &str,
-    observer: Option<&dyn ToolCallObserver>,
-    pricing: Option<&Pricing>,
-) -> Result<
-    (
-        String,
-        Vec<ToolCall>,
-        CompletionUsage,
-        Option<FinishReason>,
-        Option<f64>,
-    ),
-    ProviderError,
-> {
-    let mut decoder = SseDecoder::new();
-    let mut text = String::new();
-    // Chain-of-thought streamed under `reasoning_content`, kept separate from
-    // the answer. Used only as a fallback when `content` never arrives, so a
-    // reasoning-only turn is visible instead of blank.
-    let mut reasoning = String::new();
-    let mut usage = CompletionUsage::default();
-    let mut tool_calls: BTreeMap<usize, ToolCallAccumulator> = BTreeMap::new();
-    // Set once any choice reports `finish_reason: "length"` — the output was
-    // cut off at the token limit, so a tool call whose argument JSON didn't
-    // finish streaming is truncated, not merely malformed.
-    let mut truncated_at_token_limit = false;
-    // Gateway-reported per-call cost (OpenRouter usage accounting), from the
-    // final usage frame. `None` when the endpoint doesn't report one.
-    let mut reported_cost_usd: Option<f64> = None;
-    let mut usage_seen = false;
-    let mut terminal_seen = false;
-    let mut stream = response.bytes_stream();
-
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
-        .await
-        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
-    {
-        decoder
-            .push_bytes(&chunk)
-            .map_err(|e| ProviderError::Malformed(e.to_string()))?;
-        for event in decoder.poll() {
-            let data = event.data.trim();
-            if data.is_empty() {
-                continue;
-            }
-            if data == "[DONE]" {
-                terminal_seen = true;
-                continue;
-            }
-            // Two failure modes hide behind one `from_str`, and they must not
-            // share a branch. A frame that is not JSON at all is a keep-alive
-            // or a gateway comment: ignoring it is correct. A frame that IS
-            // valid JSON but does not fit the chunk shape is a dialect
-            // deviation, and swallowing it loses whatever it carried. Since
-            // every field in this tree defaults, an unknown or empty object
-            // still parses — so reaching the error arm means a real type
-            // mismatch on a field that matters, and the likeliest casualty is
-            // `tool_calls`. Dropping that produces a turn with no calls, which
-            // the driver reads as a clean completion: the run reports success
-            // having done nothing. The `error` field above documents this exact
-            // failure happening once already. Fail loudly instead.
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue; // not JSON: keep-alive / ping / gateway comment
-            };
-            let parsed: ZaiStreamChunk = match serde_json::from_value(value) {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(ProviderError::Malformed(format!(
-                        "{label}: unparseable stream frame ({e}); refusing to \
-                         treat a dropped frame as an empty turn"
-                    )));
-                }
-            };
-            // A mid-stream error frame aborts the turn with a typed error —
-            // never a truncated Ok with the partial text seen so far.
-            if let Some(err) = &parsed.error {
-                return Err(classify_zai_stream_error(err, label));
-            }
-            if let Some(u) = parsed.usage {
-                usage_seen = true;
-                usage.input_tokens = u.prompt_tokens;
-                usage.output_tokens = u.completion_tokens;
-                let details = u.prompt_tokens_details.unwrap_or_default();
-                // Two wire spellings for the same fact: the OpenAI-compatible
-                // details object, or DeepSeek's native top-level field — take
-                // whichever the server spoke (never both on one endpoint).
-                usage.cached_input_tokens = if details.cached_tokens > 0 {
-                    details.cached_tokens
-                } else {
-                    u.prompt_cache_hit_tokens
-                };
-                usage.cache_write_tokens = details.cache_write_tokens;
-                // Only overwrite when this frame carried the breakdown: a
-                // later usage frame without the detail object must not erase
-                // a count an earlier one reported.
-                if let Some(reasoning) =
-                    u.completion_tokens_details.and_then(|d| d.reasoning_tokens)
-                {
-                    usage.reasoning_tokens = Some(reasoning);
-                }
-                if u.cost.is_some() {
-                    reported_cost_usd = u.cost;
-                }
-            }
-            for choice in parsed.choices {
-                if choice.finish_reason.as_deref() == Some("length") {
-                    truncated_at_token_limit = true;
-                }
-                if let Some(content) = choice.delta.content {
-                    // `content` is the user-visible answer; thinking rides
-                    // `reasoning_delta` below. The two channels stay separate
-                    // all the way to the transcript.
-                    if let Some(observer) = observer {
-                        observer.text_delta(&content);
-                    }
-                    text.push_str(&content);
-                }
-                // GLM's name for chain-of-thought and OpenRouter's normalized
-                // one. Both announce as thinking, so a reasoning model's
-                // deliberation is visible live (collapsed, dimmed) instead of
-                // the turn looking idle until the answer lands.
-                if let Some(rc) = choice.delta.reasoning_content {
-                    if let Some(observer) = observer {
-                        observer.reasoning_delta(&rc);
-                    }
-                    reasoning.push_str(&rc);
-                }
-                if let Some(r) = choice.delta.reasoning {
-                    if let Some(observer) = observer {
-                        observer.reasoning_delta(&r);
-                    }
-                    reasoning.push_str(&r);
-                }
-                for (position, tc_delta) in choice
-                    .delta
-                    .tool_calls
-                    .unwrap_or_default()
-                    .into_iter()
-                    .enumerate()
-                {
-                    // Absent `index` falls back to the fragment's position in
-                    // this chunk — see `ZaiStreamToolCallDelta`.
-                    let index = tc_delta.index.unwrap_or(position);
-                    // A delta for index N proves every lower index finished
-                    // streaming (the dialect emits calls sequentially) —
-                    // the moment those calls can be announced for
-                    // speculative execution.
-                    if let Some(observer) = observer {
-                        announce_completed_below(observer, &mut tool_calls, index);
-                    }
-                    let acc = tool_calls.entry(index).or_default();
-                    if let Some(id) = tc_delta.id {
-                        acc.id = id;
-                    }
-                    if let Some(function) = tc_delta.function {
-                        if let Some(name) = function.name {
-                            // Accumulated, not assigned: the dialect contract
-                            // (pinned by
-                            // `complete_reassembles_a_streamed_tool_call_split_across_many_chunks`)
-                            // allows the name to arrive in fragments like the
-                            // arguments do, so append is the correct
-                            // reassembly. A gateway that instead repeats the
-                            // WHOLE name per fragment would garble this — no
-                            // such gateway has been observed; if one appears,
-                            // dedupe the exact-repeat case rather than
-                            // switching to last-wins.
-                            acc.name.push_str(&name);
-                        }
-                        if let Some(args) = function.arguments {
-                            // Liveness only (see
-                            // `ToolCallObserver::tool_input_delta`): a
-                            // call-only generation must still register as
-                            // producing against the idle deadline.
-                            if let Some(observer) = observer {
-                                observer.tool_input_delta();
-                            }
-                            acc.arguments.push_str(&args);
-                        }
-                    }
-                }
-                // The chunk carrying `finish_reason: "tool_calls"` is this
-                // dialect's end-of-calls terminator: the LAST call has no
-                // higher index behind it, so this is its completion boundary.
-                // Announcing here — before the final usage frame and `[DONE]`
-                // — is what opens the speculative-execution window for a
-                // single-call turn; `announced` keeps calls already announced
-                // at an index boundary from repeating.
-                if choice.finish_reason.as_deref() == Some("tool_calls")
-                    && let Some(observer) = observer
-                {
-                    announce_completed_below(observer, &mut tool_calls, usize::MAX);
-                }
-            }
-        }
-    }
-
-    // EOF without the `[DONE]` sentinel is a disconnect, not a completion —
-    // whatever accumulated is a half-answer, and even a `finish_reason` seen
-    // earlier can't prove the stream wasn't cut after it. Retryable
-    // Transport, upholding the same "never a truncated Ok" promise as the
-    // mid-stream error-frame path above.
-    if !terminal_seen {
-        return Err(http::attach_partial(
-            http::stream_ended_before_terminal(label, "[DONE]"),
-            &usage,
-            &text,
-            pricing,
-        ));
-    }
-
-    // Fallback terminator: a server that ends the stream without ever sending
-    // a `finish_reason: "tool_calls"` chunk still completed its last call —
-    // `[DONE]` proves the stream is whole, so announce whatever is still open
-    // before final assembly (`announced` makes this a no-op when the finish
-    // chunk already fired). Skipped when the token limit cut the stream: a
-    // truncated call must never reach speculative execution, and final
-    // assembly below turns it into a terminal error instead.
-    if !truncated_at_token_limit && let Some(observer) = observer {
-        announce_completed_below(observer, &mut tool_calls, usize::MAX);
-    }
-
-    usage.reported = usage_seen;
-
-    // OpenAI-style tool calls stream sequentially by index, so when the
-    // stream reports `finish_reason: "length"` only the highest-index call
-    // can be the one the token limit cut. Pinning truncation there keeps the
-    // blame on the right call — an earlier call whose JSON is broken is the
-    // model's own malformed output and still gets the repair sentinel below.
-    let truncated_index = if truncated_at_token_limit {
-        tool_calls.keys().next_back().copied()
-    } else {
-        None
-    };
-
-    let mut calls = Vec::with_capacity(tool_calls.len());
-    for (index, acc) in tool_calls {
-        let truncated = Some(index) == truncated_index;
-        let trimmed = acc.arguments.trim();
-        let input = if trimmed.is_empty() {
-            if truncated {
-                // The limit landed after the call's id/name but before any
-                // argument fragment: executing it with `{}` would fail on
-                // missing parameters and re-enter the same unwinnable
-                // retry-retruncate loop as a mid-payload cut.
-                return Err(http::truncated_tool_input_error(
-                    label,
-                    &acc.name,
-                    "",
-                    "finish_reason=length",
-                ));
-            }
-            // A no-argument tool call arrives as `arguments: ""`; that is an
-            // empty object, not null — a downstream tool deserializing its
-            // input as an object must not be handed `null`.
-            Value::Object(serde_json::Map::new())
-        } else {
-            match serde_json::from_str(trimmed) {
-                Ok(value) => value,
-                // The stream stopped at the token limit MID-arguments: the
-                // JSON is truncated, not the model's own broken syntax.
-                // Terminal and turn-aborting — mirroring openai.rs's
-                // `response.incomplete` handling — because retrying the
-                // identical request re-truncates identically (the reported
-                // "stuck-loop" defect).
-                Err(_) if truncated => {
-                    return Err(http::truncated_tool_input_error(
-                        label,
-                        &acc.name,
-                        trimmed,
-                        "finish_reason=length",
-                    ));
-                }
-                // A *non-empty* body that fails to parse without being the
-                // truncated call is the model's own broken JSON (GLM emits
-                // these): fall back to the `Value::Null` sentinel
-                // `driver.rs::execute_with_repair` checks for, so the repair
-                // loop — documented as tuned to GLM's failure shapes — can
-                // ask the model to retry. Mirrors anthropic.rs.
-                Err(_) => Value::Null,
-            }
-        };
-        calls.push(ToolCall {
-            call_id: acc.id,
-            name: acc.name,
-            input,
-        });
-    }
-
-    // Reasoning-only fallback: if the model emitted no answer `content` but did
-    // stream chain-of-thought, surface the reasoning as the text so the turn is
-    // never blank. Normal turns keep `content` as the answer and ignore it.
-    //
-    // `calls.is_empty()` is load-bearing, not defensive. A tool-calling turn
-    // legitimately has empty `content` — that is the *normal* shape for every
-    // Anthropic model routed through OpenRouter, which streams `content: ""`
-    // alongside `reasoning` and the tool call. Without this guard the fallback
-    // fired on essentially every reasoning-model tool turn and published the
-    // model's private chain-of-thought as its user-visible answer (users saw
-    // "The user is asking… I should clarify…" third-person deliberation in
-    // place of a reply). A turn that called a tool is not blank, so it never
-    // needs the fallback.
-    // `!truncated_at_token_limit` is the second load-bearing guard. "Otherwise
-    // blank" holds for a model that FINISHED thinking and wrote no answer, not one
-    // CUT OFF mid-thought — `stella_core::driver::truncation` handles that case and
-    // can only recognize it while `text` is still empty. Promoting anyway published
-    // an abandoned scratchpad as the answer, which the driver then kept for the turn.
-    if text.trim().is_empty()
-        && calls.is_empty()
-        && !reasoning.trim().is_empty()
-        && !truncated_at_token_limit
-    {
-        text = reasoning;
-    }
-
-    let finish_reason = if truncated_at_token_limit {
-        Some(FinishReason::Length)
-    } else if !calls.is_empty() {
-        Some(FinishReason::ToolCalls)
-    } else {
-        Some(FinishReason::Stop)
-    };
-
-    Ok((text, calls, usage, finish_reason, reported_cost_usd))
 }
 
 #[cfg(test)]

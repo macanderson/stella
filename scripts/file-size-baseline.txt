@@ -24,7 +24,6 @@
 3384 crates/stella-core/src/driver/tests.rs
 1781 crates/stella-model/src/anthropic/tests.rs
 2093 crates/stella-model/src/openai.rs
-1565 crates/stella-model/src/zai.rs
 1895 crates/stella-model/src/zai/tests.rs
 3126 crates/stella-pipeline/src/pipeline.rs
 2475 crates/stella-pipeline/src/pipeline/tests.rs
