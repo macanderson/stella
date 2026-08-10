@@ -193,6 +193,7 @@ pub async fn run_accounted_call(
     // window against the count at its end already gives each window its own
     // delta regardless of how many attempts ran inside it.
     let progress = StreamProgress::default();
+    let mut no_parking = crate::retry::NoParking;
     let future = retry_with_backoff_observed(
         &call.retry_policy,
         sleeper,
@@ -230,6 +231,13 @@ pub async fn run_accounted_call(
                 error.partial_usage().copied(),
             );
         },
+        // Auxiliary calls never park on a rate limit (#2677): only the
+        // engine's worker path converts sustained 429s into a budgeted wait.
+        // A summarizer/triage/authoring call failing fast is the same
+        // capacity-cascade posture the comparator takes for its background
+        // request sources — the caller falls through or retries at its own
+        // layer instead of amplifying pressure from inside a helper.
+        &mut no_parking,
     );
     let outcome = match call.timeout {
         Some(limit) => {

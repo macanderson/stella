@@ -17,6 +17,12 @@
 //!   intentionally stricter: `retry_with_backoff_observed` synchronously
 //!   exposes every failed dispatched attempt so unknown provider usage can be
 //!   persisted even when a later attempt succeeds.
+//! - **#2677 — abort becomes recovery**: sustained rate limiting is bounded
+//!   by the caller's wall clock, not the attempt count. A 429 the inline
+//!   ladder cannot absorb parks through the injected [`ParkSupervisor`] —
+//!   chunked sleeps, per-chunk keep-alive, budget-derived allowance — and
+//!   only an unaffordable wait still fails fast. Nothing here reads a clock
+//!   or a budget directly; the supervisor is a port, like [`Sleeper`].
 //!
 //! Per-call timeouts (L-E4) are a caller concern layered on top of
 //! `attempt_fn`; this module owns "should we try again, and if so after how
@@ -43,6 +49,133 @@ pub trait Sleeper: Send + Sync {
     async fn sleep(&self, duration_ms: u64);
 }
 
+/// Milliseconds per parked-wait chunk: a long rate-limit wait is slept in
+/// pieces of this size so the supervisor is consulted (and can narrate
+/// liveness or end the park) at a human cadence rather than once per
+/// multi-minute sleep. 30s matches the keep-alive cadence the comparator
+/// lineage uses for its unattended rate-limit retries.
+pub const PARK_CHUNK_MS: u64 = 30_000;
+
+/// First parked-wait backoff when the server sent no `Retry-After` hint.
+/// Deliberately past the inline ladder's 8s cap: by the time a park is
+/// reached the inline ladder has already failed, so the brownout is minutes
+/// long, not seconds.
+const PARK_BACKOFF_FLOOR_MS: u64 = 30_000;
+
+/// Ceiling on the hint-less parked-wait backoff — 5 minutes, the same cap
+/// the comparator lineage uses for sustained 429 retries. A server hint
+/// larger than this is still honored verbatim (within the allowance): a
+/// stated window always beats a guessed one.
+const PARK_BACKOFF_CAP_MS: u64 = 300_000;
+
+/// What [`ParkSupervisor::park_tick`] tells the retry driver to do with the
+/// rest of a parked wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParkDirective {
+    /// Keep waiting: sleep the next chunk.
+    Continue,
+    /// End the park now and surface the rate-limit error — the caller saw a
+    /// soft stop (or decided the wait is no longer worth it).
+    Abort,
+}
+
+/// The caller-side authority over parked rate-limit waits (#2677): how much
+/// wall clock a park may spend, and the per-chunk keep-alive hook. This is a
+/// port in the same sense as [`Sleeper`] — the retry driver stays pure
+/// decision logic plus injected effects, so the budget guard, the event
+/// stream, and the soft-stop latch never leak into this module.
+///
+/// A park happens only when a rate limit outlives the inline ladder (or its
+/// `Retry-After` exceeds [`RetryPolicy::max_server_hint_ms`]); the supervisor
+/// then bounds it. [`NoParking`] — the [`retry_with_backoff`] default —
+/// grants zero allowance, which preserves the pre-#2677 fail-fast exactly.
+/// `Send` because the retry future that borrows the supervisor crosses
+/// `tokio::spawn` in the hosts that drive turns on worker threads — the same
+/// bound [`Sleeper`] carries for the same reason.
+pub trait ParkSupervisor: Send {
+    /// Wall-clock milliseconds of parked waiting still affordable, asked
+    /// fresh before each park. `waited_ms` is the parked time this call has
+    /// already spent, so a deadline-less caller can still enforce an
+    /// absolute cap. Returning `0` declines the park and the rate-limit
+    /// error surfaces as it did before parking existed.
+    fn wait_allowance_ms(&mut self, waited_ms: u64) -> u64;
+    /// A park is starting: `planned_ms` total, slept in `chunk_ms` pieces.
+    /// `reason` is the rate-limit error's rendered message.
+    fn park_opened(&mut self, planned_ms: u64, chunk_ms: u64, reason: &str);
+    /// Consulted before every chunk (including the first, at
+    /// `waited_ms == 0`): the keep-alive/liveness hook, and the seam a soft
+    /// stop uses to end a multi-minute wait early.
+    fn park_tick(&mut self, waited_ms: u64, planned_ms: u64) -> ParkDirective;
+    /// The park ended after `waited_ms` across `chunks` sleeps; `aborted`
+    /// is true when a tick ended it early.
+    fn park_closed(&mut self, waited_ms: u64, chunks: u64, aborted: bool);
+}
+
+/// The zero-allowance supervisor: never parks, so every rate limit behaves
+/// exactly as it did before #2677 — the default for [`retry_with_backoff`]
+/// callers that have no budget authority to consult.
+pub struct NoParking;
+
+impl ParkSupervisor for NoParking {
+    fn wait_allowance_ms(&mut self, _waited_ms: u64) -> u64 {
+        0
+    }
+    // Unreachable while the allowance is 0, but no-ops rather than panics:
+    // this is library code on a provider-driven path (invariant 5).
+    fn park_opened(&mut self, _planned_ms: u64, _chunk_ms: u64, _reason: &str) {}
+    fn park_tick(&mut self, _waited_ms: u64, _planned_ms: u64) -> ParkDirective {
+        ParkDirective::Continue
+    }
+    fn park_closed(&mut self, _waited_ms: u64, _chunks: u64, _aborted: bool) {}
+}
+
+/// The pure park decision: how long to wait for a rate limit that outlived
+/// the inline ladder, given the (already jittered) server hint delay, how
+/// many parks this call has taken, and the supervisor's allowance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParkPlan {
+    /// Wait `total_ms`, then try again.
+    Wait { total_ms: u64 },
+    /// No affordable wait: surface the error.
+    GiveUp,
+}
+
+/// Plan one parked wait. Pure — all inputs are owned numbers, so the whole
+/// decision surface is property-testable without sleeping:
+///
+/// - A server hint that does not fit inside the allowance gives up: waiting
+///   less than the server's stated window guarantees a re-429, so the
+///   fail-fast the hint ceiling used to provide survives, now measured
+///   against real headroom instead of a fixed constant.
+/// - A hint that fits is honored, raised to the streak backoff when that is
+///   politer (waiting longer than asked is always safe), and clamped back to
+///   the allowance (which never dips below the hint itself).
+/// - With no hint, the wait is the streak backoff — doubling from
+///   `PARK_BACKOFF_FLOOR_MS` (30s) to `PARK_BACKOFF_CAP_MS` (5min) — clamped
+///   to the allowance, so the final park before an exhausted budget still
+///   gets its last, shorter chance.
+pub fn plan_rate_limit_park(
+    hint_delay_ms: Option<u64>,
+    park_streak: u32,
+    allowance_ms: u64,
+) -> ParkPlan {
+    if allowance_ms == 0 {
+        return ParkPlan::GiveUp;
+    }
+    let backoff = PARK_BACKOFF_FLOOR_MS
+        .saturating_mul(2u64.saturating_pow(park_streak))
+        .min(PARK_BACKOFF_CAP_MS);
+    match hint_delay_ms {
+        Some(hint) if hint > allowance_ms => ParkPlan::GiveUp,
+        Some(hint) => ParkPlan::Wait {
+            total_ms: hint.max(backoff).min(allowance_ms),
+        },
+        None => ParkPlan::Wait {
+            total_ms: backoff.min(allowance_ms),
+        },
+    }
+}
+
 /// Retry policy for one model or tool call: how many times to retry a
 /// retryable failure, and the backoff envelope between attempts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,20 +191,24 @@ pub struct RetryPolicy {
     /// bound by it; the hint has its own, much higher [`Self::max_server_hint_ms`]
     /// ceiling.
     pub max_delay_ms: u64,
-    /// Ceiling in milliseconds on a server-supplied `Retry-After` hint —
-    /// separate from, and far higher than, [`Self::max_delay_ms`]. Providers
-    /// legitimately ask for 30–60s on a hard rate limit; clamping that to the
-    /// computed-backoff cap fires the retry back inside the server's stated
-    /// window and re-429s. A hint at or under this ceiling is honored; a hint
-    /// past it is treated as unreasonable and fails the call fast (surfacing
-    /// the hint value) rather than silently parking the turn.
+    /// Ceiling in milliseconds on a server-supplied `Retry-After` hint the
+    /// *inline* ladder will sleep — separate from, and far higher than,
+    /// [`Self::max_delay_ms`]. Providers legitimately ask for 30–60s on a
+    /// hard rate limit; clamping that to the computed-backoff cap fires the
+    /// retry back inside the server's stated window and re-429s. A hint at
+    /// or under this ceiling is honored inline; a hint past it escalates to
+    /// the parked-wait path (#2677), where the caller's [`ParkSupervisor`]
+    /// decides whether the remaining wall-clock budget affords honoring it —
+    /// and only when it does not is the call failed fast (surfacing the hint
+    /// value).
     pub max_server_hint_ms: u64,
 }
 
-/// Default ceiling for a server `Retry-After` hint. High enough to obey the
-/// 30–60s waits providers hand out on hard rate limits (well past the 8s
-/// computed-backoff cap), low enough that a runaway multi-minute hint fails
-/// the call fast instead of parking the turn.
+/// Default ceiling for a server `Retry-After` hint slept inline. High
+/// enough to obey the 30–60s waits providers hand out on hard rate limits
+/// (well past the 8s computed-backoff cap), low enough that a multi-minute
+/// hint takes the supervised parked-wait path — chunked, narrated, and
+/// budget-bounded — instead of an unannounced inline sleep.
 const DEFAULT_MAX_SERVER_HINT_MS: u64 = 120_000;
 
 impl RetryPolicy {
@@ -227,9 +364,11 @@ fn server_hint_delay_ms(policy: &RetryPolicy, hint_ms: u64, rng: &mut impl Rng) 
 /// (floored at `policy.base_delay_ms`, nudged by a small jitter, and bounded
 /// by its own `policy.max_server_hint_ms` ceiling rather than the
 /// computed-backoff cap) instead of the computed jittered delay — respecting
-/// a server's stated backoff beats guessing at one. A hint past that ceiling
-/// fails the call fast (surfacing the hint value) rather than retrying back
-/// inside the server's stated window.
+/// a server's stated backoff beats guessing at one. This wrapper runs with
+/// [`NoParking`], so a rate limit that outlives the ladder (or a hint past
+/// the inline ceiling) fails the call fast, exactly as it did before #2677;
+/// callers with wall-clock authority use `retry_with_backoff_observed`'s
+/// [`ParkSupervisor`] to convert that abort into a bounded parked wait.
 ///
 /// On success, [`RetryOutcome::retries`] carries the full retry history so
 /// the caller (`driver.rs`) can walk it and emit one
@@ -248,7 +387,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, ProviderError>>,
 {
-    retry_with_backoff_observed(policy, sleeper, attempt_fn, |_, _, _| {}).await
+    retry_with_backoff_observed(policy, sleeper, attempt_fn, |_, _, _| {}, &mut NoParking).await
 }
 
 /// Retry while synchronously observing every failed dispatched attempt.
@@ -267,6 +406,7 @@ pub(crate) async fn retry_with_backoff_observed<F, Fut, T, O>(
     sleeper: &dyn Sleeper,
     mut attempt_fn: F,
     mut observe_failure: O,
+    park: &mut dyn ParkSupervisor,
 ) -> Result<RetryOutcome<T>, ProviderError>
 where
     F: FnMut() -> Fut,
@@ -275,6 +415,11 @@ where
 {
     let mut retries = Vec::new();
     let mut attempt: u32 = 0;
+    // Parked-wait accounting across the whole call: how much wall clock the
+    // parks have spent (fed back to the supervisor's allowance) and how many
+    // parks have been taken (drives the hint-less park backoff).
+    let mut parked_total_ms: u64 = 0;
+    let mut park_streak: u32 = 0;
     loop {
         let attempt_started = std::time::Instant::now();
         match attempt_fn().await {
@@ -287,30 +432,112 @@ where
             }
             Err(error) => {
                 observe_failure(attempt + 1, &error, attempt_started.elapsed());
-                if !error.is_retryable() || attempt >= policy.max_retries {
+                if !error.is_retryable() {
                     return Err(error);
                 }
+                let rate_limit_hint = match &error {
+                    ProviderError::RateLimited { retry_after_ms, .. } => Some(*retry_after_ms),
+                    _ => None,
+                };
 
-                let delay_ms = match &error {
-                    ProviderError::RateLimited {
-                        message,
-                        retry_after_ms: Some(hint),
-                    } => {
-                        if *hint > policy.max_server_hint_ms {
-                            // The provider's own message rides along — the
-                            // hint explains the wait, the message explains
-                            // the limit, and dropping either loses half the
-                            // diagnosis.
-                            return Err(ProviderError::Terminal(format!(
-                                "rate-limited ({message}) and the server asked to wait {hint}ms \
-                                 before retrying, past this call's {ceiling}ms server-hint \
-                                 ceiling — failing fast instead of parking the turn",
-                                ceiling = policy.max_server_hint_ms,
-                            )));
-                        }
-                        server_hint_delay_ms(policy, *hint, &mut rand::rng())
+                // The inline ladder — today's bounded backoff — handles
+                // every retryable failure while attempts remain, except a
+                // rate-limit hint past the inline ceiling (never sleepable
+                // inline). Anything the ladder cannot absorb either parks
+                // (a rate limit with wall-clock headroom, below) or
+                // surfaces: only rate limiting earns a park, because it is
+                // the one failure whose recovery is a function of waiting.
+                let ladder_open = attempt < policy.max_retries;
+                let inline_delay_ms = match rate_limit_hint {
+                    None if ladder_open => {
+                        Some(compute_backoff_delay_ms(policy, attempt, &mut rand::rng()))
                     }
-                    _ => compute_backoff_delay_ms(policy, attempt, &mut rand::rng()),
+                    None => return Err(error),
+                    Some(hint)
+                        if ladder_open && hint.is_none_or(|h| h <= policy.max_server_hint_ms) =>
+                    {
+                        Some(match hint {
+                            Some(h) => server_hint_delay_ms(policy, h, &mut rand::rng()),
+                            None => compute_backoff_delay_ms(policy, attempt, &mut rand::rng()),
+                        })
+                    }
+                    Some(_) => None,
+                };
+
+                let delay_ms = match inline_delay_ms {
+                    Some(delay_ms) => {
+                        sleeper.sleep(delay_ms).await;
+                        delay_ms
+                    }
+                    // The park path (#2677): a rate limit the inline ladder
+                    // could not absorb, converted into a supervised wait
+                    // when the caller's wall-clock budget affords one.
+                    None => {
+                        // L-M4 holds under rate limiting too: the
+                        // deterministic fast path never waits, never parks.
+                        if policy.max_retries == 0 {
+                            return Err(error);
+                        }
+                        let hint_ms = rate_limit_hint.flatten();
+                        let hint_delay_ms =
+                            hint_ms.map(|h| server_hint_delay_ms(policy, h, &mut rand::rng()));
+                        let allowance_ms = park.wait_allowance_ms(parked_total_ms);
+                        let total_ms =
+                            match plan_rate_limit_park(hint_delay_ms, park_streak, allowance_ms) {
+                                ParkPlan::Wait { total_ms } => total_ms,
+                                // An unaffordable stated window fails fast —
+                                // waiting less than the server asked
+                                // guarantees a re-429, so the wait would
+                                // spend the budget and buy nothing. The
+                                // provider's own message rides along: the
+                                // hint explains the wait, the message
+                                // explains the limit, and dropping either
+                                // loses half the diagnosis.
+                                ParkPlan::GiveUp => {
+                                    return Err(match hint_ms {
+                                        Some(hint) if hint > policy.max_server_hint_ms => {
+                                            ProviderError::Terminal(format!(
+                                                "{error}; the server asked to wait {hint}ms \
+                                                 before retrying, past this call's {ceiling}ms \
+                                                 inline ceiling and beyond the {allowance_ms}ms \
+                                                 of wall-clock headroom left for a parked wait — \
+                                                 failing fast instead of waiting past the budget",
+                                                ceiling = policy.max_server_hint_ms,
+                                            ))
+                                        }
+                                        // Exhaustion the headroom cannot
+                                        // absorb surfaces the rate limit
+                                        // itself, exactly as pre-park
+                                        // exhaustion did — the error class
+                                        // (and RetriesExhausted::retryable
+                                        // downstream) stays truthful.
+                                        _ => error,
+                                    });
+                                }
+                            };
+                        park.park_opened(total_ms, PARK_CHUNK_MS, &error.to_string());
+                        let mut waited_ms: u64 = 0;
+                        let mut chunks: u64 = 0;
+                        let aborted = loop {
+                            if waited_ms >= total_ms {
+                                break false;
+                            }
+                            if park.park_tick(waited_ms, total_ms) == ParkDirective::Abort {
+                                break true;
+                            }
+                            let chunk = PARK_CHUNK_MS.min(total_ms - waited_ms);
+                            sleeper.sleep(chunk).await;
+                            waited_ms += chunk;
+                            chunks += 1;
+                        };
+                        park.park_closed(waited_ms, chunks, aborted);
+                        parked_total_ms = parked_total_ms.saturating_add(waited_ms);
+                        if aborted {
+                            return Err(error);
+                        }
+                        park_streak = park_streak.saturating_add(1);
+                        waited_ms
+                    }
                 };
 
                 retries.push(RetryAttempt {
@@ -318,9 +545,7 @@ where
                     reason: error.to_string(),
                     delay_ms,
                 });
-
-                sleeper.sleep(delay_ms).await;
-                attempt += 1;
+                attempt = attempt.saturating_add(1);
             }
         }
     }
@@ -721,6 +946,236 @@ mod tests {
             sleeper.delays_ms.lock().unwrap().is_empty(),
             "must never sleep on a hint past the ceiling"
         );
+    }
+
+    // ---- parked rate-limit recovery (#2677) ------------------------------
+
+    /// A scripted [`ParkSupervisor`]: fixed allowance, full transcript of
+    /// hook calls, optional abort on the Nth tick.
+    #[derive(Default)]
+    struct RecordingSupervisor {
+        allowance_ms: u64,
+        opened: Vec<(u64, u64)>,
+        ticks: Vec<(u64, u64)>,
+        closed: Vec<(u64, u64, bool)>,
+        abort_on_tick: Option<usize>,
+    }
+
+    impl RecordingSupervisor {
+        fn with_allowance(allowance_ms: u64) -> Self {
+            Self {
+                allowance_ms,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl ParkSupervisor for RecordingSupervisor {
+        fn wait_allowance_ms(&mut self, waited_ms: u64) -> u64 {
+            self.allowance_ms.saturating_sub(waited_ms)
+        }
+        fn park_opened(&mut self, planned_ms: u64, chunk_ms: u64, _reason: &str) {
+            self.opened.push((planned_ms, chunk_ms));
+        }
+        fn park_tick(&mut self, waited_ms: u64, planned_ms: u64) -> ParkDirective {
+            self.ticks.push((waited_ms, planned_ms));
+            match self.abort_on_tick {
+                Some(n) if self.ticks.len() >= n => ParkDirective::Abort,
+                _ => ParkDirective::Continue,
+            }
+        }
+        fn park_closed(&mut self, waited_ms: u64, chunks: u64, aborted: bool) {
+            self.closed.push((waited_ms, chunks, aborted));
+        }
+    }
+
+    #[test]
+    fn plan_honors_a_hint_that_fits_and_gives_up_on_one_that_does_not() {
+        // A stated window inside the allowance is honored (raised to the
+        // streak backoff, which is always safe); one outside it gives up.
+        assert_eq!(
+            plan_rate_limit_park(Some(90_000), 0, 3_600_000),
+            ParkPlan::Wait { total_ms: 90_000 }
+        );
+        assert_eq!(
+            plan_rate_limit_park(Some(90_000), 0, 60_000),
+            ParkPlan::GiveUp
+        );
+        // Hint-less waits follow the doubling backoff, clamped to the cap…
+        assert_eq!(
+            plan_rate_limit_park(None, 0, 3_600_000),
+            ParkPlan::Wait { total_ms: 30_000 }
+        );
+        assert_eq!(
+            plan_rate_limit_park(None, 10, 3_600_000),
+            ParkPlan::Wait {
+                total_ms: PARK_BACKOFF_CAP_MS
+            }
+        );
+        // …and to the allowance, so the last affordable wait still happens.
+        assert_eq!(
+            plan_rate_limit_park(None, 3, 45_000),
+            ParkPlan::Wait { total_ms: 45_000 }
+        );
+        assert_eq!(plan_rate_limit_park(None, 0, 0), ParkPlan::GiveUp);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn a_planned_park_never_exceeds_the_allowance_and_never_undercuts_the_hint(
+            hint in proptest::option::of(0u64..1_000_000),
+            streak in 0u32..20,
+            allowance in 0u64..10_000_000,
+        ) {
+            match plan_rate_limit_park(hint, streak, allowance) {
+                ParkPlan::Wait { total_ms } => {
+                    proptest::prop_assert!(total_ms <= allowance);
+                    proptest::prop_assert!(total_ms > 0);
+                    if let Some(hint) = hint {
+                        // Waiting less than the server asked guarantees a
+                        // re-429 — a plan may wait longer, never shorter.
+                        proptest::prop_assert!(total_ms >= hint);
+                    }
+                }
+                ParkPlan::GiveUp => {
+                    let unaffordable_hint = hint.is_some_and(|h| h > allowance);
+                    proptest::prop_assert!(allowance == 0 || unaffordable_hint);
+                }
+            }
+        }
+    }
+
+    /// The pure-loop witness for #2667: rate limiting that outlives the
+    /// inline ladder parks and recovers instead of exhausting — the attempt
+    /// count stops being the bound; the supervisor's wall clock is.
+    #[tokio::test]
+    async fn sustained_rate_limiting_beyond_the_ladder_parks_and_recovers() {
+        let policy = RetryPolicy::new(2, 1, 5);
+        let sleeper = NoopSleeper::default();
+        let mut park = RecordingSupervisor::with_allowance(3_600_000);
+        let calls = AtomicU32::new(0);
+
+        let outcome = retry_with_backoff_observed(
+            &policy,
+            &sleeper,
+            || {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n < 5 {
+                        Err(ProviderError::RateLimited {
+                            message: "throttled".into(),
+                            retry_after_ms: None,
+                        })
+                    } else {
+                        Ok("recovered")
+                    }
+                }
+            },
+            |_, _, _| {},
+            &mut park,
+        )
+        .await
+        .expect("a brownout inside the allowance must recover");
+
+        assert_eq!(outcome.value, "recovered");
+        // 2 inline retries, then 3 parks (30s, 60s, 120s), each recorded in
+        // the committed retry history like any other wait.
+        assert_eq!(outcome.attempts, 6);
+        assert_eq!(outcome.retries.len(), 5);
+        assert_eq!(
+            park.opened
+                .iter()
+                .map(|(planned, _)| *planned)
+                .collect::<Vec<_>>(),
+            vec![30_000, 60_000, 120_000],
+            "hint-less parks follow the doubling backoff"
+        );
+        assert_eq!(
+            park.closed,
+            vec![(30_000, 1, false), (60_000, 2, false), (120_000, 4, false)],
+            "every park runs to its planned length in 30s chunks"
+        );
+    }
+
+    /// Long waits sleep in chunks with a tick before each one — the
+    /// keep-alive/soft-stop cadence — and an Abort tick ends the park and
+    /// surfaces the rate-limit error.
+    #[tokio::test]
+    async fn an_abort_tick_ends_the_park_and_surfaces_the_error() {
+        let policy = RetryPolicy::new(0, 1, 5);
+        // max_retries 0 would decline the park (L-M4), so use 1 with the
+        // ladder pre-burned by a first failure.
+        let policy = RetryPolicy {
+            max_retries: 1,
+            ..policy
+        };
+        let sleeper = NoopSleeper::default();
+        let mut park = RecordingSupervisor::with_allowance(3_600_000);
+        park.abort_on_tick = Some(3);
+        let calls = AtomicU32::new(0);
+
+        let result: Result<RetryOutcome<()>, _> = retry_with_backoff_observed(
+            &policy,
+            &sleeper,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(ProviderError::RateLimited {
+                        message: "hard limit".into(),
+                        retry_after_ms: Some(300_000),
+                    })
+                }
+            },
+            |_, _, _| {},
+            &mut park,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ProviderError::RateLimited { .. })),
+            "an aborted park surfaces the rate limit itself: {result:?}"
+        );
+        let (waited, chunks, aborted) = *park.closed.last().expect("park must close");
+        assert!(aborted, "the close must record the abort");
+        assert_eq!(chunks, 2, "two chunks slept before the aborting third tick");
+        assert_eq!(waited, 60_000);
+        let slept = sleeper.delays_ms.lock().unwrap();
+        assert!(
+            slept.iter().all(|&d| d <= PARK_CHUNK_MS),
+            "no single park sleep may exceed the chunk: {slept:?}"
+        );
+    }
+
+    /// L-M4 survives #2677: the deterministic fast path never parks, no
+    /// matter how generous the supervisor's allowance is.
+    #[tokio::test]
+    async fn the_deterministic_policy_never_parks_even_with_allowance() {
+        let policy = RetryPolicy::deterministic();
+        let sleeper = NoopSleeper::default();
+        let mut park = RecordingSupervisor::with_allowance(3_600_000);
+        let calls = AtomicU32::new(0);
+
+        let result: Result<RetryOutcome<()>, _> = retry_with_backoff_observed(
+            &policy,
+            &sleeper,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(ProviderError::RateLimited {
+                        message: "throttled".into(),
+                        retry_after_ms: None,
+                    })
+                }
+            },
+            |_, _, _| {},
+            &mut park,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderError::RateLimited { .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(park.opened.is_empty(), "no park may open on the fast path");
+        assert!(sleeper.delays_ms.lock().unwrap().is_empty());
     }
 
     #[test]

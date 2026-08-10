@@ -316,3 +316,178 @@ async fn a_non_read_only_probe_is_refused_not_replayed() {
     );
     assert!(refused, "the refusal must be visible on the stream");
 }
+
+// ---- rate-limit parks (#2677 / #2667): abort becomes recovery ------------
+
+/// Errors shaped like a provider brownout: HTTP 429 with no `Retry-After`.
+fn throttled() -> ProviderError {
+    ProviderError::RateLimited {
+        message: "throttled".into(),
+        retry_after_ms: None,
+    }
+}
+
+/// The witness for #2667's measured loss (7 attempts burned in 15s with 880s
+/// of budget left): sustained hint-less rate limiting that exhausts the
+/// inline ladder now parks — bounded by wall clock, narrated on the stream —
+/// and the step completes once the provider recovers. On the pre-#2677
+/// ladder this run dies at the seventh attempt with `RetriesExhausted`.
+#[tokio::test]
+async fn sustained_rate_limiting_parks_within_budget_and_recovers() {
+    // Nine 429s: six absorbed by the inline ladder, three more that only a
+    // park survives. The tenth call succeeds.
+    let mut script: Vec<Result<CompletionResultAlias, ProviderError>> =
+        (0..9).map(|_| Err(throttled())).collect();
+    script.push(Ok(text_result("recovered — done")));
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(script),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    // No task deadline: the park allowance is the absolute six-hour cap.
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { ref text, .. } if text.contains("recovered")),
+        "sustained 429s with budget left must recover, not abort: {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        10,
+        "every scripted attempt must have been dispatched"
+    );
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnParked { description, .. } if description.contains("rate limited")
+        )),
+        "the park must open a typed span naming the rate limit"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnWoken { reason, .. } if reason == "retry_window_elapsed"
+        )),
+        "the elapsed park must close its span"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::RetriesExhausted { .. })),
+        "a recovered brownout is not an exhaustion"
+    );
+}
+
+/// The witness for #2677's headline defect: a `Retry-After` past the 120s
+/// inline ceiling used to fail the call fast as `Terminal` even with hours
+/// of wall clock left. With headroom it is now honored as a parked wait.
+#[tokio::test]
+async fn a_long_retry_after_hint_is_honored_by_parking_when_budget_allows() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Err(ProviderError::RateLimited {
+                message: "hard limit".into(),
+                retry_after_ms: Some(300_000), // 5 minutes — past the 120s inline ceiling
+            }),
+            Ok(text_result("after the stated wait — done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { ref text, .. } if text.contains("done")),
+        "a stated wait that fits the budget must be honored: {outcome:?}"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    let events = drain_events(&mut rx);
+    let parked = events
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::TurnParked { deadline_secs, .. } => Some(*deadline_secs),
+            _ => None,
+        })
+        .expect("the honored hint must park, not sleep silently");
+    // The server asked for 300s; the park is that plus at most the additive
+    // hint jitter (an eighth), never less than asked.
+    assert!(
+        (300..=338).contains(&parked),
+        "park length must derive from the server hint: {parked}s"
+    );
+}
+
+/// The fail-fast half the issue keeps: a stated wait that cannot fit inside
+/// the task deadline's remaining headroom still fails fast — waiting less
+/// than the server asked guarantees a re-429, so the wait would spend the
+/// budget and buy nothing. The park machinery must not engage.
+#[tokio::test]
+async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Err(ProviderError::RateLimited {
+            message: "hard limit".into(),
+            retry_after_ms: Some(300_000),
+        })]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    // 60s of deadline left: after the 30s wake reserve, a 300s stated wait
+    // can never fit.
+    budget.set_task_deadline(Some(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Aborted { ref reason, .. } if reason.contains("failing fast")),
+        "an unaffordable stated wait must abort cleanly: {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "must fail on the first attempt, not retry into the stated window"
+    );
+    assert!(
+        !drain_events(&mut rx)
+            .iter()
+            .any(|e| matches!(e, AgentEvent::TurnParked { .. })),
+        "no park may open for a wait that cannot fit"
+    );
+}
