@@ -159,6 +159,73 @@ fn an_archived_record_is_not_retired_twice() {
     );
 }
 
+/// Two retirements in ONE hand-authored file compose: the file is rewritten
+/// once with both records archived. Per-record rewrites from per-record
+/// snapshots let the second retirement silently undo the first on disk while
+/// both ledger events claimed otherwise — a file/ledger desync.
+#[test]
+fn two_retirements_in_one_file_both_survive_on_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+
+    let mut records = Vec::new();
+    for (suffix, statement) in [("pkg", "use pnpm"), ("deploy", "deploys run from main")] {
+        let mut record = Record {
+            lineage_id: format!("ctx.acme.web.{suffix}"),
+            record_id: None,
+            record_hash: None,
+            kind: RecordKind::Rule,
+            statement: statement.to_string(),
+            tags: Vec::new(),
+            origin: Some(Origin::Imported),
+            sharing_scope: Some(SharingScope::Repository),
+            status: Some(RecordStatus::Active),
+            supersedes_record_id: None,
+            provenance: Some(Provenance {
+                source_uri: Some("notes.md".to_string()),
+                ..Default::default()
+            }),
+            steering: None,
+            enforcement: None,
+            truth: None,
+            links: Vec::new(),
+        };
+        record.stamp(&Defaults::default()).expect("stamps");
+        records.push(record);
+    }
+    let file = ContextFile {
+        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+        set_id: "acme.web".to_string(),
+        ingest_run_id: None,
+        defaults: None,
+        records,
+        proposals: Vec::new(),
+    };
+    let dir_rules = root.join(crate::context_records::RULES_DIR);
+    std::fs::create_dir_all(&dir_rules).expect("mkdir");
+    std::fs::write(
+        dir_rules.join("hand-authored.toml"),
+        toml::to_string_pretty(&file).expect("serializes"),
+    )
+    .expect("writes");
+
+    apply(root, "notes.md", &[]).expect("applies");
+
+    let contents = std::fs::read_to_string(dir_rules.join("hand-authored.toml")).expect("readable");
+    let after: ContextFile = toml::from_str(&contents).expect("parses");
+    assert_eq!(after.records.len(), 2);
+    for record in &after.records {
+        assert_eq!(
+            record.status,
+            Some(RecordStatus::Archived),
+            "every retired record must survive the rewrite: {}",
+            record.lineage_id
+        );
+    }
+    let events = crate::context_records::read_promotions(root).expect("the chain verifies");
+    assert_eq!(events.len(), 2, "one accountable event per retirement");
+}
+
 /// A workspace with no published records refreshes to a clean no-op.
 #[test]
 fn a_workspace_with_nothing_published_is_a_no_op() {

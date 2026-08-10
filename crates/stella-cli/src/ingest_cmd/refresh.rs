@@ -60,23 +60,55 @@ pub(crate) fn apply(root: &Path, rel: &str, asserted: &[AssertedClaim]) -> Resul
     let claims: Vec<PublishedClaim> = published.iter().map(|p| p.claim.clone()).collect();
     let verdict: RefreshPlan = plan(claims, asserted);
 
-    let mut failures = Vec::new();
+    // Group retirements by the file they live in and rewrite each file ONCE.
+    // `write_record` emits one record per file, but a hand-authored file may
+    // carry several — and per-record rewrites each started from a snapshot
+    // parsed before the loop, so the second retirement in a file silently
+    // undid the first on disk while both ledger events said otherwise.
+    let mut by_path: std::collections::BTreeMap<&PathBuf, Vec<&PublishedFile>> =
+        std::collections::BTreeMap::new();
     for retired in &verdict.retired {
-        let Some(entry) = published.iter().find(|p| p.claim == *retired) else {
-            continue;
-        };
-        // File first, ledger second: the archived revision is the retirement;
-        // the event is its accountable record (spec §4, #2728). A ledger
-        // failure after a successful rewrite is loud, not absorbed — an
-        // unrecorded retirement is exactly what the ledger exists to prevent.
-        match retire(entry).and_then(|()| record_retirement(root, rel, &entry.claim)) {
-            Ok(()) => println!(
-                "    {} {}  {}",
-                "retired".yellow(),
-                retired.lineage_id,
-                "— the source no longer asserts it; revision archived, history in git".dimmed()
-            ),
-            Err(err) => failures.push(format!("{}: {err}", retired.lineage_id)),
+        if let Some(entry) = published.iter().find(|p| p.claim == *retired) {
+            by_path.entry(&entry.path).or_default().push(entry);
+        }
+    }
+
+    let mut failures = Vec::new();
+    let mut failed_records = 0usize;
+    for (_, entries) in by_path {
+        // File first, ledger second: the archived revisions are the
+        // retirement; the events are its accountable record (spec §4, #2728).
+        // A ledger failure after a successful rewrite is loud, not absorbed —
+        // an unrecorded retirement is exactly what the ledger exists to
+        // prevent.
+        let outcome = retire(&entries).and_then(|()| {
+            entries
+                .iter()
+                .try_for_each(|entry| record_retirement(root, rel, &entry.claim))
+        });
+        match outcome {
+            Ok(()) => {
+                for entry in &entries {
+                    println!(
+                        "    {} {}  {}",
+                        "retired".yellow(),
+                        entry.claim.lineage_id,
+                        "— the source no longer asserts it; revision archived, history in git"
+                            .dimmed()
+                    );
+                }
+            }
+            Err(err) => {
+                failed_records += entries.len();
+                failures.push(format!(
+                    "{}: {err}",
+                    entries
+                        .iter()
+                        .map(|e| e.claim.lineage_id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
         }
     }
 
@@ -86,7 +118,7 @@ pub(crate) fn apply(root: &Path, rel: &str, asserted: &[AssertedClaim]) -> Resul
         "·".dimmed(),
         verdict.unchanged.len(),
         verdict.changed.len(),
-        verdict.retired.len() - failures.len(),
+        verdict.retired.len() - failed_records,
     );
     if failures.is_empty() {
         Ok(())
@@ -190,22 +222,31 @@ fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(
     .map(|_| ())
 }
 
-/// Rewrite one published file as an archived revision of its record.
+/// Rewrite one published file with every named record archived, in one pass.
 ///
-/// The archived revision supersedes the live one (`supersedes_record_id`
-/// carries the retired id), is re-stamped so the file verifies on load, and
-/// is written durably — the same temp+fsync+rename discipline as the
-/// promotion ledger, because both are reviewed governance files a crash must
-/// not truncate.
-fn retire(entry: &PublishedFile) -> Result<(), String> {
-    let mut file = entry.file.clone();
+/// All `entries` share the file (the caller grouped by path); mutating one
+/// parsed copy and writing once is what makes two retirements in the same
+/// file compose — per-record rewrites from per-record snapshots let the
+/// second silently undo the first. Each archived revision supersedes the
+/// revision it replaces (`supersedes_record_id` carries that record's own
+/// retired id), is re-stamped so the file verifies on load, and the write is
+/// durable — the same temp+fsync+rename discipline as the promotion ledger,
+/// because both are reviewed governance files a crash must not truncate.
+fn retire(entries: &[&PublishedFile]) -> Result<(), String> {
+    let Some(first) = entries.first() else {
+        return Ok(());
+    };
+    let mut file = first.file.clone();
     let defaults = file.defaults.clone().unwrap_or_default();
     for record in &mut file.records {
-        if record.record_id.as_deref() != Some(entry.claim.record_id.as_str()) {
+        let retired_here = entries
+            .iter()
+            .any(|e| record.record_id.as_deref() == Some(e.claim.record_id.as_str()));
+        if !retired_here {
             continue;
         }
         record.status = Some(stella_core::context_record::RecordStatus::Archived);
-        record.supersedes_record_id = Some(entry.claim.record_id.clone());
+        record.supersedes_record_id = record.record_id.clone();
         record
             .stamp(&defaults)
             .map_err(|e| format!("cannot re-stamp the archived revision: {e}"))?;
@@ -213,11 +254,11 @@ fn retire(entry: &PublishedFile) -> Result<(), String> {
     let body = toml::to_string_pretty(&file)
         .map_err(|e| format!("cannot serialize the archived revision: {e}"))?;
     stella_store::durable::write_atomic_preserving_mode(
-        &entry.path,
+        &first.path,
         body.as_bytes(),
         stella_store::durable::MODE_SHARED,
     )
-    .map_err(|e| format!("cannot write {}: {e}", entry.path.display()))
+    .map_err(|e| format!("cannot write {}: {e}", first.path.display()))
 }
 
 #[cfg(test)]
