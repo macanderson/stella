@@ -101,10 +101,10 @@ color = "#FF6B9D"
   effort = "medium"
   # No base_url: this seat runs at Anthropic, authenticated by the
   # subscription token. No per-trial ceiling either — and now that is the rule
-  # for every seat rather than a property of this one. ArenaBench refuses
-  # `budget_usd` and `max_tokens` outright (#2411), because the arm that
-  # carries one stops where the work finishes and the scoreboard reads that as
-  # the other arm being better.
+  # for every seat rather than a property of this one. ArenaBench drops
+  # `budget_usd` and `max_tokens` wherever they are written (#2411), because
+  # the arm that carries one stops where the work finishes and the scoreboard
+  # reads that as the other arm being better.
 
   [contestant.env]
   # Names only — never values.

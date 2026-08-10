@@ -88,10 +88,11 @@ class TestCommittedMatches:
         Match `5292a68cdabf` ran that shape, and all three of Stella's losses
         were the budget guard firing rather than the agent failing (#2411).
 
-        `_engine_from_toml` refuses the keys now, so a template carrying one
-        fails `_spec` before reaching this assertion. What this adds is a check
-        on the *text*, which still catches the key arriving inside a table the
-        loader has not been taught to walk.
+        `_engine_from_toml` drops the keys now, so a template carrying one
+        parses and runs uncapped — which makes this text check the only thing
+        standing between a committed file and a posture it does not get. It
+        also still catches the key arriving inside a table the loader has not
+        been taught to walk.
         """
         offenders = [
             f"line {number}: {line.strip()}"
@@ -107,11 +108,19 @@ class TestCommittedMatches:
         assert not offenders, f"{path.name} declares a per-trial ceiling: {offenders}"
 
 
-class TestPerTrialCeilingsAreRefused:
+class TestPerTrialCeilingsAreForcedOff:
     """#2411: a ceiling one seat carries and the other does not is a handicap.
 
     The witness for the change. Before it, every declaration below parsed into
     an `Engine` field, was exported to the agent, and decided matches.
+
+    Forced off rather than refused. The two spellings reach the same executed
+    state — no type here has a field a ceiling could land in — and refusing put
+    a knob nothing can honour on the critical path of every launch, which is
+    how a stale web bundle sending `budget_usd: ""` made the arena unusable
+    from a form that no longer showed the field. So each case below asserts the
+    same two things: the template loads, and the engine it loads into carries
+    no ceiling.
     """
 
     def _template(self, engine_extra: dict, *, role: bool = False) -> dict:
@@ -130,25 +139,37 @@ class TestPerTrialCeilingsAreRefused:
     @pytest.mark.parametrize(
         "key, value", [("budget_usd", 1.0), ("max_tokens", 64000)]
     )
-    def test_an_engine_level_ceiling_is_refused_by_name(
+    def test_an_engine_level_ceiling_loads_and_is_dropped(
         self, key: str, value: object
     ) -> None:
-        with pytest.raises(Exception) as caught:
-            match_from_toml(self._template({key: value}))
-        assert key in str(caught.value)
+        (seat,) = match_from_toml(self._template({key: value})).contestants
+        assert not hasattr(seat.engine, key)
+        assert key not in seat.engine.to_json()
 
-    def test_a_role_level_output_cap_is_refused_too(self) -> None:
+    def test_a_dropped_ceiling_says_so_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Dropped is not the same as unremarked: a file stating a posture it
+        does not get has to say so somewhere, or the disagreement is silent."""
+        with caplog.at_level("WARNING", logger="arenabench.config"):
+            match_from_toml(self._template({"budget_usd": 1.0}))
+        assert any("budget_usd" in record.getMessage() for record in caplog.records)
+
+    def test_a_role_level_output_cap_is_dropped_too(self) -> None:
         """The hole an engine-level check alone would leave open."""
-        with pytest.raises(Exception) as caught:
-            match_from_toml(self._template({"max_tokens": 64000}, role=True))
-        assert "max_tokens" in str(caught.value)
+        (seat,) = match_from_toml(
+            self._template({"max_tokens": 64000, "effort": "high"}, role=True)
+        ).contestants
+        # The role survives with its real settings; only the ceiling is gone.
+        assert seat.engine.roles["worker"].effort == "high"
+        assert "max_tokens" not in seat.engine.roles["worker"].to_json()
 
-    def test_an_empty_ceiling_is_still_refused(self) -> None:
+    def test_an_empty_ceiling_is_dropped_too(self) -> None:
         """`budget_usd = ""` reads as "no cap" to a loader and as a live knob to
-        the next person editing the file, so the word is what gets refused."""
-        with pytest.raises(Exception) as caught:
-            match_from_toml(self._template({"budget_usd": ""}))
-        assert "budget_usd" in str(caught.value)
+        the next person editing the file. It launches, uncapped, like any
+        other spelling of the key."""
+        (seat,) = match_from_toml(self._template({"budget_usd": ""})).contestants
+        assert "budget_usd" not in seat.engine.to_json()
 
     def test_an_archived_spec_that_ran_capped_still_loads(self) -> None:
         """Refusal is for authoring; reading history is not authoring.

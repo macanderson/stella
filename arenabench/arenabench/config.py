@@ -29,6 +29,7 @@ Round trip::
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -62,6 +63,8 @@ __all__ = [
 #: rename must keep loading, but nothing should keep *emitting* a name the rest
 #: of the codebase no longer uses, or the old spelling never dies.
 _ROLE_ALIASES = {"judge": "verifier"}
+
+log = logging.getLogger("arenabench.config")
 
 
 class MatchTemplateError(ValueError):
@@ -124,17 +127,22 @@ def _declared_env(
 
 
 def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> Engine:
-    # A per-trial ceiling is refused outright, not dropped. Dropping it would
-    # run the match the author wanted UNCAPPED while their template still said
-    # otherwise, and the two would disagree about what was measured — the
-    # failure mode #2411 documents, in reverse. Name the key and say what to do
-    # instead, because the author had a real worry and it has a real answer.
+    # A per-trial ceiling is dropped and logged, never a template error. The
+    # match runs UNCAPPED while the file still says otherwise, which is a
+    # disagreement worth a warning — but the alternative was worse: a key no
+    # reader here can honour was able to make a whole committed template
+    # unloadable, and the same refusal on the HTTP path made the web form
+    # unlaunchable from a build the operator could not edit. `WARNING` and not
+    # `INFO` because the file is stating a measurement posture it does not get.
     for key in declared_cap_keys(raw):
-        problems.append(
-            f"{where}: engine.{key} is refused — a per-trial ceiling stops the "
-            "agent where the work finishes, so the score reports our limit as "
-            "its capability (#2411). Bound the spend at the provider key, "
-            "which fails a run visibly instead of truncating a trial into a loss"
+        log.warning(
+            "%s: engine.%s ignored — a per-trial ceiling stops the agent where "
+            "the work finishes, so the score reports our limit as its "
+            "capability (#2411). This match runs uncapped; bound the spend at "
+            "the provider key, which fails a run visibly instead of truncating "
+            "a trial into a loss",
+            where,
+            key,
         )
     # Refused rather than coerced: a human wrote `bare_loop = "no"` and meant
     # something by it, and the one outcome a selector must never have is to
@@ -166,14 +174,18 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
             if not isinstance(entry, dict):
                 problems.append(f"{where}: role {name!r} must be a table")
                 continue
-            # The same refusal one level down. A role table is the older way to
-            # spell an output ceiling and would otherwise be the hole left in
-            # the wall the engine-level check just built.
+            # The same handling one level down. A role table is the older way
+            # to spell an output ceiling, and `RoleConfig` has no field for it
+            # either, so this is reported for the same reason and dropped by
+            # the same reader.
             for key in declared_cap_keys(entry):
-                problems.append(
-                    f"{where}: engine.roles.{name}.{key} is refused for the same "
-                    "reason as the engine-level key — no role runs under a "
-                    "ceiling the comparator does not also run under (#2411)"
+                log.warning(
+                    "%s: engine.roles.%s.%s ignored for the same reason as the "
+                    "engine-level key — no role runs under a ceiling the "
+                    "comparator does not also run under (#2411)",
+                    where,
+                    name,
+                    key,
                 )
             role = RoleConfig.from_json(entry)
             if not role.is_empty:
