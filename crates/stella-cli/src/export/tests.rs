@@ -177,6 +177,7 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
         "now",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     // The payload does reach the page — escaping at the sink, not
@@ -212,6 +213,33 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
     ] {
         assert!(!html.contains(raw), "no unescaped sink remains: {raw}");
     }
+}
+
+#[test]
+fn the_transcript_is_readable_with_scripts_disabled() {
+    // The tabs hide inactive panels with `display:none` and the script adds
+    // the `on` class — so a JS-assigned initial class opens the archive to a
+    // blank page for any reader with scripts off. That is a nuisance in a live
+    // dashboard and a failure in an artifact whose stated job is to be
+    // attached to a PR as evidence, which is why the class is emitted here
+    // and the script only takes over afterwards.
+    let html = render_dashboard(
+        &[],
+        &[],
+        "now",
+        "ses-x",
+        &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
+    );
+
+    assert!(
+        html.contains(r#"<section id="transcript" class="panel on""#),
+        "the transcript panel is visible before any script runs"
+    );
+    assert!(
+        html.contains(r#"data-target="transcript" role="tab" aria-selected="true""#),
+        "and its tab reads as selected without JS"
+    );
 }
 
 #[test]
@@ -512,6 +540,83 @@ fn the_archive_holds_one_session_and_states_what_it_left_out() {
 }
 
 #[test]
+fn the_archive_carries_the_session_transcript_and_only_that_session() {
+    // The transcript is a THIRD place a row can reach a recipient, beside the
+    // raw dumps and the dashboard's `<script>` blob — and it is folded from
+    // `session_events`, which neither of the other two touches. #2558 closed
+    // the first two channels; this asserts the new one was born closed.
+    //
+    // Scanning the written ZIP's bytes rather than the `Transcript` struct is
+    // deliberate, for the reason #2573 gives: the bytes are what a reader
+    // actually recovers, and an assertion over the in-memory fold would pass
+    // while the HTML someone opens still carried the other session.
+    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+
+    let tmp = tempfile::tempdir().unwrap();
+    seed_session(tmp.path(), "ses-mine", "anthropic", "src/mine.rs");
+    seed_session(tmp.path(), "ses-theirs", "openai", "src/theirs.rs");
+
+    let store = Store::open(tmp.path()).unwrap();
+    let ids = store.event_session_ids().unwrap_or_default();
+    // `seed_session` writes executions, not events — attach one journal to
+    // each session so there is something to interleave in the first place.
+    for (session, marker) in [
+        ("ses-mine", "MINE_RAN_THIS"),
+        ("ses-theirs", "THEIRS_RAN_THIS"),
+    ] {
+        let id = store
+            .begin_execution("deck", &format!("prompt of {session}"), "anthropic", "m")
+            .unwrap();
+        store.set_execution_session(id, session).unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolStart {
+                    call: ToolCall {
+                        call_id: format!("{session}-c1"),
+                        name: "bash".into(),
+                        input: serde_json::json!({"command": marker}),
+                    },
+                },
+            )
+            .unwrap();
+        store
+            .record_event(
+                id,
+                1,
+                &AgentEvent::ToolResult {
+                    call_id: format!("{session}-c1"),
+                    output: ToolOutput::Ok {
+                        content: format!("output of {marker}"),
+                    },
+                    duration_ms: 12,
+                    speculated: false,
+                },
+            )
+            .unwrap();
+    }
+    drop(ids);
+    drop(store);
+
+    let zip = export_session(tmp.path(), "ses-mine").expect("export succeeds");
+    let bytes = std::fs::read(&zip).unwrap();
+
+    assert!(
+        find_subsequence(&bytes, b"MINE_RAN_THIS").is_some(),
+        "the exported session's tool call is in the archive"
+    );
+    assert!(
+        find_subsequence(&bytes, b"THEIRS_RAN_THIS").is_none(),
+        "another session's tool call reached the transcript"
+    );
+    assert!(
+        find_subsequence(&bytes, br#"class="ev tool""#).is_some(),
+        "the transcript rendered in the dashboard's row grammar"
+    );
+}
+
+#[test]
 fn full_export_pipeline_errors_on_empty_store() {
     let tmp = tempfile::tempdir().unwrap();
     // Create the store (so .stella/ exists) but record nothing.
@@ -562,27 +667,24 @@ fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
-    // Dark: the instrument ramp, achromatic chrome, gold only as identity.
-    for declaration in [
-        "--ground: #0A0A0A;",
-        "--surface: #0F0F0F;",
-        "--raised: #111111;",
-        "--hairline: #1F1F1F;",
-        "--text: #EDEDED;",
-        "--text-2: #A1A1A1;",
-        "--text-3: #6E6E6E;",
-        "--accent: #EDEDED;",
-        "--identity: #FFB000;",
-        "--ok: #4CC38A;",
-        "--warn: #C9A227;",
-        "--bad: #E5715F;",
-        "--c1: #EDEDED;",
+    for (var, token) in [
+        ("--ground", stella_tui::theme::GROUND),
+        ("--surface", stella_tui::theme::SURFACE),
+        ("--sunk", stella_tui::theme::RAISED),
+        ("--ink", stella_tui::theme::TEXT_PRIMARY),
+        ("--dim", stella_tui::theme::TEXT_SECONDARY),
+        ("--faint", stella_tui::theme::TEXT_TERTIARY),
+        ("--stella", stella_tui::theme::ACCENT),
+        ("--pass", stella_tui::theme::SUCCESS),
+        ("--fail", stella_tui::theme::DANGER),
     ] {
+        let declaration = format!("{var}:{};", css_hex(token));
         assert!(
-            html.contains(declaration),
-            "expected `{declaration}` in the dashboard's :root block"
+            html.contains(&declaration),
+            "expected `{declaration}` in the dashboard's dark palette"
         );
     }
 
@@ -636,12 +738,30 @@ fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
         );
     }
 
-    // Every custom property the chart code asks for must exist, or the bar
-    // renders with no colour at all.
-    for used in ["--c1", "--c2", "--c3", "--ok", "--bad", "--neutral-mark"] {
+    // Every custom property referenced anywhere in the document — CSS rules
+    // and the chart JS alike — must be defined, or the rule silently paints
+    // nothing. The JS is the half that goes stale unnoticed: it names tokens
+    // in string literals, so a palette rename compiles and ships a colourless
+    // bar chart. Enumerating the references rather than listing the expected
+    // names is what makes this catch the NEXT rename too.
+    let mut referenced: Vec<String> = Vec::new();
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("var(--") {
+        rest = &rest[start + 4..];
+        if let Some(end) = rest.find(')') {
+            referenced.push(rest[..end].to_string());
+        }
+    }
+    referenced.sort();
+    referenced.dedup();
+    assert!(
+        !referenced.is_empty(),
+        "the document uses custom properties"
+    );
+    for name in referenced {
         assert!(
-            html.contains(&format!("{used}: #")),
-            "chart JS references `{used}` but :root never defines it"
+            html.contains(&format!("{name}:")),
+            "`var({name})` is referenced but never defined — it paints nothing"
         );
     }
 }

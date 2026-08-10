@@ -475,11 +475,27 @@ pub struct PullRequestRecord {
 
 /// One replayable event from a session's cross-execution journal
 /// ([`Store::session_events`]): which execution it belongs to, its position
-/// in that execution's stream, and the deserialized payload.
+/// in that execution's stream, when it was recorded, and the deserialized
+/// payload.
 #[derive(Debug, Clone)]
 pub struct SessionEventRecord {
     pub execution_id: i64,
     pub seq: i64,
+    /// The `events.ts` column: wall-clock, `YYYY-MM-DD HH:MM:SS`.
+    ///
+    /// **Second resolution, and that is the whole precision available.**
+    /// Every writer omits the column and takes SQLite's
+    /// `DEFAULT CURRENT_TIMESTAMP`, which has no sub-second component, so a
+    /// consumer rendering an elapsed clock from this may print whole seconds
+    /// and nothing finer. A tenth of a second here would be invented, not
+    /// measured — per-call durations live on the payloads
+    /// ([`AgentEvent::ToolResult::duration_ms`],
+    /// [`AgentEvent::StepUsage::duration_ms`]) and are the millisecond-precise
+    /// figures.
+    ///
+    /// Ordering still comes from `(execution_id, seq)`, never from this: it is
+    /// wall-clock, so it neither ties-break nor survives a clock adjustment.
+    pub ts: String,
     pub event: AgentEvent,
 }
 
@@ -1441,7 +1457,7 @@ impl Store {
     pub fn session_events(&self, session_id: &str) -> Result<SessionJournal> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT e.execution_id, e.seq, e.payload FROM events e \
+            "SELECT e.execution_id, e.seq, e.ts, e.payload FROM events e \
              JOIN executions x ON x.id = e.execution_id \
              WHERE x.session_id = ? \
              ORDER BY e.execution_id ASC, e.seq ASC",
@@ -1451,15 +1467,17 @@ impl Store {
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })?;
         let mut journal = SessionJournal::default();
         for row in rows {
-            let (execution_id, seq, payload) = row?;
+            let (execution_id, seq, ts, payload) = row?;
             match serde_json::from_str::<AgentEvent>(&payload) {
                 Ok(event) => journal.events.push(SessionEventRecord {
                     execution_id,
                     seq,
+                    ts,
                     event,
                 }),
                 Err(_) => journal.skipped += 1,

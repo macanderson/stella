@@ -20,6 +20,7 @@ fn journal(events: Vec<AgentEvent>) -> Vec<SessionEventRecord> {
         .map(|(seq, event)| SessionEventRecord {
             execution_id: 1,
             seq: seq as i64,
+            ts: String::new(),
             event,
         })
         .collect()
