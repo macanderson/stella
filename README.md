@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>Ship reference grade code. Eyes closed.</strong></p>
+<p align="center"><strong>AGENTIC CODING FOR SERIOUS ENGINEERS</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
