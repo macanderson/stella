@@ -95,11 +95,7 @@ fn git_blob_hash_of_content(root: &Path, rel: &str, content: &str) -> Option<Str
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    child
-        .stdin
-        .take()?
-        .write_all(content.as_bytes())
-        .ok()?;
+    child.stdin.take()?.write_all(content.as_bytes()).ok()?;
     let output = child.wait_with_output().ok()?;
     parse_oid(output)
 }
@@ -141,12 +137,7 @@ fn sha256_of(content: &str) -> String {
 
 /// Record one successful ingest into the ledger: replace the path's lineage
 /// with a fresh era, re-arming alerts unless told to keep a dismissal.
-pub(crate) fn record_ingest(
-    root: &Path,
-    rel: &str,
-    lineage: Lineage,
-    keep_dismissed: bool,
-) {
+pub(crate) fn record_ingest(root: &Path, rel: &str, lineage: Lineage, keep_dismissed: bool) {
     let mut ledger = read_ledger(root);
     ledger.record_ingest(rel, lineage, keep_dismissed);
     write_ledger(root, &ledger);
@@ -211,9 +202,7 @@ fn notification_id(rel: &str, drift: &Drift) -> String {
 /// The short spelling of a stored hash for alert prose: scheme dropped, first
 /// eight characters kept — enough to tell two hashes apart by eye.
 fn short(hash: &str) -> &str {
-    let hex = hash
-        .split_once(':')
-        .map_or(hash, |(_, rest)| rest);
+    let hex = hash.split_once(':').map_or(hash, |(_, rest)| rest);
     &hex[..hex.len().min(8)]
 }
 

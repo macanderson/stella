@@ -97,7 +97,9 @@ fn a_changed_source_alerts_once_across_sweeps() {
     assert_eq!(notes.len(), 1);
     assert!(notes[0].title.contains("notes.md"), "{}", notes[0].title);
     assert!(
-        notes[0].body.contains("stella ingest alerts dismiss notes.md"),
+        notes[0]
+            .body
+            .contains("stella ingest alerts dismiss notes.md"),
         "the alert must carry its own off switch: {}",
         notes[0].body
     );

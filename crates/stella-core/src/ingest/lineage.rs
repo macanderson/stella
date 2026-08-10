@@ -161,7 +161,11 @@ impl LineageLedger {
 
     /// Set alerts for one lineage. Scoped to exactly that path — every other
     /// lineage keeps its own state.
-    pub fn set_alerts(&mut self, source_path: &str, state: AlertState) -> Result<(), UnknownSource> {
+    pub fn set_alerts(
+        &mut self,
+        source_path: &str,
+        state: AlertState,
+    ) -> Result<(), UnknownSource> {
         match self.sources.get_mut(source_path) {
             Some(lineage) => {
                 lineage.alerts = state;
