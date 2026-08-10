@@ -129,10 +129,12 @@ use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;
 mod drive;
+pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod settlement;
 pub(crate) mod usage_anchor;
 mod waiting;
+use overflow_recovery::ModelCallFailure;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
 /// Everything about a turn's execution that isn't the provider/tools
@@ -994,7 +996,11 @@ impl<'a> Engine<'a> {
         // estimator prices only the tail since it (#2681, `usage_anchor`).
         let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
         let latched = state.latch_effective_budget(fresh);
-        let sized = state.anchored_budget(latched, self.config.compaction_budget_tokens);
+        // ... and an armed overflow-recovery clamp tightens the result
+        // (`driver::overflow_recovery`, #2680).
+        let sized = state
+            .overflow_recovery
+            .clamped(state.anchored_budget(latched, self.config.compaction_budget_tokens));
         let pass = self
             .run_compaction_pass(
                 &mut state.messages,
@@ -1060,20 +1066,13 @@ impl<'a> Engine<'a> {
             .await
         {
             Ok(committed) => committed,
-            Err(reason) => {
-                // `reason` is the engine's own summary of why the call could
-                // not commit (retries exhausted, an unretryable provider
-                // error). It is the same string that reaches the transcript
-                // and `AgentEvent::Error`, so emitting it here adds no
-                // exposure that the turn does not already have.
-                self.emit_lifecycle(
-                    bus::names::MODEL_REQUEST_FAILED,
-                    || serde_json::json!({ "step": state.step, "reason": reason }),
-                );
-                return StepOutcome::Aborted {
-                    reason,
-                    kind: AbortKind::Failure,
-                    cost_usd: state.total_cost_usd,
+            Err(failure) => {
+                // A context overflow may arm a recovery rung instead of
+                // aborting (`driver::overflow_recovery`, #2680): `None` means
+                // re-run the step against the clamped compaction budget.
+                return match self.settle_model_call_failure(failure, state, events) {
+                    Some(aborted) => aborted,
+                    None => StepOutcome::Continue,
                 };
             }
         };
@@ -1556,7 +1555,9 @@ impl<'a> Engine<'a> {
     /// flushes the step's deferred `Retry` events (module docs, L-E10) and
     /// returns the result bundled with the request-time snapshots the
     /// later phases consume; on exhausted retries, emits the terminal
-    /// error and returns the turn's clean abort.
+    /// error and returns a [`ModelCallFailure`] the caller settles —
+    /// except a context overflow, whose events are withheld because the
+    /// caller may still recover it (`driver::overflow_recovery`, #2680).
     ///
     /// The estimate captured here is the raw (uncalibrated) estimate of
     /// exactly what this step sends — recorded against the provider's
@@ -1572,7 +1573,7 @@ impl<'a> Engine<'a> {
         receipts: &mut ReceiptLedger,
         warnings: &mut BudgetWarnings,
         events: &EventSender,
-    ) -> Result<CommittedStep, String> {
+    ) -> Result<CommittedStep, ModelCallFailure> {
         let tools_schema = self.tools.schemas();
         let read_only_tools: HashSet<String> = tools_schema
             .iter()

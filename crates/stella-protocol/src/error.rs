@@ -86,6 +86,20 @@ pub enum ProviderError {
     #[error("request cancelled")]
     Cancelled,
 
+    /// The provider rejected the request because the prompt exceeds the
+    /// model's context window (an HTTP 400 carrying the provider's overflow
+    /// signature, or a bare 413). Split from [`ProviderError::Terminal`]
+    /// because the two demand opposite reactions: a terminal error ends the
+    /// turn, while an overflow is the one rejection the engine can repair —
+    /// its reactive recovery compacts the transcript and re-issues the call
+    /// (#2680). Not retryable *as-is*: re-sending the identical request
+    /// rejects identically, so the retry ladder must never touch it.
+    #[error("provider context overflow: {message}")]
+    ContextOverflow {
+        /// The provider's own explanation, summarized for the user.
+        message: String,
+    },
+
     /// A failure the adapter classified as terminal without it fitting a
     /// narrower variant — a 4xx the dialect does not model, a refusal, a
     /// content-policy stop. The catch-all, so it fails closed to "do not
@@ -172,6 +186,18 @@ mod tests {
         );
         assert!(!ProviderError::Malformed("bad json".into()).is_retryable());
         assert!(!ProviderError::Cancelled.is_retryable());
+    }
+
+    /// The variant exists so the engine can react, but the retry ladder must
+    /// never re-issue the identical oversized request — that was the original
+    /// failure mode #2680 replaces (retry the same request, then abort).
+    #[test]
+    fn context_overflow_is_never_retryable_as_is() {
+        let err = ProviderError::ContextOverflow {
+            message: "prompt is too long: 200468 tokens > 200000 maximum".into(),
+        };
+        assert!(!err.is_retryable());
+        assert!(err.to_string().contains("context overflow"), "{err}");
     }
 
     /// Witness for the accounting-loss defect: a stream that dies after the
