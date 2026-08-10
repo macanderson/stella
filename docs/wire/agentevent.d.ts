@@ -534,10 +534,14 @@ export interface LadderSnapshot {
    * tracks only its own command.
    *
    * On the wire because it **changes the verdict** and nothing else here
-   * records which channel carried it: it rescues the heuristic fallback
-   * from a verifier outage and counts as corroboration, so a reader of a
-   * stored verdict otherwise sees a pass whose reasoning cites
-   * `verify_done` with no structured field to count. `false` covers both
+   * records which channel carried it: it is a completion receipt in its own
+   * right, able to carry [`LadderRung::SubmitFast`] with no pipeline flip
+   * beside it (#2618), so a reader of a stored verdict otherwise sees a
+   * deterministic pass whose reasoning cites `verify_done` with no
+   * structured field to count. The two receipts pin different baselines —
+   * this one the ref `verify_done` chose, `flip_achieved` the pipeline's
+   * pre-execution snapshot — which is why they stay separate fields
+   * rather than one "flipped" flag. `false` covers both
    * "no confirmation was observed" and "recorded before this field
    * existed"; like every other one-way channel here it is never a claim
    * that the worker's witness failed.

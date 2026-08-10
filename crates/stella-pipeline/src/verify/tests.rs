@@ -491,6 +491,111 @@ fn one_positive_observation_defeats_the_no_op_rung() {
     }
 }
 
+/// A confirmed `verify_done` receipt carries a deterministic pass on its own
+/// (#2618).
+///
+/// The witness for the whole change, and it is deliberately a *difference*
+/// test: before this, two `LadderInputs` differing only in `verify_done_flip`
+/// produced the identical `Unverified`, so the strongest proof this toolchain
+/// can produce steered nothing. Note what the crediting turn does **not**
+/// have — `flip_achieved: false` and `touched_tests_passed: None` — because
+/// that is the shape of the task the field exists for: no configured test
+/// command, so the pipeline's own oracle can never fire and no amount of
+/// correct work can make the touched-test conjunct `Some(true)`.
+#[test]
+fn a_verify_done_receipt_is_a_deterministic_pass() {
+    let base = LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        mutating_actions: 6,
+        file_change_events: 3,
+        diff_available: true,
+        diff_lines: 10,
+        diff_budget: 400,
+        ..Default::default()
+    };
+    let without = LadderInputs {
+        verify_done_flip: false,
+        ..base
+    };
+    let with = LadderInputs {
+        verify_done_flip: true,
+        ..base
+    };
+
+    assert_eq!(ladder_decision(&without), LadderDecision::Unverified);
+    assert_eq!(
+        ladder_decision(&with),
+        LadderDecision::SubmitFast,
+        "a pinned-baseline fail→pass observed by the deterministic tool is a receipt"
+    );
+    assert_ne!(
+        ladder_decision(&without),
+        ladder_decision(&with),
+        "`verify_done_flip` must steer the ladder, not merely ride along in it"
+    );
+}
+
+/// The abstention must not swallow a turn whose only observation was the
+/// receipt (#2618).
+///
+/// The other half of crediting it, and the half that is easy to miss: the
+/// blind rung sits *above* the credit, and a `verify_done`-only turn satisfies
+/// every one of the four dark channels on the narrower predicate. Crediting it
+/// at step 4 while step 3 still reads `flip_achieved` alone would be a fix that
+/// never executes.
+#[test]
+fn a_verify_done_receipt_is_not_a_blind_turn() {
+    let dark = LadderInputs {
+        mutating_actions: 4,
+        diff_budget: 400,
+        ..Default::default()
+    };
+    assert!(dark.evidence_is_blind());
+    assert_eq!(ladder_decision(&dark), LadderDecision::Unverifiable);
+
+    let receipted = LadderInputs {
+        verify_done_flip: true,
+        ..dark
+    };
+    assert!(
+        !receipted.evidence_is_blind(),
+        "a receipt is an evidence channel; a turn holding one is not unobserved"
+    );
+    assert_eq!(ladder_decision(&receipted), LadderDecision::SubmitFast);
+}
+
+/// The operator summary may not deny a receipt the trace is holding (#2618).
+///
+/// A turn can hold a `verify_done` receipt and still land `Unverified` — here
+/// the diff outruns its budget, so the receipt does not account for all of the
+/// change. That is a fair thing to say. Telling the reader that "no fail→pass
+/// flip could be observed" is not: a test just failed on the baseline and
+/// passed on the change, and the summary named the opposite.
+#[test]
+fn an_unverified_summary_never_denies_a_verify_done_receipt() {
+    let inputs = LadderInputs {
+        verify_done_flip: true,
+        mutating_actions: 6,
+        file_change_events: 3,
+        diff_available: true,
+        diff_lines: 900,
+        diff_budget: 400,
+        ..Default::default()
+    };
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverified);
+
+    let summary = unverified_evidence(&inputs, None).summary;
+    assert!(
+        !summary.contains("no fail→pass flip could be observed"),
+        "the summary denied a receipt the inputs are holding: {summary}"
+    );
+    assert!(
+        summary.contains("`verify_done` witness confirmation"),
+        "the summary must name the channel that carried the receipt: {summary}"
+    );
+}
+
 /// Warnings only veto when opted in — errors always do, but taxing every
 /// submit on a chatty linter is a policy, not a default.
 #[test]
