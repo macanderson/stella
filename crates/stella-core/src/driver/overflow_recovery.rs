@@ -118,9 +118,10 @@ impl OverflowRecovery {
 /// caller may still do about it, which is the branch
 /// [`Engine::settle_model_call_failure`] takes.
 pub(crate) enum ModelCallFailure {
-    /// Unrecoverable. `run_model_call` has already emitted the terminal
-    /// events (`RetriesExhausted`, `Error`) and fed the provider-outcomes
-    /// breaker; all that remains is the turn's abort.
+    /// Unrecoverable. The attempt ladder (`driver/rate_limit.rs`) has
+    /// already emitted the terminal events (`RetriesExhausted`, `Error`)
+    /// and fed the provider-outcomes breaker; all that remains is the
+    /// turn's abort.
     Fatal { reason: String },
     /// The provider rejected the request as exceeding its context window.
     /// Every event is withheld (module docs) — the caller decides between a
