@@ -208,8 +208,13 @@ pub enum PolicyKind {
 
 mod call_role;
 pub mod consumers;
+mod tags;
 
 pub use call_role::ModelCallRole;
+// Re-exported so `KNOWN_TYPE_TAGS` keeps its path through this module and
+// `crate::KNOWN_TYPE_TAGS`: the table moved to a submodule (#2730), the
+// public name did not.
+pub use tags::KNOWN_TYPE_TAGS;
 
 /// Content-free reason a provider attempt cannot contribute a truthful usage
 /// envelope. Error bodies and prompts are deliberately unrepresentable.
@@ -993,127 +998,6 @@ pub enum AgentEvent {
         payload: Value,
     },
 }
-
-/// The single source of truth for the variant ↔ wire-tag mapping.
-///
-/// [`AgentEvent::type_tag`] and [`KNOWN_TYPE_TAGS`] both expand from this one
-/// list, so the two can never disagree. That matters more than it looks: the
-/// deserializer decides "is this tag from the future?" by consulting
-/// `KNOWN_TYPE_TAGS`, so a real tag missing from it would quietly demote every
-/// one of its events to [`AgentEvent::Unknown`] — data loss with no error.
-/// Generating both from one list makes that class of bug unrepresentable.
-///
-/// The `E0004` tripwire survives the move: the generated match is still
-/// exhaustive, so adding a variant without adding it here fails
-/// `cargo build -p stella-protocol` at the invocation below.
-macro_rules! agent_event_tags {
-    ($($variant:ident => $tag:literal,)*) => {
-        impl AgentEvent {
-            /// The stable discriminant tag for this event — identical to the
-            /// string `serde` writes as the `"type"` field on the stream-json
-            /// wire. Allocation-free, so logs, metrics, and tests can name an
-            /// event without serializing it.
-            ///
-            /// For [`AgentEvent::Unknown`] this returns the *preserved
-            /// original* tag, not a placeholder — an unrecognized event still
-            /// reports truthfully what it was on the wire.
-            ///
-            /// Which means the return value is no longer drawn from a closed
-            /// set: an `Unknown` tag is arbitrary, unbounded, externally
-            /// authored text. Grouping, indexing, or labelling a metric by
-            /// this string is safe only against [`KNOWN_TYPE_TAGS`] — bucket
-            /// anything outside it as one `unknown` cohort rather than letting
-            /// a foreign stream drive cardinality.
-            #[must_use]
-            pub fn type_tag(&self) -> &str {
-                match self {
-                    $(AgentEvent::$variant { .. } => $tag,)*
-                    AgentEvent::Unknown { event_type, .. } => event_type.as_str(),
-                }
-            }
-        }
-
-        /// Every `"type"` tag this build decodes into a typed variant.
-        ///
-        /// The deserializer's forward-compat fallback keys off exactly this
-        /// list: a tag present here must parse into its variant or fail loudly;
-        /// a tag absent from it becomes [`AgentEvent::Unknown`]. Consumers can
-        /// also use it to detect that a stream came from a newer stella.
-        pub const KNOWN_TYPE_TAGS: &[&str] = &[$($tag,)*];
-    };
-}
-
-agent_event_tags! {
-    Stage => "stage",
-    Text => "text",
-    TextDelta => "text_delta",
-    Reasoning => "reasoning",
-    ToolStart => "tool_start",
-    ToolResult => "tool_result",
-    SpeculationDiscarded => "speculation_discarded",
-    Retry => "retry",
-    Steered => "steered",
-    TurnParked => "turn_parked",
-    TurnWoken => "turn_woken",
-    LoopDetected => "loop_detected",
-    BudgetDenied => "budget_denied",
-    RetriesExhausted => "retries_exhausted",
-    PolicyDecision => "policy_decision",
-    Compaction => "compaction",
-    BudgetTick => "budget_tick",
-    StepUsage => "step_usage",
-    UsageIncomplete => "usage_incomplete",
-    GoalVerdict => "goal_verdict",
-    ProviderFallback => "provider_fallback",
-    FileChange => "file_change",
-    ContextRecall => "context_recall",
-    ContextWrite => "context_write",
-    BlockRegistered => "block_registered",
-    StepManifest => "step_manifest",
-    Proof => "proof",
-    Verdict => "verdict",
-    ScopeReview => "scope_review",
-    HunkReview => "hunk_review",
-    AskUser => "ask_user",
-    MediaProgress => "media_progress",
-    MediaComplete => "media_complete",
-    Commit => "commit",
-    Pr => "pr",
-    TaskUpdate => "task_update",
-    SubAgent => "sub_agent",
-    Error => "error",
-    Complete => "complete",
-}
-
-// Adding a variant? The `E0004` at `agent_event_tags!` above is the first
-// tripwire. Add the tag there, then propagate the variant to every downstream
-// matcher — the tag table alone is not enough:
-//
-// **Compile-enforced** — also exhaustive, so they will not build until you add
-// an arm; but each break surfaces one crate at a time (CI stops at the first
-// failing crate), which is exactly how #415's variant reached `main` before
-// breaking `stella-pipeline` (#421) then `stella-tui` (#422):
-//   - `stella-pipeline` `replay::event_signature`
-//   - `stella-tui` `model::Model::apply`
-//   - `stella-tui` `textline::event_line`
-//   - `stella-tui` `deck::trace_of`
-//
-// **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
-// variant falls through to a default and is wrong only at runtime. These are
-// the real trap; audit them by hand:
-//   - `stella-pipeline` `replay::structural_diff` volatile keep-set: add the
-//     variant if it is a run-to-run artifact absent from older golden streams,
-//     or it will shift every aligned position of the diff.
-//   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`: give
-//     the variant an intensity / agent status if it should register on the
-//     fleet deck.
-//
-// The same duty applies to the other exhaustively-matched cross-crate enums
-// this pattern warns about (`ToolOutput`, `BudgetOutcome`).
-//
-// Note that none of this is about *wire* safety any more — an older reader
-// survives your new variant via `AgentEvent::Unknown`. It is about this
-// workspace's own renderers staying complete.
 
 impl AgentEvent {
     /// Whether this event arrived with a `"type"` this build does not know —

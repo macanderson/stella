@@ -44,26 +44,26 @@
 //! is in making a PR author answer "what reads this?" before the merge rather
 //! than after the bench run.
 //!
-//! # Why this is a hand-maintained table and not macro-generated
+//! # What generation buys, and what it does not
 //!
-//! `agent_event_tags!` already generates `type_tag()` and `KNOWN_TYPE_TAGS`
-//! from one list, and extending it with a third output would make totality
-//! compile-enforced rather than test-enforced — strictly stronger. It is
-//! deliberately not done, for two reasons worth recording so the next author
-//! does not re-litigate it from scratch:
+//! The rows are generated from the same table as [`KNOWN_TYPE_TAGS`] and
+//! `type_tag()` (`event/tags.rs`, #2730), so **totality is compile-enforced**:
+//! adding an [`AgentEvent`](super::AgentEvent) variant without declaring a
+//! consumer is an `E0004`, not a failing test. Three of [`LedgerViolation`]'s
+//! kinds — `MissingRow`, `UnknownTag`, `DuplicateRow` — are therefore
+//! unrepresentable for the real ledger.
 //!
-//! - That macro is the wire decoder's source of truth: a tag missing from
-//!   `KNOWN_TYPE_TAGS` silently demotes every event carrying it to
-//!   [`AgentEvent::Unknown`](super::AgentEvent::Unknown). Widening its
-//!   invocation to carry consumer metadata puts editorial churn on the one
-//!   list whose stability protects against silent data loss.
-//! - `event.rs` sits 35 lines under the 1500-line ratchet with no baseline
-//!   entry, and the postures would add roughly forty. The fix would be
-//!   splitting the tag macro out — a worthwhile change, but not one to smuggle
-//!   into the PR that introduces the ledger.
+//! They are deliberately kept. [`audit_ledger`] takes its ledger and tag list
+//! as parameters precisely so the negative controls can hand it broken input,
+//! and a check that cannot be shown to fail is a claim rather than a check.
+//! Deleting the structural rules because one call site can no longer trip them
+//! would take the harness's ability to prove itself with them.
 //!
-//! The totality test below fails loudly with the exact row to add, so the
-//! practical difference is a red `cargo test` instead of a red `cargo build`.
+//! What generation does **not** buy is the semantic half, which is why
+//! [`audit_ledger`] still runs: that every gap posture cites a real issue
+//! reference, that a `Behavioral` row names somewhere to look, and that the
+//! posture agrees with `surfaces`. Those are judgements about the row's
+//! content, and no macro can hold an author to them.
 //!
 //! # Adding a variant
 //!
@@ -166,224 +166,11 @@ pub struct SignalConsumers {
 
 /// The ledger: one row per [`AgentEvent`](super::AgentEvent) variant.
 ///
-/// Kept in `agent_event_tags!` order so the two lists diff against each other
-/// by eye. The totality test enforces the set; the ordering is a courtesy.
-pub const SIGNAL_CONSUMERS: &[SignalConsumers] = &[
-    SignalConsumers {
-        type_tag: "stage",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    // Exemplar — `Surfaced`. Assistant prose has no behavioral consumer by
-    // design: the engine does not branch on what the model said in English.
-    SignalConsumers {
-        type_tag: "text",
-        posture: ConsumerPosture::Surfaced,
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "text_delta",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "reasoning",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "tool_start",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    // Exemplar — `Behavioral`. Projected into the store's `tool_calls` table
-    // in the same transaction that records the event.
-    //
-    // Worth stating what is *not* the consumer here, because the intuitive
-    // answer is wrong and the mistake is instructive: loop detection does not
-    // read this signal. It reads the transcript
-    // (`stella-core/src/driver/loop_evidence.rs::recent_call_records` over
-    // `CompletionMessage`s), which is a different plane that happens to carry
-    // the same facts. Citing it here would have described a dependency that
-    // does not exist — and severing the event would not have been caught.
-    SignalConsumers {
-        type_tag: "tool_result",
-        posture: ConsumerPosture::Behavioral {
-            site: "stella-store/src/tool_calls.rs::project_event",
-        },
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "speculation_discarded",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "retry",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "steered",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "turn_parked",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "turn_woken",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[Surface::Observatory],
-    },
-    SignalConsumers {
-        type_tag: "loop_detected",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "budget_denied",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "retries_exhausted",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "policy_decision",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "compaction",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "budget_tick",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "step_usage",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "usage_incomplete",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "goal_verdict",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "provider_fallback",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "file_change",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "context_recall",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "context_write",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "block_registered",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "step_manifest",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "proof",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "verdict",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "scope_review",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "hunk_review",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "ask_user",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "media_progress",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "media_complete",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "commit",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "pr",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "task_update",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "sub_agent",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    SignalConsumers {
-        type_tag: "error",
-        posture: ConsumerPosture::Unclassified { issue: "#2703" },
-        surfaces: &[],
-    },
-    // Exemplar — `Behavioral`. The session journal classifies this as a
-    // transition, which is what makes it flush durably instead of buffering:
-    // the signal decides persistence timing, not just content.
-    SignalConsumers {
-        type_tag: "complete",
-        posture: ConsumerPosture::Behavioral {
-            site: "stella-store/src/journal.rs::JournalRecord::is_transition",
-        },
-        surfaces: &[],
-    },
-];
+/// **Generated**, not hand-maintained (#2730). The rows live in the same table
+/// as [`KNOWN_TYPE_TAGS`] and `type_tag()` (`event/tags.rs`), so totality is
+/// `E0004` — a variant with no declared consumer fails `cargo build`, not just
+/// `cargo test`. See that module for how to add one.
+pub use super::tags::SIGNAL_CONSUMERS;
 
 /// How many rows may still be [`ConsumerPosture::Unclassified`].
 ///
