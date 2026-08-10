@@ -362,9 +362,9 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
 /// it was.
 ///
 /// The settings file below is well-formed — it parses, and every switch in it
-/// is individually legal — but `verifier_weight: 2.0` puts the judged weight
-/// above the deterministic one, which `reward_policy()` refuses by name rather
-/// than clamping. That is the only fallible step downstream of the load, so it
+/// is individually legal — but `deterministic_weight: 0.0` gives the reward
+/// scale a unit with no directions in it, which `reward_policy()` refuses by
+/// name rather than clamping. That is the only fallible step downstream of the load, so it
 /// is the lever that separates "derive, then commit" from "assign as you go":
 /// with the assignments interleaved, `enable_recap` and the `bash` switch are
 /// already written by the time the reward weights are rejected, and the
@@ -378,14 +378,14 @@ fn a_failed_reload_leaves_every_field_untouched() {
 
     std::fs::write(
         home.join(".stella").join("settings.json"),
-        r#"{"enable_recap": "on", "tools": {"bash": "off"}, "reward": {"verifier_weight": 2.0}}"#,
+        r#"{"enable_recap": "on", "tools": {"bash": "off"}, "reward": {"deterministic_weight": 0.0}}"#,
     )
     .unwrap();
 
     let error = cfg
         .reload_from_disk()
-        .expect_err("a verifier outranking a test must not resolve");
-    assert!(error.contains("verifier_weight"), "{error}");
+        .expect_err("a scale with no unit must not resolve");
+    assert!(error.contains("deterministic_weight"), "{error}");
 
     assert!(
         !cfg.enable_recap,
@@ -551,7 +551,7 @@ fn a_configured_reward_policy_reaches_the_config() {
     // mutate the one field instead of restating the struct.
     let mut settings = crate::settings::Settings::default();
     settings.reward = Some(crate::settings::RewardSettings {
-        verifier_weight: Some(0.2),
+        deterministic_weight: Some(0.2),
         ..Default::default()
     });
     let cfg = Config::load_with_settings(
@@ -562,15 +562,15 @@ fn a_configured_reward_policy_reaches_the_config() {
         std::path::PathBuf::from("/tmp/ws"),
     )
     .expect("a legal weight loads");
-    assert_eq!(cfg.reward_policy.outcome.judged, 0.2);
+    assert_eq!(cfg.reward_policy.outcome.deterministic, 0.2);
     assert_eq!(
-        cfg.reward_policy.outcome.deterministic, 1.0,
+        cfg.reward_policy.shaping.per_step, 0.02,
         "an unset weight stays at its default"
     );
 }
 
-/// A verifier weight that outranks a test fails the LAUNCH, by name — it does not
-/// get clamped to something legal and then quietly applied.
+/// A reward weight that cannot carry a scale fails the LAUNCH, by name — it does
+/// not get clamped to something legal and then quietly applied.
 ///
 /// This is the whole reason `reward_policy()` returns a `Result`. A substituted
 /// weight would produce correctly-shaped labels for every turn thereafter,
@@ -583,7 +583,7 @@ fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
     // mutate the one field instead of restating the struct.
     let mut settings = crate::settings::Settings::default();
     settings.reward = Some(crate::settings::RewardSettings {
-        verifier_weight: Some(3.0),
+        deterministic_weight: Some(0.0),
         ..Default::default()
     });
     let error = Config::load_with_settings(
@@ -593,8 +593,7 @@ fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
         &settings,
         std::path::PathBuf::from("/tmp/ws"),
     )
-    .expect_err("a verifier outranking a test must not launch");
-    assert!(error.contains("verifier_weight"), "{error}");
+    .expect_err("a scale with no unit must not launch");
     assert!(error.contains("deterministic_weight"), "{error}");
 }
 

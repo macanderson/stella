@@ -19,6 +19,21 @@
 //! `context_providers` and the hook matcher lists are open maps whose keys are
 //! user-chosen names (a tool name, a provider id), so an unrecognized key there
 //! is data, not a mistake — those are descended into, not flagged.
+//!
+//! # Retired keys are not typos
+//!
+//! A key that shipped in a release and was then removed lands in the same
+//! bucket as `"enable_recapp"` — nothing reads it — but "check the spelling" is
+//! false advice for it: the operator spelled a real key correctly, and the
+//! feature behind it is gone. [`RETIRED`] is the closed list of those, each
+//! with the one sentence that makes the difference actionable, and
+//! [`retirement`] is what the caller consults to say the right thing.
+//!
+//! Deliberately separate from the field lists above rather than a variant
+//! inside them. Those lists are also the trusted launcher's strict vocabulary
+//! (`config::trusted_engine_config_shape_is_strict`), which fails **closed** —
+//! a benchmark posture naming a retired knob must be refused at launch, not
+//! warned about and run.
 
 use std::path::Path;
 
@@ -67,11 +82,90 @@ const UI_FIELDS: &[&str] = &["theme"];
 /// until they pool the traces.
 const REWARD_FIELDS: &[&str] = &[
     "deterministic_weight",
-    "verifier_weight",
     "per_step",
     "per_usd",
     "per_revision",
 ];
+
+/// Keys that were correct in a shipped release and read nothing now, each with
+/// the sentence an operator needs: what it used to do, and why there is no
+/// replacement to point them at.
+///
+/// Both entries are the same removal seen from two angles — the pipeline stopped
+/// asking a model for a verdict, so neither the knob that demanded an
+/// independent verifier nor the weight that priced its opinion has anything
+/// left to steer. A key belongs here only while a settings file in the wild
+/// plausibly still carries it; the list is meant to be pruned, not grown.
+///
+/// Paths are dotted and format-specific, because the two documents name the
+/// same knob differently: `agent_engine_config` in JSON is `agents` in TOML.
+const RETIRED: &[(&str, &str)] = &[
+    (
+        "agent_engine_config.pipeline_require_independent_verifier",
+        "refused a run whose verdict call would resolve to the worker's own \
+         model; verification makes no model call, so there is no self-graded \
+         verdict left to refuse",
+    ),
+    (
+        "agents.pipeline_require_independent_verifier",
+        "refused a run whose verdict call would resolve to the worker's own \
+         model; verification makes no model call, so there is no self-graded \
+         verdict left to refuse",
+    ),
+    (
+        "reward.verifier_weight",
+        "scaled a model verifier's opinion against a test's observation; no \
+         rung carries that magnitude any more, so a reward label is priced by \
+         `deterministic_weight` alone",
+    ),
+];
+
+/// Why `key` is no longer read, when it is a retired key rather than a typo.
+///
+/// `key` is one of the dotted paths [`unknown_keys_in`] and
+/// [`unknown_toml_keys_in`] return; anything else — including a genuine
+/// misspelling — is `None`.
+pub(super) fn retirement(key: &str) -> Option<&'static str> {
+    RETIRED
+        .iter()
+        .find_map(|(retired, why)| (*retired == key).then_some(*why))
+}
+
+/// The lines to print for the keys `found` in the file at `path`, in the order
+/// they should appear. Empty when there is nothing to say.
+///
+/// A pure function over owned data rather than a `for` loop around `eprintln!`
+/// at the call site, so the split — a typo wants re-spelling, a retired key is
+/// spelled right — is a thing a test can read. The caller's only job is to
+/// print what comes back.
+pub(super) fn notices(path: &str, found: Vec<String>) -> Vec<String> {
+    let (retired, unknown): (Vec<_>, Vec<_>) =
+        found.into_iter().partition(|key| retirement(key).is_some());
+
+    let mut lines = Vec::new();
+    if !unknown.is_empty() {
+        lines.push(format!(
+            "  ! {path}: unrecognized key{} ignored ({}) — check the spelling; \
+             stella reads none of them",
+            if unknown.len() == 1 { "" } else { "s" },
+            unknown
+                .iter()
+                .map(|key| key.escape_debug().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
+    // One line each rather than a joined list: the whole value of this notice
+    // is the reason, and reasons do not join.
+    lines.extend(retired.iter().map(|key| {
+        format!(
+            "  ! {path}: `{}` is retired and reads nothing — it {}. Delete the key.",
+            key.escape_debug(),
+            retirement(key).unwrap_or_default(),
+        )
+    }));
+    lines
+}
 
 /// `hooks` — the PascalCase lifecycle-event keys `stella_core::hooks::Hooks`
 /// renames its fields to. A misspelled event name is the highest-consequence
@@ -471,6 +565,98 @@ mod tests {
                 "agent_engine_config.agents.verifier.params.temperatur".to_string(),
             ]
         );
+    }
+
+    /// The witness for #2586. Both keys were correct in a shipped release and
+    /// read nothing now; the file must still LOAD (serde tolerance, asserted
+    /// rather than assumed) and each key must be told apart from a misspelling,
+    /// because "check the spelling" sends its author hunting for a mistake they
+    /// did not make.
+    #[test]
+    fn a_retired_key_is_named_as_retired_rather_than_as_a_typo() {
+        let json = r#"{
+             "agent_engine_config": { "pipeline_require_independent_verifier": "on" },
+             "reward": { "verifier_weight": 0.25 }
+           }"#;
+        // It parses. A key that hard-errored would break a settings file
+        // written against a release that accepted it.
+        let parsed: super::super::Settings = serde_json::from_str(json).expect("still loads");
+        assert!(
+            parsed
+                .reward
+                .is_some_and(|reward| reward == super::super::RewardSettings::default()),
+            "the retired key contributes nothing to the typed value"
+        );
+
+        let found = scan(json);
+        assert_eq!(
+            found,
+            vec![
+                "agent_engine_config.pipeline_require_independent_verifier".to_string(),
+                "reward.verifier_weight".to_string(),
+            ],
+            "both are reported — silent acceptance is the failure mode"
+        );
+        for key in &found {
+            assert!(
+                retirement(key).is_some(),
+                "{key} must carry its own reason, not the spelling advice"
+            );
+        }
+
+        // ...and what the operator actually reads: one line per retired key,
+        // each naming it, and not a word about spelling.
+        let lines = notices("settings.json", found);
+        assert_eq!(lines.len(), 2, "{lines:#?}");
+        for (line, key) in lines.iter().zip([
+            "agent_engine_config.pipeline_require_independent_verifier",
+            "reward.verifier_weight",
+        ]) {
+            assert!(line.contains(key), "{line}");
+            assert!(line.contains("is retired and reads nothing"), "{line}");
+            assert!(
+                !line.contains("check the spelling"),
+                "a retired key was spelled correctly: {line}"
+            );
+        }
+    }
+
+    /// A file with both kinds gets both notices, and neither swallows the
+    /// other: the typo still gets its spelling advice, and it is reported
+    /// first because it is the one that is probably a live mistake.
+    #[test]
+    fn a_typo_and_a_retired_key_in_one_file_each_get_their_own_notice() {
+        let lines = notices(
+            "stella.toml",
+            scan(
+                r#"{
+                     "reward": { "verifier_weight": 0.25, "per_stepp": 0.1 }
+                   }"#,
+            ),
+        );
+        assert_eq!(lines.len(), 2, "{lines:#?}");
+        assert!(lines[0].contains("per_stepp"), "{}", lines[0]);
+        assert!(lines[0].contains("check the spelling"), "{}", lines[0]);
+        assert!(
+            !lines[0].contains("verifier_weight"),
+            "the retired key must not ride along in the typo list: {}",
+            lines[0]
+        );
+        assert!(lines[1].contains("verifier_weight"), "{}", lines[1]);
+        assert!(lines[1].contains("is retired"), "{}", lines[1]);
+    }
+
+    /// ...and the converse, so the split cannot degrade into labelling every
+    /// unknown key "retired": a genuine misspelling has no retirement reason.
+    #[test]
+    fn a_misspelling_carries_no_retirement_reason() {
+        for key in [
+            "reward.verifier_weightt",
+            "agent_engine_config.default_modle",
+            "enable_recapp",
+        ] {
+            assert_eq!(retirement(key), None, "{key}");
+        }
     }
 
     /// A malformed or missing file is the typed loader's problem, and it

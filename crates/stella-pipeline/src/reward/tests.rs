@@ -226,52 +226,38 @@ fn a_non_finite_cost_withholds_the_scalar_only() {
     }
 }
 
-/// A policy with a helper for the common case: lower the verifier, keep the rest.
-fn distrusting(judged: f64) -> RewardPolicy {
+/// A policy on a different scale, keeping the rest: the common case now that
+/// `deterministic` is the only outcome magnitude there is.
+fn scaled(deterministic: f64) -> RewardPolicy {
     RewardPolicy {
-        outcome: OutcomeWeights {
-            judged,
-            ..OutcomeWeights::default()
-        },
+        outcome: OutcomeWeights { deterministic },
         ..RewardPolicy::default()
     }
 }
 
-/// The ceiling: a judged weight above the deterministic one is refused, at both
-/// the places it can arrive. Above that line a model's opinion outranks a
-/// test's observation, which inverts the ladder.
+/// The unit must be a usable one, and it is refused at both the places a bad
+/// policy can arrive — config load and [`label`] itself.
 #[test]
-fn a_verifier_weight_above_the_deterministic_one_is_refused() {
-    let inverted = distrusting(1.5);
+fn a_non_positive_unit_is_refused_at_both_gates() {
+    let unusable = scaled(0.0);
     assert_eq!(
-        inverted.validate(),
-        Err(WeightError::JudgedAboveDeterministic)
+        unusable.validate(),
+        Err(WeightError::DeterministicNotPositive)
     );
     // ...and `label` refuses it too, rather than trusting that whoever built
     // the policy validated it first.
     let label = label(
-        settled(LadderRung::Unverified, true),
+        settled(LadderRung::SubmitFast, true),
         cost(1, 0.0, 0),
-        &inverted,
+        &unusable,
     );
     assert_eq!(label.reward, None);
     assert_eq!(label.discard, Some(DiscardReason::PolicyInvalid));
     assert_eq!(
         label.rung,
-        Some(LadderRung::Unverified),
+        Some(LadderRung::SubmitFast),
         "the rung is still true even when the arithmetic is refused"
     );
-}
-
-/// Equal weights are legal. The ceiling is `>`, not `>=`.
-///
-/// Validation only: the judged weight no longer prices any rung, so there is
-/// no scoring behaviour left to assert about it. The rule is still enforced
-/// because the field is still settings-visible, and a policy that fails its
-/// own stated bound must not be accepted whatever reads it.
-#[test]
-fn a_verifier_weight_equal_to_the_deterministic_one_is_allowed() {
-    assert_eq!(distrusting(1.0).validate(), Ok(()));
 }
 
 /// Every other way a policy can be nonsense, and the distinct reason each one
@@ -279,18 +265,8 @@ fn a_verifier_weight_equal_to_the_deterministic_one_is_allowed() {
 #[test]
 fn each_impossible_policy_names_its_own_rule() {
     let cases = [
-        (distrusting(-0.1), WeightError::JudgedNegative),
-        (distrusting(f64::NAN), WeightError::NotFinite),
-        (
-            RewardPolicy {
-                outcome: OutcomeWeights {
-                    deterministic: 0.0,
-                    judged: 0.0,
-                },
-                ..RewardPolicy::default()
-            },
-            WeightError::DeterministicNotPositive,
-        ),
+        (scaled(f64::NAN), WeightError::NotFinite),
+        (scaled(-0.1), WeightError::DeterministicNotPositive),
         (
             RewardPolicy {
                 shaping: RewardShaping {
@@ -346,7 +322,7 @@ fn a_negative_shaping_price_cannot_pay_a_trajectory_to_spend_more() {
 /// are arithmetically indistinguishable and silently incomparable.
 #[test]
 fn every_label_carries_the_policy_it_was_computed_under() {
-    let policy = distrusting(0.25);
+    let policy = scaled(0.25);
     let scored = label(
         settled(LadderRung::Unverified, true),
         cost(2, 0.1, 0),
@@ -354,7 +330,7 @@ fn every_label_carries_the_policy_it_was_computed_under() {
     );
     assert_eq!(scored.policy, policy);
     // A discard carries it too — a reader pooling records has to tell a
-    // distrusted verifier from a workspace that simply never reached one.
+    // discard from a scored row computed on a different scale.
     for settlement in [
         settled(LadderRung::Unverifiable, true),
         Settlement::Absent,
@@ -432,14 +408,14 @@ fn a_label_has_no_free_text_leaves() {
         LadderRung::Waived,
     ] {
         for passed in [true, false] {
-            // Every policy the stamp can carry, including the two that produce
-            // the new discard reasons: the stamp must add numbers and nothing
-            // else, whatever it holds.
+            // Every policy the stamp can carry, including the invalid one
+            // that produces `PolicyInvalid`: the stamp must add numbers and
+            // nothing else, whatever it holds.
             for policy in [
                 RewardPolicy::default(),
-                distrusting(0.0),
-                distrusting(0.2),
-                distrusting(f64::NAN),
+                scaled(0.2),
+                scaled(2.0),
+                scaled(f64::NAN),
             ] {
                 let value =
                     serde_json::to_value(label(settled(rung, passed), cost(3, 0.2, 1), &policy))
@@ -526,7 +502,6 @@ proptest! {
         revisions in 0u32..1_000,
         which in 0usize..7,
         deterministic in -2.0f64..4.0,
-        judged in -2.0f64..4.0,
         per_step in -1.0f64..1.0,
         per_usd in -1.0f64..1.0,
         per_revision in -1.0f64..1.0,
@@ -541,7 +516,7 @@ proptest! {
             LadderRung::Waived,
         ];
         let policy = RewardPolicy {
-            outcome: OutcomeWeights { deterministic, judged },
+            outcome: OutcomeWeights { deterministic },
             shaping: RewardShaping { per_step, per_usd, per_revision },
         };
         let label = label(
@@ -575,17 +550,15 @@ proptest! {
         revisions in 0u32..50,
         passed in any::<bool>(),
         deterministic in 0.01f64..4.0,
-        judged_fraction in 0.0f64..1.0,
         per_step in 0.0f64..1.0,
         per_usd in 0.0f64..1.0,
         per_revision in 0.0f64..1.0,
         which in 0usize..2,
     ) {
         let policy = RewardPolicy {
-            // Constructed to be valid by shape: the judged weight is expressed
-            // as a fraction of the deterministic one, which is the ordering
-            // rule written as arithmetic instead of checked after the fact.
-            outcome: OutcomeWeights { deterministic, judged: deterministic * judged_fraction },
+            // Constructed to be valid by shape: a strictly positive unit is
+            // the whole of `OutcomeWeights::validate`.
+            outcome: OutcomeWeights { deterministic },
             shaping: RewardShaping { per_step, per_usd, per_revision },
         };
         prop_assume!(policy.validate().is_ok());
