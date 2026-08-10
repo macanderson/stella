@@ -229,6 +229,96 @@ fn full_deterministic_pass_submits_fast() {
     assert_eq!(decision, LadderDecision::SubmitFast);
 }
 
+/// **The witness.** A `verify_done` receipt grants the deterministic pass on
+/// its own, with no configured test command anywhere in sight.
+///
+/// This is the shape the model-free pipeline actually runs in. With no
+/// `--test-command` the flip oracle never arms, and nothing authors a witness
+/// any more, so `flip_achieved` can never be true — which left this rung
+/// unreachable for every task that does not ship its own test command, and on
+/// Terminal-Bench that is all of them. `verify_done` is the replacement the
+/// design leans on, so it has to be able to grant the pass it earns.
+///
+/// Two things had to be true for it to work, and both were false:
+/// the credit at rung 4 has to *read* the field, and the abstention at rung 3
+/// has to stop swallowing the turn first — `evidence_is_blind` did not count
+/// the receipt as a channel, so a `verify_done`-only turn read as "nothing
+/// could look".
+#[test]
+fn a_verify_done_receipt_alone_submits_fast() {
+    let inputs = LadderInputs {
+        // No configured command: the oracle never armed and no suite ran.
+        flip_achieved: false,
+        touched_tests_passed: None,
+        // The worker's own shadow-worktree run: red on the pinned baseline,
+        // green on the change.
+        verify_done_flip: true,
+        no_test_surface: true,
+        diff_lines: 12,
+        diff_budget: 400,
+        diff_available: true,
+        file_change_events: 1,
+        mutating_actions: 3,
+        ..Default::default()
+    };
+    assert!(
+        !inputs.evidence_is_blind(),
+        "a verify_done receipt is an observation; a turn carrying one is not blind"
+    );
+    assert_eq!(
+        ladder_decision(&inputs),
+        LadderDecision::SubmitFast,
+        "a deterministic fail→pass receipt is completion authority whether the oracle \
+         or the worker's verify_done produced it"
+    );
+}
+
+/// The receipt is credited, not waved through: the refutations that apply to a
+/// configured flip apply to it too.
+#[test]
+fn a_verify_done_receipt_is_still_subject_to_the_refutations() {
+    let sound = LadderInputs {
+        verify_done_flip: true,
+        diff_lines: 12,
+        diff_budget: 400,
+        diff_available: true,
+        file_change_events: 1,
+        mutating_actions: 3,
+        ..Default::default()
+    };
+    assert_eq!(ladder_decision(&sound), LadderDecision::SubmitFast);
+
+    let over_budget = LadderInputs {
+        diff_lines: 5_000,
+        ..sound
+    };
+    assert_eq!(
+        ladder_decision(&over_budget),
+        LadderDecision::Unverified,
+        "a receipt does not account for a change far larger than it"
+    );
+
+    let regressed = LadderInputs {
+        new_diag_errors: 1,
+        ..sound
+    };
+    assert_eq!(
+        ladder_decision(&regressed),
+        LadderDecision::Unverified,
+        "the #861 veto applies to either receipt"
+    );
+
+    let red = LadderInputs {
+        touched_tests_passed: Some(false),
+        ..sound
+    };
+    assert_eq!(
+        ladder_decision(&red),
+        LadderDecision::Revise,
+        "a red suite is a deterministic failure whatever else was receipted"
+    );
+}
+
 /// The Terminal-Bench trial from #973, reconstructed as ladder inputs:
 /// the task directory is not a git repository so `git diff` cannot read it,
 /// there is no test command so the oracle never armed and no tests ran, and

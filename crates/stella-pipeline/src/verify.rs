@@ -515,6 +515,14 @@ impl LadderInputs {
     /// evidence, so neither can be blind. Only the total absence qualifies.
     pub fn evidence_is_blind(&self) -> bool {
         !self.flip_achieved
+            // A `verify_done` receipt is an evidence channel like any other,
+            // and omitting it here is a latent bug with a live trigger: this
+            // predicate is checked at rung 3, *above* the credit at rung 4, so
+            // a turn whose only observation was that receipt reads as "nothing
+            // could look" and the abstention swallows it before it can be
+            // credited. The field was added after this predicate was written
+            // and never joined it.
+            && !self.verify_done_flip
             && self.touched_tests_passed.is_none()
             && !self.diff_available
             && self.file_change_events == 0
@@ -664,8 +672,29 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     //    opted-in, new warnings) drop this rung through to escalation. Lint
     //    stays excluded from the oracle — it can veto a submit, never
     //    verify one.
-    if inputs.flip_achieved
-        && inputs.touched_tests_passed == Some(true)
+    //
+    //    **Either receipt counts.** `flip_achieved` is the configured
+    //    command's own fail→pass; `verify_done_flip` is the worker's
+    //    `verify_done` run — a pinned baseline, a shadow worktree, the test
+    //    files copied in, red there and green here. Both are deterministic
+    //    observations of the same shape, and #2588 said so in as many words
+    //    ("a configured same-command fail-to-pass flip **or** a typed built-in
+    //    `verify_done` request replayed against the sealed final tree").
+    //
+    //    It stopped being read when the veto conjuncts came back, and the
+    //    consequence is not small: with no `--test-command` the oracle never
+    //    arms, and nothing authors a witness any more, so `flip_achieved` can
+    //    never be true — which made this rung unreachable for every task that
+    //    does not ship its own test command. `verify_done` is the replacement
+    //    the model-free design leans on; it has to be able to grant the pass
+    //    it earns.
+    if (inputs.flip_achieved || inputs.verify_done_flip)
+        // A configured-command flip must also leave the suite it belongs to
+        // green. A `verify_done` receipt has no such companion — it ran both
+        // trees itself — so demanding one would reject the very evidence this
+        // arm exists to credit. A *red* suite never reaches here either way:
+        // rung 1 returned `Revise`.
+        && (!inputs.flip_achieved || inputs.touched_tests_passed == Some(true))
         && inputs.diff_lines <= inputs.diff_budget
         && inputs.new_diag_errors == 0
         && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
