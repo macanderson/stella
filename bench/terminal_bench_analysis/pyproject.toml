@@ -27,6 +27,7 @@ py-modules = [
     "tb21_analysis",
     "tb21_evidence_contract",
     "tb21_hybrid_analysis",
+    "tb21_posture_schema",
     "tb21_study_seed",
 ]
 
