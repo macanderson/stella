@@ -1,12 +1,14 @@
 ---
 title: Inference Pipeline
-description: How stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verifier, deterministic verification, and per-role routing.
+description: How stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verdict, deterministic verification, and per-role routing.
 ---
 
 stella's answer to "did the agent actually do the work?" is structural, not
 rhetorical. Every prompt runs through an **inference pipeline** that separates
-*doing* the work from *verifying* it — with deterministic checks preferred
-over model opinion, and an independent verifier preferred over self-assessment.
+*doing* the work from *verifying* it. Verification is **deterministic**: the
+answer comes from measurements — a fail→pass flip of one command, a test run, a
+diff — and no model is ever asked to rule on whether the work is done. When the
+measurements do not settle it, the run says so.
 
 ## The foundation: the step loop
 
@@ -37,7 +39,7 @@ in stages:
 <PipelineFlowDiagram />
 
 In full: triage → recall → research → plan → scope review → execute → witness
-→ verify → verdict, with a bounded revise loop, then reflection and context
+→ verify, with a bounded revise loop, then reflection and context
 write-back after the verdict settles. Recall runs concurrently with triage
 but emits after it; research, plan, scope review, and witness are conditional
 — a simple lookup skips them, research runs only when triage names questions
@@ -53,7 +55,7 @@ needs a test at all.
 A fast, cheap classification call decides how much process the task deserves —
 a **lookup** ("what does this function do?") skips planning entirely, a
 **single concrete change** gets a light path (one execute turn, still verified), a
-**genuinely multi-step** task gets the full plan → scope-review → execute → verify → verdict
+**genuinely multi-step** task gets the full plan → scope-review → execute → verify
 pipeline. Triage runs under a hard latency ceiling (30 seconds); if the model
 doesn't answer in time, stella falls through to the full path rather than
 waiting — and says so, emitting a `triage_degraded` proof step so a turn whose
@@ -190,69 +192,111 @@ gathered first:
 - **The zero-diff guard.** A run that changed nothing (including untracked
   files) can never claim success.
 - **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
-  deterministic evidence can submit without any model verifier at all.
+  deterministic evidence submits on the evidence alone.
 
-From those, the ladder picks one of **four** outcomes — before any model verifier
-runs, and in this order:
+From those, the ladder picks one of **five** outcomes, in this order. Every one
+of them is **terminal** — the ladder is the whole decision, and no model is
+consulted at any rung:
 
 <CardGrid size="md">
   <OptionCard name="1 · Revise">
     Touched tests are **red**. That is already a deterministic failure, so the evidence
-    goes straight back into a revision turn. No verifier call is spent confirming a
+    goes straight back into a revision turn. Nothing is spent confirming a
     failure that is not in doubt.
   </OptionCard>
-  <OptionCard name="2 · Unverifiable">
+  <OptionCard name="2 · Nothing attempted">
+    The turn dispatched no call capable of changing the workspace, and nothing that
+    *could* look saw a change. A determinate finding about the turn — and the one
+    place the ladder reads an absence as evidence.
+  </OptionCard>
+  <OptionCard name="3 · Unverifiable">
     **Every** channel was blind — no flip, no test result, an unreadable working tree,
-    and no recorded file touch. The ladder **abstains**: no verifier call, and the run is
-    scored as *unverified* rather than passed or failed.
+    and no recorded file touch. The ladder **abstains**: nothing is claimed about the
+    work, in particular not that it failed.
   </OptionCard>
-  <OptionCard name="3 · Submit fast">
-    Flip achieved, touched tests green, diff within budget. The full deterministic
-    pass — the model verifier is **skipped** entirely.
+  <OptionCard name="4 · Submit fast">
+    Flip achieved, touched tests green, diff within budget, no fresh diagnostics.
+    The full deterministic pass.
   </OptionCard>
-  <OptionCard name="4 · Model verifier">
-    Genuinely inconclusive — no flip, or a diff over budget, or tests that could not
-    run — but at least one channel could still see something. Only here is a verifier
-    asked.
+  <OptionCard name="5 · Unverified">
+    The probes looked and what they returned did not amount to a proof — no flip, or a
+    diff over budget, or tests that could not run. The ladder's honest *I do not know*.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-The abstain rung is what keeps the ladder honest about its own reach. Before it
-existed, a turn nothing could observe fell through to the verifier, which was handed
-an empty record and answered with a confident `FAIL` naming a file that existed.
-Buying a model call to guess from no evidence is worse than saying *I could not
-tell* — so now it says that.
+**Unverifiable** and **unverified** are different answers, and the words carry
+the difference exactly: `-able` is a capacity, `-ed` is a state. The first says
+*nothing could look*; the second says *the probes looked and did not settle it*.
+Neither is a finding that the work is wrong.
 </Callout>
+
+The last rung is where a second model used to be asked for a `PASS`/`FAIL`. It
+no longer is, and the reason is a measurement rather than a preference: over an
+89-task Terminal-Bench run that verdict agreed with the benchmark's grader 46%
+of the time — a coin flip — and 17 of its false passes cost 5 tasks outright.
+The evidence that reaches this rung is by construction the evidence no oracle
+could settle, so a model handed it is guessing too, only with a verdict's
+authority attached. The run reports `UNVERIFIED` and says what was missing.
+
+There is one narrow case where a sixth rung, **waived**, is recorded instead: the
+warrant read the diff and found nothing a test could prove (a docs-only edit, a
+pure removal), or triage waived independent review and the warrant agreed from
+the change itself. A waived pass carries no evidence either way and is scored
+`Unverified`, so it can never tie a genuinely flip-verified candidate in
+best-of-N and then win the smaller-diff tiebreak.
 
 The same discipline is available to the agent as a tool:
 **`verify_done`** replays a new test against the *previous* code in a shadow
 worktree at `git HEAD` — the test must fail there and pass on the change
 (**WITNESS CONFIRMED**). A green suite alone is never accepted as proof.
 
-### 7. Verifier
+### 7. The verdict
 
-When a model verdict is needed, the **verifier** — a separate model call, by
-preference from a *different model family* than the worker — reviews the goal,
-the diff, and the evidence summary, and answers with a leading `PASS` or
-`FAIL`. The verifier never sees the worker's narration, only what actually
-changed. If the verifier call fails, stella falls back to a conservative
-heuristic verdict rather than hanging or guessing.
+**Settling the turn is not a separate stage.** The verify stage above emits the
+`Verdict` event itself, carrying the rung the ladder came to rest on, the
+evidence summary, and the decision-time snapshot that lets a replay explain the
+answer later. Nothing runs between the ladder deciding and the turn being
+settled, and no model call is bought — there is no reviewer to disagree with the
+ladder, because the ladder is not an opinion for a reviewer to weigh.
 
-One wire-level note for stream consumers: the distress-guidance call —
-the course-correction a stuck worker gets after repeated deterministic
-failures — is served by the verifier role and emits under the same
-`verdict` stage name, though it is advice rather than a verdict. Filter on
-the call's role (`distress_guidance`) if the distinction matters to you.
+(`StageKind::Verdict` still exists in the stage vocabulary and holds its rank in
+the canonical ordering, but in the pipeline nothing emits it. The stage event you
+will see under that name comes from [goal mode](/docs/agent-modes#outcome-driven-goal-mode),
+whose outer assessor genuinely is a separate judging step.)
+
+<Callout type="warn">
+**Reading historical streams.** The rung tokens `model_judge`, `model_verdict`,
+and `heuristic_fallback` still parse — sessions already on disk spell it those
+ways, and an unknown rung fails an event rather than laundering it. They are
+read as aliases of `unverified`, which is the rung they always actually meant:
+unproven. New runs never write them.
+</Callout>
+
+The one channel left from verification back to the worker is **not** a review.
+When nothing deterministic corroborates the turn and a tracked command exists to
+answer the question, the pipeline may spend one revision on an **evidence
+demand**: a fixed template naming that command and asking for the observation
+that would settle it. It makes no claim about the change and offers no reading of
+the diff. It is bounded — one ask per candidate, and only when the ask can
+actually be answered, since a demand no worker could satisfy is a turn of pure
+loss.
 
 ### 8. Revise
 
-A failed verification sends the worker back with the failure evidence — up to
-a bounded number of revision turns (2 by default). Once a candidate has
-deterministically failed twice — consecutive or not — stella spends one
-verifier call on **distress guidance**:
-a course-correction note that rides with the next revision prompt instead of
-letting the worker keep digging the same hole.
+A deterministic failure sends the worker back with the evidence — up to a
+bounded number of revision turns (2 by default). What it gets is the sealed,
+redacted **failure brief** for the test that went red, disclosed at a grain that
+*tightens* as the same failure repeats: a reproduction, then a closed-vocabulary
+symptom sentence, then just the command, then only that it failed. A worker that
+has seen the same brief twice is not helped by a third copy, only given more
+surface to fit to. Nothing narrates it. A second deterministic failure of the same
+candidate — consecutive or not — used to buy a model **distress-guidance** call
+that appended a reviewer's reading of the diff to that brief; it was removed for
+the same reason the verdict was. A claim appended to a measurement inherits the
+measurement's authority, and a worker cannot tell the two apart. On one recorded
+run that narration talked a worker into resetting `master` and destroying a
+correctly-recovered commit, twice, to satisfy a claim no measurement supported.
 
 ### Best-of-N candidates (opt-in)
 
@@ -299,24 +343,25 @@ stella run --test-command "cargo test -p pager" "fix the off-by-one in the pager
   fail→pass flip. The change is real (the zero-diff guard sees a non-empty
   diff), the touched tests are green, and the diff — a handful of lines —
   is far inside the 400-line budget. The deterministic ladder answers
-  *submit fast*: the run finishes on evidence alone, **verifier skipped**,
-  exit code 0. The recorded evidence reads
+  *submit fast*: the run finishes on evidence alone, exit code 0. The recorded
+  evidence reads
   `flip oracle: fail→pass of 'cargo test -p pager'; touched tests green; diff 6 lines within budget`.
 
 Drop the `--test-command` and the same run doesn't lose verification — it
 pays more for it. The **witness** stage now spends an independent model call
 (never the worker) authoring a minimal *failing* test that pins the intended
 behavior, and that test's command arms the flip oracle instead. A clean flip
-on an untampered witness still submits deterministically — but when the
-evidence stays inconclusive (no flip, tests that couldn't run, a diff over
-the 400-line budget), verification **escalates to the model verifier**: a
-separate model, by preference from a different family, ruling `PASS`/`FAIL`
-on the diff and evidence summary. Same destination, more model calls at
-risk — the deterministic path is why `--test-command` is the strongest flag
-you can pass.
+on an untampered witness still submits deterministically. When the evidence
+stays inconclusive (no flip, tests that couldn't run, a diff over the 400-line
+budget), nothing escalates: the turn is reported `UNVERIFIED`, with the specific
+shortfall named. That is why `--test-command` is the strongest flag you can
+pass — it is the difference between a proof and an honest *I do not know*.
 
-You can read that distinction back out of any headless run. `verdict.deterministic`
-is `true` exactly when the ladder answered without a verifier call:
+You can read that distinction back out of any headless run.
+`verdict.deterministic` is `true` when the ladder reached a determinate finding
+about the turn — a flip-backed pass, a red test, a turn that attempted nothing,
+or a change the warrant found nothing to prove in. It is `false` when the ladder
+abstained (*unverifiable*) or could not settle the question (*unverified*):
 
 ```bash
 stella run --output-format json --test-command "cargo test -p pager" \
@@ -343,10 +388,12 @@ that resolves each role also carries reliability machinery:
   a provider's breaker; routing skips it and reports the fallback visibly —
   never a silent mid-turn switch. After a cooldown, one trial call decides
   whether the breaker closes.
-- **Cross-family verification.** The verifier prefers a healthy provider whose model
-  *family* differs from the worker's (Claude judging GLM's work, GPT judging
-  Claude's). With only one family configured, the verifier degrades to the same
-  family — with a visible caveat, never an error.
+- **Cross-family independence.** The `verifier` role prefers a healthy provider
+  whose model *family* differs from the worker's. In the pipeline that role now
+  serves the **witness author**, so the test that proves the work comes from a
+  different family than the code — and in [goal mode](/docs/agent-modes#outcome-driven-goal-mode)
+  it serves the outer goal assessor. With only one family configured, it degrades
+  to the same family — with a visible caveat, never an error.
 - **Soft degradation everywhere.** A configured role model whose provider has
   no credential falls back to the worker with a notice. Configuration can
   never turn a runnable pipeline into an error.
@@ -357,12 +404,13 @@ Routing above answers *which model serves a role*. The roster answers the two
 questions underneath it — **who performs each responsibility**, and **whether
 it runs at all** — as configuration rather than as a literal at each call site.
 
-Keys are the same names the paid-call ledger uses (`triage`, `research`,
-`plan`, `witness_author`, `worker`, `distress_guidance`, `verdict`), so a row
-here and a line in your usage report spell the same job the same way. The
-`agent` a row binds to is one of the built-in agents — `worker`, `triage`,
-`plan`, `research`, `verifier` — the same names
-[agent engine config](/docs/configuration/agent-engine-config) configures:
+Keys are the same names the paid-call ledger uses, so a row here and a line in
+your usage report spell the same job the same way. The assignable
+responsibilities are exactly the five the pipeline still issues — `triage`,
+`research`, `plan`, `worker`, `witness_author`. The `agent` a row binds to is one
+of the built-in agents — `worker`, `triage`, `plan`, `research`, `verifier` — the
+same names [agent engine config](/docs/configuration/agent-engine-config)
+configures:
 
 ```json
 {
@@ -370,11 +418,17 @@ here and a line in your usage report spell the same job the same way. The
     "responsibilities": {
       "triage":         { "enabled": false },
       "witness_author": { "agent": "triage" },
-      "verdict":        { "agent": "worker" }
+      "research":       { "agent": "worker" }
     }
   }
 }
 ```
+
+`verdict` and `distress_guidance` are **not** assignable, and naming either one
+refuses the run rather than being ignored. They are not disabled by default —
+there is no row to enable, no agent to rebind, and no spelling that reaches them.
+That is deliberate: what was removed is *authority*, and an authority a config
+key can restore is one a deployment will restore.
 
 `enabled: false` is a genuine **single-stage ablation**: the stage buys no
 call and emits no event frame, so a recorded session shows the ablation
@@ -392,12 +446,8 @@ than quietly running something else: an unknown responsibility, an agent name
 nothing resolves, or a disabled `worker` (a run that executes nothing gives
 every later stage an empty diff to grade). All problems are reported at once.
 
-Two things are legal but never silent:
+One thing is legal but never silent:
 
-- **Turning the verdict off** does not downgrade the run to a claimed-done. The
-  deterministic ladder still runs — it is not the verifier — and the turn
-  reports that no model reviewed it, so a resulting pass means *nothing failed
-  this*, never *something proved it*.
 - **Binding a graded responsibility to the worker** — self-grading — is a
   posture you may deliberately want to measure, and it is stated on the run as
   a lost independence. A witness the worker wrote proves nothing about the
@@ -452,5 +502,9 @@ stella --budget 1.50 run --test-command "cargo test -p stella-core" \
   </OptionCard>
 </CardGrid>
 
-Pipeline goal rounds mean **double verification**: the pipeline's own verifier
-checks each round's work, and the outer goal verifier checks the objective.
+Pipeline goal rounds mean **two checks at different altitudes**: the pipeline's
+deterministic ladder settles each round's work from measurements, and the outer
+goal verifier — a model, and the one model verdict stella still issues — assesses
+whether the *objective* is met. They answer different questions, which is why the
+outer one survives: "did this change do what it claimed" is a question an oracle
+can answer, while "is the goal reached" is not one any single command can run.

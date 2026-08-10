@@ -16,8 +16,20 @@ stella calibration --format json  # machine-readable tallies
 
 Two cohorts, deliberately side by side — a false-positive rate means nothing without the cohort it should be compared against:
 
-- **model verifier** — `VerifierVerdict` events with `passed: true` from a model verifier (the ladder escalated on inconclusive evidence).
+- **model verifier** — `Verdict` events with `passed: true` and `deterministic: false`.
 - **deterministic** — passes the ladder credited itself (fail→pass flip, green tests, budget, and every pre-submit audit).
+
+<Callout type="warn">
+**Read the first cohort's label as historical.** It was named when a
+`deterministic: false` pass could only have come from a model verifier ruling on
+inconclusive evidence. Since that call was removed, the same flag is set by the
+ladder's own non-determinate outcomes — *unverified*, *unverifiable*, and a
+triage-waived pass — so on sessions recorded after the removal this cohort counts
+**unproven passes, not judged ones**. The rate it reports is still meaningful (it
+is the false-positive rate of passes nothing proved); the word "verifier" in the
+label is not. Sessions recorded before the removal mix both populations under the
+one heading.
+</Callout>
 
 For each: how many passes were recorded, how many were **reconciled** — a terminal CI verdict (`Passing`/`Failing`) was observed later in the same session's stream — and how many of those reconciled passes failed CI. The rate is printed only over reconciled passes; with no CI ground truth yet, it is reported as **unmeasured**, never as zero.
 

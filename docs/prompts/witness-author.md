@@ -35,7 +35,9 @@ config via `apply_role_shaping`: `effort`, `reasoning`, `temperature`,
 `max_output_tokens` and `params` all apply (#1785). `prompt` is **deliberately**
 absent — it is a raw-call concern, and this role's system message is
 `WITNESS_SYSTEM_PROMPT`, which carries the hard requirements the create
-boundary enforces. The output ceiling is applied *after* role shaping, so an
+boundary enforces. Since #2584 deleted the verdict and guidance calls,
+`agents.verifier.prompt` reaches no role at all; every other knob on that agent
+still shapes this one. The output ceiling is applied *after* role shaping, so an
 override can lower the bound but never raise it back above the witness ceiling.
 
 The author is resolved from the **verifier's** model, never the worker's
@@ -157,5 +159,5 @@ the project's test tree. `stella run --keep-witness` promotes it instead.
 
 - [witness-repair.md](witness-repair.md) — the bounded retry when it passes now
 - [triage.md](triage.md) — `WITNESS: yes|no` gates this stage
-- [verdict.md](verdict.md) — runs only when no flip settled the outcome
+- [verdict.md](verdict.md) — no longer runs in the pipeline; when no flip settles the outcome the rung is `unverified`
 - `doc:witness-protocol` — the normative spec

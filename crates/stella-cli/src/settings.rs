@@ -593,17 +593,22 @@ pub struct AgentEngineConfig {
     /// Who performs each pipeline responsibility, and whether it runs at all
     /// (`stella_pipeline::Roster`, #2381).
     ///
-    /// Keys are `stella_protocol::ModelCallRole` wire tokens — `triage`,
-    /// `research`, `plan`, `witness_author`, `worker`, `distress_guidance`,
-    /// `verdict` — because that enum is already the vocabulary every paid call
-    /// in the pipeline names itself by, so a row here and a row in the
-    /// paid-call ledger spell the same job the same way.
+    /// Keys are `stella_protocol::ModelCallRole` wire tokens, because that enum
+    /// is already the vocabulary every paid call in the pipeline names itself
+    /// by, so a row here and a row in the paid-call ledger spell the same job
+    /// the same way. The assignable set is exactly the calls the pipeline still
+    /// issues — `triage`, `research`, `plan`, `worker`, `witness_author`.
+    /// `verdict` and `distress_guidance` are **not** assignable: #2584 removed
+    /// both calls, and `stella_pipeline::Roster::apply` rejects either key as
+    /// `NotAssignable` rather than accepting a row that would steer nothing.
+    /// That is structural, not a default — what was removed is authority, and
+    /// an authority a config key can restore is one a deployment will restore.
     ///
     /// ```jsonc
     /// "responsibilities": {
     ///   "triage": { "enabled": false },              // ablate the stage
-    ///   "witness_author": { "agent": "triage" },     // reassign it
-    ///   "verdict": { "agent": "worker" }             // self-grade, and be told so
+    ///   "witness_author": { "agent": "worker" },     // self-grade, and be told so
+    ///   "research": { "agent": "plan" }              // reassign it
     /// }
     /// ```
     ///
