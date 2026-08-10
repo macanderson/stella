@@ -32,7 +32,7 @@
 //!
 //! Stating the limit plainly, because a guard believed to prove more than it
 //! does is worse than no guard. **Checked:** that the ledger is total over
-//! [`KNOWN_TYPE_TAGS`](super::KNOWN_TYPE_TAGS) in both directions, that no tag
+//! [`KNOWN_TYPE_TAGS`] in both directions, that no tag
 //! appears twice, that every gap posture cites an issue, and that the
 //! posture/`surfaces` combination is internally coherent. **Not checked:** that
 //! a [`ConsumerPosture::Behavioral`] row's `site` string still points at live
@@ -155,7 +155,7 @@ pub enum ConsumerPosture {
 /// One signal's declared consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignalConsumers {
-    /// Must be a member of [`KNOWN_TYPE_TAGS`](super::KNOWN_TYPE_TAGS).
+    /// Must be a member of [`KNOWN_TYPE_TAGS`].
     pub type_tag: &'static str,
     /// What realizes this signal's value.
     pub posture: ConsumerPosture,
