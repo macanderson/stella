@@ -425,6 +425,11 @@ pub(crate) use gate::{GATE_RESOLVED_KEY, thread_gate_resolution};
 mod run;
 pub use run::run_by_name;
 
+// Declared here rather than at EOF: the module-reachability stripper loses
+// track after the "/*" literal below (#2732).
+#[cfg(test)]
+mod tests;
+
 fn string_args(input: &Value) -> Vec<String> {
     input
         .get("args")
@@ -1328,6 +1333,3 @@ impl Tool for RunScript {
         .await
     }
 }
-
-#[cfg(test)]
-mod tests;
