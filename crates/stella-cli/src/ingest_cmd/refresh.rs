@@ -27,9 +27,9 @@
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
+use stella_core::ingest::ContextFile;
 use stella_core::ingest::record::SCHEMA_TAG;
 use stella_core::ingest::refresh::{AssertedClaim, PublishedClaim, RefreshPlan, plan};
-use stella_core::ingest::ContextFile;
 
 use crate::context_records::RULES_DIR;
 
