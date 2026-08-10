@@ -226,9 +226,12 @@ system message and the latest user message are never touched.
 - **Bus observers must return `Err`, never panic.** `catch_unwind` contains a
   panic only under an unwinding profile, and the workspace `release` profile sets
   `panic = "abort"` ([`../Cargo.toml`](../Cargo.toml)).
-- **`run_session_start_hooks` is not called by `run_turn`.** `SessionStart` is a
-  session-level event and `run_turn` runs many times per session; the caller
-  invokes it once and folds the output into the system prompt it builds.
+- **No engine method fires `SessionStart` — it is a host obligation (#2674).**
+  `SessionStart` is a session-level event and `run_turn` runs many times per
+  session; the host fires [`src/hooks.rs`](src/hooks.rs)'s `run_hooks` once,
+  while assembling the system prompt it owns (`run_turn` only borrows history),
+  and surfaces the diagnostics this no-I/O crate cannot print. `stella-parity`'s
+  `hooks.lifecycle` row pins that a second, engine-side owner never grows back.
 - **`Engine::with_sleeper` is the only *public* constructor,** and it cannot
   carry `gate`/`steering`/`hooks` — those are builder-set private fields. A
   nested turn built through it silently drops all three, which is the bug

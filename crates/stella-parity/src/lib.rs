@@ -394,9 +394,13 @@ pub static CAPABILITIES: &[Capability] = &[
     Capability {
         id: "hooks.lifecycle",
         engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart) and the observer-only HookBus",
-        engine_entries: &["with_hooks", "run_session_start_hooks", "with_bus"],
+        engine_entries: &["with_hooks", "with_bus"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "workspace hooks wired via with_session_hook_context on every driver path",
+            mechanism: "workspace hooks wired via with_session_hook_context on every driver \
+                        path. SessionStart firing is a HOST obligation (#2674): the engine \
+                        deliberately has no method for it — a host fires hooks::run_hooks once \
+                        while it assembles the system prompt, before any Engine exists, and \
+                        owns surfacing the diagnostics the no-I/O engine cannot print",
             missing: "a CLI-side test pinning that a configured workspace hook actually fires \
                       through agent wiring (core has hook tests; the CLI wiring has none)",
         },
@@ -806,6 +810,43 @@ mod tests {
                  record it"
             );
         }
+    }
+
+    /// SessionStart firing is a host obligation, never an engine entry
+    /// (#2674). `Engine::run_session_start_hooks` shipped with no production
+    /// caller: every CLI driver fires SessionStart while assembling the
+    /// system prompt — before any Engine exists (the pipeline and fleet
+    /// paths never construct one; `Pipeline::run` builds its own, per
+    /// stage) — and must surface the hook diagnostics the no-I/O engine
+    /// cannot print (#373), while the serve host deliberately keeps shell
+    /// hooks unreachable. Two owners of one obligation is the drift the
+    /// consolidated turn loop exists to end, so the dead engine copy was
+    /// deleted; this pins both halves so a second owner cannot grow back
+    /// silently, and that the row keeps naming who does own the firing.
+    #[test]
+    fn session_start_is_a_host_obligation_not_an_engine_entry() {
+        let row = capability("hooks.lifecycle").expect("the row is declared");
+        assert!(
+            !row.engine_entries.contains(&"run_session_start_hooks"),
+            "hooks.lifecycle claims run_session_start_hooks again — SessionStart firing is a \
+             host obligation (#2674); an engine-side owner is the duplication that PR removed"
+        );
+        let (SurfacePosture::Shipped { mechanism, .. }
+        | SurfacePosture::ShippedUnwitnessed { mechanism, .. }) = &row.cli
+        else {
+            panic!("hooks.lifecycle's CLI posture moved — keep naming the SessionStart owner");
+        };
+        assert!(
+            mechanism.contains("with_session_hook_context") && mechanism.contains("obligation"),
+            "the row no longer names the single host owner of SessionStart firing"
+        );
+        assert!(
+            !engine_sources()
+                .iter()
+                .any(|source| source.contains("fn run_session_start_hooks")),
+            "an engine source defines run_session_start_hooks again — the host obligation has \
+             grown a second, engine-side owner (#2674)"
+        );
     }
 
     /// Every claimed engine entry actually exists in the swept sources —
