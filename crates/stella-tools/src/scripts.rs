@@ -425,8 +425,8 @@ pub(crate) use gate::{GATE_RESOLVED_KEY, thread_gate_resolution};
 mod run;
 pub use run::run_by_name;
 
-// Declared here rather than at EOF: the module-reachability stripper loses
-// track after the "/*" literal below (#2732).
+// Declared beside its siblings rather than at EOF — the module-reachability
+// stripper used to lose track after a "/*" literal (#2732, fixed).
 #[cfg(test)]
 mod tests;
 

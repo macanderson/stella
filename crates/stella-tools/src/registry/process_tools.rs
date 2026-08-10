@@ -26,6 +26,7 @@ pub(super) fn builtins(
         // an operator who wants it gone writes `"tools": {"bash": "off"}`,
         // which the policy layer above enforces for MCP and custom tools too.
         Arc::new(crate::bash::Bash::new(scratch_path.clone())) as Arc<dyn Tool>,
+        Arc::new(crate::capability::ProbeCapability::new()),
         Arc::new(crate::verify::VerifyDone::new(shadow_memo, diagnostics)),
         Arc::new(crate::project::BuildProject),
         Arc::new(crate::project::RunTests),

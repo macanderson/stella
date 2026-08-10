@@ -21,7 +21,7 @@ Each tool is either **read-only** (it only observes your workspace and environme
 
 A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice. A web search burns a metered API call on every run, an issue lookup spends a rate-limited API, and the graph-backed tools write catch-up state to `codegraph.db` on the read path — so those reads run only at dispatch, exactly once per committed call. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
-The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `get_state`, `list_state`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
+The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `get_state`, `list_state`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 
@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 54 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 55 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -126,6 +126,9 @@ These 54 tools register in every session — no configuration, no prerequisites.
 #### Process control
 
 <CardGrid size="md">
+  <ToolCard name="probe_capability" access="read">
+    Check whether a binary is available on PATH without executing it. Results are cached for the session — install mid-session won't be seen until restart.
+  </ToolCard>
   <ToolCard name="start_process" access="mutating">
     Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other four.
   </ToolCard>
