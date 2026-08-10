@@ -16,9 +16,11 @@
 //! same way `driver/waiting.rs` does: the wait sits between model attempts,
 //! never mid-tool, and the budget's deadline bounds it from the outside.
 
-use stella_protocol::AgentEvent;
+use stella_protocol::{AgentEvent, ProviderError};
 
-use super::{CompletionResultAlias, Engine, RetryAttemptFn, SpeculationFuture, lifecycle};
+use super::{
+    CompletionResultAlias, Engine, ModelCallFailure, RetryAttemptFn, SpeculationFuture, lifecycle,
+};
 use crate::budget::BudgetGuard;
 use crate::bus;
 use crate::event_sender::EventSender;
@@ -138,7 +140,7 @@ impl<'a> Engine<'a> {
             std::time::Instant,
             RetryOutcome<(CompletionResultAlias, SpeculationFuture<'f>)>,
         ),
-        String,
+        ModelCallFailure,
     > {
         let call_started = std::time::Instant::now();
         // Armed for exactly the interval where a paid attempt may be in
@@ -214,6 +216,16 @@ impl<'a> Engine<'a> {
                 cancel_guard.disarm();
                 let reasons =
                     std::mem::take(&mut *attempt_reasons.lock().unwrap_or_else(|p| p.into_inner()));
+                // A context overflow is withheld from the terminal events and
+                // the breaker: the caller may still recover it, and an
+                // oversized request is the engine's accounting miss, not
+                // provider ill-health (`driver::overflow_recovery`, #2680).
+                if matches!(error, ProviderError::ContextOverflow { .. }) {
+                    return Err(ModelCallFailure::ContextOverflow {
+                        message: error.to_string(),
+                        attempt_reasons: reasons,
+                    });
+                }
                 // Shared with the paired `Error` event below: whether the
                 // FINAL attempt's error is of a retryable class. `false`
                 // means every attempt (typically just one — see
@@ -237,7 +249,9 @@ impl<'a> Engine<'a> {
                 if let Some(outcomes) = self.outcomes {
                     outcomes.record_failure(self.provider.id());
                 }
-                Err(format!("model call failed: {message}"))
+                Err(ModelCallFailure::Fatal {
+                    reason: format!("model call failed: {message}"),
+                })
             }
         }
     }
