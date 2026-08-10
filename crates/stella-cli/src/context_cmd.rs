@@ -46,6 +46,10 @@ mod propose;
 mod review;
 mod validate;
 
+// The reviewer identity, shared with the ingest refresh path: a retirement
+// event must name the same actor a keep decision would (#2728).
+pub(crate) use review::actor;
+
 /// `stella context <cmd>`.
 #[derive(Debug, Subcommand)]
 pub enum ContextCmd {

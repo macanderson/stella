@@ -67,9 +67,43 @@ pub struct Governance {
     pub separation: bool,
 }
 
-/// One immutable enforcement transition. Append-only: current enforcement
-/// grants are always a fold over the whole ledger, and every event names who
-/// granted what, why, and under which policy version.
+/// What kind of transition a ledger event records (#2728).
+///
+/// The ledger began as enforcement grants only, so a legacy line carries no
+/// `action` key and reads as [`LedgerAction::Grant`] — and a grant serializes
+/// without the key, keeping every pre-#2728 line byte-identical under
+/// re-serialization and every old reader's `to == "blocking"` fold correct.
+/// The lifecycle actions record what the spec (§4) calls retirement: a
+/// record's valid time closing, by drop or by replacement. For those, `from`/
+/// `to` carry the **status** transition (`active` → `archived`), not an
+/// enforcement level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerAction {
+    /// An enforcement transition (`advisory` ↔ `blocking`) — the original
+    /// and default vocabulary.
+    #[default]
+    Grant,
+    /// The record's source no longer asserts it; its revision was archived.
+    Retired,
+    /// The record was replaced by a new revision carrying a
+    /// `supersedes_record_id` link back to it.
+    Superseded,
+}
+
+impl LedgerAction {
+    /// `true` for the default, so grants serialize without the key.
+    fn is_grant(&self) -> bool {
+        *self == LedgerAction::Grant
+    }
+}
+
+/// One immutable transition. Append-only: current enforcement grants are
+/// always a fold over the whole ledger, and every event names who decided
+/// what, why, and under which policy version. Since #2728 the ledger also
+/// carries record lifecycle events — retirement and supersession — because
+/// the spec (§4) requires every retirement to append an accountable event,
+/// and this is the only repository-visible, tamper-evident ledger there is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromotionEvent {
     /// 1-based position in the ledger; also the **policy version** after this
@@ -100,6 +134,10 @@ pub struct PromotionEvent {
     pub reason: String,
     /// The governance mode in force when the event was recorded.
     pub mode: String,
+    /// What kind of transition this is. Absent on legacy lines (= a grant),
+    /// and omitted when serializing a grant so those lines stay byte-stable.
+    #[serde(default, skip_serializing_if = "LedgerAction::is_grant")]
+    pub action: LedgerAction,
 }
 
 /// The `prev` value of a ledger's first event.
@@ -202,7 +240,12 @@ pub fn blocking_grants(events: &[PromotionEvent]) -> BTreeMap<String, PromotionE
     for event in events {
         latest.insert(event.lineage_id.clone(), event.clone());
     }
-    latest.retain(|_, event| event.to == "blocking");
+    // Deliberate consequence of the latest-event fold: a lifecycle event
+    // (retired/superseded) on a lineage clears its blocking grant, because a
+    // record whose valid time has closed must not keep the authority to deny
+    // tool calls. Old readers agree by accident of vocabulary — a lifecycle
+    // event's `to` is a status, never `blocking`.
+    latest.retain(|_, event| event.action == LedgerAction::Grant && event.to == "blocking");
     latest
 }
 
@@ -227,6 +270,7 @@ mod tests {
             proposer: Some("author@example.test".into()),
             reason: "measured advisory precision over 30 days".into(),
             mode: "regulated".into(),
+            action: LedgerAction::Grant,
         }
     }
 
@@ -295,5 +339,62 @@ mod tests {
         let events = parse_and_verify("").unwrap();
         assert!(events.is_empty());
         assert_eq!(policy_version(&events), 0);
+    }
+
+    fn retirement(lineage: &str) -> PromotionEvent {
+        PromotionEvent {
+            seq: 0,
+            prev: String::new(),
+            at: "2026-08-10T00:00:00Z".into(),
+            lineage_id: lineage.into(),
+            from: "active".into(),
+            to: "archived".into(),
+            approver: "lead@example.test".into(),
+            proposer: None,
+            reason: "the source no longer asserts it".into(),
+            mode: "regulated".into(),
+            action: LedgerAction::Retired,
+        }
+    }
+
+    /// Backward compatibility both ways (#2728): a pre-#2728 line with no
+    /// `action` key parses as a grant, and a grant serializes without the
+    /// key — so extending the vocabulary changed no existing line's bytes
+    /// and therefore no existing chain digest.
+    #[test]
+    fn legacy_lines_parse_as_grants_and_grants_serialize_without_the_key() {
+        let legacy = r#"{"seq":1,"prev":"genesis","at":"2026-08-01T00:00:00Z","lineage_id":"^a","from":"advisory","to":"blocking","approver":"lead@example.test","reason":"r","mode":"regulated"}"#;
+        let event: PromotionEvent = serde_json::from_str(legacy).unwrap();
+        assert_eq!(event.action, LedgerAction::Grant);
+        let reserialized = serde_json::to_string(&event).unwrap();
+        assert!(
+            !reserialized.contains("action"),
+            "a grant must not grow an `action` key: {reserialized}"
+        );
+    }
+
+    /// Lifecycle events chain exactly like grants — one ledger, one chain.
+    #[test]
+    fn a_retirement_chains_and_replays_with_its_reason() {
+        let text = ledger(&[
+            event("^a", "blocking", "lead@example.test"),
+            retirement("^a"),
+        ]);
+        let events = parse_and_verify(&text).unwrap();
+        assert_eq!(events[1].action, LedgerAction::Retired);
+        assert_eq!(events[1].reason, "the source no longer asserts it");
+        assert_eq!(policy_version(&events), 2);
+    }
+
+    /// A retired record must not keep the authority to deny tool calls: the
+    /// lifecycle event clears the lineage's blocking grant in the fold.
+    #[test]
+    fn a_retirement_revokes_the_blocking_grant() {
+        let text = ledger(&[
+            event("^a", "blocking", "lead@example.test"),
+            retirement("^a"),
+        ]);
+        let events = parse_and_verify(&text).unwrap();
+        assert!(blocking_grants(&events).is_empty());
     }
 }
