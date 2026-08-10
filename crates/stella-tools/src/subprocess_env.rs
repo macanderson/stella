@@ -184,7 +184,7 @@ static REGISTERED_CREDENTIAL_ENV_VARS: OnceLock<RwLock<HashSet<String>>> = OnceL
 // Thread-local storage for the session scratch directory path. Each session
 // runs in one thread, so this is safe.
 thread_local! {
-    static SCRATCH_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
+    static SCRATCH_DIR_PATH: OnceLock<PathBuf> = const { OnceLock::new() };
 }
 
 /// Set the session scratch directory path for the current thread.
