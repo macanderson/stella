@@ -516,8 +516,20 @@ contest: ## Stella vs Claude Code (num_tasks= versus_model= max_throughput= [tar
 	attempts="$(attempts)" out="$(out)" extra="$(extra)" \
 	scripts/arena-contest.sh
 
+# The match-launching counterpart to run-arena, which launches the server. A
+# positional `match=` rather than a bare word for the same reason `contest`
+# takes make variables: make has no positional arguments.
+#
+# `ARENA_ARGS` is the escape hatch for everything this target does not name —
+# --inject-all, --max-behind, --env-file, and anything after `--` bound for
+# `arenabench run` itself.
+.PHONY: run-match
+run-match: ## Launch one arenabench match, credentialled from ~/.env.global.local (match=path/to.toml [ARENA_ARGS=…])
+	@[ -n "$(match)" ] || { echo "usage: make run-match match=arenabench/matches/<name>.toml"; exit 2; }
+	scripts/arena-local.sh $(match) $(ARENA_ARGS)
+
 .PHONY: arena-scripts-test
-arena-scripts-test: ## Test the arena start/stop/reap scripts — argv self-match, ancestry, liveness (hermetic; not part of `gate`)
+arena-scripts-test: ## Test the arena start/stop/reap/local scripts — argv self-match, ancestry, liveness, credential seeding (hermetic; not part of `gate`)
 	./scripts/test-arena-scripts.sh
 
 # The supply-chain step gates on the TOOL being present, not on its exit code:
