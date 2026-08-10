@@ -55,8 +55,33 @@ assert_sole_dockerd() {
     fi
 }
 
+prepare_cgroup2() {
+    # cgroup v2 enforces "no internal processes": a cgroup may hold processes
+    # or delegate controllers to children, never both. Batch runs this
+    # container in the host's cgroup namespace, so the inner dockerd creates
+    # /sys/fs/cgroup/docker under a root that already holds our own
+    # processes, and every task container dies at start with
+    #   cannot enter cgroupv2 "/sys/fs/cgroup/docker" with domain
+    #   controllers -- it is in an invalid state
+    # which surfaces as a Harbor setup traceback while the job still exits 0.
+    #
+    # The remedy is the one the official docker:dind entrypoint uses: move
+    # this container's processes into a leaf cgroup so the root holds none,
+    # then delegate the available controllers downward so dockerd may place
+    # children. Both steps are best-effort — on a host already giving us a
+    # private cgroup namespace there is nothing to fix, and failing here
+    # would be worse than letting dockerd try.
+    [ -f /sys/fs/cgroup/cgroup.controllers ] || return 0
+    mkdir -p /sys/fs/cgroup/init 2>/dev/null || return 0
+    xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+    sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers \
+        >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+    log "cgroup v2 prepared for nested containers"
+}
+
 start_dockerd() {
     assert_sole_dockerd || return 1
+    prepare_cgroup2
     # Overlayfs cannot nest: with /var/lib/docker on the container's own
     # overlay root, the inner dockerd's mounts fail with EINVAL. The job
     # definition mounts a host-path volume at /scratch; a per-job
@@ -86,15 +111,25 @@ start_dockerd() {
 
 export_ssm_credentials() {
     # Missing credentials are not fatal here: `arenabench run` itself
-    # refuses a seat whose declared credentials are absent, which is the
-    # better error surface.
-    local pairs
+    # refuses a seat whose declared credentials are absent, and that refusal
+    # names the seat and the variable, which is the better error surface.
+    #
+    # Why the credentials could not be read is reported, though. Discarding
+    # this stderr once turned a one-line IAM gap — the role could list the
+    # SecureStrings but had no kms:Decrypt to read them, so
+    # `--with-decryption` failed wholesale — into "no SSM credentials
+    # readable; continuing", and the AccessDeniedException underneath it
+    # reached nobody. A whole 40-trial match died of it twice.
+    local pairs problem
     if ! pairs=$(aws ssm get-parameters-by-path \
         --path /arenabench --with-decryption \
-        --query 'Parameters[].[Name,Value]' --output text 2>/dev/null); then
-        log "no SSM credentials readable; continuing"
+        --query 'Parameters[].[Name,Value]' --output text 2>/tmp/ssm-error); then
+        problem=$(tr '\n' ' ' </tmp/ssm-error 2>/dev/null)
+        rm -f /tmp/ssm-error
+        log "no SSM credentials readable: ${problem:0:400}"
         return 0
     fi
+    rm -f /tmp/ssm-error
     while IFS=$'\t' read -r name value; do
         [ -n "$name" ] || continue
         local key

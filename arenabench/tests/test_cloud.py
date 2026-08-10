@@ -22,6 +22,7 @@ import argparse
 import io
 import json
 import tomllib
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -35,6 +36,7 @@ from arenabench.cloud import (
     _cmd_cloud_run,
     is_moving_ref,
     job_name,
+    pin_slice_to_commit,
     plan_trials,
     progress_from_states,
     ref_safe,
@@ -338,6 +340,56 @@ class TestSliceSpec:
         assert sliced.tasks == ()
         assert sliced.attempts == 3
         assert len(sliced.contestants) == 1
+
+
+class TestPinSliceToCommit:
+    """A slice must name a commit, never a branch.
+
+    The runner image stages a binary and carries no Stella checkout, so a
+    slice still saying ``sut_ref = "main"`` asks the container to resolve a
+    ref it cannot, and ``create_match`` refuses the seat. Every trial of
+    match ctl-0808-0014 died exactly there, after credentials and staging
+    had already succeeded.
+    """
+
+    def test_the_match_and_its_stella_seats_carry_the_resolved_commit(self) -> None:
+        pinned = pin_slice_to_commit(_spec(), _sut())
+        assert pinned.sut_ref == "c" * 40
+        stella = next(c for c in pinned.contestants if c.agent == "stella")
+        assert stella.sut_ref == "c" * 40
+
+    def test_a_non_stella_seat_is_left_alone(self) -> None:
+        """A SUT pin means nothing to Claude Code, and `config` rejects one."""
+        pinned = pin_slice_to_commit(_spec(), _sut())
+        cc = next(c for c in pinned.contestants if c.agent == "claude-code")
+        assert cc.sut_ref is None
+
+    def test_a_seat_pinned_to_its_own_ref_keeps_it(self) -> None:
+        """Per-seat pins (#2082) are the point of two Stella builds racing:
+        substituting the match-level resolution would collapse them into
+        one, silently measuring the same commit twice."""
+        own = replace(_seat("stella-b"), sut_ref="deadbeef")
+        spec = _spec(seats=(_seat("stella"), own))
+        pinned = pin_slice_to_commit(spec, _sut())
+        assert next(c for c in pinned.contestants if c.id == "stella-b").sut_ref == (
+            "deadbeef"
+        )
+
+    def test_an_unpinned_match_is_untouched(self) -> None:
+        """No staged binary means nothing was resolved to substitute."""
+        spec = _spec()
+        assert pin_slice_to_commit(spec, None) is spec
+
+    def test_the_commit_survives_the_toml_round_trip(self) -> None:
+        """`dump_match` writes the slice the container parses back; a pin
+        that does not round-trip is the same failure wearing a new hat."""
+        from arenabench.config import dump_match, match_from_toml
+
+        pinned = pin_slice_to_commit(_spec(), _sut())
+        reparsed = match_from_toml(tomllib.loads(dump_match(pinned)))
+        assert reparsed.sut_ref == "c" * 40
+        stella = next(c for c in reparsed.contestants if c.agent == "stella")
+        assert stella.sut_ref == "c" * 40
 
 
 class TestTrialEnvironment:
