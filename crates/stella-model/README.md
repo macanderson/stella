@@ -85,7 +85,6 @@ the file.
 
 - [`src/anthropic/tests.rs`](src/anthropic/tests.rs)
 - [`src/openai.rs`](src/openai.rs)
-- [`src/zai.rs`](src/zai.rs)
 - [`src/zai/tests.rs`](src/zai/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
@@ -99,14 +98,15 @@ escape hatch for an irreducible line (a module declaration in an oversized
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate map (read this first) and the public re-exports: `Provider`, `Catalog`, `ApiKey`, the cache-economics helpers. |
 | [`src/provider.rs`](src/provider.rs) | Two-line re-export of the port. Open it to be reminded where the trait actually lives. |
-| [`src/zai.rs`](src/zai.rs) (+ [`src/zai/tests.rs`](src/zai/tests.rs), [`src/zai/tests/error_classify.rs`](src/zai/tests/error_classify.rs)) | The shared OpenAI Chat Completions adapter. One adapter serving Z.ai/GLM, xAI, DeepSeek, OpenRouter, `local`, and settings-defined gateways; per-identity behavior (OpenRouter's root `cache_control` + sticky `session_id`, GLM's `thinking`, xAI's `reasoning_effort`) is gated on `self.id` inside it. |
+| [`src/zai.rs`](src/zai.rs) (+ [`src/zai/stream.rs`](src/zai/stream.rs), [`src/zai/unary.rs`](src/zai/unary.rs), [`src/zai/tests.rs`](src/zai/tests.rs), [`src/zai/tests/error_classify.rs`](src/zai/tests/error_classify.rs)) | The shared OpenAI Chat Completions adapter. One adapter serving Z.ai/GLM, xAI, DeepSeek, OpenRouter, `local`, and settings-defined gateways; per-identity behavior (OpenRouter's root `cache_control` + sticky `session_id`, GLM's `thinking`, xAI's `reasoning_effort`) is gated on `self.id` inside it. `stream.rs` is the SSE aggregation half, `unary.rs` the non-streaming fallback a broken streaming path latches onto (`src/stream_recovery.rs`, #2686). |
 | [`src/anthropic.rs`](src/anthropic.rs) (+ [`src/anthropic/tests.rs`](src/anthropic/tests.rs)), [`src/openai.rs`](src/openai.rs), [`src/gemini.rs`](src/gemini.rs), [`src/vertex.rs`](src/vertex.rs), [`src/bedrock.rs`](src/bedrock.rs) | One adapter per structurally distinct wire dialect: Messages API, Responses API, `generateContent` (direct and Vertex's project-scoped enterprise path, sharing wire types and the stream aggregator), Bedrock Converse. All follow the same shape — `new(ApiKey, model)` capturing catalog pricing, `with_base_url`, `http::client()`, `SseDecoder`, `http::classify_http_status`, `impl Provider` (plus `complete_observed`, the mid-stream tool-call announcement the engine speculates on — every streaming adapter implements it; Bedrock, which is unary, implements it as one terminal `text_delta` and announces no tool calls). Open the one whose vendor you are debugging. |
 | [`src/catalog.rs`](src/catalog.rs) | `Catalog`, `CatalogEntry`, `Pricing`, `ToolDialect`, and the compile-time seed. The only sanctioned slug → model resolution. |
 | [`src/credential.rs`](src/credential.rs) (+ [`src/credential/aux.rs`](src/credential/aux.rs)) | `ApiKey` (the non-`Display` secret wrapper), the flag → env → file → prompt chain, `CredentialsFile` (keys *and* the `[credential_fields.<provider>]` companions), the multi-variable resolvers `VertexAddressing` / `BedrockCredentials`, and `AuxCredentials` — the redacting, zeroizing set a host uses to carry the values a provider needs beyond one key (Bedrock's secret access key, session token, and region). |
-| [`src/provider_parity.rs`](src/provider_parity.rs) | `CachePosture` / `ReasoningPosture` — the per-provider matrix. A new provider id lands here or tests fail. |
+| [`src/provider_parity.rs`](src/provider_parity.rs) | `CachePosture` / `ReasoningPosture` / `StreamFallbackPosture` — the per-provider matrix. A new provider id lands here or tests fail. |
 | [`src/cache_economics.rs`](src/cache_economics.rs) | Cache savings arithmetic (`Pricing::cache_savings_usd`) and `diagnose_cache`, which reads the parity matrix to tell an opt-in bug from prefix instability. |
 | [`src/sse.rs`](src/sse.rs) | Dependency-free SSE line parser + incremental UTF-8 decoder every streaming adapter feeds. |
-| [`src/http.rs`](src/http.rs) | Crate-private plumbing: the timeout-bounded `reqwest` clients, `classify_http_status`, and the two shared stream-failure errors. Change error retryability here, not in an adapter. |
+| [`src/http.rs`](src/http.rs) | Crate-private plumbing: the timeout-bounded `reqwest` clients, the first-byte/idle stream-read bounds, `classify_http_status`, and the two shared stream-failure errors. Change error retryability here, not in an adapter. |
+| [`src/stream_recovery.rs`](src/stream_recovery.rs) | Crate-private: the streaming→non-streaming fallback latch (`StreamRecovery`) and the fault classification (`StreamFault`) any adapter with a unary fallback path shares (#2686). |
 | [`src/attachment.rs`](src/attachment.rs) | Crate-private. Turns `Attachment`s into dialect-neutral `WirePart`s once, so each adapter only maps parts onto its own JSON. |
 | [`src/modelsdev.rs`](src/modelsdev.rs), [`src/provider_listing.rs`](src/provider_listing.rs) | Fetch-and-parse only: the models.dev master list and provider-native `/models` discovery. Deciding what to store belongs to `stella-cli`. Best-effort by contract — a dead or shape-drifted endpoint returns an `Err(String)` the caller reports and moves past, so one provider can never fail a refresh of the others. |
 

@@ -34,6 +34,9 @@
 //!   provider-native `/models` discovery, both fetch-and-parse only.
 //! - [`sse`] — the shared, dependency-free SSE + incremental UTF-8 decoder
 //!   every streaming adapter feeds.
+//! - `stream_recovery` (crate-private) — the streaming→non-streaming
+//!   fallback latch armed when a stream hangs before its first byte or
+//!   comes back empty (#2686).
 pub mod anthropic;
 pub(crate) mod attachment;
 pub mod bedrock;
@@ -49,6 +52,7 @@ pub mod provider;
 pub mod provider_listing;
 pub mod provider_parity;
 pub mod sse;
+pub(crate) mod stream_recovery;
 pub mod vertex;
 pub mod zai;
 

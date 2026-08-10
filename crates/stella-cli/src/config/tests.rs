@@ -75,6 +75,24 @@ fn every_seeded_provider_declares_a_reasoning_posture() {
     }
 }
 
+/// The stream-fallback sibling (#2686): every seeded provider must declare
+/// how it recovers when its streaming path is broken — a unary fallback
+/// (with the witness proving the retried attempt goes out non-streaming), a
+/// declared streaming-only gap, or an adapter that is already unary. Same
+/// completeness contract as the other two axes.
+#[test]
+fn every_seeded_provider_declares_a_stream_fallback_posture() {
+    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
+        assert!(
+            stella_model::provider_parity::stream_fallback_posture(provider.id).is_some(),
+            "provider `{}` has no StreamFallbackPosture row in \
+             stella-model/src/provider_parity.rs — add it (with a witness test for a \
+             UnaryFallback row, or a note for a no-fallback posture) in this PR",
+            provider.id
+        );
+    }
+}
+
 #[test]
 fn alias_env_var_resolves_when_the_primary_is_unset() {
     // Synthetic provider with unique var names so parallel tests can't
