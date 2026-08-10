@@ -108,6 +108,16 @@ const COL_GAP: &str = "  ";
 const GAP_W: usize = 2;
 
 /// The transcript rows for one context recall.
+//
+// The lint is wrong here, and the alternative it asks for is the defect this
+// entry kind already suffered once. These nine parameters are not an
+// accumulation: they are exactly the fields of `TranscriptEntry::ContextRecall`
+// plus the two render inputs and the sink, destructured by the one match arm
+// that knows the variant's shape. Bundling them into a parameter struct would
+// put a *second* shape between the read-model and the renderer — a third place
+// for a field to be dropped, which is precisely how `latency_ms` and
+// `used_ann_index` reached no surface at all. `model/recall.rs`'s `Projected`
+// alias declines the same invitation for the same reason.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn recall_lines(
     frames: &[RecalledFrameRow],
