@@ -1414,19 +1414,17 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
 #[tokio::test]
 async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_aborting() {
     // The same empty length-truncated shape as the test above, and the opposite
-    // ending, because the reason for stopping is opposite. Above, the model
+    // ending, because the reason for stopping is opposite: above, the model
     // burned every continuation and still produced nothing — a failure, and the
-    // abort says so. Here the turn simply ran out of wall clock on its FIRST cap
-    // hit, with its whole allowance untouched.
-    //
-    // Both used to return `None` from `plan_continuation` and land on the same
-    // abort. That made `--turn-budget` self-defeating: it exists to stop a turn
-    // before a harness kills it, and a nonzero exit is scored as the agent dying
-    // just as a kill is. Four of the five nonzero exits on a ten-task
-    // Terminal-Bench 2.1 gate were this, each with zero continuations spent.
-    //
-    // A zero budget makes `remaining` zero however fast the step ran, so the
-    // decline is deterministic rather than a race against the test's own clock.
+    // abort says so — while here the turn simply ran out of wall clock on its
+    // FIRST cap hit, allowance untouched. Both used to return `None` from
+    // `plan_continuation` and land on the same abort, which made
+    // `--turn-budget` self-defeating: it exists to stop a turn before a harness
+    // kills it, and a nonzero exit is scored as the agent dying just as a kill
+    // is. Four of the five nonzero exits on a ten-task Terminal-Bench 2.1 gate
+    // were this, each with zero continuations spent. A zero budget makes
+    // `remaining` zero however fast the step ran, so the decline is
+    // deterministic rather than a race against the test's own clock.
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![Ok(empty_result(Some(FinishReason::Length)))]),
@@ -3077,6 +3075,7 @@ mod context_efficiency;
 mod lifecycle_bus;
 mod loop_abort;
 mod parked_wait;
+mod provider_outcomes;
 mod steer_midturn;
 mod usage_completeness;
 mod zero_copy_request;

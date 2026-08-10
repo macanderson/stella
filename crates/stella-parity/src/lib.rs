@@ -113,7 +113,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 3;
+pub const UNWITNESSED_BASELINE: usize = 4;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -543,6 +543,34 @@ pub static CAPABILITIES: &[Capability] = &[
                         (#1165), tool_request frames on \
                         POST /v1/turns/{id}/tool-result — the host owns keys and execution",
             witness: "an_unanswered_provider_request_fails_on_the_deadline",
+        },
+    },
+    Capability {
+        id: "provider.breaker_feedback",
+        engine_home: "stella-core router CircuitBreaker + the ProviderOutcomes port: every \
+                      logical model call's terminal verdict feeds the breaker, so `resolve` \
+                      fails over from observed outcomes, not configuration (#2673)",
+        engine_entries: &["with_provider_outcomes"],
+        cli: SurfacePosture::ShippedUnwitnessed {
+            mechanism: "the pipeline paths feed the router in PipelinePorts (attach() wires \
+                        every engine; raw_usage records management calls) — witnessed in \
+                        stella-pipeline by `pipeline_call_outcomes_reach_the_router_breaker`, \
+                        which this sweep cannot see — and the bare loops feed a session-scoped \
+                        `session_router` (run_interactive/run_raw_one_shot via run_turn, the \
+                        goal loop's round verifier)",
+            missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
+                      session router (the stella-pipeline and stella-core witnesses prove the \
+                      layers below; the run_turn attachment itself has no witness because the \
+                      engine assembly is inline in a function that drives a full turn)",
+        },
+        api: SurfacePosture::NotApplicable {
+            reason: "a served run remotes every model call to the host, which owns keys and \
+                     real provider selection — Stella-side failover between BYOK providers \
+                     has nothing to fail over TO (the served router carries one profile per \
+                     role). The pipeline still feeds that breaker, so a host failing the \
+                     threshold of consecutive calls surfaces as AllProvidersUnavailable until \
+                     the cooldown's half-open trial (see stella-serve pipeline_run's WallClock \
+                     doc), but cross-provider failover is the host's concern by design",
         },
     },
     Capability {

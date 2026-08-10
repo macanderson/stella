@@ -364,10 +364,22 @@ impl<'a> Pipeline<'a> {
                 // duration rather than the work's, talking the estimate down
                 // exactly when a run is in trouble.
                 self.role_pace.observe(meta.role, dispatched_at.elapsed());
+                // Breaker feedback (#2673): the provider served the call, so
+                // the router's next resolution may trust it again.
+                self.router.record_success(meta.provider.id());
                 Ok(result)
             }
-            Err(AccountedCallError::Provider(_)) => Err(RawCallError::Provider),
-            Err(AccountedCallError::Timeout) => Err(RawCallError::Timeout),
+            // The two transport-class verdicts the breaker counts. Deadline
+            // is deliberately neither: nothing was dispatched (#2238), so it
+            // is a fact about the run's clock, not about the provider.
+            Err(AccountedCallError::Provider(_)) => {
+                self.router.record_failure(meta.provider.id());
+                Err(RawCallError::Provider)
+            }
+            Err(AccountedCallError::Timeout) => {
+                self.router.record_failure(meta.provider.id());
+                Err(RawCallError::Timeout)
+            }
             // Nothing was dispatched, so `total` is untouched — the run's
             // settled cost stays exactly what it was before this call.
             Err(AccountedCallError::Deadline { overrun }) => {
@@ -375,6 +387,10 @@ impl<'a> Pipeline<'a> {
             }
             Err(AccountedCallError::Budget { result, outcome }) => {
                 *total += result.cost_usd;
+                // The completion COMMITTED and was paid for — a healthy
+                // provider whose spend tripped OUR budget is a success from
+                // the breaker's point of view.
+                self.router.record_success(meta.provider.id());
                 Err(RawCallError::Budget(
                     budget_abort(outcome).expect("budget error carries abort outcome"),
                 ))

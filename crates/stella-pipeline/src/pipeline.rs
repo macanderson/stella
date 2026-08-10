@@ -32,13 +32,13 @@
 //! prefix**, never mutated into the system block itself, so prompt-cache hits
 //! on the stable prefix survive across turns. See `assemble_user_message`.
 //!
-//! # Breaker feedback boundary
+//! # Breaker feedback
 //!
-//! The pipeline holds `&Router` (per its constructor contract) and so *reads*
-//! resolutions and surfaces `ProviderFallback` events, but does not feed
-//! call outcomes back into the breaker (`record_success`/`record_failure`
-//! need `&mut Router`). That feedback is the responsibility of the glue that
-//! owns the `Router` — documented here so the boundary is explicit.
+//! The pipeline holds `&Router` and both halves flow through it (#2673): it
+//! reads resolutions (surfacing `ProviderFallback` events) and feeds every
+//! observed call outcome back — each engine it builds reports via `attach`'s
+//! `with_provider_outcomes`, and `raw_usage` records each management call's
+//! verdict — so a provider failing consecutive calls is routed around.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;

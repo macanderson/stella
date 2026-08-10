@@ -143,10 +143,12 @@ pub struct PipelineRun {
 }
 
 /// A time source for the single-profile [`CircuitBreaker`] a served pipeline
-/// run constructs. The breaker only matters when a role fails over between
-/// multiple profiles; a served run has exactly one, so nothing here ever
-/// trips it — but `CircuitBreaker::new` still wants a real clock rather than
-/// a stub that could misreport `now_ms`.
+/// run constructs. Since #2673 the pipeline feeds real call outcomes into
+/// this breaker, so a host whose remoted provider fails the threshold of
+/// consecutive calls trips it — with one profile there is nothing to fail
+/// over TO, so resolution then reports `AllProvidersUnavailable` until the
+/// cooldown's half-open trial, which is why the clock must be real rather
+/// than a stub that could misreport `now_ms`.
 struct WallClock;
 
 impl stella_core::ports::Clock for WallClock {

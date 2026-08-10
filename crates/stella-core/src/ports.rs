@@ -190,6 +190,22 @@ pub trait Clock: Send + Sync {
     fn now_ms(&self) -> u64;
 }
 
+/// Call-outcome feedback into provider routing — the write half of
+/// [`crate::router::Router`]'s circuit breaker (§7 reliability rules; L-M7),
+/// which implements it. The engine reports each *logical* model call's
+/// terminal verdict, retries collapsed: a call that eventually committed is
+/// one success, retries exhausted (or an unretryable transport-class error)
+/// is one failure. `&self` because the reporter holds the router shared —
+/// resolution keeps reading the same reference concurrently, and requiring
+/// `&mut` is exactly what left the breaker without a production caller
+/// (#2673).
+pub trait ProviderOutcomes: Send + Sync {
+    /// A call served by `provider_id` committed.
+    fn record_success(&self, provider_id: &str);
+    /// A transport-class terminal failure from `provider_id`.
+    fn record_failure(&self, provider_id: &str);
+}
+
 /// Boundary pause gate — polled by the engine between model calls, the same
 /// safe boundary as budget aborts (L-E6: never mid-tool). `wait_if_paused`
 /// returns immediately when the turn may proceed and parks (await) while it
