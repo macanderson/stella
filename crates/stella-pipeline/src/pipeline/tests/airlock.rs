@@ -1,20 +1,13 @@
-//! The feedback airlock at the pipeline seam: the operator sees the runner's
-//! real failure, the worker sees only what the disclosure grain allows.
-//!
-//! Design: [`docs/spec/witness-protocol.md`](../../../../../docs/spec/witness-protocol.md) §4.
+//! The deterministic feedback boundary at the pipeline seam: a completed test
+//! failure reaches the worker as execution data and never as reviewer prose.
 
 use super::*;
 
-/// The witness for the feedback airlock: a distinctive token printed by the
-/// failing test runner must reach the OPERATOR's verdict and must never reach
-/// the WORKER's revision prompt.
-///
-/// Before the airlock, `verify_candidate` fed `deterministic_fail_evidence`'s
-/// summary — the raw stderr tail — straight into `revision_prompt`, so this
-/// test fails on the old code for the right reason: the token is present in
-/// the worker's messages.
+/// A completed failing command gives the worker the exact bounded result it
+/// needs to attempt a different solution: command, exit code, stdout, stderr.
+/// No model-written review or course correction may ride beside it.
 #[tokio::test]
-async fn the_runner_tail_reaches_the_operator_but_never_the_worker() {
+async fn a_completed_test_failure_is_the_workers_only_verification_feedback() {
     // A tail shaped like a real assertion failure: it names the test, and it
     // carries the runtime values the assertion compared.
     const SEALED_TAIL: &str = "\
@@ -46,9 +39,6 @@ assertion `left == right` failed
     let config = PipelineConfig {
         test_command: Some("cargo test -p x".into()),
         max_revisions: 2,
-        // Isolate the airlock: guidance is a separate model call with its own
-        // scrub, and this witness is about the deterministic path.
-        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(
@@ -92,24 +82,26 @@ assertion `left == right` failed
         verdict.summary
     );
 
-    // The worker never sees the detector's fingerprint.
+    // The test result is the worker's reason to try another solution.
     let worker_prompts: String = messages.iter().map(|m| m.content.as_str()).collect();
-    for sealed in [
+    for expected in [
+        "command: cargo test -p x",
+        "exit_code: 1",
+        "stdout:",
+        "stderr:",
         "8675309",
         "assertion `left == right`",
         "witness_totals_reconcile",
         "witness_zz9.rs",
     ] {
         assert!(
-            !worker_prompts.contains(sealed),
-            "the revision prompt leaked sealed material {sealed:?}:\n{worker_prompts}"
+            worker_prompts.contains(expected),
+            "the deterministic receipt omitted {expected:?}:\n{worker_prompts}"
         );
     }
-
-    // ...but it is still told enough to converge.
     assert!(
-        worker_prompts.contains("Verification did not pass"),
-        "the worker must still learn that verification failed"
+        !worker_prompts.contains("Independent reviewer"),
+        "model prose may not accompany a deterministic test result:\n{worker_prompts}"
     );
     assert_eq!(outcome.revisions, 2, "the revise loop still ran");
 }

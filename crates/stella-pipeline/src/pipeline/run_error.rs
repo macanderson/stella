@@ -19,28 +19,14 @@ pub enum PipelineError {
         "no provider adapter is configured for the resolved model `{0}` — configure the provider or refresh the catalog"
     )]
     NoProviderForModel(String),
-    /// [`crate::PipelineConfig::require_independent_witness`] is on and the
-    /// wiring cannot supply a witness author independent of the worker.
-    ///
-    /// The ordinary posture degrades here instead — losing the author costs
-    /// the run its authored witness, never the task. This variant exists for
-    /// the caller that has already PUBLISHED the claim that an independent
-    /// author exists (a benchmark arm whose posture digest names a second
-    /// model): for them a degraded run is not a weaker result, it is a number
-    /// described by the wrong posture, and refusing is the only honest outcome.
+    /// Legacy error retained so stored/public values remain source-compatible.
+    /// Live orchestration never emits it because witness model work is retired.
     #[error(
         "an independent witness author was required but {0} — refusing rather than running as the single-model arm under a configuration that claims otherwise"
     )]
     WitnessAuthorUnavailable(String),
-    /// [`crate::PipelineConfig::require_independent_verifier`] is on and the
-    /// verdict call would resolve to the worker's own model — or to no model
-    /// at all (#1795).
-    ///
-    /// Same shape and same before-spend placement as the witness refusal
-    /// above, for the same caller: one that has published the claim that an
-    /// independent reviewer grades the work. The ordinary posture keeps the
-    /// soft path — the verdict runs self-graded, records the fact on its
-    /// ladder snapshot, and the router's caveat says so in prose.
+    /// Legacy error retained so stored/public values remain source-compatible.
+    /// Live orchestration never emits it because model verdicts are retired.
     #[error(
         "an independent verifier was required for the verdict but {0} — refusing before spend rather than letting the worker grade its own work under a configuration that claims otherwise"
     )]
@@ -78,40 +64,6 @@ impl PipelineRunError {
             total_cost_usd,
         }
     }
-}
-
-/// What [`super::Pipeline::independence_of`] found about one responsibility.
-///
-/// Four states, not a bool, and not three: "the assigned agent resolves to the
-/// worker's model", "the operator turned this responsibility off" and "the
-/// worker itself will not resolve" are different facts with different owners,
-/// and collapsing any two of them is how a routing failure starts reading as a
-/// verdict about independence — or, since #2381 made enablement configurable,
-/// how a deliberate ablation starts reading as an outage.
-pub(super) enum Independence {
-    /// The assigned agent resolves to a model the worker does not use.
-    Independent,
-    /// The roster does not run this responsibility at all.
-    ///
-    /// An ablation the operator asked for, which
-    /// [`super::Pipeline::report_roster_posture`] has already stated once,
-    /// before any spend. A consumer must therefore neither report it a second
-    /// time nor describe it as a fault — but a caller that *required*
-    /// independence must still refuse, because "the stage did not run" fails
-    /// the claim it made just as surely as "the stage ran on the worker's
-    /// model".
-    Withheld,
-    /// The responsibility runs, but nothing independent of the worker backs
-    /// it, with the reason to announce.
-    ///
-    /// The reason names the assigned agent and never the responsibility: each
-    /// consumer wraps it in a sentence that already supplies its own role
-    /// (#1795), so a reason that named one too would misname the others.
-    Unavailable(String),
-    /// The worker role itself will not resolve. Not a verdict about
-    /// independence at all: the run fails on its own terms a few steps later,
-    /// with the routing error that actually explains it.
-    WorkerUnresolvable,
 }
 
 pub(super) enum RoleResolveError {

@@ -58,6 +58,25 @@
 
 use super::*;
 
+/// Candidate-bound hook execution: both the hook process and the engine's
+/// payload use the isolated root, never the session root.
+struct BoundHookRunner<'a> {
+    inner: &'a dyn HookRunner,
+    cwd: &'a str,
+}
+
+#[async_trait::async_trait]
+impl HookRunner for BoundHookRunner<'_> {
+    async fn run(
+        &self,
+        action: &stella_core::hooks::HookAction,
+        payload_json: &str,
+        _cwd: &str,
+    ) -> Result<stella_core::hooks::HookExecResult, stella_core::hooks::HookExecError> {
+        self.inner.run(action, payload_json, self.cwd).await
+    }
+}
+
 use crate::candidate_fanout::FanOutBudget;
 
 /// One candidate's finished work, tagged with the index that produced it.
@@ -112,6 +131,17 @@ impl CandidateWorkspacePort for SerialCreates<'_> {
 }
 
 impl<'a> Pipeline<'a> {
+    fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
+        let mut config = self.config.engine.clone();
+        if let Some(cwd) = surface.cwd {
+            config.cwd = cwd.to_string();
+            // Isolated candidates are disposable snapshots, not resumable
+            // session state. Shared-tree turns keep their checkpoint sink.
+            config.checkpoint_sink = None;
+        }
+        config
+    }
+
     /// Snapshot one isolated workspace per candidate, in index order.
     ///
     /// `Err` is a slot, not an early return: isolation was *promised*, so a
@@ -174,7 +204,6 @@ impl<'a> Pipeline<'a> {
         &self,
         frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
-        authoring: Option<WitnessAuthoring<'_>>,
         workspaces: &[Result<Box<dyn CandidateWorkspace>, String>],
         width: u32,
         spend: &mut Spend<'_>,
@@ -236,7 +265,6 @@ impl<'a> Pipeline<'a> {
                             },
                             frame,
                             worker,
-                            authoring,
                             fan,
                             &mut Spend {
                                 budget: &mut allowance,
@@ -283,7 +311,6 @@ impl<'a> Pipeline<'a> {
         slot: CandidateSlot<'_>,
         frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
-        authoring: Option<WitnessAuthoring<'_>>,
         fan: Option<&SteeringFanOut<'_>>,
         spend: &mut Spend<'_>,
     ) -> CandidateResult {
@@ -293,11 +320,9 @@ impl<'a> Pipeline<'a> {
             cwd: ws.root(),
         });
         let surface = CandidateSurface {
+            tools: ws.tools(),
             diagnostics: ws.diagnostics(),
             tests: ws.tests(),
-            lint: self.lint,
-            mutation: self.mutation,
-            coverage: self.coverage,
             repo_status: ws.repo_status(),
             cwd: Some(ws.root()),
             hook_runner: bound_hook_runner
@@ -319,7 +344,7 @@ impl<'a> Pipeline<'a> {
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(ordinal, frame, authoring, &engine, surface, spend)
+        self.run_candidate(ordinal, frame, &engine, surface, spend)
             .await
     }
 }

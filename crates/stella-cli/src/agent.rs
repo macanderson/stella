@@ -127,9 +127,9 @@ fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillReg
 /// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
 /// given, arms the pipeline's deterministic verification ladder (the
-/// fail→pass flip oracle); without it, verification falls back to the model
-/// verifier on every iteration. `keep_witness` promotes an authored witness into
-/// the working tree instead of letting it die with the candidate workspace.
+/// fail→pass flip oracle); without it, a concrete built-in `verify_done`
+/// receipt is the only completion authority. `keep_witness` is retained as a
+/// compatibility no-op.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,
@@ -413,7 +413,8 @@ async fn run_pipeline_one_shot(
         );
         // `--test-command` arms the deterministic verify ladder: the
         // fail→pass flip oracle and SubmitFast/Revise decisions all key off
-        // it. Left unset, every verification escalates to the model verifier.
+        // it. Left unset, verification needs a built-in `verify_done` receipt
+        // or abstains.
         let mut pipeline_config = pipeline_config_for_approval_capability(
             cfg,
             approval_capability,
@@ -421,9 +422,8 @@ async fn run_pipeline_one_shot(
             &wiring.worker_model,
         );
         pipeline_config.role_overrides = wiring.role_overrides.clone();
-        // Set here rather than in `pipeline_config_for_approval_capability`:
-        // that helper is shared with the deck, fleet, and goal loops, and
-        // witness promotion is a one-shot `--keep-witness` concern only.
+        // Retained for decoding old invocations; the pipeline treats this as a
+        // no-op now that model-authored witnesses are retired.
         pipeline_config.keep_witness = keep_witness;
 
         let approval_gate = approval_gate_for(cfg, approval_capability);
