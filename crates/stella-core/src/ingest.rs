@@ -29,9 +29,11 @@
 
 pub mod freshness;
 pub mod gate;
+pub mod lineage;
 pub mod record;
 
 pub use freshness::{Retention, retention_for};
+pub use lineage::{AlertState, Drift, Lineage, LineageLedger, UnknownSource};
 pub use gate::{GateOutcome, gate_proposal};
 pub use record::{
     AppliesTo, ContextFile, Defaults, Enforcement, EnforcementMode, Force, Link, LinkRelation,
