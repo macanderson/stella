@@ -284,9 +284,26 @@ pub enum DiscardReason {
     /// finding, and a valuable one — but not one the reward scale is
     /// calibrated for, so it is selected by rung rather than scored.
     NothingAttempted,
+    /// Deterministic evidence was collected and did not prove the outcome
+    /// either way ([`LadderRung::Unverified`]). Not a pass, not a failure, and
+    /// deliberately not a `0.0` — a zero would assert that a neutral outcome
+    /// was *observed*, which is the claim this rung exists to decline.
+    ///
+    /// Historical trajectories land here too. The rungs that recorded a model
+    /// verifier's opinion (`model_verdict`, `heuristic_fallback`,
+    /// `model_judge`) alias onto [`LadderRung::Unverified`], so a stored
+    /// session that was once scored `±judged` is now discarded. That is the
+    /// intended correction rather than a side effect: #871 had already
+    /// established those verdicts were not trustworthy enough to train on, and
+    /// scoring them was the last place that judgement had not been applied.
+    Unproven,
     /// The verifier call failed or returned something unparseable, and the
     /// conservative heuristic stood in. A fact about the pipeline's
     /// availability, not about the work.
+    ///
+    /// **Retired.** No run emits it: the pipeline makes no verifier call to
+    /// fail. Retained because this enum labels *stored* trajectories, and a
+    /// label already written must keep parsing.
     VerifierUnavailable,
     /// No independent review was bought at all, so nothing was determined
     /// either way.
@@ -302,6 +319,12 @@ pub enum DiscardReason {
     /// The workspace set its judged weight to `0.0`: this verifier is not trusted
     /// to label anything. Distinct from a `0.0` reward, which would assert that
     /// a neutral outcome was observed — see the module docs.
+    ///
+    /// **Retired**, and in the strongest possible sense: the workspace's
+    /// distrust of the model verifier is now the architecture rather than a
+    /// weight, because the call it distrusted is not made. Retained for the
+    /// same reason as [`Self::VerifierUnavailable`] — stored labels must keep
+    /// parsing.
     VerifierDistrusted,
     /// The [`RewardPolicy`] itself is invalid, so no scalar computed under it
     /// would mean anything. The rung is still published, because the rung is
@@ -489,9 +512,13 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy
 /// so a rung emitted with an unexpected polarity is labelled by what actually
 /// happened instead of by what the rung usually means.
 ///
-/// A judged rung under a zero judged weight is a **discard**, not a `0.0`. The
-/// difference is the whole reason [`DiscardReason::VerifierDistrusted`] exists —
-/// see the module docs.
+/// **Only deterministic rungs score.** Every other rung is a discard with a
+/// named reason, never a `0.0`, because a zero asserts that a neutral outcome
+/// was observed and none of them observed anything. The judged tier is gone
+/// along with the call that produced it: there is no longer a rung whose
+/// magnitude comes from a model's opinion, so `weights.judged` is read by
+/// nothing here (its removal is tracked separately — it is a serde-config
+/// decision, not a verification one).
 pub fn outcome_term(
     rung: LadderRung,
     passed: bool,
@@ -499,13 +526,9 @@ pub fn outcome_term(
 ) -> Result<f64, DiscardReason> {
     let magnitude = match rung {
         LadderRung::SubmitFast | LadderRung::Revise => weights.deterministic,
-        LadderRung::ModelVerdict if weights.judged == 0.0 => {
-            return Err(DiscardReason::VerifierDistrusted);
-        }
-        LadderRung::ModelVerdict => weights.judged,
+        LadderRung::Unverified => return Err(DiscardReason::Unproven),
         LadderRung::Unverifiable => return Err(DiscardReason::Abstained),
         LadderRung::NothingAttempted => return Err(DiscardReason::NothingAttempted),
-        LadderRung::HeuristicFallback => return Err(DiscardReason::VerifierUnavailable),
         LadderRung::Waived => return Err(DiscardReason::ReviewWaived),
     };
     Ok(if passed { magnitude } else { -magnitude })

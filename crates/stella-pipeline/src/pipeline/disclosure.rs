@@ -11,8 +11,6 @@
 //!
 //! Design: [`docs/spec/witness-protocol.md`](../../../../docs/spec/witness-protocol.md) §4.
 
-use stella_protocol::PolicyKind;
-
 use super::*;
 use crate::witness::airlock::FailureBrief;
 use crate::witness::warrant::warrant;
@@ -46,31 +44,6 @@ impl Pipeline<'_> {
             .unwrap_or_default();
         paths.sort();
         paths
-    }
-
-    /// Let one model-authored text cross inbound to the worker, or drop it.
-    ///
-    /// Distress guidance and verifier reasoning are both written by a model that
-    /// was shown the raw deterministic evidence, so either can quote the
-    /// detector back at the worker. `None` means the scrubber rejected it; the
-    /// emitted policy event carries a leak *token*, never the offending text.
-    pub(super) fn airlock_forward(
-        &self,
-        text: &str,
-        subject: &str,
-        sealed: &SealedFailure<'_>,
-    ) -> Option<String> {
-        match scrub(text, sealed) {
-            Ok(()) => Some(text.to_string()),
-            Err(leak) => {
-                self.emit(AgentEvent::PolicyDecision {
-                    kind: PolicyKind::Blocked,
-                    subject: subject.to_string(),
-                    outcome: leak.token().to_string(),
-                });
-                None
-            }
-        }
     }
 
     /// Turn one deterministic failure into the pair the revise loop needs: the

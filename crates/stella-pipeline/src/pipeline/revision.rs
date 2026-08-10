@@ -6,18 +6,17 @@
 /// Why a revision turn is being spent — and, crucially, how much authority the
 /// text carries.
 ///
-/// Four call sites reach [`revision_prompt`] with four different kinds of
-/// thing, and for a long time all four were announced identically as
-/// `"Verification did not pass. Evidence: … Fix the issue"`. Two of them are
-/// not evidence and one of them is not a failure, so that sentence was false
-/// three times over — and its falsehood was not cosmetic:
+/// Both remaining causes are things the pipeline **measured or did**, and that
+/// is now a property of the type rather than a convention: there is no variant
+/// for a model's reading of the change, because no model reads the change.
 ///
-/// A model verifier's prose is a **claim**. It is produced by a model reading a
-/// bounded diff and a handful of counters, it is frequently right, and it is
-/// sometimes a confabulation — especially when a channel it depends on was
-/// silent. Labelling it `Evidence` and following it with `Fix the issue` tells
-/// the worker that a measurement contradicts it, and the worker's correct
-/// response to a measurement is to believe it over its own observations.
+/// The variant that is gone is the reason this enum exists at all. A model
+/// verifier's prose is a **claim** — produced by a model reading a bounded diff
+/// and a handful of counters, frequently right, and sometimes a confabulation,
+/// especially when a channel it depended on was silent. Announcing it as
+/// `"Verification did not pass. Evidence: …"` told the worker that a
+/// measurement contradicted it, and a worker's correct response to a
+/// measurement is to believe it over its own observations.
 ///
 /// On Terminal-Bench `fix-git` that is exactly what happened. The worker
 /// recovered a lost commit correctly, the reviewer claimed it had hand-written
@@ -25,18 +24,14 @@
 /// `master` and re-did the merge. Twice. Each round destroyed correct work to
 /// satisfy a claim no measurement supported, and the trial ended on a deadline.
 ///
-/// So the cause is typed. A deterministic failure still speaks with full
-/// authority, because something really was measured. A reviewer's claim is
-/// named as a claim and the worker is told to check it before acting — and told
-/// explicitly that it may refuse. An evidence request stops pretending to be a
-/// verdict at all.
+/// Typing the cause was the first repair: the claim was relabelled a claim and
+/// the worker was told it could refuse. Removing the call is the second and
+/// last one. A channel whose best case is "the worker correctly disbelieves it"
+/// is not worth its worst case.
 pub(super) enum RevisionCause<'a> {
     /// A deterministic check failed: a test went red, or the turn changed
     /// nothing. Measured, and the worker should act on it.
     Deterministic(&'a str),
-    /// An independent reviewer withheld a pass. Prose about the change, not a
-    /// measurement of it.
-    ReviewerClaim(&'a str),
     /// Not a failure. The ladder could not corroborate a pass and is asking for
     /// the one piece of evidence that would settle it (#1295).
     EvidenceRequest(&'a str),
@@ -50,17 +45,6 @@ pub(super) fn revision_prompt(cause: RevisionCause<'_>) -> String {
              measurement, not an opinion:\n{}\n\nFix the issue and complete the task.",
             reason.trim()
         ),
-        RevisionCause::ReviewerClaim(claim) => format!(
-            "An independent reviewer did not pass this change. What follows is the \
-             reviewer's CLAIM, not a measurement: it is a model's reading of a bounded \
-             diff and a few counters, and it can be wrong — including about things you \
-             observed directly and it did not.\n\nReviewer's claim:\n{}\n\nCheck the \
-             claim against the workspace before you change anything. If it holds, fix it \
-             and complete the task. If it does not, say so, state what you checked and \
-             what you found, and leave your work in place — do not undo correct work to \
-             satisfy a claim you have disproved.",
-            claim.trim()
-        ),
         RevisionCause::EvidenceRequest(ask) => format!(
             "Verification could not be completed: the result looks right but nothing \
              corroborates it. This is a request for evidence, not a report of a \
@@ -73,40 +57,6 @@ pub(super) fn revision_prompt(cause: RevisionCause<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const CLAIM: &str = "the agent hand-wrote the content instead of recovering it";
-
-    /// The amplifier, at the grain that caused it: a model's prose must not
-    /// reach the worker wearing the word the deterministic channel uses.
-    #[test]
-    fn a_reviewer_claim_is_never_called_evidence() {
-        let prompt = revision_prompt(RevisionCause::ReviewerClaim(CLAIM));
-        assert!(
-            !prompt.contains("Evidence:"),
-            "a model's reading must not be labelled Evidence: {prompt}"
-        );
-        assert!(prompt.contains("CLAIM"), "{prompt}");
-        assert!(
-            prompt.contains(CLAIM),
-            "the claim itself still reaches the worker"
-        );
-    }
-
-    /// …and the worker is told it may refuse. Without this the relabel is
-    /// cosmetic: a worker that reads "reviewer's claim" and still believes it
-    /// unconditionally destroys correct work exactly as before.
-    #[test]
-    fn a_reviewer_claim_tells_the_worker_to_check_before_changing_anything() {
-        let prompt = revision_prompt(RevisionCause::ReviewerClaim(CLAIM));
-        assert!(
-            prompt.contains("before you change anything"),
-            "validate first: {prompt}"
-        );
-        assert!(
-            prompt.contains("do not undo correct work"),
-            "refusing is permitted: {prompt}"
-        );
-    }
 
     /// A measurement keeps its authority. Relabelling everything as a claim
     /// would be the opposite error — a red test is not an opinion, and a worker
@@ -142,10 +92,40 @@ mod tests {
     fn every_cause_forwards_its_text() {
         for cause in [
             RevisionCause::Deterministic("PAYLOAD"),
-            RevisionCause::ReviewerClaim("PAYLOAD"),
             RevisionCause::EvidenceRequest("PAYLOAD"),
         ] {
             assert!(revision_prompt(cause).contains("PAYLOAD"));
+        }
+    }
+
+    /// The witness for the removal, and the only shape one can take for a
+    /// *deleted* capability: enumerate the whole vocabulary and assert that
+    /// nothing in it carries a model's reading of the change.
+    ///
+    /// The match is exhaustive and unmatched-arm-checked, so a variant added
+    /// later fails to compile here until someone states which kind of thing it
+    /// is. That is what makes this a standing guarantee rather than a snapshot
+    /// of today: re-introducing a reviewer channel cannot be done quietly, it
+    /// has to be done by editing this test and saying so.
+    #[test]
+    fn no_revision_cause_carries_a_model_opinion() {
+        for cause in [
+            RevisionCause::Deterministic("PAYLOAD"),
+            RevisionCause::EvidenceRequest("PAYLOAD"),
+        ] {
+            let measured_or_asked = match cause {
+                // Something really ran and really failed.
+                RevisionCause::Deterministic(_) => true,
+                // A fixed template over the tracked command; asserts nothing
+                // about the change.
+                RevisionCause::EvidenceRequest(_) => true,
+            };
+            assert!(measured_or_asked);
+            let prompt = revision_prompt(cause);
+            assert!(
+                !prompt.contains("reviewer"),
+                "no revision turn may cite a reviewer: {prompt}"
+            );
         }
     }
 }

@@ -166,46 +166,6 @@ async fn ablating_triage_removes_its_frame_and_leaves_execute_and_verify_running
     );
 }
 
-/// The other half of the ablation pair the measurement plan needs: the
-/// verifier off, everything else on.
-///
-/// The deterministic ladder (`StageKind::Verify`) still runs — it is not the
-/// verifier — so this ablation removes the model verdict alone, which is
-/// exactly the attribution #2374 wants.
-#[tokio::test]
-async fn ablating_the_verdict_leaves_the_deterministic_ladder_running() {
-    let fixture = Fixture::new(vec![text_result("single"), text_result("done")]);
-    let resolver = OneProvider(&fixture.provider);
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let pipeline = fixture.pipeline(
-        &resolver,
-        tx,
-        config_with(&[("verdict", Some(false), None)]),
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("an ablated verifier must not fail the run");
-    assert_eq!(outcome.status, PipelineStatus::Completed);
-
-    let stages = stages(&drain(&mut rx));
-    assert!(
-        !stages.contains(&StageKind::Verdict),
-        "the ablated verdict stage must leave no frame; got {stages:?}"
-    );
-    assert!(
-        stages.contains(&StageKind::Triage),
-        "ablating the verdict must leave triage running; got {stages:?}"
-    );
-    assert!(
-        stages.contains(&StageKind::Verify),
-        "the DETERMINISTIC ladder is not the verifier and must still run; got {stages:?}"
-    );
-}
-
 /// Requirement 4: a roster nobody configured changes nothing.
 ///
 /// The weakest-looking test here and the one that matters most, because it is

@@ -38,7 +38,6 @@ mod diff_coverage;
 /// The #1787 verdict-degradation facts — a child module for the same two
 /// reasons, split out when this file came within sixty lines of the
 /// 1500-line ratchet it is not grandfathered against.
-mod verdict_degraded_facts;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
@@ -112,8 +111,8 @@ async fn a_timed_out_baseline_never_manufactures_a_flip() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "no flip evidence exists, so the ladder must escalate to the verifier"
+        !stages(&events).contains(&StageKind::Verdict),
+        "no flip evidence exists, so the ladder abstains — it does not buy an opinion about evidence it already knows is missing"
     );
 }
 
@@ -188,8 +187,8 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "an unobservable suite is inconclusive — verifier, not revise"
+        !stages(&events).contains(&StageKind::Verdict),
+        "an unobservable suite is inconclusive, and inconclusive is now the answer: no verdict call, and deliberately not a revision either"
     );
     // No deterministic red verdict may be emitted for infra noise: every
     // deterministic Verdict{passed:false} is the revise path's badge.
@@ -277,8 +276,8 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "the unconfirmed flip escalates to the verifier instead of fast-submitting"
+        !stages(&events).contains(&StageKind::Verdict),
+        "the unconfirmed flip withholds the deterministic credit and stops there — a model cannot confirm what a re-run could not"
     );
     assert!(
         !events.iter().any(|e| matches!(
@@ -398,8 +397,8 @@ async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "the regression veto must escalate to the verifier"
+        !stages(&events).contains(&StageKind::Verdict),
+        "the regression veto withholds the fast-submit and stops there: the fresh error is the finding, and no opinion is bought about it"
     );
     assert!(
         !events.iter().any(|e| matches!(
@@ -606,8 +605,8 @@ async fn a_tautological_witness_is_downgraded_to_the_verifier() {
         "both proposed mutants ran (none was killed, so no early exit)"
     );
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "the downgrade escalates to the verifier"
+        !stages(&events).contains(&StageKind::Verdict),
+        "the downgrade withholds the deterministic credit and stops there"
     );
     let snapshot = verdict
         .ladder
@@ -847,8 +846,9 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         "a memory kill must never be reported as a deterministic test failure"
     );
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "an unobservable suite is inconclusive — verifier, not revise"
+        !stages(&events).contains(&StageKind::Verdict),
+        "an unobservable suite is inconclusive, and inconclusive is the answer: no \
+         verdict call, and deliberately not a revision either"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
     let snapshot = verdict
@@ -868,113 +868,5 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         runner.test_runs(),
         3,
         "baseline + the killed run + its one bounded retry — retries never run away"
-    );
-}
-
-/// #1780: the distress trigger counts a candidate's deterministic failures
-/// cumulatively — the two need not be consecutive. Here the candidate fails
-/// deterministically, then takes a *different* path (the suite times out →
-/// inconclusive → model verifier, which FAILs without touching the
-/// deterministic-failure ledger), then fails deterministically again — and
-/// that second red still buys the guidance call. This pins current behavior,
-/// which is deliberate (#868 chose the cumulative ledger so a stuck worker is
-/// steered early): the docs used to promise "second *consecutive*", and this
-/// test is what keeps the code and the docs telling the same story.
-#[tokio::test]
-async fn a_second_deterministic_failure_fires_guidance_even_when_not_consecutive() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),                                     // worker
-        text_result("first fix"), // revision 1 (deterministic red #1, no guidance)
-        text_result("FAIL — the fix does not address the goal"), // model verifier (timeout round)
-        text_result("second fix"), // revision 2 (verifier FAIL: not on the ledger)
-        text_result("You are patching the symptom; fix the parser instead."), // guidance
-        text_result("third fix"), // revision 3 (carries guidance)
-    ]);
-    let resolver = OneProvider(&provider);
-    // Baseline red (the oracle arms), post-execute red → deterministic
-    // failure #1 → revise on raw evidence; post-revision-1 TIMES OUT →
-    // inconclusive, so the verifier is bought and FAILs → revise (nothing
-    // recorded on the deterministic-failure ledger); post-revision-2 red →
-    // deterministic failure #2 → distress guidance rides with revision 3;
-    // post-revision-3 red → revisions exhausted → deterministic failed verdict.
-    let runner = ScriptedRunner::scripted(
-        vec![
-            TestScript::Fail,
-            TestScript::Fail,
-            TestScript::TimeOut,
-            TestScript::Fail,
-            TestScript::Fail,
-        ],
-        "@@ -1 +1 @@\n-a\n+b",
-    );
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        // Room for the revision that carries the guidance: two revisions are
-        // already spent before the second deterministic red lands.
-        max_revisions: 3,
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            lint: None,
-            mutation: None,
-            coverage: None,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-
-    let verdict = outcome.verdict.expect("verified");
-    assert!(!verdict.passed);
-    assert!(verdict.deterministic, "red tests are a deterministic fail");
-    assert_eq!(outcome.revisions, 3);
-
-    // The guidance text reached the worker's revision prompt after the SECOND
-    // deterministic red, even though a verifier-FAIL round separated it from
-    // the first — the ledger is cumulative, not a consecutiveness filter.
-    let carried = messages.iter().any(|m| {
-        m.content.contains("Independent reviewer course-correction")
-            && m.content.contains("fix the parser instead")
-    });
-    assert!(
-        carried,
-        "guidance rides with the revision after the second deterministic red"
-    );
-    assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
-        "the guidance call is an honest Verifier stage in the stream"
     );
 }

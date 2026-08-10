@@ -73,11 +73,14 @@ struct FinishedCandidate {
     cost_usd: f64,
 }
 
-/// One candidate's identity in the fan-out: its 1-based ordinal — the number
-/// every candidate-facing surface speaks (`candidate_start_notice`,
-/// [`ProofStep::VerdictDegraded`]) — and the isolated workspace it runs in.
+/// One candidate's place in the fan-out: the isolated workspace it runs in.
+///
+/// It used to carry a 1-based ordinal too, for the surfaces that named a
+/// specific candidate — `candidate_start_notice` and `ProofStep::VerdictDegraded`.
+/// The verdict step is retired with the verdict call, and nothing else asked
+/// which candidate it was, so the field went with it rather than sitting here
+/// unread.
 struct CandidateSlot<'w> {
-    ordinal: u32,
     ws: &'w dyn CandidateWorkspace,
 }
 
@@ -228,12 +231,7 @@ impl<'a> Pipeline<'a> {
                     let mut cost_usd = 0.0;
                     let result = self
                         .run_isolated_candidate(
-                            CandidateSlot {
-                                // `n` is a `u32` config knob, so the index
-                                // always fits.
-                                ordinal: index as u32 + 1,
-                                ws,
-                            },
+                            CandidateSlot { ws },
                             frame,
                             worker,
                             authoring,
@@ -287,7 +285,7 @@ impl<'a> Pipeline<'a> {
         fan: Option<&SteeringFanOut<'_>>,
         spend: &mut Spend<'_>,
     ) -> CandidateResult {
-        let CandidateSlot { ordinal, ws } = slot;
+        let CandidateSlot { ws } = slot;
         let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
             inner: runner,
             cwd: ws.root(),
@@ -319,7 +317,7 @@ impl<'a> Pipeline<'a> {
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(ordinal, frame, authoring, &engine, surface, spend)
+        self.run_candidate(frame, authoring, &engine, surface, spend)
             .await
     }
 }

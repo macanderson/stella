@@ -92,19 +92,13 @@ use stella_core::driver::TurnHalt;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
-use crate::management_prompt::ManagementPrompt;
 use crate::verify::coverage::DiffCoverage;
-use crate::verify::diff_render::DiffContext;
 use crate::verify::{
-    FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
-    deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
-    guidance_prompt, heuristic_fallback, ladder_decision, model_verdict_evidence,
-    nothing_attempted_evidence, parse_verifier_response, uncorroborated_pass_evidence,
-    unverifiable_evidence, verifier_prompt,
+    FlipOracle, LadderDecision, LadderInputs, deterministic_fail_evidence,
+    deterministic_pass_evidence, evidence_demand_is_worth_a_turn, ladder_decision,
+    nothing_attempted_evidence, unverifiable_evidence, unverified_evidence,
 };
-use crate::witness::airlock::{
-    DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
-};
+use crate::witness::airlock::{FailureFingerprint, SealedFailure, grain_for_repeats, redact};
 use crate::witness::warrant::{ChangeSignals, warrant};
 use crate::witness::{
     Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
@@ -142,7 +136,6 @@ mod triage_stage;
 /// `pipeline.rs` is closed to growth.
 mod user_message;
 use user_message::{VerificationContract, assemble_user_message};
-mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
 mod witness_stage;
@@ -153,7 +146,6 @@ use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
 use stage_budget::{PipelineStageAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
-use verifier_stage::{VerdictDegradation, VerifierNotices};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
@@ -476,18 +468,6 @@ pub struct PipelineConfig {
     /// number at all: the arm's own digest describes a configuration the run
     /// did not have (#1147).
     pub require_independent_witness: bool,
-    /// Refuse the run when the VERDICT call would resolve to the worker's own
-    /// model (#1795) — the "independent code reviewer" grading the code it
-    /// wrote — instead of proceeding with the once-per-run prose caveat.
-    ///
-    /// Off by default for the same reason its witness sibling above is: a
-    /// single-provider BYOK seat is the common case and must keep working.
-    /// On or off, the verdict's ladder snapshot records grader independence
-    /// as a structured fact (`LadderSnapshot::verifier_independent`), so a
-    /// stored verdict states it without the transcript. Checked before spend,
-    /// like the witness gate: a refusal after the trajectory is bought is a
-    /// trajectory the caller must throw away.
-    pub require_independent_verifier: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -566,7 +546,6 @@ impl Default for PipelineConfig {
             // evidence-demand-1295/README.md` for the measurement.
             verifier_evidence_demand: true,
             require_independent_witness: false,
-            require_independent_verifier: false,
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
@@ -730,12 +709,6 @@ struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
-    /// The router's resolution-quality caveat (L-M8) — today, only the verifier
-    /// degrading to the worker's own provider family because no second family
-    /// is healthy. Surfaced by [`Pipeline::warn_verifier_caveat`] at the calls
-    /// whose independence it undermines; dropping it silently is exactly the
-    /// "fallback is always visible" rule (L-M7) applied to a softer signal.
-    caveat: Option<String>,
 }
 
 /// The candidate-local mutable state one execute+verify+revise pass threads
@@ -752,8 +725,6 @@ struct CandidateState {
     /// warrant (the #1701 recurrence a projection method used to guard
     /// against by hand).
     signals: ChangeSignals,
-    /// This candidate's verdict-degradation record (#1787) — see [`VerdictDegradation`].
-    degradation: VerdictDegradation,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
     /// `None` while there is nothing to watch: no failing configured-command
@@ -821,21 +792,6 @@ struct CandidateState {
     /// progress and hit something new" — the signal that decides how much the
     /// next revision is told (`witness::airlock`).
     failures: Vec<FailureFingerprint>,
-    /// The last model verdict this candidate bought, keyed by a digest of the
-    /// exact inputs that produced it (#1431). A revision that changed nothing
-    /// the verdict depends on reuses the opinion instead of re-buying it —
-    /// the verifier is stateless across rounds, so identical inputs are the
-    /// same question, and paying twice buys only sampling noise.
-    last_verdict: Option<(u64, crate::verify::Verdict)>,
-    /// The stripped diff text the model verifier last read on this candidate
-    /// — the delta-framing baseline (#1431), distinct from the whole-verdict
-    /// reuse pin above: reuse fires only on byte-identical *inputs*, while
-    /// this lets a round whose diff partially moved render the unchanged file
-    /// sections as stat lines instead of re-buying their bodies. `None` until
-    /// a model verdict has been bought, and never set by a heuristic
-    /// fallback: a verdict no model read must not let the next round claim
-    /// its diff was already reviewed.
-    last_verdict_diff: Option<String>,
 }
 
 impl CandidateState {
@@ -940,8 +896,6 @@ pub struct Pipeline<'a> {
     raw_call_seq: AtomicU64,
     /// Measured per-role wall clock — the anticipatory rung's basis (#2432).
     role_pace: role_pace::RolePace,
-    /// The once-per-run verifier notices — see [`VerifierNotices`].
-    verifier_notices: VerifierNotices,
     /// Whether more than one candidate is currently writing to [`Self::events`]
     /// — set for the duration of a concurrent best-of-N fan-out and false
     /// everywhere else.
@@ -1005,7 +959,6 @@ impl<'a> Pipeline<'a> {
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
             role_pace: role_pace::RolePace::default(),
-            verifier_notices: VerifierNotices::default(),
             shared_event_lane: AtomicBool::new(false),
             started: std::time::Instant::now(),
             frame_sink: None,
@@ -1044,22 +997,16 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
-        // The same probe, asked about a DIFFERENT responsibility (#1795,
-        // #2467). The VERDICT grader must be independent too when the caller
-        // says so — and until #2381 that was the same question as the witness
-        // author's, because both were served by `Role::Verifier` and neither
-        // could be moved. Asking about `Verdict` by name is what keeps the two
-        // answers correct once a roster can bind them apart; reusing the
-        // witness author's answer here would refuse, or fail to refuse, on the
-        // strength of a row the caller did not ask about.
-        if self.config.require_independent_verifier
-            && let Some(reason) = self.independence_shortfall(ModelCallRole::Verdict)
-        {
-            return Err(PipelineRunError::new(
-                PipelineError::VerifierNotIndependent(reason),
-                total_cost,
-            ));
-        }
+        // There was a second refusal here, asking the same probe about
+        // `ModelCallRole::Verdict` (#1795, #2467). It is gone with the verdict
+        // call: a grader that does not exist cannot fail to be independent of
+        // the worker, and left in place the check refused runs outright,
+        // reporting that "the `verdict` responsibility is disabled by
+        // configuration" as though the operator had done something wrong.
+        //
+        // Independence is now a property of the witness author alone, which is
+        // the check above.
+        //
         // Before triage, before recall, before a single paid call — for the
         // same reason the two independence refusals above sit here.
         if let Err(error) = self.roster_refusal() {
@@ -1647,7 +1594,7 @@ impl<'a> Pipeline<'a> {
             // into and no pristine snapshot to author blind in, so it never
             // buys a witness. The ordinal is 1-based, like the start notice.
             results.push(
-                self.run_candidate(i + 1, frame, None, &engine, surface, spend)
+                self.run_candidate(frame, None, &engine, surface, spend)
                     .await,
             );
         }
@@ -1871,7 +1818,6 @@ impl<'a> Pipeline<'a> {
 
     async fn run_candidate(
         &self,
-        candidate: u32,
         frame: TaskFrame<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
@@ -1985,7 +1931,6 @@ impl<'a> Pipeline<'a> {
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
-            degradation: VerdictDegradation::new(candidate),
             flip_halt,
             oracle,
             oracle_trace,
@@ -2007,8 +1952,6 @@ impl<'a> Pipeline<'a> {
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
             failures: Vec::new(),
-            last_verdict: None,
-            last_verdict_diff: None,
         };
 
         if let Err(abort) = self
@@ -2171,7 +2114,6 @@ impl<'a> Pipeline<'a> {
             // cost is bounded to one lint pass + one suite run per
             // verification round (a revised candidate re-enters the audit),
             // paid only where a credit is about to be spent.
-            let mut lint_sample = String::new();
             if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
                 && let Some(cmd) = effective_cmd
             {
@@ -2180,10 +2122,9 @@ impl<'a> Pipeline<'a> {
                 // moot. New errors (or opted-in warnings) drop the
                 // fast-submit rung and the run escalates to the verifier with
                 // the delta in evidence.
-                let (new_errors, new_warnings, sample) = self.lint_delta(surface, &state).await;
+                let (new_errors, new_warnings) = self.lint_delta(surface, &state).await;
                 inputs.new_diag_errors = new_errors;
                 inputs.new_diag_warnings = new_warnings;
-                lint_sample = sample;
 
                 // Confirmation run (#859), only if the veto left the
                 // fast-submit standing: re-run the tracked command once on
@@ -2454,51 +2395,21 @@ impl<'a> Pipeline<'a> {
                     // a prior model-verifier FAIL also increments `revisions`,
                     // and gating on it paid a guidance call on the FIRST deterministic
                     // red while telling the verifier the agent had "failed twice in a row".
-                    let mut reason = brief.message();
-                    if self.responsibility_enabled(ModelCallRole::DistressGuidance)
-                        && state.failures.len() >= 2
-                    {
-                        // Same witness exclusion as the verdict call (#1433):
-                        // guidance reads the change under correction, and the
-                        // verifier's own test is not part of it.
-                        let stripped =
-                            crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
-                        let prompt = guidance_prompt(
-                            frame.goal,
-                            &stripped.diff,
-                            &evidence.summary,
-                            // Guidance never carries a delta baseline: its
-                            // render is already evidence-scoped (#1432), and
-                            // "unchanged since a verdict round" is a
-                            // verdict-shaped claim.
-                            &DiffContext {
-                                witness_paths: &witness_paths,
-                                previous: None,
-                            },
-                        );
-                        match self
-                            .verifier_guidance(prompt, spend.budget, spend.total)
-                            .await
-                        {
-                            Ok(Some(guidance)) => {
-                                if let Some(text) =
-                                    self.airlock_forward(&guidance, "distress_guidance", &sealed)
-                                {
-                                    reason
-                                        .push_str("\n\nIndependent reviewer course-correction:\n");
-                                    reason.push_str(&text);
-                                }
-                            }
-                            Ok(None) => {}
-                            Err(abort) => {
-                                return CandidateResult::aborted(
-                                    state.messages,
-                                    abort.reason,
-                                    AbortKind::DeliberateStop,
-                                );
-                            }
-                        }
-                    }
+                    // The worker is told what failed, and nothing else.
+                    //
+                    // A second deterministic failure used to buy a
+                    // `distress_guidance` call here — a verifier model reading
+                    // the diff and appending "independent reviewer
+                    // course-correction" to the evidence. It is gone for the
+                    // same reason the verdict is: a model's reading of a
+                    // bounded diff is a claim, a claim appended to a
+                    // measurement inherits the measurement's authority, and a
+                    // worker that cannot tell them apart acts on both. The
+                    // measurement is already here and already conclusive —
+                    // `brief` is the sealed, redacted account of the test that
+                    // went red — so there is nothing a reviewer could add
+                    // except a way to be wrong about it.
+                    let reason = brief.message();
                     let cause = RevisionCause::Deterministic(&reason);
                     if let Err(abort) = self
                         .revise_candidate(engine, surface, cause, spend, &mut state)
@@ -2515,7 +2426,7 @@ impl<'a> Pipeline<'a> {
                 // prompt-time `VERIFIER: no` must not strip the last reviewer
                 // from a behavioral change nothing proved (§7.1:
                 // predict-then-commit is the bug).
-                LadderDecision::ModelVerdict
+                LadderDecision::Unverified
                     if !frame.assessment.wants_verifier()
                         && Self::verifier_waiver_stands(&state) =>
                 {
@@ -2526,13 +2437,13 @@ impl<'a> Pipeline<'a> {
                         score_from_verification(false, None),
                     );
                 }
-                LadderDecision::ModelVerdict => {
+                LadderDecision::Unverified => {
                     // Escalate on evidence, not on prediction. "Inconclusive"
                     // here can mean two very different things: a real change
                     // nothing proved, or a change with nothing to prove. The
                     // diff tells them apart, and the prompt never could — so
-                    // ask it before buying a verifier call to confirm the absence
-                    // of a test that was never warranted
+                    // ask it before recording as unproven the absence of a
+                    // test that was never warranted
                     // (docs/spec/witness-protocol.md §7).
                     if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
@@ -2541,189 +2452,75 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, None),
                         );
                     }
-                    // Inconclusive — escalate to the model verifier (verifier ≠
-                    // worker; a verifier-call failure falls back to a heuristic).
-                    // The summary and the witness-stripped diff are assembled
-                    // together (`pipeline/evidence.rs`) so the reuse digest
-                    // below hashes exactly what the prompt carries.
-                    let (evidence_summary, stripped) = Self::verifier_evidence_summary(
-                        &state,
-                        &inputs,
-                        &snapshot,
-                        test_infra,
-                        &lint_sample,
-                        &witness_paths,
-                    );
-                    // Reuse before re-buying (#1431): a revision that changed
-                    // nothing the verdict depends on — same goal, same diff,
-                    // same evidence, byte for byte — would re-ask the same
-                    // question and pay full price for sampling noise. The
-                    // cached verdict is the same opinion at zero cost, and the
-                    // appended note steers the worker better than a fresh
-                    // reading of an unchanged tree ever did.
-                    let inputs_digest =
-                        verdict_inputs_digest(frame.goal, &stripped.diff, &evidence_summary);
-                    let cached = state
-                        .last_verdict
-                        .as_ref()
-                        .filter(|(digest, _)| *digest == inputs_digest)
-                        .map(|(_, verdict)| verdict.clone());
-                    let verdict = match cached {
-                        Some(mut verdict) => {
-                            verdict.reasoning.push_str(
-                                "\n(verdict reused: the goal, diff, and evidence are unchanged \
-                                 since the previous review round — no new model call was made)",
-                            );
-                            verdict
+                    // One deterministic ask, and only when it can be answered
+                    // (#1295 — the predicate states why `effective_cmd`
+                    // decides that).
+                    //
+                    // This is the *only* remaining channel from the
+                    // verification side back to the worker, and it is
+                    // deliberately not a review. The text is a fixed template
+                    // over the tracked command; it makes no claim about the
+                    // change, offers no reading of the diff, and the single
+                    // thing it can produce is the observation that would
+                    // settle the question. What it replaced was a model
+                    // narrating its doubts with a verdict's authority — and on
+                    // `fix-git` that narration made a worker reset `master`
+                    // and destroy a correctly-recovered commit, twice, to
+                    // satisfy a claim no measurement supported.
+                    if inputs.verifier_pass_stands_alone()
+                        && evidence_demand_is_worth_a_turn(
+                            &self.config,
+                            state.evidence_demands,
+                            state.revisions,
+                            effective_cmd.map(|cmd| cmd.command),
+                        )
+                        && let Some(cmd) = effective_cmd
+                    {
+                        state.evidence_demands += 1;
+                        let ask = crate::verify::evidence_demand_prompt(cmd.command);
+                        let cause = RevisionCause::EvidenceRequest(&ask);
+                        if let Err(abort) = self
+                            .revise_candidate(engine, surface, cause, spend, &mut state)
+                            .await
+                        {
+                            return CandidateResult::turn_aborted(state.messages, abort);
                         }
-                        None => {
-                            // Delta framing (#1431) rides the render context:
-                            // file sections byte-identical to what the
-                            // previous verdict read arrive as stat lines.
-                            // `previous` holds that round's STRIPPED diff —
-                            // the text a verdict actually read — so both
-                            // sides of the comparison are the same shape.
-                            let prompt = verifier_prompt(
-                                frame.goal,
-                                &stripped.diff,
-                                &evidence_summary,
-                                &DiffContext {
-                                    witness_paths: &witness_paths,
-                                    previous: state.last_verdict_diff.as_deref(),
-                                },
-                            );
-                            match self
-                                .verifier(&state.degradation, prompt, &inputs, spend)
-                                .await
-                            {
-                                Ok(verdict) => {
-                                    // Only pin a real model verdict for reuse. A
-                                    // heuristic fallback is a transient-outage
-                                    // stand-in (unresolvable provider, unparseable
-                                    // response, failed/timed-out call), not the
-                                    // opinion this candidate bought: caching it
-                                    // would suppress recovery on the next round
-                                    // (the verifier may have come back) and graft
-                                    // the "no new model call was made" reuse note
-                                    // onto a fallback that never made one.
-                                    if !verdict.heuristic {
-                                        state.last_verdict = Some((inputs_digest, verdict.clone()));
-                                    }
-                                    verdict
-                                }
-                                Err(abort) => {
-                                    return CandidateResult::aborted(
-                                        state.messages,
-                                        abort.reason,
-                                        AbortKind::DeliberateStop,
-                                    );
-                                }
-                            }
-                        }
-                    };
-                    if !verdict.heuristic {
-                        // The delta-framing baseline (#1431) advances only on
-                        // a verdict a model actually answered: a heuristic
-                        // fallback read nothing, and must not let the next
-                        // round stat-line text no model ever saw. It records
-                        // the STRIPPED diff — what the verdict actually read —
-                        // so the next round's per-section comparison holds
-                        // stripped text against stripped text.
-                        state.last_verdict_diff = Some(stripped.diff.clone());
+                        // Re-observe from the top: the revised tree gets a
+                        // fresh test run and the ladder re-decides over it. A
+                        // turn that produced the evidence now takes a
+                        // deterministic rung; one that did not lands back here
+                        // with the ask spent, and ends below.
+                        continue;
                     }
-                    let mut evidence = model_verdict_evidence(&verdict);
-                    evidence.ladder = Some(Box::new(
-                        snapshot
-                            .with_rung(verdict.rung())
-                            .with_verifier_independence(verdict.verifier_independent),
-                    ));
+                    // Terminal. Nothing deterministic settled this turn, and
+                    // nothing else is going to: no model is asked, because the
+                    // evidence that reaches this arm is by construction the
+                    // evidence no oracle could settle, and a model handed it
+                    // would be guessing at it too — only with a verdict's
+                    // authority attached. Measured, that guess agreed with
+                    // Terminal-Bench's grader 46% of the time, and 17 of its
+                    // false passes cost 5 tasks outright.
+                    //
+                    // `passed: true` for exactly the reason the abstention arm
+                    // above uses it — a run is not failed by the absence of a
+                    // way to check it — and, exactly as there, what keeps it
+                    // from reading as a pass is the pair beside it: the
+                    // summary says UNVERIFIED in its first word and the score
+                    // is `Unverified`, so this candidate can never tie a
+                    // genuinely verified sibling in best-of-N and then win the
+                    // smaller-diff tiebreak.
+                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.unproven_verdict(&evidence.summary);
                     self.emit(AgentEvent::Verdict {
-                        passed: verdict.passed,
+                        passed: true,
                         evidence: evidence.clone(),
                     });
-                    if verdict.passed {
-                        // Asymmetric trust (#871). "Not yet" from a verifier is
-                        // cheap to be wrong about — it buys one more revision.
-                        // "Done" ends the run, so it has to be corroborated by
-                        // something that is not another model's opinion.
-                        //
-                        // Unsupported, the pass is recorded as UNVERIFIED, not
-                        // as a failure. The distinction is load-bearing: a
-                        // Terminal-Bench trial that solved its task through
-                        // shell redirects and scored 1.0 against its own
-                        // verifier reaches exactly this state, and failing it
-                        // closed would report a correct run as broken. The
-                        // `Unverified` score keeps it from tying a genuinely
-                        // verified sibling in best-of-N.
-                        if inputs.verifier_pass_stands_alone() {
-                            // Ask for the missing evidence once, if asking can
-                            // be answered at all (#1295 — the predicate states
-                            // why `effective_cmd` decides that).
-                            if evidence_demand_is_worth_a_turn(
-                                &self.config,
-                                state.evidence_demands,
-                                state.revisions,
-                                effective_cmd.map(|cmd| cmd.command),
-                            ) && let Some(cmd) = effective_cmd
-                            {
-                                state.evidence_demands += 1;
-                                let ask = crate::verify::evidence_demand_prompt(cmd.command);
-                                let cause = RevisionCause::EvidenceRequest(&ask);
-                                if let Err(abort) = self
-                                    .revise_candidate(engine, surface, cause, spend, &mut state)
-                                    .await
-                                {
-                                    return CandidateResult::turn_aborted(state.messages, abort);
-                                }
-                                // Re-observe from the top: the revised tree
-                                // gets a fresh test run and the ladder
-                                // re-decides over it. A turn that produced the
-                                // evidence now takes a deterministic rung; one
-                                // that did not lands back here with the ask
-                                // spent, and is relabelled below.
-                                continue;
-                            }
-                            // No answerable ask left — record the pass as
-                            // unverified, per the comment above, with the rung
-                            // moved to match (see `uncorroborated_pass_evidence`
-                            // for why leaving `ModelVerdict` would train reward
-                            // on a verdict the ladder declined to believe).
-                            let abstained = uncorroborated_pass_evidence(&evidence, &snapshot);
-                            self.unverifiable(&abstained.summary);
-                            return state.into_verified(
-                                true,
-                                &abstained,
-                                score_from_verification(false, None),
-                            );
-                        }
-                        return state.into_verified(
-                            true,
-                            &evidence,
-                            score_from_verification(false, Some(true)),
-                        );
-                    }
-                    if !self.affords_repair(&state, &meter, *spend.total, spend.budget) {
-                        return state.into_verified(
-                            false,
-                            &evidence,
-                            score_from_verification(false, Some(false)),
-                        );
-                    }
-                    // The verifier read the deterministic evidence summary, so
-                    // its prose can carry the tail back. A reasoning that
-                    // quotes sealed material degrades to the symptom rather
-                    // than being forwarded (§4.3).
-                    let feedback = self
-                        .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
-                        .map(|text| crate::verify::bound_forwarded_reasoning(&text))
-                        .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
-                    let cause = RevisionCause::ReviewerClaim(&feedback);
-                    if let Err(abort) = self
-                        .revise_candidate(engine, surface, cause, spend, &mut state)
-                        .await
-                    {
-                        return CandidateResult::turn_aborted(state.messages, abort);
-                    }
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
+                    );
                 }
             }
         }
@@ -2835,7 +2632,6 @@ impl<'a> Pipeline<'a> {
             model_ref: decision.model_ref,
             provider,
             fallback: decision.fallback,
-            caveat: decision.caveat,
         })
     }
 
@@ -3047,20 +2843,6 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
         out.push(frame);
     }
     out
-}
-
-/// One digest over everything a model verdict depends on — goal, the (witness
-/// -stripped) diff, and the evidence summary. Byte-identical inputs are the
-/// same question; the ModelVerdict arm reuses its previous answer rather than
-/// paying for sampling noise (#1431). Within-run only, so the std hasher's
-/// stability across versions is irrelevant.
-fn verdict_inputs_digest(goal: &str, diff: &str, evidence_summary: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    goal.hash(&mut hasher);
-    diff.hash(&mut hasher);
-    evidence_summary.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Count changed lines in a unified diff: lines beginning with `+`/`-` but not

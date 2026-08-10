@@ -71,40 +71,6 @@ impl RepoStatusPort for FakeRepoStatus {
     }
 }
 
-/// A [`FileTouchPort`] serving a scripted SEQUENCE of readings — one per
-/// `mutations_recorded` call, holding the last once exhausted.
-///
-/// A sequence rather than a constant because the real counter is monotonic and
-/// the pipeline reads it twice: once for the candidate's baseline, before any
-/// work, and again when it folds each observation. A fixture that returned the
-/// same number to both would report a delta of zero and silently reproduce the
-/// bug under test.
-struct SeqTouches {
-    readings: std::sync::Mutex<VecDeque<u64>>,
-    last: std::sync::atomic::AtomicU64,
-}
-
-impl SeqTouches {
-    fn new(readings: Vec<u64>) -> Self {
-        Self {
-            readings: std::sync::Mutex::new(readings.into()),
-            last: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-}
-
-impl crate::ports::FileTouchPort for SeqTouches {
-    fn mutations_recorded(&self) -> u64 {
-        match self.readings.lock().unwrap().pop_front() {
-            Some(next) => {
-                self.last.store(next, std::sync::atomic::Ordering::Relaxed);
-                next
-            }
-            None => self.last.load(std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-}
-
 /// A [`RepoStatusPort`] serving a scripted SEQUENCE of snapshots — one per
 /// `untracked_fingerprints` call, holding the last once exhausted. Lets a
 /// test make the working tree "change" between the witness stage, the
@@ -1034,12 +1000,17 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
         .verdict
         .expect("zero-diff guard forced verification");
     assert!(verdict.passed);
-    assert!(!verdict.deterministic, "verified via the model verifier");
+    assert!(
+        !verdict.deterministic,
+        "a lookup that unexpectedly wrote is not a proven change"
+    );
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "the zero-diff guard must run the verifier on an unexpected mutation"
+        !stages(&events).contains(&StageKind::Verdict),
+        "the zero-diff guard forces the turn through verification rather than \
+         letting it complete unexamined — and verification now ends in the \
+         ladder, buying no opinion about the mutation it found"
     );
 }
 
@@ -1696,17 +1667,19 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         "triage said no witness: {s:?}"
     );
     assert!(
-        s.contains(&StageKind::Verdict),
-        "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
+        !s.contains(&StageKind::Verdict),
+        "a behavioral diff is graded by the ladder, whatever triage guessed: {s:?}"
     );
-    // Three paid calls: triage, the worker, and the verifier the evidence
-    // demanded. The plan and witness-author ceremony triage declined is
-    // never bought.
+    // Two paid calls: triage and the worker. The plan and witness-author
+    // ceremony triage declined is never bought, and neither is a verdict.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(calls, 3, "no plan or witness-author call is bought: {s:?}");
+    assert_eq!(
+        calls, 2,
+        "no plan, witness-author or verdict call is bought: {s:?}"
+    );
 }
 
 /// The observed failure, end to end at the seam that actually decides it.
@@ -1916,86 +1889,6 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
     assert!(
         !log.iter().any(|entry| entry.starts_with("graft:")),
         "a rejected witness is never grafted into the candidate: {log:?}"
-    );
-}
-
-/// Distress guidance: the FIRST deterministic failure revises on raw
-/// evidence alone; the SECOND spends one verifier call whose course-correction
-/// rides with the next revision prompt.
-#[tokio::test]
-async fn second_deterministic_red_verification_gets_verifier_guidance() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),      // worker
-        text_result("first fix"), // revision 1 (no guidance)
-        text_result("You are patching the symptom; fix the parser instead."), // guidance
-        text_result("second fix"), // revision 2 (carries guidance)
-    ]);
-    let resolver = OneProvider(&provider);
-    // baseline (fail), post-execute (fail) → revise; post-revision-1
-    // (fail) → distress → guidance → revise; post-revision-2 (fail) →
-    // revisions exhausted → deterministic failed verdict.
-    let runner = ScriptedRunner::new(vec![false, false, false, false], "@@ -1 +1 @@\n-a\n+b");
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        max_revisions: 2,
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            lint: None,
-            mutation: None,
-            coverage: None,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-
-    let verdict = outcome.verdict.expect("verified");
-    assert!(!verdict.passed);
-    assert!(verdict.deterministic, "red tests are a deterministic fail");
-    assert_eq!(outcome.revisions, 2);
-
-    // The guidance text reached the worker's revision prompt.
-    let carried = messages.iter().any(|m| {
-        m.content.contains("Independent reviewer course-correction")
-            && m.content.contains("fix the parser instead")
-    });
-    assert!(carried, "guidance rides with the second revision prompt");
-    assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
-        "the guidance call is an honest Verifier stage in the stream"
     );
 }
 
@@ -2288,7 +2181,6 @@ mod verifier_evidence_demand;
 /// Verifier != worker for the verdict call (#1795): the opt-in refusal and
 /// the structured grader-independence fact on the snapshot. A child module,
 /// so it reaches the scripted ports above via `super::*`.
-mod verifier_independence;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.

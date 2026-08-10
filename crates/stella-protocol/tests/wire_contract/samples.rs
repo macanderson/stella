@@ -103,8 +103,7 @@ pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
         Revise,
         NothingAttempted,
         Unverifiable,
-        ModelVerdict,
-        HeuristicFallback,
+        Unverified,
         Waived,
     ]
 }
@@ -175,6 +174,9 @@ pub(crate) fn all_proof_steps() -> Vec<ProofStep> {
         },
         ProofStep::VerificationUnavailable {
             reason: "every channel was blind".into(),
+        },
+        ProofStep::VerificationUnproven {
+            reason: "no fail→pass flip was observed".into(),
         },
         ProofStep::Oracle {
             command: "cargo test".into(),

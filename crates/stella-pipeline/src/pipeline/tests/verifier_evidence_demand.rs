@@ -112,9 +112,9 @@ async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer(
         "exactly one revision — the ask — should have been spent"
     );
     assert_eq!(
-        calls, 4,
-        "triage, worker, verifier, and the one demanded revision; a second verifier \
-         call would mean the deterministic rung did not take"
+        calls, 3,
+        "triage, worker, and the one demanded revision — the ask is the only thing \
+         the verification side spends, and it spends no model of its own"
     );
 }
 
@@ -153,8 +153,8 @@ async fn no_tracked_command_means_no_ask_at_all() {
          the feature was switched off the first time"
     );
     assert_eq!(
-        calls, 3,
-        "triage, worker, verifier — and nothing else: no revision turn"
+        calls, 2,
+        "triage and worker — and nothing else: an unanswerable ask buys no turn"
     );
 }
 
@@ -189,59 +189,18 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         verdict.passed && !verdict.deterministic,
-        "an unanswered ask still records the verifier's pass — as unverified, \
-         never as a failure"
+        "an unanswered ask still ends as unverified — never as a failure"
     );
-    assert_eq!(outcome.revisions, 1, "one ask, not one per verifier pass");
+    assert_eq!(outcome.revisions, 1, "one ask, not one per round");
     assert_eq!(
-        calls, 4,
-        "triage, worker, verifier, and the single ask. The revised turn changed \
-         nothing the verdict depends on, so the verifier's re-read is the CACHED \
-         pass (#1431) — no fifth call"
+        calls, 3,
+        "triage, worker, and the single ask. The re-observed tree lands back on the \
+         same abstention with the ask already spent, and nothing re-reads it"
     );
     assert!(
-        verdict.summary.contains("verdict reused"),
-        "the reused verdict says so, so the transcript stays honest: {}",
-        verdict.summary
-    );
-}
-
-/// The FAIL shape of the same reuse (#1431): a revision that changes neither
-/// the diff nor the evidence re-asks the verifier the byte-identical question.
-/// The cached opinion is the same opinion at zero cost — a second paid call
-/// could differ only by sampling noise, and no one defends a verification
-/// layer that flips on noise.
-#[tokio::test]
-async fn an_unchanged_revision_reuses_the_verdict_instead_of_rebuying_it() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("FAIL — the change does not handle the empty case"),
-        text_result("I believe the change is correct as written"),
-    ]);
-    let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::TimeOut, TestScript::TimeOut],
-        "@@ -1 +1 @@\n-old\n+new",
-    );
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        max_revisions: 1,
-        ..PipelineConfig::default()
-    };
-
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
-
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(!verdict.passed, "the reused FAIL still fails the run");
-    assert_eq!(
-        calls, 4,
-        "triage, worker, verifier, one revision — the second verdict round is \
-         the cached FAIL, not a fifth call"
-    );
-    assert!(
-        verdict.summary.contains("verdict reused"),
-        "the reuse is stated in the verdict the run reports: {}",
+        verdict.summary.starts_with("UNVERIFIED"),
+        "the ask went unanswered, so the turn ends on the abstention and says so in \
+         its first word: {}",
         verdict.summary
     );
 }
@@ -272,7 +231,7 @@ async fn the_demand_can_be_switched_off() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && !verdict.deterministic);
     assert_eq!(outcome.revisions, 0, "off means no ask");
-    assert_eq!(calls, 3, "triage, worker, verifier");
+    assert_eq!(calls, 2, "triage and worker");
 }
 
 /// #1509's witness: the demand and a repair are not substitutes, so buying
@@ -341,37 +300,29 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
          main the demand eats a repair and this reads 2 with the run refused"
     );
     assert_eq!(
-        calls, 6,
-        "triage, worker, verifier, the demand, and two repair rounds"
+        calls, 5,
+        "triage, worker, the demand, and two repair rounds"
     );
 }
 
-/// An uncorroborated verifier pass must be stamped `Unverifiable` on the wire,
-/// not `ModelJudge`.
+/// The wild scenario that produced #871's asymmetric trust, re-pinned for a
+/// ladder with nothing to be asymmetric about: a warranted witness whose runner
+/// is not installed.
 ///
-/// Every other channel on this path already says abstention: the score is
-/// `Unverified`, the summary leads with UNVERIFIED, and `unverifiable()` puts
-/// `VerificationUnavailable` on the rail. The snapshot's rung was the one field
-/// left disagreeing — stamped when the verifier answered, before the branch
-/// below discovered the answer stood alone.
+/// `TestScript::Infra` observes no assertion, so there is no flip and no green
+/// test. Under the old design a verifier's "done" was all that was left
+/// standing, and the run had to be talked back down from it — relabelled
+/// UNVERIFIED, its rung restamped, so reward extraction would not train on a
+/// verdict the ladder had declined to believe.
 ///
-/// It is not a labelling nicety. `reward::outcome_term` reads the rung and
-/// nothing else: `ModelJudge` earns `+weights.judged`, while `Unverifiable`
-/// returns `DiscardReason::Abstained`. Left wrong, every pass the ladder
-/// declined to believe was fed back as a positive training signal — the exact
-/// verdicts #871's asymmetric trust exists to refuse.
-///
-/// The scenario is the one that produced it in the wild: a warranted witness
-/// whose runner is not installed. `TestScript::Infra` observes no assertion, so
-/// there is no flip and no green test, and the verifier's "done" is all that is
-/// left standing.
+/// Nothing has to be talked down now. The pass was never claimed: the ladder
+/// reaches the same state and reports it directly. The assertions are
+/// deliberately the same ones, because the *observable* contract they pin is
+/// what mattered and it has not moved — a missing toolchain is not a failing
+/// change, and it is not a passing one either.
 #[tokio::test]
-async fn an_uncorroborated_verifier_pass_is_stamped_as_an_abstention_not_a_judgement() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — the change reads correct"),
-    ]);
+async fn a_missing_runner_is_unproven_rather_than_passed_or_failed() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let runner = ScriptedRunner::scripted(
         vec![TestScript::Fail, TestScript::Infra],
         "@@ -1 +1 @@\n-old\n+new",
@@ -380,7 +331,7 @@ async fn an_uncorroborated_verifier_pass_is_stamped_as_an_abstention_not_a_judge
         test_command: Some("pytest -q".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         // The ask is a separate axis with its own tests above; switching it off
-        // keeps this scenario on the relabelling branch it is about.
+        // keeps this scenario on the branch it is about.
         verifier_evidence_demand: false,
         ..PipelineConfig::default()
     };
@@ -390,37 +341,26 @@ async fn an_uncorroborated_verifier_pass_is_stamped_as_an_abstention_not_a_judge
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         verdict.passed && !verdict.deterministic,
-        "an unverified pass is still not a failure"
+        "an unproven turn is still not a failure"
     );
     assert_eq!(
         outcome.score,
         Some(crate::candidate::CandidateScore::Unverified),
-        "the score already knew this was not a real pass"
+        "the score says plainly that nothing proved this"
     );
     assert!(
         verdict.summary.starts_with("UNVERIFIED"),
-        "and so did the summary: {}",
+        "and so does the summary: {}",
         verdict.summary
     );
-
-    let rung = verdict
-        .ladder
-        .as_deref()
-        .expect("the verdict carries its snapshot")
-        .rung
-        .expect("a rung is stamped");
     assert_eq!(
-        rung,
-        stella_protocol::LadderRung::Unverifiable,
-        "the rung must agree with the abstention every other channel recorded — \
-         `ModelJudge` here is what fed an uncorroborated pass into reward as a win"
-    );
-    assert!(
-        matches!(
-            crate::reward::outcome_term(rung, verdict.passed, &Default::default()),
-            Err(crate::reward::DiscardReason::Abstained)
-        ),
-        "the consequence that makes the rung load-bearing: this trajectory must \
-         be discarded, never credited"
+        verdict
+            .ladder
+            .as_deref()
+            .expect("the verdict carries its snapshot")
+            .rung,
+        Some(stella_protocol::LadderRung::Unverified),
+        "the rung must agree with the summary — reward extraction reads the rung \
+         and nothing else, so a disagreement here trains on the wrong label"
     );
 }

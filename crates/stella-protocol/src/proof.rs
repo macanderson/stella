@@ -85,6 +85,21 @@ pub enum ProofStep {
     /// step of its own, an abstention reaches the rail as `✓ passed · model
     /// verifier`, which is the same silent outcome in the other direction.
     VerificationUnavailable { reason: String },
+    /// The evidence channels worked, and what they returned did not amount to
+    /// a proof ([`crate::LadderRung::Unverified`]).
+    ///
+    /// The near-twin of [`Self::VerificationUnavailable`] and deliberately not
+    /// the same step, for the reason that one exists at all: a reader has to be
+    /// able to tell "the instruments were blind" from "the instruments worked
+    /// and the answer was not enough". They imply opposite repairs — fix the
+    /// probe, versus produce the missing observation — and a rail that renders
+    /// both as one row sends every reader to the wrong one half the time.
+    ///
+    /// This is the step that replaced the model verdict. Where a run used to
+    /// record a second model's opinion on inconclusive evidence, it now records
+    /// that the evidence was inconclusive and stops, so the trace states the
+    /// limit of what was established rather than papering over it.
+    VerificationUnproven { reason: String },
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
     /// flip; anything else is not.
@@ -111,10 +126,14 @@ pub enum ProofStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seed: Option<u64>,
     },
-    /// This candidate's model verdict degraded to the deterministic heuristic
-    /// ([`crate::LadderRung::HeuristicFallback`]): the verifier role was
-    /// unresolvable, its response did not follow the verdict protocol, or the
-    /// call failed outright.
+    /// This candidate's model verdict degraded to the deterministic heuristic:
+    /// the verifier role was unresolvable, its response did not follow the
+    /// verdict protocol, or the call failed outright.
+    ///
+    /// **Retired.** No run emits it — the pipeline makes no verdict call, so
+    /// there is none to degrade. Retained because recorded streams carry it and
+    /// this crate's contract is that a reader meeting an unknown step fails the
+    /// event rather than laundering it.
     ///
     /// Emitted once per candidate, keyed by ordinal, because the once-per-run
     /// prose warning cannot say *which* of a best-of-N fan-out's candidates

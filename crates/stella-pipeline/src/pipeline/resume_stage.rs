@@ -307,7 +307,6 @@ impl<'a> Pipeline<'a> {
             // Ordinal 1: a resume re-enters exactly one candidate — the fan-out
             // it may have belonged to died with the process, and only the
             // checkpointed turn comes back (#1787's per-candidate record).
-            degradation: VerdictDegradation::new(1),
             flip_halt,
             oracle,
             oracle_trace,
@@ -331,8 +330,6 @@ impl<'a> Pipeline<'a> {
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
             failures: Vec::new(),
-            last_verdict: None,
-            last_verdict_diff: None,
         };
         match outcome {
             TurnOutcome::Completed { text, cost_usd } => {
