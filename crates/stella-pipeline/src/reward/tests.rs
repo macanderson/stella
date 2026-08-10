@@ -226,8 +226,7 @@ fn a_non_finite_cost_withholds_the_scalar_only() {
     }
 }
 
-/// A policy on a different scale, keeping the rest: the common case now that
-/// `deterministic` is the only outcome magnitude there is.
+/// A policy with a helper for the common case: restate the unit, keep the rest.
 fn scaled(deterministic: f64) -> RewardPolicy {
     RewardPolicy {
         outcome: OutcomeWeights { deterministic },
@@ -235,38 +234,43 @@ fn scaled(deterministic: f64) -> RewardPolicy {
     }
 }
 
-/// The unit must be a usable one, and it is refused at both the places a bad
-/// policy can arrive — config load and [`label`] itself.
+/// A policy a stored label wrote before the judged tier was retired.
+///
+/// The extra key is the whole point: the field is gone from [`OutcomeWeights`],
+/// so a label already on disk must still decode — silently dropping the weight
+/// it no longer has a home for, never failing the read. Every other field has
+/// to survive intact, because a stored row that decodes to the WRONG policy is
+/// worse than one that will not decode at all.
 #[test]
-fn a_non_positive_unit_is_refused_at_both_gates() {
-    let unusable = scaled(0.0);
+fn a_label_written_under_the_retired_judged_weight_still_decodes() {
+    let stored = serde_json::json!({
+        "rung": "submit_fast",
+        "outcome": 0.5,
+        "reward": 0.48,
+        "cost": {"steps": 1, "cost_usd": 0.0, "revisions": 0},
+        "policy": {
+            "outcome": {"deterministic": 1.0, "judged": 0.5},
+            "shaping": {"per_step": 0.02, "per_usd": 0.5, "per_revision": 0.1},
+        },
+    });
+    let label: RewardLabel = serde_json::from_value(stored).expect("a stored label must decode");
+    assert_eq!(label.policy.outcome, OutcomeWeights { deterministic: 1.0 });
+    assert_eq!(label.policy.shaping, RewardShaping::default());
     assert_eq!(
-        unusable.validate(),
-        Err(WeightError::DeterministicNotPositive)
-    );
-    // ...and `label` refuses it too, rather than trusting that whoever built
-    // the policy validated it first.
-    let label = label(
-        settled(LadderRung::SubmitFast, true),
-        cost(1, 0.0, 0),
-        &unusable,
-    );
-    assert_eq!(label.reward, None);
-    assert_eq!(label.discard, Some(DiscardReason::PolicyInvalid));
-    assert_eq!(
-        label.rung,
-        Some(LadderRung::SubmitFast),
-        "the rung is still true even when the arithmetic is refused"
+        label.outcome,
+        Some(0.5),
+        "the term the retired weight produced is still the term that was recorded"
     );
 }
 
-/// Every other way a policy can be nonsense, and the distinct reason each one
-/// earns. Distinct because they are different mistakes with different fixes.
+/// Every way a policy can be nonsense, and the distinct reason each one earns.
+/// Distinct because they are different mistakes with different fixes.
 #[test]
 fn each_impossible_policy_names_its_own_rule() {
     let cases = [
         (scaled(f64::NAN), WeightError::NotFinite),
-        (scaled(-0.1), WeightError::DeterministicNotPositive),
+        (scaled(0.0), WeightError::DeterministicNotPositive),
+        (scaled(-1.0), WeightError::DeterministicNotPositive),
         (
             RewardPolicy {
                 shaping: RewardShaping {
@@ -414,7 +418,7 @@ fn a_label_has_no_free_text_leaves() {
             for policy in [
                 RewardPolicy::default(),
                 scaled(0.2),
-                scaled(2.0),
+                scaled(0.0),
                 scaled(f64::NAN),
             ] {
                 let value =
@@ -556,8 +560,6 @@ proptest! {
         which in 0usize..2,
     ) {
         let policy = RewardPolicy {
-            // Constructed to be valid by shape: a strictly positive unit is
-            // the whole of `OutcomeWeights::validate`.
             outcome: OutcomeWeights { deterministic },
             shaping: RewardShaping { per_step, per_usd, per_revision },
         };

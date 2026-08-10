@@ -546,18 +546,13 @@ theme = "stella-dark"   # stella-dark | stella-light
 # What a finished turn's verdict is worth when it becomes a training label
 # (#1043). Whole-block last-wins across scopes, like `[ui]`; carries no
 # credential or egress authority, so no trust restoration — a project setting a
-# weight is stating an opinion about its own scale, not borrowing permission.
+# weight is stating an opinion about its own evidence, not borrowing permission.
 #
-# WHY THIS IS CONFIGURABLE AT ALL: `deterministic_weight` is the unit the whole
-# reward scale is expressed in, and a workspace pooling its rows with someone
-# else's may need it to match theirs.
-#
-# `verifier_weight` USED TO SIT BESIDE IT and is now RETIRED: it scaled a model
-# verifier's opinion against a test's observation, and verification makes no
-# model call, so no rung carries that magnitude. A file that still sets it loads
-# — stella names it at startup as retired rather than as a misspelling — but
-# nothing reads it. Delete it. The `verifier_distrusted` discard reason it once
-# produced is likewise unreachable, retained only so stored labels keep parsing.
+# RETIRED KEY: `verifier_weight` priced a model verifier's opinion at half a
+# test's observation, and a workspace could lower it. The verdict call that
+# produced that tier is gone, so the weight priced nothing; it is removed rather
+# than kept as a no-op, and a file that still sets it is reported as an
+# unrecognized key (#2616).
 #
 # UNLIKE `[context.retrieval]` ABOVE, AN OUT-OF-RANGE VALUE HERE IS REJECTED,
 # NOT CLAMPED. The postures differ because the failures differ: a bad retrieval

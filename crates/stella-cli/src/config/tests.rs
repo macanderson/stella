@@ -363,8 +363,8 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
 ///
 /// The settings file below is well-formed — it parses, and every switch in it
 /// is individually legal — but `deterministic_weight: 0.0` gives the reward
-/// scale a unit with no directions in it, which `reward_policy()` refuses by
-/// name rather than clamping. That is the only fallible step downstream of the load, so it
+/// scale a zero unit, which `reward_policy()` refuses by name rather than
+/// clamping. That is the only fallible step downstream of the load, so it
 /// is the lever that separates "derive, then commit" from "assign as you go":
 /// with the assignments interleaved, `enable_recap` and the `bash` switch are
 /// already written by the time the reward weights are rejected, and the
@@ -564,13 +564,13 @@ fn a_configured_reward_policy_reaches_the_config() {
     .expect("a legal weight loads");
     assert_eq!(cfg.reward_policy.outcome.deterministic, 0.2);
     assert_eq!(
-        cfg.reward_policy.shaping.per_step, 0.02,
+        cfg.reward_policy.shaping.per_usd, 0.5,
         "an unset weight stays at its default"
     );
 }
 
-/// A reward weight that cannot carry a scale fails the LAUNCH, by name — it does
-/// not get clamped to something legal and then quietly applied.
+/// A reward weight with no usable scale fails the LAUNCH, by name — it does not
+/// get clamped to something legal and then quietly applied.
 ///
 /// This is the whole reason `reward_policy()` returns a `Result`. A substituted
 /// weight would produce correctly-shaped labels for every turn thereafter,
@@ -595,6 +595,7 @@ fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
     )
     .expect_err("a scale with no unit must not launch");
     assert!(error.contains("deterministic_weight"), "{error}");
+    assert!(error.contains("greater than zero"), "{error}");
 }
 
 #[test]

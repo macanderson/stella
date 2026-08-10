@@ -178,9 +178,10 @@ impl<'a> Pipeline<'a> {
     /// evidence and said nothing.
     ///
     /// Parameterised by responsibility rather than fixed to the witness author
-    /// for the same reason one step out: `require_independent_verifier` asks
-    /// about the VERDICT, and that shared an answer with the witness author
-    /// only while the two could not be bound separately.
+    /// because independence is a question each responsibility answers for
+    /// itself. It was one question only while the roster could not bind them
+    /// separately; the verdict once asked it too, and its answer agreed with
+    /// the witness author's by coincidence rather than by construction.
     ///
     /// Pure — it emits nothing, so asking twice costs nothing and says nothing
     /// twice.

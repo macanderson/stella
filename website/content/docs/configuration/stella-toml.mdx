@@ -316,13 +316,12 @@ theme = "stella-light"
 
 What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,
 like `[ui]`; carries no credential or egress authority, so a project setting a weight is
-stating an opinion about its own scale, not borrowing permission.
+stating an opinion about its own evidence, not borrowing permission.
 
 <CardGrid size="sm">
   <OptionCard name="reward.deterministic_weight" defaultValue="1.0">
-    Magnitude of a deterministic pass or fail — the unit the whole reward scale is
-    expressed in, and the only outcome magnitude there is. Zero or negative is refused
-    at launch rather than clamped.
+    Magnitude of a deterministic pass or fail — the unit the shaping prices are measured
+    against.
   </OptionCard>
   <OptionCard name="reward.per_step" defaultValue="0.02">
     Subtracted per model call.
@@ -337,15 +336,13 @@ stating an opinion about its own scale, not borrowing permission.
 
 ```toml title="stella.toml"
 [reward]
-per_usd = 1.0   # price a dollar of spend twice as dearly as the default
+per_usd = 0.05   # price a dollar of spend at a tenth of the default
 ```
 
-<Callout type="warn">
-  **`reward.verifier_weight` is retired.** It scaled a model verifier's opinion against a
-  test's observation. Verification makes no model call, so no rung carries that magnitude —
-  a label is priced by `deterministic_weight` alone. A file that still sets the key loads,
-  and stella names it at startup as retired rather than as a misspelling. Delete it.
-</Callout>
+`reward.verifier_weight` is **retired**. It priced a model verifier's opinion against
+`deterministic_weight`, and the verdict call that produced that tier no longer runs, so the
+weight steered nothing. A file that still sets it loads normally and reports the key as
+unrecognized.
 
 ### `[authority]` — managed scope only
 

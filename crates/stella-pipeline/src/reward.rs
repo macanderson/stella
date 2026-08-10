@@ -18,39 +18,53 @@
 //! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no model opinion to fall back on — see below. |
 //! | everything else | **discarded** | See below. |
 //!
-//! # Why the magnitude is configurable
+//! # One tier, because there is one kind of evidence left
 //!
-//! [`OutcomeWeights::deterministic`] is the unit the scale is expressed in, and
-//! a workspace pooling its rows with someone else's may need it to match
-//! theirs. It is the only outcome magnitude there is: the judged tier that once
-//! sat under it — a model verifier's opinion, priced at half a test's
-//! observation — went with the verifier call itself, and the settings key that
-//! scaled it (`reward.verifier_weight`) is retired: a file still carrying it
-//! loads and is told the key reads nothing, rather than being quietly obeyed
-//! in a way that changes no run.
+//! [`OutcomeWeights`] carries a single magnitude. It used to carry two: a
+//! *judged* weight priced a model verifier's opinion at half a test's
+//! observation, and a workspace could lower that half — never raise it past the
+//! deterministic weight, because above that line an opinion outranks an
+//! observation and the ladder inverts.
 //!
-//! **Refused, not clamped** — deliberately the opposite posture to
-//! `stella_context`'s retrieval tuning, which sanitizes an out-of-range knob
-//! rather than failing. The postures differ because the failures do. A bad
-//! retrieval knob degrades one turn, visibly, and the next turn recovers; the
-//! worse answer there is failing a person's work over a typo. A bad reward
-//! weight writes permanently mislabelled training data that is perfectly
-//! well-formed — there is no turn to fail, and nothing downstream can tell that
-//! a substituted weight was ever applied. So this one fails at launch, naming
-//! the key, before any work starts. [`OutcomeWeights::validate`] runs at config
-//! load and again inside [`label`], so a policy that got past one path cannot
-//! get past the other.
+//! That whole apparatus described a tier with no members once the verdict call
+//! was removed (#2584): no rung's magnitude comes from a model any more, so a
+//! judged weight priced nothing, and the ceiling it was checked against refused
+//! launches over a knob that could not change a single label (#2616). Both are
+//! gone rather than retained, because a weight is not decode-compatibility
+//! trivia — it is stamped onto every new label as the scale a reader
+//! renormalizes by, and a scale with no members on it is a claim that a tier
+//! exists.
+//!
+//! Labels written before the removal still carry `outcome.judged` in their
+//! stamped policy, which is exactly what makes their `±0.5` outcome terms
+//! readable; this type ignores the field on the way back in. The retired
+//! discard reasons ([`DiscardReason::VerifierDistrusted`],
+//! [`DiscardReason::VerifierUnavailable`]) are kept for the opposite reason —
+//! they name stored records, and a label already written must keep parsing.
+//!
+//! What survives of the argument is the posture: an unusable weight is
+//! **refused, not clamped** — deliberately the opposite of `stella_context`'s
+//! retrieval tuning, which sanitizes an out-of-range knob rather than failing.
+//! The postures differ because the failures do. A bad retrieval knob degrades
+//! one turn, visibly, and the next turn recovers; the worse answer there is
+//! failing a person's work over a typo. A bad reward weight writes permanently
+//! mislabelled training data that is perfectly well-formed — there is no turn
+//! to fail, and nothing downstream can tell that a substituted weight was ever
+//! applied. So this one fails at launch, naming the key, before any work
+//! starts.
 //!
 //! # The policy travels with the label
 //!
 //! Every [`RewardLabel`] carries the [`RewardPolicy`] it was computed under.
 //! Without it, two workspaces on different weights emit rows that are
 //! arithmetically indistinguishable and silently incomparable — pooling them
-//! would average a 1.0-scale pass against a 0.2-scale one as though they were
-//! the same measurement. With it, a reader can renormalize, or select one
-//! policy and drop the rest. `stella_core::comparison::ComparisonReport` already
-//! stamps its own `RewardWeights` for the same reason; this is that rule applied
-//! to the per-turn label.
+//! would average a reward shaped at `per_usd = 0.5` against one shaped at
+//! `0.05` as though they were the same measurement, and would read an older
+//! row's `±0.5` judged outcome as a deterministic one. With it, a reader can
+//! renormalize, or select one policy and drop the rest.
+//! `stella_core::comparison::ComparisonReport` already stamps its own
+//! `RewardWeights` for the same reason; this is that rule applied to the
+//! per-turn label.
 //!
 //! # Why the abstain rungs are discarded rather than punished
 //!
@@ -92,20 +106,15 @@ use stella_protocol::{LadderRung, VerdictEvidence};
 /// Default magnitude of a label backed by a deterministic test observation.
 const DETERMINISTIC_WEIGHT: f64 = 1.0;
 
-/// What evidence is worth, before shaping.
+/// What the one surviving tier of evidence is worth, before shaping.
 ///
-/// One number, because there is one scoring tier: only a deterministic
-/// observation prices a rung. A second field held the judged magnitude until
-/// the verifier call it described was removed; it is gone rather than retained
-/// at a value nothing multiplies.
-///
-/// A struct rather than a bare `f64` so the wire shape (`{"deterministic": …}`)
-/// and [`RewardPolicy`]'s two-half split survive the loss of the tier, and so a
-/// future tier joins here instead of re-splitting the policy.
+/// One number, because one tier scores: a deterministic observation. A second
+/// magnitude priced a model verifier's opinion until the verdict call that
+/// produced it was removed — see the module docs for why it went rather than
+/// staying as an inert stamp.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct OutcomeWeights {
-    /// Magnitude of a deterministic pass or fail — the unit the whole scale is
-    /// expressed in.
+    /// Magnitude of a deterministic pass or fail.
     pub deterministic: f64,
 }
 
@@ -144,7 +153,7 @@ impl WeightError {
             WeightError::NotFinite => "must be a finite number",
             WeightError::DeterministicNotPositive => {
                 "deterministic_weight must be greater than zero — it is the unit \
-                 the whole reward scale is expressed in"
+                 every other weight is measured against"
             }
             WeightError::ShapingNegative => {
                 "shaping prices must not be negative — a negative price pays a \
@@ -155,7 +164,7 @@ impl WeightError {
 }
 
 impl OutcomeWeights {
-    /// Check that the unit is a usable one. Called at config load so a bad
+    /// Check that the scale has a usable unit. Called at config load so a bad
     /// value is a loud launch failure, and again inside [`label`] so a policy
     /// that arrived by some other path (a deserialized record, a direct struct
     /// literal) is still refused rather than applied.
@@ -284,10 +293,8 @@ pub enum DiscardReason {
     ///
     /// **Retired**, and in the strongest possible sense: the workspace's
     /// distrust of the model verifier is now the architecture rather than a
-    /// weight, because the call it distrusted is not made. The weight that
-    /// produced it is gone too — `reward.verifier_weight` is named as a retired
-    /// key at load rather than parsed and ignored — so nothing can construct
-    /// this variant any more. Retained for the same reason as
+    /// weight, because the call it distrusted is not made and the weight that
+    /// expressed the distrust no longer exists. Retained for the same reason as
     /// [`Self::VerifierUnavailable`] — stored labels must keep parsing.
     VerifierDistrusted,
     /// The [`RewardPolicy`] itself is invalid, so no scalar computed under it
@@ -396,8 +403,9 @@ pub struct RewardLabel {
     /// The policy this label was computed under, stamped so the number above is
     /// interpretable outside the workspace that produced it. Always present,
     /// including on a discard — a reader pooling records has to be able to tell
-    /// a discard from a scored row computed on a different scale, and the two
-    /// are indistinguishable once the policy is dropped.
+    /// a discard from a scored row shaped under weights it does not share, and
+    /// an older row whose policy still names a judged weight from one written
+    /// after that tier was retired.
     pub policy: RewardPolicy,
 }
 
@@ -479,8 +487,8 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy
 /// **Only deterministic rungs score.** Every other rung is a discard with a
 /// named reason, never a `0.0`, because a zero asserts that a neutral outcome
 /// was observed and none of them observed anything. The judged tier is gone
-/// along with the call that produced it: there is no rung whose magnitude comes
-/// from a model's opinion, which is why [`OutcomeWeights`] carries one number.
+/// along with the call that produced it: no rung's magnitude comes from a
+/// model's opinion, which is why [`OutcomeWeights`] carries one number.
 pub fn outcome_term(
     rung: LadderRung,
     passed: bool,

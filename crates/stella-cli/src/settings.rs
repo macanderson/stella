@@ -1231,18 +1231,20 @@ impl ToolsSettings {
 /// it becomes a training label (#1043).
 ///
 /// Every field optional, and an absent field means the stated default rather
-/// than zero: a workspace that only wants a cheaper step price writes
+/// than zero: a workspace that only wants to price steps differently writes
 /// `per_step` alone and inherits the rest.
 ///
-/// `verifier_weight` used to live here, scaling a model verifier's opinion
-/// against a test's observation. Verification makes no model call, so no rung
-/// carries that magnitude and the key is retired — named as such by
-/// `unknown::retirement` at load rather than parsed into a number nothing
-/// multiplies. See [`stella_pipeline::reward`] for the full argument.
+/// There used to be a `verifier_weight` here, priced against
+/// `deterministic_weight`, because the ladder had a tier whose magnitude came
+/// from a model verifier's opinion. That call is gone and so is the tier, so
+/// the key is retired rather than kept as a no-op: an accepted key that steers
+/// nothing is the settings failure mode this surface exists to avoid, and a
+/// retired one is at least reported by name by the unrecognized-key pass
+/// (#2616). See [`stella_pipeline::reward`] for the full argument.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct RewardSettings {
     /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit
-    /// the whole reward scale is expressed in.
+    /// the shaping prices are measured against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic_weight: Option<f64>,
     /// Reward subtracted per model call. Default `0.02`.

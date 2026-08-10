@@ -567,96 +567,35 @@ mod tests {
         );
     }
 
-    /// The witness for #2586. Both keys were correct in a shipped release and
-    /// read nothing now; the file must still LOAD (serde tolerance, asserted
-    /// rather than assumed) and each key must be told apart from a misspelling,
-    /// because "check the spelling" sends its author hunting for a mistake they
-    /// did not make.
+    /// A **retired** key is reported by exactly the same machinery as a typo,
+    /// and that is the point (#2616). Both `reward.verifier_weight` and
+    /// `agent_engine_config.pipeline_require_independent_verifier` steered a
+    /// verdict call that no longer runs. A retired key kept in the typed struct
+    /// is worse than an unknown one — it parses, merges across all three
+    /// scopes, and configures nothing, with no output whatsoever — so retiring
+    /// it means deleting the field, not keeping a no-op.
+    ///
+    /// The file still LOADS: this pass warns, it never gates, which is what
+    /// lets a settings file written against an older release keep working.
     #[test]
-    fn a_retired_key_is_named_as_retired_rather_than_as_a_typo() {
-        let json = r#"{
-             "agent_engine_config": { "pipeline_require_independent_verifier": "on" },
-             "reward": { "verifier_weight": 0.25 }
-           }"#;
-        // It parses. A key that hard-errored would break a settings file
-        // written against a release that accepted it.
-        let parsed: super::super::Settings = serde_json::from_str(json).expect("still loads");
-        assert!(
-            parsed
-                .reward
-                .is_some_and(|reward| reward == super::super::RewardSettings::default()),
-            "the retired key contributes nothing to the typed value"
+    fn the_retired_verdict_keys_are_named() {
+        let found = scan(
+            r#"{
+                 "reward": { "deterministic_weight": 1.0, "verifier_weight": 0.3 },
+                 "agent_engine_config": {
+                   "pipeline_require_diff_coverage": "on",
+                   "pipeline_require_independent_verifier": "on"
+                 }
+               }"#,
         );
-
-        let found = scan(json);
         assert_eq!(
             found,
             vec![
                 "agent_engine_config.pipeline_require_independent_verifier".to_string(),
                 "reward.verifier_weight".to_string(),
             ],
-            "both are reported — silent acceptance is the failure mode"
+            "a retired key must be named, and the keys beside it left alone"
         );
-        for key in &found {
-            assert!(
-                retirement(key).is_some(),
-                "{key} must carry its own reason, not the spelling advice"
-            );
-        }
-
-        // ...and what the operator actually reads: one line per retired key,
-        // each naming it, and not a word about spelling.
-        let lines = notices("settings.json", found);
-        assert_eq!(lines.len(), 2, "{lines:#?}");
-        for (line, key) in lines.iter().zip([
-            "agent_engine_config.pipeline_require_independent_verifier",
-            "reward.verifier_weight",
-        ]) {
-            assert!(line.contains(key), "{line}");
-            assert!(line.contains("is retired and reads nothing"), "{line}");
-            assert!(
-                !line.contains("check the spelling"),
-                "a retired key was spelled correctly: {line}"
-            );
-        }
-    }
-
-    /// A file with both kinds gets both notices, and neither swallows the
-    /// other: the typo still gets its spelling advice, and it is reported
-    /// first because it is the one that is probably a live mistake.
-    #[test]
-    fn a_typo_and_a_retired_key_in_one_file_each_get_their_own_notice() {
-        let lines = notices(
-            "stella.toml",
-            scan(
-                r#"{
-                     "reward": { "verifier_weight": 0.25, "per_stepp": 0.1 }
-                   }"#,
-            ),
-        );
-        assert_eq!(lines.len(), 2, "{lines:#?}");
-        assert!(lines[0].contains("per_stepp"), "{}", lines[0]);
-        assert!(lines[0].contains("check the spelling"), "{}", lines[0]);
-        assert!(
-            !lines[0].contains("verifier_weight"),
-            "the retired key must not ride along in the typo list: {}",
-            lines[0]
-        );
-        assert!(lines[1].contains("verifier_weight"), "{}", lines[1]);
-        assert!(lines[1].contains("is retired"), "{}", lines[1]);
-    }
-
-    /// ...and the converse, so the split cannot degrade into labelling every
-    /// unknown key "retired": a genuine misspelling has no retirement reason.
-    #[test]
-    fn a_misspelling_carries_no_retirement_reason() {
-        for key in [
-            "reward.verifier_weightt",
-            "agent_engine_config.default_modle",
-            "enable_recapp",
-        ] {
-            assert_eq!(retirement(key), None, "{key}");
-        }
     }
 
     /// A malformed or missing file is the typed loader's problem, and it
