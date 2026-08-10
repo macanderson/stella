@@ -130,17 +130,19 @@ async fn golden_single_task_deterministic_flip() {
     check_golden(
         "single_task_deterministic_flip",
         "A single-task goal whose test command flips fail->pass: deterministic \
-         verdict with no model-verification stage.",
+         verdict, model verifier skipped.",
         drain(&mut rx),
     );
 }
 
 /// The abstention path: no test command, so the deterministic ladder cannot
-/// conclude and preserves the work as unverified without consulting a model.
-/// The historical fixture id is retained so stored conformance references do
-/// not need a format migration.
+/// conclude — and that is where the run ends, with no model consulted. A
+/// materially different stage sequence from the flip path above, and the one
+/// this recording exists to pin: the *absence* of a verdict stage is now part
+/// of the observable event contract, so re-introducing an escalation shows up
+/// here as a fixture diff rather than as a quiet extra call.
 #[tokio::test]
-async fn golden_unverified_without_a_test_command() {
+async fn golden_unproven_without_a_test_command() {
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
         writing_tool_result("editing"),
@@ -200,9 +202,9 @@ async fn golden_unverified_without_a_test_command() {
         .expect("run succeeds");
 
     check_golden(
-        "verifier_escalation_without_a_test_command",
+        "unproven_without_a_test_command",
         "A file-touching goal with no test command: the deterministic ladder \
-         abstains without consulting a model verifier.",
+         cannot conclude, so the turn ends unproven with no model consulted.",
         drain(&mut rx),
     );
 }
@@ -215,7 +217,7 @@ fn the_recorded_flows_are_structurally_distinct() {
     let dir = golden_dir();
     let flip = GoldenTrajectory::load(&dir, "single_task_deterministic_flip")
         .expect("the flip golden is committed");
-    let escalation = GoldenTrajectory::load(&dir, "verifier_escalation_without_a_test_command")
+    let escalation = GoldenTrajectory::load(&dir, "unproven_without_a_test_command")
         .expect("the escalation golden is committed");
     assert!(
         !flip.diff(escalation.events()).is_empty(),
@@ -232,7 +234,7 @@ fn the_committed_goldens_are_labelled_as_baselines_not_references() {
     let dir = golden_dir();
     for task_id in [
         "single_task_deterministic_flip",
-        "verifier_escalation_without_a_test_command",
+        "unproven_without_a_test_command",
     ] {
         let golden = GoldenTrajectory::load(&dir, task_id).expect("golden is committed");
         assert!(

@@ -61,37 +61,39 @@ fn effects_that_escaped_collection_abstain_rather_than_claim_a_clean_tree() {
     );
 }
 
-/// Work observations do not become correctness evidence. Only a deterministic
-/// fail/pass flip lifts the turn off the abstention rung.
+/// The guard rails on the rung: any single corroborating observation takes the
+/// turn back to a rung that can credit it. Abstention is for the state where
+/// *nothing* saw the work, not for every empty diff.
 #[test]
-fn only_a_deterministic_flip_lifts_the_turn_off_the_abstain_rung() {
+fn one_corroborating_observation_lifts_the_turn_off_the_abstain_rung() {
     for (label, inputs) in [
         (
-            "a recorded file touch proves only that the tree moved",
+            "a recorded file touch proves the tree moved",
             LadderInputs {
                 file_change_events: 3,
                 ..escaped()
             },
         ),
         (
-            "a green candidate run without a failing baseline proves no flip",
+            "a green test is an observation of the work",
             LadderInputs {
                 touched_tests_passed: Some(true),
                 ..escaped()
             },
         ),
+        (
+            "a flip is the strongest corroboration there is",
+            LadderInputs {
+                flip_achieved: true,
+                ..escaped()
+            },
+        ),
     ] {
         assert!(!inputs.effects_escaped_collection(), "{label}");
-        assert_eq!(
+        assert_ne!(
             ladder_decision(&inputs),
             LadderDecision::Unverifiable,
             "{label}"
         );
     }
-
-    let flipped = LadderInputs {
-        flip_achieved: true,
-        ..escaped()
-    };
-    assert_eq!(ladder_decision(&flipped), LadderDecision::SubmitFast);
 }
