@@ -35,10 +35,6 @@ mod untracked_render_bound;
 /// beside the only tests that script it.
 mod diff_coverage;
 
-/// The #1787 verdict-degradation facts — a child module for the same two
-/// reasons, split out when this file came within sixty lines of the
-/// 1500-line ratchet it is not grandfathered against.
-
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
 /// must escalate to the model verifier, never credit `DeterministicPass`. Before

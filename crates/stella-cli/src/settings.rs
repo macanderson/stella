@@ -953,13 +953,6 @@ impl AgentEngineConfig {
             .is_some_and(Toggle::is_on)
     }
 
-    /// Whether a verdict that would be graded by the worker's own model
-    /// refuses the run instead (#1795). Absent is off.
-    pub fn pipeline_require_independent_verifier_on(&self) -> bool {
-        self.pipeline_require_independent_verifier
-            .is_some_and(Toggle::is_on)
-    }
-
     /// Whether interactive surfaces gate writes on per-hunk approval (#1265).
     pub fn hunk_review_on(&self) -> bool {
         self.hunk_review.is_some_and(Toggle::is_on)

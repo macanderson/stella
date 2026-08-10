@@ -782,6 +782,7 @@ fn the_dashboard_is_monospace_and_square() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     assert!(
@@ -828,6 +829,7 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     assert!(
