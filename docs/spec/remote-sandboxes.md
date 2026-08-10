@@ -332,7 +332,7 @@ credentials end up in a vendor's container. Three classes:
 `read_file` · `write_file` · `edit_file` · `apply_edits` · `delete_file`
 · `glob_files` · `grep_files` · `read_symbol` · `bash` · `run_script` ·
 `run_tests` · `build_project` · `start_process` · `read_output` ·
-`send_stdin` · `stop_process` · `code_map` · `project_overview` ·
+`clear_output` · `send_stdin` · `stop_process` · `code_map` · `project_overview` ·
 `impact` · `staleness` · `validate` · `verify_done` · `diagnostics` ·
 git operations in `repo` · custom tools · foundry-authored tools
 
