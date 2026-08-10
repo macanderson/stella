@@ -1,51 +1,11 @@
 //! The #1291 diff-coverage half of the verification hardening series: does
 //! the authored witness actually execute the lines the change touched?
-//! Split out of the parent module to keep it under the 1500-line ratchet;
-//! the scripted probe lives here beside the only tests that script it.
+//! Split out of the parent module to keep it under the 1500-line ratchet.
+//! The scripted probe used to live here beside the only tests that scripted
+//! it; `guard_wiring` is the second scripter, so it moved up to the parent
+//! where [`super::ScriptedMutation`] already sits.
 
 use super::*;
-
-/// A scripted coverage probe (#1291): answers with a fixed report, or `None`
-/// for "no tooling could measure this", and counts the runs it was asked for.
-struct ScriptedCoverage {
-    report: Option<crate::verify::coverage::CoverageReport>,
-    calls: std::sync::atomic::AtomicU32,
-}
-
-impl ScriptedCoverage {
-    fn measuring(entries: &[(&str, &[u32])]) -> Self {
-        Self {
-            report: Some(
-                entries
-                    .iter()
-                    .map(|(path, lines)| ((*path).to_string(), lines.iter().copied().collect()))
-                    .collect(),
-            ),
-            calls: std::sync::atomic::AtomicU32::new(0),
-        }
-    }
-    fn unavailable() -> Self {
-        Self {
-            report: None,
-            calls: std::sync::atomic::AtomicU32::new(0),
-        }
-    }
-    fn calls(&self) -> u32 {
-        self.calls.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-#[async_trait]
-impl crate::ports::CoverageProbe for ScriptedCoverage {
-    async fn covered_lines(
-        &self,
-        _root: Option<&str>,
-        _invocation: &TestInvocation,
-    ) -> Option<crate::verify::coverage::CoverageReport> {
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.report.clone()
-    }
-}
 
 /// A run whose flip is real and whose diff touches `src/lib.rs` line 12 —
 /// the shape both coverage scenarios below share, so only the probe differs.

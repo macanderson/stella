@@ -18,6 +18,109 @@
 
 use crate::ports::LineMutation;
 
+/// What the mutation audit observed about the authored witness (#870).
+///
+/// Three values because the question has three answers, and #2607 is the
+/// record of what happens when it is spelled with two. This was a
+/// `witness_tautological: bool` on the ladder inputs, and `false` meant both
+/// "the audit ran and the witness constrains the change" and "no audit ever
+/// ran" — so deleting the code that computes it was not a compile error, not
+/// a test failure, and not visible in a verdict: it was a silent downgrade to
+/// "everything is fine" wearing the ladder's strongest badge. A guard whose
+/// benign default is indistinguishable from its answer is a guard that can
+/// stop being fed without anyone noticing.
+///
+/// Deliberately shaped like [`crate::verify::coverage::DiffCoverage`], the
+/// other half of the same pair: `Unmeasured` is a statement about the
+/// instrument and never a finding about the work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MutationAudit {
+    /// No mutant was ever *observed*: the probe was not wired, the diff
+    /// proposed no mutable line, or every proposed mutant came back
+    /// [`crate::ports::MutantOutcome::Unavailable`]. The default, and never a
+    /// finding about the witness.
+    #[default]
+    Unmeasured,
+    /// At least one mutant broke the changed lines and the witness went red —
+    /// it constrains the change, and the audit stopped there (a killed mutant
+    /// is proof; the remaining ones are not paid for).
+    Constrains,
+    /// Mutants WERE observed and the witness stayed green under every one of
+    /// them: it reacts to the change without constraining it. The flip stands
+    /// as an observation, but it may not buy a deterministic pass.
+    Tautological,
+}
+
+impl MutationAudit {
+    /// The finding of an audit that DID observe at least one mutant run:
+    /// `killed` says whether any of them sent the witness red.
+    ///
+    /// The `observed > 0` precondition belongs to the caller, and it is the
+    /// whole distinction this type exists to keep — an audit that observed
+    /// nothing is [`MutationAudit::Unmeasured`] and must never arrive here as
+    /// a `false`.
+    #[must_use]
+    pub fn from_killed(killed: bool) -> Self {
+        if killed {
+            MutationAudit::Constrains
+        } else {
+            MutationAudit::Tautological
+        }
+    }
+
+    /// The audit's finding as the wire snapshot spells it (#865):
+    /// `Some(true)` = constrains, `Some(false)` = tautological, `None` =
+    /// never measured. The wire shape predates this enum and is deliberately
+    /// unchanged — it was already tri-state, which is precisely why the
+    /// *provenance* stayed honest while the ladder input could not.
+    #[must_use]
+    pub fn recorded(self) -> Option<bool> {
+        match self {
+            MutationAudit::Unmeasured => None,
+            MutationAudit::Constrains => Some(true),
+            MutationAudit::Tautological => Some(false),
+        }
+    }
+
+    /// A sentence a verifier (or a human reading a verdict) can act on, in
+    /// the same register as [`crate::verify::coverage::DiffCoverage::explain`]:
+    /// what was observed, and what it does NOT mean.
+    #[must_use]
+    pub fn explain(self) -> &'static str {
+        match self {
+            MutationAudit::Unmeasured => {
+                "witness_mutation=unmeasured (no mutant run was observed for this witness, so \
+                 whether it constrains the change is UNKNOWN — this is not a finding that it \
+                 does not)"
+            }
+            MutationAudit::Constrains => {
+                "witness_mutation=constrains (the witness went red when a changed line was \
+                 broken under it)"
+            }
+            MutationAudit::Tautological => {
+                "witness_mutation=tautological (the witness stayed green under EVERY observed \
+                 mutant of the changed lines — it reacts to the change without constraining it, \
+                 which is not a finding that the change is wrong)"
+            }
+        }
+    }
+
+    /// Whether this finding may carry a deterministic fast-submit — that is,
+    /// whether the ladder may *skip the verifier*.
+    ///
+    /// `Unmeasured` credits, for the reason every probe in this ladder
+    /// degrades open: the mutation probe is optional, and an absent one must
+    /// leave the pre-#870 ladder rather than manufacture a tautology finding.
+    /// The downgrade requires positive evidence, never its absence — which is
+    /// why the *guard* against an unfed audit is a wiring test
+    /// (`pipeline/tests/verification_hardening/guard_wiring.rs`) and not this
+    /// method.
+    #[must_use]
+    pub fn credits_a_deterministic_pass(self) -> bool {
+        !matches!(self, MutationAudit::Tautological)
+    }
+}
+
 /// Ceiling on proposed mutants: bounded cost, one witness run per mutant,
 /// spent only on a candidate about to be credited a deterministic pass (the
 /// pre-submit audit gates it) — in best-of-N that is per fast-submitting
@@ -128,6 +231,23 @@ mod tests {
 +    // boundary now inclusive
  }
 ";
+
+    /// The tri-state's whole point (#2607): "the audit never ran" and "the
+    /// audit ran and cleared the witness" are different values, so a ladder
+    /// input that stopped being fed cannot impersonate a finding. Both still
+    /// credit a fast-submit — the probe is optional and degrades open — but a
+    /// reader, a verdict snapshot, and a test can now tell them apart.
+    #[test]
+    fn an_unmeasured_audit_is_not_the_same_value_as_a_cleared_one() {
+        assert_ne!(MutationAudit::Unmeasured, MutationAudit::Constrains);
+        assert_eq!(MutationAudit::default(), MutationAudit::Unmeasured);
+        assert_eq!(MutationAudit::Unmeasured.recorded(), None);
+        assert_eq!(MutationAudit::Constrains.recorded(), Some(true));
+        assert_eq!(MutationAudit::Tautological.recorded(), Some(false));
+        assert!(MutationAudit::Unmeasured.credits_a_deterministic_pass());
+        assert!(MutationAudit::Constrains.credits_a_deterministic_pass());
+        assert!(!MutationAudit::Tautological.credits_a_deterministic_pass());
+    }
 
     #[test]
     fn mutants_come_from_added_lines_with_correct_positions() {

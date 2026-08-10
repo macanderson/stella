@@ -193,7 +193,10 @@ impl<'a> Pipeline<'a> {
             new_diag_errors: inputs.new_diag_errors,
             new_diag_warnings: inputs.new_diag_warnings,
             witness_intact,
-            witness_mutation: state.witness_mutation,
+            // #2607: the wire shape was already tri-state (`None` = never
+            // measured), so the enum states map onto it without a schema
+            // change — `recorded()` is the whole conversion.
+            witness_mutation: state.witness_mutation.recorded(),
             // #1291: always stated, including `unmeasured` — a reader must be
             // able to tell "the test ran the change" from "nobody looked",
             // and the absence of the field would be a third, unintended

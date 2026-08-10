@@ -446,12 +446,17 @@ pub struct LadderInputs {
     /// fast-submit (errors always do). Carried here so the ladder stays a
     /// pure function of one input value.
     pub veto_warnings: bool,
-    /// The witness stayed green under EVERY trivial mutation of the changed
-    /// lines (#870) — it reacts to the change without constraining it, so
-    /// its flip may not buy a deterministic pass. `false` both when the
-    /// check found the witness sound and when it never ran: the downgrade
-    /// requires positive evidence of tautology, never its absence.
-    pub witness_tautological: bool,
+    /// What the trivial-mutation audit found about the authored witness
+    /// (#870): does it constrain the changed lines, or merely react to them?
+    /// A [`mutation::MutationAudit::Tautological`] witness may not buy a
+    /// deterministic pass.
+    ///
+    /// Tri-state rather than a `bool` (#2607). The downgrade still requires
+    /// positive evidence of tautology and never its absence — but "the audit
+    /// cleared this witness" and "no audit ever ran" are now different
+    /// values, so the code that feeds this field cannot be deleted into a
+    /// finding of innocence. See [`mutation::MutationAudit`].
+    pub witness_mutation: mutation::MutationAudit,
     /// Whether the passing test run actually executed the lines the change
     /// added (#1291). [`coverage::DiffCoverage::Unmeasured`] — the default —
     /// is "nobody could tell", which is a different answer from "it did not"
@@ -664,7 +669,12 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
         && inputs.diff_lines <= inputs.diff_budget
         && inputs.new_diag_errors == 0
         && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
-        && !inputs.witness_tautological
+        // #870: a witness that stays green under every observed mutant of the
+        // changed lines reacts to the change without constraining it. An
+        // audit that never ran credits the pass — the probe is optional and
+        // degrades open — but it is a distinguishable value (#2607), not the
+        // same `false` as a cleared witness.
+        && inputs.witness_mutation.credits_a_deterministic_pass()
         // #1291: a test that never executed the changed lines passed for some
         // other reason. Withholding the deterministic credit sends the turn to
         // the verifier — "unproven" — and is never a failure; an *unmeasured*
@@ -828,6 +838,26 @@ pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> 
         "a flip was observed, but the touched tests could not be run, so nothing confirmed the \
          change left the rest of the suite green"
             .to_string()
+    } else if !inputs
+        .diff_coverage
+        .credits_a_deterministic_pass(inputs.require_diff_coverage)
+    {
+        // #2607: the two mechanical guards are the commonest reason a flipped
+        // candidate lands here, and until now the reader was told only that
+        // "the deterministic checks did not combine into a pass" — a sentence
+        // that names neither the guard nor its finding, and reads identically
+        // whichever one objected. Each states itself, in the guard's own
+        // words, so a withheld credit is legible without opening a snapshot.
+        // Coverage first, matching the order the audits actually run in.
+        format!(
+            "a flip was observed, but {}",
+            inputs.diff_coverage.explain()
+        )
+    } else if !inputs.witness_mutation.credits_a_deterministic_pass() {
+        format!(
+            "a flip was observed, but {}",
+            inputs.witness_mutation.explain()
+        )
     } else {
         "the deterministic checks did not combine into a pass".to_string()
     };
@@ -896,7 +926,7 @@ pub struct StrippedDiff {
 /// billed against the diff budget on every escalated verdict and guidance
 /// call. What the verifier needs to know about the witness it already gets
 /// from the trusted evidence summary (`witness_tamper_check`,
-/// `witness_tautological`, the oracle trace); the test's text says nothing
+/// `witness_mutation`, the oracle trace); the test's text says nothing
 /// about the change under review.
 ///
 /// Paths are matched the way [`coverage::changed_lines`] excludes them: each

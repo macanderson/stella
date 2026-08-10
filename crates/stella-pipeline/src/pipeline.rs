@@ -93,6 +93,7 @@ use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
+use crate::verify::mutation::MutationAudit;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, deterministic_fail_evidence,
     deterministic_pass_evidence, evidence_demand_is_worth_a_turn, ladder_decision,
@@ -757,11 +758,10 @@ struct CandidateState {
     /// from the still-pristine session tree. `None` also covers "probe
     /// unavailable", and the veto degrades open either way.
     lint_baseline: Option<Vec<LintRecord>>,
-    /// The mutation audit's finding (#870): Some(true) = the witness
-    /// failed under at least one mutant (it constrains the change);
-    /// Some(false) = it stayed green under every observed mutant
-    /// (tautological — the fast-submit was withheld); None = never run.
-    witness_mutation: Option<bool>,
+    /// The mutation audit's finding (#870), tri-state so "never run" is a
+    /// value of its own rather than a `false` that reads as innocence
+    /// (#2607): see [`MutationAudit`].
+    witness_mutation: MutationAudit,
     /// The diff-coverage audit's finding (#1291): whether the passing test
     /// run executed the lines this candidate added. `Unmeasured` both before
     /// the audit runs and wherever it cannot be made — the two are the same
@@ -1942,7 +1942,7 @@ impl<'a> Pipeline<'a> {
                 self.touches.mutations_recorded()
             },
             lint_baseline,
-            witness_mutation: None,
+            witness_mutation: MutationAudit::Unmeasured,
             diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
             evidence_demands: 0,
@@ -2231,8 +2231,8 @@ impl<'a> Pipeline<'a> {
                         }
                     }
                     if observed > 0 {
-                        state.witness_mutation = Some(killed);
-                        inputs.witness_tautological = !killed;
+                        state.witness_mutation = MutationAudit::from_killed(killed);
+                        inputs.witness_mutation = state.witness_mutation;
                     }
                 }
             }

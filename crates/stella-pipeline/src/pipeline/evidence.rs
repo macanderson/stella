@@ -39,7 +39,7 @@ impl<'a> Pipeline<'a> {
             new_diag_errors: 0,
             new_diag_warnings: 0,
             veto_warnings: self.config.diagnostics_veto_warnings,
-            witness_tautological: false,
+            witness_mutation: MutationAudit::Unmeasured,
             diff_coverage: DiffCoverage::Unmeasured,
             require_diff_coverage: self.config.require_diff_coverage,
             verify_done_flip: state.signals.verify_done_confirmations > 0,
