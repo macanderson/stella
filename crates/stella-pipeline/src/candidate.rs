@@ -22,6 +22,20 @@ pub enum CandidateScore {
     /// than an outright failure, worse than any pass.
     Unverified,
     /// A model verifier passed it (softer evidence than a deterministic flip).
+    ///
+    /// **Retired**, in the same sense as [`crate::reward::DiscardReason`]'s
+    /// `VerifierDistrusted`: verification is model-free, so nothing in the
+    /// pipeline can reach this rank any more. Every live call site of
+    /// [`score_from_verification`] passes `None` or `Some(false)`, and the one
+    /// receipt that used to arrive here without a pipeline flip — a confirmed
+    /// `verify_done` — is a deterministic pass now (#2618), which is a rank
+    /// *above* this one, not below it.
+    ///
+    /// Retained rather than removed because it labels **stored trajectories**:
+    /// best-of-N selections recorded before the escalation was removed rank
+    /// against this variant, and deleting it would renumber the derived `Ord`
+    /// underneath them, silently reordering a historical comparison rather
+    /// than failing it.
     VerifierPass,
     /// The deterministic ladder passed it (flip + green + budget) — the
     /// strongest evidence.

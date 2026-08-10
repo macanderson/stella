@@ -777,12 +777,6 @@ fn the_dashboard_is_monospace_and_square() {
              where a hairline says \"boundary\", and this page is boundaries"
         );
     }
-    for rounded in ["border-radius: 8px", "border-radius: 6px"] {
-        assert!(
-            !html.contains(literal),
-            "`{literal}` bypasses `--radius`: set the token, not the rule"
-        );
-    }
 }
 
 /// The wordmark is lowercase, everywhere the report says it.

@@ -3,27 +3,81 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Self-Improving Model · Stella Playbook</title>
+<title>Self-Improving Model · stella Playbook</title>
 <style>
+  /* This playbook was on the retired blue family — --bg #0a0e14 through a full
+     hue wheel (--accent2 #58d3ff ice blue, --violet, --gold, --amber), two
+     radial gradients under the body, and an inset-highlight drop shadow. That
+     palette was tried on main for about seven hours and reverted wholesale; a
+     document still wearing it is carrying a dead system, not an alternative
+     one.
+
+     The token NAMES are unchanged and the values are re-pointed, which is the
+     same move arenabench made: ~29 rules below spell these names, and renaming
+     a token is how a page ends up painting elements with nothing. What each
+     name now means:
+
+       --bg/--bg2/--card/--card2   ground / surface / raised / sunken — a card
+                                   reads as raised by a value step of 1–2
+                                   rather than by a shadow
+       --accent                    labels and section numerals. Achromatic:
+                                   they are differentiated by TREATMENT
+                                   (uppercase, tracked, small), not by hue,
+                                   which is the whole instrument premise
+       --accent2                   the secondary label tone
+       --gold/--violet             were categorical marks; now positions on the
+                                   lightness ramp, the one channel that
+                                   survives greyscale printing, colour-vision
+                                   deficiency and a projector
+       --green/--red/--amber       the only real colour here, and only on a
+                                   verdict: ok / bad / warn
+
+     Light is new. The document was dark-only, so half its readers opened a
+     black page on a white desktop. Both schemes are declared at :root with the
+     media query only overriding — never define a colour solely inside a media
+     query, or an explicit choice cannot win. */
   :root{
-    --bg:#0a0e14; --bg2:#0f141c; --card:#131922; --card2:#1a212e;
-    --line:#232b3a; --line2:#2e3849;
-    --ink:#e6edf3; --dim:#8b98a9; --faint:#5c6777;
-    --accent:#7ee787; --accent2:#58d3ff; --warn:#ff9580; --gold:#ffd479; --violet:#c499ff;
-    --green:#56d364; --red:#ff7b72; --amber:#e3b341;
-    --mono:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,Menlo,Consolas,monospace;
-    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
-    --shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px rgba(0,0,0,.4);
+    --bg:#0A0A0A; --bg2:#0F0F0F; --card:#111111; --card2:#151515;
+    --line:#1F1F1F; --line2:#2E2E2E;
+    --ink:#EDEDED; --dim:#A1A1A1; --faint:#6E6E6E;
+    --accent:#6E6E6E; --accent2:#A1A1A1; --warn:#C9A227; --gold:#A1A1A1; --violet:#6E6E6E;
+    --green:#4CC38A; --red:#E5715F; --amber:#C9A227;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    /* One face. `--sans` survives as a name because rules below spell it, and
+       it now resolves to the same mono stack — the brand has one face and a
+       playbook is not the place it grows a second. */
+    --sans:var(--mono);
+    /* No shadows, ever. A shadow says "floating"; a hairline says "boundary",
+       and this document is a sequence of boundaries. */
+    --shadow:none;
   }
+  @media (prefers-color-scheme:light){:root{
+    --bg:#FFFFFF; --bg2:#FAFAFA; --card:#FFFFFF; --card2:#F6F6F6;
+    --line:#EAEAEA; --line2:#D4D4D4;
+    --ink:#0A0A0A; --dim:#525252; --faint:#8F8F8F;
+    --accent:#8F8F8F; --accent2:#525252; --warn:#7A5C00; --gold:#525252; --violet:#8F8F8F;
+    --green:#11703A; --red:#A32F1F; --amber:#7A5C00;}}
+  :root[data-theme="light"]{
+    --bg:#FFFFFF; --bg2:#FAFAFA; --card:#FFFFFF; --card2:#F6F6F6;
+    --line:#EAEAEA; --line2:#D4D4D4;
+    --ink:#0A0A0A; --dim:#525252; --faint:#8F8F8F;
+    --accent:#8F8F8F; --accent2:#525252; --warn:#7A5C00; --gold:#525252; --violet:#8F8F8F;
+    --green:#11703A; --red:#A32F1F; --amber:#7A5C00;}
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{
-    margin:0;background:
-      radial-gradient(1200px 600px at 80% -10%, rgba(126,231,135,.05), transparent 60%),
-      radial-gradient(900px 500px at 0% 30%, rgba(88,211,255,.04), transparent 55%),
-      var(--bg);
-    color:var(--ink);font-family:var(--sans);line-height:1.6;
-    font-size:15px;-webkit-font-smoothing:antialiased;
+    /* Flat. The two radial gradients that used to sit here changed the
+       apparent value of every mark drawn over them, which on a document full
+       of measurements is a readability cost paid for decoration that carries
+       no information. */
+    margin:0;background:var(--bg);
+    color:var(--ink);font-family:var(--mono);line-height:1.6;
+    font-size:14px;-webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *{animation:none !important;transition:none !important}
   }
   /* layout */
   .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
@@ -34,12 +88,12 @@
   h1 .grad{background:linear-gradient(100deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
   .lede{font-size:18px;color:var(--dim);max-width:680px;margin:0 0 28px}
   .meta{display:flex;gap:10px;flex-wrap:wrap}
-  .pill{font-family:var(--mono);font-size:11px;padding:5px 10px;border:1px solid var(--line2);border-radius:999px;color:var(--dim);background:var(--card)}
+  .pill{font-family:var(--mono);font-size:11px;padding:5px 10px;border:1px solid var(--line2);border-radius:0;color:var(--dim);background:var(--card)}
   .pill .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle}
   /* nav */
   nav.toc{position:sticky;top:0;z-index:20;background:rgba(10,14,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);margin:0 -24px;padding:0 24px}
   nav.toc ul{list-style:none;display:flex;gap:2px;margin:0;padding:8px 0;overflow-x:auto;white-space:nowrap}
-  nav.toc a{display:block;padding:8px 12px;font-size:13px;color:var(--dim);text-decoration:none;border-radius:6px;transition:.15s}
+  nav.toc a{display:block;padding:8px 12px;font-size:13px;color:var(--dim);text-decoration:none;border-radius:0;transition:.15s}
   nav.toc a:hover{color:var(--ink);background:var(--card)}
   nav.toc a .n{font-family:var(--mono);color:var(--faint);margin-right:6px;font-size:11px}
   /* sections */
@@ -58,7 +112,7 @@
   li{margin:6px 0}
   /* step cards */
   .steps{display:flex;flex-direction:column;gap:20px}
-  .step{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:14px;padding:24px 28px;position:relative;box-shadow:var(--shadow);transition:.2s}
+  .step{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:0;padding:24px 28px;position:relative;box-shadow:var(--shadow);transition:.2s}
   .step:hover{border-color:var(--line2)}
   .step-head{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}
   .step-no{font-family:var(--mono);font-size:13px;color:var(--accent);flex-shrink:0;width:28px}
@@ -66,13 +120,13 @@
   .step-body{color:var(--dim)}
   .step-body p{margin:8px 0}
   /* code */
-  pre{background:#0b0f16;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0;font-family:var(--mono);font-size:13px;line-height:1.55}
+  pre{background:#0b0f16;border:1px solid var(--line);border-radius:0;padding:16px 18px;overflow-x:auto;margin:14px 0;font-family:var(--mono);font-size:13px;line-height:1.55}
   pre code{color:#c9d4e3;background:none;padding:0}
-  code.inline{background:var(--card2);border:1px solid var(--line2);padding:2px 6px;border-radius:5px;color:var(--accent2)}
+  code.inline{background:var(--card2);border:1px solid var(--line2);padding:2px 6px;border-radius:0;color:var(--accent2)}
   .tok-kw{color:var(--violet)} .tok-fn{color:var(--accent2)} .tok-str{color:var(--accent)}
   .tok-com{color:var(--faint);font-style:italic} .tok-typ{color:var(--gold)} .tok-att{color:var(--amber)}
   /* callout */
-  .callout{border-left:3px solid var(--accent2);background:rgba(88,211,255,.05);padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout{border-left:3px solid var(--accent2);background:rgba(88,211,255,.05);padding:14px 18px;border-radius:0;margin:16px 0}
   .callout.warn{border-color:var(--warn);background:rgba(255,149,128,.06)}
   .callout.key{border-color:var(--accent);background:rgba(126,231,135,.05)}
   .callout .lbl{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent2);margin-bottom:4px}
@@ -80,7 +134,7 @@
   .callout p{margin:2px 0;color:var(--dim)}
   /* component map */
   .map-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:20px 0}
-  .crate{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;transition:.15s}
+  .crate{background:var(--card);border:1px solid var(--line);border-radius:0;padding:16px;transition:.15s}
   .crate:hover{border-color:var(--line2);transform:translateY(-2px)}
   .crate .cn{font-family:var(--mono);font-size:13px;color:var(--accent);margin-bottom:2px}
   .crate .cd{font-size:13px;color:var(--dim);margin:0}
@@ -96,10 +150,10 @@
   th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint)}
   td{color:var(--dim)} td code{color:var(--accent2)}
   /* diagram */
-  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px;margin:20px 0;text-align:center}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:0;padding:28px;margin:20px 0;text-align:center}
   .diagram svg{max-width:100%;height:auto}
   /* phase band */
-  .phase-band{display:flex;gap:0;margin:24px 0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+  .phase-band{display:flex;gap:0;margin:24px 0;border-radius:0;overflow:hidden;border:1px solid var(--line)}
   .phase{flex:1;padding:18px 14px;background:var(--card2);border-right:1px solid var(--line);text-align:center}
   .phase:last-child{border-right:none}
   .phase .pi{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:4px}
@@ -107,7 +161,7 @@
   .phase .pd{font-size:11px;color:var(--dim);margin-top:2px}
   /* footer */
   footer{padding:48px 0 64px;color:var(--faint);font-size:13px}
-  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:4px;background:var(--card);border:1px solid var(--line2);color:var(--dim);margin:0 4px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:0;background:var(--card);border:1px solid var(--line2);color:var(--dim);margin:0 4px}
   @media(max-width:640px){h1{font-size:30px}.phase-band{flex-direction:column}.phase{border-right:none;border-bottom:1px solid var(--line)}}
 </style>
 </head>
@@ -116,9 +170,9 @@
 <!-- ============ HERO ============ -->
 <header class="hero">
   <div class="wrap">
-    <p class="eyebrow">Playbook · Stella × Self-Improvement</p>
-    <h1>Build a <span class="grad">Self-Improving Model</span><br>into Stella</h1>
-    <p class="lede">A step-by-step engineering plan to close the loop — collect traces, extract rewards from Stella's verify→verdict ladder, fine-tune, re-evaluate on the bench harness, and redeploy through the <code class="mono">Provider</code> trait — without breaking the pipeline's guarantees.</p>
+    <p class="eyebrow">Playbook · stella × Self-Improvement</p>
+    <h1>Build a <span class="grad">Self-Improving Model</span><br>into stella</h1>
+    <p class="lede">A step-by-step engineering plan to close the loop — collect traces, extract rewards from stella's verify→verdict ladder, fine-tune, re-evaluate on the bench harness, and redeploy through the <code class="mono">Provider</code> trait — without breaking the pipeline's guarantees.</p>
     <div class="meta">
       <span class="pill"><span class="dot"></span>17 crates · Rust workspace</span>
       <span class="pill">Provider trait · stella-protocol</span>
@@ -150,7 +204,7 @@
 <section id="map">
   <div class="wrap">
     <h2><span class="num">00</span>Terrain map — what already exists</h2>
-    <p class="sec-sub">Stella already ships most of the machinery a self-improvement loop needs. The work is wiring, not greenfield. Know these surfaces before you touch anything.</p>
+    <p class="sec-sub">stella already ships most of the machinery a self-improvement loop needs. The work is wiring, not greenfield. Know these surfaces before you touch anything.</p>
     <div class="map-grid">
       <div class="crate"><p class="cn">stella-protocol</p><p class="cd">The <code>Provider</code> trait + <code>CompletionRequest/Result</code>. Every model — including your fine-tuned one — plugs in here.</p></div>
       <div class="crate"><p class="cn">stella-model</p><p class="cd">Concrete adapters: Z.ai (GLM 5.2), Anthropic, OpenAI, Gemini, Vertex, Bedrock. <code>factory.rs</code>, <code>catalog.rs</code>.</p></div>
@@ -163,7 +217,7 @@
     </div>
     <div class="callout key">
       <p class="lbl">Key realization</p>
-      <p>You are not building a self-improvement system from zero. Stella already has a <strong>closed feedback loop</strong> (verify→verdict→revise), a <strong>persistent memory</strong> (ContextStore), and an <strong>eval harness</strong> (bench/). Self-improvement = adding a training step on the cold path between "the loop produced an outcome" and "the loop runs again with a better model."</p>
+      <p>You are not building a self-improvement system from zero. stella already has a <strong>closed feedback loop</strong> (verify→verdict→revise), a <strong>persistent memory</strong> (ContextStore), and an <strong>eval harness</strong> (bench/). Self-improvement = adding a training step on the cold path between "the loop produced an outcome" and "the loop runs again with a better model."</p>
     </div>
   </div>
 </section>
@@ -172,7 +226,7 @@
 <section id="loop">
   <div class="wrap">
     <h2><span class="num">01</span>The self-improvement loop</h2>
-    <p class="sec-sub">One sentence: <strong>run → record → reward → refine → re-evaluate → redeploy → run.</strong> Each phase maps onto an existing Stella subsystem.</p>
+    <p class="sec-sub">One sentence: <strong>run → record → reward → refine → re-evaluate → redeploy → run.</strong> Each phase maps onto an existing stella subsystem.</p>
 
     <div class="diagram">
       <svg viewBox="0 0 900 240" xmlns="http://www.w3.org/2000/svg">
@@ -238,13 +292,13 @@
 <section id="collect">
   <div class="wrap">
     <h2><span class="num">02</span>Phase 1 — Collect execution traces</h2>
-    <p class="sec-sub">Before a model can improve, you need structured records of what it did and what happened. Stella already emits <code class="mono">AgentEvent</code>s at every pipeline stage boundary and routes lifecycle telemetry through the hooks system. Capture them.</p>
+    <p class="sec-sub">Before a model can improve, you need structured records of what it did and what happened. stella already emits <code class="mono">AgentEvent</code>s at every pipeline stage boundary and routes lifecycle telemetry through the hooks system. Capture them.</p>
 
     <div class="steps">
       <div class="step">
         <div class="step-head"><span class="step-no">2.1</span><h3>Tap the hooks channel</h3></div>
         <div class="step-body">
-          <p>The <code class="mono">HookRunner</code> trait (<code class="mono">stella-core/src/hooks.rs:249</code>) is Stella's lifecycle telemetry bus. It fires at every step boundary with a structured JSON payload. Implement a hook that writes each event to an append-only trace store — a JSONL file or a SQLite table.</p>
+          <p>The <code class="mono">HookRunner</code> trait (<code class="mono">stella-core/src/hooks.rs:249</code>) is stella's lifecycle telemetry bus. It fires at every step boundary with a structured JSON payload. Implement a hook that writes each event to an append-only trace store — a JSONL file or a SQLite table.</p>
 <pre><code><span class="tok-com">// stella-observatory or a new crate: stella-trace</span>
 <span class="tok-kw">pub struct</span> <span class="tok-typ">TraceSink</span> {
     out: <span class="tok-typ">Mutex</span>&lt;<span class="tok-typ">LineWriter</span>&gt;,
@@ -308,7 +362,7 @@
 <section id="reward">
   <div class="wrap">
     <h2><span class="num">03</span>Phase 2 — Extract reward signal</h2>
-    <p class="sec-sub">This is Stella's superpower for self-improvement: the pipeline already <strong>verifies</strong> every outcome through a deterministic-first ladder and an independent model judge. That verdict <em>is</em> your reward. You don't need to build a reward model from scratch — you need to export the one Stella already computes.</p>
+    <p class="sec-sub">This is stella's superpower for self-improvement: the pipeline already <strong>verifies</strong> every outcome through a deterministic-first ladder and an independent model judge. That verdict <em>is</em> your reward. You don't need to build a reward model from scratch — you need to export the one stella already computes.</p>
 
     <div class="steps">
       <div class="step">
@@ -325,7 +379,7 @@
           </table>
           <div class="callout key">
             <p class="lbl">Why this matters</p>
-            <p>Stella's ladder is <strong>deterministic-first</strong> — it only spends a model judge call on genuinely inconclusive evidence (design lesson L-E11). That means most of your reward labels are grounded in real test execution, not another model's opinion. This is rare and valuable training signal.</p>
+            <p>stella's ladder is <strong>deterministic-first</strong> — it only spends a model judge call on genuinely inconclusive evidence (design lesson L-E11). That means most of your reward labels are grounded in real test execution, not another model's opinion. This is rare and valuable training signal.</p>
           </div>
         </div>
       </div>
@@ -333,7 +387,7 @@
       <div class="step">
         <div class="step-head"><span class="step-no">3.2</span><h3>Enrich the reward with cost and efficiency</h3></div>
         <div class="step-body">
-          <p>A purely outcome-based reward ignores that the model took 12 steps and $0.40 to do what should take 3 steps and $0.05. Stella already meters both:</p>
+          <p>A purely outcome-based reward ignores that the model took 12 steps and $0.40 to do what should take 3 steps and $0.05. stella already meters both:</p>
           <ul>
             <li><strong>Step count</strong> — from <code class="mono">EngineConfig::max_steps</code> tracking; fewer is better.</li>
             <li><strong>USD cost</strong> — <code class="mono">BudgetGuard</code> meters every completion into per-role envelopes (triage/worker/judge).</li>
@@ -350,7 +404,7 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
       <div class="step">
         <div class="step-head"><span class="step-no">3.3</span><h3>Respect the feedback airlock when labeling</h3></div>
         <div class="step-body">
-          <p>Critical subtlety: Stella's <strong>feedback airlock</strong> (<code class="mono">witness::airlock</code>) redacts model-authored text (judge reasoning, distress guidance) before it reaches the worker, to prevent the worker from gaming sealed test material. When you export reward labels, use the <em>deterministic outcome</em> as ground truth — treat judge reasoning as soft signal only, never as a training target. Otherwise you risk training the model to fool the judge.</p>
+          <p>Critical subtlety: stella's <strong>feedback airlock</strong> (<code class="mono">witness::airlock</code>) redacts model-authored text (judge reasoning, distress guidance) before it reaches the worker, to prevent the worker from gaming sealed test material. When you export reward labels, use the <em>deterministic outcome</em> as ground truth — treat judge reasoning as soft signal only, never as a training target. Otherwise you risk training the model to fool the judge.</p>
           <div class="callout warn">
             <p class="lbl">Guardrail</p>
             <p>Never train on the <em>content</em> of distress-guidance prompts or judge reasoning as if they were correct outputs. They are steering text, not ground truth. The deterministic flip oracle and test execution are your only hard labels.</p>
@@ -393,7 +447,7 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
       <div class="step">
         <div class="step-head"><span class="step-no">4.2</span><h3>Preference pairs — for DPO</h3></div>
         <div class="step-body">
-          <p>For the same prompt where you have a <em>chosen</em> (high-reward) and <em>rejected</em> (low-reward) trajectory, build Direct Preference Optimization pairs. Stella's best-of-N candidate isolation (<code class="mono">stella-pipeline/src/candidate.rs</code>) already generates multiple candidates per task and scores them — mine it for natural preference pairs.</p>
+          <p>For the same prompt where you have a <em>chosen</em> (high-reward) and <em>rejected</em> (low-reward) trajectory, build Direct Preference Optimization pairs. stella's best-of-N candidate isolation (<code class="mono">stella-pipeline/src/candidate.rs</code>) already generates multiple candidates per task and scores them — mine it for natural preference pairs.</p>
 <pre><code>{
   "prompt": ...,
   "chosen":  &lt;completion from CandidateScore::DeterministicPass&gt;,
@@ -405,7 +459,7 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
       <div class="step">
         <div class="step-head"><span class="step-no">4.3</span><h3>RL rollout set — for online improvement</h3></div>
         <div class="step-body">
-          <p>For RL (GRPO/PPO), you don't pre-label — you need a set of <em>tasks</em> the model can attempt, with a <em>verifier</em> that returns reward. Stella <em>is</em> that verifier. Define the rollout set as repeatable bench tasks (see Phase 4) and let the verify ladder score each rollout live.</p>
+          <p>For RL (GRPO/PPO), you don't pre-label — you need a set of <em>tasks</em> the model can attempt, with a <em>verifier</em> that returns reward. stella <em>is</em> that verifier. Define the rollout set as repeatable bench tasks (see Phase 4) and let the verify ladder score each rollout live.</p>
         </div>
       </div>
 
@@ -427,13 +481,13 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
 <section id="train">
   <div class="wrap">
     <h2><span class="num">05</span>Phase 3 — Fine-tune the model</h2>
-    <p class="sec-sub">The training itself happens outside Stella (on a GPU cluster with your framework of choice — Axolotl, TRL, OpenRLHF). Stella's job ends at producing clean data and a reliable verifier. Start simple, escalate only when returns plateau.</p>
+    <p class="sec-sub">The training itself happens outside stella (on a GPU cluster with your framework of choice — Axolotl, TRL, OpenRLHF). stella's job ends at producing clean data and a reliable verifier. Start simple, escalate only when returns plateau.</p>
 
     <div class="steps">
       <div class="step">
         <div class="step-head"><span class="step-no">5.1</span><h3>Stage A — Supervised fine-tuning (SFT) on winners</h3></div>
         <div class="step-body">
-          <p>Always start here. SFT on the proven-winner dataset (4.1). This teaches the model Stella's <em>style</em> — the staged reasoning, tool-call format, when to stop. It's the cheapest, most reliable first improvement and it de-risks everything after.</p>
+          <p>Always start here. SFT on the proven-winner dataset (4.1). This teaches the model stella's <em>style</em> — the staged reasoning, tool-call format, when to stop. It's the cheapest, most reliable first improvement and it de-risks everything after.</p>
           <p><strong>Base model:</strong> a small open model in <code class="mono">stella-model</code>'s catalog (e.g. a GLM-class or Llama-class model you can host). Keep parameter count modest — the goal is agentic behavior, not world knowledge.</p>
         </div>
       </div>
@@ -446,12 +500,12 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
       </div>
 
       <div class="step">
-        <div class="step-head"><span class="step-no">5.3</span><h3>Stage C — Online RL with Stella as the verifier (advanced)</h3></div>
+        <div class="step-head"><span class="step-no">5.3</span><h3>Stage C — Online RL with stella as the verifier (advanced)</h3></div>
         <div class="step-body">
-          <p>The endgame: the model attempts bench tasks, Stella's verify ladder scores each attempt in real time, and the reward backpropagates. This closes the loop fully — the model literally learns from Stella's own verification. Wire the reward function (3.2) as the RL reward and the <code class="mono">FlipOracle</code> / test execution as the environment.</p>
+          <p>The endgame: the model attempts bench tasks, stella's verify ladder scores each attempt in real time, and the reward backpropagates. This closes the loop fully — the model literally learns from stella's own verification. Wire the reward function (3.2) as the RL reward and the <code class="mono">FlipOracle</code> / test execution as the environment.</p>
           <div class="callout">
             <p class="lbl">Architecture</p>
-            <p>RL training loop → calls Stella <code class="mono">Engine::run_turn</code> on a bench task → pipeline produces <code class="mono">LadderDecision</code> + cost → reward scalar → gradient step. The <code class="mono">Provider</code> trait is the interface the training server speaks to dispatch completions to the in-training model.</p>
+            <p>RL training loop → calls stella <code class="mono">Engine::run_turn</code> on a bench task → pipeline produces <code class="mono">LadderDecision</code> + cost → reward scalar → gradient step. The <code class="mono">Provider</code> trait is the interface the training server speaks to dispatch completions to the in-training model.</p>
           </div>
         </div>
       </div>
@@ -463,7 +517,7 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
 <section id="eval">
   <div class="wrap">
     <h2><span class="num">06</span>Phase 4 — Re-evaluate on the bench harness</h2>
-    <p class="sec-sub">Never trust training loss. Prove the new model is better on Stella's frozen evaluation suite before it touches production. The <code class="mono">bench/</code> directory is your battleground.</p>
+    <p class="sec-sub">Never trust training loss. Prove the new model is better on stella's frozen evaluation suite before it touches production. The <code class="mono">bench/</code> directory is your battleground.</p>
 
     <div class="steps">
       <div class="step">
@@ -496,7 +550,7 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
       <div class="step">
         <div class="step-head"><span class="step-no">6.3</span><h3>Gate the deploy on a regression check</h3></div>
         <div class="step-body">
-          <p>A model that gains 3% on SWE-bench but regresses 15% on loop-bench is a net loss. Define a promotion gate: candidate must beat baseline on the primary metric <em>and</em> not regress beyond a threshold on any secondary. This mirrors Stella's own philosophy — proportionate verification, escalate on evidence.</p>
+          <p>A model that gains 3% on SWE-bench but regresses 15% on loop-bench is a net loss. Define a promotion gate: candidate must beat baseline on the primary metric <em>and</em> not regress beyond a threshold on any secondary. This mirrors stella's own philosophy — proportionate verification, escalate on evidence.</p>
           <div class="callout warn">
             <p class="lbl">Watch for reward hacking</p>
             <p>If resolve rate rises but step count and cost spike, the model may be brute-forcing. If judge-escalation drops but resolve rate is flat, it may be gaming the flip oracle. Always read metrics <em>together</em>, never in isolation.</p>
@@ -518,13 +572,13 @@ reward = outcome_label            <span class="tok-com"># +1 / -1 / +0.5 / -0.5<
 <section id="deploy">
   <div class="wrap">
     <h2><span class="num">07</span>Phase 4 — Redeploy through the Provider trait</h2>
-    <p class="sec-sub">Stella's clean port architecture makes deployment trivial in principle. The <code class="mono">Provider</code> trait (<code class="mono">stella-protocol/src/provider.rs:69</code>) is the single integration surface — your fine-tuned model is just another adapter.</p>
+    <p class="sec-sub">stella's clean port architecture makes deployment trivial in principle. The <code class="mono">Provider</code> trait (<code class="mono">stella-protocol/src/provider.rs:69</code>) is the single integration surface — your fine-tuned model is just another adapter.</p>
 
     <div class="steps">
       <div class="step">
         <div class="step-head"><span class="step-no">7.1</span><h3>Serve the fine-tuned model behind an OpenAI-compatible endpoint</h3></div>
         <div class="step-body">
-          <p>The path of least resistance: host your fine-tuned model with vLLM, TGI, or llama.cpp server — all expose an OpenAI-compatible chat completions API. Stella's existing <code class="mono">openai.rs</code> adapter then points at your endpoint with zero new code.</p>
+          <p>The path of least resistance: host your fine-tuned model with vLLM, TGI, or llama.cpp server — all expose an OpenAI-compatible chat completions API. stella's existing <code class="mono">openai.rs</code> adapter then points at your endpoint with zero new code.</p>
 <pre><code><span class="tok-com"># stella settings: point the openai adapter at your served model</span>
 [model.stella-self]
 provider = <span class="tok-str">"openai"</span>
@@ -557,7 +611,7 @@ api_key = <span class="tok-str">"local"</span></code></pre>
           <p>Add the model to <code class="mono">stella-model/src/catalog.rs</code> and ensure <code class="mono">ProviderResolver::provider_for</code> (<code class="mono">stella-pipeline/src/ports.rs:34</code>) routes <code class="mono">ModelRef</code>s for your model to your adapter. The pipeline's role system (triage/worker/judge) lets you deploy selectively — e.g. use the fine-tuned model as the <em>worker</em> while keeping a frontier model as the <em>judge</em>, preserving the independence guarantee (judge ≠ worker, L-E11).</p>
           <div class="callout key">
             <p class="lbl">Preserve judge independence</p>
-            <p>Stella requires the judge to be a <em>different model</em> than the worker. If you fine-tune for the worker role, keep the judge on a frontier model. The pipeline degrades the authored-witness path when judge == worker — don't lose that safety net.</p>
+            <p>stella requires the judge to be a <em>different model</em> than the worker. If you fine-tune for the worker role, keep the judge on a frontier model. The pipeline degrades the authored-witness path when judge == worker — don't lose that safety net.</p>
           </div>
         </div>
       </div>
@@ -607,10 +661,10 @@ api_key = <span class="tok-str">"local"</span></code></pre>
 <section id="guardrails">
   <div class="wrap">
     <h2><span class="num">09</span>Guardrails — what can go wrong</h2>
-    <p class="sec-sub">Self-improvement is a power tool. These are the ways it cuts you, and how Stella's existing design helps you avoid each.</p>
+    <p class="sec-sub">Self-improvement is a power tool. These are the ways it cuts you, and how stella's existing design helps you avoid each.</p>
 
     <table>
-      <tr><th>Risk</th><th>Mechanism</th><th>Mitigation (Stella-native)</th></tr>
+      <tr><th>Risk</th><th>Mechanism</th><th>Mitigation (stella-native)</th></tr>
       <tr>
         <td><strong>Reward hacking</strong></td>
         <td>Model learns to game the flip oracle or write tests that trivially pass</td>
@@ -639,7 +693,7 @@ api_key = <span class="tok-str">"local"</span></code></pre>
       <tr>
         <td><strong>Cost runaway</strong></td>
         <td>RL rollouts or best-of-N eval burns GPU/API budget</td>
-        <td>Stella's <code class="mono">BudgetGuard</code> meters every call. Wrap the training cycle in a USD ceiling, same as a production turn.</td>
+        <td>stella's <code class="mono">BudgetGuard</code> meters every call. Wrap the training cycle in a USD ceiling, same as a production turn.</td>
       </tr>
     </table>
 
@@ -661,7 +715,7 @@ api_key = <span class="tok-str">"local"</span></code></pre>
       <span class="tag">stella-model</span>
       <span class="tag">bench/</span>
     </p>
-    <p style="margin-top:16px">This playbook references the Stella workspace as indexed. Every crate, trait, and file path is real and current. Adapt training infrastructure (GPU cluster, RL framework) to your environment.</p>
+    <p style="margin-top:16px">This playbook references the stella workspace as indexed. Every crate, trait, and file path is real and current. Adapt training infrastructure (GPU cluster, RL framework) to your environment.</p>
     <p style="color:var(--accent);margin-top:8px;font-family:var(--mono);font-size:12px">run → record → reward → refine → re-evaluate → redeploy → run</p>
   </div>
 </footer>
