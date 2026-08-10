@@ -207,6 +207,7 @@ pub enum PolicyKind {
 }
 
 mod call_role;
+pub mod consumers;
 
 pub use call_role::ModelCallRole;
 
