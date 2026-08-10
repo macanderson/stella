@@ -83,6 +83,11 @@ COPY ${STELLA_ADAPTER_PATH}/README.md /opt/stella-harbor/README.md
 COPY ${STELLA_ADAPTER_PATH}/stella_harbor /opt/stella-harbor/stella_harbor
 RUN python3 -m pip install --break-system-packages /opt/stella-harbor \
     && python3 -c "import stella_harbor"
+# The runner resolves the adapter *source* through this variable (or a Stella
+# checkout, which the container deliberately does not carry): `stage_adapter`
+# copies it content-addressed per trial (#2127). The install above proves the
+# import; this names the directory the staging reads.
+ENV ARENABENCH_STELLA_ADAPTER=/opt/stella-harbor
 
 COPY ${PKG_PATH}/infra/runner/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
