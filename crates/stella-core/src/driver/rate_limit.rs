@@ -18,8 +18,9 @@
 
 use stella_protocol::{AgentEvent, ProviderError};
 
-use super::overflow_recovery::ModelCallFailure;
-use super::{CompletionResultAlias, Engine, RetryAttemptFn, SpeculationFuture, lifecycle};
+use super::{
+    CompletionResultAlias, Engine, ModelCallFailure, RetryAttemptFn, SpeculationFuture, lifecycle,
+};
 use crate::budget::BudgetGuard;
 use crate::bus;
 use crate::event_sender::EventSender;
