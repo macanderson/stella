@@ -162,7 +162,7 @@ catalog! {
     "format_code"         => (false, false, Always, "build"),
     // Capability probing: check whether a binary exists on PATH without
     // executing it. Results memoized per session.
-    "probe_capability"    => (true, true, Always, "process"),
+    "probe_capability"    => (true, true, Always, "environment"),
     // The project scripts index (docs/spec/scripts-index.md) — static
     // manifest detection, nothing executed.
     "list_scripts"        => (true, true, Always, "scripts"),
