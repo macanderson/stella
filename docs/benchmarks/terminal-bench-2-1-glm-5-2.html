@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="A paired 89-task Terminal-Bench 2.1 comparison holding the model fixed and changing only the agent harness. Every trial inspectable.">
 <meta property="og:title" content="Terminal-Bench 2.1: same model, different harness">
-<meta property="og:description" content="Stella 58, Claude Code 44, on identical GLM-5.2. Every trial inspectable.">
+<meta property="og:description" content="stella 58, Claude Code 44, on identical GLM-5.2. Every trial inspectable.">
 <style>*,*::before,*::after{box-sizing:border-box}
 body,h1,h2,p,ul,pre{margin:0} ul{list-style:none;padding:0}
 button{font:inherit;color:inherit} table{border-collapse:collapse}</style>
 </head>
 <body>
-<title>Terminal-Bench 2.1: same model, different harness · Stella Benchmarks</title>
+<title>Terminal-Bench 2.1: same model, different harness · stella Benchmarks</title>
 <style>
 /* Neutral monochrome, per the docs house style: no accent hue in the chrome.
    The only colour on this page is semantic — a task passed or it did not. */
@@ -51,7 +51,7 @@ h1,h2,h3{letter-spacing:-.022em; text-wrap:balance; font-weight:640; margin:0}
 a{color:var(--ink); text-decoration:underline; text-decoration-color:var(--rule-2);
   text-underline-offset:3px}
 a:hover{text-decoration-color:var(--ink)}
-:focus-visible{outline:2px solid var(--ink); outline-offset:3px; border-radius:2px}
+:focus-visible{outline:2px solid var(--ink); outline-offset:3px; border-radius:0}
 
 .crumb{border-bottom:1px solid var(--rule)}
 .crumb .wrap{display:flex; gap:9px; align-items:center; padding:13px 28px;
@@ -111,7 +111,7 @@ strong{font-weight:625}
 .toolbar{display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin:0 0 15px}
 .chip{font-family:ui-monospace,Menlo,monospace; font-size:11.5px; padding:6px 12px;
   border:1px solid var(--rule-2); background:transparent; color:var(--ink-2); cursor:pointer;
-  border-radius:3px; letter-spacing:.02em}
+  border-radius:0; letter-spacing:.02em}
 .chip:hover{border-color:var(--ink-3); color:var(--ink)}
 .chip[aria-pressed="true"]{background:var(--ink); color:var(--bg); border-color:var(--ink)}
 .count{margin-left:auto; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--ink-3)}
@@ -133,7 +133,7 @@ td.task{text-align:left; font-size:13px; color:var(--ink); max-width:270px; over
   text-overflow:ellipsis}
 td.sep{border-left:1px solid var(--rule)}
 .v{display:inline-block; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
-  padding:3px 7px; border-radius:3px; font-weight:600}
+  padding:3px 7px; border-radius:0; font-weight:600}
 .v.ok{color:var(--pass); background:var(--pass-bg)}
 .v.no{color:var(--fail); background:var(--fail-bg)}
 .v.err{color:var(--ink-3); background:var(--code)}
@@ -161,7 +161,7 @@ tr.detail>td{padding:0; background:var(--code); border-bottom:1px solid var(--ru
 pre{background:var(--code); border:1px solid var(--rule); padding:15px 17px; overflow-x:auto;
   font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.62; margin:20px 0}
 code{font-family:ui-monospace,Menlo,monospace; font-size:.9em; background:var(--code);
-  padding:1.5px 5px; border:1px solid var(--rule); border-radius:2px}
+  padding:1.5px 5px; border:1px solid var(--rule); border-radius:0}
 pre code{background:none; border:none; padding:0}
 ul{padding-left:19px; margin:0 0 17px} li{margin-bottom:9px}
 footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,monospace; font-size:11.5px}
@@ -174,7 +174,7 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
 </style>
 
 <div class="crumb"><div class="wrap">
-  <a href="https://stella.oxagen.sh">Stella</a><span class="sep">/</span>
+  <a href="https://stella.oxagen.sh">stella</a><span class="sep">/</span>
   <a href="/benchmarks/">Benchmarks</a><span class="sep">/</span>
   <span class="here">Terminal-Bench 2.1</span>
 </div></div>
@@ -186,7 +186,7 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
     <p class="dek">Two agents ran the same 89 terminal tasks on the same model, on the same
       machine, at the same hour. One solved fourteen more of them.</p>
     <div class="score">
-      <div class="sc win"><div class="who">Stella</div><div class="big">58</div>
+      <div class="sc win"><div class="who">stella</div><div class="big">58</div>
         <div class="sub">of 89 · 65.2%</div></div>
       <div class="sc"><div class="who">Claude Code</div><div class="big">44</div>
         <div class="sub">of 89 · 49.4%</div></div>
@@ -244,10 +244,10 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
   </div>
   <div class="grid2">
     <div class="hd"></div><div class="hd">Claude Code solved</div><div class="hd">Claude Code failed</div>
-    <div class="hd">Stella solved</div>
+    <div class="hd">stella solved</div>
     <div><div class="cell">36<small>both — no signal</small></div></div>
-    <div class="key"><div class="cell">22<small>Stella only</small></div></div>
-    <div class="hd">Stella failed</div>
+    <div class="key"><div class="cell">22<small>stella only</small></div></div>
+    <div class="hd">stella failed</div>
     <div><div class="cell">8<small>Claude Code only</small></div></div>
     <div><div class="cell">23<small>neither — model ceiling</small></div></div>
   </div>
@@ -267,16 +267,16 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
   <div class="prose">
     <p>The failure classes explain more than the totals do. Claude Code recorded
       <strong>25 non-zero-exit failures</strong> — the agent stopped and left the workspace
-      short of the goal. Stella recorded <strong>2</strong>. In the other direction, Stella
+      short of the goal. stella recorded <strong>2</strong>. In the other direction, stella
       spent more of its failures on the clock, still working when time ran out.</p>
     <p>That is the shape the thesis predicts. A harness that verifies before it stops converts
       "I think I'm done" into another attempt. The cost shows up exactly where you would
       expect: more tool actions, more tokens, more wall-clock — and more tasks finished.</p>
     <p>The tool-count gap deserves its own sentence, because read carelessly it looks like
-      waste. Claude Code funnels nearly everything through one general-purpose shell; Stella
+      waste. Claude Code funnels nearly everything through one general-purpose shell; stella
       ships many small single-purpose tools — one that reads, one that edits, one that inspects
       what changed, one that runs tests. More calls is the design, not the inefficiency. The
-      efficiency question is answered by cost per success, and there Stella is
+      efficiency question is answered by cost per success, and there stella is
       <strong>cheaper</strong>: $1.35 against $1.44.</p>
   </div>
 </section>
@@ -286,7 +286,7 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
   <div class="toolbar">
     <button class="chip" data-f="all" aria-pressed="true">All 89</button>
     <button class="chip" data-f="disc" aria-pressed="false">Disagreements (30)</button>
-    <button class="chip" data-f="a" aria-pressed="false">Stella only (22)</button>
+    <button class="chip" data-f="a" aria-pressed="false">stella only (22)</button>
     <button class="chip" data-f="b" aria-pressed="false">Claude Code only (8)</button>
     <button class="chip" data-f="both" aria-pressed="false">Both solved (36)</button>
     <button class="chip" data-f="none" aria-pressed="false">Neither (23)</button>
@@ -295,7 +295,7 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
   <div class="tscroll"><table>
     <thead><tr>
       <th data-s="k">Task<span class="ar"></span></th>
-      <th class="grp" data-s="av">Stella<span class="ar"></span></th>
+      <th class="grp" data-s="av">stella<span class="ar"></span></th>
       <th data-s="at">Tools<span class="ar"></span></th>
       <th data-s="ao">Out tok<span class="ar"></span></th>
       <th data-s="ac">Cost<span class="ar"></span></th>
@@ -318,7 +318,7 @@ footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,m
     <div class="sk">Effort</div><div>max, reasoning enabled, for every role that affects the outcome</div>
     <div class="sk">Budget</div><div>No spend cap on either agent</div>
     <div class="sk">Attempts</div><div>1 per task, 0 retries, both agents</div>
-    <div class="sk">Endpoint</div><div>Stella → OpenRouter · Claude Code → z.ai <em>(the one intended difference)</em></div>
+    <div class="sk">Endpoint</div><div>stella → OpenRouter · Claude Code → z.ai <em>(the one intended difference)</em></div>
     <div class="sk">Host</div><div>One machine, both agents concurrently, same clock</div>
     <div class="sk">Pre-registered</div><div>Commit, binary hash, config hash and task list fixed before launch</div>
   </div>
@@ -411,18 +411,18 @@ function detail(r){
     ["Steps",r.a&&r.a.st,r.b&&r.b.st,"lower"],["Tool actions",r.a&&r.a.t,r.b&&r.b.t,null],
     ["Input tokens",r.a&&r.a.i,r.b&&r.b.i,"lower"],["Output tokens",r.a&&r.a.o,r.b&&r.b.o,"lower"],
     ["Cost",r.a&&r.a.c,r.b&&r.b.c,"lower"],["Wall clock",r.a&&r.a.w,r.b&&r.b.w,"lower"],
-    // Stella-only telemetry, and marked as such (#1211 §6.5). This is read
+    // stella-only telemetry, and marked as such (#1211 §6.5). This is read
     // from `stella-events.jsonl`, which the Claude Code arm does not write, so
     // its 0 on all 89 rows is the absence of a source — not a measurement of
     // zero. Rendered as a comparison with "lower is better" it handed Claude
     // Code a win on every row and totalled to a 106-vs-0 that reads as a
-    // finding about the agents. The Stella figure is itself inferred (a step
+    // finding about the agents. The stella figure is itself inferred (a step
     // that spent >=16K output tokens and called no tool) against a 64K
     // ceiling, so it over-counts long answers as truncations; the reported
     // `finish_reason` now replaces that inference on new runs.
-    ["Output-cap hits (Stella telemetry only)",r.a&&r.a.cap,null,null]];
+    ["Output-cap hits (stella telemetry only)",r.a&&r.a.cap,null,null]];
   let h='<div class="dpanel"><p class="dhead">'+r.k+' — full telemetry, side by side</p><div class="cmp">'
-    +'<div class="lab hdr"></div><div class="hdr">Stella</div><div class="hdr">Claude Code</div>';
+    +'<div class="lab hdr"></div><div class="hdr">stella</div><div class="hdr">Claude Code</div>';
   for(const [lab,av,bv,better] of rows){
     if(lab==="Verdict"){ h+='<div class="lab">'+lab+'</div><div>'+av+'</div><div>'+bv+'</div>'; continue; }
     if(bv===null){
@@ -430,7 +430,7 @@ function detail(r){
       // the other side has no source, rather than printing a 0 that reads as
       // a measured result.
       h+='<div class="lab">'+lab+'</div><div>'+fmt(av||0)+'</div>'
-        +'<div class="v">not measured — no Stella telemetry on this arm</div>';
+        +'<div class="v">not measured — no stella telemetry on this arm</div>';
       continue;
     }
     const A=av||0,B=bv||0,mx=Math.max(A,B,1);
