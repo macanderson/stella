@@ -1136,6 +1136,24 @@ pub(crate) fn resolve_cross_family_verifier(
     Some((verifier, decision.model_ref.provider))
 }
 
+/// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the
+/// same wiring the pipeline paths build per run, held for the whole session
+/// so its breaker accumulates the observed outcome of every turn's model
+/// calls (#2673). The bare loops feed this router today and do not yet
+/// resolve from it (their provider is fixed at session start), which is why
+/// wiring notices are deliberately not surfaced here: none of the routing
+/// decisions they describe are operative on this path until mid-turn
+/// fallback (#2679) starts consulting the breaker at resolution time.
+pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
+    let configured = crate::config::discover_configured_providers();
+    let wiring = resolve_engine_wiring(cfg, worker_ref, &configured);
+    Router::new(
+        wiring.pins,
+        wiring.profiles,
+        CircuitBreaker::new(Box::new(SystemClock::new())),
+    )
+}
+
 /// Where post-turn reflection dispatches, and on what posture.
 ///
 /// [`Self::provider`] is `None` in the one case that is still a route: the

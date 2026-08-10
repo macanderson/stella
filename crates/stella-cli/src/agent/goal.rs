@@ -144,6 +144,9 @@ pub(crate) async fn run_raw_one_shot(
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
+    // Breaker feedback for the bare one-shot turn (#2673) — one turn per
+    // process, so this is pure ledger today; #2679 reads it mid-turn.
+    let router = session_router(cfg, &ModelRef::new(cfg.provider.id, cfg.model_id.clone()));
 
     if format == OutputFormat::Text {
         plain::section_header("Stella");
@@ -216,6 +219,7 @@ pub(crate) async fn run_raw_one_shot(
         &mut messages,
         &mut budget,
         &calibration,
+        &router,
         cfg,
         format,
         &store,
@@ -818,7 +822,10 @@ async fn run_goal_pipeline_turn(
             verifier_engine_config_for(cfg),
             &TokioSleeper,
         )
-        .with_calibration(calibration);
+        .with_calibration(calibration)
+        // The round verifier's outcomes feed the same breaker the next
+        // round's pipeline resolves against (#2673).
+        .with_provider_outcomes(&router);
 
         let mut total_cost_usd = 0.0f64;
         let mut result: Option<Result<(), crate::failure::CliFailure>> = None;

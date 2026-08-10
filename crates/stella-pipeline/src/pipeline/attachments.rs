@@ -69,6 +69,10 @@ impl<'a> Pipeline<'a> {
         if let Some(calibration) = self.calibration {
             engine = engine.with_calibration(calibration);
         }
-        engine
+        // Breaker feedback (#2673): every engine turn the pipeline runs
+        // reports its call outcomes into the router it resolved from, so a
+        // provider observed failing here is one the NEXT resolution — a
+        // revise round, the witness author, the verifier — routes around.
+        engine.with_provider_outcomes(self.router)
     }
 }

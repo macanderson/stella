@@ -199,12 +199,11 @@ struct PipelineRunSummary {
 /// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.
 /// A different key set from [`PipelineRunSummary`] — no verification ladder ran,
 /// and this path is the one that carries `files_touched` — but the same
-/// contract, so it declares the same [`crate::SUMMARY_SCHEMA_VERSION`]. The two
-/// can never drift: both read the one constant.
-///
-/// A struct rather than `serde_json::json!` so the version leads the object:
-/// `json!` builds a sorted map and would bury it mid-envelope. Key order is not
-/// contractual either way; this is for whoever reads the output by eye.
+/// contract, so it declares the same [`crate::SUMMARY_SCHEMA_VERSION`]; the two
+/// can never drift, both reading the one constant. A struct rather than
+/// `serde_json::json!` so the version leads the object (`json!` builds a sorted
+/// map and would bury it mid-envelope); key order is not contractual either
+/// way — this is for whoever reads the output by eye.
 #[derive(serde::Serialize)]
 struct RawRunSummary {
     schema_version: u32,
@@ -495,24 +494,21 @@ async fn run_pipeline_one_shot(
         .await;
     }
 
-    // Reflect on turns that did real work — success AND failure. A failed
-    // pipeline run is a high-value learning signal (root-cause prompt via
-    // `succeeded=false`).
-    //
+    // Reflect on turns that did real work — success AND failure (a failed
+    // pipeline run is a high-value root-cause signal via `succeeded=false`).
     // The gate is `did real work` = tool-calls in the transcript OR files
     // changed on disk. On the pipeline path the worker's tool-calling turns
     // are deliberately kept OUT of `messages` (planner context hygiene,
     // L-E6), so `turn_warrants_reflection(&messages)` alone is always false
-    // there and the whole self-improvement loop never fired on `stella run`.
-    // Falling back to `!files.is_empty()` — mirroring the episode gate above
+    // there and the self-improvement loop never fired on `stella run`;
+    // falling back to `!files.is_empty()` — mirroring the episode gate above
     // — is what makes the primary surface actually learn. The reflector is
-    // then handed an enriched transcript (final answer + a note of what
-    // changed) so it has signal even when the tool turns aren't in `messages`.
-    // Output format does not change Stella's learning semantics: text, JSON,
-    // and stream-JSON runs all reflect by default. Ephemeral automation may
-    // explicitly opt out with `STELLA_DISABLE_REFLECTION` when it must avoid a
-    // post-turn provider call (for example, a benchmark adapter that meters
-    // only the task-solving envelope).
+    // handed an enriched transcript (final answer + a note of what changed)
+    // so it has signal even when the tool turns aren't in `messages`. Output
+    // format does not change learning semantics: text, JSON, and stream-JSON
+    // runs all reflect by default; ephemeral automation opts out with
+    // `STELLA_DISABLE_REFLECTION` when it must avoid a post-turn provider
+    // call (e.g. a benchmark adapter metering only the task envelope).
     let mut reflection_report = ReflectionReport::default();
     if one_shot_reflection_enabled(format)
         && (turn_warrants_reflection(&messages) || !files.is_empty())
@@ -766,6 +762,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // Session-scoped like `budget`: seeded once from prior sessions'
     // telemetry, then sharpened by every turn in this REPL.
     let calibration = seed_calibration(&store, cfg);
+    // Session-scoped like `calibration`: every turn's engine reports its
+    // call outcomes into this router's breaker (#2673) — the state a
+    // resolution (and #2679's mid-turn fallback) reads to route around a
+    // provider this session has watched fail.
+    let router = session_router(cfg, &ModelRef::new(cfg.provider.id, cfg.model_id.clone()));
 
     plain::welcome_banner(
         cfg.provider.id,
@@ -1093,6 +1094,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &mut messages,
             &mut budget,
             &calibration,
+            &router,
             cfg,
             OutputFormat::Text,
             &store,
@@ -1239,9 +1241,9 @@ pub(crate) async fn init_workspace(
 /// snapshot. `None` when there is no index, it is empty, or any read fails —
 /// the tab then shows its "run stella init" hint instead of an empty graph.
 ///
-/// This is [`graph_snapshot_focus`] with no explicit focus, so the neighborhood
-/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file) — the
-/// sensible default the deck opens on and can re-root away from via the picker.
+/// This is [`graph_snapshot_focus`] with no explicit focus: the neighborhood
+/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file), which
+/// the deck opens on and can re-root away from via the picker.
 pub(crate) fn graph_snapshot(
     workspace_root: &std::path::Path,
 ) -> Option<stella_tui::GraphSnapshot> {
@@ -1828,12 +1830,10 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
 }
 
 /// Construct the budget guard from `--budget`. The limit lands on the
-/// session axis, so it caps cumulative spend across every turn and goal
-/// round of the run — `begin_turn` (called at the top of each turn/round)
-/// resets only the turn-scoped counter while the session accumulator
-/// survives it. The turn axis is left unset on purpose: turn spend can
-/// never exceed session spend (it is a reset-to-zero subset of it), so a
-/// turn limit equal to the session limit could never trip first and would
+/// session axis, capping cumulative spend across every turn and goal round
+/// of the run — `begin_turn` resets only the turn-scoped counter. The turn
+/// axis is left unset on purpose: turn spend is a reset-to-zero subset of
+/// session spend, so an equal turn limit could never trip first and would
 /// only mislabel a session breach as a turn one. No limit at all still
 /// meters spend (`BudgetMode::Observed`) so the cost summary and
 /// `BudgetTick` events stay meaningful even when nothing is enforced.
@@ -1905,13 +1905,11 @@ pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>>
 
 /// Build the session's token-drift calibration, seeded from prior sessions'
 /// telemetry for the resolved provider/model (`Store::drift_samples`) so the
-/// estimator starts already corrected instead of re-learning each session.
-/// Best-effort like all persistence: no store (or a failed query) just means
-/// starting uncalibrated — factor 1.0, the pre-drift behavior.
-///
-/// The seeding, including the sample count, lives in
-/// [`stella_runtime::seed_calibration`]; this wrapper only unwraps the pin out
-/// of a [`Config`], which the runtime crate deliberately does not know about.
+/// estimator starts already corrected. Best-effort like all persistence: no
+/// store (or a failed query) means starting uncalibrated — factor 1.0. The
+/// seeding lives in [`stella_runtime::seed_calibration`]; this wrapper only
+/// unwraps the pin out of a [`Config`], which the runtime crate deliberately
+/// does not know about.
 pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
     stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
@@ -1942,16 +1940,14 @@ pub(crate) fn begin_execution(
 }
 
 /// Run one full turn through `stella_core::Engine`, rendering its
-/// `AgentEvent` stream live via a spawned draining task running
-/// concurrently with the engine. Ordinary runs enqueue to an unbounded
-/// channel; benchmark stream-json runs synchronously append+flush each event
-/// before enqueueing it, so paid-call evidence survives a paused/cancelled
-/// renderer. Events still reach the renderer as soon as `run_turn` yields.
-/// The drain task ([`spawn_renderer`]) persists every event and each
-/// `StepUsage` to the workspace store when one is open. `registry` is the
-/// concrete tool registry (its CRUD ledger is read after the turn for the
-/// Files Touched panel); `base_tools` is the same registry as the engine's
-/// executor, possibly MCP-wrapped.
+/// `AgentEvent` stream live via a spawned draining task. Ordinary runs
+/// enqueue to an unbounded channel; benchmark stream-json runs synchronously
+/// append+flush each event before enqueueing it, so paid-call evidence
+/// survives a paused/cancelled renderer. The drain task ([`spawn_renderer`])
+/// persists every event and each `StepUsage` to the workspace store when one
+/// is open. `registry` is the concrete tool registry (its CRUD ledger feeds
+/// the Files Touched panel); `base_tools` is the same registry as the
+/// engine's executor, possibly MCP-wrapped.
 #[allow(clippy::too_many_arguments)]
 async fn run_turn(
     provider: &dyn Provider,
@@ -1961,6 +1957,8 @@ async fn run_turn(
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
     calibration: &CalibrationMap,
+    // Session-scoped breaker feedback (#2673): the engine reports outcomes.
+    router: &Router,
     cfg: &Config,
     format: OutputFormat,
     store: &Option<Arc<Store>>,
@@ -2022,7 +2020,8 @@ async fn run_turn(
         let permitted = PolicyToolSet::new(registry, session_tool_policy(cfg));
         let config = engine::engine_config_for_kind(cfg, kind);
         let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
-            .with_calibration(calibration);
+            .with_calibration(calibration)
+            .with_provider_outcomes(router);
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         let customs = CustomToolSet::new(
@@ -2048,7 +2047,8 @@ async fn run_turn(
         let hook_runner = ShellHookRunner;
         let config = engine::engine_config_for_kind(cfg, kind);
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
-            .with_calibration(calibration);
+            .with_calibration(calibration)
+            .with_provider_outcomes(router);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

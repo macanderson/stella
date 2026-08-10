@@ -694,6 +694,10 @@ impl Engine<'_> {
             // `agent_id`, which is what lets a consumer tell parent work from
             // child work without a second bus.
             bus: self.bus,
+            // A child's model calls are real observed outcomes for the same
+            // provider — the breaker they feed is session state, like the
+            // calibration map above (#2673).
+            outcomes: self.outcomes,
         };
 
         // The child's private transcript. It is a local: nothing outside
