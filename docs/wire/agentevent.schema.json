@@ -481,7 +481,7 @@
       "type": "object"
     },
     "LadderRung": {
-      "description": "Which rung of the evidence ladder a `Verdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`VerdictEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers a real model verifier, a heuristic verdict\n  after the verifier call *failed*, and the abstain rung. The first is soft\n  signal, the second is not signal at all, and the only thing separating\n  them in the old shape was the wording of a summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the verifier arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
+      "description": "Which rung of the evidence ladder a `Verdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`VerdictEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers two rungs that are not the same answer —\n  [`LadderRung::Unverifiable`] (\"no probe could look\") and\n  [`LadderRung::Unverified`] (\"the probes looked and did not settle it\") —\n  and the only thing separating them in the old shape was the wording of a\n  summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the verifier arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
       "oneOf": [
         {
           "const": "submit_fast",
@@ -500,17 +500,12 @@
         },
         {
           "const": "unverifiable",
-          "description": "Every evidence channel was blind, so the ladder abstained. Nothing is\nclaimed about the work — in particular not that it failed.",
+          "description": "Every evidence channel was blind, so the ladder abstained. Nothing is\nclaimed about the work — in particular not that it failed.\n\nA claim about the **probes**: nothing could look. Its near-namesake\n[`LadderRung::Unverified`] is a claim about the **proof**: the probes\nlooked and what they returned did not settle the question. The two words\ncarry that difference exactly — `-able` is a capacity, `-ed` is a state.",
           "type": "string"
         },
         {
-          "const": "model_verdict",
-          "description": "The verifier answered on genuinely inconclusive evidence. Named for\nthe *evidence class* — a model's opinion — not for the model: it is\ndeliberately not called `ModelVerifier`, because the whole ladder is\nverification and this is the one rung that is only an opinion.\n\nThe alias is what keeps this rename additive. This rung shipped as\n`model_judge`, so every session already on disk spells it that way; a\nbare rename would make those streams fail to parse — and this enum's\nown contract is that an unknown rung fails the event rather than being\nlaundered, so the failure would be loud and total. New writes use\n`model_verdict`; old reads still land.",
-          "type": "string"
-        },
-        {
-          "const": "heuristic_fallback",
-          "description": "The verdict call itself failed or returned something unparseable, and\nthe conservative heuristic verdict stood in for it. A verdict about the\nverifier's availability, not about the work.",
+          "const": "unverified",
+          "description": "Deterministic evidence was collected, and it did not amount to a proof:\nno receipt, or a receipt something deterministic refuted. No model was\nasked, because there is no question a model could settle that the oracle\ncould not.\n\n# Why the two rungs it replaces are gone\n\nBoth described a model's involvement rather than the work: `model_judge`\n/ `model_verdict` was \"a second model read the diff and offered an\nopinion\", and `heuristic_fallback` was \"that model was unreachable, so a\nheuristic stood in\". Neither is evidence about the change. Measured over\nan 89-task Terminal-Bench run the opinion agreed with the benchmark's\ngrader 46% of the time and 17 of its false passes cost 5 tasks outright,\nso the escalation was removed and the honest label put in its place.\n\nAll three aliases are retained for the reason `model_verdict` once\naliased `model_judge`: sessions already on disk spell it those ways, and\nthis enum's contract is that an unknown rung fails the event rather than\nlaundering it, so a bare rename would make historical streams fail to\nparse loudly and totally. New writes use `unverified`; old reads still\nland, and land on the rung whose semantics they always actually had.",
           "type": "string"
         },
         {
@@ -1104,6 +1099,23 @@
           "properties": {
             "kind": {
               "const": "verification_unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The evidence channels worked, and what they returned did not amount to\na proof ([`crate::LadderRung::Unverified`]).\n\nThe near-twin of [`Self::VerificationUnavailable`] and deliberately not\nthe same step, for the reason that one exists at all: a reader has to be\nable to tell \"the instruments were blind\" from \"the instruments worked\nand the answer was not enough\". They imply opposite repairs — fix the\nprobe, versus produce the missing observation — and a panel that renders\nboth as one row sends every reader to the wrong one half the time.\n\nThis is the step that replaced the model verdict. Where a run used to\nrecord a second model's opinion on inconclusive evidence, it now records\nthat the evidence was inconclusive and stops, so the trace states the\nlimit of what was established rather than papering over it.",
+          "properties": {
+            "kind": {
+              "const": "verification_unproven",
               "type": "string"
             },
             "reason": {
