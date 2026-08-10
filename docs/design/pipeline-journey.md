@@ -1,12 +1,17 @@
 ---
 id: pipeline-journey
 title: "The journey of a prompt — full pipeline mode, in plain language"
-status: living
+status: archived
 ---
 
 # The journey of a prompt — full pipeline mode, in plain language
 
-**Status:** Living document. Describes the staged pipeline as of 0.6.x.
+**Status:** Superseded historical design. It describes the staged pipeline as
+of 0.6.x, before the deterministic verification boundary. For the current
+contract, see the user-facing
+[Inference Pipeline](../../website/content/docs/inference-pipeline.mdx) page.
+The current pipeline makes no witness-author, witness-repair,
+distress-guidance, or verdict model calls.
 
 This is the maintainer's companion to the user-facing
 [Inference Pipeline](../website/content/docs/inference-pipeline.mdx) page. That
@@ -218,7 +223,8 @@ witness test, and if not, why not":
 
 When a witness is required, the **witness author** — an independent model,
 resolved from the verifier's slot and skipped (the run degrades to an
-unauthored ladder) if it would be the same model as the worker — writes a minimal *failing* test (`pipeline/witness_stage.rs`).
+unauthored ladder) if it would be the same model as the worker — wrote a
+minimal *failing* test in the former witness stage.
 The author works in a **pristine snapshot of the pre-execution tree**, blind
 to the diff, so the test pins the *intended behavior* rather than restating
 the patch. The authored test must:

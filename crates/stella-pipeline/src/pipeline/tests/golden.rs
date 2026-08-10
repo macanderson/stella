@@ -130,16 +130,17 @@ async fn golden_single_task_deterministic_flip() {
     check_golden(
         "single_task_deterministic_flip",
         "A single-task goal whose test command flips fail->pass: deterministic \
-         verdict, model verifier skipped.",
+         verdict with no model-verification stage.",
         drain(&mut rx),
     );
 }
 
-/// The verifier-escalation path: no test command, so the deterministic ladder
-/// cannot conclude and a model verifier is consulted — a materially different
-/// stage sequence from the flip path above.
+/// The abstention path: no test command, so the deterministic ladder cannot
+/// conclude and preserves the work as unverified without consulting a model.
+/// The historical fixture id is retained so stored conformance references do
+/// not need a format migration.
 #[tokio::test]
-async fn golden_verifier_escalation_without_a_test_command() {
+async fn golden_unverified_without_a_test_command() {
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
         writing_tool_result("editing"),
@@ -201,7 +202,7 @@ async fn golden_verifier_escalation_without_a_test_command() {
     check_golden(
         "verifier_escalation_without_a_test_command",
         "A file-touching goal with no test command: the deterministic ladder \
-         cannot conclude, so the model verifier is consulted.",
+         abstains without consulting a model verifier.",
         drain(&mut rx),
     );
 }

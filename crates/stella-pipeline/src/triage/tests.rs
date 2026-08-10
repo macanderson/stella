@@ -110,7 +110,10 @@ fn parses_the_structured_assurance_answer() {
     assert_eq!(a.require_witness, Some(false));
     assert_eq!(a.require_verifier, Some(true));
     assert!(!a.wants_witness(), "an explicit no wins over the class");
-    assert!(a.wants_verifier());
+    assert!(
+        !a.wants_verifier(),
+        "legacy verifier flags have no live effect"
+    );
 }
 
 #[test]
@@ -344,18 +347,13 @@ fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
 }
 
 #[test]
-fn a_verifier_opinion_is_required_to_skip_the_verifier() {
-    // `wants_verifier` is only consulted after the ladder came back
-    // inconclusive, so silence must never mean "skip".
+fn no_assessment_can_select_a_model_verifier() {
     for class in [
         TaskClass::SimpleLookup,
         TaskClass::SingleTask,
         TaskClass::MultiStep,
     ] {
-        assert!(
-            TaskAssessment::from_class(class).wants_verifier(),
-            "{class:?} with no triage opinion must still reach the verifier"
-        );
+        assert!(!TaskAssessment::from_class(class).wants_verifier());
     }
 }
 
@@ -597,13 +595,10 @@ fn requirement_bullets_do_not_floor_to_multi_step() {
 }
 
 #[test]
-fn the_verifier_nudge_prefers_review_when_unsure() {
+fn the_triage_prompt_does_not_offer_a_model_verifier() {
     let p = triage_prompt("anything", "").rendered();
-    // The witness keeps its skip-nudge; the verifier must not share it —
-    // the verifier is only ever consulted when no test settled the outcome,
-    // which is exactly when review has value.
-    assert!(p.contains("when unsure, say yes"));
-    assert!(!p.contains("Prefer `no` for both"));
+    assert!(!p.contains("VERIFIER:"), "{p}");
+    assert!(!p.contains("separate model should review"), "{p}");
 }
 
 #[test]

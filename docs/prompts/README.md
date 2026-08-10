@@ -22,11 +22,11 @@ exhaustive `match` at compile time. If a role exists, it has a page here.
 | `research` | [research.md](research.md) | `doc:prompt-research` | engine (sub-agent) | read-only | one pre-plan question about the workspace |
 | `plan` | [plan.md](plan.md) | `doc:prompt-plan` | raw | none | the ordered step list |
 | `plan_repair` | [plan-repair.md](plan-repair.md) | `doc:prompt-plan-repair` | raw | none | re-emit an unparseable plan as JSON |
-| `witness_author` | [witness-author.md](witness-author.md) | `doc:prompt-witness-author` | engine | witness set | the failing test that arms the flip oracle |
-| `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
+| `witness_author` | [witness-author.md](witness-author.md) | `doc:prompt-witness-author` | retired | none | historical trace/configuration decoding only |
+| `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | retired | none | historical trace/configuration decoding only |
 | `worker` | [worker.md](worker.md) | `doc:prompt-worker` | engine / raw | full registry | the change itself |
-| `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | raw | none | course-correction for a stuck worker |
-| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | raw | none | PASS/FAIL on inconclusive evidence |
+| `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | retired | none | historical trace/configuration decoding only |
+| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | retired | none | historical trace/configuration decoding only |
 | `agent_author` | [agent-author.md](agent-author.md) | `doc:prompt-agent-author` | raw | none | a generated agent definition |
 | `skill_author` | [skill-author.md](skill-author.md) | `doc:prompt-skill-author` | raw | none | a generated `SKILL.md` |
 | `domain_inference` | [domain-inference.md](domain-inference.md) | `doc:prompt-domain-inference` | raw | none | the workspace's domain taxonomy |
@@ -132,7 +132,7 @@ The mapping to call roles is not one-to-one, and the gaps are real:
 | `agents.default.prompt` | the interactive worker's base persona | anything in the pipeline |
 | `agents.worker.prompt` | the pipeline worker's base persona, and `plan` / `plan_repair` whenever `agents.plan.prompt` is unset | the conversational reply — by design, see below |
 | `agents.plan.prompt` | `plan`, `plan_repair` | — |
-| `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` — by design, see below |
+| `agents.verifier.prompt` | no live role (retained for configuration decoding) | retired `verdict`, `distress_guidance`, `witness_author`, and `witness_repair` roles |
 | `agents.triage.prompt` | `triage` | — |
 | `agents.research.prompt` | — | `research` — by design, see below |
 
@@ -149,13 +149,10 @@ shapes its `EngineConfig` rather than a request; its system message is
 `RESEARCH_SYSTEM_PROMPT`, and that prompt is the contract that makes the child
 read-only rather than a preference to override.
 
-The witness row is a decision, not a gap. `apply_role_shaping`
-(`crates/stella-pipeline/src/pipeline/witness_stage.rs`) carries every *other*
-verifier knob — `effort`, `reasoning`, `temperature`, `max_output_tokens`,
-`params` — onto the witness engine config (#1785), and excludes `prompt`
-because it is a raw-call concern: that role's system message is
-`WITNESS_SYSTEM_PROMPT`, whose hard requirements the create boundary enforces
-mechanically.
+The verifier row is retained only so historical settings and traces still
+decode. The live pipeline makes no witness-author, witness-repair,
+distress-guidance, or verdict model calls, so none of its prompt or tuning
+fields reaches a live completion.
 
 The `worker` row reaches the plan stage (#2416): the planner writes the
 worker's work order, so operator prose constraining the worker has to be
