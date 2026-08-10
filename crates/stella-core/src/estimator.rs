@@ -5,7 +5,11 @@
 //! estimator: [`Calibration`] tracks the observed actual/estimated
 //! input-token ratio per model and corrects the
 //! heuristic with a bounded factor, so the estimate converges on what the
-//! provider's tokenizer actually reports over a session. The uncalibrated
+//! provider's tokenizer actually reports over a session. Within a turn the
+//! same reports also re-base the compaction decision directly
+//! (`crate::driver::usage_anchor`, #2681): the last report is the measured
+//! size of the transcript prefix it covered, and this module's estimate then
+//! prices only the tail appended since. The uncalibrated
 //! functions remain the shared byte-heuristic baseline
 //! ([`stella_protocol::tokens`] — the one place the rule is written down, so
 //! this module and the receipts plane cannot disagree on what a token is made

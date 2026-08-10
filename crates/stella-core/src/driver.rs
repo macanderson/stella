@@ -130,6 +130,7 @@ use tokio::sync::mpsc::UnboundedSender;
 mod dispatch;
 mod drive;
 mod settlement;
+pub(crate) mod usage_anchor;
 mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
@@ -481,11 +482,10 @@ pub struct Engine<'a> {
     pub(crate) hooks: Option<HooksHandle<'a>>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
-    /// the map across turns (and seeds it from persisted telemetry at
-    /// session start), the engine feeds it every committed step's
-    /// (estimated, actual) pair and reads the correction back into the
-    /// compaction decision. When `None` the turn path is exactly the
-    /// uncalibrated engine.
+    /// the map across turns (seeded from persisted telemetry at session
+    /// start), the engine feeds it every committed step's (estimated,
+    /// actual) pair and reads the correction back into the compaction
+    /// decision. When `None` the turn path is the uncalibrated engine.
     pub(crate) calibration: Option<&'a CalibrationMap>,
     /// Boundary pause gate ([`crate::ports::TurnGate`]), off by default.
     /// Attached via [`Engine::with_gate`]; consulted once per step, before
@@ -988,9 +988,12 @@ impl<'a> Engine<'a> {
         snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
         // Live while the calibration still answers identity, then latched at
         // the first corrected value (#1841, #2133): compaction and the
-        // manifest below always compare against the same settled number.
+        // manifest below compare against the same settled number. On top of
+        // that pair, the last usage report re-bases the budget so the
+        // estimator prices only the tail since it (#2681, `usage_anchor`).
         let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
-        let sized = state.latch_effective_budget(fresh);
+        let latched = state.latch_effective_budget(fresh);
+        let sized = state.anchored_budget(latched, self.config.compaction_budget_tokens);
         let pass = self
             .run_compaction_pass(
                 &mut state.messages,
@@ -1006,8 +1009,7 @@ impl<'a> Engine<'a> {
             state.mark_transcript_rewritten();
         }
         // The manifest reports the budget compaction just compared against —
-        // now the same latched value, not a second computation that happened
-        // to agree.
+        // the same anchored value, never a second computation.
         state.memos.receipts.set_effective_budget(sized.0, sized.1);
         // Set immediately after the pass that may have rewritten the
         // transcript, so the ledger's digest memo cannot serve a stale block.
@@ -1079,6 +1081,9 @@ impl<'a> Engine<'a> {
         });
         state.last_step = Some(step_started.elapsed());
         state.calibration_model = Some(committed.result.model.clone());
+        // Anchor the context measure to what the provider just attested for
+        // this exact prefix — before dispatch appends the reply to it.
+        state.anchor_usage(&committed.result.usage, committed.estimated_input_tokens);
         state.total_cost_usd += committed.result.cost_usd;
 
         if let Some(aborted) = self.handle_committed_result(
@@ -1104,8 +1109,7 @@ impl<'a> Engine<'a> {
         }
 
         // Only meaningful once a step has been timed and a budget configured:
-        // the forecast for one more continuation is what the last one cost, and
-        // without a deadline there is nothing to compare it against.
+        // the forecast for one more continuation is what the last one cost.
         let continuation_budget =
             self.config
                 .turn_budget
@@ -1176,22 +1180,21 @@ impl<'a> Engine<'a> {
         TurnState::from_checkpoint(checkpoint, &self.config)
     }
 
-    /// The compaction budget this turn's next step will actually compare
-    /// against, and the calibration factor that produced it. Single source of
-    /// truth for both the compaction pass and the step manifest, so the
-    /// receipt's `effective_budget_tokens` is exactly the number the decision
-    /// used (#364 item 1). Returns the configured budget with factor `1.0`
-    /// when calibration is off.
+    /// The calibrated compaction budget and the factor that produced it —
+    /// the configured budget with factor `1.0` when calibration is off.
+    /// `TurnState::anchored_budget` then re-bases this on the last usage
+    /// report, and THAT value is the single source of truth for both the
+    /// compaction pass and the step manifest, so the receipt's
+    /// `effective_budget_tokens` is exactly the number the decision used
+    /// (#364 item 1).
     ///
     /// Drift correction enters here: `compact` compares the RAW estimate
-    /// against the budget it is given, so dividing the configured budget
-    /// by the correction factor is exactly comparing the CALIBRATED
-    /// estimate (raw × factor) against the configured budget — including
-    /// the eviction loop's stopping condition — without threading a factor
-    /// through compaction's incremental bookkeeping. A factor > 1 (we
-    /// under-estimate this model's tokenizer) shrinks the effective budget
-    /// and compacts earlier; the factor's clamp (`crate::estimator`)
-    /// bounds how far either way a noisy sample can move this.
+    /// against the budget it is given, so dividing the configured budget by
+    /// the correction factor is exactly comparing the CALIBRATED estimate
+    /// (raw × factor) against the configured budget, without threading a
+    /// factor through compaction's bookkeeping. A factor > 1 (we
+    /// under-estimate this model's tokenizer) compacts earlier; the clamp
+    /// (`crate::estimator`) bounds how far a noisy sample can move this.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
             // Solves for the conversation size the budget allows, subtracting
@@ -1204,10 +1207,9 @@ impl<'a> Engine<'a> {
     }
 
     /// Compaction, before every model call, per the running estimate
-    /// (L-E3 dedup+evict, stable system prefix — the system message is
-    /// index 0 and `compact()` never touches it). The budget it compares
-    /// against is [`Self::effective_compaction_budget`]'s, so the pass and
-    /// the step manifest can never disagree about which number was used.
+    /// (L-E3 dedup+evict; the system message is index 0 and `compact()`
+    /// never touches it), against the caller's settled `sized` budget —
+    /// the same number the step manifest reports.
     ///
     /// Returns the summarizer's spend (0.0 on the overwhelmingly common
     /// no-summarization path) so `run_turn` folds it into the turn total.
@@ -1606,8 +1608,7 @@ impl<'a> Engine<'a> {
         // see `estimate_conversation_attachment_tokens`), and this value is
         // what StepUsage persists as the drift sample and what
         // `handle_committed_result` records. The compaction decision keeps
-        // the full attachment-weighted estimate via its own walk in
-        // `run_compaction_pass`.
+        // the full estimate via its own walk in `run_compaction_pass`.
         let estimated_input_tokens = estimate_conversation_tokens(messages).saturating_sub(
             crate::estimator::estimate_conversation_attachment_tokens(messages),
         );
