@@ -1,7 +1,7 @@
 # ROADMAP — Verification Pipeline
 
 Improvement proposals for the verification half of `stella-pipeline` — the
-flip oracle, the evidence ladder, witness authoring, the verifier escalation
+flip oracle, the evidence ladder, witness authoring, the revise/evidence-demand
 path, and best-of-N candidate scoring (`verify.rs`, `witness.rs`,
 `candidate.rs`, and the verify/revise wiring in `pipeline.rs`).
 
@@ -28,8 +28,9 @@ ship it" false positives.
 - **Flip oracle** (`verify::FlipOracle`): only a fail→pass flip of the *same
   normalized command* counts as deterministic verification.
 - **Evidence ladder** (`verify::ladder_decision`): submit fast on strong
-  evidence, revise on clear failure, escalate to the model verifier only when
-  evidence is genuinely inconclusive.
+  evidence, revise on clear failure, and report `Unverified` when the evidence
+  is genuinely inconclusive. Every rung is terminal — since #2584 no rung asks
+  a model.
 - **Witness authoring** (`witness`): when no `--test-command` is armed, an
   independent model authors the failing witness test, with tamper exclusion
   at verify time.
@@ -68,16 +69,16 @@ the test *constrains* the change well.
   two dialects `verify::fingerprint` can already read test output for — and
   `verify::coverage` intersects the executed lines with the diff's added
   ones. Three-valued, and **neither non-`covered` answer is a pass**:
-  - `not_covered` (measured, no overlap) withholds the deterministic credit
-    and escalates to the verifier — the flip is a coincidence, which is worth a
-    second opinion. Never a failure, never a deterministic red.
+  - `not_covered` (measured, no overlap) withholds the deterministic credit and
+    drops the turn to `Unverified` — the flip is a coincidence, so the honest
+    label is unproven. Never a failure, never a deterministic red.
   - `unmeasured` (no tooling, no probe, an unreadable report) takes the
-    fast-submit — no verifier call, no extra turn — but is **scored
+    fast-submit — no extra turn — but is **scored
     `Unverified`**, with the verdict summary leading `UNPROVEN` and the status
     on the ladder snapshot. The honest answer costs a ranking position rather
-    than a model call, which is what makes it affordable by default; escalating
-    instead would tax every workspace without coverage tooling (the #1295
-    result). `require_diff_coverage` turns that stricter reading on for an
+    than a turn, which is what makes it affordable by default; withholding the
+    submit instead would tax every workspace without coverage tooling (the
+    #1295 result). `require_diff_coverage` turns that stricter reading on for an
     operator who has the tooling and wants the overlap enforced.
 
   `PipelineOutcome::score` surfaces the grade so a host can see the

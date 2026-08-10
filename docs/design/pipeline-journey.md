@@ -22,8 +22,8 @@ The one-line itinerary:
 
 > **prompt → triage (+ recall, concurrently) → [conversational fast path?] →
 > plan → scope review → execute → diff probe → witness warrant → witness
-> authoring (on demand) → evidence ladder → { submit fast | revise | verifier |
-> abstain } → complete.**
+> authoring (on demand) → evidence ladder → { submit fast | revise | nothing
+> attempted | abstain | unverified } → verdict → complete.**
 
 A detail worth calling out immediately, because older docs got it backwards:
 **the witness test is authored *after* execution, not before it.** Authoring
@@ -70,8 +70,9 @@ Two things start at once, because neither depends on the other:
   It answers two independent questions — *is this even a software task?*
   (`conversational`), and *how much ceremony does it deserve?* (`TaskClass`:
   `SimpleLookup` / `SingleTask` / `MultiStep`) — plus two optional opinions:
-  whether an authored witness is warranted and whether a verifier review is
-  warranted. The call runs under a hard latency ceiling
+  whether an authored witness is warranted and whether independent review is
+  warranted (`VERIFIER: yes|no`, which since #2584 gates a *waiver* rather than
+  a call — see §10). The call runs under a hard latency ceiling
   (`triage_latency_ceiling`, default 10 s); if the model doesn't answer in
   time the pipeline falls through to the full path rather than waiting.
   A **deterministic floor** (`triage::resolve_task_class`) pattern-matches the
@@ -250,8 +251,8 @@ touched-test result, diff size and availability, file-touch count, mutating
 actions, new lint errors/warnings, and whether the witness proved
 tautological. The ladder answers **in this order**:
 
-1. **Touched tests red → `Revise`.** Already a deterministic failure; never
-   spend a verifier call confirming it.
+1. **Touched tests red → `Revise`.** Already a deterministic failure; nothing
+   is spent confirming it.
 2. **Nothing attempted → `NothingAttempted`.** The turn dispatched zero
    mutating calls and nothing observed a change: the model narrated a solution
    and wrote none of it down. This rung is *knowledge*, not abstention — the
@@ -260,43 +261,48 @@ tautological. The ladder answers **in this order**:
    `passed: false`. Before this rung existed, eleven untouched Terminal-Bench
    tasks were reported as successes.
 3. **Every channel blind → `Unverifiable`.** No flip, no test result, an
-   unreadable tree, no recorded touch: the ladder *abstains*. No verifier call —
-   a verifier asked to rule on an empty record once answered with a confident
-   `FAIL` naming a file that existed. The run is scored unverified, never
-   passed or failed.
+   unreadable tree, no recorded touch: the ladder *abstains*. A verifier asked
+   to rule on an empty record once answered with a confident `FAIL` naming a
+   file that existed. The run is scored unverified, never passed or failed.
 4. **Flip + green + diff within budget (default ≤ 400 lines) + no new lint
    errors + witness not tautological → `SubmitFast`.** The full deterministic
-   pass. The model verifier is skipped entirely. Two audits run before the
+   pass. Two audits run before the
    submit is final: a **confirmation run** (#859 — one extra suite run; a
-   flake demotes the oracle to `Unstable` and escalates instead) and the
+   flake demotes the oracle to `Unstable` and drops through to rung 5) and the
    **mutation check** (#870 — break the changed lines one at a time; a
    witness that stays green under every mutant is tautological and loses its
    fast-submit).
-5. **Otherwise → `ModelVerifier`.** Genuinely inconclusive, but at least one
-   channel saw something.
+5. **Otherwise → `Unverified`.** Genuinely inconclusive: at least one channel
+   saw something, and what it saw does not amount to a proof. **Terminal**, like
+   every rung above it.
 
-## 10. Verifier: asymmetric trust in a second opinion
+## 10. Verdict: the ladder's answer is the answer
 
-When the ladder escalates, the **verifier** — a separate model call, by
-preference from a different model *family* than the worker — reviews the
-goal, the honest diff, and a compact structured evidence snapshot
-(`VerifierEvidence` carrying the full `LadderSnapshot`, #864: oracle trace in
-observation order, diagnostics delta, tamper result, audit findings), and
-answers with a leading `PASS` or `FAIL`. It never sees the worker's narration.
-A failed verifier call degrades to a conservative heuristic verdict
-(`verify::heuristic_fallback`) rather than hanging.
+Rung 5 used to escalate to a **verifier** — a separate model call, by preference
+from a different model *family* than the worker — which reviewed the goal, the
+honest diff, and a structured evidence snapshot and answered with a leading
+`PASS` or `FAIL`. #2584 removed it, along with the heuristic fallback that
+covered its outages.
 
-Trust in the verifier is deliberately asymmetric, because its authority was
-measured and found wanting: across an 89-task Terminal-Bench run where the
-witness rung couldn't fire (single-model posture), the verifier agreed with the
-benchmark's own grader 46% of the time, and its false passes cost tasks
-outright. So a verifier "not yet" is always actionable (costs one revision), but
-a verifier "done" **standing alone** — no flip, no green test behind it — is
-scored *unverified* rather than passed (`verifier_pass_stands_alone`). The verifier
-never overrides a deterministic failure.
+The reason is that its authority was measured and found wanting: across an
+89-task Terminal-Bench run where the witness rung couldn't fire (single-model
+posture), it agreed with the benchmark's own grader 46% of the time, and 17 of
+its false passes cost 5 tasks outright. The intermediate design was *asymmetric
+trust* — a "not yet" was actionable, a "done" standing alone was downgraded to
+unverified — and the removal is that asymmetry taken to its limit. If a verdict
+standing on nothing deterministic could never be believed, the call that
+produced it was buying only the half that could still be wrong.
 
-Before recording that unverified pass, the pipeline asks for the missing
-evidence once (`verifier_evidence_demand`, #1295): one revision turn telling the
+So the turn is settled from the rung alone, inside the verify stage itself:
+`Pipeline::verify_candidate` emits `AgentEvent::Verdict` with the evidence
+summary and the decision-time `LadderSnapshot` that lets `replay` explain the
+answer later, and buys nothing. There is no separate verdict stage in the
+pipeline — `StageKind::Verdict` keeps its rank in `stage_rank` and its
+Verify/Verdict → Execute back-edge, but nothing in `pipeline.rs` emits it; goal
+mode does.
+
+Before recording an unverified pass, the pipeline still asks for the missing
+evidence once (`evidence_demand_prompt`, #1295): one revision turn telling the
 worker to make the tracked command observe its change. The ask is raised **only
 where a tracked command exists**, and that precondition is what makes it
 affordable — the two facts that would clear `verifier_pass_stands_alone` are both
@@ -312,13 +318,18 @@ because `bench/evidence/` is frozen at the vocabulary each run was recorded in.
 
 ## 11. Revise: bounded retries with escalating candor
 
-A `Revise` decision (or a verifier `FAIL`) sends the evidence back into a fresh
+A `Revise` decision sends the evidence back into a fresh
 worker turn (`Pipeline::revise_candidate`), up to `max_revisions` times
-(default 2). On the **second** deterministic failure a candidate accumulates —
-consecutive or not (#868) — the pipeline spends one verifier call on
-**distress guidance** (`verify::guidance_prompt`) —
-a course-correction note that rides with the next revision prompt instead of
-letting the worker dig the same hole. Repeated identical failures also widen
+(default 2). The worker receives `brief.message()` — the sealed, redacted
+account of the test that went red — and nothing else. On the **second**
+deterministic failure a candidate accumulates — consecutive or not (#868) — the
+pipeline used to spend one verifier call on **distress guidance**, a
+course-correction note riding with the next revision prompt. That went with the
+verdict in #2584 and for the same reason: a claim appended to a measurement
+inherits the measurement's authority, and the worker receiving both cannot tell
+them apart. On `fix-git` that narration talked a worker into resetting `master`
+and destroying a correctly-recovered commit, twice. The measurement was already
+there and already conclusive. Repeated identical failures still widen
 what the revision prompt discloses about the failure
 (`witness::airlock::grain_for_repeats` — sealed failure output is scrubbed of
 secrets and disclosed at coarser or finer grain by repeat count). After every
@@ -353,9 +364,9 @@ exactly one terminal signal:
 The `PipelineOutcome` records the task class, final text, total cost, revision
 count, how many candidates actually *ran* (not how many were configured), and
 the verdict — including `deterministic: true/false`, so a headless caller can
-tell a flip-oracle pass from a verifier's opinion, and the frozen
-`LadderSnapshot` (#865), so `stella replay` can answer "why did this run
-fast-submit / revise / verifier?" from the recording alone without re-deriving.
+tell a determinate finding from an unproven pass, and the frozen
+`LadderSnapshot` (#865), so `stella replay` can answer "which rung did this run
+come to rest on?" from the recording alone without re-deriving.
 
 Every stage boundary along the way emitted a `Stage` event, every model call
 was metered into the budget guard, and every proof-relevant step (oracle
@@ -376,7 +387,7 @@ Every role is configured through `agent_engine_config` (see the README's
 | **worker** | Execute turns, revise turns (conversational rides this tier too) | `pipeline_worker_model` → `default_model` |
 | **research** | The read-only sub-agents answering triage's pre-plan questions, one child per question | `pipeline_research_model` → **the worker**, never `default_model` |
 | **plan** | The planner writing the ordered work order | `pipeline_plan_model` → **the worker**, never `default_model` |
-| **verifier** | Verifier verdicts, distress guidance | `pipeline_verifier_model` → `default_model`; prefers a different model *family* than the worker |
+| **verifier** | The witness author only, since #2584 removed the verdict and distress-guidance calls | `pipeline_verifier_model` → `default_model`; prefers a different model *family* than the worker |
 | **witness author** | Authors the failing witness test | Resolves from the verifier slot; **degrades to no authored witness** if it would equal the worker's model (refused outright only under `require_independent_witness`) — Stella will not let the worker write the test that proves the worker |
 
 Research and plan end their chain at the worker rather than `default_model`
@@ -405,9 +416,11 @@ ceilings, scope thresholds, headless behavior, `test_command`, `roster`,
 `create_worktrees`.
 
 `roster` (`src/roster.rs`) holds who performs each responsibility and whether
-it runs at all — including whether a witness is authored and whether distress
-guidance is bought, each of which was briefly a separate bool ANDed with its
-roster row at run time until #2458 collapsed them. One decision, one place;
+it runs at all — including whether a witness is authored, which was briefly a
+separate bool ANDed with its roster row at run time until #2458 collapsed them.
+The `verdict` and `distress_guidance` rows are gone entirely: `default_agent`
+answers `None`, so `Roster::apply` rejects either key as `NotAssignable` rather
+than offering a switch that would steer nothing. One decision, one place;
 the whole roster rides the resume frame, so an ablation survives a kill. The
 verification half's design history and remaining work are tracked in
 [`ROADMAP.md`](../ROADMAP.md); every decision and its spend is pinned by the

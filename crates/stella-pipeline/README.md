@@ -25,11 +25,11 @@ which owns the port implementations and the `Router` itself. It builds no binary
 
 This crate owns the staged flow itself: which stages run for a given prompt, in what
 order, on what evidence — triage classification, plan shape, the scope gate, witness
-authoring and acceptance, the flip oracle and evidence ladder, verifier prompting, the
+authoring and acceptance, the flip oracle and evidence ladder, the
 revision policy, best-of-N selection. The decision rule: if a change alters what
 happens between a prompt arriving and a verdict being declared — a stage added or
-skipped, a gate's threshold, what a failure brief may disclose, when a verifier call is
-bought — it lands here, with the judgement in a synchronous sibling module and only
+skipped, a gate's threshold, what a failure brief may disclose, which rung the ladder
+comes to rest on — it lands here, with the judgement in a synchronous sibling module and only
 the sequencing in [`src/pipeline.rs`](src/pipeline.rs), per the two intro boundaries.
 
 Engine step-loop mechanics never land here. How one model-call/tool loop retries,
@@ -90,14 +90,14 @@ as a planning assumption.
 | [`src/lib.rs`](src/lib.rs) | The index of design lessons the crate encodes (L-E2, L-E5–E8, L-E11, L-M4) and the public re-exports. Read it first — every claim below is stated there in one line. |
 | [`src/pipeline.rs`](src/pipeline.rs) | `Pipeline::run` and the whole stage sequence, `PipelineConfig`, `PipelineOutcome`. Open it when you need the *order* things happen in. |
 | [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs) | The one stage that runs against the candidate's `witness_tools()` rather than the worker's executor: author → one bounded repair → artifact/invocation/identity acceptance. |
-| [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, verifier, guidance) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
+| [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, plan, the conversational reply) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
 | [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AlwaysAbortGate`). |
 | [`src/triage.rs`](src/triage.rs) | `TaskClass`, `TaskAssessment`, the response parser, and the deterministic pattern floor. |
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |
 | [`src/witness.rs`](src/witness.rs) | Witness prompts, the closed test-command vocabulary, and the artifact/invocation/identity validators. |
 | [`src/witness/airlock.rs`](src/witness/airlock.rs) | The feedback airlock: `DisclosureGrain`, `SymptomClass`, `FailureFingerprint`, and the `scrub`/`redact` pair that decide what a failure may tell the worker. |
-| [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision`, verifier prompting/parsing, `heuristic_fallback`, `guidance_prompt`. |
+| [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision` and its `LadderInputs`/`LadderDecision`, the per-rung `VerdictEvidence` builders, `evidence_demand_prompt`. |
 | [`src/reward.rs`](src/reward.rs) | The ladder verdict as a training label (#1043): `RewardPolicy` (the per-workspace weights), `label`, and the `DiscardReason` set. Pure. Read it before changing what a rung is worth — most of the file is the argument for what the module refuses to claim. |
 | [`src/candidate.rs`](src/candidate.rs) | `CandidateScore` and `select_best_candidate` — best-of-N selection, pure. |
 | [`src/candidate_fanout.rs`](src/candidate_fanout.rs) | `fan_out_width` and `FanOutBudget` — how wide a fan-out runs and how one turn's money is split between candidates spending at the same time. Pure; the normative statement of the overshoot window. |
@@ -150,21 +150,31 @@ count (the `witness_identity_matches` sweep at the top of `Pipeline::verify_cand
 loop). A mismatch aborts the candidate *before* the ladder runs. It is
 an authority boundary, not evidence for a model to weigh, and no verifier can override it.
 
-**The evidence ladder decides before spending a verifier call.** `ladder_decision` is a pure
-function of `(flip_achieved, touched_tests_passed, diff_lines, diff_budget)`: touched tests
-red → `Revise` (a red test is already deterministic; never pay a verifier to confirm it); flip
-+ green + within budget → `SubmitFast` with the verifier skipped; anything else →
-`ModelVerifier`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
-pass. Linters and typecheckers are never fed to `FlipOracle::observe`. A verifier call that
-fails or returns unparseable text falls back to `heuristic_fallback`, which passes only on
-observed-green tests, so an outage never degrades to a blanket pass. On a candidate's
-second deterministic failure — cumulative, not necessarily consecutive (#868) —
-`distress_guidance` buys one verifier call for course-correction that rides with the next
-revision prompt — event-triggered, never a fixed mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
-`verifier_evidence_demand` buys one revision asking the worker for corroboration instead —
-once per candidate, and only where a tracked command exists to answer it, because with none
-resolved neither a flip nor a green touched test is reachable and the ask would be pure
-cost on every turn (#1295).
+**The evidence ladder is the whole decision, and every rung is terminal.**
+`ladder_decision` is a pure function over `LadderInputs` returning one of five outcomes, in
+order: touched tests red → `Revise` (already deterministic; nothing is spent confirming it);
+a turn that dispatched nothing that could mutate → `NothingAttempted`; every channel dark →
+`Unverifiable` (abstain); flip + green + within budget + no fresh diagnostics + a
+non-tautological witness that covered the diff → `SubmitFast`; anything else →
+`Unverified`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
+pass. Linters and typecheckers are never fed to `FlipOracle::observe`.
+
+**No rung asks a model** (#2584). The evidence that reaches `Unverified` is by construction
+the evidence no oracle could settle, so a second model would be guessing at it too — only
+with a verdict's authority attached. Measured, that verdict agreed with Terminal-Bench's
+grader 46% of the time and 17 of its false passes cost 5 tasks outright. The
+`distress_guidance` call a candidate's second deterministic failure used to buy is gone for
+the same reason: it appended a reviewer's reading of the diff to a sealed measurement, and
+a worker cannot tell the two apart. A second failure now revises on `brief.message()` alone.
+Both removals are structural — `default_agent` answers `None` and `Roster::apply` rejects
+either key as `NotAssignable`, so no configuration restores them.
+
+The one remaining channel back to the worker is `evidence_demand_prompt`: when nothing
+deterministic corroborates the turn (`verifier_pass_stands_alone`), one revision asks for
+the observation that would settle it — once per candidate, and only where a tracked command
+exists to answer it, because with none resolved neither a flip nor a green touched test is
+reachable and the ask would be pure cost on every turn (#1295). It is a fixed template over
+that command: no claim about the change, no reading of the diff.
 
 **The feedback airlock decides what a failure may say.** Before it, a deterministic
 failure went back to the worker as the raw `stderr` tail — the assertion, the runtime
@@ -176,10 +186,11 @@ as the same `FailureFingerprint` repeats — a worker that has seen the same bri
 is not helped by a third copy, only given more surface to fit. The symptom sentences are
 compile-time literals, so that grain cannot quote the assertion by construction; `scrub`
 covers the rest and **fails closed**, degrading a brief rather than emitting it with a
-hole. Model prose arriving inbound (distress guidance, verifier reasoning) goes through the
-same scrub, and a rejection emits `PolicyDecision { kind: Blocked }` carrying a token,
-never content. Two audiences, two texts: the operator's `VerifierVerdict` event keeps the
-real output, because the human is not the adversary.
+hole. Since #2584 removed the verdict and guidance calls there is no model prose arriving
+inbound at all, so the airlock's whole job is the sealed material — a rejection emits
+`PolicyDecision { kind: Blocked }` carrying a token, never content. Two audiences, two
+texts: the operator's `AgentEvent::Verdict` keeps the real output, because the human is
+not the adversary.
 
 **A best-of-N fan-out runs its isolated candidates at once**
 ([`src/pipeline/fanout_stage.rs`](src/pipeline/fanout_stage.rs)). Isolation already
@@ -318,7 +329,7 @@ contract.
   this crate enforces at runtime; "Architecture: ports, not concretions" for the inherited
   no-I/O and byte-stable-prompt rules.
 - [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
-  — the full stage flow, the distress-triggered guidance loop, and the `/pipeline` deck toggle.
+  — the full stage flow, the five terminal ladder outcomes, and the `/pipeline` deck toggle.
 - [`../../docs/spec/replay-golden-trajectories.md`](../../docs/spec/replay-golden-trajectories.md) — the
   recording procedure and the reference-engine adapter contract.
 - [`../stella-core`](../stella-core) — `Engine::run_turn`, the loop this crate composes.

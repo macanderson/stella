@@ -36,12 +36,24 @@ draft's machinery has something to attach to at all:
   crate to install new vocabulary.
 - **Tamper exclusion.** The witness artifact's full filesystem identity is
   pinned and re-checked at verify time, and a mismatch aborts the candidate
-  before any model verifier can weigh in. The draft calls this an authority
-  boundary; Stella already treats it as one.
-- **Deterministic-first laddering.** A red test never costs a verifier call, and
-  the verifier never overrides a deterministic failure.
+  before the ladder runs. The draft calls this an authority boundary; Stella
+  already treats it as one.
+- **Deterministic-first laddering.** A red test is conclusive on its own, and
+  nothing overrides a deterministic failure.
 
 Anything below that would weaken these is out of scope by construction.
+
+<a id="model-free-note"></a>
+**Update (#2584): the ladder took the principle to its end.** This document was
+written when the ladder's inconclusive arm escalated to a model verifier, and
+several sections below reason about *when that call is bought*. It is no longer
+bought at any rung — `ladder_decision` is terminal at all five outcomes, and
+inconclusive evidence resolves to `LadderRung::Unverified` with no model
+consulted. Read every "buys/spares the verifier call" below as **"buys/spares
+the escalation"**: the decisions still happen and the guards still run, but what
+they gate is which rung the ladder rests on, not a provider request. The witness
+*author* remains a live model call — it creates the oracle rather than
+substituting for one.
 
 ## 2. The defects this document fixes
 
@@ -275,12 +287,18 @@ abstention, never a pass. It is deliberately not a failure — the work may be
 entirely correct and merely uncollected, and no revision can make an
 un-snapshot-able workspace observable.
 
-**No test needed is not the same as no review needed.** A removal's proof is
-its diff, but deleting the *wrong* thing is a real mistake a reader catches and
-no test would have covered — so `TestsOnly` and `PureRemoval` keep the
-independent reviewer even though they skip the witness. Prose, comments, and
-manifests carry no behavior for a reviewer to reason about, so a review call
-there is spend with no question to answer.
+**No test needed is not the same as nothing left to check.** A removal's proof
+is its diff, but deleting the *wrong* thing is a real mistake a reader catches
+and no test would have covered — so `TestsOnly` and `PureRemoval` answer
+`warrants_independent_review()` with `true` even though they skip the witness.
+Prose, comments, and manifests carry no behavior to reason about, so they answer
+`false`.
+
+Since #2584 that predicate no longer decides whether a reviewer *call* is
+bought — it decides whether the ladder may record the turn as `Waived` at all.
+A `DocsOnly` change completes with a stated reason; a `PureRemoval` that nothing
+else settled falls through to `Unverified`, which is the honest answer for a
+change whose only remaining check was a reader Stella no longer employs.
 
 **Say why.** When no test is warranted, the reason is recorded on the verdict —
 the pipeline's half of the contract contributors are already held to. The run
