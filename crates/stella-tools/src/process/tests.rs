@@ -14,9 +14,21 @@ fn tools() -> (ProcessTableHandle, std::path::PathBuf) {
 }
 
 async fn start(table: &ProcessTableHandle, root: &std::path::Path, argv: &[&str]) -> String {
-    let out = StartProcess(table.clone())
-        .execute(&serde_json::json!({ "argv": argv }), root)
-        .await;
+    start_with_scratch(table, root, argv, None).await
+}
+
+async fn start_with_scratch(
+    table: &ProcessTableHandle,
+    root: &std::path::Path,
+    argv: &[&str],
+    scratch: Option<std::path::PathBuf>,
+) -> String {
+    let out = StartProcess {
+        handle: table.clone(),
+        scratch,
+    }
+    .execute(&serde_json::json!({ "argv": argv }), root)
+    .await;
     match out {
         ToolOutput::Ok { content } => content
             .split_whitespace()
@@ -77,9 +89,12 @@ fn a_buffer_at_the_cap_drains_a_quantum_not_every_chunk() {
 #[tokio::test]
 async fn empty_argv_is_a_named_error() {
     let (table, root) = tools();
-    let out = StartProcess(table)
-        .execute(&serde_json::json!({"argv": []}), &root)
-        .await;
+    let out = StartProcess {
+        handle: table,
+        scratch: None,
+    }
+    .execute(&serde_json::json!({"argv": []}), &root)
+    .await;
     match out {
         ToolOutput::Error { message } => assert!(message.contains("argv"), "{message}"),
         other => panic!("{other:?}"),
@@ -446,9 +461,12 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
         handles.push(start(&table, &root, &["cat"]).await);
     }
 
-    let over = StartProcess(table.clone())
-        .execute(&serde_json::json!({"argv": ["cat"]}), &root)
-        .await;
+    let over = StartProcess {
+        handle: table.clone(),
+        scratch: None,
+    }
+    .execute(&serde_json::json!({"argv": ["cat"]}), &root)
+    .await;
     match over {
         ToolOutput::Error { message } => {
             assert!(
@@ -467,9 +485,12 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
         .execute(&serde_json::json!({"handle": handles[0]}), &root)
         .await;
     assert!(!stopped.is_error(), "{stopped:?}");
-    let again = StartProcess(table.clone())
-        .execute(&serde_json::json!({"argv": ["cat"]}), &root)
-        .await;
+    let again = StartProcess {
+        handle: table.clone(),
+        scratch: None,
+    }
+    .execute(&serde_json::json!({"argv": ["cat"]}), &root)
+    .await;
     assert!(
         !again.is_error(),
         "a freed slot admits a new process: {again:?}"
@@ -564,6 +585,56 @@ async fn exited_unread_entries_are_evicted_oldest_first_never_running_ones() {
             .execute(&serde_json::json!({"handle": handle}), &root)
             .await;
     }
+}
+
+/// Witness test: STELLA_SCRATCH is injected into spawned processes.
+/// This test must FAIL on a version that doesn't wire the scratch injection,
+/// and PASS once the fix is in place.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_process_injects_stella_scratch_into_spawned_process() {
+    let (table, root) = tools();
+    // Create a scratch dir for injection.
+    let scratch = crate::scratch::ScratchDir::new().expect("scratch dir creation");
+    let scratch_path = scratch.path().to_path_buf();
+    let expected_path = scratch_path.to_string_lossy().to_string();
+
+    // Start a process that outputs the STELLA_SCRATCH environment variable.
+    // Use printf to ensure output is flushed immediately.
+    let command = format!("printf 'STELLA_SCRATCH=%s\\n' \"$STELLA_SCRATCH\"; sleep 30");
+    let handle = start_with_scratch(&table, &root, &["sh", "-c", &command], Some(scratch_path.clone()))
+        .await;
+
+    // Poll read_output until we see the STELLA_SCRATCH value in the output.
+    let mut observed = String::new();
+    for attempt in 0..100 {
+        let out = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("read_output failed on attempt {attempt}");
+        };
+        observed.push_str(&content);
+        // The injected scratch path should appear in the output.
+        if observed.contains(&expected_path) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Verify the scratch path was actually injected.
+    assert!(
+        observed.contains(&expected_path),
+        "STELLA_SCRATCH should be set to the scratch path. Expected substring '{}' in output:\n{}",
+        expected_path,
+        observed
+    );
+
+    // Stop the process.
+    let stopped = StopProcess(table)
+        .execute(&serde_json::json!({"handle": handle}), &root)
+        .await;
+    assert!(!stopped.is_error(), "{stopped:?}");
 }
 
 /// A send_stdin whose write was in flight when stop_process closed stdin

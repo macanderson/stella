@@ -382,7 +382,10 @@ fn spawn_pump<R>(
 }
 
 /// `start_process` — see the module doc.
-pub struct StartProcess(pub ProcessTableHandle);
+pub struct StartProcess {
+    pub handle: ProcessTableHandle,
+    pub scratch: Option<std::path::PathBuf>,
+}
 
 #[async_trait]
 impl Tool for StartProcess {
@@ -432,7 +435,7 @@ impl Tool for StartProcess {
         // loop can create, and each one holds a pipe pair and up to
         // MAX_BUFFER_BYTES until it is stopped.
         {
-            let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
             // Bound the exited-but-unread backlog before growing the table —
             // see [`ProcessTable::enforce_exited_cap`].
             table.enforce_exited_cap();
@@ -456,6 +459,7 @@ impl Tool for StartProcess {
         // are scrubbed along with credentials, exactly like `exec::drive` —
         // a server's output lands in the captured buffer, never a terminal.
         crate::subprocess_env::scrub_spawn_env(&mut cmd);
+        crate::subprocess_env::inject_scratch_env(&mut cmd, self.scratch.as_deref());
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -490,7 +494,7 @@ impl Tool for StartProcess {
         }
 
         let display = argv.join(" ");
-        let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
         table.next_id += 1;
         let handle = format!("proc-{}", table.next_id);
         table.entries.insert(
