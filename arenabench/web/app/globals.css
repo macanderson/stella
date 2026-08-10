@@ -7,7 +7,18 @@
 
    `--accent` is therefore the text colour: "active" is an inversion of the
    page, and `--on-accent` is what sits on that fill. Dark is the default
-   (matching `arenabench serve`). */
+   (matching `arenabench serve`).
+
+   stella's own web surfaces (the observatory, the telemetry export, the
+   loopback auth pages) carry an `--identity` token, because the rule
+   governing them permits the brand's gold on identity — wordmark, favicon
+   mark, one primary action — and nowhere else. **This surface carries none**,
+   and neither does `arenabench/ui`: the arena scores stella as one seat among
+   several, so its mark does not belong in the chrome every seat is judged
+   under (#2577). That is a declared posture, not a gap —
+   crates/stella-cli/tests/design_token_parity.rs holds this file to the
+   observatory's values for every role it does carry and does not list
+   `identity` among them. */
 :root {
   color-scheme: dark;
   --bg: #0a0a0a;
