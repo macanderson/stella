@@ -740,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn a_cross_root_cd_warns_when_indexed() {
         let dir = indexed_tempdir();
-        let out = Bash
+        let out = Bash::new(None)
             .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
             .await;
         let text = text_of(out);
@@ -760,7 +760,7 @@ mod tests {
         // Grep /dev/null (instant, hermetic) — the advisory keys off the
         // command string's `cd` + grep pattern, not what grep actually reads,
         // so this exercises the precedence without walking `/`.
-        let out = Bash
+        let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "cd / && grep -rn \"struct Greeter\" /dev/null"}),
                 dir.path(),
@@ -782,7 +782,7 @@ mod tests {
     #[tokio::test]
     async fn a_symbol_shaped_bash_grep_gets_the_graph_tip_when_indexed() {
         let dir = indexed_tempdir();
-        let out = Bash
+        let out = Bash::new(None)
             .execute(
                 &serde_json::json!({"command": "grep -rn \"struct Greeter\" ."}),
                 dir.path(),
@@ -876,7 +876,7 @@ mod tests {
             )
             .await;
         let exported = match result {
-            ToolOutput::Ok { content } => content.trim().to_string(),
+            ToolOutput::Ok { content } => content.lines().next().unwrap_or_default().to_string(),
             ToolOutput::Error { message } => panic!("bash: {message}"),
         };
         assert_eq!(exported, scratch_path.to_string_lossy().to_string());

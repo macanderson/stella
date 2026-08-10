@@ -827,9 +827,12 @@ mod tests {
     }
 
     async fn start(table: &ProcessTableHandle, root: &std::path::Path, argv: &[&str]) -> String {
-        let out = StartProcess(table.clone())
-            .execute(&serde_json::json!({ "argv": argv }), root)
-            .await;
+        let out = StartProcess {
+            handle: table.clone(),
+            scratch: None,
+        }
+        .execute(&serde_json::json!({ "argv": argv }), root)
+        .await;
         match out {
             ToolOutput::Ok { content } => content
                 .split_whitespace()
@@ -890,9 +893,12 @@ mod tests {
     #[tokio::test]
     async fn empty_argv_is_a_named_error() {
         let (table, root) = tools();
-        let out = StartProcess(table)
-            .execute(&serde_json::json!({"argv": []}), &root)
-            .await;
+        let out = StartProcess {
+            handle: table,
+            scratch: None,
+        }
+        .execute(&serde_json::json!({"argv": []}), &root)
+        .await;
         match out {
             ToolOutput::Error { message } => assert!(message.contains("argv"), "{message}"),
             other => panic!("{other:?}"),
@@ -1133,9 +1139,12 @@ mod tests {
             handles.push(start(&table, &root, &["cat"]).await);
         }
 
-        let over = StartProcess(table.clone())
-            .execute(&serde_json::json!({"argv": ["cat"]}), &root)
-            .await;
+        let over = StartProcess {
+            handle: table.clone(),
+            scratch: None,
+        }
+        .execute(&serde_json::json!({"argv": ["cat"]}), &root)
+        .await;
         match over {
             ToolOutput::Error { message } => {
                 assert!(
@@ -1154,9 +1163,12 @@ mod tests {
             .execute(&serde_json::json!({"handle": handles[0]}), &root)
             .await;
         assert!(!stopped.is_error(), "{stopped:?}");
-        let again = StartProcess(table.clone())
-            .execute(&serde_json::json!({"argv": ["cat"]}), &root)
-            .await;
+        let again = StartProcess {
+            handle: table.clone(),
+            scratch: None,
+        }
+        .execute(&serde_json::json!({"argv": ["cat"]}), &root)
+        .await;
         assert!(
             !again.is_error(),
             "a freed slot admits a new process: {again:?}"
