@@ -165,6 +165,69 @@ printf 'pub fn f() {}\n' >"$c/src/foo.rs"
 track "$TMP/raw_string"
 want "S2 the same through a raw string with an embedded quote" expect-pass "$TMP/raw_string"
 
+# #2732: a `'"'` char-literal match arm (e.g. `matches!(c, '"')`) puts a lone
+# `"` in the source that is not a string boundary. Unrecognized, the stripper
+# mistook it for one and searched forward for the next `"` to close it — which
+# turned out to be the opening quote of a real `"/*"` string later in the
+# file, so the genuine `/*` right after it was read as a comment-opener
+# instead of string content and never found its `*/`, blanking everything to
+# EOF and hiding the `mod foo;` at the end. This is the exact shape from
+# `crates/stella-tools/src/scripts.rs`'s `pattern.strip_suffix("/*")`.
+c="$(new_crate char_lit_quote)"
+{
+  printf 'fn is_quote(c: char) -> bool {\n'
+  printf "    matches!(c, '\"')\n"
+  printf '}\n\n'
+  printf 'fn expand(pattern: &str) -> Option<&str> {\n'
+  printf '    pattern.strip_suffix("/*").or_else(|| pattern.strip_suffix("/**"))\n'
+  printf '}\n\n'
+  printf 'mod foo;\n'
+} >"$c/src/lib.rs"
+printf 'pub fn f() {}\n' >"$c/src/foo.rs"
+track "$TMP/char_lit_quote"
+want "S4 a '\"' char literal does not misalign a later \"/*\" string boundary" \
+  expect-pass "$TMP/char_lit_quote"
+
+# The nested variant: the second strip_suffix candidate is "/**" (Rust block
+# comments nest, so an unmatched "/*" plus a later "/**" would deepen rather
+# than close if either were misread as a comment).
+c="$(new_crate char_lit_quote_nested)"
+{
+  printf 'fn is_quote(c: char) -> bool {\n'
+  printf "    matches!(c, '\"')\n"
+  printf '}\n\n'
+  printf 'fn expand(pattern: &str) -> Option<&str> {\n'
+  printf '    let base = pattern\n'
+  printf '        .strip_suffix("/*")\n'
+  printf '        .or_else(|| pattern.strip_suffix("/**"));\n'
+  printf '    base\n'
+  printf '}\n\n'
+  printf 'mod foo;\n'
+} >"$c/src/lib.rs"
+printf 'pub fn f() {}\n' >"$c/src/foo.rs"
+track "$TMP/char_lit_quote_nested"
+want "S5 the nested \"/**\" variant on the following line is still reachable" \
+  expect-pass "$TMP/char_lit_quote_nested"
+
+# The `mod` declaration as the very last line after both strings — the shape
+# that silently orphaned crates/stella-tools/src/scripts/tests.rs.
+c="$(new_crate char_lit_quote_last_line)"
+{
+  printf 'fn is_quote(c: char) -> bool {\n'
+  printf "    matches!(c, '\"')\n"
+  printf '}\n\n'
+  printf 'fn expand(pattern: &str) -> Option<&str> {\n'
+  printf '    pattern.strip_suffix("/*").or_else(|| pattern.strip_suffix("/**"))\n'
+  printf '}\n\n'
+  printf 'pub fn a() {}\n'
+  printf '#[cfg(test)]\n'
+  printf 'mod tests;\n'
+} >"$c/src/lib.rs"
+printf '#[test]\nfn t() {}\n' >"$c/src/tests.rs"
+track "$TMP/char_lit_quote_last_line"
+want "S6 a mod declared as the file's last line survives both string shapes" \
+  expect-pass "$TMP/char_lit_quote_last_line"
+
 # The other direction: a real comment must still be stripped, so a `mod` named
 # only in prose does not count as a declaration.
 c="$(new_crate comment_mod)"

@@ -71,6 +71,21 @@ def strip_comments(src: str) -> str:
 
     Raw strings get their hash count matched (`r#"…"#`) so a quoted `"` inside
     one does not end it early.
+
+    Char literals are tracked for the same reason strings are (#2732). A
+    `'"'` — an ordinary `match c { '"' => … }` arm, and this file has several
+    — puts a lone `"` in the source that is not a string boundary at all. Left
+    unrecognized, that `"` was mistaken for opening a real string, which then
+    swallowed forward looking for the next `"` to close it; whatever real code
+    fell inside that stolen span — including a later genuine `/*` — was
+    misread as string content instead of a comment opener, and the code
+    *after* that span had its lexer state shifted by one `"`, occasionally
+    landing exactly on a `/*` that would otherwise have paired correctly. That
+    is what happened to `crates/stella-tools/src/scripts.rs`'s
+    `pattern.strip_suffix("/*")`: not the `/*` itself, but an unrelated `'"'`
+    several hundred lines earlier. A `'` is tried as a char literal first
+    (an escape, or one plain character, then a closing `'`); a lifetime
+    (`'a`, `'static`) never closes that way and falls through untouched.
     """
     out: list[str] = []
     i, n = 0, len(src)
@@ -101,6 +116,32 @@ def strip_comments(src: str) -> str:
             out.append("  ")
             i += 2
             continue
+        if src[i] == "'":
+            # A char literal (`'"'`, `'\''`, `'\n'`, `'\u{2019}'`, `'a'`) is
+            # exactly one escape-or-char followed by a closing `'`. A
+            # lifetime (`'a`, `'static`) is not — nothing after its
+            # identifier closes it — so probe for the close before
+            # committing; on failure, fall through and consume the `'`
+            # itself as an ordinary character.
+            j = i + 1
+            if j < n and src[j] == "\\":
+                j += 1
+                if j < n and src[j] == "x":
+                    j += 3  # \xNN — the 'x' plus two hex digits
+                elif j < n and src[j] == "u":
+                    j += 1
+                    if j < n and src[j] == "{":
+                        while j < n and src[j] != "}":
+                            j += 1
+                        j += 1  # the closing brace
+                else:
+                    j += 1  # the escaped character itself
+            elif j < n:
+                j += 1  # one plain character
+            if j < n and src[j] == "'":
+                out.append(src[i : j + 1])
+                i = j + 1
+                continue
         if src[i] == '"':
             out.append('"')
             i += 1
