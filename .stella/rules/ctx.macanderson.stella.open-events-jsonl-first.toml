@@ -3,8 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.open-events-jsonl-first"
-record_id = "rec_macanderson_stella_open_events_jsonl_first_691f32a90dec"
-record_hash = "sha256:37f1f5e8b3f95b9b061d2cbdca6c3fd7b7fc20ffbc200e575d9737b646d7281d"
+record_id = "rec_macanderson_stella_open_events_jsonl_first_8901bf9ed5c6"
+record_hash = "sha256:3af1c4c6e9d8c10ca8faf97af9898d59bfb4b55b8f8ceb44a77d1d668de6a6e8"
 kind = "procedure"
 statement = "Open stella-events.jsonl before claiming anything about a bench run."
 origin = "imported"
@@ -31,10 +31,6 @@ precedence = 100
 
 [record.steering.applies_to]
 paths = ["stella-events.jsonl"]
-tasks = [
-    "benchmark",
-    "investigation",
-]
 keywords = [
     "stella-events.jsonl",
     "ground truth",

@@ -3,8 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.no-widen-deny-toml"
-record_id = "rec_macanderson_stella_no_widen_deny_toml_1ee6703bf2d2"
-record_hash = "sha256:5553c6a6850ec733814a72e3baf7162511bee78cd42362d8965d36c41583e611"
+record_id = "rec_macanderson_stella_no_widen_deny_toml_f155c01834a0"
+record_hash = "sha256:c75a7dc64e2633c8a9fe94ae86afb1aa614247989148cf56c132541068e4b9ad"
 kind = "rule"
 statement = "Widening the deny.toml allow-list to turn a gate green is prohibited."
 origin = "imported"
@@ -27,7 +27,7 @@ extractor = "anthropic/claude-opus-5"
 
 [record.steering]
 force = "must"
-precedence = 100
+precedence = 50
 
 [record.steering.applies_to]
 paths = ["deny.toml"]
