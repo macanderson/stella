@@ -106,6 +106,10 @@ const CATALOG_MIGRATIONS: &[(&str, &str, &str)] = &[
     // Synced from models.dev and from provider-native /models endpoints.
     ("model_card_versions", "supports_reasoning", "INTEGER"),
     ("model_card_versions", "supports_tools", "INTEGER"),
+    // The model's knowledge/training cutoff as models.dev spells it
+    // (year-month text, e.g. "2025-04"; NULL = unknown). Read by the
+    // session-environment prompt block via the runtime catalog (#2718).
+    ("model_card_versions", "knowledge", "TEXT"),
 ];
 
 /// Apply [`CATALOG_MIGRATIONS`] to an open connection.
@@ -143,6 +147,10 @@ pub struct VersionData {
     pub supports_reasoning: Option<bool>,
     /// Whether the model accepts tool definitions.
     pub supports_tools: Option<bool>,
+    /// The model's knowledge/training cutoff (year-month text as the master
+    /// list spells it). `None` is "unknown" and must stay `None` — the
+    /// prompt line it feeds is omitted rather than guessed (#2718).
+    pub knowledge: Option<String>,
 }
 
 impl VersionData {
@@ -168,6 +176,12 @@ impl VersionData {
                 "|{:?}|{:?}",
                 self.supports_reasoning, self.supports_tools
             ));
+        }
+        // Same append-only discipline as the capability flags: a cutoff joins
+        // the hash only when known, so pre-column versions keep their
+        // historical hash and cutoff-less re-syncs append nothing.
+        if self.knowledge.is_some() {
+            key.push_str(&format!("|{:?}", self.knowledge));
         }
         fnv_hex(&key)
     }
@@ -377,8 +391,8 @@ impl CatalogStore {
                          (model_card_id, version, input_usd_per_mtok, output_usd_per_mtok,
                           cached_input_usd_per_mtok, cache_write_usd_per_mtok, context_window,
                           max_output_tokens, release_date, last_updated, source, content_hash,
-                          supports_reasoning, supports_tools)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                          supports_reasoning, supports_tools, knowledge)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                     params![
                         card_id,
                         next,
@@ -393,7 +407,8 @@ impl CatalogStore {
                         model.source,
                         new_hash,
                         model.version.supports_reasoning,
-                        model.version.supports_tools
+                        model.version.supports_tools,
+                        model.version.knowledge
                     ],
                 )?;
                 counts.versions_added += 1;
@@ -506,7 +521,7 @@ impl CatalogStore {
                         v.input_usd_per_mtok, v.output_usd_per_mtok,
                         v.cached_input_usd_per_mtok, v.cache_write_usd_per_mtok,
                         v.context_window, v.max_output_tokens, v.release_date, v.last_updated,
-                        v.supports_reasoning, v.supports_tools
+                        v.supports_reasoning, v.supports_tools, v.knowledge
                  FROM model_aliases a
                  JOIN model_cards c ON c.id = a.model_card_id
                  LEFT JOIN model_card_versions v ON v.model_card_id = c.id
@@ -536,6 +551,7 @@ impl CatalogStore {
                             last_updated: row.get(16)?,
                             supports_reasoning: row.get(17)?,
                             supports_tools: row.get(18)?,
+                            knowledge: row.get(19)?,
                         },
                     })
                 },
@@ -574,7 +590,7 @@ impl CatalogStore {
                           v.input_usd_per_mtok, v.output_usd_per_mtok,
                           v.cached_input_usd_per_mtok, v.cache_write_usd_per_mtok,
                           v.context_window, v.max_output_tokens, v.release_date, v.last_updated,
-                          v.supports_reasoning, v.supports_tools
+                          v.supports_reasoning, v.supports_tools, v.knowledge
                    FROM model_cards c
                    LEFT JOIN model_card_versions v ON v.model_card_id = c.id
                         AND v.version = (SELECT MAX(version) FROM model_card_versions
@@ -602,6 +618,7 @@ impl CatalogStore {
                     last_updated: row.get(14)?,
                     supports_reasoning: row.get(15)?,
                     supports_tools: row.get(16)?,
+                    knowledge: row.get(17)?,
                 },
             })
         })?;
@@ -675,6 +692,44 @@ mod tests {
         (dir, store)
     }
 
+    /// Witness for the knowledge-cutoff column (#2718): both read paths
+    /// return it, an unknown cutoff hashes exactly like the pre-column
+    /// format (a cutoff-less re-sync appends nothing), and the cutoff
+    /// arriving for a card that lacked one is a real change — one version.
+    #[test]
+    fn a_knowledge_cutoff_arriving_is_one_new_version_and_roundtrips() {
+        let (_dir, store) = store();
+        store.apply_batch(&[sonnet_upsert()]).expect("seed");
+        let resync = store.apply_batch(&[sonnet_upsert()]).expect("resync");
+        assert_eq!(
+            resync.versions_added, 0,
+            "a cutoff-less re-sync must hash like the pre-column format"
+        );
+
+        let mut gained = sonnet_upsert();
+        gained.version.knowledge = Some("2025-07".to_string());
+        let counts = store
+            .apply_batch(std::slice::from_ref(&gained))
+            .expect("gain");
+        assert_eq!(
+            counts.versions_added, 1,
+            "a cutoff arriving is a real change"
+        );
+        assert_eq!(
+            store.apply_batch(&[gained]).expect("stable").versions_added,
+            0,
+            "an unchanged cutoff appends nothing"
+        );
+
+        let resolved = store
+            .resolve("anthropic", "claude-sonnet-4-5")
+            .unwrap()
+            .expect("hit");
+        assert_eq!(resolved.pricing.knowledge.as_deref(), Some("2025-07"));
+        let listing = &store.models_for_provider(Some("anthropic")).unwrap()[0];
+        assert_eq!(listing.pricing.knowledge.as_deref(), Some("2025-07"));
+    }
+
     fn sonnet_upsert() -> ModelUpsert {
         ModelUpsert {
             api_provider: "anthropic".to_string(),
@@ -694,6 +749,9 @@ mod tests {
                 last_updated: Some("2025-09-29".to_string()),
                 supports_reasoning: Some(true),
                 supports_tools: Some(true),
+                // Deliberately unknown here so the capability test's
+                // pre-column hash pin stands; the cutoff test adds it.
+                knowledge: None,
             },
             aliases: vec![
                 AliasForm {

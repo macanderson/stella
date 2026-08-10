@@ -142,6 +142,12 @@ pub struct CatalogEntry {
     /// doing so — and a step cut off mid-reasoning emits no tool call and
     /// does no work. `bench/READINESS.md` §8.3.2 carries the measurement.
     pub max_output_tokens: Option<u32>,
+    /// The model's knowledge/training cutoff, verbatim from the master
+    /// list's `knowledge` field (year-month text, e.g. `"2025-04"`).
+    /// `None` is "unknown": the session-environment prompt line that reads
+    /// this is omitted rather than guessed (#2718). Seed rows carry `None`
+    /// by construction — cutoff dates are synced data, not curated code.
+    pub knowledge_cutoff: Option<String>,
 }
 
 impl CatalogEntry {
@@ -166,6 +172,7 @@ impl CatalogEntry {
             pricing,
             supports_reasoning: None,
             max_output_tokens: None,
+            knowledge_cutoff: None,
         }
     }
 
@@ -183,6 +190,15 @@ impl CatalogEntry {
     #[must_use]
     pub fn with_max_output_tokens(mut self, max_output_tokens: Option<u32>) -> Self {
         self.max_output_tokens = max_output_tokens;
+        self
+    }
+
+    /// Set the knowledge cutoff (builder-style, same reason as the two
+    /// above; a row without the data keeps `None` and the consumer omits
+    /// its line rather than guessing).
+    #[must_use]
+    pub fn with_knowledge_cutoff(mut self, knowledge_cutoff: Option<String>) -> Self {
+        self.knowledge_cutoff = knowledge_cutoff;
         self
     }
 }

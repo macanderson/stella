@@ -132,15 +132,15 @@ fn assemble_system_prompt_carries_a_byte_stable_scripts_section() {
         ..crate::settings::AuthorityPolicy::default()
     };
     let rules = crate::rules::ResolvedRules::default();
-    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules);
-    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules);
+    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
+    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
     assert_eq!(first, second, "same workspace state ⇒ identical bytes");
     assert!(first.contains("## Project scripts"), "section present");
     assert!(first.contains("build → pnpm run build"), "{first}");
     assert!(first.contains("install → pnpm install"), "{first}");
 
     let empty = tempfile::tempdir().expect("tempdir");
-    let bare = assemble_system_prompt(SYSTEM_PROMPT, empty.path(), &authority, &rules);
+    let bare = assemble_system_prompt(SYSTEM_PROMPT, empty.path(), &authority, &rules, None);
     assert!(
         !bare.contains("## Project scripts"),
         "no scripts → no section, no noise"
@@ -163,8 +163,8 @@ fn assemble_system_prompt_bakes_a_byte_stable_orientation_map() {
         ..crate::settings::AuthorityPolicy::default()
     };
     let rules = crate::rules::ResolvedRules::default();
-    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules);
-    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules);
+    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
+    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
     assert_eq!(
         first, second,
         "same index state ⇒ identical bytes (the prompt-cache invariant)"
@@ -719,7 +719,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     cfg.authority.project_prompts_allowed = true;
 
     let rules = crate::rules::load_workspace_rules(root, &cfg.authority);
-    let prompt = build_pipeline_system_prompt(&cfg, root, &rules);
+    let prompt = build_pipeline_system_prompt(&cfg, root, &rules, None);
     let skills = crate::memory::load_workspace_skills(root);
     let custom_tools = custom_tool_report_for_workspace(root).tools;
     let memory = SessionMemory::open(root, false);
@@ -745,7 +745,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
         .map(|schema| schema.name)
         .collect();
 
-    assert_eq!(prompt, PIPELINE_SYSTEM_PROMPT);
+    assert_eq!(prompt, expected_isolated_pipeline_prompt(root));
     assert!(rules.is_empty(), "rules loaded under benchmark isolation");
     assert!(skills.is_empty(), "skills loaded under benchmark isolation");
     assert!(
@@ -782,7 +782,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     // unchanged against the exact same workspace/user fixtures.
     drop(isolation);
     let normal_rules = crate::rules::load_workspace_rules(root, &cfg.authority);
-    let normal_prompt = build_pipeline_system_prompt(&cfg, root, &normal_rules);
+    let normal_prompt = build_pipeline_system_prompt(&cfg, root, &normal_rules, None);
     let normal_skills = crate::memory::load_workspace_skills(root);
     let normal_custom_tools = custom_tool_report_for_workspace(root).tools;
     assert!(normal_prompt.contains("HOSTILE_WORKSPACE_MEMORY"));

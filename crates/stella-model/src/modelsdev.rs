@@ -65,6 +65,11 @@ pub struct ModelEntry {
     pub release_date: Option<String>,
     #[serde(default)]
     pub last_updated: Option<String>,
+    /// The model's knowledge/training cutoff as the master list spells it
+    /// (a year-month like `"2025-04"`). Absent in the document means
+    /// unknown — degrade to "unknown", never guess a date (#2718).
+    #[serde(default)]
+    pub knowledge: Option<String>,
     /// Whether the model supports reasoning / extended thinking. Absent in
     /// the document means unknown — degrade to "unknown", never assume.
     #[serde(default)]
@@ -292,6 +297,7 @@ mod tests {
                     "family": "claude-sonnet",
                     "release_date": "2025-09-29",
                     "last_updated": "2025-09-29",
+                    "knowledge": "2025-07",
                     "reasoning": true,
                     "tool_call": true,
                     "limit": { "context": 1000000, "output": 64000 },
@@ -327,6 +333,7 @@ mod tests {
         assert_eq!(cost.cache_write, Some(3.75));
         assert_eq!(sonnet.limit.unwrap().context, Some(1_000_000));
         assert_eq!(sonnet.release_date.as_deref(), Some("2025-09-29"));
+        assert_eq!(sonnet.knowledge.as_deref(), Some("2025-07"));
         assert_eq!(sonnet.reasoning, Some(true));
         assert_eq!(sonnet.tool_call, Some(true));
         assert_eq!(anthropic.name.as_deref(), Some("Anthropic"));
