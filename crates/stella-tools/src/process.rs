@@ -200,10 +200,36 @@ impl ProcessEntry {
         buf
     }
 
-    /// Can this entry be dropped? Only once it has exited and every byte it
-    /// ever wrote has been delivered to a caller.
+    /// Can this entry be dropped? Only once it has exited, every byte it
+    /// ever wrote has been delivered to a caller, AND no other process in
+    /// its group is still alive holding the log open. `poll_exit` observes
+    /// only the DIRECT child; a `start_process(["sh","-c","server &"])`
+    /// backgrounds a grandchild that inherits the log fd and keeps writing
+    /// after the shell exits. Reaping (which deletes the log file) while
+    /// that grandchild is still alive would silently lose all of its
+    /// ongoing output, so the group check keeps the entry — and its log —
+    /// around until the whole group is gone.
     fn is_reapable(&mut self) -> bool {
-        self.poll_exit().is_some() && self.read_pos >= self.log_len()
+        self.poll_exit().is_some()
+            && self.read_pos >= self.log_len()
+            && !self.group_has_live_members()
+    }
+
+    /// Whether any process in this entry's process group is still alive.
+    /// The spawn places each child in its own session via `setsid`, so the
+    /// group id equals the direct child's pid; `kill(-pgid, 0)` sends no
+    /// signal but succeeds while any member (including an inherited-fd
+    /// grandchild) survives and fails with `ESRCH` once the group is empty.
+    /// Returns `false` when the pid was unavailable or off unix, falling
+    /// back to the drain-only gate.
+    fn group_has_live_members(&self) -> bool {
+        #[cfg(unix)]
+        if self.pid > 0 {
+            // SAFETY: signal 0 performs only the permission/existence check,
+            // delivering nothing; the negated pid targets the process group.
+            return unsafe { libc::kill(-self.pid, 0) } == 0;
+        }
+        false
     }
 }
 
