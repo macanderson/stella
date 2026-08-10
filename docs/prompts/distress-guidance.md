@@ -1,13 +1,10 @@
 ---
 id: prompt-distress-guidance
 title: "distress_guidance — the effective prompt"
-status: archived
+status: living
 ---
 
 # `distress_guidance`
-
-Historical prompt reference only. The live pipeline never dispatches guidance;
-the worker receives the bounded deterministic test execution result instead.
 
 Course-correction handed to a worker that is looping or stuck. Spent only when
 the worker is **demonstrably** stuck: the *second* deterministic test failure a
@@ -26,11 +23,11 @@ next revision turn carries.
 | Dispatch | raw completion, `tools: []` |
 | Instructions | `GUIDANCE_INSTRUCTIONS`, `crates/stella-pipeline/src/verify.rs` |
 | Payload | `guidance_prompt`, same file |
-| Sent from | No live call site (retired) |
+| Sent from | `crates/stella-pipeline/src/pipeline/verifier_stage.rs` |
 | Output cap | 1,024 visible + 4,096 reasoning headroom |
 | Effort | inherited |
 | Diff budget | `GUIDANCE_DIFF_BUDGET_TOKENS` = 2,000, `DiffScope::EvidenceNamed` |
-| Override | Historical `agents.verifier.prompt` |
+| Override | `agents.verifier.prompt` — **wired** |
 | Gate | `PipelineConfig::distress_guidance` |
 
 ## Why event-triggered, never a checkpoint

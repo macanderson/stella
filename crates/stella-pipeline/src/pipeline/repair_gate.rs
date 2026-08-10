@@ -80,7 +80,11 @@ impl Pipeline<'_> {
         // refutation. All of them price the mean round, demands included —
         // a demand round runs the same worker-turn-plus-verification shape.
         let rounds = state.revisions.saturating_add(1);
-        let repairs = state.revisions;
+        // Repair attempts spent = revision turns minus evidence demands
+        // (#1509). A demand corroborates a PASSING verdict; a repair fixes a
+        // refuted one — counting the demand here walked a candidate into its
+        // next refutation one repair round short of the configured allowance.
+        let repairs = state.revisions.saturating_sub(state.evidence_demands);
         // One clock read for the whole decision, taken here at the boundary
         // rather than inside the headroom derivation (invariant 2).
         let now = Instant::now();

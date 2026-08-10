@@ -1134,10 +1134,11 @@ export interface HunkProposal {
  *   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
  *   reader inferring "deterministic pass" from those two flags would label a
  *   turn nothing checked as the ladder's strongest possible result.
- * - `deterministic: false` covers a real model verifier, a heuristic verdict
- *   after the verifier call *failed*, and the abstain rung. The first is soft
- *   signal, the second is not signal at all, and the only thing separating
- *   them in the old shape was the wording of a summary string.
+ * - `deterministic: false` covers two rungs that are not the same answer —
+ *   [`LadderRung::Unverifiable`] ("no probe could look") and
+ *   [`LadderRung::Unverified`] ("the probes looked and did not settle it") —
+ *   and the only thing separating them in the old shape was the wording of a
+ *   summary string.
  *
  * Re-deriving the rung by re-running the ladder over
  * [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
@@ -1149,7 +1150,7 @@ export interface HunkProposal {
  * vocabulary in this crate: a reader that meets a rung it does not know fails
  * the event rather than laundering it (see the [`crate::event`] docs).
  */
-export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "model_verdict" | "heuristic_fallback" | "waived";
+export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "unverified" | "waived";
 
 /**
  * The deterministic evidence the ladder decided a verdict from, snapshotted
@@ -1560,6 +1561,9 @@ export type ProofStep = {
   reason: string;
 } | {
   kind: "verification_unavailable";
+  reason: string;
+} | {
+  kind: "verification_unproven";
   reason: string;
 } | {
   command: string;

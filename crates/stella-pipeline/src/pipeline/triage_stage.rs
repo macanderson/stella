@@ -17,7 +17,7 @@ impl Pipeline<'_> {
     /// Record that this turn's class came from the deterministic keyword floor
     /// rather than from a model (#2414).
     ///
-    /// Both channels carry the same degraded fact:
+    /// Both channels, for the same reason [`Pipeline::unproven`] uses both:
     /// the warning is the prose account a watching human reads, and the proof
     /// step is the structured record a bench census can count. The fallback
     /// this reports is correct and load-bearing — triage must never fail a
@@ -235,9 +235,7 @@ impl Pipeline<'_> {
         if !resolved.conversational {
             self.emit_proof(ProofStep::Assurance {
                 witness: resolved.wants_witness(),
-                // Historical protocol field. A live model reviewer no longer
-                // exists, so the declared assurance plan can never select one.
-                verifier: false,
+                verifier: resolved.wants_verifier(),
             });
         }
         Ok((resolved, research))

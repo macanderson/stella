@@ -30,10 +30,11 @@ use serde::{Deserialize, Serialize};
 ///   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
 ///   reader inferring "deterministic pass" from those two flags would label a
 ///   turn nothing checked as the ladder's strongest possible result.
-/// - `deterministic: false` covers a real model verifier, a heuristic verdict
-///   after the verifier call *failed*, and the abstain rung. The first is soft
-///   signal, the second is not signal at all, and the only thing separating
-///   them in the old shape was the wording of a summary string.
+/// - `deterministic: false` covers two rungs that are not the same answer —
+///   [`LadderRung::Unverifiable`] ("no probe could look") and
+///   [`LadderRung::Unverified`] ("the probes looked and did not settle it") —
+///   and the only thing separating them in the old shape was the wording of a
+///   summary string.
 ///
 /// Re-deriving the rung by re-running the ladder over
 /// [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
@@ -61,24 +62,48 @@ pub enum LadderRung {
     NothingAttempted,
     /// Every evidence channel was blind, so the ladder abstained. Nothing is
     /// claimed about the work — in particular not that it failed.
-    Unverifiable,
-    /// The verifier answered on genuinely inconclusive evidence. Named for
-    /// the *evidence class* — a model's opinion — not for the model: it is
-    /// deliberately not called `ModelVerifier`, because the whole ladder is
-    /// verification and this is the one rung that is only an opinion.
     ///
-    /// The alias is what keeps this rename additive. This rung shipped as
-    /// `model_judge`, so every session already on disk spells it that way; a
-    /// bare rename would make those streams fail to parse — and this enum's
-    /// own contract is that an unknown rung fails the event rather than being
-    /// laundered, so the failure would be loud and total. New writes use
-    /// `model_verdict`; old reads still land.
-    #[serde(alias = "model_judge")]
-    ModelVerdict,
-    /// The verdict call itself failed or returned something unparseable, and
-    /// the conservative heuristic verdict stood in for it. A verdict about the
-    /// verifier's availability, not about the work.
-    HeuristicFallback,
+    /// Reads as a claim about the **probes**: nothing could look. Its
+    /// near-namesake [`LadderRung::Unverified`] is a claim about the
+    /// **proof**: the probes looked and what they returned did not settle the
+    /// question. The two words carry that difference exactly — `-able` is a
+    /// capacity, `-ed` is a state — and conflating them would recreate the
+    /// defect this enum exists to fix, since both emit `deterministic: false`
+    /// and neither is a finding that the work is wrong.
+    Unverifiable,
+    /// Deterministic evidence was collected, and it did not amount to a proof.
+    /// No model was asked, because there is no question a model could settle
+    /// that the oracle could not.
+    ///
+    /// This is the terminal rung for genuinely inconclusive evidence — no
+    /// fail→pass flip, or a diff over budget, or a test that could not be run.
+    /// It is the ladder's honest "I do not know", and the run is scored
+    /// `Unverified` on it.
+    ///
+    /// # Why the two rungs it replaces are gone
+    ///
+    /// Both described a model's involvement rather than the work: `model_judge`
+    /// / `model_verdict` was "a second model read the diff and offered an
+    /// opinion", and `heuristic_fallback` was "that model was unreachable, so a
+    /// heuristic stood in". Neither is evidence about the change. Measured over
+    /// an 89-task Terminal-Bench run the opinion agreed with the benchmark's
+    /// grader 46% of the time and 17 of its false passes cost 5 tasks outright
+    /// — a coin flip that could end a run — so the escalation was removed and
+    /// the honest label put in its place.
+    ///
+    /// Both aliases are retained for the same reason `model_verdict` once
+    /// aliased `model_judge`: sessions already on disk spell it those ways, and
+    /// this enum's contract is that an unknown rung fails the event rather than
+    /// laundering it, so a bare rename would make historical streams fail to
+    /// parse loudly and totally. New writes use `unverified`; old reads still
+    /// land, and land on the rung whose semantics they always actually had —
+    /// unproven.
+    #[serde(
+        alias = "model_judge",
+        alias = "model_verdict",
+        alias = "heuristic_fallback"
+    )]
+    Unverified,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass
     /// carrying no evidence either way.
@@ -95,8 +120,7 @@ impl LadderRung {
             LadderRung::Revise => "revise",
             LadderRung::NothingAttempted => "nothing_attempted",
             LadderRung::Unverifiable => "unverifiable",
-            LadderRung::ModelVerdict => "model_verdict",
-            LadderRung::HeuristicFallback => "heuristic_fallback",
+            LadderRung::Unverified => "unverified",
             LadderRung::Waived => "waived",
         }
     }
@@ -353,7 +377,7 @@ mod tests {
             snapshot(),
             snapshot().with_rung(LadderRung::SubmitFast),
             snapshot()
-                .with_rung(LadderRung::ModelVerdict)
+                .with_rung(LadderRung::Unverified)
                 .with_verifier_independence(Some(false)),
             // #2194: the three channels that joined the snapshot after the
             // verdict already turned on them.
@@ -420,8 +444,8 @@ mod tests {
     #[test]
     fn with_rung_preserves_every_other_field() {
         let base = snapshot();
-        let stamped = base.with_rung(LadderRung::ModelVerdict);
-        assert_eq!(stamped.rung, Some(LadderRung::ModelVerdict));
+        let stamped = base.with_rung(LadderRung::Unverified);
+        assert_eq!(stamped.rung, Some(LadderRung::Unverified));
         assert_eq!(
             LadderSnapshot {
                 rung: None,
@@ -440,8 +464,7 @@ mod tests {
         for rung in [
             LadderRung::NothingAttempted,
             LadderRung::Unverifiable,
-            LadderRung::ModelVerdict,
-            LadderRung::HeuristicFallback,
+            LadderRung::Unverified,
             LadderRung::Waived,
         ] {
             assert!(!rung.is_deterministic(), "{rung:?} is not deterministic");
@@ -453,12 +476,35 @@ mod tests {
     #[test]
     fn rung_tokens_are_snake_case() {
         assert_eq!(
-            serde_json::to_string(&LadderRung::HeuristicFallback).unwrap(),
-            "\"heuristic_fallback\""
+            serde_json::to_string(&LadderRung::Unverified).unwrap(),
+            "\"unverified\""
         );
         assert_eq!(
             serde_json::to_string(&LadderRung::NothingAttempted).unwrap(),
             "\"nothing_attempted\""
         );
+    }
+
+    /// Every rung token this enum has ever written still parses, and the three
+    /// that described a model's involvement land on [`LadderRung::Unverified`].
+    ///
+    /// This is the compatibility half of removing the escalation. The enum's
+    /// stated contract is that an unknown rung fails the event rather than
+    /// being laundered, so dropping `model_judge` / `model_verdict` /
+    /// `heuristic_fallback` without aliases would make every session already on
+    /// disk fail to parse — loudly and totally, which is the worst way to
+    /// discover a vocabulary change. They map to `Unverified` because that is
+    /// the claim they always actually supported: a model offered an opinion, or
+    /// could not, and either way nothing deterministic proved the work.
+    #[test]
+    fn the_retired_model_rungs_parse_as_unverified() {
+        for token in ["model_judge", "model_verdict", "heuristic_fallback"] {
+            let parsed: LadderRung = serde_json::from_str(&format!("\"{token}\"")).unwrap();
+            assert_eq!(
+                parsed,
+                LadderRung::Unverified,
+                "`{token}` must still parse, as the unproven rung it always was"
+            );
+        }
     }
 }

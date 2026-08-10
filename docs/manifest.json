@@ -363,7 +363,7 @@
         12,
         13
       ],
-      "status": "archived",
+      "status": "living",
       "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
     },
     "prompt-agent-author": {
@@ -373,7 +373,7 @@
     },
     "prompt-distress-guidance": {
       "path": "docs/prompts/distress-guidance.md",
-      "status": "archived",
+      "status": "living",
       "title": "distress_guidance \u2014 the effective prompt"
     },
     "prompt-domain-inference": {
@@ -418,17 +418,17 @@
     },
     "prompt-verdict": {
       "path": "docs/prompts/verdict.md",
-      "status": "archived",
+      "status": "living",
       "title": "verdict \u2014 the effective prompt"
     },
     "prompt-witness-author": {
       "path": "docs/prompts/witness-author.md",
-      "status": "archived",
+      "status": "living",
       "title": "witness_author \u2014 the effective prompt"
     },
     "prompt-witness-repair": {
       "path": "docs/prompts/witness-repair.md",
-      "status": "archived",
+      "status": "living",
       "title": "witness_repair \u2014 the effective prompt"
     },
     "prompt-worker": {

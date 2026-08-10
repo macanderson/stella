@@ -302,10 +302,13 @@ fn the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm() {
     );
 }
 
-/// A same-model verifier posture is historical configuration, not a live
-/// degradation: deterministic verification dispatches no verifier model.
+/// The same-model degradation is a fact the operator is owed BEFORE a token
+/// is spent — the pipeline keeps running (an auto-routing gateway can serve
+/// distinct upstream models behind one id, so refusing would punish exactly
+/// that setup), but the notice must name the duplicated model and the config
+/// key that restores independence.
 #[test]
-fn a_same_model_posture_does_not_claim_live_verifier_degradation() {
+fn a_same_model_posture_is_named_in_a_wiring_notice_not_refused() {
     let same_model_notice = |wiring: &EngineWiring| {
         wiring
             .notices
@@ -319,8 +322,17 @@ fn a_same_model_posture_does_not_claim_live_verifier_degradation() {
     let plain_ref = ModelRef::new(plain.provider.id, plain.model_id.clone());
     let wiring = resolve_engine_wiring(&plain, &plain_ref, &[configured_provider("zai")]);
     assert!(
-        !same_model_notice(&wiring),
-        "no live verifier means no same-model warning: {:?}",
+        same_model_notice(&wiring),
+        "no engine settings means every role rides `{plain_ref}` — the degradation \
+         must be named: {:?}",
+        wiring.notices
+    );
+    assert!(
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains(&plain_ref.to_string()) && n.contains("pipeline_verifier_model")),
+        "the notice must name the duplicated model and the key that fixes it: {:?}",
         wiring.notices
     );
 
@@ -333,7 +345,11 @@ fn a_same_model_posture_does_not_claim_live_verifier_degradation() {
     );
     let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
     let wiring = resolve_engine_wiring(&control, &worker_ref, &[configured_provider("openrouter")]);
-    assert!(!same_model_notice(&wiring), "{:?}", wiring.notices);
+    assert!(
+        same_model_notice(&wiring),
+        "a settings posture that lands every role on one model is the same fact: {:?}",
+        wiring.notices
+    );
 
     // A split posture must NOT raise it.
     let split = cfg_with_engine(

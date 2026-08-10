@@ -264,6 +264,17 @@ pub struct ProofState {
     /// Outranks the verdict: a turn nothing could observe must not read
     /// `proved` just because nothing failed it either.
     pub unverifiable: Option<String>,
+    /// Set when verification RAN and did not prove the turn — the ladder's
+    /// `Unverified` rung, which is where inconclusive evidence now comes to
+    /// rest instead of buying a model's opinion.
+    ///
+    /// A separate channel from [`Self::unverifiable`] rather than a shade of
+    /// it, for the reason that one exists: "no probe could look" and "the
+    /// probes looked and it was not enough" imply opposite repairs — fix the
+    /// instrument, versus produce the missing observation. They land on
+    /// different standings for the same reason ([`Standing::CouldNotCheck`] vs
+    /// [`Standing::NotProved`]).
+    pub unproven: Option<String>,
     /// The witness-tamper check's stated result, from the verdict's ladder
     /// snapshot: `Some(true)` = every witness artifact matched its pinned
     /// identity. `None` = the check never ran or the verdict predates the
@@ -330,6 +341,9 @@ impl ProofState {
             }
             ProofStep::VerificationUnavailable { reason } => {
                 self.unverifiable = Some(reason.clone());
+            }
+            ProofStep::VerificationUnproven { reason } => {
+                self.unproven = Some(reason.clone());
             }
             ProofStep::Oracle {
                 command,
@@ -441,6 +455,12 @@ impl ProofState {
         if self.unverifiable.is_some() {
             return Standing::CouldNotCheck;
         }
+        // Verification ran and did not settle it. Checked here for exactly the
+        // reason above: this turn also closes with `passed: true` — an unproven
+        // run is not a failed one — so the verdict alone would read `proved`.
+        if self.unproven.is_some() {
+            return Standing::NotProved;
+        }
         // The worker edited the very test meant to judge it. Outranks
         // everything below including a green flip, because a flip observed on a
         // tampered artifact is not evidence at all.
@@ -507,6 +527,7 @@ impl ProofState {
             && self.witness.is_none()
             && self.verdict.is_none()
             && self.unverifiable.is_none()
+            && self.unproven.is_none()
             && self.flip == Flip::default()
     }
 
@@ -584,6 +605,9 @@ impl ProofState {
         if self.flip.candidate_passed == Some(false) {
             return "the test still fails with this change".into();
         }
+        if self.unproven.is_some() && self.flip.command.is_none() {
+            return "no test was run that could have proven this change".into();
+        }
         "the test passes, but it was never run without the change".into()
     }
 
@@ -649,6 +673,9 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
         ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
         ProofStep::VerificationUnavailable { reason } => {
             format!("verification unavailable: {reason}")
+        }
+        ProofStep::VerificationUnproven { reason } => {
+            format!("verification unproven: {reason}")
         }
         ProofStep::Oracle { passed, tree, .. } => format!(
             "oracle: {} on {}",

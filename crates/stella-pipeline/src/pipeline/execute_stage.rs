@@ -20,6 +20,7 @@ pub(super) struct TurnTallies {
     file_changes: Arc<AtomicU32>,
     mutating: Arc<AtomicU32>,
     opaque: Arc<AtomicU32>,
+    verify_confirmations: Arc<AtomicU32>,
     errored_commands: Arc<AtomicU32>,
 }
 
@@ -29,9 +30,19 @@ impl TurnTallies {
         signals.file_changes += self.file_changes.load(Ordering::Relaxed);
         signals.mutating_actions += self.mutating.load(Ordering::Relaxed);
         signals.opaque_actions += self.opaque.load(Ordering::Relaxed);
+        signals.verify_done_confirmations += self.verify_confirmations.load(Ordering::Relaxed);
         signals.errored_commands += self.errored_commands.load(Ordering::Relaxed);
     }
 }
+
+/// The built-in verification tool's registered name
+/// (`stella-tools/src/verify.rs`) and the leading marker of its success
+/// output. Name-based like [`crate::witness::warrant::diff_accountable_mutator`],
+/// and both halves must match before a confirmation is tallied: the name
+/// alone could be shadowed by an attached MCP tool, and the marker alone
+/// could be echoed by a shell call's stdout.
+const VERIFY_DONE_TOOL: &str = "verify_done";
+const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
 
 impl<'a> Pipeline<'a> {
     /// Execute stage: one turn for simple/single-task; one turn per plan step
@@ -235,6 +246,8 @@ impl<'a> Pipeline<'a> {
         let mutating = seen_mutating.clone();
         let seen_opaque = Arc::new(AtomicU32::new(0));
         let opaque = seen_opaque.clone();
+        let seen_verify = Arc::new(AtomicU32::new(0));
+        let verify = seen_verify.clone();
         // The errored-command census (#2125): unconditional, like the
         // `verify_done` tally above, because the fact it records is invisible
         // to every other channel — a chain that exits 0 with a broken command
@@ -242,6 +255,11 @@ impl<'a> Pipeline<'a> {
         // oracle.
         let seen_command_errors = Arc::new(AtomicU32::new(0));
         let command_errors = seen_command_errors.clone();
+        // The `verify_done` calls in flight, so their results can be scored
+        // (#2129). Correlated by `call_id` for the same reason the command
+        // map below is — a step dispatches calls concurrently.
+        let pending_verify: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let verify_calls = pending_verify.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
         // Correlate a shell call's command line (carried on `ToolStart`) with
@@ -305,6 +323,15 @@ impl<'a> Pipeline<'a> {
                     {
                         pending.insert(call.call_id.clone(), command.to_string());
                     }
+                    // Track `verify_done` dispatches unconditionally (#2129):
+                    // its confirmation is flip evidence the fallback verdict
+                    // must be able to read, and the calls are rare enough
+                    // that the set costs nothing on ordinary turns.
+                    if call.name == VERIFY_DONE_TOOL
+                        && let Ok(mut pending) = verify_calls.lock()
+                    {
+                        pending.insert(call.call_id.clone());
+                    }
                     consumer.send(event)
                 }
                 AgentEvent::ToolResult {
@@ -333,6 +360,19 @@ impl<'a> Pipeline<'a> {
                             halt.observe(&command, content);
                         }
                     }
+                    // A `verify_done` success that opens with the confirmed
+                    // marker is a deterministic flip observation (#2129). The
+                    // marker is the tool's first output byte, so `starts_with`
+                    // cannot be satisfied by a quoted echo in a longer reply.
+                    if verify_calls
+                        .lock()
+                        .ok()
+                        .is_some_and(|mut pending| pending.remove(call_id))
+                        && let ToolOutput::Ok { content } = output
+                        && content.starts_with(WITNESS_CONFIRMED_MARKER)
+                    {
+                        verify.fetch_add(1, Ordering::Relaxed);
+                    }
                     // Scored off the result alone (#2125) — no call-id
                     // correlation, because the marker the census reads is the
                     // shell renderer's own and no dispatch record is needed to
@@ -351,6 +391,7 @@ impl<'a> Pipeline<'a> {
                 file_changes: seen_file_changes,
                 mutating: seen_mutating,
                 opaque: seen_opaque,
+                verify_confirmations: seen_verify,
                 errored_commands: seen_command_errors,
             },
         )

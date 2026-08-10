@@ -1,13 +1,10 @@
 ---
 id: prompt-verdict
 title: "verdict — the effective prompt"
-status: archived
+status: living
 ---
 
 # `verdict`
-
-Historical prompt reference only. The live pipeline never dispatches a model
-verdict; deterministic oracles either confirm the final state or abstain.
 
 The verifier's verdict call, spent only on **inconclusive deterministic
 evidence**. When a fail→pass flip or a green touched test already settled the
@@ -24,11 +21,11 @@ keeps every recorded model call in every stored session readable.
 | Dispatch | raw completion, `tools: []` |
 | Instructions | `VERIFIER_INSTRUCTIONS`, `crates/stella-pipeline/src/verify.rs` |
 | Payload | `verifier_prompt`, same file |
-| Sent from | No live call site (retired) |
+| Sent from | `crates/stella-pipeline/src/pipeline/verifier_stage.rs` |
 | Output cap | 1,024 visible + 4,096 reasoning headroom |
 | Effort | inherited — a judgment call on evidence |
 | Diff budget | `VERIFIER_DIFF_BUDGET_TOKENS` = 5,000, `DiffScope::Budgeted` |
-| Override | Historical `agents.verifier.prompt` |
+| Override | `agents.verifier.prompt` — **wired** |
 
 The verifier's model is resolved independently of the worker's and must not be
 the same resolution (#1795). A verifier that is the worker is not a second

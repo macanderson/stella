@@ -93,19 +93,6 @@ pub(crate) async fn run(
         .map(|(code, output)| (code, truncate_middle(output)))
 }
 
-/// `run` with stdout and stderr kept separate for typed verification
-/// receipts. It preserves the same process-group, timeout, capture, and
-/// credential-scrubbing guarantees as the merged path.
-pub(crate) async fn run_split(
-    command: &str,
-    dir: &std::path::Path,
-    timeout_secs: u64,
-) -> Result<(i32, String, String), String> {
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(command);
-    drive_split(cmd, command, dir, timeout_secs, &[]).await
-}
-
 /// Run a repository-owned GitHub CLI command while preserving only GitHub
 /// CLI's exact documented authentication variables. The command text must be
 /// constructed by Stella code with user values shell-quoted; model-authored

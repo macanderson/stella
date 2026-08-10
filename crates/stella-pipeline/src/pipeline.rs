@@ -1,6 +1,6 @@
 //! The orchestrator: the staged turn flow that sits
 //! *above* `stella-core::Engine`. It sequences evaluate → enhance → route →
-//! execute → deterministic verify → bounded revise over the injected ports,
+//! execute → witness → verify → verdict → revise over the injected ports,
 //! emitting a `Stage` event at every boundary and owning terminal
 //! success-or-failure signaling for outcome-producing runs (`Complete` or a
 //! non-retryable `Error`). Hard infrastructure failures return out of band as
@@ -57,11 +57,11 @@ use stella_core::{
     AbortKind, BudgetGuard, CalibrationMap, Engine, EngineConfig, EventSender, Router, TurnOutcome,
 };
 use stella_protocol::{
-    AgentEvent, CompletionMessage, LadderSnapshot, MessageRole, ModelCallRole, ModelRef,
-    OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
+    AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
+    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
 };
 
-use self::revision::{RevisionCause, TestFailureReceipt, revision_prompt};
+use self::revision::{RevisionCause, revision_prompt};
 use crate::candidate::{
     CandidateScore, CandidateSummary, score_from_verification, select_best_candidate,
 };
@@ -73,9 +73,10 @@ use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, PipelinePorts,
-    ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision,
-    TestInvocation, TestRunner, WorkspaceError,
+    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord,
+    McpPrefetchPort, MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall,
+    RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
+    WorkspaceError,
 };
 use crate::research::ResearchFinding;
 use crate::roster::Roster;
@@ -94,11 +95,16 @@ use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, deterministic_fail_evidence,
-    deterministic_pass_evidence, ladder_decision, normalize_command, unverifiable_evidence,
+    deterministic_pass_evidence, evidence_demand_is_worth_a_turn, ladder_decision,
+    nothing_attempted_evidence, unverifiable_evidence, unverified_evidence,
 };
-use crate::witness::airlock::{FailureFingerprint, SealedFailure, grain_for_repeats};
-use crate::witness::parse_test_invocation;
+use crate::witness::airlock::{FailureFingerprint, SealedFailure, grain_for_repeats, redact};
 use crate::witness::warrant::{ChangeSignals, warrant};
+use crate::witness::{
+    Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
+    validate_witness_identity, validate_witness_invocation, witness_identity_matches,
+    witness_prompt, witness_repair_prompt,
+};
 pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 mod attachments;
 // `pub(crate)` for one constant: `verify`'s instruction block names the
@@ -131,15 +137,35 @@ mod triage_stage;
 mod user_message;
 use user_message::{VerificationContract, assemble_user_message};
 mod verify_probes;
+use verify_probes::DiffProbe;
+mod witness_stage;
 use candidate_result::{CandidateAbort, CandidateResult, TurnAbort, escape_abort_reason};
 use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
-use stage_budget::{PipelineStageAbort, Spend};
+use stage_budget::{PipelineStageAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
-use verify_probes::DiffProbe;
-use verify_probes::ObservedTest;
+use witness_stage::{BoundHookRunner, WitnessAuthoring};
+/// Make a diff that verification hands downstream *incapable of lying*.
+///
+/// What a [`LadderDecision::NothingAttempted`] revision turn is told.
+///
+/// Says only what was observed and what is required, and deliberately offers no
+/// theory about *why* the turn stopped — the pipeline does not know, and a
+/// wrong guess ("you seem to have thought the task was complete") is an
+/// invitation to argue with the premise instead of acting on it. The observed
+/// fact is the whole message: no tool ran, so nothing changed.
+///
+/// The last clause matters more than it looks. The turns this fires on ended
+/// with the model narrating a finished solution it never wrote down — on
+/// Terminal-Bench, 123 reasoning events and zero tool calls — so the one thing
+/// worth saying is that describing the work is not doing it.
+const NOTHING_ATTEMPTED_NUDGE: &str = "This turn ended without calling a single tool, so the \
+     workspace is exactly as it was. Nothing has been written yet, whatever the answer above \
+     describes. Carry out the task now with tool calls that change the workspace — writing the \
+     file, running the command, applying the edit. Reasoning about a solution, or stating one in \
+     prose, does not perform it.";
 
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
@@ -224,15 +250,42 @@ pub struct PipelineConfig {
     /// which since #2433 reports whichever binds first, so a surface arming
     /// only one of them is still measured.
     pub run_budget: Option<Duration>,
-    /// Per-role request overrides (`agent_engine_config`) for raw management
-    /// calls. Verification does not consume an override or call a model.
+    /// Per-role request overrides (`agent_engine_config`) for the raw
+    /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
     /// Who performs each responsibility, and whether it runs at all (#2381).
-    /// Live rows cover triage, research, planning, and worker execution.
-    /// Historical verifier-owned rows (`witness_author`,
-    /// `distress_guidance`, and `verdict`) are hard-retired: configuration may
-    /// preserve an explicit disabled row for compatibility, but cannot enable
-    /// or reassign one.
+    /// [`Roster::default`] is the pipeline that shipped; see [`crate::roster`]
+    /// for why assignment and enablement are configurable while stage ORDER
+    /// deliberately is not.
+    ///
+    /// **This is the only storage for any of it** (#2458). Two responsibilities
+    /// briefly carried a second switch each — a `witness_writer` bool and a
+    /// `distress_guidance` bool, each ANDed with its row at run time — and two
+    /// knobs for one decision is a defect waiting on a reader: a surface that
+    /// flipped the bool did nothing when the row was off, and neither answer
+    /// named the other. The concrete bug was in persistence. Only the bool rode
+    /// the resume frame, so a killed run came back having reconstructed half
+    /// the decision and defaulted the rest, and a deliberately witness-free run
+    /// started authoring witnesses on its resumed leg. The rows are now the
+    /// whole answer, and the whole roster is what `stella_cli::resume_frame`
+    /// persists.
+    ///
+    /// The two rows whose switch used to live here, since a reader of this
+    /// struct still needs to know what they buy:
+    ///
+    /// - **`witness_author`** — witness authoring (L-E11 front half). When no
+    ///   [`Self::test_command`] is configured and the task class verifies
+    ///   unconditionally, an independent model authors a failing witness test
+    ///   whose command arms the flip oracle, with tamper exclusion at verify
+    ///   time ([`crate::witness`]). Costs one engine turn + up to two test runs
+    ///   per *candidate*: each best-of-N candidate authors its own witness
+    ///   inside its own snapshot, because a witness written against a sibling's
+    ///   tree witnesses nothing about this one's work. At the default
+    ///   `candidates = None` that is once.
+    ///
+    /// `distress_guidance` is deliberately absent: the responsibility is
+    /// unassignable, so no roster row can put a model back in the steering
+    /// seat on a twice-failed candidate.
     pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
@@ -302,20 +355,37 @@ pub struct PipelineConfig {
     /// otherwise the run is a named error rather than a silent auto-approve.
     pub headless_bypass_scope_review: bool,
     /// The test command the flip oracle tracks (run before and after execute).
-    /// When absent, completion requires a concrete built-in `verify_done`
-    /// receipt; otherwise verification abstains.
+    /// `None` hands the flip oracle to the witness author (when the
+    /// `witness_author` row of [`Self::roster`] is enabled) — an explicit user
+    /// command always wins over an authored one.
     pub test_command: Option<String>,
-    /// Legacy authored-witness setting retained for configuration decoding.
-    /// Model-authored witnesses are retired, so this flag has no effect.
+    /// Whether an authored witness is adopted into the real tree along with
+    /// the work it verified. Off by default: the witness is scaffolding for
+    /// one run, not a change the user asked for.
+    ///
+    /// A witness is written to *fail* — it encodes a moment ("this code does
+    /// not do X yet"), not an invariant, which is the opposite of what a
+    /// durable regression test encodes. Adopting one by default dropped an
+    /// untracked, already-satisfied test into the project's real test tree,
+    /// where the runner picks it up forever and nobody reviews it because it
+    /// was never in a diff. They accumulate: the witness executor creates
+    /// exclusively (`create_new`), so each run that lands on a taken filename
+    /// simply picks another.
+    ///
+    /// Turning this on is the explicit promotion step — the run's verdict is
+    /// unchanged either way, since the witness has already done its job by
+    /// the time adoption happens.
     pub keep_witness: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
     pub diff_diagnostic: Option<DiagnosticInvocation>,
-    /// Legacy diff-size telemetry threshold. It does not gate deterministic
-    /// authority: an oracle flip verifies regardless of diff size.
+    /// The diff-size budget in changed lines: a diff at or under this is
+    /// "small enough" to trust deterministic evidence without a verifier (L-E11).
     pub diff_budget_lines: u32,
-    /// Legacy diagnostics-audit setting retained for configuration decoding.
-    /// Diagnostics no longer override an oracle flip or invoke a reviewer.
+    /// Regression veto strictness (#861): when `true`, NEW lint/typecheck
+    /// warnings (not just errors) also block a deterministic fast-submit and
+    /// route to the verifier. Off by default — a chatty linter would otherwise
+    /// tax every submit — while new *errors* always veto.
     pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
     pub max_revisions: u32,
@@ -335,18 +405,66 @@ pub struct PipelineConfig {
     /// which stays honest: the outcome is still `out_of_memory`, never a
     /// failing assertion.
     pub test_oom_retries: u32,
-    /// Legacy coverage-audit setting retained for configuration decoding.
-    /// Coverage no longer overrides or substitutes for the fail-to-pass oracle.
+    /// Escalate to the verifier when the diff-coverage overlap could not be
+    /// *measured* (#1291) — the strictest reading of "did the test run the
+    /// changed lines?".
+    ///
+    /// Off by default, and note what the default does NOT mean: an unmeasured
+    /// overlap is already scored `Unverified` rather than `DeterministicPass`
+    /// (see the `SubmitFast` arm), so it never ships as a verified pass. What
+    /// this adds is *spending a verifier call* on it.
+    ///
+    /// The three positions, so the choice is legible:
+    ///
+    /// - measured overlap → deterministic pass, either way;
+    /// - measured NON-overlap → verifier, either way (the flip is a coincidence,
+    ///   and that is worth a second opinion);
+    /// - unmeasured → scored unproven and shipped (off, the default), or
+    ///   escalated to the verifier (on).
+    ///
+    /// Off is the default for the reason `verify::coverage` records at
+    /// length: most workspaces have no coverage tooling, so escalating would
+    /// route nearly every deterministic pass through a paid verifier call to be
+    /// told what the evidence already said — the "a gate that fires
+    /// everywhere is a tax" result #1295 measured. Turning it on is for an
+    /// operator who has the tooling and wants the overlap enforced rather
+    /// than merely scored.
     pub require_diff_coverage: bool,
-    /// Legacy model-verifier setting retained for configuration decoding. It
-    /// has no effect because no model verdict can request corroboration.
+    /// Ask for corroboration when a model verifier passes and nothing
+    /// deterministic stands behind it (#1295): spend one revision demanding
+    /// the evidence instead of recording the pass as UNVERIFIED on the spot.
+    ///
+    /// Bounded to **one** demand per candidate, spending a revision turn the
+    /// repair gate does NOT count against `max_revisions` (#1509 — the demand
+    /// corroborates a passing verdict; a repair fixes a refuted one, and the
+    /// two are not substitutes), and — the part that
+    /// decides whether this is worth having at all — only raised when
+    /// `Pipeline::effective_test_command` resolved to something. Without a
+    /// tracked command the ladder has no channel that can *ever* answer the
+    /// ask: `touched_tests_passed` stays `None` by construction and the flip
+    /// oracle never observes a candidate run, so
+    /// [`crate::verify::LadderInputs::verifier_pass_stands_alone`] is true no
+    /// matter what the worker does with the turn. That is the whole of why
+    /// this was measured as a loss the first time (#1211 §1) — on
+    /// Terminal-Bench, with no `--test-command` and the authored-witness rung
+    /// unable to fire under a single-model posture, the condition held on
+    /// nearly every turn and the extra turn bought nothing on all of them.
+    /// Gating on the command is what turns "fires everywhere, answerable
+    /// nowhere" into "fires only where an answer exists".
     pub verifier_evidence_demand: bool,
-    /// Legacy independence setting retained for configuration decoding. Model
-    /// witness authors are retired, so this flag no longer refuses a run.
+    /// Refuse the run when no witness author independent of the worker can
+    /// be resolved, instead of degrading to the unauthored verify ladder.
+    ///
+    /// Off by default, and that default is the one almost every caller wants:
+    /// a missing author costs the run its authored witness, never the task
+    /// (see `Pipeline::can_author_independent_witness`). Turning it on is
+    /// for the host that has already made the independence claim OUTSIDE the
+    /// run — a benchmark arm whose hashed posture names a second model, a
+    /// manifest that will be read as "this number was produced with an
+    /// independent author". There, the silent degradation is worse than no
+    /// number at all: the arm's own digest describes a configuration the run
+    /// did not have (#1147).
     pub require_independent_witness: bool,
-    /// Legacy independence setting retained for configuration decoding. Model
-    /// verdicts are retired, so this flag no longer refuses a run.
-    pub require_independent_verifier: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -425,7 +543,6 @@ impl Default for PipelineConfig {
             // evidence-demand-1295/README.md` for the measurement.
             verifier_evidence_demand: true,
             require_independent_witness: false,
-            require_independent_verifier: false,
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
@@ -500,8 +617,8 @@ fn worktree_decision_without_asking(
 }
 
 /// The final verification verdict a pipeline run produced, if verification
-/// ran. `deterministic` is true only for a fail-to-pass oracle receipt or a
-/// completed candidate test failure; false denotes an unverified abstention.
+/// ran. `deterministic` distinguishes a flip-oracle/ladder verdict from a
+/// model/heuristic verifier's opinion (never conflated, L-E11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub passed: bool,
@@ -509,7 +626,7 @@ pub struct Verdict {
     pub summary: String,
     /// The ladder input snapshot this verdict was decided from (#865), when
     /// verification ran far enough to take one. `replay` answers "why did
-    /// this run pass / revise / abstain?" from here without
+    /// this run fast-submit / revise / verifier?" from here without
     /// re-deriving.
     pub ladder: Option<Box<stella_protocol::LadderSnapshot>>,
 }
@@ -605,19 +722,18 @@ struct CandidateState {
     /// warrant (the #1701 recurrence a projection method used to guard
     /// against by hand).
     signals: ChangeSignals,
-    /// Latest policy-final built-in `verify_done` request confirmed during
-    /// execution. It is never authority by itself: every verification round
-    /// replays it against the current sealed candidate state.
-    verify_done_request: Option<serde_json::Value>,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
-    /// `None` while there is no failing configured-command baseline to watch.
-    /// See [`crate::flip_halt`] for why stopping is separate from crediting.
+    /// `None` while there is nothing to watch: no failing configured-command
+    /// baseline and no authored witness yet. `witness_on_demand` arms it the
+    /// moment a witness's failing baseline is credited (#1793). See
+    /// [`crate::flip_halt`] for why stopping is separate from crediting.
     flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
-    /// configured-command baseline, per-iteration candidate runs, and the
-    /// pre-submit confirmation.
+    /// baseline (only for a configured `--test-command`; the authored-witness
+    /// baseline feeds the flip oracle directly without a trace entry),
+    /// per-iteration candidate runs, the pre-submit confirmation.
     /// Mirrors the emitted `ProofStep::Oracle` events, accumulated here so
     /// the verdict can carry its own trace without replaying the stream.
     oracle_trace: Vec<OracleObservation>,
@@ -635,7 +751,39 @@ struct CandidateState {
     /// turn. Every later reading is a delta from here, which is what makes a
     /// monotonic session-wide counter usable per candidate.
     touch_baseline: u64,
+    /// Pre-execution lint records for the regression veto (#861). Populated
+    /// eagerly only on the in-place path, whose baseline tree is destroyed
+    /// by execution; isolated candidates read theirs lazily at audit time
+    /// from the still-pristine session tree. `None` also covers "probe
+    /// unavailable", and the veto degrades open either way.
+    lint_baseline: Option<Vec<LintRecord>>,
+    /// The mutation audit's finding (#870): Some(true) = the witness
+    /// failed under at least one mutant (it constrains the change);
+    /// Some(false) = it stayed green under every observed mutant
+    /// (tautological — the fast-submit was withheld); None = never run.
+    witness_mutation: Option<bool>,
+    /// The diff-coverage audit's finding (#1291): whether the passing test
+    /// run executed the lines this candidate added. `Unmeasured` both before
+    /// the audit runs and wherever it cannot be made — the two are the same
+    /// claim, which is none.
+    diff_coverage: DiffCoverage,
+    /// How the authored witness's arming failure presented (#1790): the
+    /// airlock's symptom class of the failing baseline run, recorded only
+    /// when it was a build failure — a flip armed by a compile error is
+    /// legitimate for a missing-API goal but weaker evidence than an
+    /// assertion failure, and the verifier deserves to see which it was.
+    witness_baseline_symptom: Option<&'static str>,
     revisions: u32,
+    /// How many of those revisions were spent asking for corroboration of a
+    /// standalone verifier pass rather than fixing a failure (#1295). Capped at
+    /// one per candidate: the second ask would be to a worker that already
+    /// answered "there is no test surface here", and paying for that answer
+    /// twice is the cost this feature was switched off for the first time.
+    evidence_demands: u32,
+    /// Paths of the witness artifact grafted into this candidate, if the
+    /// warrant bought one after execution. Empty until then, and empty forever
+    /// when the change had nothing to prove.
+    witness_paths: Vec<String>,
     /// Every deterministic failure this candidate has produced, in order.
     /// The airlock reads it to tell "stuck on the same thing" from "made
     /// progress and hit something new" — the signal that decides how much the
@@ -661,6 +809,7 @@ impl CandidateState {
             score,
             diff_lines: self.diff_lines,
             revisions: self.revisions,
+            witness_paths: self.witness_paths,
         }
     }
 
@@ -675,6 +824,7 @@ impl CandidateState {
             score: CandidateScore::Unverified,
             diff_lines: self.diff_lines,
             revisions: self.revisions,
+            witness_paths: self.witness_paths,
         }
     }
 }
@@ -685,9 +835,15 @@ impl CandidateState {
 /// so the candidate phases thread one value instead of two borrows.
 #[derive(Clone, Copy)]
 struct CandidateSurface<'c> {
-    tools: &'c dyn stella_core::ToolExecutor,
     diagnostics: &'c dyn DiagnosticRunner,
     tests: &'c dyn TestRunner,
+    /// The witness mutation check (#870); rooted per surface via `cwd`.
+    mutation: Option<&'c dyn MutationProbe>,
+    /// The diff-coverage check (#1291); rooted per surface via `cwd`.
+    coverage: Option<&'c dyn CoverageProbe>,
+    /// The lint probe for the regression veto (#861); rooted per surface
+    /// via `cwd`.
+    lint: Option<&'c dyn LintProbe>,
     repo_status: &'c dyn RepoStatusPort,
     cwd: Option<&'c str>,
     hook_runner: Option<&'c dyn HookRunner>,
@@ -709,6 +865,9 @@ pub struct Pipeline<'a> {
     touches: &'a dyn FileTouchPort,
     diagnostics: &'a dyn DiagnosticRunner,
     tests: &'a dyn TestRunner,
+    lint: Option<&'a dyn LintProbe>,
+    mutation: Option<&'a dyn MutationProbe>,
+    coverage: Option<&'a dyn CoverageProbe>,
     approvals: &'a dyn ApprovalGate,
     sleeper: &'a dyn Sleeper,
     hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
@@ -781,6 +940,9 @@ impl<'a> Pipeline<'a> {
             touches: ports.touches,
             diagnostics: ports.diagnostics,
             tests: ports.tests,
+            lint: ports.lint,
+            mutation: ports.mutation,
+            coverage: ports.coverage,
             approvals: ports.approvals,
             sleeper: ports.sleeper,
             hooks: ports.hooks,
@@ -819,10 +981,31 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
-        // Before triage, before recall, before a single paid call: a roster
-        // that tries to restore retired model-verification authority is
-        // refused here. The legacy independence switches are intentionally
-        // inert because no verifier model remains to compare with the worker.
+        // Checked HERE — before triage, before recall, before a single paid
+        // call — because the whole point of the refusal is that the run must
+        // not produce a number under a configuration it does not have. A
+        // check further down would still refuse, but only after buying the
+        // very trajectory the caller must now throw away (#1147).
+        if self.config.require_independent_witness
+            && let Some(reason) = self.independence_shortfall(ModelCallRole::WitnessAuthor)
+        {
+            return Err(PipelineRunError::new(
+                PipelineError::WitnessAuthorUnavailable(reason),
+                total_cost,
+            ));
+        }
+        // There was a second refusal here, asking the same probe about
+        // `ModelCallRole::Verdict` (#1795, #2467). It is gone with the verdict
+        // call: a grader that does not exist cannot fail to be independent of
+        // the worker, and left in place the check refused runs outright,
+        // reporting that "the `verdict` responsibility is disabled by
+        // configuration" as though the operator had done something wrong.
+        //
+        // Independence is now a property of the witness author alone, which is
+        // the check above.
+        //
+        // Before triage, before recall, before a single paid call — for the
+        // same reason the two independence refusals above sit here.
         if let Err(error) = self.roster_refusal() {
             return Err(PipelineRunError::new(error, total_cost));
         }
@@ -892,9 +1075,27 @@ impl<'a> Pipeline<'a> {
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
+        // The authored-witness decision, taken HERE — before the user message
+        // is assembled — so a run with no oracle and no independent author
+        // can tell the worker up front that its own failing test is the only
+        // deterministic evidence the run will carry (test-first is cheap
+        // exactly at the start and unaffordable after the diff exists). The
+        // conjunction short-circuits in the same order it did at the
+        // single-shot/best-of-N split below, so `can_author…` — which
+        // announces the degradation — is still never consulted for a turn
+        // that would not have authored a witness anyway.
+        let authored_witness = !assessment.conversational
+            && self.config.test_command.is_none()
+            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
+            && assessment.wants_witness()
+            && task_class.verifies_unconditionally()
+            && self.can_author_independent_witness();
         let contract = match verified_by {
             Some(command) => VerificationContract::Oracle(command),
-            None if !assessment.conversational && task_class.verifies_unconditionally() => {
+            None if !assessment.conversational
+                && task_class.verifies_unconditionally()
+                && !authored_witness =>
+            {
                 VerificationContract::WorkerTestFirst
             }
             None => VerificationContract::None,
@@ -970,21 +1171,43 @@ impl<'a> Pipeline<'a> {
         // because this is where its last field settles: nothing after this
         // point changes the goal, the staged prefix, the plan, or the class.
         let frame = TaskFrame {
+            goal,
             base_messages: &base_messages,
             plan: plan.as_deref(),
             assessment,
         };
-        // A single candidate uses a disposable worktree only when the
-        // operator explicitly asks for isolation. Best-of-N always isolates.
-        let isolate = if n == 1 {
+        // Decided above, before the user message was assembled (the worker's
+        // test-first contract keys off it) and before this single-shot/
+        // best-of-N split, because an authored witness is the *only* reason a
+        // single candidate needs disposable isolation. Resolving independence
+        // later would commit the run to snapshot machinery it then discovers
+        // it cannot use — and candidate isolation requires a git working
+        // tree, so on a plain directory that is a hard failure rather than an
+        // unused cost.
+        // The third reason a single candidate needs isolation: the operator
+        // asked for this run's work to happen in a worktree rather than in
+        // their checkout. Resolved here, beside the other two, so all three
+        // reach the same one decision.
+        // Asked ONLY when the answer can change what happens. Best-of-N and an
+        // authored witness already require a disposable candidate, so the
+        // branch below is taken regardless of this value — prompting there
+        // would put a question to the operator whose answer is then discarded,
+        // which teaches them their choices do not matter. `false` is the safe
+        // value in that case precisely because it is unreachable.
+        let isolate = if n == 1 && !authored_witness {
             self.isolate_in_worktree(task_class).await
         } else {
             false
         };
-        // Single-shot (the default) runs directly over the session ports.
+        // Single-shot (the default) runs directly over the session ports —
+        // zero snapshot/adoption machinery only when the user supplied the
+        // test invocation (or witness authoring is otherwise disabled).
+        // Authored witnesses always require a disposable candidate, even at
+        // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, worker_model_label, candidates_run) = if n == 1 && !isolate {
+        let (best, worker_model_label, candidates_run) = if n == 1 && !authored_witness && !isolate
+        {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -1019,6 +1242,8 @@ impl<'a> Pipeline<'a> {
                 .run_best_of_n(
                     frame,
                     n,
+                    &frames,
+                    authored_witness,
                     &mut Spend {
                         budget: &mut *budget,
                         total: &mut total_cost,
@@ -1298,8 +1523,8 @@ impl<'a> Pipeline<'a> {
 
     /// Last-resort execution when candidate setup failed before the worker
     /// ever ran. Runs exactly one worker turn on the session tree — no
-    /// isolation, the simplest path that still does the work. Returns `None`
-    /// only when there is no resolvable worker provider
+    /// isolation, no authored witness, the simplest path that still does the
+    /// work. Returns `None` only when there is no resolvable worker provider
     /// (a true impossibility, not a degradable setup failure), in which case
     /// the caller keeps the original setup abort.
     async fn degrade_to_bare_execution(
@@ -1332,9 +1557,11 @@ impl<'a> Pipeline<'a> {
         spend: &mut Spend<'_>,
     ) -> Vec<CandidateResult> {
         let surface = CandidateSurface {
-            tools: self.tools,
             diagnostics: self.diagnostics,
             tests: self.tests,
+            lint: self.lint,
+            mutation: self.mutation,
+            coverage: self.coverage,
             repo_status: self.repo_status,
             cwd: None,
             hook_runner: None,
@@ -1364,7 +1591,7 @@ impl<'a> Pipeline<'a> {
             // into and no pristine snapshot to author blind in, so it never
             // buys a witness. The ordinal is 1-based, like the start notice.
             results.push(
-                self.run_candidate(i + 1, frame, &engine, surface, spend)
+                self.run_candidate(frame, None, &engine, surface, spend)
                     .await,
             );
         }
@@ -1382,6 +1609,8 @@ impl<'a> Pipeline<'a> {
         &self,
         frame: TaskFrame<'_>,
         n: u32,
+        frames: &[RecalledFrame],
+        author_witness: bool,
         spend: &mut Spend<'_>,
     ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
@@ -1391,6 +1620,20 @@ impl<'a> Pipeline<'a> {
             ..frame
         };
         let Some(port) = self.candidate_workspaces else {
+            if author_witness {
+                return Ok((
+                    CandidateResult::setup_aborted(
+                        frame.base_messages.to_vec(),
+                        "authored witness requires candidate isolation, but no candidate \
+                         workspace port is available"
+                            .to_string(),
+                    ),
+                    None,
+                    // Nothing was dispatched: the isolation port is missing, so
+                    // no candidate ever reached a model.
+                    0,
+                ));
+            }
             // No isolation port (non-git workspace, or a caller that never
             // wired one): the historical shared-tree behavior, made loud —
             // candidates see each other's residue and losers' edits stay on
@@ -1421,6 +1664,9 @@ impl<'a> Pipeline<'a> {
             ));
         };
 
+        // Resolve both identities before creating a workspace or dispatching
+        // the witness. Authored verification is meaningful only when its
+        // author is actually independent from the worker.
         let worker = self
             .resolve_provider(Role::Worker)
             .map_err(RoleResolveError::into_pipeline_error)?;
@@ -1428,12 +1674,30 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fallback);
         }
         let worker_label = worker.model_ref.to_string();
-        // Reaching the isolated path with one candidate means the operator
-        // requested worktree isolation; larger runs are ordinary best-of-N.
-        let single_shot_isolation = n == 1;
+        // Losing the independent author costs the run its authored witness —
+        // it must never cost the run the whole task. A single-model
+        // configuration (every role pinned to one model, as benchmark and
+        // solo-provider setups do) previously aborted here after one model
+        // call, having done no work at all. Degrade to the unauthored verify
+        // ladder instead, and say so once.
+        // Whether this is the `create_worktrees` caller — a plain single-shot
+        // run the operator asked to happen in a worktree — as opposed to
+        // best-of-N or an authored witness. Read from the CALLER's argument,
+        // before the degradation below shadows it, because a requested-then-
+        // degraded authored witness is still not this caller.
+        //
+        // Exact by construction: `run` takes the direct path when
+        // `n == 1 && !authored_witness && !isolate`, so reaching here with
+        // `n == 1 && !author_witness` means `isolate` was the only reason.
+        let single_shot_isolation = n == 1 && !author_witness;
+        let witness_author = self.resolve_witness_author(author_witness, &worker);
+        let author_witness = witness_author.is_some();
 
-        // Isolation is created in index order even when candidates run
-        // together. See `fanout_stage` for why git creation is serialized.
+        // Isolation is created in index order even when the candidates then
+        // run together, and so is the second snapshot a witness author needs —
+        // `SerialCreates` is what makes the second one obey too. See
+        // `fanout_stage`'s module doc for why git, and not the model calls, is
+        // the thing worth serializing.
         let serialized = SerialCreates::new(port);
         let port: &dyn CandidateWorkspacePort = &serialized;
         let width = fan_out_width(n, self.config.candidate_concurrency);
@@ -1443,8 +1707,18 @@ impl<'a> Pipeline<'a> {
         // paths that result carries). `Err` marks a candidate that never got a
         // workspace, and carries the reason it will be scored with.
         let workspaces = self.create_candidate_workspaces(port, n, frame.plan).await;
+        // Handed to the candidate rather than spent here: whether a run buys a
+        // witness is not knowable until the candidate has executed and its diff
+        // can be read.
+        let authoring = author_witness.then(|| WitnessAuthoring {
+            port,
+            author: witness_author
+                .as_ref()
+                .expect("authored witness identity is resolved before dispatch"),
+            frames,
+        });
         let candidates = self
-            .dispatch_isolated_candidates(frame, &worker, &workspaces, width, spend)
+            .dispatch_isolated_candidates(frame, &worker, authoring, &workspaces, width, spend)
             .await;
 
         let best_idx = best_index(&candidates);
@@ -1465,7 +1739,15 @@ impl<'a> Pipeline<'a> {
                     .as_ref()
                     .is_some_and(|verdict| verdict.passed)
             {
-                match ws.adopt(&[]).await {
+                // The witness has already done its whole job by now — it armed
+                // the flip oracle and the flip was observed — so withholding it
+                // cannot change the verdict, only what lands in the tree.
+                let withhold: &[String] = if self.config.keep_witness {
+                    &[]
+                } else {
+                    &candidates[best_idx].witness_paths
+                };
+                match ws.adopt(withhold).await {
                     Ok(adopted) => {
                         // Surface the adopted changes on the event stream: the
                         // winner's edits happened inside the snapshot, so no
@@ -1533,8 +1815,8 @@ impl<'a> Pipeline<'a> {
 
     async fn run_candidate(
         &self,
-        _candidate: u32,
         frame: TaskFrame<'_>,
+        authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
         spend: &mut Spend<'_>,
@@ -1559,7 +1841,7 @@ impl<'a> Pipeline<'a> {
         // engine a stop signal for work the turn never did.
         let mut flip_halt: Option<Arc<FlipHalt>> = None;
         if frame.assessment.class.verifies_unconditionally()
-            && let Some(cmd) = self.effective_test_command()
+            && let Some(cmd) = self.effective_test_command(None)
         {
             let pre = self.run_test_observed(surface.tests, cmd.invocation).await;
             // #860: only a completed run is an oracle observation. A baseline
@@ -1594,13 +1876,34 @@ impl<'a> Pipeline<'a> {
                 // instead of forfeiting the flip (#1671).
                 self.record_progress(|p| {
                     p.baseline = Some(RecordedBaseline {
-                        command: normalize_command(cmd.command),
+                        command: cmd.command.to_string(),
                         passed,
                         output_tail: output.clone(),
                     });
                 });
             }
         }
+
+        // Baseline lint snapshot for the regression veto (#861) — eager only
+        // where it must be. An in-place candidate executes into the session
+        // tree, so its pre-execution diagnostics are unreadable after this
+        // point; an isolated candidate leaves the session tree pristine, so
+        // its baseline is read lazily at audit time and a candidate that
+        // never reaches a fast-submit pays no lint run at all. Gated on the
+        // classes that verify: a fast-submit needs a flip, so where no flip
+        // is possible the snapshot would be spend without a consumer.
+        let lint_baseline = if surface.workspace.is_none()
+            && frame.assessment.class.verifies_unconditionally()
+            && (self.effective_test_command(None).is_some()
+                || self.responsibility_enabled(ModelCallRole::WitnessAuthor))
+        {
+            match surface.lint {
+                Some(probe) => probe.snapshot(surface.cwd).await,
+                None => None,
+            }
+        } else {
+            None
+        };
 
         // Snapshot untracked files (with content fingerprints) BEFORE
         // executing so `gather_diff` can tell files this turn created OR
@@ -1625,7 +1928,6 @@ impl<'a> Pipeline<'a> {
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
-            verify_done_request: None,
             flip_halt,
             oracle,
             oracle_trace,
@@ -1639,7 +1941,13 @@ impl<'a> Pipeline<'a> {
                 self.touches.begin_workspace_probe();
                 self.touches.mutations_recorded()
             },
+            lint_baseline,
+            witness_mutation: None,
+            diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
+            evidence_demands: 0,
+            witness_paths: Vec::new(),
+            witness_baseline_symptom: None,
             failures: Vec::new(),
         };
 
@@ -1672,9 +1980,14 @@ impl<'a> Pipeline<'a> {
             return state.into_unverified();
         }
 
-        // Publish the warrant observation from the one place every verifying
-        // candidate reaches. It remains useful telemetry, but grants no
-        // completion authority.
+        // The warrant's answer, published from the one place that always runs
+        // for a verifying candidate. `witness_on_demand` and
+        // `warranted_completion` each re-ask it (the call is pure and cheap),
+        // but neither is reached on every path — authoring is skipped whenever
+        // there is no independent author, and the completion shortcut returns
+        // early when a test IS required. Emitting from either would make the
+        // rail's first row appear only on some runs, which is the failure this
+        // whole surface exists to end.
         let warrant = warrant(&state.diff_text, state.signals);
         self.emit_proof(ProofStep::Warrant {
             required: warrant.is_required(),
@@ -1682,18 +1995,34 @@ impl<'a> Pipeline<'a> {
             diff_lines: state.diff_lines,
         });
 
-        self.verify_candidate(frame, engine, surface, spend, state)
+        // Buy the witness now, or not at all. Everything above this line has
+        // already happened, so the diff is evidence rather than a prediction —
+        // which is the whole reason authoring waits until here.
+        let witness = match self
+            .witness_on_demand(frame.goal, authoring, surface, &mut state, spend)
+            .await
+        {
+            Ok(witness) => witness,
+            // A witness-stage budget stop: pipeline policy, so this abort is
+            // deliberate and still owes the stream its one error event.
+            Err(reason) => {
+                return CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
+            }
+        };
+
+        self.verify_candidate(frame, witness.as_ref(), engine, surface, spend, state)
             .await
     }
 
     /// Verify + bounded revise loop over an executed candidate: observe the
     /// tests, take the deterministic ladder decision (L-E11), and either
-    /// finish verified, abstain, or spend one of `max_revisions` on a revise
-    /// pass after a completed test failure. Owns `state` because
+    /// finish with a verdict, escalate to the model verifier, or spend one of
+    /// `max_revisions` on a revise pass and re-observe. Owns `state` because
     /// every exit moves it into the returned [`CandidateResult`].
     async fn verify_candidate(
         &self,
-        _frame: TaskFrame<'_>,
+        frame: TaskFrame<'_>,
+        witness: Option<&Witness>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
         spend: &mut Spend<'_>,
@@ -1702,7 +2031,8 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verify,
         });
-        let effective_cmd = self.effective_test_command();
+        let effective_cmd = self.effective_test_command(witness);
+        let witness_paths = Self::witness_paths(witness);
         let meter = repair_gate::RepairMeter::start(*spend.total);
         loop {
             if let Some(workspace) = surface.workspace {
@@ -1726,51 +2056,32 @@ impl<'a> Pipeline<'a> {
                     );
                 }
             }
-            let observed_test = self
+            let (touched_tests_passed, test_tail, test_infra) = self
                 .observe_touched_tests(surface, effective_cmd, &mut state)
                 .await;
-            let mut observed_test = observed_test;
-            let mut failure_command = effective_cmd.map(|cmd| cmd.command.to_string());
-            let mut verify_done_flip = false;
-
-            // Only the concrete built-in executor can deposit one of these
-            // policy-final requests. Replay it now, after sealing, so a
-            // confirmation before a later mutation or revision can never
-            // verify stale bytes. The latest request persists across revision
-            // rounds and is replayed against every new final state.
-            if effective_cmd.is_none() {
-                if let Some(latest) = surface.tools.drain_verification_requests().pop() {
-                    state.verify_done_request = Some(latest);
-                }
-                if let Some(request) = state.verify_done_request.as_ref()
-                    && let Some(result) = surface.tools.replay_verification_request(request).await
-                {
-                    match result {
-                        stella_core::VerificationOracleResult::Confirmed { .. } => {
-                            verify_done_flip = true;
-                        }
-                        stella_core::VerificationOracleResult::CandidateFailed {
-                            command,
-                            exit_code,
-                            stdout,
-                            stderr,
-                        } => {
-                            failure_command = Some(command);
-                            observed_test = ObservedTest {
-                                assertion: Some(false),
-                                exit_code: Some(exit_code),
-                                stdout_tail: stdout,
-                                stderr_tail: stderr,
-                                infra: None,
-                            };
-                        }
-                        stella_core::VerificationOracleResult::Unverifiable { .. } => {}
+            // Tamper exclusion is an authority boundary, not evidence for a
+            // model to weigh. Any post-baseline witness mutation hard-fails
+            // the candidate before a verifier can override it.
+            let mut tampered = Vec::new();
+            if let Some(witness) = witness {
+                for (path, expected) in &witness.files {
+                    let current = surface.repo_status.artifact_identity(path).await;
+                    if !witness_identity_matches(expected, current.as_ref()) {
+                        tampered.push(path.clone());
                     }
                 }
+                tampered.sort();
             }
-            let touched_tests_passed = observed_test.assertion;
-            let test_tail = observed_test.combined_output();
-            let test_infra = observed_test.infra;
+            if !tampered.is_empty() {
+                return CandidateResult::aborted(
+                    state.messages,
+                    format!(
+                        "witness artifact changed after its accepted baseline: {}",
+                        tampered.join(", ")
+                    ),
+                    AbortKind::Failure,
+                );
+            }
             if let Some(workspace) = surface.workspace {
                 match workspace.sealed_is_unchanged().await {
                     Ok(true) => {}
@@ -1790,50 +2101,231 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            let inputs = self.ladder_inputs(
-                &state,
-                touched_tests_passed,
-                verify_done_flip,
-                effective_cmd.is_none() && state.verify_done_request.is_none(),
-            );
+            let mut inputs =
+                self.ladder_inputs(&state, touched_tests_passed, effective_cmd.is_none());
+
+            // Pre-submit audit (#859, #861): a deterministic pass is about
+            // to be credited, so spend the two cheap checks that can refute
+            // it — gated on the DECISION, not on the flip transition, so
+            // paths already headed to the verifier pay nothing extra and the
+            // cost is bounded to one lint pass + one suite run per
+            // verification round (a revised candidate re-enters the audit),
+            // paid only where a credit is about to be spent.
+            if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                && let Some(cmd) = effective_cmd
+            {
+                // Regression veto first (#861): the lint delta is cheaper
+                // than a suite re-run, and a veto makes the confirmation
+                // moot. New errors (or opted-in warnings) drop the
+                // fast-submit rung and the run escalates to the verifier with
+                // the delta in evidence.
+                let (new_errors, new_warnings) = self.lint_delta(surface, &state).await;
+                inputs.new_diag_errors = new_errors;
+                inputs.new_diag_warnings = new_warnings;
+
+                // Confirmation run (#859), only if the veto left the
+                // fast-submit standing: re-run the tracked command once on
+                // the same sealed tree. A failed or infra confirmation moves
+                // the oracle to `Unstable`; the re-derived decision below
+                // then escalates instead of fast-submitting, with
+                // `unstable_flip=true` in the evidence.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast) {
+                    // Through the retrying runner (#1294) for a reason worth
+                    // stating: an OOM'd confirmation demotes the oracle to
+                    // `Unstable` below, which is a real cost paid for a run
+                    // that observed nothing. Retrying first is what keeps a
+                    // memory kill from silently withdrawing a deterministic
+                    // pass the candidate had earned.
+                    let confirmation = self.run_test_observed(surface.tests, cmd.invocation).await;
+                    match confirmation.assertion_result() {
+                        Some(passed) => {
+                            state.oracle.confirm(passed);
+                            state.oracle_trace.push(OracleObservation {
+                                tree: ProofTree::Candidate,
+                                passed,
+                            });
+                            self.emit_proof(ProofStep::Oracle {
+                                command: cmd.command.to_string(),
+                                passed,
+                                tree: ProofTree::Candidate,
+                                run: None,
+                                runs_required: None,
+                                seed: None,
+                            });
+                        }
+                        // An unobservable confirmation confirms nothing:
+                        // demote without fabricating a pass/fail proof step
+                        // (#860).
+                        None => state.oracle.confirm(false),
+                    }
+                    inputs.flip_achieved = state.oracle.is_flipped();
+                }
+
+                // Diff coverage (#1291): did the passing run execute the
+                // lines this candidate added? Ordered after the confirmation
+                // (a flip that could not be reproduced makes the question
+                // moot) and before the mutation check (one instrumented run
+                // beats up to three witness runs). Every unavailable path —
+                // no probe wired, no tooling for this dialect, an unreadable
+                // report — leaves the status `Unmeasured`, which withholds
+                // nothing unless the operator asked for strictness. A
+                // measured non-overlap withholds the deterministic credit and
+                // escalates: unproven, never failed.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                    && let Some(probe) = surface.coverage
+                {
+                    let changed =
+                        crate::verify::coverage::changed_lines(&state.diff_text, &witness_paths);
+                    let report = probe.covered_lines(surface.cwd, cmd.invocation).await;
+                    inputs.diff_coverage =
+                        crate::verify::coverage::overlap(&changed, report.as_ref());
+                    state.diff_coverage = inputs.diff_coverage;
+                }
+
+                // Mutation check (#870), last because it is the most
+                // expensive (one witness run per mutant, ≤3) and only for
+                // AUTHORED witnesses — a user-configured suite is not the
+                // artifact whose tautology this audits. Break the changed
+                // lines one at a time; a witness that fails under any mutant
+                // has proven it constrains the change (stop early, credit
+                // stands). One that stays green under every mutant reacts to
+                // the change without constraining it — the flip may not buy
+                // a deterministic pass, and the verifier is told why.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                    && witness.is_some()
+                    && let Some(probe) = surface.mutation
+                {
+                    let mutants = crate::verify::mutation::mutants_from_diff(
+                        &state.diff_text,
+                        &witness_paths,
+                    );
+                    let mut observed = 0u32;
+                    let mut killed = false;
+                    for mutant in &mutants {
+                        match probe.run_mutant(surface.cwd, mutant, cmd.invocation).await {
+                            MutantOutcome::Witness { passed } => {
+                                observed += 1;
+                                if !passed {
+                                    killed = true;
+                                    break;
+                                }
+                            }
+                            // Neither evidence for nor against — the check
+                            // degrades open on unavailable mutants.
+                            MutantOutcome::Unavailable => {}
+                            // The original bytes could not be restored: the
+                            // tree is no longer the verified candidate.
+                            // Fail closed — shipping a mutated tree is
+                            // strictly worse than losing the candidate.
+                            MutantOutcome::TreePoisoned => {
+                                return CandidateResult::aborted(
+                                    state.messages,
+                                    format!(
+                                        "mutation audit could not restore {} after a mutant \
+                                         run; the candidate tree is no longer verified",
+                                        mutant.path
+                                    ),
+                                    AbortKind::Failure,
+                                );
+                            }
+                        }
+                    }
+                    if observed > 0 {
+                        state.witness_mutation = Some(killed);
+                        inputs.witness_tautological = !killed;
+                    }
+                }
+            }
 
             // The verdict's provenance (#865): the ladder inputs frozen at
             // decision time, attached to every evidence value emitted below.
             // `witness_intact` states that the tamper exclusion above RAN
             // and passed — a tampered witness never reaches a verdict.
-            let snapshot = Self::ladder_snapshot(&inputs, &state, test_infra, None);
+            let snapshot =
+                Self::ladder_snapshot(&inputs, &state, test_infra, witness.map(|_| true));
 
             // Everything the verification side knows about this round's
             // failure. Both failing arms disclose from it, and nothing reaches
             // the worker except through `Pipeline::airlock_forward` or a
             // `redact` of this value.
             let sealed = SealedFailure {
-                command: failure_command.as_deref().unwrap_or(""),
+                command: effective_cmd.map_or("", |cmd| cmd.command),
                 invocation: effective_cmd.map(|cmd| cmd.invocation),
                 output: &test_tail,
-                witness_paths: &[],
+                witness_paths: &witness_paths,
             };
 
             match ladder_decision(&inputs) {
                 LadderDecision::SubmitFast => {
-                    // Deterministic pass: completion authority is the oracle
-                    // receipt itself; no model participates (L-E11).
+                    // Deterministic pass — verifier SKIPPED (L-E11).
                     let mut evidence = deterministic_pass_evidence(
                         state.oracle.tracked_command(),
-                        inputs.verify_done_flip,
                         state.diff_lines,
-                        inputs.diff_coverage,
+                        state.diff_coverage,
                     );
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::Verdict {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // #1291: the deterministic *badge* is earned only when
+                    // something confirmed the test ran the changed lines. An
+                    // unmeasured overlap keeps the fast-submit — no verifier
+                    // call, no extra turn, the run completes exactly as
+                    // before — but scores `Unverified`, because "a test
+                    // passed and nobody could check it touched this change"
+                    // is unproven, and the score is what the claim is made
+                    // in. Cheap by construction: the downgrade costs a
+                    // ranking position, never a model call.
+                    //
+                    // `evidence.deterministic` deliberately stays `true`:
+                    // the flip WAS a real test observation, and the
+                    // calibration cohorts (#871) partition by evidence kind,
+                    // not by coverage. Only the score moves.
+                    let proven = state.diff_coverage != DiffCoverage::Unmeasured;
                     return state.into_verified(
                         true,
                         &evidence,
-                        score_from_verification(true, None),
+                        score_from_verification(proven, None),
                     );
+                }
+                LadderDecision::NothingAttempted => {
+                    // The turn ended without dispatching one call that could
+                    // write anything. Unlike the arm below, no probe failed
+                    // here and no evidence is missing — the pipeline is
+                    // reporting its own dispatch record — so this reports a
+                    // plain `passed: false` and pushes the worker to act.
+                    //
+                    // Before this arm existed the state fell through to
+                    // `Unverifiable`, whose four dark channels it satisfies,
+                    // and abstaining reported `passed: true`: eleven
+                    // Terminal-Bench trials completed "successfully" having
+                    // never touched the task, and Harbor scored every one 0.0.
+                    let mut evidence = nothing_attempted_evidence(&inputs);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.emit(AgentEvent::Verdict {
+                        passed: false,
+                        evidence: evidence.clone(),
+                    });
+                    if !self.affords_repair(&state, &meter, *spend.total, spend.budget) {
+                        return state.into_verified(
+                            false,
+                            &evidence,
+                            score_from_verification(false, Some(false)),
+                        );
+                    }
+                    if let Err(abort) = self
+                        .revise_candidate(
+                            engine,
+                            surface,
+                            RevisionCause::Deterministic(NOTHING_ATTEMPTED_NUDGE),
+                            spend,
+                            &mut state,
+                        )
+                        .await
+                    {
+                        return CandidateResult::turn_aborted(state.messages, abort);
+                    }
                 }
                 LadderDecision::Unverifiable => {
                     // The turn went unobserved — every channel blind, or every
@@ -1876,7 +2368,7 @@ impl<'a> Pipeline<'a> {
                 LadderDecision::Revise => {
                     // Deterministic failure (touched tests red) — no verifier.
                     //
-                    let (mut evidence, _brief) =
+                    let (mut evidence, brief) =
                         Self::deterministic_disclosure(&mut state, &sealed, &test_tail);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::Verdict {
@@ -1890,28 +2382,32 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    let (Some(command), Some(exit_code)) =
-                        (failure_command.as_deref(), observed_test.exit_code)
-                    else {
-                        // `Revise` is reachable only from a completed failed
-                        // test. Keep the boundary total if a future caller
-                        // violates that invariant: abstain rather than invent
-                        // feedback or panic on runtime data.
-                        let mut abstained = unverifiable_evidence(&inputs);
-                        abstained.ladder = Some(Box::new(snapshot.clone()));
-                        self.unverifiable(&abstained.summary);
-                        return state.into_verified(
-                            true,
-                            &abstained,
-                            score_from_verification(false, None),
-                        );
-                    };
-                    let cause = RevisionCause::TestFailure(TestFailureReceipt {
-                        command,
-                        exit_code,
-                        stdout: &observed_test.stdout_tail,
-                        stderr: &observed_test.stderr_tail,
-                    });
+                    // Distress trigger: a SECOND deterministic failure of this
+                    // candidate — the ledger is cumulative, so the two need not
+                    // be consecutive (#868) — means the evidence alone didn't
+                    // steer the worker: spend one verifier call on course-correction
+                    // (event-triggered, never a fixed midpoint checkpoint).
+                    // Counted from that ledger (`deterministic_disclosure` just
+                    // recorded this round's fingerprint), not from `revisions`:
+                    // a prior model-verifier FAIL also increments `revisions`,
+                    // and gating on it paid a guidance call on the FIRST deterministic
+                    // red while telling the verifier the agent had "failed twice in a row".
+                    // The worker is told what failed, and nothing else.
+                    //
+                    // A second deterministic failure used to buy a
+                    // `distress_guidance` call here — a verifier model reading
+                    // the diff and appending "independent reviewer
+                    // course-correction" to the evidence. It is gone for the
+                    // same reason the verdict is: a model's reading of a
+                    // bounded diff is a claim, a claim appended to a
+                    // measurement inherits the measurement's authority, and a
+                    // worker that cannot tell them apart acts on both. The
+                    // measurement is already here and already conclusive —
+                    // `brief` is the sealed, redacted account of the test that
+                    // went red — so there is nothing a reviewer could add
+                    // except a way to be wrong about it.
+                    let reason = brief.message();
+                    let cause = RevisionCause::Deterministic(&reason);
                     if let Err(abort) = self
                         .revise_candidate(engine, surface, cause, spend, &mut state)
                         .await
@@ -1919,11 +2415,118 @@ impl<'a> Pipeline<'a> {
                         return CandidateResult::turn_aborted(state.messages, abort);
                     }
                 }
+                // Triage judged this result not worth a separate reviewer,
+                // and the warrant AGREES from the change itself
+                // (`verifier_waiver_stands`) — the guard is load-bearing, because
+                // this arm is only reached when the ladder came back
+                // inconclusive, which falsifies the waiver's own premise. A
+                // prompt-time `VERIFIER: no` must not strip the last reviewer
+                // from a behavioral change nothing proved (§7.1:
+                // predict-then-commit is the bug).
+                LadderDecision::Unverified
+                    if !frame.assessment.wants_verifier()
+                        && Self::verifier_waiver_stands(&state) =>
+                {
+                    let evidence = self.waived_completion(&snapshot);
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
+                    );
+                }
+                LadderDecision::Unverified => {
+                    // Escalate on evidence, not on prediction. "Inconclusive"
+                    // here can mean two very different things: a real change
+                    // nothing proved, or a change with nothing to prove. The
+                    // diff tells them apart, and the prompt never could — so
+                    // ask it before recording as unproven the absence of a
+                    // test that was never warranted
+                    // (docs/spec/witness-protocol.md §7).
+                    if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
+                        return state.into_verified(
+                            true,
+                            &evidence,
+                            score_from_verification(false, None),
+                        );
+                    }
+                    // One deterministic ask, and only when it can be answered
+                    // (#1295 — the predicate states why `effective_cmd`
+                    // decides that).
+                    //
+                    // This is the *only* remaining channel from the
+                    // verification side back to the worker, and it is
+                    // deliberately not a review. The text is a fixed template
+                    // over the tracked command; it makes no claim about the
+                    // change, offers no reading of the diff, and the single
+                    // thing it can produce is the observation that would
+                    // settle the question. What it replaced was a model
+                    // narrating its doubts with a verdict's authority — and on
+                    // `fix-git` that narration made a worker reset `master`
+                    // and destroy a correctly-recovered commit, twice, to
+                    // satisfy a claim no measurement supported.
+                    if inputs.verifier_pass_stands_alone()
+                        && evidence_demand_is_worth_a_turn(
+                            &self.config,
+                            state.evidence_demands,
+                            state.revisions,
+                            effective_cmd.map(|cmd| cmd.command),
+                        )
+                        && let Some(cmd) = effective_cmd
+                    {
+                        state.evidence_demands += 1;
+                        let ask = crate::verify::evidence_demand_prompt(cmd.command);
+                        let cause = RevisionCause::EvidenceRequest(&ask);
+                        if let Err(abort) = self
+                            .revise_candidate(engine, surface, cause, spend, &mut state)
+                            .await
+                        {
+                            return CandidateResult::turn_aborted(state.messages, abort);
+                        }
+                        // Re-observe from the top: the revised tree gets a
+                        // fresh test run and the ladder re-decides over it. A
+                        // turn that produced the evidence now takes a
+                        // deterministic rung; one that did not lands back here
+                        // with the ask spent, and ends below.
+                        continue;
+                    }
+                    // Terminal. Nothing deterministic settled this turn, and
+                    // nothing else is going to: no model is asked, because the
+                    // evidence that reaches this arm is by construction the
+                    // evidence no oracle could settle, and a model handed it
+                    // would be guessing at it too — only with a verdict's
+                    // authority attached. Measured, that guess agreed with
+                    // Terminal-Bench's grader 46% of the time, and 17 of its
+                    // false passes cost 5 tasks outright.
+                    //
+                    // `passed: true` for exactly the reason the abstention arm
+                    // above uses it — a run is not failed by the absence of a
+                    // way to check it — and, exactly as there, what keeps it
+                    // from reading as a pass is the pair beside it: the
+                    // summary says UNVERIFIED in its first word and the score
+                    // is `Unverified`, so this candidate can never tie a
+                    // genuinely verified sibling in best-of-N and then win the
+                    // smaller-diff tiebreak.
+                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.unproven_verdict(&evidence.summary);
+                    self.emit(AgentEvent::Verdict {
+                        passed: true,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
+                    );
+                }
             }
         }
     }
 
-    fn effective_test_command(&self) -> Option<EffectiveTestCommand<'_>> {
+    fn effective_test_command<'c>(
+        &'c self,
+        witness: Option<&'c Witness>,
+    ) -> Option<EffectiveTestCommand<'c>> {
         if let Ok(Some(invocation)) = &self.configured_test {
             return self
                 .config
@@ -1934,7 +2537,10 @@ impl<'a> Pipeline<'a> {
                     invocation,
                 });
         }
-        None
+        witness.map(|w| EffectiveTestCommand {
+            command: &w.command,
+            invocation: &w.invocation,
+        })
     }
 
     /// Spend one revision: run [`Pipeline::revise_turn`] with the failure

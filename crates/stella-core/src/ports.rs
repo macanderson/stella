@@ -6,25 +6,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::{ToolOutput, ToolSchema};
 
-/// Result of replaying one built-in `verify_done` request against the final
-/// candidate state. This typed capability is separate from ordinary
-/// [`ToolOutput`]: model-visible text is never completion authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VerificationOracleResult {
-    /// The exact request still observes baseline-fail / candidate-pass.
-    Confirmed { summary: String },
-    /// The candidate half completed and failed. Its bounded execution result
-    /// is the only feedback a revision worker receives.
-    CandidateFailed {
-        command: String,
-        exit_code: i32,
-        stdout: String,
-        stderr: String,
-    },
-    /// The replay could not establish a deterministic flip.
-    Unverifiable { reason: String },
-}
-
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
 /// by test doubles). The engine treats it as a black box that never panics.
 #[async_trait]
@@ -36,23 +17,6 @@ pub trait ToolExecutor: Send + Sync {
     /// never an Err — tool failures are model-visible data, not engine
     /// failures.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput;
-
-    /// Take built-in `verify_done` requests that actually returned a
-    /// confirmation through this executor. Ordinary executors have no such
-    /// authority, even if their model-visible output copies the marker.
-    fn drain_verification_requests(&self) -> Vec<Value> {
-        Vec::new()
-    }
-
-    /// Replay a previously confirmed, policy-final request against the
-    /// candidate's current state. The default is deliberately absent:
-    /// generic tool adapters cannot grant verification authority.
-    async fn replay_verification_request(
-        &self,
-        _input: &Value,
-    ) -> Option<VerificationOracleResult> {
-        None
-    }
 
     /// USD spent by sub-agents this executor dispatched since the last call,
     /// **taken** (not peeked) — the engine folds it into the turn's

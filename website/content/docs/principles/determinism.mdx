@@ -88,16 +88,18 @@ failure class has nowhere to occur.
 put frontier models to work. It is a statement about **where to spend
 them**:
 
-- Verification accepts only a deterministic [flip oracle](/docs/inference-pipeline)
-  or a typed `verify_done` request replayed against the final tree. When neither
-  can prove the result, the pipeline abstains.
-- Failed test execution is evidence for the worker, not an invitation for a
-  verifier agent to intervene: the exact command, exit code, stdout, and stderr
-  become the next revision receipt.
+- Verification prefers the [flip oracle](/docs/inference-pipeline) — a
+  test that fails before and passes after — and escalates to a model verifier
+  only when deterministic evidence is inconclusive. Evidence first, opinion
+  as fallback.
+- When a model *is* asked to verifier, the setup is engineered like a
+  mechanism: a different family than the worker (bias resistance), a
+  strict output contract, read-only tools, a heuristic fallback if the
+  call fails.
 - Routing, budgets, compaction, retries, memory injection — all
   deterministic, all boring, all auditable. The model's tokens go to the
-  things only intelligence can do: **understanding the task** and **writing the
-  change**.
+  two things only intelligence can do: **writing the change** and
+  **judging what mechanisms can't measure**.
 
 The payoff compounds: deterministic mechanisms cost nothing per run, never
 rate-limit, never hallucinate, and give the *same answer twice* — which is
@@ -113,12 +115,12 @@ stella run --output-format json --test-command "cargo test -p stella-core" \
   | jq '{deterministic: .verdict.deterministic, evidence: .verdict.summary}'
 ```
 
-A CI gate can therefore insist on verified completion:
+A CI gate can therefore insist on the mechanism and refuse the opinion:
 
 ```bash
 stella run --output-format json --test-command "make test" "$TASK" \
   | jq -e '.verdict.deterministic == true' >/dev/null \
-  || { echo "no deterministic verification authority — holding this one for review" >&2; exit 1; }
+  || { echo "verified only by a model verifier — holding this one for review" >&2; exit 1; }
 ```
 
 <Callout type="info">

@@ -493,12 +493,35 @@ pub struct AgentEngineConfig {
     /// said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
-    /// Legacy model-verifier setting retained for configuration decoding.
-    /// Live verification is deterministic-only, so this has no effect.
+    /// Whether a model verifier's pass with nothing deterministic behind it buys
+    /// one revision demanding corroboration
+    /// (`stella_pipeline::PipelineConfig::verifier_evidence_demand`, #1295).
+    /// Absent keeps the pipeline's own default.
+    ///
+    /// Reachable as a setting because the question it answers is empirical and
+    /// per-workload: the ask is only ever raised where a tracked command could
+    /// answer it, so on a workload that has one it converts near-misses, and
+    /// on one that does not it costs literally nothing. A benchmark arm that
+    /// wants to measure the difference sets it here rather than rebuilding,
+    /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    /// Legacy verifier-independence setting retained for configuration
-    /// decoding. Live verification dispatches no model, so this has no effect.
+    /// Legacy (#1795), retained so existing settings files keep decoding:
+    /// **setting it changes nothing about a run.**
+    ///
+    /// It once refused a run whose VERDICT call would resolve to the worker's
+    /// own model. Verification makes no model calls now, so there is no
+    /// self-graded verdict left to refuse, and `PipelineConfig` no longer
+    /// carries the field this fed — the accessor that read it went with it.
+    /// The surviving independence question is about the *witness author*, and
+    /// it is answered by `pipeline_require_independent_witness` via
+    /// `agent::engine::trusted_posture_requires_independent_witness`, not by
+    /// this key.
+    ///
+    /// Deliberately still parsed rather than rejected, because a key that
+    /// hard-errors would break settings files written against a shipped
+    /// release. Retiring it — silently accepting a no-op key is its own defect
+    /// — is tracked in #2616.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
@@ -932,13 +955,6 @@ impl AgentEngineConfig {
     /// deterministic fast-submit (#1291). Absent is off.
     pub fn pipeline_require_diff_coverage_on(&self) -> bool {
         self.pipeline_require_diff_coverage
-            .is_some_and(Toggle::is_on)
-    }
-
-    /// Whether a verdict that would be graded by the worker's own model
-    /// refuses the run instead (#1795). Absent is off.
-    pub fn pipeline_require_independent_verifier_on(&self) -> bool {
-        self.pipeline_require_independent_verifier
             .is_some_and(Toggle::is_on)
     }
 

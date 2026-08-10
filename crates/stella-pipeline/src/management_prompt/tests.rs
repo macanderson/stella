@@ -18,8 +18,6 @@ use stella_protocol::{MessageRole, ModelCallRole};
 use super::ManagementPrompt;
 use crate::pipeline::CONVERSATIONAL_SYSTEM_PROMPT;
 use crate::triage::triage_prompt;
-use crate::verify::diff_render::DiffContext;
-use crate::verify::{guidance_prompt, verifier_prompt};
 
 /// The preamble every management system block is declared to open with,
 /// byte-for-byte.
@@ -39,19 +37,8 @@ const SHARED_MANAGEMENT_PREAMBLE: &str = "";
 /// is: a new role routed through the chokepoint must declare its prefix
 /// posture here, not escape the family witness by omission.
 fn management_system_block(role: ModelCallRole) -> Option<String> {
-    let ctx = DiffContext::default();
     match role {
         ModelCallRole::Triage => Some(triage_prompt("goal", "src/lib.rs").instructions.to_string()),
-        ModelCallRole::Verdict => Some(
-            verifier_prompt("goal", "+a\n", "no flip", &ctx)
-                .instructions
-                .to_string(),
-        ),
-        ModelCallRole::DistressGuidance => Some(
-            guidance_prompt("goal", "+a\n", "red twice", &ctx)
-                .instructions
-                .to_string(),
-        ),
         // The conversational fast path is the only raw `Worker` dispatch.
         ModelCallRole::Worker => Some(CONVERSATIONAL_SYSTEM_PROMPT.to_string()),
         // Plan and PlanRepair ride the chokepoint as a single user message
@@ -64,7 +51,12 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // Never dispatched through the management chokepoint. `Research`
         // (#1778) rides the sub-agent primitive — its system prompt travels
         // on the `SubAgentSpec`, not through `metered_raw_call`.
-        ModelCallRole::Unknown
+        // Verdict and DistressGuidance are no longer dispatched at all: the
+        // pipeline makes no judgement call, so neither has a system block to
+        // declare a posture for.
+        ModelCallRole::Verdict
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Unknown
         | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor
         | ModelCallRole::WitnessRepair
