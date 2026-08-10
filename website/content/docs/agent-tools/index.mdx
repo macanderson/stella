@@ -259,7 +259,7 @@ These 55 tools register in every session — no configuration, no prerequisites.
 <Callout type="info">
 `verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
+The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `probe_capability`, `get_state`, `list_state`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered
@@ -451,7 +451,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 54 always-on tools, up to 66 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 55 always-on tools, up to 67 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

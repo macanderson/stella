@@ -7,10 +7,10 @@
 //! same name hits the cache, so install-mid-session won't be seen until
 //! restart. This is the honest answer about a cached environment.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -34,6 +34,12 @@ impl ProbeCapability {
         Self {
             memo: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl Default for ProbeCapability {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -102,9 +108,11 @@ impl Tool for ProbeCapability {
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
         let name = match input.get("name").and_then(Value::as_str) {
             Some(n) => n,
-            None => return ToolOutput::Error {
-                message: "missing required string field \"name\"".to_string(),
-            },
+            None => {
+                return ToolOutput::Error {
+                    message: "missing required string field \"name\"".to_string(),
+                };
+            }
         };
 
         // Validate the name.
@@ -113,7 +121,10 @@ impl Tool for ProbeCapability {
         }
 
         // Check memoized result first.
-        let memo = self.memo.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let memo = self
+            .memo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(probe) = memo.get(name) {
             return match &probe.resolved {
                 Some(path) => ToolOutput::Ok {
@@ -134,18 +145,19 @@ impl Tool for ProbeCapability {
             Ok(p) => p,
             Err(_) => {
                 let probe = CapabilityProbe { resolved: None };
-                let mut memo = self.memo.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut memo = self
+                    .memo
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 memo.insert(name.to_string(), probe);
                 return ToolOutput::Error {
-                    message: format!(
-                        "{}: PATH is not set (cached for this session)",
-                        name
-                    ),
+                    message: format!("{}: PATH is not set (cached for this session)", name),
                 };
             }
         };
 
         let resolved = resolve_on_path(name, &path_var);
+        let is_resolved = resolved.is_some();
         let result_str = match &resolved {
             Some(path) => format!("{}: {}", name, path.display()),
             None => format!(
@@ -156,13 +168,20 @@ impl Tool for ProbeCapability {
 
         // Memoize and return.
         let probe = CapabilityProbe { resolved };
-        let mut memo = self.memo.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut memo = self
+            .memo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         memo.insert(name.to_string(), probe);
 
-        if resolved.is_some() {
-            ToolOutput::Ok { content: result_str }
+        if is_resolved {
+            ToolOutput::Ok {
+                content: result_str,
+            }
         } else {
-            ToolOutput::Error { message: result_str }
+            ToolOutput::Error {
+                message: result_str,
+            }
         }
     }
 }
@@ -170,8 +189,6 @@ impl Tool for ProbeCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn probes_sh_resolves_to_path() {
@@ -181,7 +198,11 @@ mod tests {
 
         match output {
             ToolOutput::Ok { content } => {
-                assert!(content.starts_with("sh: "), "Expected 'sh: ...' format, got: {}", content);
+                assert!(
+                    content.starts_with("sh: "),
+                    "Expected 'sh: ...' format, got: {}",
+                    content
+                );
             }
             ToolOutput::Error { message } => {
                 panic!("sh should resolve on test system; got error: {}", message);
@@ -200,8 +221,16 @@ mod tests {
                 panic!("Expected error for absent tool; got: {}", content);
             }
             ToolOutput::Error { message } => {
-                assert!(message.contains("not found on PATH"), "Expected not-found message, got: {}", message);
-                assert!(message.contains("cached for this session"), "Expected cache caveat, got: {}", message);
+                assert!(
+                    message.contains("not found on PATH"),
+                    "Expected not-found message, got: {}",
+                    message
+                );
+                assert!(
+                    message.contains("cached for this session"),
+                    "Expected cache caveat, got: {}",
+                    message
+                );
             }
         }
     }
@@ -240,14 +269,15 @@ mod tests {
         let tool = ProbeCapability::new();
 
         // Test each invalid case.
-        let invalid_cases = [
+        let long_name = "a".repeat(65);
+        let invalid_cases: Vec<(&str, &str)> = vec![
             ("../sh", "path separator"),
             ("a b", "space"),
             ("", "empty"),
-            ("a".repeat(65), "too long"),
+            (&long_name, "too long"),
         ];
 
-        for (name, reason) in &invalid_cases {
+        for (name, reason) in invalid_cases {
             let input = json!({"name": name});
             let output = tool.execute(&input, std::path::Path::new("/")).await;
 
@@ -256,11 +286,16 @@ mod tests {
                     assert!(
                         message.contains("invalid capability name"),
                         "Expected validation error for {} ({}); got: {}",
-                        name, reason, message
+                        name,
+                        reason,
+                        message
                     );
                 }
                 ToolOutput::Ok { content } => {
-                    panic!("Expected error for invalid name {} ({}); got: {}", name, reason, content);
+                    panic!(
+                        "Expected error for invalid name {} ({}); got: {}",
+                        name, reason, content
+                    );
                 }
             }
         }
@@ -281,9 +316,11 @@ mod tests {
             match output {
                 ToolOutput::Error { message } => {
                     assert!(
-                        message.contains("not found on PATH") || message.contains("PATH is not set"),
+                        message.contains("not found on PATH")
+                            || message.contains("PATH is not set"),
                         "Expected not-found, not validation error for {}: {}",
-                        name, message
+                        name,
+                        message
                     );
                 }
                 ToolOutput::Ok { content } => {
