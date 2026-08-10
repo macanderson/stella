@@ -201,15 +201,30 @@ fn detect(
     }
 }
 
+/// The window a prove-it decision reasons over: from the last user message
+/// that is NOT itself a prove-it nudge. [`turn_start_index`] restarts at any
+/// user message — including the nudge — so the plain window would put the
+/// once-only marker outside its own scan. Measured on the gate's first field
+/// trial (run `gate-ab`, task pypi-server): three nudges in one turn, each
+/// re-armed by that reset, riding a refuted `verify_done` into the 900s
+/// ceiling — the exact spend the gate exists to stop.
+fn prove_it_turn_start(messages: &[CompletionMessage]) -> usize {
+    messages
+        .iter()
+        .rposition(|m| m.role == MessageRole::User && !m.content.starts_with(PROVE_IT_PREFIX))
+        .unwrap_or(0)
+}
+
 /// True when this turn did mutating work, no `verify_done` call this turn
 /// came back confirmed, and the prove-it nudge has not been issued yet —
 /// the #2663 condition: work was declared, never proven, and not yet asked
-/// about. Windowed to the current turn like every check in this module.
+/// about. Windowed with [`prove_it_turn_start`], so the nudge itself never
+/// reopens the window it closed.
 fn wants_prove_it_nudge(messages: &[CompletionMessage], read_only_tools: &HashSet<String>) -> bool {
     if turn_activity(messages, read_only_tools).artifact_calls == 0 {
         return false;
     }
-    let start = turn_start_index(messages);
+    let start = prove_it_turn_start(messages);
     let mut verify_ids: Vec<&str> = Vec::new();
     for message in &messages[start..] {
         match message.role {
@@ -558,6 +573,42 @@ mod tests {
         assert!(
             matches!(again, super::CompletionRuling::Clean),
             "asked and answered: one nudge per turn, whatever the answer"
+        );
+    }
+
+    /// **The `gate-ab` field regression, pinned.** The nudge is a user
+    /// message, so the plain turn window restarts right after it — and a
+    /// refuted `verify_done` plus one more edit then re-armed the nudge,
+    /// three times in one trial, into the 900s ceiling. With the window
+    /// anchored at the last NON-nudge user message, the answered nudge stays
+    /// in scope and the second declaration is `Clean`, whatever the
+    /// verification said. Fails on the `turn_start_index`-windowed code.
+    #[test]
+    fn a_refuted_verification_after_the_nudge_never_rearms_it() {
+        let mut messages = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+            CompletionMessage::assistant("Done — the bug is fixed."),
+            CompletionMessage::user(super::PROVE_IT_NUDGE),
+            assistant_call(super::VERIFY_DONE_TOOL, "c2"),
+            tool_result("c2", "WITNESS REFUTED — the test still fails"),
+            assistant_call("edit_file", "c3"),
+            tool_result("c3", "ok"),
+        ];
+        let ruling = super::check(
+            &mut messages,
+            &read_only(&["read_file"]),
+            &done_result("Done for real this time."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(
+            matches!(ruling, super::CompletionRuling::Clean),
+            "one nudge per turn means per TURN — its own message must not \
+             reopen the window it closed"
         );
     }
 
