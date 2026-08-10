@@ -313,6 +313,24 @@ RESPONSIBILITIES: tuple[str, ...] = (
     "verdict",
 )
 
+#: The agents a responsibility may be reassigned *to* — Stella's
+#: ``AgentId::BUILTIN`` (``crates/stella-pipeline/src/roster.rs``). Anything else
+#: is a ``RosterError::UnknownAgent`` that fails the run inside the container,
+#: after the image is built and the clock is running, so an authoring surface
+#: that offers free text charges a container build for a typo.
+#:
+#: **Derived, not copied.** It is :data:`ROLES` without ``default``, because
+#: ``default`` is the interactive step loop and owns no pipeline responsibility.
+#: A fourth hand-maintained spelling of a Rust vocabulary is precisely the drift
+#: ``scripts/check-role-names.sh`` was written for (#1449) — deriving from a set
+#: that guard already pins inherits the guard instead of needing a new one. The
+#: premise (that Stella's bindable agents are exactly its configurable non-default
+#: roles) is an inference, so it is asserted against the Rust source itself in
+#: ``tests/test_responsibilities.py::TestReassignmentTargets``.
+RESPONSIBILITY_AGENTS: tuple[str, ...] = tuple(
+    role for role in ROLES if role != "default"
+)
+
 
 @dataclass(frozen=True)
 class ResponsibilityConfig:
