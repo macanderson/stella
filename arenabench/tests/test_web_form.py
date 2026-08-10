@@ -12,8 +12,8 @@ whole draft object to the server with ``{...seat.engine}``.
 
 The server counts a cap key's *presence*, not its value, so a blank field was
 enough: **every** launch from the web UI was refused, with an error naming keys
-the operator could not see and had never set. The form was unusable for two
-days and nothing failed.
+the operator could not see and had never set. The form was unusable from the
+moment #2461 landed (2026-08-09) and nothing failed.
 
 Two lessons are pinned below. First, the cap keys must be absent from the form's
 source, checked on the text the way the templates are. Second — the one that
