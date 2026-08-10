@@ -7,7 +7,6 @@ mod calibration;
 mod conversational_window;
 mod management_accounting;
 mod telemetry;
-mod verification_boundary;
 
 use super::*;
 use crate::CmdKind;
@@ -80,13 +79,11 @@ impl RepoStatusPort for FakeRepoStatus {
 /// work, and again when it folds each observation. A fixture that returned the
 /// same number to both would report a delta of zero and silently reproduce the
 /// bug under test.
-#[allow(dead_code)]
 struct SeqTouches {
     readings: std::sync::Mutex<VecDeque<u64>>,
     last: std::sync::atomic::AtomicU64,
 }
 
-#[allow(dead_code)]
 impl SeqTouches {
     fn new(readings: Vec<u64>) -> Self {
         Self {
@@ -120,7 +117,6 @@ pub(super) struct SeqRepoStatus {
     artifact_identity: Option<ArtifactIdentity>,
     artifact_identities: std::sync::Mutex<VecDeque<Option<ArtifactIdentity>>>,
 }
-#[allow(dead_code)]
 impl SeqRepoStatus {
     pub(super) fn new(snapshots: Vec<Vec<(&str, &str)>>) -> Self {
         let mapped: VecDeque<HashMap<String, String>> = snapshots
@@ -303,7 +299,6 @@ impl ProviderResolver for OneProvider<'_> {
 /// One scripted `run_test` result: a real pass/fail, or an infra outcome
 /// (#860) so tests can model a timed-out runner without faking exit codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum TestScript {
     Pass,
     Fail,
@@ -348,7 +343,6 @@ pub(super) struct ScriptedRunner {
     /// available — so pre-existing scripts never see the constraint.
     available_runners: Option<Vec<String>>,
 }
-#[allow(dead_code)]
 impl ScriptedRunner {
     pub(super) fn new(test_results: Vec<bool>, diff: &str) -> Self {
         Self::scripted(
@@ -622,7 +616,6 @@ fn router() -> Router {
 
 /// Every role pinned to one model — what `--model` alone, a single-provider
 /// account, and the benchmark engine posture all produce.
-#[allow(dead_code)]
 fn single_model_router() -> Router {
     let only = ModelRef::new("scripted", "only");
     Router::new(
@@ -662,11 +655,7 @@ fn stages(events: &[AgentEvent]) -> Vec<StageKind> {
 #[tokio::test]
 async fn single_task_with_a_flip_submits_fast_and_skips_the_verifier() {
     // triage → "single"; worker turn → final text (no tool calls).
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("done"),
-    ]);
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
     let tools = EmptyTools;
@@ -974,8 +963,8 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
 }
 
 /// The zero-diff guard: triage misclassifies a file-touching task as a
-/// lookup, but the non-empty diff still crosses the verification boundary.
-/// With no deterministic oracle, the result is retained as unverified.
+/// lookup, but the non-empty diff revokes the verifier-skip and the task is
+/// verified via the model verifier — it still completes ("correct downgrade").
 ///
 /// The worker genuinely dispatches a mutating call: since #1553 a diff with
 /// ZERO dispatched tool calls is foreign motion (someone else's edit in a
@@ -1045,17 +1034,12 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
         .verdict
         .expect("zero-diff guard forced verification");
     assert!(verdict.passed);
-    assert!(!verdict.deterministic);
-    assert!(
-        verdict.summary.contains("UNVERIFIABLE"),
-        "{}",
-        verdict.summary
-    );
+    assert!(!verdict.deterministic, "verified via the model verifier");
 
     let events = drain(&mut rx);
     assert!(
-        !stages(&events).contains(&StageKind::Verdict),
-        "verification must not dispatch a model-verdict stage"
+        stages(&events).contains(&StageKind::Verdict),
+        "the zero-diff guard must run the verifier on an unexpected mutation"
     );
 }
 
@@ -1410,9 +1394,11 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
     );
 
     let surface = CandidateSurface {
-        tools: &EmptyTools,
         diagnostics: &runner,
         tests: &runner,
+        lint: None,
+        mutation: None,
+        coverage: None,
         repo_status: &repo_status,
         cwd: None,
         hook_runner: None,
@@ -1456,6 +1442,63 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
     assert!(probe3.text.contains("src/huge.rs"));
 }
 
+/// With no `--test-command`, the witness author arms the flip oracle: its
+/// authored command is observed failing, the worker's change flips it, and
+/// the run submits fast on deterministic evidence — verifier skipped.
+#[tokio::test]
+async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
+    // triage → "single"; worker → done; THEN the witness author, because the
+    // warrant only has a diff to read once the worker has produced one.
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
+    ]);
+    // The two halves of the flip now come from two trees. Candidate (id 0):
+    // the post-execute observation passes. Baseline (id 1): the same command
+    // fails on the pre-execution code, which is what makes it a flip rather
+    // than one tree observed twice.
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    let verdict = outcome.verdict.expect("verified");
+    assert!(verdict.passed);
+    assert!(
+        verdict.deterministic,
+        "a witness flip is deterministic evidence: {}",
+        verdict.summary
+    );
+    assert!(
+        verdict
+            .summary
+            .contains("cargo test --test witness witness -- --exact"),
+        "the evidence names the witness command: {}",
+        verdict.summary
+    );
+
+    let s = stages(&events);
+    assert!(s.contains(&StageKind::Witness), "witness stage emitted");
+    assert!(
+        !s.contains(&StageKind::Verdict),
+        "verifier skipped on the flip"
+    );
+}
+
 /// #1538: a candidate that wrote through its isolation into the real tree is
 /// failed at verification, in the round that caused it — named as the
 /// candidate's own defect. Before the post-seal check, this escape survived
@@ -1463,20 +1506,28 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
 /// the stray copy, attributed to nobody.
 #[tokio::test]
 async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
-    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
+    ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let candidate =
-        FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone()).with_escaped(vec!["app/vm.js"]);
-    let sibling =
-        FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone()).with_escaped(vec!["app/vm.js"]);
-    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(sibling)], log.clone());
+    // Same authored-witness scripting as the flip test above — the escape
+    // must be caught at *verification*, so the run has to get that far.
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+        ]))
+        .with_escaped(vec!["app/vm.js"]);
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
     let (outcome, events, _) = run_isolated(
         &provider,
         &port,
-        PipelineConfig {
-            candidates: Some(2),
-            ..PipelineConfig::default()
-        },
+        PipelineConfig::default(),
         "Fix the retry bug",
     )
     .await;
@@ -1510,6 +1561,97 @@ async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),
         "escaped work must never be adopted: {log:?}"
+    );
+}
+
+/// #1539: an author that names a runner the workspace cannot spawn is caught
+/// by the availability constraint at parse time — degraded with the honest
+/// reason and the available set named, never by spending the baseline run to
+/// discover an unobservable command and blaming generic infra noise.
+#[tokio::test]
+async fn an_unavailable_runner_choice_degrades_naming_the_available_set() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: pytest tests/test_witness.py"),
+        // The unauthored ladder's verifier, after the witness degrades.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline = FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone())
+        .with_available_runners(vec!["cargo"]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an unavailable runner degrades the witness, never the run: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("witness author chose `pytest`")
+                    && message.contains("available runners: cargo")
+        )),
+        "the degradation names the choice and the available set: {events:?}"
+    );
+}
+
+/// #1539: a workspace where NO vocabulary runner is usable degrades before
+/// the author turn is even dispatched — zero model spend on a witness that
+/// could never be observed, and the reason says so.
+#[tokio::test]
+async fn a_workspace_with_no_usable_runner_skips_the_author_turn() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        // The unauthored ladder's verifier — NOT a witness-author reply. If
+        // the author turn had run anyway, it would have consumed this text
+        // and degraded on "produced no TEST_COMMAND line" instead of the
+        // no-runner reason asserted below.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline =
+        FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone()).with_available_runners(vec![]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an absent toolchain degrades honestly, never aborts: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("no supported test runner is available")
+        )),
+        "the degradation states the toolchain fact: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("produced no TEST_COMMAND")
+        )),
+        "the author turn must never have been dispatched: {events:?}"
     );
 }
 
@@ -1553,18 +1695,18 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         !s.contains(&StageKind::Witness),
         "triage said no witness: {s:?}"
     );
-    assert!(!s.contains(&StageKind::Verdict), "no reviewer stage: {s:?}");
-    let verdict = outcome.verdict.expect("unverified result retained");
-    assert!(verdict.summary.contains("UNVERIFIABLE"));
-    // Two paid calls: triage and worker only.
+    assert!(
+        s.contains(&StageKind::Verdict),
+        "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
+    );
+    // Three paid calls: triage, the worker, and the verifier the evidence
+    // demanded. The plan and witness-author ceremony triage declined is
+    // never bought.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(
-        calls, 2,
-        "no verifier or witness-author call is bought: {s:?}"
-    );
+    assert_eq!(calls, 3, "no plan or witness-author call is bought: {s:?}");
 }
 
 /// The observed failure, end to end at the seam that actually decides it.
@@ -1638,6 +1780,223 @@ async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
          triage called it chat: {s:?}"
     );
     assert_eq!(outcome.status, PipelineStatus::Completed);
+}
+
+/// Losing the independent witness author must cost the run its authored
+/// witness, never the whole task. With every role pinned to one model the
+/// pipeline used to abort here after a single model call, having executed
+/// nothing — which is what a benchmark or solo-provider account always hits.
+/// It must instead warn once and fall through to the unauthored verify ladder.
+#[tokio::test]
+async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting() {
+    // triage → "single"; worker → done; verifier → verdict. No witness-author
+    // turn is scripted because no independent author can be resolved.
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS looks right"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+        single_model_router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert_eq!(
+        outcome.status,
+        PipelineStatus::Completed,
+        "a single-model config must still complete the task"
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Witness),
+        "witness authoring is skipped, not attempted without an author"
+    );
+    // Announced on BOTH channels, which is the contract: the warning carries
+    // the transcript's prose account, and the proof step carries the rail's.
+    // Reporting on only one is the failure mode this pairing exists to stop —
+    // a warning scrolls away, and a rail with nothing to show falls back to
+    // "not reported" when the reason was known all along.
+    let warned = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("no model independent of the worker")
+        )
+    });
+    assert!(warned, "the degradation is announced: {events:?}");
+    let on_the_rail = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::WitnessUnavailable { reason }
+            } if reason.contains("no model independent of the worker")
+        )
+    });
+    assert!(
+        on_the_rail,
+        "the rail must state the reason, not fall back to `not reported`: {events:?}"
+    );
+}
+
+/// A witness whose test passes on the pre-execution code proves nothing: one
+/// bounded repair retry, and if it still passes the run finishes without one.
+///
+/// What changed with demand-driven authoring is the *cost* of that outcome.
+/// While authoring ran first, a useless witness discarded the whole candidate
+/// and `run` degraded to a fresh bare worker turn — the task was executed
+/// twice because scaffolding failed. Now the work already exists when the
+/// author is asked, so a useless witness costs only the authoring calls and
+/// the candidate finishes on the unauthored ladder. The artifact never leaves
+/// the authoring snapshot, so nothing the author wrote can reach adoption
+/// either way.
+#[tokio::test]
+async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"), // worker
+        text_result("TEST_COMMAND: cargo test --test witness always_green -- --exact"),
+        // The repair attempt also yields a command that passes -> useless.
+        text_result("TEST_COMMAND: cargo test --test witness still_green -- --exact"),
+        // The candidate then finishes on the unauthored ladder, so give the
+        // fallback generous responses.
+        text_result("PASS looks right"),
+        text_result("done"),
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    // Both the author's command and its repair PASS on the pre-execution
+    // code, so neither proves anything.
+    let baseline =
+        FakeWorkspace::new(1, vec![true, true], Ok(vec![]), log.clone()).with_repo_status(
+            SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+        );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("a useless witness degrades, it does not error");
+    // A witness that proves nothing couldn't be AUTHORED — the task proceeds
+    // unwitnessed rather than dying.
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "a useless witness must not end the turn: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("continuing without an authored witness")
+        )),
+        "the degradation announces itself: {events:?}"
+    );
+    // The verdict is not deterministic: with no witness there was no flip, so
+    // the ladder had to buy the verifier. Nothing is scored as proven.
+    let verdict = outcome.verdict.expect("verified");
+    assert!(
+        !verdict.deterministic,
+        "an unauthored run has no deterministic evidence: {}",
+        verdict.summary
+    );
+    // One candidate workspace and one authoring snapshot — NOT a second
+    // execution. The old behavior re-ran the whole task here.
+    let log = log.lock().unwrap().clone();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "create").count(),
+        2,
+        "one candidate + one authoring snapshot: {log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("graft:")),
+        "a rejected witness is never grafted into the candidate: {log:?}"
+    );
+}
+
+/// Distress guidance: the FIRST deterministic failure revises on raw
+/// evidence alone; the SECOND spends one verifier call whose course-correction
+/// rides with the next revision prompt.
+#[tokio::test]
+async fn second_deterministic_red_verification_gets_verifier_guidance() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),      // worker
+        text_result("first fix"), // revision 1 (no guidance)
+        text_result("You are patching the symptom; fix the parser instead."), // guidance
+        text_result("second fix"), // revision 2 (carries guidance)
+    ]);
+    let resolver = OneProvider(&provider);
+    // baseline (fail), post-execute (fail) → revise; post-revision-1
+    // (fail) → distress → guidance → revise; post-revision-2 (fail) →
+    // revisions exhausted → deterministic failed verdict.
+    let runner = ScriptedRunner::new(vec![false, false, false, false], "@@ -1 +1 @@\n-a\n+b");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        max_revisions: 2,
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("verified");
+    assert!(!verdict.passed);
+    assert!(verdict.deterministic, "red tests are a deterministic fail");
+    assert_eq!(outcome.revisions, 2);
+
+    // The guidance text reached the worker's revision prompt.
+    let carried = messages.iter().any(|m| {
+        m.content.contains("Independent reviewer course-correction")
+            && m.content.contains("fix the parser instead")
+    });
+    assert!(carried, "guidance rides with the second revision prompt");
+    assert!(
+        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
+        "the guidance call is an honest Verifier stage in the stream"
+    );
 }
 
 // best-of-N candidate isolation
@@ -1818,16 +2177,17 @@ async fn run_isolated_with_router(
     Vec<AgentEvent>,
     Vec<CompletionMessage>,
 ) {
-    run_isolated_full(provider, port, config, goal, router).await
+    run_isolated_full(provider, port, config, goal, router, None).await
 }
 
-/// Shared implementation for isolated test runs.
+/// [`run_isolated_with_router`] plus an optional mutation probe (#870).
 async fn run_isolated_full(
     provider: &ScriptedProvider,
     port: &FakeWorkspacePort,
     config: PipelineConfig,
     goal: &str,
     router: Router,
+    mutation: Option<&dyn MutationProbe>,
 ) -> (
     Result<PipelineOutcome, PipelineRunError>,
     Vec<AgentEvent>,
@@ -1854,7 +2214,7 @@ async fn run_isolated_full(
             diagnostics: &diagnostics,
             tests: &diagnostics,
             lint: None,
-            mutation: None,
+            mutation,
             coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
@@ -1883,12 +2243,15 @@ fn isolated_config(n: u32) -> PipelineConfig {
     }
 }
 
+mod verification_honesty;
+
 /// The feedback airlock (`witness::airlock`) observed end to end: what a
 /// verification failure tells the operator versus what it tells the worker.
 /// A child module, so it reaches the scripted ports above via `super::*`.
 mod airlock;
 mod best_of_n;
 mod chaos;
+mod degradation_gate;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
@@ -1916,6 +2279,22 @@ mod triage_context;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
 mod verdict_repair;
+mod verification_hardening;
+/// Asking for corroboration when only a model verifier approved the work
+/// (#1295), and — the part that decides whether the ask is affordable —
+/// declining to ask where no tracked command could ever answer. A child
+/// module, so it reaches the scripted ports above via `super::*`.
+mod verifier_evidence_demand;
+/// Verifier != worker for the verdict call (#1795): the opt-in refusal and
+/// the structured grader-independence fact on the snapshot. A child module,
+/// so it reaches the scripted ports above via `super::*`.
+mod verifier_independence;
+/// Proportionate verification: changes with nothing to prove complete with a
+/// stated reason rather than escalating. A child module, so it reaches the
+/// scripted ports above via `super::*`.
+mod warrant;
+mod witness_isolation;
+
 /// A recall port whose plane reports what the fan-out spent — the shape
 /// `stella-cli`'s `SessionMemory` produces from a real CGP host.
 struct MeteredRecall;

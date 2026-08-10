@@ -687,22 +687,6 @@ impl ToolExecutor for McpToolSet {
         }
     }
 
-    fn drain_verification_requests(&self) -> Vec<Value> {
-        self.native
-            .as_ref()
-            .map_or_else(Vec::new, |native| native.drain_verification_requests())
-    }
-
-    async fn replay_verification_request(
-        &self,
-        input: &Value,
-    ) -> Option<stella_core::VerificationOracleResult> {
-        match &self.native {
-            Some(native) => native.replay_verification_request(input).await,
-            None => None,
-        }
-    }
-
     /// Forwarded: this is a decorator, and a decorator that let the default
     /// `0.0` stand would silently drop sub-agent spend out of the parent's
     /// budget (see the port's contract).
@@ -777,17 +761,6 @@ impl ToolExecutor for CandidateMcpView {
             };
         }
         self.native.execute(name, input).await
-    }
-
-    fn drain_verification_requests(&self) -> Vec<Value> {
-        self.native.drain_verification_requests()
-    }
-
-    async fn replay_verification_request(
-        &self,
-        input: &Value,
-    ) -> Option<stella_core::VerificationOracleResult> {
-        self.native.replay_verification_request(input).await
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default

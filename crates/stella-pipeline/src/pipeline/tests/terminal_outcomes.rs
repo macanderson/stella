@@ -10,7 +10,6 @@ use super::*;
 /// Every role resolves except the verifier — "no independent witness author is
 /// available", stated by identity rather than by call count so the fixture
 /// survives a change in the order roles are resolved.
-#[allow(dead_code)]
 struct NoVerifierProvider<'a> {
     provider: &'a ScriptedProvider,
 }
@@ -385,6 +384,87 @@ async fn an_expired_task_deadline_stops_the_run_before_any_paid_stage() {
             AgentEvent::Error { message, .. } if message.contains("task deadline exceeded by")
         )),
         "the stream must name the clock as the reason, not leave it to argv: {events:?}"
+    );
+}
+
+/// An unresolvable verifier costs the run its authored witness, not the task.
+/// The pipeline warns once and falls through to the unauthored verify ladder
+/// rather than aborting with no work done.
+#[tokio::test]
+async fn unavailable_independent_witness_degrades_instead_of_aborting() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
+    ]);
+    let resolver = NoVerifierProvider {
+        provider: &provider,
+    };
+    let runner = ScriptedRunner::new(vec![false], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let workspace = FakeWorkspace::new(0, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "sha256:test")]]),
+    );
+    let _candidate_workspaces = FakeWorkspacePort::new(vec![Ok(workspace)], log);
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let outcome = pipeline
+        .run("Fix the parser", &mut messages, &mut budget)
+        .await
+        .expect("an unresolvable witness author is a degradation, not a failure");
+
+    assert!(
+        !matches!(
+            outcome.status,
+            PipelineStatus::Aborted { ref reason, .. }
+                if reason.contains("independent witness author")
+        ),
+        "losing the author must not abort the task: {outcome:?}"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("no model independent of the worker")
+        )),
+        "the degradation is announced once: {events:?}"
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Witness),
+        "witness authoring is skipped, never attempted without an author"
     );
 }
 

@@ -311,7 +311,7 @@ esac
 ## A complete CI job
 
 The whole contract in one GitHub Actions step: a budget cap that cannot be
-exceeded, a deterministic oracle for completion authority, JSON on
+exceeded, a deterministic oracle so most runs never spend a verifier call, JSON on
 stdout, and the summary parsed for the job log.
 
 ```yaml title=".github/workflows/autofix.yml"

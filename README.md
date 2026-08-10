@@ -259,9 +259,8 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 ### Agent engine config (`agent_engine_config`)
 
 The engine runs a configurable agent per role — **default** (the interactive /
-step-loop agent), the pipeline's **worker**, **triage**, **research**, and
-**plan**, plus goal mode's outer **verifier**. Pipeline verification itself is
-model-free.
+step-loop agent) and the pipeline's **worker**, **verifier**, **triage**,
+**research**, and **plan**.
 The `agent_engine_config` object in the same `settings.json` scope chain
 configures each one's model, gateway, system prompt, reasoning, and sampling
 parameters — and in the Command Deck, `/settings` opens the SETTINGS tab,
@@ -411,7 +410,7 @@ own vocabulary, so the surface column says where a command actually works:
 | `/goal <text>`                                                                           | REPL only   | Work in judged rounds until the goal is met                                                                                         |
 | `/config`                                                                                | REPL only   | Show resolved configuration                                                                                                         |
 | `/rename <name>` `/color <name>`                                                         | REPL only   | Rename the tab · switch accent color                                                                                                |
-| `/pipeline`                                                                              | Deck only   | Toggle deterministically verified staged turns (see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline))               |
+| `/pipeline`                                                                              | Deck only   | Toggle witness-verified staged turns (see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline))               |
 | `/settings` `/diff` `/graph` `/skills` `/mcp` `/mcp-search` `/sessions` `/context` `/inspect` `/inbox` | Deck only | Open the corresponding tab or overlay (`/settings` includes the engine-config editor)                             |
 | `/export`                                                                                | Deck only   | Export session telemetry to a ZIP + HTML dashboard                                                                                  |
 | `/exit` or `Ctrl-D`                                                                      | REPL only   | Exit (the deck exits with `Ctrl-C`)                                                                                                 |
@@ -478,9 +477,8 @@ deliberately **not** global: it is declared by the commands that honor it —
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`
 uses the staged pipeline by default; `--no-pipeline` falls back to the raw
 step-loop. In pipeline mode, `--test-command <cmd>` arms deterministic
-verification with your own test. Without it, the worker can use the built-in
-`verify_done` tool to establish the same baseline-fail/candidate-pass flip;
-otherwise Stella reports the result unverified without asking another model
+verification with your own test; without it an independent witness author
+writes a failing test whose fail→pass flip proves the work
 ([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)).
 Post-turn reflection remains enabled for one-shot text, JSON, and stream-JSON
 runs. Ephemeral automation can suppress that additional model call explicitly
@@ -745,7 +743,7 @@ extending it.
 | [`stella-protocol`](crates/stella-protocol/README.md)       | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports                                                                                                                                                |
 | [`stella-context`](crates/stella-context/README.md)         | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts                                                                                                                                             |
 | [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
-| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → execute → deterministic verify ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
+| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → verdict ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
 | [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate)                    |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |

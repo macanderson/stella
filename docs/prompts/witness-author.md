@@ -1,13 +1,10 @@
 ---
 id: prompt-witness-author
 title: "witness_author — the effective prompt"
-status: archived
+status: living
 ---
 
 # `witness_author`
-
-Historical prompt reference only. The live pipeline never dispatches this role;
-completion authority is deterministic and model-free.
 
 Writing the witness test that arms the flip oracle. This is the role that
 makes "verified done, not claimed done" mechanical: it authors a test that must
@@ -29,7 +26,7 @@ makes the pipeline its own oracle and authors nothing.
 | Tools | the witness set only: `read_file`, `glob` (names only), `create_witness_test` |
 | System prompt | `WITNESS_SYSTEM_PROMPT`, `crates/stella-pipeline/src/witness.rs` |
 | User message | `witness_prompt`, same file |
-| Sent from | No live call site (retired) |
+| Sent from | `crates/stella-pipeline/src/pipeline/witness_stage.rs` |
 | Output cap | engine base, then `bound_witness_output_tokens` (#2141) |
 | Override | `agents.verifier` — every knob **except** `prompt` |
 

@@ -75,7 +75,6 @@ pub(super) struct FakeWorkspace {
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
-#[allow(dead_code)]
 impl FakeWorkspace {
     pub(super) fn new(
         id: usize,

@@ -41,11 +41,10 @@ actually exercise the fix. Stella rejects both.
 shadow worktree pinned at `git HEAD`. The test must **fail there** and **pass on
 your change**. A green suite alone is never accepted — the fail → pass
 transition *is* the evidence. When you don't hand it a test, the staged pipeline
-(`stella run`, on by default) accepts a concrete built-in `verify_done` receipt
-that is replayed against the final candidate state. If neither oracle produces
-a flip, Stella abstains; it never asks a verifier model to judge or repair the
-work. Deterministic definition of done, enforced by construction — see [the
-inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
+(`stella run`, on by default) spawns an independent **witness author** that
+writes the failing test, tamper-excluded from the code under change, so the flip
+cannot be gamed. Deterministic definition of done, enforced by construction —
+see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
 
 ## An engine you can actually reason about
 

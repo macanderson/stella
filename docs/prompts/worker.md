@@ -238,7 +238,7 @@ the airlock. Three shapes:
 | Contract | When |
 |---|---|
 | `Oracle(command)` | `--test-command` set, and the class verifies |
-| `WorkerTestFirst` | no configured oracle — the worker must create a focused test and use `verify_done`; otherwise the pipeline abstains |
+| `WorkerTestFirst` | no oracle *and* no independent witness author — the worker's own failing test is the run's only deterministic evidence, and it is told so up front |
 | `None` | conversational, a class that never verifies, or an authored witness will supply the oracle |
 
 ## Per-step user message

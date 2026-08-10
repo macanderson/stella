@@ -342,19 +342,22 @@ working tree into the shadow, runs the suite, and expects a failure there.
 is derived from the canonical root-relative path, never the raw model-supplied
 string (an absolute path would make the shadow copy truncate the real file).
 
-The staged pipeline enforces the same contract at runtime without a verifier
-agent. A configured `--test-command` must fail on the baseline and pass on the
-final tree. Without one, the worker can call the concrete built-in `verify_done`
-tool; the pipeline drains that typed request and replays it after the candidate
-is sealed, so a later edit cannot inherit stale authority and a generic tool
-cannot forge it by printing a success marker. A completed failing test is handed
-back to the worker as the exact bounded command, exit code, stdout, and stderr;
-infrastructure failures and missing proof end unverified. Historical witness and
-verdict role tokens remain decodable, but the pipeline makes no witness-author,
-witness-repair, distress-guidance, or verdict model call. `--keep-witness` is a
-deprecated compatibility no-op. See
-`website/content/docs/inference-pipeline.mdx` for the full stage flow and the
-`/pipeline` deck toggle.
+The staged pipeline enforces the same contract at runtime: when no
+`--test-command` is configured, its **witness stage** has an independent model
+(the verifier's resolution, never the worker) author the failing witness test,
+tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
+the worker modified the witness files (tamper exclusion). Authoring is
+**demand-driven and runs after execution** — once the warrant has read the
+executed diff and found something worth proving — so the stage order is
+triage → recall → research → plan → scope → **execute → witness** → verify → verdict
+(`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
+ordering; the revise back-edges land on execute, so re-execution never
+re-authors). The witness
+is **scaffolding for that one run**: it lives in the candidate workspace and is
+discarded with it, so an already-satisfied test is never left behind in the
+project's test tree. `stella run --keep-witness` promotes it instead. See
+`website/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
+loop, and the `/pipeline` deck toggle.
 
 **A witness that no longer exists cannot fail.** Three times a PR has landed
 that silently deleted a test another PR added to the same file hours earlier —
@@ -433,7 +436,7 @@ the files you must plan around (see below).
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
-| Triage → … → deterministic verification orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
+| Triage → … → verifier orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
 | Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
@@ -593,7 +596,7 @@ this before assuming two of them mean the same thing:
 | **session** | `SessionRecord::id` | `crates/stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0; the overflow summarizer and live pipeline management roles take 1, 2, …; older recordings may also contain retired verifier/guidance roles. |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/verifier/plan/guidance roles take 1, 2, … |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 

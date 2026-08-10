@@ -53,7 +53,7 @@ have one stable prefix to cache-mark across all of them.
 
 **`agents.research.prompt` is deliberately not wired.** This role is the one
 whose row shapes an `EngineConfig` rather than a request — `research_stage`
-applies it through `apply_role_shaping`, the stage's bounded engine-config seam
+applies it through `apply_role_shaping`, the same seam the witness author uses
 — and `prompt` has no seat there. The exclusion is also the point: read-only is
 what a research child *is*, and the system message above is where that is
 stated. `model`, `provider`, `effort`, `reasoning` and `params` all apply
