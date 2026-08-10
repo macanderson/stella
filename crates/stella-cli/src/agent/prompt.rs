@@ -410,11 +410,15 @@ fn append_session_environment(
     workspace_root: &std::path::Path,
     worker: Option<&stella_protocol::role::ModelRef>,
 ) {
-    let git = workspace_root.join(".git");
-    let repo_note = if git.is_file() {
-        // A gitfile, not a directory: `git worktree add`'s link shape.
+    // The git/worktree bit and the `uname`/`SHELL` probes are shared with
+    // `stella-tools::environment` (#2697) — the `get_environment` tool
+    // reads the same functions, so a model that calls it gets exactly what
+    // this prefix already told it, never a second, possibly-diverging
+    // answer.
+    let (is_git, is_linked_worktree) = stella_tools::environment::git_worktree_bits(workspace_root);
+    let repo_note = if is_linked_worktree {
         " — a git repository, and a LINKED WORKTREE: all work happens here; never cd to the primary checkout, the isolation is the point"
-    } else if git.is_dir() {
+    } else if is_git {
         " — a git repository"
     } else {
         " — not a git repository"
@@ -425,10 +429,10 @@ fn append_session_environment(
         std::env::consts::OS,
         std::env::consts::ARCH,
     ));
-    if let Some(release) = os_release() {
+    if let Some(release) = stella_tools::environment::os_release() {
         prompt.push_str(&format!(" ({release})"));
     }
-    if let Some(shell) = login_shell() {
+    if let Some(shell) = stella_tools::environment::login_shell() {
         prompt.push_str(&format!(
             "\nShell: {shell} — write commands in its dialect rather than guessing"
         ));
@@ -445,41 +449,6 @@ fn append_session_environment(
         "\nThese are constants for this session: read them from here instead of \
          spending calls on pwd, uname, or shell probing.",
     );
-}
-
-/// `uname -sr`, best-effort: one cheap spawn at session open, and an absent
-/// or failing `uname` simply omits the parenthetical rather than failing
-/// prompt assembly — the block degrades, never blocks.
-#[cfg(unix)]
-fn os_release() -> Option<String> {
-    let out = std::process::Command::new("uname")
-        .arg("-sr")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let release = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!release.is_empty()).then_some(release)
-}
-
-#[cfg(not(unix))]
-fn os_release() -> Option<String> {
-    None
-}
-
-/// The user's login shell, by basename (`/bin/zsh` → `zsh`), because the
-/// dialect is what the model needs — array syntax, word splitting, and
-/// heredoc quirks all key off it. `SHELL` on unix, `COMSPEC` on Windows;
-/// absent either, the line is omitted.
-fn login_shell() -> Option<String> {
-    let var = if cfg!(windows) { "COMSPEC" } else { "SHELL" };
-    let path = std::env::var(var).ok()?;
-    let name = std::path::Path::new(&path)
-        .file_name()?
-        .to_string_lossy()
-        .into_owned();
-    (!name.is_empty()).then_some(name)
 }
 
 /// The knowledge cutoff the catalog records for `worker`, if any. Reads the
