@@ -163,6 +163,12 @@ pub(super) struct DocSummary {
     /// The candidate ids of every proposal written, so the source file's
     /// lineage can name what it produced.
     pub candidate_ids: Vec<String>,
+    /// Every claim the document asserts, *including* withheld and dismissed
+    /// ones — the refresh diff compares published records against what the
+    /// source still says, and a claim withheld as already-decided is exactly
+    /// the "unchanged, keep the published record" case. Omitting withheld
+    /// claims here would read every unchanged record as removed and retire it.
+    pub asserted: Vec<stella_core::ingest::AssertedClaim>,
 }
 
 /// Extract every named document, writing one proposal file each.
@@ -174,7 +180,7 @@ pub(super) struct DocSummary {
 pub(super) fn extract_all(
     root: &Path,
     docs: &[NamedDoc],
-    keep_dismissed: bool,
+    options: super::IngestOptions,
     model: Option<&str>,
     api_key: Option<&str>,
     base_url: Option<&str>,
@@ -228,9 +234,18 @@ pub(super) fn extract_all(
                         candidate_ids: summary.candidate_ids.clone(),
                         alerts: stella_core::ingest::lineage::AlertState::Active,
                     },
-                    keep_dismissed,
+                    options.keep_dismissed,
                 );
                 report(doc, &summary);
+                // The reconciliation pass, after the summary so its retire
+                // lines read as consequences of this document's extraction.
+                // A failed retirement is this document's failure, not the
+                // run's — the next document still extracts.
+                if options.refresh
+                    && let Err(err) = super::refresh::apply(root, &doc.rel, &summary.asserted)
+                {
+                    eprintln!("    {}", err.red());
+                }
             }
             Err(err) => {
                 eprintln!("  {}  {}", doc.rel.red(), err.dimmed());
@@ -281,8 +296,13 @@ async fn extract_document(
     let mut file = ContextFile::new_ingest(set_id, ingest_run_id, defaults.clone());
     let (mut eligible, mut refuted, mut dismissed) = (0usize, 0usize, 0usize);
     let mut withheld = 0usize;
+    let mut asserted = Vec::new();
     for claim in claims {
         let proposal = build_proposal(root, set_id, &defaults, observed_at, eligibility, claim);
+        asserted.push(stella_core::ingest::AssertedClaim {
+            lineage_id: proposal.record.lineage_id.clone(),
+            statement: proposal.record.statement.clone(),
+        });
         if !stella_core::records::should_repropose(&decided, &proposal.candidate_id, observed_at) {
             withheld += 1;
             continue;
@@ -317,6 +337,7 @@ async fn extract_document(
         withheld,
         cost_usd,
         candidate_ids,
+        asserted,
     })
 }
 
@@ -578,6 +599,7 @@ fn build_proposal(
         origin: None,
         sharing_scope: None,
         status: None,
+        supersedes_record_id: None,
         provenance,
         steering: Some(steering),
         enforcement: Some(enforcement),

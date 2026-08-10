@@ -217,9 +217,9 @@ fn alert_body(rel: &str, drift: &Drift) -> String {
     match drift {
         Drift::Changed { from, to } => format!(
             "`{rel}` changed since it was ingested ({} → {}). Its context records still \
-             reflect the old text.\n\nRe-run `stella ingest {rel}` to propose records from the \
-             new text, or silence alerts for this file permanently:\n  stella ingest alerts \
-             dismiss {rel}",
+             reflect the old text.\n\nRun `stella ingest --refresh {rel}` to reconcile — \
+             unchanged records are kept, changed claims re-proposed, dropped claims retired — \
+             or silence alerts for this file permanently:\n  stella ingest alerts dismiss {rel}",
             short(from),
             short(to),
         ),

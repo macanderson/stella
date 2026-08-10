@@ -31,6 +31,7 @@ pub mod freshness;
 pub mod gate;
 pub mod lineage;
 pub mod record;
+pub mod refresh;
 
 pub use freshness::{Retention, retention_for};
 pub use gate::{GateOutcome, gate_proposal};
@@ -40,6 +41,7 @@ pub use record::{
     Probe, ProbeKind, Proposal, Provenance, Quarantine, Record, RecordKind, Refutation, SCHEMA_TAG,
     SharingScope, Steering, Truth, TruthBasis, Validation, Verdict,
 };
+pub use refresh::{AssertedClaim, PublishedClaim, RefreshPlan};
 
 #[cfg(test)]
 mod tests;

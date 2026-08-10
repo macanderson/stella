@@ -23,6 +23,7 @@ pub(super) fn record_named(lineage: &str) -> Record {
         origin: Some(Origin::Imported),
         sharing_scope: Some(SharingScope::Repository),
         status: Some(RecordStatus::Active),
+        supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
             force: Force::Must,

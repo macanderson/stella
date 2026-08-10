@@ -313,6 +313,61 @@ fn keep_refuses_to_overwrite_an_existing_record() {
     );
 }
 
+/// The other fork of an existing publication (#2708): a *different* claim at
+/// the same lineage supersedes rather than refuses. The new revision replaces
+/// the file, cites the revision it retires, and the ledger records why.
+#[test]
+fn keeping_a_changed_claim_supersedes_the_published_revision() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("first keep succeeds");
+    let published = root
+        .path()
+        .join(".stella/rules/ctx.acme.web.pkg-manager.toml");
+    let old: stella_core::ingest::ContextFile =
+        toml::from_str(&std::fs::read_to_string(&published).expect("readable")).expect("parses");
+    let old_id = old.records[0].record_id.clone().expect("stamped");
+
+    review::run_keep(
+        root.path(),
+        "pkg-manager",
+        Some("This repository uses pnpm; npm and yarn are not used."),
+        false,
+    )
+    .expect("a changed claim supersedes");
+
+    let new: stella_core::ingest::ContextFile =
+        toml::from_str(&std::fs::read_to_string(&published).expect("readable")).expect("parses");
+    let record = &new.records[0];
+    assert_eq!(
+        record.statement,
+        "This repository uses pnpm; npm and yarn are not used."
+    );
+    assert_eq!(
+        record.supersedes_record_id.as_deref(),
+        Some(old_id.as_str())
+    );
+    assert_ne!(
+        record.record_id.as_deref(),
+        Some(old_id.as_str()),
+        "a superseding revision has its own identity"
+    );
+    assert_eq!(
+        new.records.len(),
+        1,
+        "the file carries exactly the live revision — selection can never see both"
+    );
+
+    let last = read_decisions(root.path())
+        .into_iter()
+        .next_back()
+        .expect("a decision was appended");
+    assert_eq!(
+        last.reason.as_deref(),
+        Some(format!("supersedes {old_id}").as_str()),
+        "the ledger must record the supersession, not just the file diff"
+    );
+}
+
 #[test]
 fn edit_publishes_the_reviewers_wording_under_the_same_lineage() {
     let root = workspace();

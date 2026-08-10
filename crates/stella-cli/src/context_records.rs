@@ -626,6 +626,38 @@ pub(crate) fn write_record(
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
+/// Replace a published record file with a superseding revision (#2708).
+///
+/// The deliberate counterpart to [`write_record`]'s `create_new` refusal:
+/// this is reached only after the caller has established that the new record
+/// is a *different* claim carrying a `supersedes_record_id` link to the one
+/// it replaces — never as a way to silently clobber reviewed work. Durable
+/// (temp + fsync + rename), because the file is Git-tracked governance and a
+/// crash mid-write must not leave a truncated record where a reviewed one
+/// stood.
+pub(crate) fn replace_record(
+    path: &Path,
+    set_id: &str,
+    record: &stella_core::ingest::record::Record,
+) -> Result<(), String> {
+    let file = stella_core::ingest::record::ContextFile {
+        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+        set_id: set_id.to_string(),
+        ingest_run_id: None,
+        defaults: None,
+        records: vec![record.clone()],
+        proposals: Vec::new(),
+    };
+    let body =
+        toml::to_string_pretty(&file).map_err(|e| format!("cannot serialize the record: {e}"))?;
+    stella_store::durable::write_atomic_preserving_mode(
+        path,
+        body.as_bytes(),
+        stella_store::durable::MODE_SHARED,
+    )
+    .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
 /// Build and stamp the context record an inference-derived rule publishes —
 /// the shared shape behind `stella memory promote` and the mined-rule
 /// writers, so every code path that once minted a legacy `.md` rule emits
@@ -680,6 +712,7 @@ pub(crate) fn inferred_rule_record(
         origin: Some(Origin::Inferred),
         sharing_scope: Some(rec::SharingScope::Repository),
         status: Some(RecordStatus::Active),
+        supersedes_record_id: None,
         provenance: Some(rec::Provenance {
             source_kind: Some(source_kind.to_string()),
             source_uri: Some(source_uri.to_string()),

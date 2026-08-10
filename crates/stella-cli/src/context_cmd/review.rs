@@ -35,11 +35,12 @@ use std::path::Path;
 use colored::Colorize;
 
 use stella_core::ingest::record::SharingScope;
+use stella_core::ingest::refresh::same_statement;
 use stella_core::records::{Decision, DecisionEvent, decision};
 
 use super::{FoundProposal, read_proposals, resolve_candidate, verdict_label};
 use crate::context_records::{
-    append_decision, now_rfc3339, publication_path, read_decisions, write_record,
+    append_decision, now_rfc3339, publication_path, read_decisions, replace_record, write_record,
 };
 
 /// `stella context review`.
@@ -242,15 +243,59 @@ pub fn run_keep(
         .unwrap_or(SharingScope::Repository);
     let path = publication_path(root, scope, &record.lineage_id)
         .ok_or_else(|| "cannot determine where to publish this record".to_string())?;
+    // A lineage that is already published forks two ways on content (#2708):
+    // the same claim again is a refusal (there is nothing to change, and a
+    // published record is somebody's reviewed work), while a *different* claim
+    // is a supersession — the new revision replaces the file, carries a
+    // `supersedes_record_id` link to the revision it retires, and the old
+    // revision survives where every prior revision on this substrate does, in
+    // the repository history. Records are never edited; they are succeeded.
+    let mut superseded: Option<String> = None;
     if path.exists() {
-        return Err(format!(
-            "{} already exists — refusing to overwrite it. A published record is somebody's \
-             reviewed work; edit the file directly, or delete it first if you meant to replace it.",
-            path.display()
-        ));
+        match published_record_at(&path) {
+            Some(existing) if same_statement(&existing.statement, &record.statement) => {
+                return Err(format!(
+                    "{} already exists — refusing to overwrite it. A published record is \
+                     somebody's reviewed work; this candidate says the same thing, so there is \
+                     nothing to supersede. Edit the file directly, or delete it first if you \
+                     meant to replace it.",
+                    path.display()
+                ));
+            }
+            Some(existing) => match existing.record_id {
+                Some(old_id) => {
+                    record.supersedes_record_id = Some(old_id.clone());
+                    // Re-stamp: the supersession link is canonical content, so
+                    // it must be inside the revision's hash, not beside it.
+                    record
+                        .stamp(&found.defaults)
+                        .map_err(|e| format!("cannot canonicalize the record: {e}"))?;
+                    superseded = Some(old_id);
+                }
+                None => {
+                    return Err(format!(
+                        "{} already exists but its record is unstamped, so a superseding \
+                         revision has no identity to cite. Run `stella context validate` to see \
+                         the finding, or edit the file directly.",
+                        path.display()
+                    ));
+                }
+            },
+            None => {
+                return Err(format!(
+                    "{} already exists — refusing to overwrite it. A published record is \
+                     somebody's reviewed work; edit the file directly, or delete it first if \
+                     you meant to replace it.",
+                    path.display()
+                ));
+            }
+        }
     }
 
-    write_record(&path, &found.set_id, &record)?;
+    match superseded {
+        Some(_) => replace_record(&path, &found.set_id, &record)?,
+        None => write_record(&path, &found.set_id, &record)?,
+    }
 
     let decision_kind = if statement.is_some() {
         Decision::Edit
@@ -274,9 +319,24 @@ pub fn run_keep(
     );
     event.decision = decision_kind;
     event.approved_blocking = enforce;
+    if let Some(old_id) = &superseded {
+        // The ledger is the audit trail; a supersession that only the file
+        // diff records is invisible to anyone replaying decisions.
+        event.reason = Some(format!("supersedes {old_id}"));
+    }
     append_decision(root, &event)?;
 
     println!("\n  {}  {}", "published".green(), path.display());
+    if let Some(old_id) = &superseded {
+        println!(
+            "    {}",
+            format!(
+                "supersedes {old_id} — the prior revision leaves selection now and stays \
+                 readable in git history"
+            )
+            .yellow()
+        );
+    }
     println!("    {}", record.statement);
     println!(
         "    {}",
@@ -297,6 +357,19 @@ pub fn run_keep(
             .dimmed()
     );
     Ok(())
+}
+
+/// The record stored in a published file, exactly as the file spells it.
+///
+/// A raw TOML read, deliberately not [`stella_core::records::load_context_file`]:
+/// the loader re-stamps for verification, and a supersession link must cite
+/// the `record_id` the file actually carries, not one recomputed today.
+/// `None` when the file cannot be read or parsed — the caller then falls back
+/// to the plain refusal rather than superseding something it cannot see.
+fn published_record_at(path: &Path) -> Option<stella_core::ingest::record::Record> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let file: stella_core::ingest::record::ContextFile = toml::from_str(&contents).ok()?;
+    file.records.first().cloned()
 }
 
 /// `stella context ignore <id>`.
