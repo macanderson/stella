@@ -70,10 +70,11 @@ pub(crate) async fn mcp_snapshot(
             let card = config.card(name).expect("name came from the config");
             let enabled = !disabled_set.contains(name);
             let connected_now = connected.contains(name);
-            let prefix = format!("mcp__{name}__");
             let tool_count = schemas
                 .iter()
-                .filter(|s| s.name.starts_with(&prefix))
+                .filter(|s| {
+                    stella_mcp::split_wire_name(&s.name).is_some_and(|(server, _)| server == name)
+                })
                 .count();
             let health = crate::mcp_cmd::health_label(&health, name);
             let calls: u64 = usage

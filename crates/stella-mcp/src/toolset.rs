@@ -6,13 +6,20 @@
 //!
 //! # Namespacing
 //!
-//! Every MCP tool is advertised as `mcp__<server>__<tool>` so tools from
-//! different servers (and from the native set) never collide. Server names
-//! are required to be non-empty and free of the `__` separator; a server whose
-//! name violates that is skipped and recorded in
-//! [`McpToolSet::failed_servers`]. With that guarantee the prefix uniquely
-//! identifies the server and the remainder is the raw tool name, so routing is
-//! unambiguous.
+//! Every MCP tool is advertised as `mcp__<server>__<tool>` — composed by
+//! [`wire_name`], the one place the encoding lives — so tools from different
+//! servers (and from the native set) never collide. Server names are required
+//! to be non-empty, free of the `__` separator, and free of a leading or
+//! trailing `_`; a server whose name violates that is skipped and recorded in
+//! [`McpToolSet::failed_servers`]. Those rules make the encoding **injective**
+//! (see [`wire_name`]), so the prefix uniquely identifies the server, the
+//! remainder is the raw tool name, and routing is unambiguous.
+//!
+//! Injectivity is also enforced, not merely argued: if two `(server, tool)`
+//! pairs ever map to one wire name anyway, route building drops **every**
+//! claimant's route and records the clash in
+//! [`McpToolSet::wire_name_collisions`], so connect order can never silently
+//! pick which third-party server answers a call (#2675).
 //!
 //! # Composition & fall-through
 //!
@@ -37,7 +44,7 @@
 //! instead of aborting the agent. Per-server state is surfaced by
 //! [`McpToolSet::health`] for a non-fatal CLI/TUI/telemetry diagnostic.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -106,12 +113,37 @@ pub struct ServerIdentity {
     pub protocol_version: String,
 }
 
+/// One wire name claimed by more than one `(server, tool)` pair (#2675).
+///
+/// The `namespace_rejection` rules make [`wire_name`] injective, so this should
+/// never occur — but MCP servers are third-party and their tool lists are
+/// untrusted, and a misroute here delivers a call meant for one server to a
+/// different one. When it does occur, **every** claimant's route is dropped
+/// (never a connect-order winner) and this record is the operator-visible
+/// diagnostic, in the [`McpToolSet::failed_servers`] /
+/// [`McpToolSet::over_advertising_servers`] style: bounded, named, non-fatal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireNameCollision {
+    /// The contested `mcp__…` name. Not advertised and not callable this
+    /// session.
+    pub wire_name: String,
+    /// Every `(server, tool)` pair that encodes to `wire_name`, in client
+    /// connect order. Always at least two entries, always distinct servers
+    /// (one server's duplicate tool names are deduped at ingest).
+    pub claimants: Vec<(String, String)>,
+}
+
 /// A set of connected MCP servers exposed to the engine as one
 /// `ToolExecutor`, optionally composed over an inner native executor.
 pub struct McpToolSet {
     clients: Vec<McpClient>,
-    /// Namespaced tool name -> (client index, raw tool name).
+    /// Namespaced tool name -> (client index, raw tool name). A wire name
+    /// claimed by more than one client is absent here and recorded in
+    /// `collisions` instead — routing never has a connect-order winner.
     routes: HashMap<String, (usize, String)>,
+    /// Wire names more than one `(server, tool)` pair claimed, with every
+    /// claimant. See [`McpToolSet::wire_name_collisions`].
+    collisions: Vec<WireNameCollision>,
     /// Servers that could not be connected or had invalid names: `(name,
     /// reason)`. They advertise no tools but never block the rest.
     failed: Vec<(String, String)>,
@@ -159,11 +191,8 @@ impl McpToolSet {
             .collect();
 
         for config in configs {
-            if !is_namespaceable(&config.name) {
-                failed.push((
-                    config.name.clone(),
-                    "server name is empty or contains the reserved `__` separator".into(),
-                ));
+            if let Some(reason) = namespace_rejection(&config.name) {
+                failed.push((config.name.clone(), reason.into()));
                 continue;
             }
             if !seen.insert(config.name.clone()) {
@@ -188,6 +217,7 @@ impl McpToolSet {
         let mut set = Self {
             clients,
             routes: HashMap::new(),
+            collisions: Vec::new(),
             failed,
             native: None,
             usage: None,
@@ -208,11 +238,8 @@ impl McpToolSet {
 
         for client in clients {
             let name = client.name().to_string();
-            if !is_namespaceable(&name) {
-                failed.push((
-                    name,
-                    "server name is empty or contains the reserved `__` separator".into(),
-                ));
+            if let Some(reason) = namespace_rejection(&name) {
+                failed.push((name, reason.into()));
                 continue;
             }
             if !seen.insert(name.clone()) {
@@ -225,6 +252,7 @@ impl McpToolSet {
         let mut set = Self {
             clients: kept,
             routes: HashMap::new(),
+            collisions: Vec::new(),
             failed,
             native: None,
             usage: None,
@@ -424,6 +452,23 @@ impl McpToolSet {
             .collect()
     }
 
+    /// Wire names claimed by more than one `(server, tool)` pair, with every
+    /// claimant — sorted by wire name (#2675). Each contested name routes
+    /// nowhere this session: dropping every claimant is the only answer that
+    /// does not let connect order decide which third-party server receives a
+    /// call meant for another.
+    ///
+    /// Deliberately **not** folded into [`McpToolSet::failed_servers`], for
+    /// the same reason [`McpToolSet::over_advertising_servers`] is not: the
+    /// claimant servers are connected and their uncontested tools route
+    /// normally, so rendering them "unavailable" would be a lie. Empty
+    /// whenever every server name passes `namespace_rejection`, which makes
+    /// [`wire_name`] injective — this is the defense-in-depth record for the
+    /// day that guarantee is weakened.
+    pub fn wire_name_collisions(&self) -> &[WireNameCollision] {
+        &self.collisions
+    }
+
     /// How many advertised tools this session refused across *every* connected
     /// server — the single number a status line can carry ("2 servers
     /// truncated, 31 tools dropped") without iterating
@@ -458,17 +503,40 @@ impl McpToolSet {
     }
 
     /// (Re)build the routing map from the current clients. Server names are
-    /// validated unique + namespaceable, which makes the usual case
-    /// unambiguous — but `mcp__<server>__<tool>` can still collide when a
-    /// server name ends in `_` and another's tool starts with `_`
-    /// (`acme` + `_status` == `acme_` + `status`), and the later client then
-    /// wins the route silently.
+    /// validated unique + namespaceable, which makes [`wire_name`] injective
+    /// and every wire name single-claimant. Should two `(server, tool)` pairs
+    /// map to one wire name anyway, **every** claimant's route is dropped and
+    /// the clash recorded in [`McpToolSet::wire_name_collisions`] — before
+    /// #2675 the later-connected client silently won the route, which handed
+    /// a third-party server a way to shadow another server's tools by
+    /// choosing colliding names.
     fn rebuild_routes(&mut self) {
         self.routes.clear();
+        self.collisions.clear();
+        // BTreeMap so the collision report is ordered by wire name, not by
+        // hash order — diagnostics are rendered to the operator and must not
+        // shuffle between runs.
+        let mut claims: BTreeMap<String, Vec<(usize, String)>> = BTreeMap::new();
         for (idx, client) in self.clients.iter().enumerate() {
             for tool in client.tools() {
-                let namespaced = namespaced_name(client.name(), &tool.name);
-                self.routes.insert(namespaced, (idx, tool.name.clone()));
+                claims
+                    .entry(wire_name(client.name(), &tool.name))
+                    .or_default()
+                    .push((idx, tool.name.clone()));
+            }
+        }
+        for (name, pairs) in claims {
+            match pairs.as_slice() {
+                [(idx, tool)] => {
+                    self.routes.insert(name, (*idx, tool.clone()));
+                }
+                _ => self.collisions.push(WireNameCollision {
+                    wire_name: name,
+                    claimants: pairs
+                        .into_iter()
+                        .map(|(idx, tool)| (self.clients[idx].name().to_string(), tool))
+                        .collect(),
+                }),
             }
         }
     }
@@ -504,16 +572,41 @@ impl McpToolSet {
     }
 }
 
-/// Which server a namespaced tool belongs to — `mcp__<server>__<tool>`.
+/// Compose the wire name for a server/tool pair: `mcp__<server>__<tool>`.
 ///
-/// Server names are guaranteed free of the `__` separator (`is_namespaceable`
-/// rejects the rest at connect), so the segment between the prefix and the
-/// first separator is unambiguous.
+/// **This is the one place the encoding lives** — no other `format!` may
+/// build an `mcp__…` name, so a future tool-contract registry (#2716) can
+/// call this single function and its collision check covers every advertised
+/// name.
+///
+/// **Injectivity.** Over server names accepted by `namespace_rejection`
+/// (non-empty, no `__`, no leading or trailing `_`), the encoding is
+/// injective: two distinct `(server, tool)` pairs cannot share a wire name.
+/// Equality would force one server to be the other plus a trailing `_`
+/// (`wire_name("acme_", "status") == wire_name("acme", "_status")` is the
+/// whole collision family — any longer suffix puts a non-`_` byte where the
+/// other name needs the `__` separator), and a trailing `_` is rejected.
+/// [`split_wire_name`] is the inverse. Defense in depth for the day the name
+/// rule is weakened lives in [`McpToolSet::wire_name_collisions`] (#2675).
+pub fn wire_name(server: &str, tool: &str) -> String {
+    format!("{NS_PREFIX}{server}{NS_SEP}{tool}")
+}
+
+/// The inverse of [`wire_name`]: `(server, tool)` for an `mcp__…` name, or
+/// `None` for a name outside the MCP namespace.
+///
+/// Splits at the **first** `__` after the prefix, which is exact because
+/// accepted server names never contain the separator. The tool half may
+/// contain `__` freely — only the server segment is constrained.
+pub fn split_wire_name(namespaced: &str) -> Option<(&str, &str)> {
+    namespaced.strip_prefix(NS_PREFIX)?.split_once(NS_SEP)
+}
+
+/// Which server a namespaced tool belongs to, or `""` for a name outside the
+/// MCP namespace — the total-function convenience over [`split_wire_name`]
+/// that `budget_segment`'s fold wants.
 fn server_of(namespaced: &str) -> &str {
-    namespaced
-        .strip_prefix(NS_PREFIX)
-        .and_then(|rest| rest.split_once(NS_SEP))
-        .map_or("", |(server, _)| server)
+    split_wire_name(namespaced).map_or("", |(server, _)| server)
 }
 
 /// Roughly what one schema costs in the serialized tools block: its name, its
@@ -603,9 +696,10 @@ impl McpToolSet {
                 continue;
             }
             for tool in client.tools() {
-                let namespaced = namespaced_name(client.name(), &tool.name);
+                let namespaced = wire_name(client.name(), &tool.name);
                 // Only advertise tools that actually route back to this client
-                // (defends against any skipped/collided entry).
+                // — a collided wire name has no route at all (see
+                // `wire_name_collisions`), so no claimant advertises it.
                 if self.routes.get(&namespaced).map(|(i, _)| *i) == Some(idx) {
                     mcp.push(ToolSchema {
                         name: namespaced,
@@ -786,11 +880,6 @@ impl ToolExecutor for CandidateMcpView {
     }
 }
 
-/// Compose the namespaced tool name for a server/tool pair.
-fn namespaced_name(server: &str, tool: &str) -> String {
-    format!("{NS_PREFIX}{server}{NS_SEP}{tool}")
-}
-
 /// Whether `schema` can be called with an empty `{}` — no `required` array,
 /// or an empty one. Used ONLY to decide whether [`McpToolSet::prefetch_candidate_context`]
 /// may call a tool blind; never to synthesize a value for a required field.
@@ -801,11 +890,28 @@ fn accepts_empty_input(schema: &Value) -> bool {
         .is_none_or(|required| required.is_empty())
 }
 
-/// A server name may be used as a namespace segment only if it is non-empty
-/// and does not contain the `__` separator (which would make the prefix
-/// ambiguous).
-fn is_namespaceable(name: &str) -> bool {
-    !name.is_empty() && !name.contains(NS_SEP)
+/// Why `name` may not be used as a namespace segment, or `None` if it may.
+///
+/// Three rules, each protecting [`wire_name`]'s injectivity: the name must be
+/// non-empty, must not contain the `__` separator (which would make the
+/// server prefix ambiguous), and must not start or end with `_` — a trailing
+/// `_` is exactly what lets two pairs collide
+/// (`wire_name("acme_", "status") == wire_name("acme", "_status")`, #2675),
+/// and a leading `_` is rejected symmetrically so the boundary between the
+/// `mcp__` prefix and the server segment stays visually and lexically crisp.
+fn namespace_rejection(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some("server name is empty")
+    } else if name.contains(NS_SEP) {
+        Some("server name contains the reserved `__` separator")
+    } else if name.starts_with('_') || name.ends_with('_') {
+        Some(
+            "server name starts or ends with `_`, which would make \
+             `mcp__<server>__<tool>` wire names ambiguous",
+        )
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

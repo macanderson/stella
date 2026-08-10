@@ -2438,6 +2438,7 @@ fn spawn_mcp_connect(
                             &set.connected_names(),
                             set.failed_servers(),
                             &set.over_advertising_servers(),
+                            set.wire_name_collisions(),
                         )));
                         // `set` is infallible here (the cell is set exactly once,
                         // by this task); an in-flight turn keeps its resolved

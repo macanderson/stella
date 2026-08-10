@@ -94,5 +94,8 @@ pub use registry::{
     RegistryPage, RegistryServer,
 };
 pub use stdio::StdioTransport;
-pub use toolset::{DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity};
+pub use toolset::{
+    DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity, WireNameCollision,
+    split_wire_name, wire_name,
+};
 pub use transport::Transport;

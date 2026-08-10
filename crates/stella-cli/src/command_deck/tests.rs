@@ -179,7 +179,7 @@ fn extract_skill_md_unwraps_a_fenced_block_or_frontmatter() {
 
 #[test]
 fn mcp_outcome_report_lists_connected_servers_by_name() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[], &[]);
     assert_eq!(report, "2 MCP server(s) connected: files, search");
 }
 
@@ -189,7 +189,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
         "slow".to_string(),
         "connect timed out after 10000ms".to_string(),
     )];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: files");
     assert_eq!(
@@ -201,7 +201,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
 #[test]
 fn mcp_outcome_report_states_total_failure_outright() {
     let failed = vec![("a".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[], &[]);
     assert!(
         report.starts_with("no MCP servers connected"),
         "the degraded mode is stated, not implied: {report}"
@@ -214,7 +214,7 @@ fn mcp_outcome_report_states_total_failure_outright() {
 /// no consumer, so the model silently had fewer tools than the server offered.
 #[test]
 fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: greedy");
     assert!(
@@ -239,7 +239,7 @@ fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() 
 #[test]
 fn mcp_outcome_report_carries_truncation_and_failure_together() {
     let failed = vec![("dead".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)], &[]);
     assert!(report.contains("MCP server `dead` unavailable: spawn failed"));
     assert!(report.contains("`greedy` advertised more than"));
 }
@@ -248,8 +248,35 @@ fn mcp_outcome_report_carries_truncation_and_failure_together() {
 /// zero is noise that trains operators to ignore the real one.
 #[test]
 fn mcp_outcome_report_is_silent_when_nothing_was_truncated() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[]);
     assert_eq!(report, "1 MCP server(s) connected: files");
+}
+
+/// #2675: a contested wire name is reported with every claimant, and the
+/// claimant servers stay "connected" — their uncontested tools route
+/// normally, so `unavailable` would be a lie (the same reasoning as
+/// truncation above).
+#[test]
+fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
+    let collisions = vec![stella_mcp::WireNameCollision {
+        wire_name: "mcp__acme___status".to_string(),
+        claimants: vec![
+            ("acme_".to_string(), "status".to_string()),
+            ("acme".to_string(), "_status".to_string()),
+        ],
+    }];
+    let report = crate::mcp_cmd::mcp_outcome_report(&["acme_", "acme"], &[], &[], &collisions);
+    assert!(report.contains("`mcp__acme___status`"), "{report}");
+    assert!(report.contains("`acme_` tool `status`"), "{report}");
+    assert!(report.contains("`acme` tool `_status`"), "{report}");
+    assert!(
+        report.contains("every claimant dropped"),
+        "the resolution is stated — no connect-order winner: {report}"
+    );
+    assert!(
+        !report.contains("unavailable"),
+        "claimant servers are connected, not down: {report}"
+    );
 }
 
 /// Drive [`DeckAskUserIo::prompt`] with a scripted answer and inspect the
