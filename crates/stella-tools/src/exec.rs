@@ -85,10 +85,11 @@ pub(crate) async fn run(
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
+    scratch_path: Option<&std::path::Path>,
 ) -> Result<(i32, String), String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command);
-    drive(cmd, command, dir, timeout_secs, &[])
+    drive(cmd, command, dir, timeout_secs, &[], scratch_path)
         .await
         .map(|(code, output)| (code, truncate_middle(output)))
 }
@@ -101,6 +102,7 @@ pub(crate) async fn run_github(
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
+    scratch_path: Option<&std::path::Path>,
 ) -> Result<(i32, String), String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command);
@@ -110,6 +112,7 @@ pub(crate) async fn run_github(
         dir,
         timeout_secs,
         crate::subprocess_env::GITHUB_CLI_AUTH_ENV_VARS,
+        scratch_path,
     )
     .await
     .map(|(code, output)| (code, truncate_middle(output)))
@@ -411,9 +414,17 @@ async fn drive(
     dir: &std::path::Path,
     timeout_secs: u64,
     preserved_sensitive_env: &[&str],
+    scratch_path: Option<&std::path::Path>,
 ) -> Result<(i32, String), String> {
-    let (code, stdout, stderr) =
-        drive_split(cmd, command, dir, timeout_secs, preserved_sensitive_env).await?;
+    let (code, stdout, stderr) = drive_split(
+        cmd,
+        command,
+        dir,
+        timeout_secs,
+        preserved_sensitive_env,
+        scratch_path,
+    )
+    .await?;
     let mut combined = stdout;
     if !stderr.is_empty() {
         if !combined.is_empty() {
@@ -444,12 +455,13 @@ async fn drive_split(
     dir: &std::path::Path,
     timeout_secs: u64,
     preserved_sensitive_env: &[&str],
+    scratch_path: Option<&std::path::Path>,
 ) -> Result<(i32, String, String), String> {
     cmd.current_dir(dir);
     crate::subprocess_env::scrub_spawn_env_except(&mut cmd, preserved_sensitive_env);
     // Inject the session scratch directory path AFTER the scrub, so the
     // scrub cannot remove it.
-    crate::subprocess_env::inject_scratch_env(&mut cmd);
+    crate::subprocess_env::inject_scratch_env(&mut cmd, scratch_path);
     // No stdin: everything driven through here is non-interactive, and an
     // inherited stdin is the TUI's terminal — a build or test that prompts
     // would consume the user's keystrokes and then hang until the timeout
@@ -535,9 +547,10 @@ pub(crate) async fn run_and_report(
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
+    scratch_path: Option<&std::path::Path>,
 ) -> stella_protocol::tool::ToolOutput {
     use stella_protocol::tool::ToolOutput;
-    match run(command, dir, timeout_secs).await {
+    match run(command, dir, timeout_secs, scratch_path).await {
         Ok((0, output)) => ToolOutput::Ok {
             content: format!("`{command}` PASSED (exit 0)\n{output}"),
         },

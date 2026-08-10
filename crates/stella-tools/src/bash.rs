@@ -232,7 +232,15 @@ fn graph_advisory(command: &str, root: &Path) -> Option<String> {
     None
 }
 
-pub struct Bash;
+pub struct Bash {
+    scratch: Option<std::path::PathBuf>,
+}
+
+impl Bash {
+    pub fn new(scratch: Option<std::path::PathBuf>) -> Self {
+        Self { scratch }
+    }
+}
 
 #[async_trait]
 impl Tool for Bash {
@@ -286,8 +294,8 @@ impl Tool for Bash {
         // (same families `exec::drive` removes for every other runner).
         crate::subprocess_env::scrub_spawn_env(&mut cmd);
         // Inject the session scratch directory path AFTER the scrub, so the
-        // scrub cannot remove it. All tool spawns get this.
-        crate::subprocess_env::inject_scratch_env(&mut cmd);
+        // scrub cannot remove it.
+        crate::subprocess_env::inject_scratch_env(&mut cmd, self.scratch.as_deref());
         // No stdin. An inherited stdin is the TUI's terminal: a command that
         // reads it (`cat`, an interactive prompt, a confirmation `read`)
         // silently steals the user's keystrokes and then blocks until the
@@ -845,5 +853,24 @@ mod tests {
         );
         assert!(!text.contains("graph_query"), "{text}");
         assert!(!text.contains("outside the session root"), "{text}");
+    }
+
+    /// Witness test for #2696: verify STELLA_SCRATCH is injected via constructor
+    /// in a multi-threaded tokio runtime, proving the thread-local storage seam
+    /// was fixed and the pure function signature approach works correctly.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn constructor_injected_scratch_path_is_exported_to_bash() {
+        let scratch_dir = tempfile::tempdir().expect("tempdir creation");
+        let scratch_path = scratch_dir.path().to_path_buf();
+        let bash_tool = Bash::new(Some(scratch_path.clone()));
+        let dir = std::env::temp_dir();
+        let result = bash_tool
+            .execute(&serde_json::json!({"command": "echo $STELLA_SCRATCH"}), &dir)
+            .await;
+        let exported = match result {
+            ToolOutput::Ok { content } => content.trim().to_string(),
+            ToolOutput::Error { message } => panic!("bash: {message}"),
+        };
+        assert_eq!(exported, scratch_path.to_string_lossy().to_string());
     }
 }

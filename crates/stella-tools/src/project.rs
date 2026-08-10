@@ -56,7 +56,7 @@ impl Tool for BuildProject {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-            return run_and_report(command, root, timeout_secs).await;
+            return run_and_report(command, root, timeout_secs, None).await;
         }
         let index = ScriptIndex::detect(root).await;
         if index.is_empty() {
@@ -117,7 +117,7 @@ impl Tool for RunTests {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-            return run_and_report(command, root, timeout_secs).await;
+            return run_and_report(command, root, timeout_secs, None).await;
         }
         let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("all");
         let filter = input.get("filter").and_then(|v| v.as_str()).unwrap_or("");

@@ -430,6 +430,7 @@ pub async fn run_by_name(
     dir: Option<&str>,
     args: &[String],
     timeout_secs: u64,
+    scratch_path: Option<&std::path::Path>,
 ) -> ToolOutput {
     let index = ScriptIndex::detect(root).await;
     let entry = match index.resolve(script, dir) {
@@ -442,7 +443,7 @@ pub async fn run_by_name(
     } else {
         root.join(&entry.dir)
     };
-    exec::run_and_report(&command, &cwd, timeout_secs).await
+    exec::run_and_report(&command, &cwd, timeout_secs, scratch_path).await
 }
 
 fn string_args(input: &Value) -> Vec<String> {
@@ -1283,7 +1284,9 @@ impl Tool for ListScripts {
     }
 }
 
-pub struct RunScript;
+pub struct RunScript {
+    pub scratch: Option<std::path::PathBuf>,
+}
 
 #[async_trait]
 impl Tool for RunScript {
@@ -1332,9 +1335,18 @@ impl Tool for RunScript {
             } else {
                 root.join(dir)
             };
-            return exec::run_and_report(command, &cwd, timeout_secs).await;
+            return exec::run_and_report(command, &cwd, timeout_secs, self.scratch.as_deref())
+                .await;
         }
-        run_by_name(root, script, dir, &args, timeout_secs).await
+        run_by_name(
+            root,
+            script,
+            dir,
+            &args,
+            timeout_secs,
+            self.scratch.as_deref(),
+        )
+        .await
     }
 }
 
