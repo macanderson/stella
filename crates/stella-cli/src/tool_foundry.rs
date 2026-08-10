@@ -109,8 +109,10 @@ fn notification_id(signature: &str) -> String {
 }
 
 /// A tiny FNV-1a hash — enough to key dedup deterministically, and it keeps
-/// this module free of a hashing dependency.
-fn fnv1a(s: &str) -> u64 {
+/// this module free of a hashing dependency. `pub(crate)` because the ingest
+/// staleness alerts (`ingest_cmd::lineage`) derive their notification ids the
+/// same way, and two copies of a hash function is how they drift apart.
+pub(crate) fn fnv1a(s: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {
         hash ^= *b as u64;

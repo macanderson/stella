@@ -20,12 +20,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use colored::Colorize;
 
+use stella_core::ingest::lineage::AlertState;
 use stella_core::ingest::{self, Candidate, Plan, Tier};
 
 mod extract;
+pub(crate) mod lineage;
 pub(crate) mod probe;
 mod progress;
 
@@ -48,8 +50,14 @@ const MAX_READ_BYTES: u64 = 512 * 1024;
 /// `stella ingest` — see what steering a workspace already contains.
 #[derive(Debug, Args)]
 pub struct IngestArgs {
+    /// Alert management for ingested source files.
+    #[command(subcommand)]
+    pub cmd: Option<IngestCmd>,
+
     /// Markdown files to ingest. Any path is valid, inside the workspace or
     /// not; naming a file overrides every tiering rule the scan would apply.
+    /// (A file literally named `alerts` needs a `./` prefix, since `alerts`
+    /// is the subcommand.)
     ///
     /// With no paths, the workspace is scanned and the candidates are grouped
     /// the way the first-run dialog groups them.
@@ -58,6 +66,44 @@ pub struct IngestArgs {
     /// Show every candidate found, including the ones normally held back.
     #[arg(long)]
     pub all: bool,
+
+    /// When re-ingesting a file whose alerts were dismissed, keep the
+    /// dismissal instead of re-arming. By default a fresh ingest re-declares
+    /// the file a live source, which contradicts the dismissal.
+    #[arg(long)]
+    pub keep_dismissed: bool,
+}
+
+/// The `stella ingest alerts` family — staleness alerts for ingested files.
+#[derive(Debug, Subcommand)]
+pub enum IngestCmd {
+    /// Staleness alerts: which ingested files drifted, and per-file silencing
+    ///
+    /// Every ingested file leaves a lineage — the hash it had, and the records
+    /// it produced. When the file later changes or disappears, a non-blocking
+    /// inbox alert says so. These commands list the lineages and silence or
+    /// re-arm alerts per file.
+    Alerts {
+        #[command(subcommand)]
+        cmd: AlertsCmd,
+    },
+}
+
+/// One alert operation, always scoped to a single ingested source file.
+#[derive(Debug, Subcommand)]
+pub enum AlertsCmd {
+    /// Every tracked source file: its lineage, alert state, and live drift
+    List,
+    /// Permanently silence staleness alerts for one file (records stay live)
+    Dismiss {
+        /// The ingested source file, as ingest displayed it.
+        source_path: PathBuf,
+    },
+    /// Re-arm staleness alerts for a dismissed file
+    Restore {
+        /// The ingested source file, as ingest displayed it.
+        source_path: PathBuf,
+    },
 }
 
 /// One discovered file, with the cheap facts worth showing a person.
@@ -292,6 +338,7 @@ fn percent(part: usize, whole: usize) -> u64 {
 fn run_named(
     root: &Path,
     paths: &[PathBuf],
+    keep_dismissed: bool,
     model: Option<&str>,
     api_key: Option<&str>,
     base_url: Option<&str>,
@@ -334,7 +381,7 @@ fn run_named(
     if docs.is_empty() {
         return Err("no readable files to ingest".to_string());
     }
-    let result = extract::extract_all(root, &docs, model, api_key, base_url);
+    let result = extract::extract_all(root, &docs, keep_dismissed, model, api_key, base_url);
     if unreadable && result.is_ok() {
         eprintln!(
             "{}",
@@ -352,6 +399,18 @@ pub fn run(
     base_url: Option<&str>,
 ) -> Result<(), String> {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(IngestCmd::Alerts { cmd }) = &args.cmd {
+        // Ledger-only reads and writes — no provider, no model call.
+        return match cmd {
+            AlertsCmd::List => lineage::run_list(&root),
+            AlertsCmd::Dismiss { source_path } => {
+                lineage::run_set_alerts(&root, source_path, AlertState::Dismissed)
+            }
+            AlertsCmd::Restore { source_path } => {
+                lineage::run_set_alerts(&root, source_path, AlertState::Active)
+            }
+        };
+    }
     if args.paths.is_empty() {
         run_scan(&root, args.all);
         Ok(())
@@ -365,7 +424,14 @@ pub fn run(
         // stays catalog-free, and this call site is synchronous, so the full
         // refresh — not just the network-free half — is safe.
         crate::model_catalog::bootstrap();
-        run_named(&root, &args.paths, model, api_key, base_url)
+        run_named(
+            &root,
+            &args.paths,
+            args.keep_dismissed,
+            model,
+            api_key,
+            base_url,
+        )
     }
 }
 
