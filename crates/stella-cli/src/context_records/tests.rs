@@ -382,6 +382,7 @@ fn grant(lineage: &str, reason: &str) -> stella_core::records::promotion::Promot
         proposer: None,
         reason: reason.into(),
         mode: "solo".into(),
+        action: stella_core::records::promotion::LedgerAction::Grant,
     }
 }
 

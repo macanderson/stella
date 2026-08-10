@@ -234,6 +234,7 @@ pub(crate) fn run_promote(
             proposer,
             reason: reason.to_string(),
             mode: governance.mode.as_str().to_string(),
+            action: stella_core::records::promotion::LedgerAction::Grant,
         },
     )?;
     println!(

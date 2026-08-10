@@ -30,6 +30,7 @@ mod extract;
 pub(crate) mod lineage;
 pub(crate) mod probe;
 mod progress;
+mod refresh;
 
 pub(crate) use extract::derive_set_id;
 
@@ -72,6 +73,22 @@ pub struct IngestArgs {
     /// the file a live source, which contradicts the dismissal.
     #[arg(long)]
     pub keep_dismissed: bool,
+
+    /// Reconcile published records with what each named file says *now*:
+    /// records the file still asserts are kept untouched, changed claims are
+    /// re-proposed (keeping one supersedes the old revision), and claims the
+    /// file no longer contains are retired. Requires naming the files.
+    #[arg(long)]
+    pub refresh: bool,
+}
+
+/// The per-run behavior switches extraction threads through to its hooks.
+#[derive(Debug, Clone, Copy)]
+struct IngestOptions {
+    /// Preserve an existing alert dismissal across this re-ingest.
+    keep_dismissed: bool,
+    /// Run the published-record reconciliation after each document.
+    refresh: bool,
 }
 
 /// The `stella ingest alerts` family — staleness alerts for ingested files.
@@ -338,7 +355,7 @@ fn percent(part: usize, whole: usize) -> u64 {
 fn run_named(
     root: &Path,
     paths: &[PathBuf],
-    keep_dismissed: bool,
+    options: IngestOptions,
     model: Option<&str>,
     api_key: Option<&str>,
     base_url: Option<&str>,
@@ -347,7 +364,12 @@ fn run_named(
     let mut docs = Vec::new();
     println!();
     for path in paths {
-        let rel = relative(root, path).unwrap_or_else(|| path.to_string_lossy().to_string());
+        // `display_path`, not `relative`-with-a-raw-fallback: this string is
+        // also the lineage-ledger key, and `alerts dismiss`/`restore` derive
+        // theirs the same way. A raw fallback kept Windows backslashes for an
+        // out-of-workspace file, so its recorded key could never match the
+        // normalized one a dismissal looked up.
+        let rel = lineage::display_path(root, path);
         match fs::read_to_string(path) {
             Ok(content) => {
                 let candidate = ingest::classify(&rel, &content);
@@ -381,7 +403,7 @@ fn run_named(
     if docs.is_empty() {
         return Err("no readable files to ingest".to_string());
     }
-    let result = extract::extract_all(root, &docs, keep_dismissed, model, api_key, base_url);
+    let result = extract::extract_all(root, &docs, options, model, api_key, base_url);
     if unreadable && result.is_ok() {
         eprintln!(
             "{}",
@@ -411,6 +433,15 @@ pub fn run(
             }
         };
     }
+    if args.refresh && args.paths.is_empty() {
+        // A refresh reconciles published records against named sources; with
+        // no source named there is nothing to reconcile against, and quietly
+        // falling back to the scan would read as the refresh having run.
+        return Err(
+            "--refresh needs the files to reconcile: `stella ingest --refresh <path>...`"
+                .to_string(),
+        );
+    }
     if args.paths.is_empty() {
         run_scan(&root, args.all);
         Ok(())
@@ -427,7 +458,10 @@ pub fn run(
         run_named(
             &root,
             &args.paths,
-            args.keep_dismissed,
+            IngestOptions {
+                keep_dismissed: args.keep_dismissed,
+                refresh: args.refresh,
+            },
             model,
             api_key,
             base_url,

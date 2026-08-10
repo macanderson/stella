@@ -507,6 +507,7 @@ fn record_from_markdown(rule: &Rule, trust: Trust) -> LoadedRecord {
         origin: Some(Origin::User),
         sharing_scope: Some(SharingScope::Repository),
         status: Some(RecordStatus::Active),
+        supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
             force: Force::Must,

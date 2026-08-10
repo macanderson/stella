@@ -258,6 +258,15 @@ pub struct Record {
     /// Merged lifecycle status. Populated by [`Record::stamp`] from [`Defaults`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<RecordStatus>,
+    /// The `record_id` of the revision this record supersedes, when it is a
+    /// revision of an already-published record rather than a first publication
+    /// (the field [`crate::context_record::EffectiveStatus::Superseded`] is
+    /// derived from). Set at supersession time, before stamping, so the link is
+    /// inside the canonical hash. `None` — the overwhelmingly common case — is
+    /// omitted from serialization *and* from the hash preimage, so adding this
+    /// field changed no existing record's identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_record_id: Option<String>,
     /// Merged provenance. Populated by [`Record::stamp`] from [`Defaults`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
