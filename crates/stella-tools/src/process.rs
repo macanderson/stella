@@ -1,10 +1,19 @@
-//! Long-lived process group: `start_process`, `read_output`, `send_stdin`,
-//! `stop_process`.
+//! Long-lived process group: `start_process`, `read_output`, `clear_output`,
+//! `send_stdin`, `stop_process`.
 //!
 //! For servers, REPLs, and watchers — anything that outlives one tool call.
 //! One-shot work belongs in `run_tests` / `build_project` / `run_script`,
 //! and every tool description here says so, steering the model away from
 //! parking a build in a process slot.
+//!
+//! `read_output` and `clear_output` used to be one tool with a `clear:
+//! bool` mode flag — a parameter that picked *which operation ran* rather
+//! than scoping the same one, which blurs the description the model
+//! decides by and defeats per-tool policy (`tools.<name>` cannot deny the
+//! destructive arm without also denying the harmless read). #2699 split
+//! them. `read_output`'s `clear` field survives for one release as a
+//! deprecation: any truthy value is refused with a named error pointing at
+//! `clear_output`, rather than silently ignored or silently accepted.
 //!
 //! Contracts:
 //! - `start_process` spawns an **argv vector directly** (no shell), cwd
@@ -31,13 +40,26 @@
 //!   capped ring buffer per process; when the cap overflows the oldest
 //!   bytes are dropped and the drop is FLAGGED on the next read.
 //! - `read_output` returns the output buffered since the last read —
-//!   middle-truncated at the shared 30 KB page cap, with the cut named — and
-//!   reports `running` / `exited (code N)`; `clear: true` discards the
-//!   buffered output instead of returning it. Once a process has exited,
-//!   both its pipes are at EOF, and its buffer has been drained, the entry
-//!   is REAPED — its `Child` and its buffer are released and a small
-//!   tombstone takes their place, so the handle still reports its exit
-//!   instead of degrading to "unknown handle".
+//!   middle-truncated at the shared 30 KB page cap, with the cut named —
+//!   and reports `running` / `exited (code N)`. Reading is itself
+//!   destructive: it drains the buffer it returns, exactly like
+//!   `clear_output` does, just without discarding the bytes unread. That
+//!   is why `read_output` stays `read_only: false` even after the split —
+//!   the engine's read-only concurrency contract
+//!   ([`stella_protocol::tool::ToolSchema::read_only`]) requires a call
+//!   to mutate no process/filesystem/environment state, and this one
+//!   always mutates the process table's buffer (and can reap the entry
+//!   into a tombstone) on every call, `clear` or not.
+//! - `clear_output` discards a process's buffered output without
+//!   returning it, for a caller that wants a clean slate before a noisy
+//!   step. It does not stop the process. Like `read_output`, it mutates
+//!   the table (and may reap a fully-drained, exited entry), so it is
+//!   also `read_only: false`.
+//! - Once a process has exited, both its pipes are at EOF, and its buffer
+//!   has been drained (by either `read_output` or `clear_output`), the
+//!   entry is REAPED — its `Child` and its buffer are released and a
+//!   small tombstone takes their place, so the handle still reports its
+//!   exit instead of degrading to "unknown handle".
 //! - `stop_process` closes stdin, sends SIGTERM to the process group,
 //!   waits `STOP_GRACE_MS`, then SIGKILLs the group — and any process
 //!   still alive when the registry (and with it this table) drops is
@@ -75,15 +97,16 @@ const MAX_LIVE_PROCESSES: usize = 16;
 const MAX_TOMBSTONES: usize = 64;
 /// How many exited-but-unread entries the table retains. Exited entries are
 /// exempt from [`MAX_LIVE_PROCESSES`] on purpose (a finished process must
-/// never block a new start), but reaping only happens on `read_output` — so
-/// without a bound of their own, a start/exit loop that never reads pins a
-/// `Child` plus up to [`MAX_BUFFER_BYTES`] per iteration for the rest of the
-/// session. 32 keeps twice the live cap's worth of recently finished output
-/// (~6.4 MB worst case) while bounding the table; the excess is evicted into
-/// a tombstone, so the handle still answers with its exit code.
+/// never block a new start), but reaping only happens on `read_output` /
+/// `clear_output` — so without a bound of their own, a start/exit loop
+/// that never reads pins a `Child` plus up to [`MAX_BUFFER_BYTES`] per
+/// iteration for the rest of the session. 32 keeps twice the live cap's
+/// worth of recently finished output (~6.4 MB worst case) while bounding
+/// the table; the excess is evicted into a tombstone, so the handle still
+/// answers with its exit code.
 const MAX_EXITED_ENTRIES: usize = 32;
 
-/// The shared process table — held by the registry's four process tool
+/// The shared process table — held by the registry's five process tool
 /// instances, so it lives exactly as long as the registry and its `Drop`
 /// reaps whatever is still running when the session ends.
 pub type ProcessTableHandle = Arc<Mutex<ProcessTable>>;
@@ -229,7 +252,7 @@ impl ProcessTable {
     }
 
     /// Drop `handle`'s entry, leaving a tombstone so `read_output` /
-    /// `stop_process` can still explain it. Callers must have established
+    /// `clear_output` / `stop_process` can still explain it. Callers must have established
     /// [`ProcessEntry::is_reapable`] — except [`Self::enforce_exited_cap`],
     /// whose evictions knowingly discard an unread buffer and record the
     /// discard on the tombstone.
@@ -494,6 +517,16 @@ impl Tool for StartProcess {
     }
 }
 
+/// The named error `read_output` returns for its deprecated `clear: true`
+/// arm — see the module doc and #2699.
+fn clear_removed_from_read_output_error() -> ToolOutput {
+    ToolOutput::Error {
+        message: "`read_output`'s `clear` field was removed — call `clear_output(handle)` \
+                  instead to discard buffered output without reading it."
+            .into(),
+    }
+}
+
 /// `read_output` — see the module doc.
 pub struct ReadOutput(pub ProcessTableHandle);
 
@@ -503,14 +536,14 @@ impl Tool for ReadOutput {
         ToolSchema {
             name: "read_output".into(),
             description: "Read a started process's buffered stdout+stderr since the last \
-                          read, plus its running/exited state. clear: discard the buffered \
-                          output instead of returning it."
+                          read, plus its running/exited state. To discard buffered output \
+                          instead of reading it, use clear_output."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle returned by start_process" },
-                    "clear": { "type": "boolean", "description": "Discard buffered output instead of returning it" }
+                    "clear": { "type": "boolean", "description": "Deprecated and removed — use clear_output(handle) instead. Any truthy value is refused with a named error." }
                 },
                 "required": ["handle"]
             }),
@@ -528,10 +561,18 @@ impl Tool for ReadOutput {
                 };
             }
         };
-        let clear = input
+        // Deprecation, kept for one release (#2699): a caller still sending
+        // the removed `clear` mode flag gets a named error pointing at its
+        // replacement, rather than the field being silently ignored (which
+        // would leave buffered output the caller thought it discarded) or
+        // silently honored (which would resurrect the split we just made).
+        if input
             .get("clear")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+            .unwrap_or(false)
+        {
+            return clear_removed_from_read_output_error();
+        }
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(tomb) = table.tombstones.get(handle) {
             // Discarded bytes are reported, never silent — same contract as
@@ -580,9 +621,7 @@ impl Tool for ReadOutput {
                 "\n[output truncated: {dropped} oldest bytes dropped before this read]"
             ));
         }
-        if clear {
-            content.push_str(&format!("\n[cleared {} buffered bytes]", bytes.len()));
-        } else if bytes.is_empty() {
+        if bytes.is_empty() {
             content.push_str("\n[no new output]");
         } else {
             content.push('\n');
@@ -594,6 +633,98 @@ impl Tool for ReadOutput {
         // are at EOF, and everything they produced has now reached the
         // model. Keeping it would hold a `Child` and up to MAX_BUFFER_BYTES
         // for the rest of the session.
+        if entry.is_reapable() {
+            table.reap(handle);
+        }
+        ToolOutput::Ok { content }
+    }
+}
+
+/// `clear_output` — see the module doc. Split out of `read_output`'s
+/// `clear: true` arm by #2699: discarding output is a distinct operation
+/// from reading it, not a mode of the same one, and folding them together
+/// meant a policy denying the destructive arm (`tools.clear_output: "off"`)
+/// had no way to spell that without also denying the harmless read.
+pub struct ClearOutput(pub ProcessTableHandle);
+
+#[async_trait]
+impl Tool for ClearOutput {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "clear_output".into(),
+            description: "Discard a started process's buffered stdout+stderr without \
+                          reading it — use before a step you don't want in the next \
+                          read_output. Does not stop the process."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle returned by start_process" }
+                },
+                "required": ["handle"]
+            }),
+            read_only: false,
+            speculation_safe: false,
+        }
+    }
+
+    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+        let handle = match crate::input::required_str(input, "handle") {
+            Ok(v) => v,
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
+        };
+        let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(tomb) = table.tombstones.get(handle) {
+            // Already reaped: its buffer was drained (and any unread bytes
+            // counted) when it was reaped, so there is nothing left to
+            // discard. Answering rather than erroring matches `read_output`
+            // and `stop_process`'s posture on a tombstoned handle — the
+            // model still gets a coherent answer about a handle it holds.
+            return ToolOutput::Ok {
+                content: format!(
+                    "{handle} `{}`{}: exited (code {}) — already reaped, nothing to clear",
+                    tomb.display,
+                    tomb.name
+                        .as_deref()
+                        .map(|n| format!(" ({n})"))
+                        .unwrap_or_default(),
+                    tomb.exit_code,
+                ),
+            };
+        }
+        let Some(entry) = table.entries.get_mut(handle) else {
+            return unknown_handle_error(&table, handle);
+        };
+        let status = match entry.poll_exit() {
+            Some(code) => format!("exited (code {code})"),
+            None => "running".to_string(),
+        };
+        let label = entry
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        let (bytes, dropped) = entry
+            .output
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        let mut content = format!(
+            "{handle} `{}`{label}: {status}\n[cleared {} buffered bytes]",
+            entry.display,
+            bytes.len()
+        );
+        if dropped > 0 {
+            content.push_str(&format!(
+                " ({dropped} more were already dropped before this clear)"
+            ));
+        }
+        // Same reap contract as `read_output`: once exited, drained, and
+        // pump-quiet, nothing further can ever arrive on this handle.
         if entry.is_reapable() {
             table.reap(handle);
         }
@@ -925,6 +1056,129 @@ mod tests {
         }
     }
 
+    /// Witness for #2699: `clear_output` did not exist before this split —
+    /// `read_output`'s only way to discard buffered output was its `clear`
+    /// mode flag. This proves the new single-purpose tool actually
+    /// discards: write output via a started process, `clear_output` it,
+    /// then `read_output` sees nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn clear_output_discards_buffered_output_before_the_next_read() {
+        let (table, root) = tools();
+        let handle = start(
+            &table,
+            &root,
+            &["sh", "-c", "echo written_before_clear; sleep 30"],
+        )
+        .await;
+
+        // Wait until the write has actually landed in the buffer, or
+        // clearing it would prove nothing.
+        let mut buffered = false;
+        for _ in 0..250 {
+            if table
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entries
+                .get(&handle)
+                .is_some_and(|e| {
+                    !e.output
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .data
+                        .is_empty()
+                })
+            {
+                buffered = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(buffered, "the process never produced buffered output");
+
+        let cleared = ClearOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        let ToolOutput::Ok { content } = cleared else {
+            panic!("clear_output failed: {cleared:?}");
+        };
+        assert!(content.contains("cleared"), "{content}");
+        assert!(content.contains("buffered bytes"), "{content}");
+
+        let after = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        let ToolOutput::Ok { content } = after else {
+            panic!("read_output after clear failed: {after:?}");
+        };
+        assert!(
+            content.contains("[no new output]"),
+            "read_output must see nothing after clear_output drained the buffer: {content}"
+        );
+
+        let _ = StopProcess(table)
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+    }
+
+    /// #2699: `read_output`'s `clear` field is removed, not silently
+    /// ignored. A caller still sending `clear: true` gets a named error
+    /// pointing at the replacement tool, and the buffer it would have
+    /// discarded is left untouched.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_output_clear_true_is_a_named_deprecation_error() {
+        let (table, root) = tools();
+        let handle = start(&table, &root, &["sh", "-c", "echo still_here; sleep 30"]).await;
+
+        let mut buffered = false;
+        for _ in 0..250 {
+            if table
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entries
+                .get(&handle)
+                .is_some_and(|e| {
+                    !e.output
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .data
+                        .is_empty()
+                })
+            {
+                buffered = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(buffered, "the process never produced buffered output");
+
+        let out = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle, "clear": true}), &root)
+            .await;
+        match out {
+            ToolOutput::Error { message } => {
+                assert!(message.contains("clear_output"), "{message}");
+                assert!(message.contains("removed"), "{message}");
+            }
+            other => panic!("clear: true must be a named error, not: {other:?}"),
+        }
+
+        // The deprecated call must not have consumed the buffer it refused
+        // to act on — a plain read still sees the output.
+        let read = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        let ToolOutput::Ok { content } = read else {
+            panic!("read_output failed: {read:?}");
+        };
+        assert!(content.contains("still_here"), "{content}");
+
+        let _ = StopProcess(table)
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+    }
+
     /// `start_process` used to apply only the credential scrub — a
     /// hook-exported GIT_DIR or forced-color override reached the child.
     #[cfg(unix)]
@@ -967,6 +1221,9 @@ mod tests {
         let (table, root) = tools();
         for out in [
             ReadOutput(table.clone())
+                .execute(&serde_json::json!({"handle": "proc-9"}), &root)
+                .await,
+            ClearOutput(table.clone())
                 .execute(&serde_json::json!({"handle": "proc-9"}), &root)
                 .await,
             SendStdin(table.clone())

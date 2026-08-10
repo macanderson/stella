@@ -32,6 +32,7 @@ pub(super) fn builtins(
         Arc::new(crate::scripts::RunScript),
         Arc::new(crate::process::StartProcess(processes.clone())),
         Arc::new(crate::process::ReadOutput(processes.clone())),
+        Arc::new(crate::process::ClearOutput(processes.clone())),
         Arc::new(crate::process::SendStdin(processes.clone())),
         Arc::new(crate::process::StopProcess(processes)),
         Arc::new(crate::repo::RepoStatusTool(repo.clone())),

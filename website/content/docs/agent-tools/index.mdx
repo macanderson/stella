@@ -127,10 +127,13 @@ These 49 tools register in every session — no configuration, no prerequisites.
 
 <CardGrid size="md">
   <ToolCard name="start_process" access="mutating">
-    Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other three.
+    Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other four.
   </ToolCard>
   <ToolCard name="read_output" access="mutating">
     Read a started process's buffered stdout+stderr since the last read, plus its running/exited state.
+  </ToolCard>
+  <ToolCard name="clear_output" access="mutating">
+    Discard a started process's buffered stdout+stderr without reading it. Does not stop the process.
   </ToolCard>
   <ToolCard name="send_stdin" access="mutating">
     Write text to a started process's stdin (e.g. a REPL command).
@@ -313,7 +316,7 @@ Two recipes that fall out of that rule:
 }
 ```
 
-```json title="Keep exactly one of the four process tools"
+```json title="Keep exactly one of the five process tools"
 {
   "tools": {
     "process": "off",
