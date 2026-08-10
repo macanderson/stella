@@ -35,10 +35,7 @@ pub(super) fn builtins(
         Arc::new(crate::scripts::RunScript {
             scratch: scratch_path.clone(),
         }),
-        Arc::new(crate::process::StartProcess {
-            handle: processes.clone(),
-            scratch: scratch_path.clone(),
-        }),
+        Arc::new(crate::process::StartProcess(processes.clone())),
         Arc::new(crate::process::ReadOutput(processes.clone())),
         Arc::new(crate::process::ClearOutput(processes.clone())),
         Arc::new(crate::process::SendStdin(processes.clone())),
