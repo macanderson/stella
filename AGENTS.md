@@ -317,6 +317,37 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    ran Claude models with ZERO prompt caching for months because nothing
    enforced the cache axis; the reasoning axis was added after the same
    silent-drop shape recurred for pinned `effort`.
+9. *(reserved for the tool-first single-purpose invariant, PR #2710 /
+   issue #2700, open at the time of writing. This entry takes #10 rather than
+   colliding on #9: two PRs writing one number is how a citation silently
+   resolves to the wrong invariant, and the numbering is an address. If #2710
+   closes without merging, renumber this to 9 before merge — no code cites the
+   number, deliberately, so that edit is one line.)*
+10. **Every emitted signal names its consumer.** An `AgentEvent` variant that
+   nothing reads is allowed, but only as a **declared, issue-cited gap** —
+   never as a silence nobody noticed. The ledger is
+   `crates/stella-protocol/src/event/consumers.rs`: one row per wire tag, each
+   declaring a `ConsumerPosture` (`Behavioral` names the code that branches on
+   it, `Surfaced` names the surfaces that select it, `RecordedOnly` and
+   `Unclassified` each cite the issue where the gap is being decided). Tests
+   enforce totality against `KNOWN_TYPE_TAGS` from both sides, so adding a
+   variant without declaring what consumes it is a red test, and
+   `MAX_UNCLASSIFIED` is a down-only ratchet on the unaudited backlog.
+
+   Born from a repeated real defect, every instance of which was found by a
+   bench run paying for it rather than by a test: `flip.json` written with
+   nothing reading it (#1536); `verify_done` confirmations tallied but not
+   feeding the halt, which cost `solved_then_timeout` four times on one
+   certification panel before #2661 wired it; the flip transition still
+   emitting nothing durable, so a shipped halt cannot be measured in the
+   field. This is invariant #3's discipline pointed at consumption instead of
+   egress — a reviewed table plus tests that enforce it from both sides
+   (#2701).
+
+   What it does **not** prove: that a `Behavioral` row's `site` still points
+   at live code. That string is prose for a reviewer. The enforced half is
+   totality, uniqueness, issue citation, and posture coherence — enough to
+   make a PR author answer "what reads this?" before the merge.
 
 ---
 
