@@ -19,6 +19,21 @@
 //! `context_providers` and the hook matcher lists are open maps whose keys are
 //! user-chosen names (a tool name, a provider id), so an unrecognized key there
 //! is data, not a mistake — those are descended into, not flagged.
+//!
+//! # Retired keys are not typos
+//!
+//! A key that shipped in a release and was then removed lands in the same
+//! bucket as `"enable_recapp"` — nothing reads it — but "check the spelling" is
+//! false advice for it: the operator spelled a real key correctly, and the
+//! feature behind it is gone. [`RETIRED`] is the closed list of those, each
+//! with the one sentence that makes the difference actionable, and
+//! [`retirement`] is what the caller consults to say the right thing.
+//!
+//! Deliberately separate from the field lists above rather than a variant
+//! inside them. Those lists are also the trusted launcher's strict vocabulary
+//! (`config::trusted_engine_config_shape_is_strict`), which fails **closed** —
+//! a benchmark posture naming a retired knob must be refused at launch, not
+//! warned about and run.
 
 use std::path::Path;
 
@@ -71,6 +86,86 @@ const REWARD_FIELDS: &[&str] = &[
     "per_usd",
     "per_revision",
 ];
+
+/// Keys that were correct in a shipped release and read nothing now, each with
+/// the sentence an operator needs: what it used to do, and why there is no
+/// replacement to point them at.
+///
+/// Both entries are the same removal seen from two angles — the pipeline stopped
+/// asking a model for a verdict, so neither the knob that demanded an
+/// independent verifier nor the weight that priced its opinion has anything
+/// left to steer. A key belongs here only while a settings file in the wild
+/// plausibly still carries it; the list is meant to be pruned, not grown.
+///
+/// Paths are dotted and format-specific, because the two documents name the
+/// same knob differently: `agent_engine_config` in JSON is `agents` in TOML.
+const RETIRED: &[(&str, &str)] = &[
+    (
+        "agent_engine_config.pipeline_require_independent_verifier",
+        "refused a run whose verdict call would resolve to the worker's own \
+         model; verification makes no model call, so there is no self-graded \
+         verdict left to refuse",
+    ),
+    (
+        "agents.pipeline_require_independent_verifier",
+        "refused a run whose verdict call would resolve to the worker's own \
+         model; verification makes no model call, so there is no self-graded \
+         verdict left to refuse",
+    ),
+    (
+        "reward.verifier_weight",
+        "scaled a model verifier's opinion against a test's observation; no \
+         rung carries that magnitude any more, so a reward label is priced by \
+         `deterministic_weight` alone",
+    ),
+];
+
+/// Why `key` is no longer read, when it is a retired key rather than a typo.
+///
+/// `key` is one of the dotted paths [`unknown_keys_in`] and
+/// [`unknown_toml_keys_in`] return; anything else — including a genuine
+/// misspelling — is `None`.
+pub(super) fn retirement(key: &str) -> Option<&'static str> {
+    RETIRED
+        .iter()
+        .find_map(|(retired, why)| (*retired == key).then_some(*why))
+}
+
+/// The lines to print for the keys `found` in the file at `path`, in the order
+/// they should appear. Empty when there is nothing to say.
+///
+/// A pure function over owned data rather than a `for` loop around `eprintln!`
+/// at the call site, so the split — a typo wants re-spelling, a retired key is
+/// spelled right — is a thing a test can read. The caller's only job is to
+/// print what comes back.
+pub(super) fn notices(path: &str, found: Vec<String>) -> Vec<String> {
+    let (retired, unknown): (Vec<_>, Vec<_>) =
+        found.into_iter().partition(|key| retirement(key).is_some());
+
+    let mut lines = Vec::new();
+    if !unknown.is_empty() {
+        lines.push(format!(
+            "  ! {path}: unrecognized key{} ignored ({}) — check the spelling; \
+             stella reads none of them",
+            if unknown.len() == 1 { "" } else { "s" },
+            unknown
+                .iter()
+                .map(|key| key.escape_debug().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
+    // One line each rather than a joined list: the whole value of this notice
+    // is the reason, and reasons do not join.
+    lines.extend(retired.iter().map(|key| {
+        format!(
+            "  ! {path}: `{}` is retired and reads nothing — it {}. Delete the key.",
+            key.escape_debug(),
+            retirement(key).unwrap_or_default(),
+        )
+    }));
+    lines
+}
 
 /// `hooks` — the PascalCase lifecycle-event keys `stella_core::hooks::Hooks`
 /// renames its fields to. A misspelled event name is the highest-consequence

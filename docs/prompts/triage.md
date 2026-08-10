@@ -174,5 +174,5 @@ than an assumption.
 - [research.md](research.md) — consumes the `RESEARCH:` line
 - [plan.md](plan.md) — consumes `CLASS`
 - [witness-author.md](witness-author.md) — consumes `WITNESS`
-- [verdict.md](verdict.md) — consumes `VERIFIER`
+- [verdict.md](verdict.md) — `VERIFIER` no longer buys a call; it gates a waiver the warrant must agree with
 - [worker.md](worker.md) — `CLASS: chat` routes to the conversational reply

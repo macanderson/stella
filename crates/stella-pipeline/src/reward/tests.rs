@@ -334,7 +334,7 @@ fn every_label_carries_the_policy_it_was_computed_under() {
     );
     assert_eq!(scored.policy, policy);
     // A discard carries it too — a reader pooling records has to tell a
-    // distrusted verifier from a workspace that simply never reached one.
+    // discard from a scored row computed on a different scale.
     for settlement in [
         settled(LadderRung::Unverifiable, true),
         Settlement::Absent,
@@ -412,9 +412,9 @@ fn a_label_has_no_free_text_leaves() {
         LadderRung::Waived,
     ] {
         for passed in [true, false] {
-            // Every policy the stamp can carry, including the two that produce
-            // the new discard reasons: the stamp must add numbers and nothing
-            // else, whatever it holds.
+            // Every policy the stamp can carry, including the invalid one
+            // that produces `PolicyInvalid`: the stamp must add numbers and
+            // nothing else, whatever it holds.
             for policy in [
                 RewardPolicy::default(),
                 scaled(0.2),

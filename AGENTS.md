@@ -355,9 +355,22 @@ ordering; the revise back-edges land on execute, so re-execution never
 re-authors). The witness
 is **scaffolding for that one run**: it lives in the candidate workspace and is
 discarded with it, so an already-satisfied test is never left behind in the
-project's test tree. `stella run --keep-witness` promotes it instead. See
-`website/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
-loop, and the `/pipeline` deck toggle.
+project's test tree. `stella run --keep-witness` promotes it instead.
+
+**Verification itself buys no model call.** The witness *author* above is the
+one verifier-tier call the pipeline still spends, and it survives because it
+creates the oracle rather than substituting for one — its test either goes
+fail→pass or does not, and that is decided by running it. Everything downstream
+is deterministic: `ladder_decision`
+(`crates/stella-pipeline/src/verify.rs`) is terminal at all five of its outcomes
+(`SubmitFast`, `Revise`, `NothingAttempted`, `Unverifiable`, `Unverified`), and
+the verify stage emits the `Verdict` event from that answer directly — the
+pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
+an ordering, not a stage the run passes through. The model verdict and the
+distress-guidance call are gone (#2584), structurally rather than by default —
+`Roster::apply` rejects both keys as `NotAssignable`, so no configuration
+restores them. See `website/content/docs/inference-pipeline.mdx` for the full
+stage flow and the `/pipeline` deck toggle.
 
 **A witness that no longer exists cannot fail.** Three times a PR has landed
 that silently deleted a test another PR added to the same file hours earlier —
@@ -596,7 +609,7 @@ this before assuming two of them mean the same thing:
 | **session** | `SessionRecord::id` | `crates/stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/verifier/plan/guidance roles take 1, 2, … |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/research/plan/witness-author roles take 1, 2, … |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 

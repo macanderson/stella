@@ -706,13 +706,27 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     }
 }
 
-/// The report is monospace with compact corners, like the transcript reference.
+/// The report is monospace and square.
 ///
-/// Sans-serif body text and 8px cards made the archived evidence harder to
-/// scan. The transcript restyle deliberately uses 3px surfaces and 2px event
-/// rows rather than the square instrument chrome used by live dashboards.
+/// Sans-serif body text and 8px corners were this file's most visible
+/// divergence from the Observatory and arenabench — and it is the surface
+/// users mail around, so it was the copy of the product most readers ever saw.
+///
+/// **The corner is a settled question, and this test is where it stays
+/// settled.** #2597 made every web surface stella renders square, arguing that
+/// a rounded corner says "surface" where a hairline says "boundary" and this
+/// page is all boundaries. #2606 then landed the transcript carrying the
+/// reference's 3px/2px corners, and the two repairs of the resulting collision
+/// (#2610, #2614) resolved it in opposite directions — one rewriting this test
+/// to demand 3px, the other restoring the square CSS — which is how `main`
+/// came to hold one design's stylesheet and the other's assertions.
+///
+/// It resolves to #2597 because that PR owns the decision repo-wide and argued
+/// it; the transcript's contribution was its ROW GRAMMAR, not its palette or
+/// its geometry. Anyone re-opening it should change `--radius` in the token
+/// block, where one line moves every corner, and not here.
 #[test]
-fn the_dashboard_is_monospace_with_compact_corners() {
+fn the_dashboard_is_monospace_and_square() {
     let html = render_dashboard(
         &[],
         &[],
@@ -722,26 +736,51 @@ fn the_dashboard_is_monospace_with_compact_corners() {
         &transcript::render(&Default::default(), &Default::default()),
     );
 
+    // The face comes from the `--mono` token, not a hardcoded shorthand. This
+    // assertion asked for `font: 13px/1.55 ui-monospace` — the pre-design-system
+    // shorthand — while `export.rs` shipped `font-family: var(--mono)`, so the
+    // test and the file it tests asserted opposite things and `main` was red.
+    // The token is the correct half: the brand's face is JetBrains Mono, and a
+    // shorthand that starts at `ui-monospace` never names it.
     assert!(
-        html.contains("font: 13px/1.55 ui-monospace"),
-        "the dashboard body does not use the transcript's mono stack"
+        html.contains(r#"--mono: "JetBrains Mono""#),
+        "the dashboard does not declare the brand's mono stack"
+    );
+    assert!(
+        html.contains("font-family: var(--mono);"),
+        "the dashboard body does not use the mono token"
     );
     assert!(
         !html.contains("-apple-system"),
         "the dashboard still falls back to the system sans stack"
     );
+    // Square, not "compact". This asked for `border-radius: 3px` and `2px` —
+    // the pre-design-system corners — against a file that pins `--radius: 0`,
+    // which is the second half of why `main` was red. Square is the correct
+    // half twice over: the Instrument system allows 0 only for a surface like
+    // this, and a rounded corner says "surface" where a hairline says
+    // "boundary", on a page that is entirely boundaries.
     assert!(
-        html.contains("border-radius: 3px"),
-        "the dashboard does not use compact surface corners"
+        html.contains("--radius: 0;"),
+        "the dashboard does not declare square corners"
     );
-    assert!(
-        html.contains("border-radius: 2px"),
-        "the dashboard does not use compact event-row corners"
-    );
-    for rounded in ["border-radius: 8px", "border-radius: 6px"] {
+    for rounded in [
+        "border-radius: 8px",
+        "border-radius: 6px",
+        "border-radius: 3px",
+        "border-radius: 2px",
+        "border-radius: 0 6px 6px 0",
+    ] {
         assert!(
             !html.contains(rounded),
-            "`{rounded}` still ships: the archive has regressed to app-sized corners"
+            "`{rounded}` still ships: a rounded corner says \"surface\" \
+             where a hairline says \"boundary\", and this page is boundaries"
+        );
+    }
+    for rounded in ["border-radius: 8px", "border-radius: 6px"] {
+        assert!(
+            !html.contains(literal),
+            "`{literal}` bypasses `--radius`: set the token, not the rule"
         );
     }
 }
@@ -766,9 +805,13 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
         !html.contains("Stella"),
         "the dashboard capitalises the wordmark; it is lowercase always"
     );
+    // The wordmark is its own element, because it is the one place on this page
+    // where `--identity` gold is permitted — the rule is identity only, never a
+    // state. A bare `<h1>stella session —` cannot carry that, and asserting it
+    // is what put this test on the opposite side of `export.rs` from #2597.
     assert!(
-        html.contains("<h1>stella session —"),
-        "the masthead does not carry the lowercase wordmark"
+        html.contains(r#"<span class="wordmark">stella</span>"#),
+        "the masthead does not carry the lowercase wordmark as its own element"
     );
 }
 

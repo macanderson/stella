@@ -3,19 +3,19 @@
 //! label it at all.
 //!
 //! The verify stage already computes a tiered, evidence-based verdict for
-//! every outcome: deterministic first, a model verifier only on genuinely
-//! inconclusive evidence, an abstention when nothing could see. That verdict
-//! *is* the reward signal this project has been generating all along. This
-//! module is the (pure, I/O-free) mapping from it to a label, and the rules it
-//! encodes are all about **what not to claim**.
+//! every outcome: deterministic evidence when an instrument could observe the
+//! turn, an abstention when nothing could see. That verdict *is* the reward
+//! signal this project has been generating all along. This module is the
+//! (pure, I/O-free) mapping from it to a label, and the rules it encodes are
+//! all about **what not to claim**.
 //!
-//! # Two tiers of confidence, and one refusal
+//! # One tier of confidence, and every other rung refused
 //!
 //! | Rung | Label | Why |
 //! |---|---|---|
 //! | [`LadderRung::SubmitFast`] | **+1.0** | A fail→pass flip of the tracked command. A hard label: a test observed it. |
 //! | [`LadderRung::Revise`] | **−1.0** | Touched tests red. Equally hard, in the other direction. |
-//! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no longer a model opinion to discount — see below. |
+//! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no model opinion to fall back on — see below. |
 //! | everything else | **discarded** | See below. |
 //!
 //! # One tier, because there is one kind of evidence left
@@ -289,7 +289,7 @@ pub enum DiscardReason {
     CostNotFinite,
     /// The workspace set its judged weight to `0.0`: this verifier is not trusted
     /// to label anything. Distinct from a `0.0` reward, which would assert that
-    /// a neutral outcome was observed — see the module docs.
+    /// a neutral outcome was observed.
     ///
     /// **Retired**, and in the strongest possible sense: the workspace's
     /// distrust of the model verifier is now the architecture rather than a

@@ -99,9 +99,46 @@
      the platform mono stack otherwise — the same stack tokens.css ships. */
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   --fs-micro:11px; --fs-sm:12px; --fs-base:13px; --fs-md:15px; --fs-xl:28px;
+  /* The Instrument scale's upper reaches. The five sizes above cover chrome;
+     these three cover the things a report says once — a section heading, a
+     headline measurement, a page title. Named for their job rather than their
+     step, because "the 22px one" is not a decision anybody can review. */
+  --fs-lg:22px;                    /* section heading                        */
+  --fs-metric:40px;                /* a headline measurement, tabular        */
+  --fs-display:64px;               /* page title; one per document           */
+  /* Three weights, and what each is for. 300 is prose only: at 11–13px on a
+     dark ground a light weight loses too much of the stem to stay legible,
+     which is why labels and data take 500/600 instead. */
+  --fw-prose:300; --fw-ui:500; --fw-metric:600;
+  /* Tracking. Uppercase micro-labels need the width back that capitals eat;
+     display sizes need it taken away. Both are the Instrument system's. */
+  --tr-label:.16em; --tr-display:-.03em; --tr-heading:-.01em;
+  /* Prose measure. Longer than this and the eye loses the line return; the
+     Instrument rule is 68ch and never justified. */
+  --measure:68ch; --lh-prose:1.7;
 
-  /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. */
-  --sp1:8px; --sp2:16px; --sp3:24px; --sp4:32px;
+  /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. The scale
+     below is the Instrument system's nine steps, named by value so a rule
+     that spells `var(--sp-12)` is self-documenting and cannot be confused
+     with the ordinal names. --sp1..--sp4 are kept as aliases: the existing
+     rules spell them, and renaming a token that JS also names in a string
+     literal is how the export dashboard shipped a colourless chart — rustc
+     never reads inside `'<p style="color:var(--text-3)">'`, so that rename
+     compiled, passed clippy, passed every test asserting the :root block, and
+     painted three elements with nothing. See
+     crates/stella-cli/src/export/tests.rs, which now enumerates every
+     `var(--…)` in the rendered page instead of listing expected names. */
+  --sp-4:4px;   --sp-8:8px;   --sp-12:12px; --sp-16:16px; --sp-24:24px;
+  --sp-32:32px; --sp-48:48px; --sp-64:64px; --sp-96:96px;
+  --sp1:var(--sp-8); --sp2:var(--sp-16); --sp3:var(--sp-24); --sp4:var(--sp-32);
+
+  /* Motion reports progress or it does not exist. Two durations, and no third:
+     a state change (hover, focus, selection) is 120ms linear because the eye
+     should not be able to watch it happen, and a reveal is 240ms on the
+     Instrument easing, moving opacity and at most 4px. Anything that loops,
+     overshoots or parallaxes is decoration on a page of measurements. */
+  --dur-state:120ms; --dur-reveal:240ms;
+  --ease-reveal:cubic-bezier(.2,0,0,1);
   /* Square, everywhere. Kept as tokens rather than deleted so the ~40 rules
      that spell `border-radius:var(--radius)` stay honest about where a corner
      is being set — and so the decision lives in one line instead of forty. A
@@ -194,6 +231,14 @@ body{
      changes the apparent value of every mark drawn over it — which on a page
      of measurements is a readability cost paid for nothing. */
   min-height:100vh; -webkit-font-smoothing:antialiased;
+  /* The Observatory is a live panel: rows re-render as executions land. A
+     digit that changes width between polls makes the whole column appear to
+     move, which reads as the layout being unstable rather than the number
+     being new. JetBrains Mono is already fixed-pitch, so this costs nothing
+     while the face is present and is the guarantee when the stack degrades to
+     the platform fallback — which it does, because the page is served
+     self-contained and may not fetch a font. */
+  font-variant-numeric:tabular-nums;
 }
 ::selection{background:var(--accent-wash)}
 .wrap{max-width:1360px;margin:0 auto;padding:0 var(--sp3) 80px}
