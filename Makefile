@@ -32,7 +32,8 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
-                    role-names stat-portability module-reachability typed-errors
+                    role-names stat-portability module-reachability typed-errors \
+                    diagnostic-codes
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -232,6 +233,14 @@ typed-errors: ## Assert no library crate's public API returns Result<_, String> 
 .PHONY: typed-errors-update
 typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing signatures)
 	@python3 ./scripts/check-typed-errors.py --update
+
+.PHONY: diagnostic-codes
+diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitted diagnostic code (#2507)
+	@./scripts/check-diagnostic-codes.sh
+
+.PHONY: diag-reference
+diag-reference: ## Regenerate the diagnostic-code reference from the tree, preserving prose (#2507)
+	@python3 ./scripts/diagnostic-codes.py write
 
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
