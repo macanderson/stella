@@ -473,6 +473,13 @@ pub struct LadderInputs {
     /// [`Self::flip_achieved`] because the pipeline's oracle tracks only its
     /// own command; before this field, a confirmed `verify_done` flip and a
     /// failing "no flip" fallback verdict coexisted in one trace.
+    ///
+    /// A completion receipt, not telemetry: [`ladder_decision`] credits it
+    /// through [`Self::has_flip_receipt`], and it can carry `SubmitFast` on
+    /// its own (#2618). It cannot be forged — the harvest is call-id
+    /// correlated to a dispatched `verify_done` call *and* requires the result
+    /// to start with `WITNESS CONFIRMED`, so neither an MCP tool shadowing the
+    /// name nor a shell `echo` reaches this field.
     pub verify_done_flip: bool,
     /// Positive claim that this round had NO tracked test command at all —
     /// neither a configured `--test-command` nor an authored witness — so
@@ -499,9 +506,33 @@ pub struct LadderInputs {
 }
 
 impl LadderInputs {
+    /// Whether any deterministic red→green receipt exists for this turn.
+    ///
+    /// Two channels can produce one, and they are deliberately not merged into
+    /// a single field because they are not interchangeable.
+    /// [`Self::flip_achieved`] is the pipeline's own tracked command measured
+    /// against the pre-execution snapshot; [`Self::verify_done_flip`] is the
+    /// `verify_done` tool's shadow run against the baseline *it* pinned
+    /// (`WITNESS_BASELINE_WORKTREE_REF`, else the first-parent walk past the
+    /// pipeline's seal commits). Both are deterministic observations of a test
+    /// failing before the change and passing after it, and neither is a
+    /// model's opinion — so both belong on this ladder. A caller that must
+    /// report *which* one carried a turn reads the two fields directly, as
+    /// [`unverified_evidence`] does.
+    ///
+    /// #2618: the ladder read only the first for as long as this field
+    /// existed, so the strongest proof this toolchain can produce — the
+    /// worker's own witness, confirmed against a pinned baseline — could not
+    /// reach a passing rung, and every turn on a task with no configured test
+    /// command was told "no test command was tracked, so no fail→pass flip
+    /// could be observed" while one sat in the trace.
+    pub fn has_flip_receipt(&self) -> bool {
+        self.flip_achieved || self.verify_done_flip
+    }
+
     /// Whether every channel the ladder has was unable to observe anything:
-    /// no flip, no test result, a diff probe that could not read the tree, and
-    /// no recorded file touch.
+    /// no flip receipt, no test result, a diff probe that could not read the
+    /// tree, and no recorded file touch.
     ///
     /// This is *not* "the turn changed nothing" — it is "nothing here can tell
     /// you either way", and the distinction is the whole value of the ladder.
@@ -513,8 +544,14 @@ impl LadderInputs {
     ///
     /// Note the asymmetry: a *red* test or a non-zero touch count is real
     /// evidence, so neither can be blind. Only the total absence qualifies.
+    ///
+    /// Reads [`Self::has_flip_receipt`] rather than [`Self::flip_achieved`]
+    /// for the reason the abstention sits above the credit: a turn whose only
+    /// observation was a `verify_done` receipt satisfies all four dark
+    /// channels on the narrower predicate, so this rung would swallow it
+    /// before step 4 could ever look (#2618).
     pub fn evidence_is_blind(&self) -> bool {
-        !self.flip_achieved
+        !self.has_flip_receipt()
             && self.touched_tests_passed.is_none()
             && !self.diff_available
             && self.file_change_events == 0
@@ -621,8 +658,10 @@ impl LadderInputs {
 ///    Either every channel was blind, or every channel could look and none of
 ///    them saw the work this run demonstrably dispatched. Nothing may be
 ///    claimed about it — in particular not a failure.
-/// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
-///    pass.
+/// 4. **A corroborated flip receipt, within budget → `SubmitFast`.** The full
+///    deterministic pass. Either the pipeline's own flip with the touched
+///    tests green beside it, or a `verify_done` confirmation, which carries
+///    its own corroboration (#2618).
 /// 5. **Otherwise → `Unverified`.** Genuinely inconclusive: no flip, or the
 ///    diff is over budget, or tests couldn't be run — but something could still
 ///    see. Terminal, and never an escalation: see [`LadderDecision::Unverified`]
@@ -660,12 +699,31 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     // 4. Full deterministic pass — submit fast, verifier skipped. The
     //    diagnostics conjuncts are the regression veto (#861): a flipped
     //    witness plus a fresh type error in an untested module is exactly
-    //    the inconclusive case the verifier exists for, so new errors (and,
-    //    opted-in, new warnings) drop this rung through to escalation. Lint
-    //    stays excluded from the oracle — it can veto a submit, never
-    //    verify one.
-    if inputs.flip_achieved
-        && inputs.touched_tests_passed == Some(true)
+    //    the inconclusive case a second opinion existed for, so new errors
+    //    (and, opted-in, new warnings) drop this rung through to
+    //    `Unverified`. Lint stays excluded from the oracle — it can veto a
+    //    submit, never verify one.
+    //
+    //    Two receipts can carry this rung (#2618), and they demand different
+    //    corroboration because they observe different things. The pipeline's
+    //    own flip needs the touched-test run beside it: that oracle proves
+    //    only that *its* command went red→green, and says nothing about the
+    //    rest of the suite. A `verify_done` confirmation already contains
+    //    both halves — the tool ran the witness on the baseline it pinned and
+    //    again on the change, so the red→green observation and the
+    //    green-on-the-change observation are one run. Demanding a second,
+    //    pipeline-side green on top would withhold the credit on precisely
+    //    the tasks the field was added for: the ones with no configured test
+    //    command at all (#2129), where `touched_tests_passed` is structurally
+    //    `None` and no amount of correct work can make it `Some(true)`.
+    //
+    //    A red touched test still outranks both. It returned `Revise` at step
+    //    1, above every receipt here, so neither channel can talk over a test
+    //    that is failing now.
+    let receipt_is_corroborated = (inputs.flip_achieved
+        && inputs.touched_tests_passed == Some(true))
+        || inputs.verify_done_flip;
+    if receipt_is_corroborated
         && inputs.diff_lines <= inputs.diff_budget
         && inputs.new_diag_errors == 0
         && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
@@ -817,7 +875,24 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
 /// wants a test, an over-budget diff wants a smaller change, and an unrun test
 /// command wants a working toolchain.
 pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> VerdictEvidence {
-    let shortfall = if !inputs.flip_achieved {
+    // Which channel carried the receipt, in the words of the channel that
+    // made the observation (#2618). The two flips pin different baselines —
+    // the pipeline's pre-execution snapshot versus `verify_done`'s own
+    // `WITNESS_BASELINE_WORKTREE_REF` — so a reader deciding what to re-run
+    // has to be told which one stood behind the turn, and "a flip was
+    // observed" alone does not say.
+    let receipt = if inputs.flip_achieved {
+        "a flip was observed"
+    } else {
+        "a `verify_done` witness confirmation was observed"
+    };
+    let shortfall = if !inputs.has_flip_receipt() {
+        // Reads the receipt predicate, not `flip_achieved`. Saying "no
+        // fail→pass flip could be observed" on a turn holding a confirmed
+        // `verify_done` receipt told the operator the exact opposite of what
+        // the trace recorded, and it was the commonest phrasing to hit,
+        // because a task with no configured test command takes the `None`
+        // arm — which is the same task `verify_done` exists to prove.
         match tracked_cmd {
             Some(cmd) => format!(
                 "no fail→pass flip was observed for `{cmd}` — the only thing that can prove this \
@@ -830,11 +905,14 @@ pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> 
         }
     } else if inputs.diff_lines > inputs.diff_budget {
         format!(
-            "a flip was observed, but the change is {} lines against a {}-line budget, so the \
-             flip does not account for all of it",
+            "{receipt}, but the change is {} lines against a {}-line budget, so the flip does not \
+             account for all of it",
             inputs.diff_lines, inputs.diff_budget
         )
     } else if inputs.touched_tests_passed.is_none() {
+        // Only reachable for a pipeline flip: a `verify_done` receipt carries
+        // its own green run, so step 4 credits it without consulting this
+        // field and a turn holding one never lands here.
         "a flip was observed, but the touched tests could not be run, so nothing confirmed the \
          change left the rest of the suite green"
             .to_string()
@@ -849,15 +927,9 @@ pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> 
         // whichever one objected. Each states itself, in the guard's own
         // words, so a withheld credit is legible without opening a snapshot.
         // Coverage first, matching the order the audits actually run in.
-        format!(
-            "a flip was observed, but {}",
-            inputs.diff_coverage.explain()
-        )
+        format!("{receipt}, but {}", inputs.diff_coverage.explain())
     } else if !inputs.witness_mutation.credits_a_deterministic_pass() {
-        format!(
-            "a flip was observed, but {}",
-            inputs.witness_mutation.explain()
-        )
+        format!("{receipt}, but {}", inputs.witness_mutation.explain())
     } else {
         "the deterministic checks did not combine into a pass".to_string()
     };
