@@ -1,10 +1,13 @@
 ---
 id: prompt-witness-repair
 title: "witness_repair — the effective prompt"
-status: living
+status: archived
 ---
 
 # `witness_repair`
+
+Historical prompt reference only. The live pipeline never dispatches this role;
+failed deterministic tests go directly to the worker as execution receipts.
 
 Fixing a witness that did not fail on the current code. A test that passes
 before the work is done witnesses nothing — only a fail→pass flip counts as
@@ -17,7 +20,7 @@ corrected test, and discards the witness if that turn also fails.
 | Dispatch | engine turn, **continuing the author's existing thread** |
 | Tools | the same witness set: `read_file`, `glob`, `create_witness_test` |
 | Built by | `witness_repair_prompt`, `crates/stella-pipeline/src/witness.rs` |
-| Sent from | `crates/stella-pipeline/src/pipeline/witness_stage.rs` |
+| Sent from | No live call site (retired) |
 | Output cap | engine base, then `bound_witness_output_tokens` (#2141) |
 | Override | `agents.verifier` — every knob **except** `prompt`, same as the author |
 | Wall clock | a static ceiling (#2141) — one observed repair ran a single reasoning-heavy call for 965 seconds |

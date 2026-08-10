@@ -13,7 +13,7 @@ stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [glo
 
 ## What it does
 
-By default `stella run` sends the prompt through the **staged pipeline** — triage, plan, execute, verify, verifier — and exits when the task is done. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
+By default `stella run` sends the prompt through the **staged pipeline** — triage, plan, execute, deterministic verify — and exits when the task is done. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
 
 Pass `--no-pipeline` to fall back to the raw step loop instead: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions.
 
@@ -31,20 +31,20 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
-    Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify,
-    verifier).
+    Use the raw step loop instead of the staged pipeline (triage, plan, execute,
+    deterministic verify).
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
     The test command the pipeline's verify stage runs deterministically — e.g.
     `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
-    failing test to passing can submit without a model-verifier call. Omitted, verification
-    always escalates to the verifier.
+    failing test to passing can submit. A failing execution is returned to the
+    worker verbatim as command, exit code, stdout, and stderr. Without this
+    oracle, the worker must earn authority with `verify_done`; otherwise the
+    run ends unverified.
   </OptionCard>
   <OptionCard name="--keep-witness">
-    Keep the authored witness test as a file in your working tree. By default the witness
-    is scaffolding — it proves this run's goal inside the candidate workspace and is
-    discarded with it, so an already-satisfied test is never left behind in your test
-    tree. Pass this to promote it to a real test you can commit.
+    Deprecated compatibility no-op. The staged pipeline no longer authors
+    witness tests, so there is nothing for this flag to retain.
   </OptionCard>
 </CardGrid>
 
@@ -93,19 +93,17 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
 ```
 
-Hand the verify stage a deterministic oracle, so a fixed test can submit without a
-model-verifier call:
+Hand the verify stage a deterministic oracle, so a fixed test can submit:
 
 ```bash
 stella run --test-command "cargo test -p stella-store" \
   "Fix the failing WAL checkpoint test"
 ```
 
-Keep the witness the pipeline authored, so you can review and commit it alongside the fix:
+The old witness-retention flag is accepted as a no-op for script compatibility:
 
 ```bash
-stella run --keep-witness \
-  "Add retry-with-backoff to the HTTP client and prove it with a test"
+stella run --keep-witness "Add retry-with-backoff to the HTTP client"
 ```
 
 Skip the pipeline entirely for a small mechanical edit:

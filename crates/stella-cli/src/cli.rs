@@ -484,25 +484,21 @@ pub(crate) enum Command {
         prompt: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline (triage, plan,
-        /// execute, verify, verifier). The pipeline is the default; this flag
+        /// execute, deterministic verification). The pipeline is the default; this flag
         /// falls back to the direct Engine::run_turn path.
         #[arg(long)]
         no_pipeline: bool,
 
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
-        /// a change that flips a failing test to passing can submit without
-        /// a model-verifier call. Omitted, verification always escalates to the
-        /// verifier.
+        /// a change is verified only when the same normalized command fails on
+        /// the baseline and passes on the candidate. Without this or a built-in
+        /// `verify_done` receipt, the pipeline reports the result unverified.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
-        /// Keep the authored witness test as a file in your working tree.
-        /// By default the witness is scaffolding: it proves this run's goal
-        /// inside the candidate workspace and is discarded with it, so an
-        /// already-satisfied test is never left behind in your test tree.
-        /// Pass this to promote it to a real test you can commit.
-        #[arg(long)]
+        /// Deprecated compatibility option; model-authored witnesses are retired.
+        #[arg(long, hide = true)]
         keep_witness: bool,
 
         /// Output shape: text, json, or stream-json

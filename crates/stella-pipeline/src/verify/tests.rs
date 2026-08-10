@@ -151,7 +151,7 @@ fn unstable_ignores_other_commands_like_every_locked_state() {
 }
 
 /// The binding #859 property at the ladder level: an unconfirmed flip
-/// must escalate, never fast-submit.
+/// must abstain, never fast-submit.
 #[test]
 fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     let mut oracle = FlipOracle::new();
@@ -170,8 +170,8 @@ fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     };
     assert_eq!(
         ladder_decision(&inputs),
-        LadderDecision::ModelVerdict,
-        "an unconfirmed flip must escalate to the verifier, not SubmitFast"
+        LadderDecision::Unverifiable,
+        "an unconfirmed flip must remain unverified, not SubmitFast"
     );
 }
 
@@ -264,8 +264,8 @@ fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
 
 /// The single signal that rescues the blind case, and the one the bug
 /// suppressed: the recorder saw the tree change even though nothing could
-/// render *how*. That is real evidence, so the ladder must escalate rather
-/// than abstain — and the verifier is told a positive fact instead of a zero.
+/// render *how*. That proves work happened, but it does not prove correctness,
+/// so without an oracle the ladder still abstains.
 #[test]
 fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
     let inputs = LadderInputs {
@@ -282,7 +282,7 @@ fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
         !inputs.evidence_is_blind(),
         "six observed mutations are not an absence of evidence"
     );
-    assert_eq!(ladder_decision(&inputs), LadderDecision::ModelVerdict);
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
 }
 
 /// A red test is a real observation, so a turn carrying one is never blind
@@ -334,14 +334,14 @@ fn a_readable_empty_diff_is_not_blindness() {
         "a probe that read the tree is not a probe that could not"
     );
     assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
-    // The property the rung above still owns: a readable diff with content in
-    // it is genuinely inconclusive, and that is what a verifier is for.
+    // A readable diff with content proves only that work happened. It cannot
+    // substitute for a deterministic oracle.
     assert_eq!(
         ladder_decision(&LadderInputs {
             diff_lines: 12,
             ..inputs
         }),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverifiable,
     );
 }
 
@@ -357,7 +357,7 @@ fn a_readable_empty_diff_is_not_blindness() {
 /// answered `passed: true`. Ordering is the entire fix, which is why this
 /// test pins both facts at once.
 #[test]
-fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
+fn a_turn_that_called_no_tool_is_unverified_without_an_oracle() {
     let inputs = LadderInputs {
         flip_achieved: false,
         touched_tests_passed: None,
@@ -376,8 +376,8 @@ fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
     );
     assert_eq!(
         ladder_decision(&inputs),
-        LadderDecision::NothingAttempted,
-        "a turn that dispatched nothing must never reach the abstain rung and be passed"
+        LadderDecision::Unverifiable,
+        "without an oracle result the ladder must abstain rather than invent another verdict"
     );
 }
 
@@ -485,10 +485,13 @@ fn one_positive_observation_defeats_the_no_op_rung() {
             !inputs.nothing_was_attempted(),
             "{label} is a positive observation; the turn is not a no-op"
         );
-        assert_ne!(
+        assert_eq!(
             ladder_decision(&inputs),
-            LadderDecision::NothingAttempted,
-            "{label} must route somewhere that reasons about it"
+            if label == "a flip" {
+                LadderDecision::SubmitFast
+            } else {
+                LadderDecision::Unverifiable
+            },
         );
     }
 }
@@ -564,11 +567,10 @@ fn both_verifier_prompts_mark_the_diff_as_worker_authored_data() {
 
 // ── Regression veto (#861) ───────────────────────────────────────────
 
-/// The veto's binding case: everything else says SubmitFast, but the
-/// candidate introduced a fresh diagnostic ERROR — exactly the
-/// inconclusive case the verifier exists for.
+/// Diagnostics are observations, not a second completion authority. Once the
+/// configured oracle has flipped, a linter cannot route the result to a model.
 #[test]
-fn a_new_diagnostic_error_vetoes_the_fast_submit() {
+fn a_new_diagnostic_error_does_not_override_a_confirmed_flip() {
     let clean = LadderInputs {
         flip_achieved: true,
         touched_tests_passed: Some(true),
@@ -585,15 +587,14 @@ fn a_new_diagnostic_error_vetoes_the_fast_submit() {
     };
     assert_eq!(
         ladder_decision(&regressed),
-        LadderDecision::ModelVerdict,
-        "a flipped witness plus a fresh error must escalate, not ship"
+        LadderDecision::SubmitFast,
+        "only the deterministic oracle decides verification"
     );
 }
 
-/// Warnings only veto when opted in — errors always do, but taxing every
-/// submit on a chatty linter is a policy, not a default.
+/// The legacy strict-warning switch cannot reintroduce model verification.
 #[test]
-fn new_warnings_veto_only_when_opted_in() {
+fn new_warnings_never_override_a_confirmed_flip() {
     let base = LadderInputs {
         flip_achieved: true,
         touched_tests_passed: Some(true),
@@ -615,8 +616,8 @@ fn new_warnings_veto_only_when_opted_in() {
     };
     assert_eq!(
         ladder_decision(&strict),
-        LadderDecision::ModelVerdict,
-        "opted-in, a new warning is a veto"
+        LadderDecision::SubmitFast,
+        "warnings are not a completion oracle"
     );
 }
 
@@ -635,11 +636,11 @@ fn the_veto_touches_no_other_rung() {
         new_diag_errors: 7,
         ..Default::default()
     };
-    assert_eq!(ladder_decision(&noop), LadderDecision::NothingAttempted);
+    assert_eq!(ladder_decision(&noop), LadderDecision::Unverifiable);
 }
 
 #[test]
-fn flip_and_green_but_over_diff_budget_escalates_to_verifier() {
+fn flip_and_green_ignore_the_legacy_diff_budget() {
     let decision = ladder_decision(&LadderInputs {
         flip_achieved: true,
         touched_tests_passed: Some(true),
@@ -652,13 +653,13 @@ fn flip_and_green_but_over_diff_budget_escalates_to_verifier() {
     });
     assert_eq!(
         decision,
-        LadderDecision::ModelVerdict,
-        "a large diff deserves a second opinion even with green tests"
+        LadderDecision::SubmitFast,
+        "a diff budget cannot turn deterministic proof into model work"
     );
 }
 
 #[test]
-fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
+fn a_green_candidate_without_a_failing_baseline_is_unverifiable() {
     // Tests green but never flipped (they always passed) → inconclusive.
     let decision = ladder_decision(&LadderInputs {
         flip_achieved: false,
@@ -670,11 +671,11 @@ fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
         mutating_actions: 1,
         ..Default::default()
     });
-    assert_eq!(decision, LadderDecision::ModelVerdict);
+    assert_eq!(decision, LadderDecision::Unverifiable);
 }
 
 #[test]
-fn tests_indeterminate_escalates_to_verifier() {
+fn tests_indeterminate_are_unverifiable() {
     let decision = ladder_decision(&LadderInputs {
         flip_achieved: false,
         touched_tests_passed: None,
@@ -685,7 +686,32 @@ fn tests_indeterminate_escalates_to_verifier() {
         mutating_actions: 1,
         ..Default::default()
     });
-    assert_eq!(decision, LadderDecision::ModelVerdict);
+    assert_eq!(decision, LadderDecision::Unverifiable);
+}
+
+#[test]
+fn observable_work_without_an_oracle_reports_missing_proof_not_a_blind_probe() {
+    let inputs = LadderInputs {
+        diff_lines: 5,
+        diff_available: true,
+        file_change_events: 1,
+        mutating_actions: 1,
+        no_test_surface: true,
+        ..Default::default()
+    };
+    let evidence = unverifiable_evidence(&inputs);
+    assert!(evidence.summary.contains("no deterministic oracle result"));
+    assert!(!evidence.summary.contains("could not read the working tree"));
+}
+
+#[test]
+fn verify_done_is_a_deterministic_pass() {
+    let decision = ladder_decision(&LadderInputs {
+        verify_done_flip: true,
+        mutating_actions: 1,
+        ..Default::default()
+    });
+    assert_eq!(decision, LadderDecision::SubmitFast);
 }
 
 // verifier fallback (the response-parsing half lives in `parse`)
@@ -852,8 +878,13 @@ fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
 #[test]
 fn evidence_builders_tag_determinism_correctly() {
     assert!(
-        deterministic_pass_evidence(Some("cargo test"), 10, coverage::DiffCoverage::Covered)
-            .deterministic
+        deterministic_pass_evidence(
+            Some("cargo test"),
+            false,
+            10,
+            coverage::DiffCoverage::Covered,
+        )
+        .deterministic
     );
     assert!(deterministic_fail_evidence("boom").deterministic);
     let model = model_verdict_evidence(&Verdict {
@@ -890,37 +921,16 @@ fn a_heuristic_verdict_names_a_different_rung_than_a_parsed_one() {
     assert_eq!(fallback.rung(), LadderRung::HeuristicFallback);
 }
 
-/// Every ladder decision has a wire name, and the mapping is one-to-one.
+/// Every live ladder decision has a wire name, and the mapping is one-to-one.
 #[test]
 fn every_decision_maps_to_its_rung() {
     for (decision, rung) in [
         (LadderDecision::SubmitFast, LadderRung::SubmitFast),
         (LadderDecision::Revise, LadderRung::Revise),
-        (
-            LadderDecision::NothingAttempted,
-            LadderRung::NothingAttempted,
-        ),
         (LadderDecision::Unverifiable, LadderRung::Unverifiable),
-        (LadderDecision::ModelVerdict, LadderRung::ModelVerdict),
     ] {
         assert_eq!(LadderRung::from(decision), rung);
     }
-}
-
-#[test]
-fn verifier_prompt_carries_goal_diff_and_evidence_but_asks_for_pass_fail() {
-    let p = verifier_prompt(
-        "fix the bug",
-        "@@ -1 +1 @@\n-x\n+y",
-        "no flip; tests green",
-        &diff_render::DiffContext::default(),
-    )
-    .rendered();
-    assert!(p.contains("fix the bug"));
-    assert!(p.contains("+y"));
-    assert!(p.contains("no flip; tests green"));
-    assert!(p.contains("PASS"));
-    assert!(p.contains("FAIL"));
 }
 
 // ── Worker-authored diff as data, not instructions (witness-protocol D5) ──
@@ -1178,21 +1188,20 @@ proptest! {
         }
     }
 
-    /// The binding invariant of the no-op rung: **no ladder input that
-    /// dispatched nothing and observed nothing can resolve to a rung that
-    /// reports a pass.**
+    /// With no deterministic oracle result, even a provable no-op is an
+    /// abstention. The ladder may describe that no work happened, but it may
+    /// not ask a model to reinterpret the state or mint a verified pass.
     ///
     /// Stated over the whole input space rather than the eleven trials,
     /// because the defect was never about a particular trial's numbers —
-    /// it was that one reachable combination fell into `Unverifiable`,
-    /// which answers `passed: true`. A ranged sweep is what proves no such
-    /// combination is left, including ones nobody has produced yet.
+    /// A ranged sweep proves the dispatch counters cannot accidentally become
+    /// a second completion oracle.
     ///
     /// `diff_available` is swept and deliberately unconstrained: whether
     /// the probe could look must make no difference to a turn that never
     /// gave it anything to look at.
     #[test]
-    fn a_turn_that_dispatched_nothing_never_reaches_a_passing_rung(
+    fn a_turn_that_dispatched_nothing_is_unverifiable_without_an_oracle(
         diff_available in any::<bool>(),
         diff_budget in 0u32..1000,
     ) {
@@ -1208,12 +1217,8 @@ proptest! {
         };
         prop_assert!(inputs.nothing_was_attempted());
         let decision = ladder_decision(&inputs);
-        prop_assert_eq!(decision, LadderDecision::NothingAttempted);
-        // The two rungs that answer `passed: true` in the pipeline. Named
-        // individually so a future rung that also passes has to be
-        // considered here rather than silently inheriting a green test.
+        prop_assert_eq!(decision, LadderDecision::Unverifiable);
         prop_assert_ne!(decision, LadderDecision::SubmitFast);
-        prop_assert_ne!(decision, LadderDecision::Unverifiable);
     }
 
     /// The converse, and the guard on the fix's blast radius: any turn
@@ -1240,7 +1245,10 @@ proptest! {
             ..Default::default()
         };
         prop_assert!(!inputs.nothing_was_attempted());
-        prop_assert_ne!(ladder_decision(&inputs), LadderDecision::NothingAttempted);
+        prop_assert!(matches!(
+            ladder_decision(&inputs),
+            LadderDecision::SubmitFast | LadderDecision::Revise | LadderDecision::Unverifiable
+        ));
     }
 }
 
@@ -1355,10 +1363,11 @@ fn a_newer_failure_replaces_the_tracked_fingerprint() {
     assert!(!oracle.is_flipped());
 }
 
-/// #870 at the ladder level: a tautological witness withholds the
-/// fast-submit even when every other conjunct holds.
+/// Authored witnesses no longer run. A legacy witness-quality flag therefore
+/// cannot override a flip produced by an operator-supplied deterministic
+/// oracle.
 #[test]
-fn a_tautological_witness_blocks_the_fast_submit() {
+fn a_legacy_witness_quality_flag_cannot_override_a_confirmed_flip() {
     let sound = LadderInputs {
         flip_achieved: true,
         touched_tests_passed: Some(true),
@@ -1375,8 +1384,8 @@ fn a_tautological_witness_blocks_the_fast_submit() {
     };
     assert_eq!(
         ladder_decision(&tautological),
-        LadderDecision::ModelVerdict,
-        "a witness that constrains nothing may not buy a deterministic pass"
+        LadderDecision::SubmitFast,
+        "the deterministic oracle is the only completion authority"
     );
 }
 

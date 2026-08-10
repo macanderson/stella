@@ -1,9 +1,8 @@
-//! Deterministic-first verification (L-E11): the design that stops model
-//! verifiers from rubber-stamping plausible-but-unverified work. Three pure
-//! pieces live here — the flip-oracle state machine, the evidence ladder, and
-//! the verifier-response parsing + heuristic fallback. The async parts (running
-//! the test command, calling the verifier model) live in [`crate::pipeline`];
-//! everything in this module is a synchronous function over owned data.
+//! Model-free verification (L-E11). The live pipeline recognizes only a
+//! deterministic fail-to-pass oracle receipt, a completed candidate test
+//! failure, or an abstention. Historical verifier prompt/parsing helpers remain
+//! public for compatibility with stored tooling, but the pipeline never calls
+//! a verifier model or forwards reviewer prose to the worker.
 //!
 //! # The flip oracle ([`FlipOracle`])
 //!
@@ -17,15 +16,11 @@
 //!
 //! # The evidence ladder ([`ladder_decision`])
 //!
-//! With the flip result plus touched-tests status and diff size, the ladder
-//! decides — *before any model verifier runs*:
-//! - **submit fast** (verifier skipped) when flip + touched-tests-green + diff
-//!   within budget all hold;
-//! - **revise** on a clear failure (touched tests red), or on a turn that
-//!   never attempted anything (`NothingAttempted`);
-//! - **abstain** (`Unverifiable`) when every channel was blind — no flip, no
-//!   test result, an unreadable working tree, and no recorded file touch;
-//! - **escalate to the model verifier** only on genuinely inconclusive evidence.
+//! The ladder has three outcomes:
+//! - **submit** when the configured command failed on the baseline and passed
+//!   on the candidate, or `verify_done` supplies the equivalent pinned receipt;
+//! - **revise** when a completed candidate test execution failed;
+//! - **abstain** (`Unverifiable`) for every other state.
 //!
 //! The abstain rung is what keeps the ladder honest about its own reach. Before
 //! it, a turn nothing could observe fell through to the verifier, which was handed
@@ -34,27 +29,9 @@
 //! there" are opposite claims; a ladder that emits the second when it means the
 //! first is worse than one that says nothing.
 //!
-//! # Abstaining is not a place to hide a no-op
-//!
-//! The abstain rung has one failure mode of its own, and it is the mirror of
-//! the one it fixed: a turn that did *nothing* looks exactly like a turn whose
-//! work nothing could see. Both show no flip, no test result, an unreadable
-//! tree and a zero touch count — so both abstained, and abstaining reported a
-//! pass. Eleven Terminal-Bench 2.1 trials ended that way: `glm-5.2` reasoned
-//! for a while, called no tool at all, and the run declared success on a task
-//! it had not touched. Every one scored 0.0.
-//!
-//! [`LadderInputs::mutating_actions`] separates them, and it is the one input
-//! here that can never be blind. Every other channel is a *probe into the
-//! world* that can fail to see; the dispatch count is the pipeline's record of
-//! **what it itself ran**. Zero mutating calls is not "I could not tell whether
-//! anything changed", it is "nothing was ever asked to change" — evidence of
-//! absence, which the ladder is otherwise built never to infer. So it gets its
-//! own rung ([`LadderDecision::NothingAttempted`]) above the blind check, and
-//! that rung fails closed while abstain keeps failing open, because the case
-//! abstain exists for is real: one of those eleven trials' siblings did the
-//! work entirely through shell redirects, recorded no touch, could not be
-//! diffed — and passed its Harbor verifier.
+//! A no-op, an unreadable workspace, a candidate-only green run, and a visible
+//! diff all therefore share one honest outcome: unverified. None authorizes a
+//! model to invent a pass or a failure.
 //!
 //! Linters and typecheckers are deliberately **excluded** from the flip
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
@@ -166,9 +143,8 @@ impl FlipOracle {
     }
 
     /// Whether the oracle reached `Unstable`: a flip was observed but its
-    /// confirmation re-run failed (#859). Surfaced in verifier evidence so the
-    /// model verifier weighs "the pass was not reproducible" rather than
-    /// mistaking the state for an ordinary never-passed failure.
+    /// confirmation re-run failed (#859). Preserved in the evidence snapshot so
+    /// consumers can distinguish an unreproducible pass from a never-passed test.
     pub fn is_unstable(&self) -> bool {
         matches!(self.state, FlipState::Unstable)
     }
@@ -332,22 +308,15 @@ pub fn normalize_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The four ways the evidence ladder can resolve a turn *before* spending a
-/// model-verifier call (L-E11).
+/// The three deterministic outcomes of the evidence ladder (L-E11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LadderDecision {
-    /// Deterministic pass: flip achieved + touched-tests-green + diff within
-    /// budget. Submit fast; the model verifier is SKIPPED and a deterministic
-    /// `Verdict { passed: true }` is emitted.
+    /// Deterministic pass: a configured-command or typed `verify_done` flip was
+    /// confirmed. A deterministic `Verdict { passed: true }` is emitted.
     SubmitFast,
     /// Clear failure (touched tests are red): feed the evidence back into a
     /// revision turn. No verifier call — the failure is already deterministic.
     Revise,
-    /// The turn dispatched nothing that could change the workspace, and no
-    /// channel saw anything change — see [`LadderInputs::nothing_was_attempted`].
-    /// A determinate finding, not an abstention: revise, and report `passed:
-    /// false` if the revisions run out.
-    NothingAttempted,
     /// The turn went unobserved, by either route: **every** evidence channel
     /// was unavailable ([`LadderInputs::evidence_is_blind`]), or the channels
     /// were available and saw nothing of work that was demonstrably dispatched
@@ -355,10 +324,6 @@ pub enum LadderDecision {
     /// verifier call, and the run is scored as unverified rather than passed
     /// or failed.
     Unverifiable,
-    /// Inconclusive: no flip evidence, or diff over budget, or tests couldn't
-    /// be run — but at least one channel could still see something. Escalate to
-    /// the model verifier (a different model than the worker).
-    ModelVerdict,
 }
 
 /// The evidence gathered after execution, over which [`ladder_decision`]
@@ -437,15 +402,14 @@ pub struct LadderInputs {
     /// Carried here so the ladder stays a pure function of one input value,
     /// exactly like [`Self::veto_warnings`].
     pub require_diff_coverage: bool,
-    /// The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
-    /// this candidate (#2129): a deterministic fail-on-baseline / pass-on-new
-    /// shadow run, observed off the turn's `ToolResult` stream. Distinct from
-    /// [`Self::flip_achieved`] because the pipeline's oracle tracks only its
-    /// own command; before this field, a confirmed `verify_done` flip and a
-    /// failing "no flip" fallback verdict coexisted in one trace.
+    /// The concrete built-in `verify_done` capability replayed its policy-final
+    /// request against this sealed candidate and confirmed a deterministic
+    /// fail-on-baseline / pass-on-candidate flip. Ordinary `ToolOutput` text
+    /// cannot set this field.
     pub verify_done_flip: bool,
     /// Positive claim that this round had NO tracked test command at all —
-    /// neither a configured `--test-command` nor an authored witness — so
+    /// neither a configured `--test-command` nor a retained `verify_done`
+    /// request — so
     /// "no flip" is a demand the task structurally cannot meet (#2129: a
     /// one-line `answer.txt` deliverable has no tests to flip).
     ///
@@ -459,10 +423,9 @@ pub struct LadderInputs {
     /// ([`command_errors`], #2125) — the shape a cited measurement can
     /// silently stand on.
     ///
-    /// Carried for the model verifier to weigh and read by nothing in
-    /// [`ladder_decision`], on purpose: an errored probe makes a quantity
-    /// *unsubstantiated*, not *disproven*, so it may inform an opinion and
-    /// must never withhold a deterministic pass. Like every probe here except
+    /// Carried as telemetry and read by nothing in [`ladder_decision`], on
+    /// purpose: an errored probe makes a quantity *unsubstantiated*, not
+    /// *disproven*, and must never withhold a deterministic pass. Like every probe here except
     /// [`Self::mutating_actions`] it is one-way — `0` is "the closed signature
     /// vocabulary matched nothing", never "this run's commands were clean".
     pub errored_commands: u32,
@@ -583,92 +546,43 @@ impl LadderInputs {
 ///
 /// 1. **Touched tests red → `Revise`.** A red test is a clear, deterministic
 ///    failure; never spend a verifier call to "confirm" it.
-/// 2. **Nothing attempted → `NothingAttempted`.** The turn dispatched no
-///    mutating call and nothing observed a change. Checked *above* the blind
-///    rung, which it would otherwise satisfy — and does not fall through to
-///    it, because "no action was taken" is knowledge, not an absence of it.
-/// 3. **The turn went unobserved → `Unverifiable`.** Two routes, one state.
-///    Either every channel was blind, or every channel could look and none of
-///    them saw the work this run demonstrably dispatched. Nothing may be
-///    claimed about it — in particular not a failure.
-/// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
-///    pass: verifier skipped.
-/// 5. **Otherwise → `ModelVerdict`.** Genuinely inconclusive: no flip, or the
-///    diff is over budget (large change deserves a second opinion even with
-///    green tests), or tests couldn't be run — but something could still see.
+/// 2. **Baseline fail → candidate pass → `SubmitFast`.** The configured
+///    command flip, or the equivalent `verify_done` pinned-baseline receipt,
+///    is the only completion authority.
+/// 3. **Otherwise → `Unverifiable`.** The ladder abstains. Observable work,
+///    a readable diff, and a candidate-only green run are useful context but
+///    cannot establish correctness without a failing baseline.
 pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
-    // 1. A red touched-test is a deterministic failure — revise, no verifier.
+    // A completed red test is the one deterministic failure the worker can
+    // act on. It wins even if a prior `verify_done` confirmation exists: the
+    // latest executed oracle result says the candidate is red now.
     if inputs.touched_tests_passed == Some(false) {
         return LadderDecision::Revise;
     }
-    // 2. The turn never acted. Ordered above the blind rung on purpose: this
-    //    state satisfies all four of its dark channels, so abstaining would
-    //    absorb it and report the pass that shipped eleven untouched
-    //    Terminal-Bench tasks as successes.
-    if inputs.nothing_was_attempted() {
-        return LadderDecision::NothingAttempted;
-    }
-    // 3. Nothing could observe the turn. Buying a verifier call here spends money
-    //    to ask a model to guess from an empty record, and the answer it
-    //    produced in the wild was a confident FAIL naming a file that existed.
-    if inputs.evidence_is_blind() {
-        return LadderDecision::Unverifiable;
-    }
-    // 3b. The probe could look, looked, and found an unchanged tree — while
-    //     this pipeline's own record says calls able to write it were
-    //     dispatched. That is not a clean turn; it is a turn whose effects
-    //     landed outside what the run collects, and the two are
-    //     indistinguishable from here (#1701). Same abstention as above, for
-    //     the same reason: what cannot be observed cannot be claimed, in
-    //     either direction. Deliberately NOT `Revise` — the work may be
-    //     entirely correct and merely uncollected, and no revision can make
-    //     an un-snapshot-able workspace observable.
-    if inputs.effects_escaped_collection() {
-        return LadderDecision::Unverifiable;
-    }
-    // 4. Full deterministic pass — submit fast, verifier skipped. The
-    //    diagnostics conjuncts are the regression veto (#861): a flipped
-    //    witness plus a fresh type error in an untested module is exactly
-    //    the inconclusive case the verifier exists for, so new errors (and,
-    //    opted-in, new warnings) drop this rung through to escalation. Lint
-    //    stays excluded from the oracle — it can veto a submit, never
-    //    verify one.
-    if inputs.flip_achieved
-        && inputs.touched_tests_passed == Some(true)
-        && inputs.diff_lines <= inputs.diff_budget
-        && inputs.new_diag_errors == 0
-        && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
-        && !inputs.witness_tautological
-        // #1291: a test that never executed the changed lines passed for some
-        // other reason. Withholding the deterministic credit sends the turn to
-        // the verifier — "unproven" — and is never a failure; an *unmeasured*
-        // overlap withholds only when the operator asked for strictness.
-        && inputs
-            .diff_coverage
-            .credits_a_deterministic_pass(inputs.require_diff_coverage)
-    {
+
+    // These are the only two proof receipts. `flip_achieved` means the same
+    // normalized configured command completed red on the baseline and green
+    // on the candidate. `verify_done_flip` is the equivalent pinned-baseline
+    // shadow-worktree receipt produced by the deterministic tool.
+    if inputs.flip_achieved || inputs.verify_done_flip {
         return LadderDecision::SubmitFast;
     }
-    // 5. Inconclusive — escalate to the model verifier.
-    LadderDecision::ModelVerdict
+
+    // Everything else is an abstention. A readable diff, a green candidate
+    // run with no failing baseline, lint, coverage, or proof that work was
+    // attempted can describe the change; none can establish its correctness.
+    // In particular there is no model-escalation arm here.
+    LadderDecision::Unverifiable
 }
 
 impl From<LadderDecision> for LadderRung {
-    /// The wire name of a decision (#1043).
-    ///
-    /// One-way on purpose, and the missing direction is the point: the wire
-    /// vocabulary is *wider* than this enum, because two of its rungs describe
-    /// what happened after the ladder said [`LadderDecision::ModelVerdict`] —
-    /// the verifier answered, the verifier was unavailable, or no reviewer was
-    /// bought at all. A `LadderRung -> LadderDecision` conversion would have
-    /// to invent that history backwards.
+    /// The wire name of a live deterministic decision (#1043). Historical
+    /// protocol rungs remain readable, but the pipeline no longer emits them.
     fn from(decision: LadderDecision) -> Self {
         match decision {
             LadderDecision::SubmitFast => LadderRung::SubmitFast,
             LadderDecision::Revise => LadderRung::Revise,
-            LadderDecision::NothingAttempted => LadderRung::NothingAttempted,
             LadderDecision::Unverifiable => LadderRung::Unverifiable,
-            LadderDecision::ModelVerdict => LadderRung::ModelVerdict,
         }
     }
 }
@@ -685,19 +599,24 @@ impl From<LadderDecision> for LadderRung {
 /// reach the end of a sentence to learn the pass is unproven.
 pub fn deterministic_pass_evidence(
     tracked_cmd: Option<&str>,
+    verify_done_flip: bool,
     diff_lines: u32,
     diff_coverage: coverage::DiffCoverage,
 ) -> VerdictEvidence {
-    let observed = match tracked_cmd {
-        Some(cmd) => format!(
-            "flip oracle: fail→pass of `{cmd}`; touched tests green; diff {diff_lines} lines within budget"
-        ),
-        None => format!(
-            "touched tests green; diff {diff_lines} lines within budget (no flip command tracked)"
-        ),
+    let observed = if verify_done_flip {
+        "verify_done: pinned baseline failed and the candidate passed".to_string()
+    } else {
+        match tracked_cmd {
+            Some(cmd) => format!(
+                "flip oracle: fail→pass of `{cmd}`; candidate tests green; diff {diff_lines} lines"
+            ),
+            None => format!(
+                "deterministic oracle confirmed; candidate tests green; diff {diff_lines} lines"
+            ),
+        }
     };
-    let summary = if diff_coverage == coverage::DiffCoverage::Unmeasured {
-        format!("UNPROVEN — {}; {observed}", diff_coverage.explain())
+    let summary = if diff_coverage == coverage::DiffCoverage::Unmeasured || verify_done_flip {
+        observed
     } else {
         format!("{observed}; {}", diff_coverage.explain())
     };
@@ -733,16 +652,30 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
              work and nothing is claimed about it (this is NOT a finding that the work is absent \
              or wrong): the effects landed outside what this run collects. No fail→pass flip was \
              observed; no touched-test result; file-change events recorded = 0. Verify the result \
-             on its own merits.",
+             with a deterministic oracle.",
             inputs.mutating_actions
         )
-    } else {
+    } else if inputs.evidence_is_blind() {
         format!(
             "UNVERIFIABLE — no evidence channel could observe this turn, so nothing is claimed \
              about it (this is NOT a finding that the work is absent or wrong): flip oracle not \
              armed (no test command); touched tests not run; the diff probe could not read the \
-             working tree; file-change events recorded = {}. Verify the result on its own merits.",
+             working tree; file-change events recorded = {}. Verify the result with a \
+             deterministic oracle.",
             inputs.file_change_events
+        )
+    } else {
+        let candidate_test = match inputs.touched_tests_passed {
+            Some(true) => "candidate command passed without a failing baseline",
+            Some(false) => "candidate command failed",
+            None => "no completed candidate test result",
+        };
+        format!(
+            "UNVERIFIABLE — no deterministic oracle result: no same-command baseline-fail / \
+             candidate-pass flip and no verify_done confirmation ({candidate_test}). Work \
+             observations cannot establish correctness: diff lines = {}, file-change events = \
+             {}, mutating calls = {}. Verify the result with a deterministic oracle.",
+            inputs.diff_lines, inputs.file_change_events, inputs.mutating_actions
         )
     };
     VerdictEvidence {
@@ -784,7 +717,7 @@ pub fn uncorroborated_pass_evidence(
     abstained
 }
 
-/// Build the `VerdictEvidence` for a [`LadderDecision::NothingAttempted`] turn.
+/// Build historical no-work evidence for readers of older trajectories.
 ///
 /// `deterministic: true`, and the contrast with [`unverifiable_evidence`] is
 /// the entire point: that one is marked `false` because it reports the absence

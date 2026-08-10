@@ -325,17 +325,18 @@ no configuration at all, an OpenRouter instance runs:
 | Role | Model | Why |
 | --- | --- | --- |
 | default | `moonshotai/kimi-k3` | long-context agentic driver, at `xhigh` effort with thinking on |
-| verifier | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
+| goal assessor | `anthropic/claude-opus-5` | a different vendor's strongest reasoner for goal mode's outer assessment |
 | triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
 
-Note the verifier is deliberately a different **family** from the driver. stella already
-treats cross-family judging as the goal (see `auto_mode`); this default just reaches it
-without asking you to configure anything.
+Note the goal-mode assessor is deliberately a different **family** from the
+driver. `auto_mode` can choose that cross-family posture without asking you to
+configure it. The staged pipeline does not use this model for completion:
+pipeline verification is deterministic-only.
 
 This is a *baseline*, not a lock. It composes underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any
-field you set is yours — set `pipeline_verifier_model` and the verifier is whatever you said,
-while the rest of the posture stays. It also applies only when OpenRouter is the provider
+field you set is yours — set `pipeline_verifier_model` and goal mode's outer
+assessor is whatever you said, while the rest of the posture stays. It also applies only when OpenRouter is the provider
 that actually got picked: run `--model anthropic/…` with an OpenRouter key present and you
 have an Anthropic session, with no part of this routed through the gateway.
 

@@ -4,33 +4,13 @@
 //! Who does what, and whether it happens at all — the pipeline's
 //! responsibility roster (#2381).
 //!
-//! # The two axes, and the one this crate deliberately does not offer
+//! # Live and retired responsibilities
 //!
-//! A staged pipeline has three things an operator might want to change:
-//!
-//! 1. **Whether a responsibility runs** — the ablation axis. Turning triage
-//!    off and leaving everything else running is how a measurement attributes
-//!    an effect to triage rather than to "the pipeline".
-//! 2. **Who performs it** — the assignment axis. Nothing about *authoring a
-//!    witness test* requires the verifier's model specifically; it requires a
-//!    model that is not the worker. Which one is a deployment choice.
-//! 3. **What order they run in** — the topology axis.
-//!
-//! This module offers the first two and **deliberately refuses the third**,
-//! because in this pipeline the order is not a workflow, it is a proof
-//! protocol. The witness is authored in a pristine snapshot of the
-//! *pre-execution* tree by a model that is not the worker, and its fail→pass
-//! flip is credited only when the worker never touched the witness files
-//! (tamper exclusion, [`crate::witness`]). Move authoring after the worker has
-//! seen the diff, or bind it to the worker, and the flip oracle still *reports
-//! a flip* — it has simply stopped meaning anything. A configuration file that
-//! can silently convert a proof into a false proof is not a feature.
-//! [`crate::replay::stage_transition_legal`] encodes the same ordering for
-//! recorded streams, and an operator-authored graph would make replay
-//! validation undecidable rather than merely stricter.
-//!
-//! So: **the set of responsibilities and their order are code; the assignment
-//! and the enablement are configuration.**
+//! Triage, research, planning, and worker execution remain configurable. The
+//! historical verifier-owned responsibilities are not: witness authoring,
+//! distress guidance, and model verdicts are retained only as wire/config
+//! vocabulary and cannot be enabled or assigned. Verification authority now
+//! comes exclusively from deterministic oracle receipts.
 //!
 //! # Why [`ModelCallRole`] is the responsibility vocabulary
 //!
@@ -170,9 +150,8 @@ impl fmt::Display for AgentId {
 /// by `stella-cli` and `stella-core` outside this pipeline, so binding them
 /// here would advertise a knob that steers nothing.
 ///
-/// The bindings below are exactly what the call sites hard-coded before this
-/// module existed — [`Roster::default`] therefore reproduces today's pipeline
-/// byte for byte.
+/// Live responsibilities receive their normal binding; retired verification
+/// responsibilities deliberately return `None`.
 #[must_use]
 pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
     let role = match responsibility {
@@ -185,12 +164,11 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
         ModelCallRole::Plan => Role::Plan,
         ModelCallRole::Research => Role::Research,
         ModelCallRole::Worker => Role::Worker,
-        // Three halves of the verifier's job (`Role::Verifier`'s docs): author
-        // the witness, steer a distressed worker, render the verdict. Distinct
-        // responsibilities that share one agent by default — which is
-        // precisely why they are separate rows here.
+        // Historical wire roles, retained so old telemetry and resume frames
+        // still decode. Verification is now a deterministic oracle boundary:
+        // none of these may resolve to a live model responsibility.
         ModelCallRole::WitnessAuthor | ModelCallRole::DistressGuidance | ModelCallRole::Verdict => {
-            Role::Verifier
+            return None;
         }
         // Repairs follow their principal — see `principal_of`.
         ModelCallRole::PlanRepair | ModelCallRole::WitnessRepair => return None,
@@ -226,6 +204,18 @@ pub fn principal_of(responsibility: ModelCallRole) -> Option<ModelCallRole> {
         ModelCallRole::WitnessRepair => Some(ModelCallRole::WitnessAuthor),
         _ => None,
     }
+}
+
+/// Whether this historical responsibility is intentionally non-executable.
+///
+/// Kept separate from [`default_agent`]'s other `None` arms because a settings
+/// row naming one deserves a boundary-specific refusal rather than the generic
+/// "issued outside the pipeline" diagnosis.
+fn is_retired(responsibility: ModelCallRole) -> bool {
+    matches!(
+        responsibility,
+        ModelCallRole::WitnessAuthor | ModelCallRole::DistressGuidance | ModelCallRole::Verdict
+    )
 }
 
 /// One responsibility's binding: whether it runs, and who performs it.
@@ -268,6 +258,15 @@ pub enum RosterError {
     )]
     NotAssignable {
         /// The responsibility named, as its wire token.
+        responsibility: String,
+    },
+    /// A historical model-verification responsibility was explicitly made
+    /// executable. The token remains readable, but the authority is gone.
+    #[error(
+        "`{responsibility}` is retired — verification is deterministic-only and this model responsibility cannot be enabled or assigned"
+    )]
+    RetiredResponsibility {
+        /// The retired responsibility's stable wire token.
         responsibility: String,
     },
     /// A repair call was named. Repairs follow the agent whose output they
@@ -316,13 +315,9 @@ pub struct AssignmentOverride {
     pub agent: Option<AgentId>,
 }
 
-/// A responsibility whose assigned agent is the worker's, so the independence
-/// its stage assumes does not hold.
-///
-/// Reported, never refused: binding the verdict to the worker is a legitimate
-/// posture (and a measurement someone may deliberately want), but it must
-/// arrive as a stated fact rather than as an unexplained pass. The pipeline's
-/// standing posture is that degradation warns and never silently disables.
+/// Historical self-grading posture record retained for API compatibility.
+/// Live rosters cannot contain the verifier-owned responsibilities that could
+/// produce one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndependenceLoss {
     /// The responsibility that lost its independence.
@@ -333,12 +328,8 @@ pub struct IndependenceLoss {
 
 /// The total responsibility→assignment table.
 ///
-/// Total by construction: [`Self::assignment`] answers for every
-/// [`ModelCallRole`] the pipeline owns, because the rows are built from
-/// [`ModelCallRole::ALL`] filtered through [`default_agent`] rather than
-/// written out. [`Self::default`] is today's pipeline exactly — every
-/// responsibility enabled, every agent the one its call site used to name
-/// literally — so a deployment that configures nothing sees no change.
+/// Total over live responsibilities: [`Self::assignment`] answers for every
+/// role returned by [`default_agent`]. Retired verifier roles have no row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Roster {
     /// One row per assignable responsibility, in [`ModelCallRole::ALL`] order.
@@ -507,6 +498,18 @@ impl Roster {
                 });
                 continue;
             }
+            if is_retired(responsibility) {
+                // Compatibility for the mitigation operators already wrote:
+                // an explicit off row remains valid after the row itself
+                // disappears. Any form that could grant authority is refused.
+                if spec.enabled == Some(false) {
+                    continue;
+                }
+                self.rejected.push(RosterError::RetiredResponsibility {
+                    responsibility: responsibility_token(responsibility),
+                });
+                continue;
+            }
             if !Self::is_assignable(responsibility) {
                 self.rejected.push(RosterError::NotAssignable {
                     responsibility: responsibility_token(responsibility),
@@ -589,36 +592,12 @@ impl Roster {
         errors
     }
 
-    /// The responsibilities whose agent is the worker's, so the independence
-    /// their stage assumes does not hold.
-    ///
-    /// Only the responsibilities that *have* an independence requirement are
-    /// considered: authoring a witness and rendering the verdict both mean
-    /// something different when the worker performs them. Distress guidance
-    /// does not — steering a worker with its own model is weaker advice, not a
-    /// broken proof — so it is deliberately absent, and a witness repair
-    /// follows its author's binding rather than carrying one.
-    ///
-    /// Compares assigned agents, not resolved models: two distinct agents that
-    /// happen to resolve to one model is the *other* independence question,
-    /// and `Pipeline::witness_author_independence` already answers it against
-    /// the router. This one catches the case that answer cannot see — a
-    /// configuration that asked for self-grading outright.
+    /// Always empty for a live roster because model-authored witnesses and
+    /// verdicts cannot be assigned. Kept so downstream readers of old posture
+    /// data do not require an API break.
     #[must_use]
     pub fn independence_losses(&self) -> Vec<IndependenceLoss> {
-        let Some(worker) = self.assignment(ModelCallRole::Worker) else {
-            return Vec::new();
-        };
-        [ModelCallRole::WitnessAuthor, ModelCallRole::Verdict]
-            .into_iter()
-            .filter_map(|responsibility| {
-                let row = self.assignment(responsibility)?;
-                (row.enabled && row.agent == worker.agent).then(|| IndependenceLoss {
-                    responsibility,
-                    agent: row.agent.clone(),
-                })
-            })
-            .collect()
+        Vec::new()
     }
 }
 
