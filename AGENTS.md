@@ -512,7 +512,7 @@ a plan needs and the part that rarely changes:
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tools` | `src/registry.rs`, `src/scripts.rs` |
+| `stella-tools` | `src/registry.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
 The other fourteen crates carry no god files — keep it that way. Each crate's
