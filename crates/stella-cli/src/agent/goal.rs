@@ -7,6 +7,21 @@
 
 use super::*;
 
+/// The session task board, tool by tool — everything the catalog files under
+/// the `task` group *except* the delegation tool that shares the group name.
+///
+/// See [`bare_loop_config`]'s `# Blast radius` for why this is a name list and
+/// not the one-line group key, and for the catalog assertion that keeps it
+/// complete.
+const WITHHELD_BOARD_TOOLS: [&str; 6] = [
+    "task_create",
+    "task_list",
+    "task_start",
+    "task_complete",
+    "task_cancel",
+    "task_assign",
+];
+
 /// The caller's config with the task board withheld — what the bare step loop
 /// actually runs on.
 ///
@@ -28,12 +43,27 @@ use super::*;
 ///
 /// # Blast radius
 ///
-/// `task` is a **group** key, and the catalog puts sub-agent delegation (the
-/// tool literally named `task`) in that group alongside the six `task_*` board
-/// tools — so the bare loop loses delegation too. That is #2410's shipped
-/// behaviour, pinned by a test below rather than left to be rediscovered; #2580
-/// asks whether it was intended, since the measurement above is about
-/// bookkeeping, not about spend.
+/// The switch names the six board tools one at a time, and deliberately not
+/// the `task` **group** key #2410 shipped: the catalog files sub-agent
+/// delegation — the tool literally named `task` — in that same group, so the
+/// group key took delegation with the board and the bare loop could not spawn
+/// a child at all.
+///
+/// That was collateral, not a decision, and #2580 settled it that way: the
+/// measurement above, #2410's prose, its reviewer-facing behaviour-change note
+/// and all three of its witnesses say *the board* throughout. Delegation is a
+/// different capability with a different cost model — it does work and spends
+/// money, where a board call reads nothing and changes nothing — so none of
+/// the evidence for withholding the board reaches it. Restoring it is also
+/// what makes [`run_raw_one_shot`]'s
+/// [`install_for_session`](crate::subagent::install_for_session) pay for
+/// itself, rather than installing a dispatcher behind a tool the policy always
+/// stripped.
+///
+/// Naming the six costs the group's future-proofing — a seventh board tool
+/// would be offered here until someone added it to [`WITHHELD_BOARD_TOOLS`] —
+/// so `the_withheld_list_is_the_whole_board_minus_delegation` below reads the
+/// catalog and fails when the group grows.
 ///
 /// # Why this is a function
 ///
@@ -45,10 +75,9 @@ use super::*;
 fn bare_loop_config(cfg: &Config) -> Config {
     let mut bare = cfg.clone();
     bare.tool_policy
-        .narrow_with(&stella_tools::policy::ToolPolicy::from_switches([(
-            "task".to_string(),
-            false,
-        )]));
+        .narrow_with(&stella_tools::policy::ToolPolicy::from_switches(
+            WITHHELD_BOARD_TOOLS.map(|name| (name.to_string(), false)),
+        ));
     bare
 }
 
@@ -1052,6 +1081,10 @@ mod bare_loop_board_tests {
     /// All six tools `stella_tools::tasks` registers, not the five that were
     /// listed while `task_assign` shipped: the assertion has to name the whole
     /// board, or regrouping the one tool it omits goes unnoticed (#2511).
+    ///
+    /// Spelled out here rather than looped over [`WITHHELD_BOARD_TOOLS`] on
+    /// purpose — a test that reads the same list production reads passes for
+    /// any list at all, including an empty one.
     #[test]
     fn the_bare_loop_withholds_every_board_tool() {
         let policy = bare_loop_policy(ToolPolicy::allow_all());
@@ -1067,20 +1100,45 @@ mod bare_loop_board_tests {
         }
     }
 
-    /// The switch is the `task` **group**, and the catalog files sub-agent
-    /// delegation — the tool named `task` — in it, so the bare loop loses
-    /// delegation along with the board.
+    /// Sub-agent delegation survives the board's withdrawal.
     ///
-    /// Pinned rather than merely true: it is a real capability difference that
-    /// #2410's measurement (board bookkeeping) does not by itself justify, so
-    /// changing it should have to change a test. #2580 asks whether it was
-    /// intended.
+    /// #2410 narrowed with the `task` **group** key, and the catalog files
+    /// delegation — the tool named `task` — in that group, so the bare loop
+    /// silently lost the capability too. #2580 settled that as collateral
+    /// rather than a decision: the evidence for withholding the board is about
+    /// bookkeeping that reads nothing and changes nothing, and reaches no
+    /// tool that does work.
     #[test]
-    fn withholding_the_board_also_withholds_sub_agent_delegation() {
+    fn withholding_the_board_leaves_sub_agent_delegation_alone() {
         let policy = bare_loop_policy(ToolPolicy::allow_all());
         assert!(
-            !policy.allows("task"),
-            "the `task` group key takes sub-agent delegation with the board"
+            policy.allows("task"),
+            "sub-agent delegation shares the board's group but not its rationale"
+        );
+    }
+
+    /// What the group key gave for free and a name list does not: cover.
+    ///
+    /// [`WITHHELD_BOARD_TOOLS`] must be exactly the `task` group minus the
+    /// delegation tool, so a seventh board tool added to the catalog fails
+    /// here instead of being quietly offered to the bare loop. Asserted
+    /// against the group, not against a `task_*` name prefix — the group is
+    /// what `narrow_with` used to resolve, and a board tool named without the
+    /// prefix would slip a prefix test.
+    #[test]
+    fn the_withheld_list_is_the_whole_board_minus_delegation() {
+        let expected: Vec<&str> = stella_tools::catalog::CATALOG
+            .iter()
+            .filter(|entry| entry.group == "task" && entry.name != "task")
+            .map(|entry| entry.name)
+            .collect();
+        let mut withheld = WITHHELD_BOARD_TOOLS.to_vec();
+        withheld.sort_unstable();
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort_unstable();
+        assert_eq!(
+            withheld, expected_sorted,
+            "the `task` group changed: reconcile WITHHELD_BOARD_TOOLS with the catalog"
         );
     }
 
@@ -1105,6 +1163,27 @@ mod bare_loop_board_tests {
         assert!(
             !policy.allows("task_create"),
             "an operator grant must not resurrect the board here"
+        );
+    }
+
+    /// The other direction of the same guarantee, and the one this narrowing
+    /// newly depends on: handing delegation back must hand it back only to
+    /// operators who never took it away.
+    ///
+    /// An operator who switched the whole `task` group off has denied
+    /// delegation too — the group key means here exactly what it meant to
+    /// #2410 — and no longer naming that key in the narrowing must not turn
+    /// their denial into a grant.
+    #[test]
+    fn an_operator_who_denied_the_task_group_keeps_delegation_denied() {
+        let policy = bare_loop_policy(ToolPolicy::from_switches([("task".to_string(), false)]));
+        assert!(
+            !policy.allows("task"),
+            "the operator's group denial covers delegation and must survive"
+        );
+        assert!(
+            !policy.allows("task_create"),
+            "the operator's group denial covers the board too"
         );
     }
 }
