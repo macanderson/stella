@@ -130,6 +130,7 @@ use tokio::sync::mpsc::UnboundedSender;
 mod dispatch;
 mod drive;
 pub(crate) mod overflow_recovery;
+mod rate_limit;
 mod settlement;
 pub(crate) mod usage_anchor;
 mod waiting;
@@ -1712,8 +1713,7 @@ impl<'a> Engine<'a> {
         // The ladder itself — the cancellation usage guard, per-attempt
         // incompleteness envelopes, parked rate-limit recovery (#2677),
         // provider-outcome feedback (#2673), and the exhaustion event pair —
-        // lives in `driver/
-      .rs`.
+        // lives in `driver/rate_limit.rs`.
         let (call_started, outcome) = self
             .drive_attempt_ladder(attempt, attempt_in_flight, budget, events)
             .await?;
@@ -1721,82 +1721,7 @@ impl<'a> Engine<'a> {
             value: (result, speculation_future),
             retries,
             ..
-        } = match retry_with_backoff_observed(
-            &self.config.retry_policy,
-            self.sleeper,
-            attempt,
-            // Per-attempt duration (retry.rs times each dispatch
-            // individually): the failed call's own latency, never
-            // cumulative across earlier attempts or backoff sleeps.
-            |attempt, error, attempt_duration| {
-                attempt_reasons
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push(error.to_string());
-                let _ = incomplete_events.send(AgentEvent::UsageIncomplete {
-                    role: self.call_role,
-                    provider: self.provider.id().to_string(),
-                    model: "unknown".into(),
-                    reason: stella_protocol::UsageIncompleteReason::ProviderError,
-                    duration_ms: attempt_duration.as_millis() as u64,
-                    retries: Some(attempt.saturating_sub(1)),
-                    // Whatever the adapter salvaged from the dying stream.
-                    // This observer is the only place it can be read: retry.rs
-                    // returns history only for calls that COMMIT, so a doomed
-                    // attempt's accounting reaches the wire here or nowhere.
-                    partial: error.partial_usage().copied(),
-                });
-            },
-        )
-        .await
-        {
-            Ok(outcome) => {
-                cancel_guard.disarm();
-                outcome
-            }
-            Err(error) => {
-                cancel_guard.disarm();
-                let reasons =
-                    std::mem::take(&mut *attempt_reasons.lock().unwrap_or_else(|p| p.into_inner()));
-                // A context overflow is withheld from the terminal events and
-                // the breaker: the caller may still recover it, and an
-                // oversized request is the engine's accounting miss, not
-                // provider ill-health (`driver::overflow_recovery`, #2680).
-                if matches!(error, ProviderError::ContextOverflow { .. }) {
-                    return Err(ModelCallFailure::ContextOverflow {
-                        message: error.to_string(),
-                        attempt_reasons: reasons,
-                    });
-                }
-                // Shared with the paired `Error` event below: whether the
-                // FINAL attempt's error is of a retryable class. `false`
-                // means every attempt (typically just one — see
-                // `retry_with_backoff_observed`, which bails on the first
-                // non-retryable error) was doomed from the start, not
-                // exhausted by an actual retry loop (#926).
-                let retryable = error.is_retryable();
-                let _ = events.send(AgentEvent::RetriesExhausted {
-                    turn_instance: self.config.turn_instance,
-                    attempts: reasons.len() as u32,
-                    reasons,
-                    retryable,
-                });
-                let message = error.to_string();
-                let _ = events.send(AgentEvent::Error {
-                    message: message.clone(),
-                    retryable,
-                });
-                if let Some(outcomes) = self.outcomes {
-                    outcomes.record_failure(self.provider.id());
-                }
-                return Err(ModelCallFailure::Fatal {
-                    reason: format!("model call failed: {message}"),
-                });
-            }
-        };
-        if let Some(outcomes) = self.outcomes {
-            outcomes.record_success(self.provider.id());
-        }
+        } = outcome;
         // One boundary read: the call's duration and the tick's clock axis.
         let now = std::time::Instant::now();
         let call_duration_ms = now.duration_since(call_started).as_millis() as u64;
