@@ -167,6 +167,7 @@ catalog! {
     // The long-running process group
     "start_process"       => (false, false, Always, "process"),
     "read_output"         => (false, false, Always, "process"),
+    "clear_output"        => (false, false, Always, "process"),
     "send_stdin"          => (false, false, Always, "process"),
     "stop_process"        => (false, false, Always, "process"),
     // Vendor-neutral repository tools; the two reads are local git queries.
