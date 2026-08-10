@@ -40,6 +40,13 @@ export function AppShell() {
           agents: agents.agents,
           efforts: agents.efforts,
           roles: agents.roles,
+          // Both lists are Stella's vocabularies, and an unknown name in
+          // either fails the run rather than degrading, so neither has a
+          // client-side fallback: an older server that sends nothing yields
+          // no controls, which is honest, where a hardcoded list would offer
+          // names that build a container and then refuse the roster.
+          responsibilities: agents.responsibilities ?? [],
+          responsibility_agents: agents.responsibility_agents ?? [],
         });
       } catch (error) {
         if (!cancelled) setBootError(String(error));

@@ -538,15 +538,24 @@ impl Tool for RepoHistoryTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "repo_history".into(),
+            // No longer claims to be the first stop for missing work (#2575):
+            // `repo_status` costs one git call, takes no arguments, and
+            // already reports the detached position, the shelved count and
+            // the orphaned commits. What is only here is the HISTORY those
+            // facts sit inside — when the position moved, and how far each
+            // branch has diverged.
             description: "Where this repository has BEEN: recent commits, every branch with \
-                          its ahead/behind vs the default branch, shelved changes (git \
-                          stash), and the log of where the working position has moved (git \
-                          reflog) — plus whether the position is currently detached. One \
-                          call, no shell. Reach for this before `bash git log`/`git \
-                          branch`/`git stash list`, and FIRST when work seems to have gone \
-                          missing after a branch switch: a detached position or a stash \
-                          entry usually answers it outright. If nothing here explains it, \
-                          `repo_recover` searches the commits no branch points at."
+                          its ahead/behind vs the default branch, each shelved change with \
+                          the selector that addresses it (`stash@{0}`), and the log of where \
+                          the working position has moved (git reflog). One call, no shell — \
+                          reach for it instead of `bash git log`/`git branch`/`git reflog`. \
+                          `repo_status` is cheaper and already answers the current branch, a \
+                          detached position, the shelved COUNT and the orphaned commits the \
+                          reflog still reaches, so start there; come here when you need the \
+                          history around those facts — which commit the position moved to and \
+                          when, how far every branch has diverged, or a stash's selector so \
+                          you can address it. If a commit appears in none of it, \
+                          `repo_recover` searches the object store itself."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -608,15 +617,28 @@ impl Tool for RepoRecoverTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "repo_recover".into(),
-            description: "Find committed work that no branch points at — the commits a \
-                          checkout strands. Returns each one's subject, author, date, \
-                          parents, and `sits_on_target` (true when it sits directly on the \
-                          target and can be integrated by fast-forward). Use when work is \
-                          missing and `repo_history` showed no stash and no detached \
-                          position. Walks the whole object store, so it is the slower \
-                          second move, not the first. Stella's own candidate-workspace \
-                          snapshot commits are excluded and counted separately — they are \
-                          unreachable by construction and are never the user's lost work."
+            // The escalation clause used to route through `repo_history` for
+            // "no stash and no detached position" — written before
+            // `repo_status` reported either (#2551), so it sent a caller to
+            // the middle rung for facts the cheapest one already had (#2575).
+            // It now names what is genuinely only here: a caller-chosen
+            // `target`, fast-forwardability, and the reach past the reflog.
+            description: "Find committed work that no branch points at, judged against a \
+                          reference you name (`target`, default HEAD). Searches the whole \
+                          object store (git fsck) UNIONed with the position log, so it is the \
+                          only tool that reaches commits the reflog has already expired, and \
+                          the only one that answers \"unreferenced relative to THIS ref\". \
+                          Returns each commit's sha, subject, author, date, parents, and \
+                          `sits_on_target` (true when it sits directly on the target and can \
+                          be integrated by fast-forward rather than a merge that could \
+                          conflict); commits already contained in the target are omitted as \
+                          found, not lost. This is the slow last resort — scanning every \
+                          object is why `repo_status` does not do it on every call — so reach \
+                          for it only once `repo_status` has shown no shelved change, no \
+                          detached position and nothing under `unreachable`. Stella's own \
+                          candidate-workspace snapshot commits are excluded and counted \
+                          separately — they are unreachable by construction and are never the \
+                          user's lost work."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -749,6 +771,87 @@ mod tests {
         let json = serde_json::to_string(&recovery).expect("serialize");
         assert!(json.contains("\"sits_on_target\":true"));
         assert!(json.contains("\"pipeline_commits_excluded\":2"));
+    }
+
+    /// The three git readers are a LADDER, and each one's schema description
+    /// is the only thing that tells a model which rung it is standing on.
+    ///
+    /// #2551 and #2538 diagnosed the same `fix-git` trial independently and
+    /// landed minutes apart, so this surface is the residue of a merge rather
+    /// than a decision (#2575). What the merge actually broke was not the
+    /// overlap — `repo_recover` really does reach commits the other two
+    /// cannot — it was the *disclosure*: `repo_status` grew `unreachable` and
+    /// a shelved count while its description still named three of its ten
+    /// payload fields, and `repo_recover`'s description went on sending
+    /// callers to `repo_history` to rule out a stash that `repo_status` now
+    /// answered in one git call. Three tools that overlap are a design; three
+    /// whose descriptions do not say where the boundaries are is what makes
+    /// selection guesswork, in exactly the situation these exist to serve.
+    ///
+    /// Asserted against the schema text because that is the only thing the
+    /// model ever reads. A comment stating the same boundaries is what was
+    /// already there, and it did not fail when they stopped being true.
+    #[test]
+    fn each_git_reader_names_its_boundary_and_the_next_rung() {
+        let history_backend: Arc<dyn HistoryBackend> = Arc::new(GitCli);
+        let repo_backend: Arc<dyn crate::repo::RepoBackend> = Arc::new(GitCli);
+        let status = crate::repo::RepoStatusTool(repo_backend)
+            .schema()
+            .description;
+        let history = RepoHistoryTool(history_backend.clone())
+            .schema()
+            .description;
+        let recover = RepoRecoverTool(history_backend).schema().description;
+
+        // Rung 1 must advertise the payload that makes it the first call —
+        // these are the exact fields whose omission hid the fact that the
+        // cheapest tool already answers "where did my commit go".
+        for named in ["unreachable", "shelved", "ahead/behind", "FIRST"] {
+            assert!(
+                status.contains(named),
+                "repo_status does not advertise `{named}`, so nothing tells a model the \
+                 cheap tool answers it: {status}"
+            );
+        }
+        for deeper in ["repo_history", "repo_recover"] {
+            assert!(
+                status.contains(deeper),
+                "repo_status must name `{deeper}` as the next rung: {status}"
+            );
+        }
+
+        // Rung 2 sends the cheap case back down and the object-store case up.
+        assert!(
+            history.contains("repo_status"),
+            "repo_history must defer the facts repo_status answers more cheaply: {history}"
+        );
+        assert!(
+            history.contains("repo_recover"),
+            "repo_history must name the rung above it: {history}"
+        );
+
+        // Rung 3 defers to the CHEAPEST rung, not the middle one. The stale
+        // sentence is named exactly rather than banning any mention of
+        // `repo_history`, which would forbid a legitimate future reference.
+        assert!(
+            recover.contains("repo_status"),
+            "repo_recover must name repo_status as its prerequisite: {recover}"
+        );
+        assert!(
+            !recover.contains("`repo_history` showed"),
+            "repo_recover routes the stash/detached check through repo_history again — \
+             repo_status answers both in one git call (#2575): {recover}"
+        );
+
+        // …and it states what is only here, or it has no claim to be a tool
+        // of its own rather than a flag on repo_status.
+        for only_here in ["target", "sits_on_target", "fsck"] {
+            assert!(
+                recover.contains(only_here),
+                "repo_recover does not state `{only_here}`, the capability that earns it a \
+                 separate tool: {recover}"
+            );
+        }
     }
 
     /// The whole point of these two tools: they survive the read-only

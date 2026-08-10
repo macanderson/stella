@@ -1134,7 +1134,7 @@ mod tests {
     /// The plan card's collapse names where the plan stands. This used to be
     /// three assertions across three cards; `/plan` is one card now, and the
     /// verification phase it also carried lives permanently in the rail's
-    /// DONE VERIFICATION panel rather than in a collapsed statline cell.
+    /// PROOF panel rather than in a collapsed statline cell.
     #[test]
     fn the_plan_collapse_names_where_the_plan_stands() {
         use crate::deck_ui::cards::Card;

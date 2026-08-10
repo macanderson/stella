@@ -1,5 +1,5 @@
-//! `/export` — export all session telemetry as a ZIP archive of raw JSON
-//! dumps plus a self-contained HTML dashboard.
+//! `/export` — export **one session's** telemetry as a ZIP archive of raw
+//! JSON dumps plus a self-contained HTML dashboard.
 //!
 //! The archive lives at `.stella/exports/` and is named with the microsecond
 //! timestamp of the **last log entry** included (the data's own clock, not the
@@ -11,22 +11,37 @@
 //! resolve rate, cost-per-resolved-task, token efficiency, tool-call
 //! frequency, retry patterns, and file-edit heat — the same data `stella
 //! stats` summarizes in a table, but visually and interactively.
+//!
+//! **Scope is a safety property here, not a convenience** (#2558). Until the
+//! session argument existed, this module dumped the entire workspace store:
+//! attaching an export to a public PR to show one run disclosed every other
+//! run in that project — their prompts, their tool arguments, their touched
+//! files' contents. The credential masking below and the `0600` archive mode
+//! both assume the blast radius is one session, so the scoping is what makes
+//! the rest of the hardening mean what it says.
 
 use std::path::{Path, PathBuf};
 
-use stella_store::Store;
+use stella_store::{ExportExclusions, Store};
 
 /// One `(table_name, json_array)` pair from the export dump.
 type TableDump = (&'static str, String);
 
-/// Build the export archive. Returns the path to the written file, or an
-/// error message. `workspace_root` is where `.stella/exports/` is created.
-pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
+/// Build the export archive for one session. Returns the path to the written
+/// file, or an error message. `workspace_root` is where `.stella/exports/` is
+/// created; `session_id` is the session registry id
+/// ([`stella_store::SessionRecord::id`]) whose telemetry the archive covers.
+///
+/// There is deliberately no whole-workspace variant on this path. The archive
+/// is built to be shared, and "export everything by default" is the defect
+/// #2558 records — a caller who wants workspace-wide analytics wants `stella
+/// stats`, which is not an artifact that leaves the machine.
+pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf, String> {
     let store = Store::open(workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
 
-    // Collect every table's raw data.
+    // Collect this session's raw data — never the workspace's.
     let dumps = store
-        .export_all_json()
+        .export_session_json(session_id)
         .map_err(|e| format!("cannot read telemetry: {e}"))?;
     // #817: the archive leaves the machine (emailed, committed to a PR as
     // evidence), so mask any credential that reached the telemetry — a key
@@ -39,13 +54,20 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .collect();
 
     if dumps.iter().all(|(_, json)| json == "[]") {
-        return Err("no session telemetry recorded yet — run a few turns first.".into());
+        return Err("no telemetry recorded for this session yet — run a few turns first.".into());
     }
 
-    // The watermark: the timestamp of the last log entry in this set. Falls
-    // back to "now" only if the store somehow has no timestamps at all.
+    // What the scope left out, so the manifest can state it. A census failure
+    // must not sink an otherwise-good export: an unstated exclusion count is a
+    // gap in the archive's provenance, not a reason to withhold the evidence.
+    let excluded = store.export_exclusions(session_id).unwrap_or_default();
+
+    // The watermark: the timestamp of the last log entry in this set — read
+    // over the same session, or the filename would assert a moment no row in
+    // the archive reaches. Falls back to "now" only if the store somehow has
+    // no timestamps at all.
     let watermark = store
-        .last_log_timestamp()
+        .last_log_timestamp_for_session(session_id)
         .ok()
         .flatten()
         .unwrap_or_else(|| {
@@ -63,12 +85,33 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     // Sanitize the watermark into a filename-safe folder name.
     let folder = sanitize_timestamp(&watermark);
 
+    // Scoped too: the KPI tiles and every chart are computed from these rows,
+    // so workspace totals rendered beside one session's dumps would describe
+    // runs the archive does not contain.
     let usage_stats = store
-        .usage_stats()
+        .usage_stats_for_session(session_id)
         .map_err(|e| format!("cannot read usage stats: {e}"))?;
 
+    // The transcript. The nine dumped tables say what the session cost and
+    // which tools it called; none of them holds what it actually did, because
+    // the ordered event stream is not one of them. `session_events` is already
+    // scoped to this session by the same predicate the dumps use.
+    //
+    // A journal that will not read must not sink the export: the tables and
+    // the dashboard are still worth having, and an empty transcript reports
+    // itself on the page rather than pretending the session was silent.
+    let journal = store.session_events(session_id).unwrap_or_default();
+    let transcript = transcript::render(&journal, &execution_prompts(&dumps));
+
     // Build the self-contained HTML dashboard.
-    let html = render_dashboard(&usage_stats, &dumps, &watermark);
+    let html = render_dashboard(
+        &usage_stats,
+        &dumps,
+        &watermark,
+        session_id,
+        &excluded,
+        &transcript,
+    );
 
     // Assemble the ZIP.
     //
@@ -92,9 +135,16 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     }
     // The dashboard.
     zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes())?;
-    // A manifest with the watermark and table list.
+    // A manifest with the watermark, the scope, and the table list.
+    //
+    // `session` and `excluded` are the archive's provenance: without them a
+    // reader cannot tell "this session did nothing else" from "the exporter
+    // dropped the rest", and the scope becomes an assumption rather than a
+    // claim they can check.
     let manifest = serde_json::json!({
         "exported_at": watermark,
+        "session": session_id,
+        "excluded": excluded,
         "tables": dumps.iter().map(|(t, j)| {
             let count = serde_json::from_str::<Vec<serde_json::Value>>(j)
                 .map(|v| v.len())
@@ -114,6 +164,33 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// The `/export` deck command: build `session_id`'s archive and return the
+/// message the deck prints.
+///
+/// Runs off the runtime worker. The export opens SQLite, dumps and
+/// pretty-prints every telemetry table, renders the dashboard, and builds the
+/// whole ZIP without yielding — awaiting it inline stalls the deck's event
+/// pump, so keystrokes go unprocessed and the TUI looks hung on the crate's
+/// most I/O-heavy command.
+pub async fn export_command(workspace_root: &Path, session_id: &str) -> String {
+    let root = workspace_root.to_path_buf();
+    let session = session_id.to_string();
+    let exported = tokio::task::spawn_blocking(move || export_session(&root, &session)).await;
+    match exported.map_err(|e| format!("export task failed: {e}")) {
+        Ok(Ok(path)) => format!(
+            "Export Session Telemetry — archive written to {}\n\
+             Scope: this session ({session_id}) only — the archive is safe to attach to a \
+             PR or email without disclosing your other runs in this workspace. The ZIP \
+             holds a `dashboard.html` (open in any browser), raw JSON dumps of this \
+             session's telemetry tables, and a `manifest.json` naming the session and \
+             what was excluded. The timestamped folder name matches the last log entry's \
+             timestamp.",
+            path.display()
+        ),
+        Ok(Err(e)) | Err(e) => format!("export failed: {e}"),
+    }
 }
 
 /// Create `dir` (and parents) owner-only. An existing directory is tightened
@@ -172,6 +249,48 @@ fn redact_dump(json: &str) -> String {
 fn css_hex(color: ratatui::style::Color) -> String {
     let (r, g, b) = crate::plain::token_rgb(color);
     format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// The dark-mode custom properties, resolved from `stella_tui::theme`.
+///
+/// Every value here is *derived*, never typed: the hand-written block this
+/// replaced had gone two recolours stale while sitting in an artifact users
+/// mail around, so only the slot NAMES live in the template. That constraint
+/// is what decides the mapping below — each reference slot takes the theme
+/// token that already means what the slot is for, rather than the nearest hex:
+///
+/// - `--faint` is the reference's timestamp/label tone. The theme's
+///   `TEXT_TERTIARY` is documented as exactly "labels, captions", and it is
+///   also the accessible choice: the reference's own `#55534F` measures
+///   **2.56:1** on its ground, where `TEXT_TERTIARY` is 5.71:1. That token
+///   paints `.t` and `.lbl` on every row in the transcript, so sub-AA there is
+///   not a detail.
+/// - `--fail` takes `DANGER` ("error / failed"), not `ORACLE_RED` — which
+///   happens to be the reference's exact `#F87171` but means "the test is red
+///   before the patch", a healthy state. Matching the hex would have meant
+///   borrowing a token whose whole purpose is to *not* say "something broke".
+///
+/// The light palette has no counterpart here and is written literally in the
+/// template: a TUI has no light theme, so there is no source to derive it from
+/// and nothing for it to drift against.
+fn dark_tokens() -> String {
+    use stella_tui::theme;
+    format!(
+        "--ground:{ground}; --surface:{surface}; --sunk:{sunk}; --line:{line};\n    \
+         --ink:{ink}; --dim:{dim}; --faint:{faint};\n    \
+         --stella:{stella}; --pass:{pass}; --fail:{fail}; --warn:{warn};",
+        ground = css_hex(theme::GROUND),
+        surface = css_hex(theme::SURFACE),
+        sunk = css_hex(theme::RAISED),
+        line = css_hex(theme::HAIRLINE_STRONG),
+        ink = css_hex(theme::TEXT_PRIMARY),
+        dim = css_hex(theme::TEXT_SECONDARY),
+        faint = css_hex(theme::TEXT_TERTIARY),
+        stella = css_hex(theme::ACCENT),
+        pass = css_hex(theme::SUCCESS),
+        fail = css_hex(theme::DANGER),
+        warn = css_hex(theme::WARNING),
+    )
 }
 
 /// Recursively replace every string value in `value` with its redacted form.
@@ -247,6 +366,24 @@ fn pretty_json(compact: &str) -> String {
 
 // ── Self-contained HTML dashboard ───────────────────────────────────────────
 
+/// `execution_id` → that execution's prompt, read off the `executions` dump.
+///
+/// The transcript opens each turn with what was asked, and the prompt is a
+/// column rather than an event — it never appears in the journal. Taking it
+/// from the dump rather than re-querying means it has already been through
+/// [`redact_dump`], so the same masking covers it.
+fn execution_prompts(dumps: &[TableDump]) -> std::collections::HashMap<i64, String> {
+    serde_json::from_str::<Vec<serde_json::Value>>(table_json(dumps, "executions"))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_i64()?;
+            let prompt = row.get("prompt")?.as_str()?.to_string();
+            Some((id, prompt))
+        })
+        .collect()
+}
+
 /// One table's JSON array from the dump set, or an empty array when absent.
 fn table_json<'a>(dumps: &'a [TableDump], table: &str) -> &'a str {
     dumps
@@ -300,6 +437,9 @@ fn render_dashboard(
     usage_stats: &[stella_store::UsageStatsRow],
     dumps: &[TableDump],
     watermark: &str,
+    session_id: &str,
+    excluded: &ExportExclusions,
+    transcript: &transcript::Transcript,
 ) -> String {
     let total_cost: f64 = usage_stats.iter().map(|r| r.total_cost_usd).sum();
     let total_runs: i64 = usage_stats.iter().map(|r| r.runs).sum();
@@ -324,10 +464,26 @@ fn render_dashboard(
     let total_output_fmt = comma(total_output);
     let total_cache_read_fmt = comma(total_cache_read);
 
-    // The watermark is the only value interpolated into markup rather than
-    // into the `<script>` block; every dump below goes through `script_json`
-    // instead — see its doc for why raw JSON is not safe there.
+    // The watermark and the session id are the only values interpolated into
+    // markup rather than into the `<script>` block; every dump below goes
+    // through `script_json` instead — see its doc for why raw JSON is not safe
+    // there. The session id is a store column like any other, and a store
+    // column is not a place this module gets to assume markup-safety about.
     let watermark = escape_html(watermark);
+    let session = escape_html(session_id);
+
+    // The scope line. The dashboard is the artifact someone opens before
+    // deciding to forward it, so what it does and does not contain belongs on
+    // the page — not only in the manifest beside it.
+    let scope_note = if excluded.is_empty() {
+        "the only session recorded in this workspace".to_string()
+    } else {
+        format!(
+            "{} execution(s) from other sessions and {} unattributed execution(s) in this \
+             workspace were <strong>not</strong> included",
+            excluded.other_session_executions, excluded.unattributed_executions,
+        )
+    };
 
     // Telemetry rows for the timeline chart.
     let telemetry_json = script_json(table_json(dumps, "telemetry"));
@@ -345,21 +501,25 @@ fn render_dashboard(
     let stats_json =
         script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
-    // The `:root` custom properties, resolved from the live theme rather than
-    // typed into the template — see the `:root` block's own note.
-    let c_ground = css_hex(stella_tui::theme::GROUND);
-    let c_surface = css_hex(stella_tui::theme::SURFACE);
-    let c_raised = css_hex(stella_tui::theme::RAISED);
-    let c_text = css_hex(stella_tui::theme::TEXT_PRIMARY);
-    let c_text2 = css_hex(stella_tui::theme::TEXT_SECONDARY);
-    let c_text3 = css_hex(stella_tui::theme::TEXT_TERTIARY);
-    let c_brand = css_hex(stella_tui::theme::ACCENT);
-    let c_brand_fill = css_hex(stella_tui::theme::ACCENT_FILL);
-    let c_violet = css_hex(stella_tui::theme::VIOLET);
-    let c_success = css_hex(stella_tui::theme::SUCCESS);
-    let c_warn = css_hex(stella_tui::theme::WARNING);
-    let c_danger = css_hex(stella_tui::theme::DANGER);
-    let c_rule = css_hex(stella_tui::theme::HAIRLINE_STRONG);
+    // The dark palette, resolved from the live theme rather than typed into
+    // the template — see `dark_tokens`. Emitted twice (media query and
+    // explicit opt-in), so it is built once here.
+    let dark_tokens = dark_tokens();
+
+    // What the transcript panel says about itself, above its first row.
+    let transcript_provenance = transcript.provenance();
+    let transcript_rows = comma(transcript.rendered as i64);
+    // An empty transcript is a real state, not a bug: a session whose events
+    // were never persisted, or one recorded by a build old enough that none of
+    // them replay. Say which, rather than rendering a blank panel that reads
+    // as a broken page.
+    let transcript_body = if transcript.rendered > 0 {
+        transcript.body.clone()
+    } else {
+        "<p class=\"empty\">No replayable events were recorded for this session. \
+         The metrics tab and the archive's <code>raw/</code> dumps are unaffected.</p>"
+            .to_string()
+    };
 
     format!(
         r##"<!DOCTYPE html>
@@ -372,114 +532,204 @@ fn render_dashboard(
      page itself declares it loads nothing and talks to no one — inline
      script/style only (its own), no frames, no forms, no external fetches. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'">
-<title>Stella Session Telemetry — {watermark}</title>
+<title>stella session telemetry — {watermark}</title>
 <style>
+  /* The page is an instrument's printout, not an app: mono everywhere, corners
+     nearly square, and colour spent only where it carries meaning (the brand
+     rule on a stage, pass/fail on a verdict). One grammar covers the metrics
+     and the transcript, because they are two views of one run.
+
+     LIGHT is the default and is written literally: a terminal has no light
+     theme, so there is no token to derive these from and nothing for them to
+     drift against. DARK is interpolated from `stella_tui::theme` — see
+     `dark_tokens()` for why that half may never be typed by hand. */
   :root {{
-    /* Brand palette, INTERPOLATED from stella_tui::theme rather than typed
-       here. The export is a standalone file a user mails around or attaches to
-       a PR, so the tokens must be inlined — but "inlined" was being done by
-       hand, and the hand-written block had gone two recolours stale: a true
-       black ground and the retired sky/violet pair, on the artifact that
-       represents the product to whoever opens it. Values that ship to a reader
-       are generated now; only the variable NAMES live in this string. */
-    --bg: {c_ground};
-    --surface: {c_surface};
-    --raised: {c_raised};
-    --text: {c_text};
-    --text2: {c_text2};
-    --text3: {c_text3};
-    --brand: {c_brand};
-    --brand-fill: {c_brand_fill};
-    --violet: {c_violet};
-    --success: {c_success};
-    --warn: {c_warn};
-    --danger: {c_danger};
-    --rule: {c_rule};
+    --ground:#FAFAF9; --surface:#FFFFFF; --sunk:#F2F1EE; --line:#E2E0DB;
+    --ink:#1A1917; --dim:#6B6862; --faint:#77736B;
+    --stella:#B57A00; --pass:#187A45; --fail:#C0392B; --warn:#7A5C00;
   }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  @media (prefers-color-scheme: dark) {{
+    :root:not([data-theme="light"]) {{ {dark_tokens} }}
+  }}
+  :root[data-theme="dark"] {{ {dark_tokens} }}
+
+  * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text);
-    line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 28px 20px 80px;
   }}
-  h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
-  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
-  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
-  .kpi {{
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px;
-  }}
-  .kpi .label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); margin-bottom: 4px; }}
-  .kpi .value {{ font-size: 1.8rem; font-weight: 700; }}
-  .kpi .sub {{ font-size: 0.75rem; color: var(--text2); margin-top: 2px; }}
-  .kpi.good .value {{ color: var(--success); }}
-  .kpi.warn .value {{ color: var(--warn); }}
-  .kpi.cost .value {{ color: var(--warn); }}
-  table {{ width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }}
-  th, td {{ padding: 8px 12px; text-align: left; font-size: 0.85rem; border-bottom: 1px solid var(--rule); }}
-  th {{ background: var(--raised); color: var(--text2); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .wrap {{ max-width: 1100px; margin: 0 auto; }}
+  h1 {{ font-size: 16px; margin: 0 0 2px; letter-spacing: -.01em; }}
+  h2 {{ font-size: 13px; margin: 26px 0 12px; font-weight: 600; color: var(--stella);
+       border-top: 1px solid var(--line); padding-top: 10px; }}
+  .sub {{ color: var(--dim); margin: 0 0 14px; font-size: 12px; }}
+  .scope {{ color: var(--dim); font-size: 12px; margin: 0 0 22px; padding: 7px 10px;
+           background: var(--surface); border: 1px solid var(--line);
+           border-left: 3px solid var(--stella); border-radius: 3px; }}
+  code {{ font: inherit; color: var(--ink); }}
+
+  /* KPI cards — the reference's dl/dt/dd, one card per measure. */
+  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+           gap: 12px; margin-bottom: 22px; }}
+  .card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+          padding: 12px 14px; border-left-width: 3px; border-left-color: var(--stella); }}
+  dt {{ color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }}
+  dd {{ margin: 2px 0 0; font-size: 19px; font-variant-numeric: tabular-nums; }}
+  .card .sub {{ margin: 2px 0 0; font-size: 11px; color: var(--dim); }}
+  .card.good dd {{ color: var(--pass); }}
+  .card.cost dd {{ color: var(--warn); }}
+
+  /* Tabs — the reference's sticky bar; here it switches the metrics view for
+     the transcript rather than one arm for another. */
+  .tabs {{ display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; position: sticky;
+          top: 0; background: var(--ground); padding: 8px 0; z-index: 5;
+          border-bottom: 1px solid var(--line); }}
+  .tab {{ font: inherit; cursor: pointer; background: var(--surface); color: var(--dim);
+         border: 1px solid var(--line); border-radius: 3px; padding: 6px 12px; }}
+  .tab[aria-selected="true"] {{ color: var(--stella); border-color: var(--stella); }}
+  .tab .n {{ color: var(--faint); font-size: 11px; }}
+  .tab:focus-visible {{ outline: 2px solid var(--stella); outline-offset: 2px; }}
+  .panel {{ display: none; }} .panel.on {{ display: block; }}
+
+  /* Row grammar — every transcript entry is `.ev` with a timestamp, a kind
+     label, and content. Kept identical across kinds so the eye can scan the
+     left two columns and never re-learn the row. */
+  .ev {{ margin: 0 0 3px; padding: 5px 8px; border-left: 2px solid transparent;
+        background: var(--surface); border-radius: 2px; }}
+  .t {{ color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 10px;
+       font-size: 11px; white-space: pre; }}
+  .lbl {{ display: inline-block; min-width: 74px; color: var(--faint); font-size: 10px;
+         letter-spacing: .07em; margin-right: 8px; }}
+  .meta {{ color: var(--dim); font-size: 11px; margin-left: 92px; }}
+  .ev.stage {{ background: transparent; border-left-color: var(--stella); margin: 18px 0 6px;
+              padding-top: 8px; border-top: 1px solid var(--line); border-radius: 0; }}
+  .ev.stage b {{ letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }}
+  .ev.step {{ background: var(--sunk); }}
+  .ev.say .prose, .ev.user .prose, .ev.think .prose {{
+    margin-left: 92px; white-space: pre-wrap; word-break: break-word; max-width: 78ch; }}
+  .ev.say {{ border-left-color: var(--pass); }}
+  .ev.user {{ border-left-color: var(--dim); }}
+  .ev.think .prose {{ color: var(--dim); font-style: italic; }}
+  .ev.verdict, .ev.proof {{ border-left-color: var(--stella); }}
+  .ev.err, .ev.tool.err, .ev.verdict.err {{ border-left-color: var(--fail); }}
+  details.ev {{ padding: 0; border-left-color: var(--dim); }}
+  details.ev summary {{ cursor: pointer; padding: 5px 8px; list-style: none; }}
+  details.ev summary::-webkit-details-marker {{ display: none; }}
+  details.ev summary:hover {{ background: var(--sunk); }}
+  details.ev[open] summary {{ border-bottom: 1px solid var(--line); }}
+  .ev pre {{ margin: 0; padding: 8px 10px 8px 100px; white-space: pre-wrap;
+            word-break: break-word; font: inherit; overflow-x: auto; }}
+  pre.in {{ color: var(--ink); background: var(--sunk); }}
+  pre.out {{ color: var(--dim); border-top: 1px dashed var(--line); max-height: 340px; overflow: auto; }}
+  pre.out.err {{ color: var(--fail); }}
+  pre.out.pending {{ color: var(--faint); font-style: italic; }}
+  pre.diff {{ color: var(--dim); max-height: 300px; overflow: auto; }}
+  .empty {{ color: var(--dim); padding: 10px 0; }}
+
+  /* Metrics view. */
+  table {{ width: 100%; border-collapse: collapse; background: var(--surface);
+          border: 1px solid var(--line); border-radius: 3px; }}
+  th, td {{ padding: 6px 10px; text-align: left; font-size: 12px; border-bottom: 1px solid var(--line); }}
+  th {{ background: var(--sunk); color: var(--faint); font-weight: 600; font-size: 10px;
+       text-transform: uppercase; letter-spacing: .06em; }}
   tr:last-child td {{ border-bottom: none; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }}
-  .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }}
-  .badge.completed {{ background: rgba(74,222,128,0.15); color: var(--success); }}
-  .badge.failed {{ background: rgba(255,92,122,0.15); color: var(--danger); }}
-  .badge.other {{ background: rgba(152,166,186,0.15); color: var(--text2); }}
-  .chart-container {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }}
+  td.num, th.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .badge {{ display: inline-block; padding: 0 5px; border-radius: 2px; font-size: 10px;
+           letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--line); }}
+  .badge.completed {{ color: var(--pass); border-color: var(--pass); }}
+  .badge.failed {{ color: var(--fail); border-color: var(--fail); }}
+  .badge.other {{ color: var(--dim); }}
+  .chart-container {{ background: var(--surface); border: 1px solid var(--line);
+                     border-radius: 3px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }}
   .bar-chart {{ display: flex; flex-direction: column; gap: 4px; }}
-  .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }}
-  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-  .bar-row .bar-track {{ flex: 1; background: var(--raised); border-radius: 3px; height: 22px; position: relative; min-width: 100px; }}
-  .bar-row .bar-fill {{ height: 100%; border-radius: 3px; background: var(--violet); transition: width 0.3s; }}
-  .bar-row .bar-value {{ width: 60px; color: var(--text3); font-family: monospace; font-size: 0.75rem; }}
-  .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
-  .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
-  .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--brand); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--brand); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-  .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
+  .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 12px; }}
+  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--dim); white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; }}
+  .bar-row .bar-track {{ flex: 1; background: var(--sunk); border-radius: 2px; height: 18px;
+                        min-width: 100px; }}
+  .bar-row .bar-fill {{ height: 100%; border-radius: 2px; background: var(--stella); }}
+  .bar-row .bar-value {{ width: 66px; color: var(--faint); font-size: 11px;
+                        font-variant-numeric: tabular-nums; }}
+  .insight {{ background: var(--surface); border: 1px solid var(--line);
+             border-left: 3px solid var(--stella); padding: 8px 12px; border-radius: 3px;
+             margin-bottom: 6px; font-size: 12px; }}
+  .insight .insight-label {{ color: var(--stella); font-size: 10px; text-transform: uppercase;
+                            letter-spacing: .06em; margin-right: 8px; }}
+  .footer {{ margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--line);
+            color: var(--faint); font-size: 11px; }}
+
+  /* Under 720px the 92px indent costs more than it buys — the label becomes a
+     row of its own and every indent collapses to the gutter. */
+  @media (max-width: 720px) {{
+    .lbl {{ min-width: 0; display: block; margin: 0 0 2px; }}
+    .meta, .ev .prose {{ margin-left: 0; }}
+    .ev pre {{ padding-left: 10px; }}
+    .bar-row .bar-label {{ width: 110px; }}
+  }}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<h1>⚡ Stella Session Telemetry</h1>
-<div class="watermark">as of {watermark}</div>
+<h1>stella session — {session}</h1>
+<p class="sub">as of {watermark} · every model step, tool call and result, in order</p>
+<div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
-<div class="kpi-grid">
-  <div class="kpi"><div class="label">Total Runs</div><div class="value">{total_runs}</div><div class="sub">{total_resolved} resolved</div></div>
-  <div class="kpi good"><div class="label">Resolve Rate</div><div class="value">{resolve_rate:.1}%</div><div class="sub">{total_resolved}/{total_runs}</div></div>
-  <div class="kpi cost"><div class="label">Total Cost</div><div class="value">${total_cost:.4}</div><div class="sub">${cost_per_resolved:.4}/resolved</div></div>
-  <div class="kpi"><div class="label">Tokens In</div><div class="value">{total_input_fmt}</div><div class="sub">{total_cache_read_fmt} cache reads</div></div>
-  <div class="kpi"><div class="label">Tokens Out</div><div class="value">{total_output_fmt}</div><div class="sub">generated</div></div>
+<div class="cards">
+  <div class="card"><dl><dt>runs</dt><dd>{total_runs}</dd></dl><p class="sub">{total_resolved} resolved</p></div>
+  <div class="card good"><dl><dt>resolve rate</dt><dd>{resolve_rate:.1}%</dd></dl><p class="sub">{total_resolved}/{total_runs}</p></div>
+  <div class="card cost"><dl><dt>cost</dt><dd>${total_cost:.4}</dd></dl><p class="sub">${cost_per_resolved:.4}/resolved</p></div>
+  <div class="card"><dl><dt>tokens in</dt><dd>{total_input_fmt}</dd></dl><p class="sub">{total_cache_read_fmt} cache reads</p></div>
+  <div class="card"><dl><dt>tokens out</dt><dd>{total_output_fmt}</dd></dl><p class="sub">generated</p></div>
 </div>
 
-<div id="insights"></div>
-
-<h2>Cost &amp; Efficiency by Model</h2>
-<div id="stats-table"></div>
-
-<h2>Token Economy</h2>
-<div class="chart-container">
-  <div id="token-chart" class="bar-chart"></div>
+<div class="tabs" role="tablist">
+  <button class="tab" data-target="transcript" role="tab" aria-selected="true">Transcript <span class="n">{transcript_rows}</span></button>
+  <button class="tab" data-target="metrics" role="tab" aria-selected="false">Metrics</button>
 </div>
 
-<h2>Tool Usage</h2>
-<div class="chart-container">
-  <div id="tool-chart" class="bar-chart"></div>
-</div>
+<!-- `on` is set HERE, not by the script. The tabs are a convenience; the
+     archive is evidence, and a reader with scripts disabled must not open it
+     to a blank page — which is exactly what a JS-assigned initial class gives
+     them, since the CSP already forbids the page every other resource. The
+     script re-asserts this class on load and then owns it. -->
+<section id="transcript" class="panel on" role="tabpanel">
+  <p class="sub">{transcript_provenance}</p>
+  {transcript_body}
+</section>
 
-<h2>Files Touched</h2>
-<div class="chart-container">
-  <div id="file-chart" class="bar-chart"></div>
-</div>
+<section id="metrics" class="panel" role="tabpanel">
+  <div id="insights"></div>
 
-<h2>Execution Outcomes</h2>
-<div class="chart-container">
-  <div id="outcome-chart" class="bar-chart"></div>
-</div>
+  <h2>Cost &amp; efficiency by model</h2>
+  <div id="stats-table"></div>
+
+  <h2>Token economy</h2>
+  <div class="chart-container">
+    <div id="token-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Tool usage</h2>
+  <div class="chart-container">
+    <div id="tool-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Files touched</h2>
+  <div class="chart-container">
+    <div id="file-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Execution outcomes</h2>
+  <div class="chart-container">
+    <div id="outcome-chart" class="bar-chart"></div>
+  </div>
+</section>
 
 <div class="footer">
   Exported by <strong>stella /export</strong> · {total_runs} executions ·
-  All data is local (no server, no account) · Dashboard is fully self-contained
+  all data is local (no server, no account) · this page is fully self-contained
+</div>
 </div>
 
 <script>
@@ -499,6 +749,22 @@ const FILES = {files_json};
 // the sink, which is the only place that knows the value is about to
 // become markup.
 const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+
+// ── Tabs ────────────────────────────────────────────────────────────────
+// The transcript opens first: it is what the archive is for, and the metrics
+// are the summary of it. Everything is in the document either way — the tabs
+// only choose what is displayed, so Ctrl-F still finds a tool call on the tab
+// you are not looking at, and printing is unaffected.
+(function tabs() {{
+  const buttons = [...document.querySelectorAll('.tab')];
+  const panels = [...document.querySelectorAll('.panel')];
+  const show = id => {{
+    panels.forEach(p => p.classList.toggle('on', p.id === id));
+    buttons.forEach(b => b.setAttribute('aria-selected', String(b.dataset.target === id)));
+  }};
+  buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.target)));
+  if (buttons.length) show(buttons[0].dataset.target);
+}})();
 
 // ── KPI insights — surface the patterns that change quality ─────────────
 (function insights() {{
@@ -547,7 +813,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
 // ── Stats table ─────────────────────────────────────────────────────────
 (function statsTable() {{
   const el = document.getElementById('stats-table');
-  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--text3)">No usage data.</p>'; return; }}
+  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--faint)">No usage data.</p>'; return; }}
   let html = '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">Runs</th><th class="num">Resolved</th><th class="num">Rate</th><th class="num">Cost</th><th class="num">$/Resolved</th><th class="num">In Tok</th><th class="num">Out Tok</th><th class="num">Avg ms</th></tr></thead><tbody>';
   for (const r of USAGE) {{
     const rate = r.runs > 0 ? (r.resolved/r.runs*100).toFixed(1)+'%' : '-';
@@ -562,24 +828,30 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
   const outTok = USAGE.reduce((s,r)=>s+r.output_tokens,0);
   const rate = runs>0?(resolved/runs*100).toFixed(1)+'%':'-';
   const per = resolved>0?'$'+(cost/resolved).toFixed(4):'-';
-  html += `<tr style="border-top:2px solid var(--rule)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
+  html += `<tr style="border-top:2px solid var(--line)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
   html += '</tbody></table>';
   el.innerHTML = html;
 }})();
 
 // ── Bar chart helper ────────────────────────────────────────────────────
+// `colorVar` is the series token for the whole chart; a datum may override it
+// with its own `colorVar` when the bar carries a verdict rather than a
+// position in a series (see the outcome chart). The token name is chart code's
+// own literal — never reader-supplied — so it is not run through `esc`, which
+// is for the label and display text either side of it.
 function barChart(containerId, data, colorVar) {{
   const el = document.getElementById(containerId);
-  if (!data.length) {{ el.innerHTML = '<p style="color:var(--text3)">No data.</p>'; return; }}
+  if (!data.length) {{ el.innerHTML = '<p style="color:var(--faint)">No data.</p>'; return; }}
   const max = Math.max(...data.map(d=>d.value), 1);
   el.innerHTML = data.map(d => {{
     const pct = (d.value/max*100).toFixed(1);
-    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
+    const fill = d.colorVar || colorVar;
+    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{fill}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
   }}).join('');
 }}
 
 // ── Token economy chart ─────────────────────────────────────────────────
-barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--violet');
+barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--c1');
 
 // ── Tool frequency chart ────────────────────────────────────────────────
 (function toolChart() {{
@@ -589,7 +861,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('tool-chart', data, '--violet');
+  barChart('tool-chart', data, '--c2');
 }})();
 
 // ── Files touched chart ─────────────────────────────────────────────────
@@ -598,7 +870,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--brand-fill');
+  barChart('file-chart', data, '--c3');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
@@ -608,10 +880,18 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     const o = e.outcome || 'open';
     counts[o] = (counts[o]||0)+1;
   }}
+  // An outcome IS a verdict, so these bars are the one chart on the page
+  // entitled to semantic colour. Every bar used to be painted --success,
+  // including the failures — the chart said "pass" in the one channel the
+  // palette reserves for saying it, about rows that did not.
+  const verdict = o =>
+    o === 'completed' || o === 'resolved' || o === 'success' ? '--ok'
+    : o === 'failed' || o === 'error' || o === 'aborted' ? '--bad'
+    : '--neutral-mark';
   const data = Object.entries(counts)
-    .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
+    .map(([name,n])=>({{label:name, value:n, display:String(n), colorVar:verdict(name)}}))
     .sort((a,b)=>b.value-a.value);
-  barChart('outcome-chart', data, '--success');
+  barChart('outcome-chart', data, '--neutral-mark');
 }})();
 </script>
 
@@ -795,517 +1075,7 @@ impl ZipWriter {
     }
 }
 
+mod transcript;
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zip_writer_produces_a_valid_archive() {
-        let mut zip = ZipWriter::new();
-        zip.add_file("a.txt", b"hello").unwrap();
-        zip.add_file("b.txt", b"world!!!").unwrap();
-        let bytes = zip.finish().unwrap();
-
-        // Minimum valid ZIP with 2 entries: 2 local headers + 2 central + EOCD.
-        // Each local header is 30 + name_len; central is 46 + name_len; EOCD is 22.
-        assert!(bytes.len() > 100);
-        // Starts with PK\x03\x04.
-        assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04]);
-        // Ends with EOCD PK\x05\x06.
-        assert_eq!(
-            &bytes[bytes.len() - 22..bytes.len() - 18],
-            &[0x50, 0x4b, 0x05, 0x06]
-        );
-
-        // Verify the content is stored verbatim (store-only).
-        let hello_pos = find_subsequence(&bytes, b"hello");
-        assert!(hello_pos.is_some(), "file content stored in the zip");
-    }
-
-    #[test]
-    fn zip_writer_handles_empty_files() {
-        let mut zip = ZipWriter::new();
-        zip.add_file("empty.txt", b"").unwrap();
-        let bytes = zip.finish().unwrap();
-        assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04]);
-    }
-
-    /// The four-byte size/offset guard, exercised with plain lengths — the
-    /// point is refusing loudly at the ZIP32 boundary, not allocating 4 GiB.
-    #[test]
-    fn zip32_field_refuses_lengths_the_headers_cannot_store() {
-        assert_eq!(zip32_field(0, "entry `x`"), Ok(0));
-        assert_eq!(
-            zip32_field(u32::MAX as usize, "entry `x`"),
-            Ok(u32::MAX),
-            "the last representable length still fits"
-        );
-        let err = zip32_field(u32::MAX as usize + 1, "entry `big.json`").unwrap_err();
-        assert!(err.contains("entry `big.json`"), "{err}");
-        assert!(err.contains("4 GiB"), "{err}");
-        assert!(err.contains("ZIP64"), "{err}");
-    }
-
-    /// Past 65,535 entries the EOCD's two-byte counts wrap — `finish` must
-    /// refuse rather than emit an archive most tools would misread.
-    #[test]
-    fn zip_writer_refuses_more_entries_than_the_eocd_can_count() {
-        let mut zip = ZipWriter::new();
-        for i in 0..=u16::MAX as u32 {
-            zip.add_file(&format!("{i}"), b"").unwrap();
-        }
-        let err = zip.finish().unwrap_err();
-        assert!(err.contains("65,535"), "{err}");
-        assert!(err.contains("ZIP64"), "{err}");
-    }
-
-    #[test]
-    fn crc32_matches_known_values() {
-        // CRC-32 of "hello" is 0x3610a686.
-        assert_eq!(crc32(b"hello"), 0x3610a686);
-        // CRC-32 of "" is 0.
-        assert_eq!(crc32(b""), 0);
-        // CRC-32 of "123456789" is 0xcbf43926 (the standard check value).
-        assert_eq!(crc32(b"123456789"), 0xcbf43926);
-    }
-
-    #[test]
-    fn sanitize_timestamp_strips_unsafe_chars() {
-        assert_eq!(
-            sanitize_timestamp("2024-01-15 10:30:00"),
-            "2024-01-15-10-30-00"
-        );
-        assert_eq!(sanitize_timestamp("1705312200000000"), "1705312200000000");
-        assert_eq!(sanitize_timestamp("../etc/passwd"), "etc-passwd");
-    }
-
-    /// A workspace file path, a tool name, and a prompt all reach the
-    /// dashboard's `<script>` block verbatim, and all three are text an agent
-    /// or a cloned repo chooses. A literal `</script` in any of them would end
-    /// the element and turn the rest of the page into attacker markup — in an
-    /// artifact the module doc tells you to email or attach to a PR.
-    #[test]
-    fn script_json_cannot_close_the_script_element() {
-        let hostile = r#"[{"path":"</script><img src=x onerror=alert(1)>"}]"#;
-        let safe = script_json(hostile);
-        assert!(!safe.contains('<'), "{safe}");
-        assert!(!safe.contains('>'), "{safe}");
-        // …and it is still the same document to a JSON parser.
-        let parsed: serde_json::Value = serde_json::from_str(&safe).expect("valid JSON");
-        assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
-    }
-
-    /// A file path an agent created lands in `FILES`, flows into `barChart`
-    /// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
-    /// the payload from closing the `<script>` element — the JS parser decodes
-    /// `<` straight back and the live string reaches the sink — so every
-    /// `innerHTML` interpolation of agent-, MCP-, or repo-chosen text has to
-    /// escape at the sink.
-    ///
-    /// The assertion is structural (over the emitted JS) rather than over the
-    /// rendered DOM on purpose: the escaping happens in the browser, so no
-    /// Rust-side output ever contains the escaped `&lt;img` form.
-    #[test]
-    fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
-        let hostile =
-            r#"[{"path":"<img src=x onerror=alert(1)>","lines_added":1,"lines_removed":0}]"#;
-        let html = render_dashboard(&[], &[("files_touched", hostile.to_string())], "now");
-
-        // The payload does reach the page — escaping at the sink, not
-        // dropping the datum, is what makes it inert.
-        assert!(
-            html.contains("onerror=alert(1)"),
-            "the hostile path is embedded in the dashboard data"
-        );
-        assert!(
-            html.contains("const esc ="),
-            "the dashboard defines an HTML escape helper"
-        );
-
-        // Every interpolation that reaches `innerHTML` goes through it…
-        for wrapped in [
-            "${esc(t.label)}",
-            "${esc(t.text)}",
-            "${esc(r.provider)}",
-            "${esc(r.model)}",
-            "${esc(d.label)}",
-            "${esc(d.display)}",
-        ] {
-            assert!(html.contains(wrapped), "escaped at the sink: {wrapped}");
-        }
-        // …and none of them is left raw.
-        for raw in [
-            "${t.label}",
-            "${t.text}",
-            "${r.provider}",
-            "${r.model}",
-            "${d.label}",
-            "${d.display}",
-        ] {
-            assert!(!html.contains(raw), "no unescaped sink remains: {raw}");
-        }
-    }
-
-    #[test]
-    fn script_json_leaves_ordinary_payloads_alone() {
-        let plain = r#"[{"model":"glm-5.2","runs":3}]"#;
-        assert_eq!(script_json(plain), plain);
-    }
-
-    #[test]
-    fn table_json_falls_back_to_an_empty_array() {
-        let dumps: Vec<TableDump> = vec![("telemetry", "[1]".to_string())];
-        assert_eq!(table_json(&dumps, "telemetry"), "[1]");
-        assert_eq!(table_json(&dumps, "missing"), "[]");
-    }
-
-    #[test]
-    fn sanitize_timestamp_collapses_dash_runs() {
-        assert_eq!(sanitize_timestamp("a--b---c"), "a-b-c");
-    }
-
-    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|window| window == needle)
-    }
-
-    #[test]
-    fn export_all_json_from_an_in_memory_store() {
-        let store = Store::in_memory().unwrap();
-        // An empty store should produce empty arrays, not errors.
-        let dumps = store.export_all_json().unwrap();
-        assert!(
-            dumps.iter().all(|(_, j)| j == "[]"),
-            "an empty store exports empty arrays"
-        );
-    }
-
-    #[test]
-    fn redact_dump_masks_secrets_and_keeps_valid_json() {
-        // #817: a GitHub PAT in a prompt and an AWS key inside a nested
-        // `args_json` string. Both must be gone, the dump must stay valid JSON,
-        // and the non-secret content must survive.
-        let raw = r#"[{"prompt":"deploy with ghp_016C7e4a9b2d3f5081726354ABCDabcd1234","args_json":"{\"key\":\"AKIAIOSFODNN7EXAMPLE\"}"},{"n":42}]"#;
-        let out = redact_dump(raw);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&out).expect("a redacted dump is still valid JSON");
-        assert!(parsed.is_array(), "shape preserved");
-        assert!(
-            !out.contains("ghp_016C7e4a9b2d3f5081726354"),
-            "github token leaked: {out}"
-        );
-        assert!(
-            !out.contains("AKIAIOSFODNN7EXAMPLE"),
-            "aws key leaked: {out}"
-        );
-        assert!(out.contains("[redacted]"), "placeholder present: {out}");
-        assert!(out.contains("deploy with"), "non-secret prose survives");
-        assert!(out.contains("42"), "non-string values survive");
-    }
-
-    #[test]
-    fn export_dumps_redact_a_secret_that_reached_the_telemetry() {
-        // The end-to-end guarantee: a credential recorded in real telemetry is
-        // masked by the same redaction `export_session` applies before writing.
-        let store = Store::in_memory().unwrap();
-        use stella_store::FileTouchRow;
-        store
-            .record_files_touched(
-                1,
-                &[FileTouchRow {
-                    path: "deploy.env".into(),
-                    ops: "A".into(),
-                    lines_added: 1,
-                    lines_removed: 0,
-                    events_json: r#"[{"note":"leaked ghp_016C7e4a9b2d3f5081726354ABCDabcd1234"}]"#
-                        .into(),
-                }],
-            )
-            .unwrap();
-        let dumps: Vec<TableDump> = store
-            .export_all_json()
-            .unwrap()
-            .into_iter()
-            .map(|(t, j)| (t, redact_dump(&j)))
-            .collect();
-        let files = dumps
-            .iter()
-            .find(|(t, _)| *t == "files_touched")
-            .map(|(_, j)| j.as_str())
-            .expect("files_touched present");
-        assert!(
-            !files.contains("ghp_016C7e4a9b2d3f5081726354"),
-            "secret leaked into the export: {files}"
-        );
-        assert!(files.contains("[redacted]"), "secret was masked: {files}");
-    }
-
-    #[test]
-    fn export_round_trips_through_a_real_store() {
-        // Record a minimal execution + telemetry, then export and verify the
-        // JSON round-trips.
-        let store = Store::in_memory().unwrap();
-        use stella_store::{FileTouchRow, TelemetryRow};
-
-        // We need an execution id — use the internal record path via a direct
-        // SQL insert since start_execution is on the CLI side.
-        store
-            .record_telemetry(
-                1,
-                &TelemetryRow {
-                    step: 0,
-                    call_role: "worker".into(),
-                    provider: "test".into(),
-                    model: "test-model".into(),
-                    input_tokens: 100,
-                    estimated_input_tokens: 90,
-                    output_tokens: 50,
-                    cache_read_tokens: 0,
-                    cache_miss_tokens: 100,
-                    cache_write_tokens: 10,
-                    cost_usd: 0.001,
-                    duration_ms: 500,
-                    retries: 0,
-                    tool_calls: 1,
-                    usage_complete: true,
-                },
-            )
-            .unwrap();
-        store
-            .record_files_touched(
-                1,
-                &[FileTouchRow {
-                    path: "src/main.rs".into(),
-                    ops: "M".into(),
-                    lines_added: 10,
-                    lines_removed: 2,
-                    events_json: "[]".into(),
-                }],
-            )
-            .unwrap();
-
-        let dumps = store.export_all_json().unwrap();
-        let telemetry = dumps
-            .iter()
-            .find(|(t, _)| *t == "telemetry")
-            .map(|(_, j)| j.as_str())
-            .unwrap();
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(telemetry).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["provider"], "test");
-        assert_eq!(parsed[0]["input_tokens"], 100);
-
-        let files = dumps
-            .iter()
-            .find(|(t, _)| *t == "files_touched")
-            .map(|(_, j)| j.as_str())
-            .unwrap();
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(files).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["path"], "src/main.rs");
-    }
-
-    #[test]
-    fn full_export_pipeline_creates_valid_zip_with_dashboard() {
-        // End-to-end: seed a temp store with data, export it, and verify the
-        // archive is a valid ZIP containing the HTML dashboard and raw JSON.
-        use stella_store::TelemetryRow;
-        let tmp = tempfile::tempdir().unwrap();
-
-        // Seed: record telemetry so the store has data to export.
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 1000,
-                        estimated_input_tokens: 900,
-                        output_tokens: 200,
-                        cache_read_tokens: 500,
-                        cache_miss_tokens: 500,
-                        cache_write_tokens: 10,
-                        cost_usd: 0.012,
-                        duration_ms: 1500,
-                        retries: 1,
-                        tool_calls: 3,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
-
-        // Export.
-        let zip_path = export_session(tmp.path()).expect("export should succeed");
-        assert!(zip_path.exists(), "the zip file was written");
-        assert!(
-            zip_path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("session-"),
-            "filename starts with session-"
-        );
-        assert!(
-            zip_path.extension().is_some_and(|e| e == "zip"),
-            "extension is .zip"
-        );
-
-        // Verify the archive content.
-        let bytes = std::fs::read(&zip_path).unwrap();
-        assert_eq!(&bytes[..2], b"PK", "valid ZIP magic bytes");
-        let content = String::from_utf8_lossy(&bytes);
-        assert!(
-            content.contains("Stella Session Telemetry"),
-            "HTML dashboard is embedded"
-        );
-        assert!(
-            content.contains("anthropic"),
-            "provider name appears in the data"
-        );
-        assert!(
-            content.contains("claude-test"),
-            "model name appears in the data"
-        );
-        assert!(content.contains("manifest"), "manifest is present");
-    }
-
-    /// #817 masks credentials from the dump, but what remains is the whole
-    /// session — every prompt, tool argument, and touched file's content. It
-    /// was written at the process umask (0644 on a stock system) inside the
-    /// project tree, so on a shared machine any other account could read the
-    /// complete transcript just by looking. Archive and directory are both
-    /// owner-only now; the directory matters as much as the file, because an
-    /// archive nobody can open is still an archive everybody can list.
-    #[cfg(unix)]
-    #[test]
-    fn the_export_archive_and_its_directory_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-        use stella_store::TelemetryRow;
-
-        let tmp = tempfile::tempdir().unwrap();
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 10,
-                        estimated_input_tokens: 10,
-                        output_tokens: 2,
-                        cache_read_tokens: 0,
-                        cache_miss_tokens: 0,
-                        cache_write_tokens: 0,
-                        cost_usd: 0.001,
-                        duration_ms: 5,
-                        retries: 0,
-                        tool_calls: 0,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
-
-        // A pre-existing world-readable exports dir (an older build's) must be
-        // tightened, not accepted.
-        let exports = tmp.path().join(".stella/exports");
-        std::fs::create_dir_all(&exports).unwrap();
-        std::fs::set_permissions(&exports, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        let zip_path = export_session(tmp.path()).unwrap();
-
-        assert_eq!(
-            std::fs::metadata(&zip_path).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "the session archive must not be readable by other accounts"
-        );
-        assert_eq!(
-            std::fs::metadata(&exports).unwrap().permissions().mode() & 0o777,
-            0o700,
-            "the exports directory must not be listable by other accounts"
-        );
-    }
-
-    #[test]
-    fn full_export_pipeline_errors_on_empty_store() {
-        let tmp = tempfile::tempdir().unwrap();
-        // Create the store (so .stella/ exists) but record nothing.
-        let _ = Store::open(tmp.path()).unwrap();
-        let result = export_session(tmp.path());
-        assert!(result.is_err(), "exporting an empty store is an error");
-        assert!(
-            result.unwrap_err().contains("no session telemetry"),
-            "error message is helpful"
-        );
-    }
-
-    /// The dashboard's `:root` palette is generated from the live theme, not
-    /// typed into the template. The block it replaced was two recolours stale
-    /// — a true-black ground and the retired sky/violet pair — in an artifact
-    /// users mail around and attach to PRs, so it was the most widely seen
-    /// remnant of a retired identity in the product.
-    #[test]
-    fn the_dashboard_palette_is_generated_from_the_live_theme() {
-        let html = render_dashboard(&[], &[], "2026-01-01 00:00:00");
-
-        for (var, token) in [
-            ("--bg", stella_tui::theme::GROUND),
-            ("--brand", stella_tui::theme::ACCENT),
-            ("--brand-fill", stella_tui::theme::ACCENT_FILL),
-            ("--violet", stella_tui::theme::VIOLET),
-            ("--text3", stella_tui::theme::TEXT_TERTIARY),
-        ] {
-            let declaration = format!("{var}: {};", css_hex(token));
-            assert!(
-                html.contains(&declaration),
-                "expected `{declaration}` in the dashboard's :root block"
-            );
-        }
-
-        // The retired values must not survive anywhere in the document —
-        // including the chart JS, which referenced a `--azure` the `:root`
-        // block no longer defines.
-        for retired in [
-            "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
-        ] {
-            assert!(
-                !html.contains(retired),
-                "retired brand value `{retired}` still ships in the dashboard"
-            );
-        }
-
-        // Every custom property the chart code asks for must exist, or the bar
-        // renders with no colour at all.
-        for used in ["--brand-fill", "--violet", "--success"] {
-            assert!(
-                html.contains(&format!("{used}: #")),
-                "chart JS references `{used}` but :root never defines it"
-            );
-        }
-    }
-
-    /// The watermark is the one store-supplied value that reaches markup
-    /// rather than the `<script>` block, so it gets the markup escape.
-    #[test]
-    fn escape_html_neutralizes_markup() {
-        assert_eq!(escape_html("2024-01-15 10:30:00"), "2024-01-15 10:30:00");
-        assert_eq!(
-            escape_html("<img src=x onerror=alert(1)>"),
-            "&lt;img src=x onerror=alert(1)&gt;"
-        );
-        assert_eq!(
-            escape_html("a & \"b\" 'c'"),
-            "a &amp; &quot;b&quot; &#39;c&#39;"
-        );
-    }
-}
+mod tests;

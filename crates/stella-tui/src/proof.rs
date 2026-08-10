@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The proof rail: what this turn has established about its own work, folded
-//! live from `AgentEvent::Proof` and the verdict that closes it.
+//! The PROOF panel: whether this turn's work is proven, in one word and one
+//! sentence, folded live from `AgentEvent::Proof` and the verdict that closes
+//! it.
 //!
 //! # Why this is a panel and not transcript lines
 //!
@@ -11,40 +12,85 @@
 //! *"right now, is this run proving what it is doing"* — a small state machine
 //! whose current value matters and whose history does not. Rendered as
 //! transcript rows the answer is buried under whatever the worker printed
-//! since; rendered as a rail it is one glance, beside the work, the whole
+//! since; rendered as a panel it is one glance, beside the work, the whole
 //! time.
 //!
-//! # The invariant: every row resolves, on every path
+//! # Why one [`Standing`] and not five rows
 //!
-//! **Once a turn has ended, no row may read `pending`.** A tool that reports
-//! only when things go well is a tool you cannot trust when they do not, and
-//! `pending` on a finished turn is the worst of both — it is silence wearing
-//! the costume of progress.
+//! This panel used to render the pipeline's five internal stages as five
+//! labelled rows — `warrant`, `witness`, `oracle`, `tamper`, `verdict` — under
+//! the title DONE VERIFICATION. Every one of those is a role name out of
+//! `stella-pipeline`, and not one of them is a word the person reading the
+//! screen would use. The mechanism was on screen; the answer was not.
+//!
+//! Three things followed, and together they are the case for this shape:
+//!
+//! 1. **The stage names crowded out the payoff.** The rail is ~38 columns and
+//!    the label column took nine of them, so the row that finally said
+//!    something — `✗ fails on base → ✓ passes on new` — is truncated to
+//!    `✓ passes…` in this repository's own committed golden frame. The panel
+//!    spent its width naming a stage and then cut off its result.
+//! 2. **The rows contradicted the ladder, in the safe-looking direction.**
+//!    `witness_intact`, `flip_refused` and `unstable_flip` were folded off the
+//!    verdict ladder and then rendered by nothing at all, while the `oracle` row
+//!    derived its own verdict from the raw `ProofStep::Oracle` stream. Those two
+//!    readings disagree exactly where it costs the most: when the ladder refuses
+//!    a flip because the passing run fixed a *different* failure (#867), the
+//!    stream still shows baseline-fail then candidate-pass, so the panel painted
+//!    a green `✗ fails on base → ✓ passes on new` over a flip the pipeline had
+//!    already declined to credit. A false green on the one claim this product
+//!    exists to make is the worst defect available to this surface.
+//! 3. **Five stage names are not five facts.** Four of the five are steps
+//!    toward a single claim. A reader wants the claim — and the reason, when it
+//!    is not the good one.
+//!
+//! So the fold now produces exactly that: a [`Standing`] (one word, one tone)
+//! and [`ProofState::explain`] (the plain sentences behind it). The stage
+//! detail did not move to a smaller font; it moved to the traces view, which is
+//! where a history belongs.
+//!
+//! # The invariant: a turn that ended never claims to still be working
+//!
+//! **Once a turn has ended, the standing is settled.** `checking` and `proving`
+//! are promises, and a tool that leaves one up on a dead turn is silence
+//! wearing the costume of progress.
 //!
 //! Holding that is a *design* problem, not a diligence problem. `run_candidate`
-//! alone has eighteen terminal exits; a rule of "every exit must remember to
+//! alone has eighteen terminal exits, and a rule of "every exit must remember to
 //! report" is one refactor away from being false, and false invisibly. So the
 //! invariant lives here, in the fold, in two halves:
 //!
-//! 1. **The plan is declared up front.** [`ProofStep::Assurance`] is emitted
-//!    the moment triage decides, before any stage can fail or decline. Every
-//!    row therefore has a stated intent from the first second — a witness is
-//!    owed, or it is not and here is who said so — rather than an absence that
+//! 1. **The plan is declared up front.** [`ProofStep::Assurance`] is emitted the
+//!    moment triage decides, before any stage can fail or decline — so the panel
+//!    carries a stated intent from the first second rather than an absence that
 //!    only becomes meaningful in hindsight.
-//! 2. **Unreported is terminal.** [`ProofState::finish`] runs on the turn's
-//!    `Complete` and converts anything still awaiting an answer into an
-//!    explicit *not reported*. That is an honest and different claim from
-//!    `pending`: the pipeline never said, and the rail says so rather than
-//!    implying more is coming. A pipeline path nobody has written yet cannot
-//!    regress this, because the backstop does not depend on that path
-//!    cooperating.
+//! 2. **Unsettled plus finished is terminal.** [`ProofState::standing`] maps any
+//!    unsettled standing to [`Standing::NeverReported`] once
+//!    [`ProofState::finish`] has run. That is an honest and different claim from
+//!    a spinner: the pipeline never said, and the panel says so rather than
+//!    implying more is coming. It is now **one branch over the whole state
+//!    machine** rather than a rule each of five rows had to remember
+//!    individually, so a pipeline path nobody has written yet cannot regress it.
 //!
-//! `no_row_is_left_pending_after_a_turn_ends` proves it over arbitrary event
-//! sequences rather than a handful of examples — the property IS the contract.
+//! `a_finished_turn_never_claims_to_still_be_working` proves it over arbitrary
+//! event sequences rather than a handful of examples — the property IS the
+//! contract.
 //!
-//! Pure: this module folds and formats, and returns [`ProofRow`]s for a
-//! renderer to style. No ratatui types, so the fold is unit-testable without a
-//! terminal (L-T1, and the buffer-not-ANSI discipline in `deck_ui::tests`).
+//! # Copy law (D6)
+//!
+//! The words on this surface are the reader's: *proved*, *not proved*, *not
+//! needed*, *a test*, *this change*. Never `warrant`, `witness`, `oracle`,
+//! `tamper`, `flip` or `verdict` — those name pipeline stages, and a stage name
+//! on a user-facing surface is this panel's original defect, not its house
+//! style.
+//!
+//! `no_pipeline_stage_name_reaches_the_panel` enforces it over arbitrary event
+//! sequences, because the leak to catch is a future branch reaching for the
+//! nearest available string — which, in this module, is always a stage name.
+//!
+//! Pure: this module folds and phrases, and hands plain strings to a renderer to
+//! style. No ratatui types, so the fold is unit-testable without a terminal
+//! (L-T1, and the buffer-not-ANSI discipline in `deck_ui::tests`).
 
 use stella_protocol::{ProofStep, ProofTree, VerdictEvidence};
 
@@ -60,21 +106,21 @@ pub struct Flip {
     pub baseline_passed: Option<bool>,
     /// What it did on the executed tree; `None` until observed.
     pub candidate_passed: Option<bool>,
-    /// How many candidate replays have been observed so far — the witness
-    /// panel's `run N` counter. Counts observations, so it is honest even
-    /// when the emitter carries no explicit `run` ordinal.
+    /// How many candidate replays have been observed so far. Counts
+    /// observations, so it is honest even when the emitter carries no explicit
+    /// `run` ordinal.
     pub candidate_runs: u32,
-    /// How many passing candidate replays the flip requires, when the
-    /// emitter stated one (`ProofStep::Oracle::runs_required`).
+    /// How many passing candidate replays the flip requires, when the emitter
+    /// stated one (`ProofStep::Oracle::runs_required`).
     pub runs_required: Option<u32>,
     /// The deterministic seed the replay pinned, when one was pinned.
     pub seed: Option<u64>,
 }
 
 impl Flip {
-    /// Whether a genuine fail→pass flip has been observed across the two
-    /// trees. Deliberately stricter than "the tests pass": a command that only
-    /// ever passed proves the code reacts to nothing.
+    /// Whether a genuine fail→pass flip has been observed across the two trees.
+    /// Deliberately stricter than "the tests pass": a command that only ever
+    /// passed proves the code reacts to nothing.
     pub fn achieved(&self) -> bool {
         self.baseline_passed == Some(false) && self.candidate_passed == Some(true)
     }
@@ -90,12 +136,12 @@ pub enum WitnessStanding {
     Unavailable { reason: String },
 }
 
-/// The verdict that closes the rail.
+/// The verdict that closes the panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerdictStanding {
     pub passed: bool,
     /// `true` when the deterministic ladder decided it, `false` for a model
-    /// verifier. Never conflated — the rail says which one spoke (L-E11).
+    /// verifier. Never conflated — the panel says which one spoke (L-E11).
     pub deterministic: bool,
     pub summary: String,
 }
@@ -107,12 +153,106 @@ pub struct Assurance {
     pub verifier: bool,
 }
 
-/// The whole rail state for one turn.
+/// Where this turn's proof stands, in one word.
+///
+/// The variants are the reader's questions, not the pipeline's stages. Several
+/// distinct mechanical outcomes collapse into [`Self::NotProved`] on purpose:
+/// a test that was never written, one that passes without the change, one the
+/// worker edited, and one that failed its confirmation re-run are four
+/// mechanisms with one consequence — *this work is not proven* — and the
+/// consequence is what belongs in the headline. Which of them happened is the
+/// job of [`ProofState::explain`], one line below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    /// Nothing established yet, and the turn is still running.
+    Checking,
+    /// Nothing was owed: this change has no behavior a test could pin down.
+    NothingToProve,
+    /// A test is owed and the machinery is working on it.
+    Proving,
+    /// A test fails without this change and passes with it.
+    Proved,
+    /// Something was owed and could not be established.
+    NotProved,
+    /// The verifier rejected the work.
+    Rejected,
+    /// Accepted — but by a model reading the change, not a test running against
+    /// it. Deliberately not [`Self::Proved`]: "nothing objected" and "something
+    /// was proven" are precisely the conflation this panel exists to break.
+    Accepted,
+    /// Every channel that could have checked this was blind, so the run cannot
+    /// say either way. Distinct from [`Self::NotProved`], which is a finding.
+    CouldNotCheck,
+    /// The turn ended without the pipeline ever reporting. A gap in the tool,
+    /// and it is shown as one.
+    NeverReported,
+}
+
+impl Standing {
+    /// Every variant, for the surfaces that must prove something about all of
+    /// them. Hand-maintained; `every_variant_is_listed` makes the compiler the
+    /// thing that notices when it falls behind the enum.
+    pub const ALL: [Standing; 9] = [
+        Self::Checking,
+        Self::NothingToProve,
+        Self::Proving,
+        Self::Proved,
+        Self::NotProved,
+        Self::Rejected,
+        Self::Accepted,
+        Self::CouldNotCheck,
+        Self::NeverReported,
+    ];
+
+    /// The word the panel title carries, completing the title's own sentence:
+    /// `PROOF ✓ proved`, `PROOF ○ not needed`, `PROOF ⚠ can't check`.
+    ///
+    /// **These are budgeted, not merely chosen.** A ratatui block title clips
+    /// with no ellipsis at all, and the rail is drawn as narrow as
+    /// `plan_rail::RAIL_MIN_W`, so a word a few characters too long does not
+    /// wrap or elide — it silently becomes a different word.
+    /// `every_standing_fits_the_narrowest_rail` holds the ceiling, and it is the
+    /// reason these read `not needed` rather than `nothing to prove`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Checking => "checking",
+            Self::NothingToProve => "not needed",
+            Self::Proving => "proving",
+            Self::Proved => "proved",
+            Self::NotProved => "not proved",
+            Self::Rejected => "rejected",
+            Self::Accepted => "accepted",
+            Self::CouldNotCheck => "can't check",
+            Self::NeverReported => "no report",
+        }
+    }
+
+    /// The tone the word and its light render in.
+    pub fn tone(self) -> Tone {
+        match self {
+            Self::Proved => Tone::Success,
+            Self::Rejected => Tone::Error,
+            Self::NotProved | Self::CouldNotCheck | Self::NeverReported => Tone::Warn,
+            // In flight, and "accepted but unproven" — both are states a reader
+            // notes without acting on.
+            Self::Proving | Self::Accepted => Tone::Info,
+            Self::Checking | Self::NothingToProve => Tone::Muted,
+        }
+    }
+
+    /// Whether this is an answer rather than a promise. The half of the
+    /// module's invariant that [`ProofState::standing`] enforces.
+    pub fn is_settled(self) -> bool {
+        !matches!(self, Self::Checking | Self::Proving)
+    }
+}
+
+/// The whole panel state for one turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProofState {
     /// The turn's declared plan, from triage. `None` before triage answers and
-    /// on conversational turns, which buy no assurance because there is no
-    /// work to assure.
+    /// on conversational turns, which buy no assurance because there is no work
+    /// to assure.
     pub assurance: Option<Assurance>,
     /// `Some((required, reason, diff_lines))` once the warrant has read the
     /// diff. `reason` is populated only when no test is warranted.
@@ -121,9 +261,8 @@ pub struct ProofState {
     pub flip: Flip,
     pub verdict: Option<VerdictStanding>,
     /// Set when the ladder abstained because every evidence channel was blind.
-    /// Holds the stated reason, and outranks the verdict on the rail: a turn
-    /// nothing could observe must not read `✓ passed` just because nothing
-    /// failed it either.
+    /// Outranks the verdict: a turn nothing could observe must not read
+    /// `proved` just because nothing failed it either.
     pub unverifiable: Option<String>,
     /// Set when verification ran and did not prove the turn — the ladder's
     /// `Unverified` rung. Outranks the verdict on the rail for the same
@@ -134,18 +273,17 @@ pub struct ProofState {
     pub unproven: Option<String>,
     /// The witness-tamper check's stated result, from the verdict's ladder
     /// snapshot: `Some(true)` = every witness artifact matched its pinned
-    /// identity (the witness panel's `tamper check ✓` line). `None` = the
-    /// check never ran or the verdict predates the snapshot.
+    /// identity. `None` = the check never ran or the verdict predates the
+    /// snapshot.
     pub witness_intact: Option<bool>,
     /// A would-be flip was refused because the pass demonstrably fixed a
-    /// *different* failure — the witness panel's distinct refused-flip result
-    /// state, never rendered as a generic failure.
+    /// *different* failure.
     pub flip_refused: bool,
     /// A flip was observed but its confirmation re-run did not pass.
     pub unstable_flip: bool,
-    /// Whether the turn has ended. Flips `pending` rows to *not reported* —
-    /// see the module docs; this is the half of the invariant that does not
-    /// depend on any pipeline path cooperating.
+    /// Whether the turn has ended. Settles an in-flight standing into
+    /// [`Standing::NeverReported`] — see the module docs; this is the half of
+    /// the invariant that does not depend on any pipeline path cooperating.
     finished: bool,
 }
 
@@ -163,9 +301,8 @@ impl ProofState {
             && self.flip == Flip::default()
     }
 
-    /// The turn ended. Anything still awaiting an answer becomes *not
-    /// reported* — a statement, where `pending` would be a promise the turn
-    /// can no longer keep.
+    /// The turn ended. Anything still in flight becomes *never reported* — a
+    /// statement, where a spinner would be a promise the turn cannot keep.
     ///
     /// Deliberately not `apply`-driven off a proof step: the backstop has to
     /// hold for turns that emitted no proof steps at all, including ones that
@@ -240,23 +377,20 @@ impl ProofState {
                 }
             }
             // Per-candidate provenance for the traces view and replay (#1787);
-            // the rail's verdict row already states the *winning* verdict's
-            // heuristic degradation via its evidence summary, so no row folds
-            // from it here.
+            // the winning verdict's own summary already states any heuristic
+            // degradation, so no standing folds from it here.
             ProofStep::VerdictDegraded { .. } => {}
-            // Provenance for the traces view and the event stream (#2414),
-            // like `VerdictDegraded` above. No rail row folds from it: the
-            // rail states what assurance the turn bought, and a triage that
-            // fell to the keyword floor still declares its `Assurance` plan —
-            // what degraded is where the plan came from, which is a question
-            // for the trace, not a row.
+            // Provenance for the traces view and the event stream (#2414), like
+            // `VerdictDegraded` above. The panel states what assurance the turn
+            // bought, and a triage that fell to the keyword floor still declares
+            // its `Assurance` plan — what degraded is *where the plan came
+            // from*, which is a question for the trace, not the headline.
             ProofStep::TriageDegraded { .. } => {}
         }
     }
 
-    /// Fold the verdict that closes the turn — and the ladder facts riding
-    /// it that the witness panel renders (tamper exclusion, a refused or
-    /// unstable flip).
+    /// Fold the verdict that closes the turn — and the ladder facts riding it:
+    /// tamper exclusion, and a refused or unstable flip.
     pub fn apply_verdict(&mut self, passed: bool, evidence: &VerdictEvidence) {
         self.verdict = Some(VerdictStanding {
             passed,
@@ -270,24 +404,7 @@ impl ProofState {
         }
     }
 
-    /// The rail's rows, in fixed order. Always five, so a surface that shows
-    /// the whole rail does not reflow as the proof accumulates.
-    ///
-    /// Every row resolves: `pending` only while the turn runs, and never once
-    /// [`Self::finish`] has been called — see the module docs.
-    pub fn rows(&self) -> Vec<ProofRow> {
-        vec![
-            self.warrant_row(),
-            self.witness_row(),
-            self.oracle_row(),
-            self.tamper_row(),
-            self.verdict_row(),
-        ]
-    }
-
-    /// Whether the rail carries news that earns a panel of its own.
-    ///
-    /// # Why this exists
+    /// Where the proof stands, in one word.
     ///
     /// The rail used to claim seven rows the moment [`ProofStep::Assurance`]
     /// landed — which is the *first* step triage emits, before any work exists.
@@ -327,193 +444,205 @@ impl ProofState {
             && self.flip == Flip::default()
     }
 
-    /// The rows worth showing when the rail is promoted: everything that is
-    /// not [`Tone::Muted`], **plus the verdict, always**.
+    /// The plain sentences behind [`Self::standing`], most important first.
     ///
-    /// A muted row is one that resolved to "nothing was owed" — correct to
-    /// record, and exactly what a reader scanning a *problem* has to skip past.
-    ///
-    /// The verdict is exempt because it is the rail's conclusion, and a
-    /// conclusion is never nothing. Dropped while muted, a promoted rail would
-    /// show a problem and then stop, leaving "so was this turn accepted or
-    /// not?" unanswered — the reader cannot tell a verdict that is still coming
-    /// from one the filter ate. `verdict  pending` is a row that carries
-    /// information precisely because the rows above it do not.
-    ///
-    /// Can never be empty (the verdict row is unconditional), so the caller is
-    /// never handed a bordered card with no interior.
-    pub fn notable_rows(&self) -> Vec<ProofRow> {
-        let verdict = self.verdict_row();
-        self.rows()
-            .into_iter()
-            .filter(|r| r.tone != Tone::Muted || r.label == verdict.label)
-            .collect()
+    /// Empty only for [`Standing::Checking`], where there is genuinely nothing
+    /// to say yet and the title already says it. Every settled standing
+    /// explains itself — asserted as a property, because a headline with no
+    /// reason under it is the failure this panel replaced.
+    pub fn explain(&self) -> Vec<String> {
+        match self.standing() {
+            Standing::Checking => Vec::new(),
+            Standing::NothingToProve => vec![self.nothing_owed_because()],
+            Standing::Proving => vec![self.proving_because()],
+            Standing::Proved => self.proved_because(),
+            Standing::NotProved => vec![self.not_proved_because()],
+            Standing::Rejected => self.rejected_because(),
+            Standing::Accepted => self.accepted_because(),
+            Standing::CouldNotCheck => vec![
+                self.unverifiable
+                    .clone()
+                    .unwrap_or_else(|| "there was no way to check this change".into()),
+            ],
+            Standing::NeverReported => {
+                vec!["the run ended without saying whether it proved anything".into()]
+            }
+        }
     }
 
-    /// The whole rail compressed to one cell, for the state strip.
-    ///
-    /// Ordered by what a reader most needs to know, not by pipeline order: a
-    /// warranted-but-unproven turn outranks a passing verdict, because the
-    /// verdict on such a turn is precisely the thing that must not be read
-    /// alone.
-    pub fn summary(&self) -> ProofRow {
-        if let Some(reason) = &self.unverifiable {
-            return ProofRow::new("proof", format!("unverifiable · {reason}"), Tone::Warn);
+    /// The standing before the finished-turn backstop. Ordered by what a reader
+    /// most needs to know, **not** by pipeline order: a warranted-but-unproven
+    /// turn outranks a passing verdict, because the verdict on such a turn is
+    /// precisely the thing that must not be read alone.
+    fn live_standing(&self) -> Standing {
+        // Nothing could observe this turn. Checked first, and before the
+        // verdict, because the pipeline emits BOTH: an abstention still closes
+        // the turn with a `passed: true` verdict — a run is not failed by the
+        // absence of a way to check it — and read off the verdict alone the
+        // panel would say `proved`.
+        if self.unverifiable.is_some() {
+            return Standing::CouldNotCheck;
+        }
+        // The worker edited the very test meant to judge it. Outranks
+        // everything below including a green flip, because a flip observed on a
+        // tampered artifact is not evidence at all.
+        //
+        // Defensive today and deliberately kept: `LadderSnapshot::witness_intact`
+        // documents that `Some(false)` never reaches a verdict, because tamper
+        // aborts the candidate before one is issued. So this branch encodes what
+        // the panel must say *if* that ever changes, rather than leaving the
+        // most dangerous value in the type to fall through to `Proved`.
+        if self.witness_intact == Some(false) {
+            return Standing::NotProved;
         }
         if let Some(reason) = &self.unproven {
             return ProofRow::new("proof", format!("unproven · {reason}"), Tone::Warn);
         }
         if matches!(self.witness, Some(WitnessStanding::Unavailable { .. })) {
-            return ProofRow::new("proof", "⚠ warranted, NOT proven", Tone::Warn);
+            return Standing::NotProved;
         }
         if let Some(v) = &self.verdict
             && !v.passed
         {
-            return ProofRow::new("proof", "✗ failed", Tone::Error);
+            return Standing::Rejected;
+        }
+        // A flip the ladder refused, or one that did not survive its
+        // confirmation re-run. Both look like a pass from the oracle's side and
+        // are not one.
+        if self.flip_refused || self.unstable_flip {
+            return Standing::NotProved;
         }
         if self.flip.achieved() {
-            return ProofRow::new("proof", "flip ✓ red→green", Tone::Success);
+            return Standing::Proved;
         }
-        if self.flip.baseline_passed == Some(true) {
-            return ProofRow::new("proof", "passes on base — no flip", Tone::Warn);
+        // A test already green on the untouched tree reacts to nothing; a test
+        // still red on the changed one has not been made to pass; a pass with
+        // no baseline observation spans nothing. None of the three is a proof.
+        if self.flip.baseline_passed == Some(true)
+            || self.flip.candidate_passed == Some(false)
+            || (self.flip.baseline_passed.is_none() && self.flip.candidate_passed.is_some())
+        {
+            return Standing::NotProved;
         }
         if let Some(v) = &self.verdict {
-            return ProofRow::new(
-                "proof",
-                if v.deterministic {
-                    "✓ passed · deterministic"
-                } else {
-                    "✓ passed · model verifier"
-                },
-                if v.deterministic {
-                    Tone::Success
-                } else {
-                    Tone::Info
-                },
-            );
+            return if v.deterministic {
+                Standing::Proved
+            } else {
+                Standing::Accepted
+            };
         }
-        if self.bought_nothing() {
-            return ProofRow::new("proof", "waived · nothing to prove", Tone::Muted);
+        if self.bought_nothing() || self.warrant_says_not_required() {
+            return Standing::NothingToProve;
         }
-        if self.witness.is_some() {
-            return ProofRow::new("proof", "witness authored · proving…", Tone::Info);
+        if self.witness.is_some() || self.warrant_says_required() {
+            return Standing::Proving;
         }
-        if self.warrant_says_required() {
-            return ProofRow::new("proof", "warranted · proving…", Tone::Info);
-        }
-        if self.finished {
-            return ProofRow::new("proof", "not reported", Tone::Warn);
-        }
-        ProofRow::new("proof", "—", Tone::Muted)
+        Standing::Checking
     }
 
-    /// The row for something the pipeline has not answered: `pending` mid-turn,
-    /// and an explicit *not reported* once the turn is over. The single place
-    /// the invariant is enforced, so no row can forget it.
-    fn unanswered(&self, label: &'static str) -> ProofRow {
-        if self.finished {
-            // Amber, not muted: a turn that ended without reporting is a gap in
-            // the tool, and it should look like one.
-            ProofRow::new(label, "not reported — the run never said", Tone::Warn)
-        } else {
-            ProofRow::new(label, "pending", Tone::Muted)
-        }
+    /// Triage declared this turn buys neither a test nor a verifier, *and*
+    /// nothing arrived regardless.
+    ///
+    /// Both halves are load-bearing. The first alone would let a turn that
+    /// bought nothing but then failed a verdict anyway suppress the failure;
+    /// requiring that every channel is also empty means anything that actually
+    /// happened is still judged on its own.
+    fn bought_nothing(&self) -> bool {
+        self.assurance.is_some_and(|a| !a.witness && !a.verifier)
+            && self.witness.is_none()
+            && self.verdict.is_none()
+            && self.unverifiable.is_none()
+            && self.flip == Flip::default()
     }
 
-    fn warrant_row(&self) -> ProofRow {
-        match &self.warrant {
-            // The warrant reads a diff, so a turn that never produced one
-            // never asks the question. Saying that is better than implying an
-            // answer is still coming.
-            None if self.finished => ProofRow::new(
-                "warrant",
-                "not reached — no diff was read".to_string(),
-                Tone::Muted,
-            ),
-            None => self.unanswered("warrant"),
-            Some((true, _, lines)) => ProofRow::new(
-                "warrant",
-                format!("required · {lines} changed lines"),
-                Tone::Info,
-            ),
-            // Not-required is a RESULT, and the reason is the whole of it.
-            Some((false, reason, _)) => ProofRow::new(
-                "warrant",
-                reason
-                    .clone()
-                    .unwrap_or_else(|| "no test warranted".to_string()),
-                Tone::Muted,
-            ),
+    fn nothing_owed_because(&self) -> String {
+        // The warrant reads the diff and states its reason as a sentence, so
+        // when it has one it is already better than anything phrased here.
+        if let Some((false, Some(reason), _)) = &self.warrant {
+            return reason.clone();
+        }
+        if self.warrant_says_not_required() {
+            return "nothing in this change alters how the code behaves".into();
+        }
+        "this turn changed no behavior a test could pin down".into()
+    }
+
+    fn proving_because(&self) -> String {
+        match (self.flip.baseline_passed, self.flip.candidate_passed) {
+            (Some(false), None) => {
+                "a test fails without this change — running it with the change now".into()
+            }
+            _ if self.witness.is_some() => {
+                "wrote a test that should fail without this change".into()
+            }
+            _ => "this change needs a test to prove it".into(),
         }
     }
 
-    fn witness_row(&self) -> ProofRow {
-        match &self.witness {
-            // THE case this rail exists for. Triage waiving the witness is the
-            // most common outcome by far, and it emits nothing downstream —
-            // `witness_on_demand` is handed `None` and returns immediately —
-            // so before the assurance plan existed this row hung on `pending`
-            // for the whole turn and then forever. Naming who declined it, and
-            // saying so from the first second, is the difference between a
-            // tool that reports and one that only reports good news.
-            None if self.triage_waived_the_witness() => {
-                ProofRow::new("witness", "waived by triage", Tone::Muted)
-            }
-            None if self.warrant_says_not_required() => ProofRow::new("witness", "—", Tone::Muted),
-            None => self.unanswered("witness"),
-            Some(WitnessStanding::Authored { path, .. }) => {
-                ProofRow::new("witness", format!("authored  {path}"), Tone::Success)
-            }
-            // A warranted witness that could not be produced is the one row
-            // that must shout: the work is finished and NOT proven.
-            Some(WitnessStanding::Unavailable { reason }) => {
-                ProofRow::new("witness", format!("unavailable · {reason}"), Tone::Warn)
-            }
+    fn proved_because(&self) -> Vec<String> {
+        // A deterministic verdict with no flip behind it (a configured
+        // `--test-command`, say) proved the work some other way, and its own
+        // summary is the honest account of how.
+        if !self.flip.achieved() {
+            return self
+                .verdict
+                .as_ref()
+                .map(|v| vec![v.summary.clone()])
+                .unwrap_or_default();
         }
+        let mut lines = vec!["a test fails without this change and passes with it".to_string()];
+        if let Some(WitnessStanding::Authored { path, .. }) = &self.witness {
+            lines.push(path.clone());
+        }
+        // Only when the replay policy asked for more than one pass: a lone run
+        // is the ordinary case and saying "run 1 of 1" is noise.
+        if let Some(required) = self.flip.runs_required
+            && required > 1
+        {
+            lines.push(format!(
+                "confirmed on {} of {required} runs",
+                self.flip.candidate_runs
+            ));
+        }
+        lines
     }
 
-    fn oracle_row(&self) -> ProofRow {
-        let (base, cand) = (self.flip.baseline_passed, self.flip.candidate_passed);
-        match (base, cand) {
-            (None, None) if self.triage_waived_the_witness() => {
-                ProofRow::new("oracle", "— no test to flip", Tone::Muted)
-            }
-            (None, None) if self.warrant_says_not_required() => {
-                ProofRow::new("oracle", "—", Tone::Muted)
-            }
-            (None, None) => self.unanswered("oracle"),
-            // The only shape that proves anything: red before, green after.
-            (Some(false), Some(true)) => ProofRow::new(
-                "oracle",
-                "✗ fails on base → ✓ passes on new".to_string(),
-                Tone::Success,
-            ),
-            (Some(false), None) => ProofRow::new(
-                "oracle",
-                "✗ fails on base → running on new".to_string(),
-                Tone::Info,
-            ),
-            (Some(false), Some(false)) => ProofRow::new(
-                "oracle",
-                "✗ fails on base → ✗ still fails".to_string(),
-                Tone::Error,
-            ),
-            // Passing on the untouched tree means the test does not react to
-            // the change — a green that proves nothing, and worth naming.
-            (Some(true), _) => ProofRow::new(
-                "oracle",
-                "passes on base — no flip to observe".to_string(),
-                Tone::Warn,
-            ),
-            (None, Some(passed)) => ProofRow::new(
-                "oracle",
-                format!(
-                    "{} on new · no baseline observation",
-                    if passed { "✓ passes" } else { "✗ fails" }
-                ),
-                Tone::Warn,
-            ),
+    /// The several distinct ways a turn arrives at *not proved*, in the same
+    /// precedence [`Self::live_standing`] used to get there — so the headline
+    /// and the reason under it can never disagree about which one happened.
+    fn not_proved_because(&self) -> String {
+        if self.witness_intact == Some(false) {
+            return "the change edited its own test, so the test proves nothing".into();
         }
+        if let Some(WitnessStanding::Unavailable { reason }) = &self.witness {
+            return format!("no test could be written — {reason}");
+        }
+        if self.flip_refused {
+            return "the test passes now, but it was fixing a different failure".into();
+        }
+        if self.unstable_flip {
+            return "the test passed once, then failed when re-run to confirm".into();
+        }
+        if self.flip.baseline_passed == Some(true) {
+            return "the test passes even without this change, so it proves nothing".into();
+        }
+        if self.flip.candidate_passed == Some(false) {
+            return "the test still fails with this change".into();
+        }
+        "the test passes, but it was never run without the change".into()
+    }
+
+    fn rejected_because(&self) -> Vec<String> {
+        let Some(v) = &self.verdict else {
+            return Vec::new();
+        };
+        let mut lines = vec![v.summary.clone()];
+        // L-E11: who decided is never left to inference. A model's rejection
+        // and a failing test are different kinds of news.
+        if !v.deterministic {
+            lines.push("a model reviewed this — no test ran".into());
+        }
+        lines
     }
 
     fn tamper_row(&self) -> ProofRow {
@@ -579,6 +708,7 @@ impl ProofState {
                 },
             ),
         }
+        lines
     }
 
     fn warrant_says_not_required(&self) -> bool {
@@ -588,57 +718,17 @@ impl ProofState {
     fn warrant_says_required(&self) -> bool {
         matches!(self.warrant, Some((true, _, _)))
     }
-
-    /// Triage declared this turn buys no witness. Distinct from the warrant
-    /// declining one: triage decides from the *prompt* before any work exists,
-    /// the warrant decides from the *diff* after. Naming which one spoke is
-    /// the difference between "nothing to prove" and "we chose not to check".
-    fn triage_waived_the_witness(&self) -> bool {
-        self.assurance.is_some_and(|a| !a.witness)
-    }
-}
-
-/// One rendered rail row: a fixed-width label, its value, and the tone the
-/// surface should style the value with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofRow {
-    pub label: &'static str,
-    pub value: String,
-    pub tone: Tone,
-}
-
-impl ProofRow {
-    fn new(label: &'static str, value: impl Into<String>, tone: Tone) -> Self {
-        Self {
-            label,
-            value: value.into(),
-            tone,
-        }
-    }
-
-    // There is deliberately no `pending()` constructor. `pending` is reachable
-    // from exactly one place — [`ProofState::unanswered`], which decides
-    // between it and *not reported* by whether the turn is over — so the
-    // invariant cannot be bypassed by a future row that hand-rolls the string.
-    // Removing this constructor is what makes that structural rather than a
-    // convention someone has to remember.
-}
-
-/// Elide a fingerprint to its recognizable head. Full hashes are for
-/// comparing, not for reading, and a rail row has ~40 columns.
-fn short(fingerprint: &str) -> String {
-    let head: String = fingerprint.chars().take(16).collect();
-    if fingerprint.chars().nth(16).is_some() {
-        format!("{head}…")
-    } else {
-        head
-    }
 }
 
 /// One-line trace summary of a [`stella_protocol::ProofStep`] for the traces
-/// view — the scrolling counterpart to the rail this module folds: the rail
+/// view — the scrolling counterpart to the panel this module folds: the panel
 /// answers "is this run proving what it is doing *now*", a trace row records
 /// what each step said when it happened.
+///
+/// This is the surface that keeps the pipeline's own vocabulary, deliberately:
+/// a trace is read by someone debugging the pipeline, for whom `oracle` and
+/// `warrant` are the precise words, and it is where the stage detail the panel
+/// stopped rendering now lives.
 pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
     use stella_protocol::{ProofStep, ProofTree};
     match step {
@@ -683,6 +773,7 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use stella_protocol::LadderSnapshot;
 
     fn authored() -> ProofStep {
         ProofStep::WitnessAuthored {
@@ -703,28 +794,220 @@ mod tests {
         }
     }
 
+    /// A ladder snapshot with every finding clear — the base the tamper /
+    /// refused / unstable tests each flip one field of.
+    fn clean_ladder() -> LadderSnapshot {
+        LadderSnapshot {
+            rung: None,
+            tracked_command: None,
+            oracle_trace: Vec::new(),
+            flip_achieved: true,
+            unstable_flip: false,
+            flip_refused_different_failure: false,
+            touched_tests_passed: None,
+            test_infra: None,
+            diff_lines: 0,
+            diff_budget: 0,
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 0,
+            new_diag_errors: 0,
+            new_diag_warnings: 0,
+            witness_intact: None,
+            witness_mutation: None,
+            diff_coverage: None,
+            verify_done_flip: false,
+            no_test_surface: false,
+            errored_commands: 0,
+            verifier_independent: None,
+        }
+    }
+
+    /// A passing verdict carrying a ladder snapshot — the shape whose findings
+    /// used to be folded and then rendered by nothing.
+    fn passed_with(ladder: LadderSnapshot) -> VerdictEvidence {
+        VerdictEvidence {
+            summary: "the change looks correct".into(),
+            deterministic: true,
+            evidence_refs: vec![],
+            ladder: Some(Box::new(ladder)),
+        }
+    }
+
+    /// The event shape a refused or unstable flip arrives in: the oracle stream
+    /// says baseline-fail then candidate-pass either way, and only the ladder
+    /// snapshot riding the verdict knows better.
+    fn green_flip() -> ProofState {
+        let mut state = ProofState::default();
+        state.apply(&authored());
+        state.apply(&oracle(false, ProofTree::Baseline));
+        state.apply(&oracle(true, ProofTree::Candidate));
+        state
+    }
+
+    /// [`Standing::ALL`] is hand-maintained, and the exhaustive match below is
+    /// what makes adding a variant a compile error here rather than a silent
+    /// hole in every property that iterates it.
     #[test]
-    fn a_fresh_state_hides_the_rail() {
-        assert!(ProofState::default().is_empty());
+    fn every_variant_is_listed() {
+        for standing in Standing::ALL {
+            match standing {
+                Standing::Checking
+                | Standing::NothingToProve
+                | Standing::Proving
+                | Standing::Proved
+                | Standing::NotProved
+                | Standing::Rejected
+                | Standing::Accepted
+                | Standing::CouldNotCheck
+                | Standing::NeverReported => {}
+            }
+        }
     }
 
     #[test]
-    fn a_warrant_alone_raises_the_rail() {
+    fn a_fresh_state_has_nothing_to_report() {
+        let state = ProofState::default();
+        assert_eq!(state.standing(), Standing::Checking);
+        assert!(state.explain().is_empty(), "no headline needs no reason");
+    }
+
+    #[test]
+    fn a_warranted_turn_reads_as_proving_and_says_what_it_needs() {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Warrant {
             required: true,
             reason: None,
             diff_lines: 41,
         });
-        assert!(!state.is_empty());
-        assert_eq!(state.rows()[0].value, "required · 41 changed lines");
+        assert_eq!(state.standing(), Standing::Proving);
+        assert_eq!(
+            state.explain(),
+            vec!["this change needs a test to prove it"]
+        );
     }
 
-    /// The witness for the module's own contract: a warranted witness that
-    /// could not be produced must NEVER render as a blank or a pending. The
-    /// work is done and unproven, and the row has to say so.
     #[test]
-    fn an_unavailable_witness_is_stated_not_swallowed() {
+    fn a_flip_reads_as_proved_and_names_the_test() {
+        let mut state = ProofState::default();
+        state.apply(&authored());
+        state.apply(&oracle(false, ProofTree::Baseline));
+        assert_eq!(state.standing(), Standing::Proving, "still mid-flight");
+        assert!(state.explain()[0].contains("running it with the change"));
+
+        state.apply(&oracle(true, ProofTree::Candidate));
+        assert_eq!(state.standing(), Standing::Proved);
+        assert_eq!(state.standing().tone(), Tone::Success);
+        let why = state.explain();
+        assert_eq!(
+            why[0],
+            "a test fails without this change and passes with it"
+        );
+        assert_eq!(why[1], "tests/clear_reset.rs");
+    }
+
+    /// A test already green on the untouched tree proves the code reacts to
+    /// nothing — the panel must not dress that as a pass.
+    #[test]
+    fn a_test_green_on_the_baseline_is_not_a_flip() {
+        let mut state = ProofState::default();
+        state.apply(&oracle(true, ProofTree::Baseline));
+        state.apply(&oracle(true, ProofTree::Candidate));
+        assert_eq!(state.standing(), Standing::NotProved);
+        assert!(state.explain()[0].contains("even without this change"));
+    }
+
+    // ---- the ladder findings the five-row panel folded and never rendered ----
+
+    /// **The witness for this change.** The oracle stream says baseline-fail →
+    /// candidate-pass, so the old panel painted a green
+    /// `✗ fails on base → ✓ passes on new` — while the ladder riding the same
+    /// verdict had already refused that flip, because the passing run fixed a
+    /// *different* failure than the one the baseline showed (#867). The panel
+    /// claimed a proof the pipeline declined to credit.
+    #[test]
+    fn a_flip_the_ladder_refused_is_never_shown_as_proved() {
+        let mut state = green_flip();
+        assert_eq!(
+            state.standing(),
+            Standing::Proved,
+            "the raw oracle stream alone reads as a clean flip"
+        );
+
+        state.apply_verdict(
+            true,
+            &passed_with(LadderSnapshot {
+                flip_achieved: false,
+                flip_refused_different_failure: true,
+                ..clean_ladder()
+            }),
+        );
+        assert_eq!(
+            state.standing(),
+            Standing::NotProved,
+            "the ladder's refusal outranks the stream it contradicts"
+        );
+        assert_eq!(state.standing().tone(), Tone::Warn);
+        assert!(
+            state.explain()[0].contains("different failure"),
+            "{:?}",
+            state.explain()
+        );
+    }
+
+    /// The same shape for a flip that did not survive its confirmation re-run.
+    /// The old panel could describe this only as a test that never passed,
+    /// which is a different — and less alarming — event than one that passed
+    /// and then stopped.
+    #[test]
+    fn an_unstable_flip_says_the_confirmation_run_failed() {
+        let mut state = green_flip();
+        state.apply_verdict(
+            true,
+            &passed_with(LadderSnapshot {
+                flip_achieved: false,
+                unstable_flip: true,
+                ..clean_ladder()
+            }),
+        );
+        assert_eq!(state.standing(), Standing::NotProved);
+        assert!(
+            state.explain()[0].contains("re-run to confirm"),
+            "{:?}",
+            state.explain()
+        );
+    }
+
+    /// Defensive, and stated as such: the protocol documents that a tampered
+    /// witness aborts its candidate before any verdict is issued, so this value
+    /// does not arrive today. The test pins what the panel would say if it ever
+    /// did — the alternative is leaving the most dangerous value in the type
+    /// falling through to `proved`.
+    #[test]
+    fn a_change_that_edited_its_own_test_would_not_be_proved() {
+        let mut state = green_flip();
+        state.apply_verdict(
+            true,
+            &passed_with(LadderSnapshot {
+                witness_intact: Some(false),
+                ..clean_ladder()
+            }),
+        );
+        assert_eq!(state.standing(), Standing::NotProved);
+        assert!(
+            state.explain()[0].contains("edited its own test"),
+            "{:?}",
+            state.explain()
+        );
+    }
+
+    // ---- the rest of the state machine ----
+
+    /// A warranted test that could not be produced is the one standing that
+    /// must shout: the work is finished and NOT proven, and the reason reaches
+    /// the panel rather than being swallowed.
+    #[test]
+    fn a_test_that_could_not_be_written_states_its_reason() {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Warrant {
             required: true,
@@ -734,56 +1017,15 @@ mod tests {
         state.apply(&ProofStep::WitnessUnavailable {
             reason: "no author independent of the worker".into(),
         });
-        let row = &state.rows()[1];
-        assert_eq!(row.tone, Tone::Warn);
-        assert!(
-            row.value.starts_with("unavailable · "),
-            "the reason must reach the rail: {}",
-            row.value
-        );
-    }
-
-    #[test]
-    fn only_red_then_green_reads_as_a_flip() {
-        let mut state = ProofState::default();
-        state.apply(&authored());
-        state.apply(&oracle(false, ProofTree::Baseline));
-        assert_eq!(state.rows()[2].tone, Tone::Info, "still mid-flight");
-        state.apply(&oracle(true, ProofTree::Candidate));
-        assert!(state.flip.achieved());
-        assert_eq!(state.rows()[2].tone, Tone::Success);
-    }
-
-    /// A test that was already green on the untouched tree proves the code
-    /// reacts to nothing — the rail must not dress that as a pass.
-    #[test]
-    fn a_test_green_on_the_baseline_is_not_a_flip() {
-        let mut state = ProofState::default();
-        state.apply(&oracle(true, ProofTree::Baseline));
-        state.apply(&oracle(true, ProofTree::Candidate));
-        assert!(!state.flip.achieved());
-        assert_eq!(state.rows()[2].tone, Tone::Warn);
-    }
-
-    #[test]
-    fn a_change_with_nothing_to_prove_states_its_reason_and_dashes_the_rest() {
-        let mut state = ProofState::default();
-        state.apply(&ProofStep::Warrant {
-            required: false,
-            reason: Some("documentation only; prose has no runtime behavior to flip".into()),
-            diff_lines: 4,
-        });
-        let rows = state.rows();
-        assert!(rows[0].value.starts_with("documentation only"));
+        assert_eq!(state.standing(), Standing::NotProved);
         assert_eq!(
-            rows[1].value, "—",
-            "no witness was owed, so none is pending"
+            state.explain()[0],
+            "no test could be written — no author independent of the worker"
         );
-        assert_eq!(rows[2].value, "—");
     }
 
     #[test]
-    fn a_model_verdict_pass_is_not_coloured_like_a_proven_one() {
+    fn a_model_pass_is_accepted_and_never_reads_as_proved() {
         let mut state = ProofState::default();
         state.apply_verdict(
             true,
@@ -794,15 +1036,86 @@ mod tests {
                 ladder: None,
             },
         );
-        let row = state.rows()[4].clone();
-        assert_eq!(row.tone, Tone::Info);
-        assert!(row.value.contains("model verifier"));
+        assert_eq!(state.standing(), Standing::Accepted);
+        assert_eq!(state.standing().tone(), Tone::Info);
+        assert!(state.explain()[0].contains("no test ran"));
     }
 
-    // ---- the invariant ----
+    #[test]
+    fn a_change_with_nothing_to_prove_says_why_in_the_warrants_own_words() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::Warrant {
+            required: false,
+            reason: Some("documentation only; prose has no runtime behavior to flip".into()),
+            diff_lines: 4,
+        });
+        assert_eq!(state.standing(), Standing::NothingToProve);
+        assert_eq!(state.standing().tone(), Tone::Muted);
+        assert_eq!(
+            state.explain()[0],
+            "documentation only; prose has no runtime behavior to flip"
+        );
+    }
+
+    /// The regression that started the panel's redesign: triage waives the
+    /// test, nothing downstream is emitted, and the old row hung on `pending`
+    /// for the whole turn and then forever. It must say so immediately —
+    /// before the turn ends, not only after.
+    #[test]
+    fn a_triage_waived_turn_says_so_while_it_is_still_running() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::Assurance {
+            witness: false,
+            verifier: false,
+        });
+        assert_eq!(state.standing(), Standing::NothingToProve);
+        assert!(!state.explain().is_empty());
+        // And nothing about it turns into a false promise at the end.
+        state.finish();
+        assert_eq!(state.standing(), Standing::NothingToProve);
+    }
+
+    /// A turn that dies before reporting must still say what it does not know.
+    #[test]
+    fn a_turn_that_reported_nothing_says_it_reported_nothing() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::Assurance {
+            witness: true,
+            verifier: true,
+        });
+        state.finish();
+        assert_eq!(state.standing(), Standing::NeverReported);
+        assert_eq!(
+            state.standing().tone(),
+            Tone::Warn,
+            "a reporting gap looks like a gap"
+        );
+        assert!(state.explain()[0].contains("without saying"));
+    }
+
+    #[test]
+    fn an_unobservable_turn_outranks_the_passing_verdict_that_closes_it() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::VerificationUnavailable {
+            reason: "every evidence channel was blind".into(),
+        });
+        state.apply_verdict(
+            true,
+            &VerdictEvidence {
+                summary: "nothing objected".into(),
+                deterministic: true,
+                evidence_refs: vec![],
+                ladder: None,
+            },
+        );
+        assert_eq!(state.standing(), Standing::CouldNotCheck);
+        assert_eq!(state.explain()[0], "every evidence channel was blind");
+    }
+
+    // ---- the invariants ----
 
     /// Every step shape the protocol can produce, as a proptest strategy. New
-    /// `ProofStep` variants must be added here — the invariant is only worth
+    /// `ProofStep` variants must be added here — an invariant is only worth
     /// what its input space covers.
     fn any_step() -> impl Strategy<Value = ProofStep> {
         prop_oneof![
@@ -843,36 +1156,39 @@ mod tests {
     proptest! {
         /// **The invariant.** However a turn went — no steps at all, steps in
         /// any order, contradictory steps, an abort partway — once it has
-        /// ended, not one row may still read `pending`.
+        /// ended, the panel states an outcome rather than a promise.
         ///
         /// A property rather than examples because the failure this guards is
         /// a *path nobody thought of*: the original bug was triage waiving the
-        /// witness, a case that emitted no steps and so appeared in no
+        /// test, a case that emitted no steps and so appeared in no
         /// example-based test. Enumerating states by hand is how it was missed
         /// the first time.
         #[test]
-        fn no_row_is_left_pending_after_a_turn_ends(steps in prop::collection::vec(any_step(), 0..8)) {
+        fn a_finished_turn_never_claims_to_still_be_working(
+            steps in prop::collection::vec(any_step(), 0..8)
+        ) {
             let mut state = ProofState::default();
             for step in &steps {
                 state.apply(step);
             }
             state.finish();
-            for row in state.rows() {
-                prop_assert_ne!(
-                    row.value.as_str(),
-                    "pending",
-                    "`{}` still reads pending after the turn ended (steps: {:?})",
-                    row.label,
-                    steps
-                );
-            }
+            prop_assert!(
+                state.standing().is_settled(),
+                "still `{}` after the turn ended (steps: {:?})",
+                state.standing().word(),
+                steps
+            );
         }
 
-        /// The rail always has exactly five rows, whatever happened. A surface
-        /// whose height depends on how the turn went cannot be read at a
-        /// glance, and cannot be laid out without reflowing the transcript.
+        /// A headline with no reason under it is the failure this panel
+        /// replaced, so every settled standing explains itself. `Checking` is
+        /// the sole exception, and only because it is unreachable once the turn
+        /// is over.
         #[test]
-        fn the_rail_is_always_five_rows(steps in prop::collection::vec(any_step(), 0..8), finished: bool) {
+        fn every_settled_standing_explains_itself(
+            steps in prop::collection::vec(any_step(), 0..8),
+            finished: bool
+        ) {
             let mut state = ProofState::default();
             for step in &steps {
                 state.apply(step);
@@ -880,51 +1196,46 @@ mod tests {
             if finished {
                 state.finish();
             }
-            prop_assert_eq!(state.rows().len(), 5);
+            let standing = state.standing();
+            if standing != Standing::Checking {
+                prop_assert!(
+                    !state.explain().is_empty(),
+                    "`{}` with no reason under it (steps: {:?})",
+                    standing.word(),
+                    steps
+                );
+            }
         }
-    }
 
-    /// The regression that started this: triage waives the witness, nothing
-    /// downstream is emitted, and the row used to hang on `pending` for the
-    /// whole turn and then forever. It must name who declined, immediately —
-    /// before the turn ends, not only after.
-    #[test]
-    fn a_triage_waived_witness_says_so_while_the_turn_is_still_running() {
-        let mut state = ProofState::default();
-        state.apply(&ProofStep::Assurance {
-            witness: false,
-            verifier: false,
-        });
-        assert!(!state.is_empty(), "the rail is up from triage onward");
-        let rows = state.rows();
-        assert_eq!(rows[1].value, "waived by triage");
-        assert_eq!(rows[2].value, "— no test to flip");
-        assert_eq!(rows[3].value, "— no artifact to pin");
-        // And nothing about it changes into a false promise at the end.
-        state.finish();
-        assert_eq!(state.rows()[1].value, "waived by triage");
-    }
-
-    /// A turn that dies before reporting anything must still say what it does
-    /// not know. `pending` on a dead turn is silence in the costume of
-    /// progress.
-    #[test]
-    fn a_turn_that_reported_nothing_says_it_reported_nothing() {
-        let mut state = ProofState::default();
-        state.apply(&ProofStep::Assurance {
-            witness: true,
-            verifier: true,
-        });
-        state.finish();
-        let rows = state.rows();
-        assert!(rows[1].value.starts_with("not reported"), "{:?}", rows[1]);
-        assert_eq!(rows[1].tone, Tone::Warn, "a reporting gap looks like a gap");
-        assert!(rows[4].value.starts_with("none —"), "{:?}", rows[4]);
-    }
-
-    #[test]
-    fn a_fingerprint_is_elided_to_a_readable_head() {
-        assert_eq!(short("sha256:9f3c1d2e4a5b6c7d8e9f"), "sha256:9f3c1d2e4…");
-        assert_eq!(short("short"), "short");
+        /// The words are the reader's, not the pipeline's (D6). Asserted over
+        /// arbitrary event sequences because the leak this catches is a future
+        /// branch that reaches for the nearest available string — which, in
+        /// this module, is always a stage name.
+        #[test]
+        fn no_pipeline_stage_name_reaches_the_panel(
+            steps in prop::collection::vec(any_step(), 0..8),
+            finished: bool
+        ) {
+            let mut state = ProofState::default();
+            for step in &steps {
+                state.apply(step);
+            }
+            if finished {
+                state.finish();
+            }
+            // The warrant's own reason is model-authored prose passed through
+            // verbatim, so it is not this module's word choice to police.
+            let authored_reason = matches!(&state.warrant, Some((false, Some(_), _)));
+            let mut phrased = state.standing().word().to_string();
+            if !authored_reason {
+                phrased.push_str(&state.explain().join(" "));
+            }
+            for banned in ["warrant", "witness", "oracle", "tamper", "verdict", "flip"] {
+                prop_assert!(
+                    !phrased.to_lowercase().contains(banned),
+                    "`{banned}` reached the panel in {phrased:?}"
+                );
+            }
+        }
     }
 }

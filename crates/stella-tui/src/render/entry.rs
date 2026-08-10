@@ -28,6 +28,16 @@ use crate::textline::{
 use super::{INLINE_DIFF_CAP, resolve_inline_diff};
 use crate::{diff, theme};
 
+// The context-recall table. Split out rather than grown here: it is the one
+// entry kind that lays out a *grid* — fitted columns, a heading, a rule, a
+// second grid for the budget legs — and that machinery is a concern of its own,
+// with an invariant (`cell` returns exactly its column's width) that only holds
+// if nothing outside it composes a recall row by hand. Keeping it in a child
+// module means it reaches this file's private `quiet`/`value`/`plural` without
+// widening anything, exactly as `entry` itself reaches `render`'s.
+mod recall;
+use recall::recall_lines;
+
 // Pure content builders (unit-tested directly)
 
 /// Fold the in-flight answer preview
@@ -558,22 +568,19 @@ fn entry_body(
         TranscriptEntry::ContextRecall {
             frames,
             tokens,
-            labels,
+            latency_ms,
+            used_ann_index,
+            providers,
+            budget,
         } => {
-            let cited = labels.join(", ");
-            push_note(
-                "◉ recalled",
-                quiet(),
-                vec![
-                    Span::styled(
-                        format!(
-                            "{} · {tokens} tok",
-                            plural(*frames as u64, "frame", "frames")
-                        ),
-                        value(),
-                    ),
-                    Span::styled(format!("  ·  {cited}"), quiet()),
-                ],
+            recall_lines(
+                frames,
+                *tokens,
+                *latency_ms,
+                *used_ann_index,
+                providers,
+                budget.as_ref(),
+                expanded,
                 width,
                 out,
             );

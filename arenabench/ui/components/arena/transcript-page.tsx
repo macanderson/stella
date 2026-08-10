@@ -62,6 +62,11 @@ const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
   // transcript down to the proof rail is to read the rail, and leaving it
   // bundled with every stage rule means turning the stages off to see it.
   { key: "proof", label: "proof", kinds: ["proof", "verdict"] },
+  // Likewise its own group. "What did recall put in front of the model, and
+  // what did it cost?" is a question asked of a whole run at once, and it is
+  // the question a transcript is opened with when a benchmark arm is being
+  // argued about — filtering to it should not mean turning off the stages.
+  { key: "context", label: "recall", kinds: ["context_recall"] },
 ];
 
 function groupOf(kind: string): string | null {
@@ -170,6 +175,209 @@ function usageLine(entry: TranscriptEntry): string {
 
 const RESULT_PREVIEW_LINES = 12;
 const THINKING_PREVIEW_LINES = 5;
+
+/** Frames shown before the fold, matching the deck's `RECALL_PREVIEW`. */
+const RECALL_PREVIEW_FRAMES = 3;
+
+type RecallFrame = {
+  kind?: string;
+  label?: string;
+  uri?: string | null;
+  provider?: string;
+  source?: string;
+  method?: string | null;
+  id?: string | null;
+  digest?: string | null;
+  tokens?: number;
+};
+
+/**
+ * One context recall, as a table.
+ *
+ * The recall stage reached this page for the first time with this component:
+ * `TranscriptReader` had no `context_recall` arm, so the event fell through to
+ * `return []` and **every arena transcript silently omitted the stage that
+ * decides what the model sees**. A benchmark transcript is the artifact used to
+ * argue whether recall helped a run, and the evidence was never in it.
+ *
+ * Laid out the way the Command Deck lays it out
+ * (`crates/stella-tui/src/render/entry.rs`), because it is the same data
+ * answering the same questions: a header with the totals and the latency, one
+ * row per frame carrying its kind, citation, location and token cost, and a
+ * disclosure holding the provenance chain and the budget report.
+ */
+function RecallEntry({
+  entry,
+  query,
+  open,
+  toggle,
+}: {
+  entry: TranscriptEntry;
+  query: string;
+  open: boolean;
+  toggle: () => void;
+}) {
+  const meta = (entry.meta || {}) as Record<string, unknown>;
+  const frames = (Array.isArray(meta.frames) ? meta.frames : []) as RecallFrame[];
+  const budget = (meta.budget || null) as {
+    requested?: number;
+    consumed?: number;
+    providers?: {
+      provider_id?: string;
+      frames_served?: number;
+      frames_rejected?: number;
+      token_cost?: number;
+    }[];
+  } | null;
+  const shown = open ? frames : frames.slice(0, RECALL_PREVIEW_FRAMES);
+  const hidden = frames.length - shown.length;
+  // The folded frames' cost, so the fold names what it hides. Without it the
+  // preview keeps the host's render order — which is the honest order, the one
+  // the model actually saw — while silently burying the outlier that made the
+  // case for per-frame costs in the first place.
+  const hiddenTokens = frames
+    .slice(shown.length)
+    .reduce((sum, f) => sum + (f.tokens ?? 0), 0);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="cursor-pointer font-semibold text-accent hover:text-foreground"
+      >
+        ◉ <Highlight text={entry.title ?? "recall"} query={query} />
+      </button>
+      <table className="w-full border-collapse text-[11px]">
+        {/* The columns are named once they are worth naming. Collapsed this is
+            a three-row preview whose cells label themselves; expanded it is the
+            whole recall with a provenance line under each row, and there the
+            heading is what keeps `82 tok` readable as a per-frame cost rather
+            than a running total. Same reasoning, and the same wording, as the
+            deck's ctrl+o heading in
+            `crates/stella-tui/src/render/entry/recall.rs`. */}
+        {open && (
+          <thead>
+            <tr className="border-b border-line-soft text-left align-baseline text-dim">
+              <th className="w-[1%] whitespace-nowrap pr-3 font-normal">kind</th>
+              <th className="pr-3 font-normal">citation</th>
+              <th className="pr-3 font-normal">location</th>
+              <th className="w-[1%] whitespace-nowrap text-right font-normal">
+                cost
+              </th>
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {shown.map((frame, i) => (
+            <React.Fragment key={`${frame.label}-${i}`}>
+              <tr className="align-baseline">
+                {/* The field the old rendering dropped, and the one that
+                    changes how a row is read: a `memory` and a `symbol` cost
+                    the prompt the same tokens and mean entirely different
+                    things about what retrieval did. */}
+                <td className="w-[1%] whitespace-nowrap pr-3 text-dim">
+                  {frame.kind || "frame"}
+                </td>
+                <td className="max-w-0 truncate pr-3 text-foreground">
+                  <Highlight text={frame.label ?? ""} query={query} />
+                </td>
+                {/* `direction: rtl` elides a path from the *left*: the tail
+                    (`…/command_deck/hunk_gate.rs:32`) identifies the frame and
+                    the head is a repo prefix every row already shares, so a
+                    plain right-truncation removes exactly the useful half. */}
+                <td
+                  dir="rtl"
+                  className="max-w-0 truncate pr-3 text-left text-muted"
+                  title={frame.uri ?? undefined}
+                >
+                  <bdi>
+                    <Highlight text={frame.uri ?? ""} query={query} />
+                  </bdi>
+                </td>
+                <td className="w-[1%] whitespace-nowrap text-right tabular-nums text-dim">
+                  {frame.tokens ?? 0} tok
+                </td>
+              </tr>
+              {open && (
+                <tr>
+                  <td />
+                  <td colSpan={3} className="pb-1 text-[10.5px] text-dim">
+                    {recallProvenance(frame)}
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={toggle}
+          className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
+        >
+          ⋯ {hidden} more · {hiddenTokens} tok · provenance and budget
+        </button>
+      )}
+      {open && budget && (
+        <div className="pt-1 text-[10.5px] text-dim">
+          <div>
+            budget {budget.consumed ?? 0} of {budget.requested ?? 0} tok
+          </div>
+          {/* A grid, not a `·`-joined line. The legs are two or three rows of
+              the same four fields, and joined into prose the rejected count
+              pushes the cost eleven characters right on the one row that has
+              one — so the two numbers a reader is here to compare never share
+              an edge. `tabular-nums` keeps the digits themselves in a column,
+              which is the browser's half of what the deck's fitted `{n:>w}`
+              does in a terminal. */}
+          <table className="border-collapse pl-3 tabular-nums">
+            <tbody>
+              {(budget.providers ?? []).map((leg) => (
+                <tr key={leg.provider_id} className="align-baseline">
+                  <td className="pl-3 pr-3">{leg.provider_id}</td>
+                  <td className="pr-3 text-right">{leg.frames_served ?? 0} served</td>
+                  {/* The number the frame list cannot carry — a rejected frame
+                      never reaches it — and so the only visible evidence that a
+                      provider misdeclared its cost. A leg that rejected nothing
+                      leaves the cell empty rather than writing a `0` the eye
+                      then has to filter out of the column it is scanning. */}
+                  <td className="pr-3 text-right text-warn">
+                    {(leg.frames_rejected ?? 0) > 0
+                      ? `${leg.frames_rejected} rejected`
+                      : ""}
+                  </td>
+                  <td className="text-right">{leg.token_cost ?? 0} tok</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** `provider ← source · method · id · digest` for an expanded frame row. */
+function recallProvenance(frame: RecallFrame): string {
+  const parts: string[] = [];
+  // Two fields on purpose: an adapter fronting another store
+  // (`workspace-memory` over `stella-context`) is the case one field hides.
+  if (frame.provider && frame.source && frame.provider !== frame.source) {
+    parts.push(`${frame.provider} ← ${frame.source}`);
+  } else if (frame.provider || frame.source) {
+    parts.push(frame.provider || frame.source || "");
+  }
+  if (frame.method) parts.push(frame.method);
+  if (frame.id) parts.push(frame.id);
+  // A missing digest is not nothing: per the context-reuse spec such a frame
+  // is *not verifiable* and a host must re-query rather than reuse it.
+  parts.push(
+    frame.digest ? `${frame.digest.slice(0, 14)}…` : "unverifiable (no digest)",
+  );
+  return parts.join(" · ");
+}
 
 /** One transcript entry, rendered in the deck's grammar. */
 function Entry({
@@ -343,6 +551,17 @@ function Entry({
 
   if (entry.kind === "usage") {
     return <div className="text-[10.5px] text-dim">{usageLine(entry)}</div>;
+  }
+
+  if (entry.kind === "context_recall") {
+    return (
+      <RecallEntry
+        entry={entry}
+        query={query}
+        open={resultOpen}
+        toggle={toggleResult}
+      />
+    );
   }
 
   if (entry.kind === "proof") {

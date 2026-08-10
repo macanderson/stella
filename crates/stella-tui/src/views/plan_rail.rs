@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The right-hand rail: **PLAN** over **DONE VERIFICATION**, always on.
+//! The right-hand rail: **PLAN** over **PROOF**, always on.
 //!
 //! # What this replaces
 //!
@@ -31,29 +31,38 @@
 //! │ ○ 3 pin the approved plan   │  ← default text, hollow ring
 //! │ ○ 4 update the goldens      │
 //! └──────────── /plan reads it ─┘
-//! ┌ DONE VERIFICATION ──────────┐
-//! │ ● warrant  required · 41 ln │
-//! │ ● witness  authored         │
-//! │ ○ oracle   pending          │
-//! │ ○ tamper   —                │
-//! │ ○ verdict  pending          │
+//! ┌ PROOF ✓ proved ─────────────┐
+//! │ a test fails without this   │
+//! │ change and passes with it   │
+//! │ tests/clear_reset.rs        │
 //! └─────────────────────────────┘
 //! ```
 //!
 //! Both panels are **unconditional**. That is the whole point: a rail that
 //! appears only when something is wrong teaches the reader that its absence
 //! means nothing is happening, when in fact absence and healthy look identical.
-//! All five verification rows are always drawn, so a row moving from `pending`
-//! to `authored` is a light changing colour in a fixed place — which is what
-//! makes it readable out of the corner of an eye.
+//! PROOF is always drawn at the same height, so a change of standing is a light
+//! changing colour in a fixed place — which is what makes it readable out of the
+//! corner of an eye.
+//!
+//! # Why the two panels are shaped alike
+//!
+//! Each carries its state **in its own title** — `PLAN ● working 2/5`,
+//! `PROOF ✓ proved` — and spends its body on the detail behind it. One idiom,
+//! learned once, read twice. PROOF used to be a title that said only what the
+//! panel *was* (`DONE VERIFICATION`) over five rows of pipeline stage names, so
+//! the answer was somewhere in the body if it was anywhere; the state-in-title
+//! shape puts it where the eye already goes for PLAN.
 //!
 //! # Copy law (D6)
 //!
-//! `PLAN`, `DONE VERIFICATION`, plan step. Never task, scope, issue, witness,
-//! or proof — those are other tools' words (GitHub's, Jira's) or internal role
-//! names, and neither belongs on a user-facing surface.
+//! `PLAN`, `PROOF`, plan step. Never task, scope or issue — those are other
+//! tools' words (GitHub's, Jira's) — and never `warrant`, `witness`, `oracle`,
+//! `tamper` or `verdict`, which name `stella-pipeline` stages. `PROOF` is not
+//! among them: it is the plain-English claim the panel makes, and the earlier
+//! ban on it here is what produced a title nobody could read.
 //!
-//! Pure line-builders ([`plan_rows`], [`verification_rows`]) so the state→colour
+//! Pure line-builders ([`plan_rows`], [`proof_body`]) so the state→colour
 //! mapping is unit-testable without a terminal.
 
 use ratatui::buffer::Buffer;
@@ -64,7 +73,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::model::SessionModel;
 use crate::plan::{Plan, PlanState};
-use crate::proof::ProofState;
+use crate::proof::{ProofState, Standing};
 use crate::render::truncate_spans;
 use crate::textline::Tone;
 use crate::theme;
@@ -89,8 +98,8 @@ const RAIL_MIN_W: u16 = 24;
 /// to render whitespace.
 const RAIL_MAX_W: u16 = 44;
 
-/// Rows the verification panel claims when it can show every light.
-const VERIFY_H: u16 = proof::ROWS + 2;
+/// Rows the PROOF panel claims when it can show its whole explanation.
+const VERIFY_H: u16 = proof::BODY_ROWS + 2;
 
 /// Rows PLAN keeps before verification may take any: its border plus two
 /// steps. Below this the panel is a bordered box with nothing readable in it.
@@ -178,14 +187,20 @@ fn plan_ring(state: PlanState) -> (&'static str, Style) {
     }
 }
 
-/// The verification light for a row's tone. Same three-channel redundancy as
-/// the plan rings: shape, colour, and the row's own words.
+/// The PROOF light. Genuine three-channel redundancy — **shape**, colour, and
+/// the standing's own word — so the panel survives a colour-blind reader and a
+/// monochrome terminal alike.
+///
+/// The shape channel used to carry only two values (`●` established, `○` not),
+/// which meant colour alone separated a proof from a failure. It now borrows
+/// the plan's own settled glyphs, so `✓` and `✗` mean the same thing in both
+/// panels of one rail.
 fn verify_ring(tone: Tone) -> (&'static str, Style) {
     match tone {
-        Tone::Success => ("●", Style::new().fg(theme::OK)),
-        Tone::Warn => ("●", Style::new().fg(theme::WARN)),
+        Tone::Success => ("✓", Style::new().fg(theme::OK)),
+        Tone::Warn => ("⚠", Style::new().fg(theme::WARN)),
         Tone::Error => (
-            "●",
+            "✗",
             Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
         ),
         // In flight: the same violet the plan uses for "working", so one
@@ -291,28 +306,28 @@ pub fn plan_rows(plan: &Plan, cap: usize, now_ms: u64, animate: bool) -> Vec<Lin
     rows
 }
 
-/// The DONE VERIFICATION panel's body: **all five rows, always**, each with its
-/// light.
+/// The PROOF panel's body: the plain sentences behind the standing its title
+/// carries, wrapped to `width`.
 ///
-/// Unfiltered by design. The old rail hid every row whose tone was `Muted`,
-/// which meant a turn that was proving itself cleanly showed fewer rows than
-/// one that had gone wrong — so the panel got *shorter* as things went better,
-/// and a reader could not tell "nothing to report" from "not reported".
-pub fn verification_rows(state: &ProofState) -> Vec<Line<'static>> {
+/// No light and no label per row — the panel makes **one** claim, so it gets one
+/// light, in the title, where the eye already goes for PLAN's. Five lights over
+/// five pipeline stage names is what this replaced, and the reason is in
+/// [`crate::proof`]'s module docs.
+///
+/// A body that is quiet news reads in the ordinary secondary text; one that is
+/// bad news is tinted, so a reader who has looked away from the title still sees
+/// the panel as a problem.
+pub fn proof_body(state: &ProofState, width: usize) -> Vec<Line<'static>> {
+    let tone = state.standing().tone();
+    let style = match tone {
+        Tone::Warn | Tone::Error => proof::style_for(tone),
+        _ => Style::new().fg(theme::TEXT_SECONDARY),
+    };
     state
-        .rows()
-        .into_iter()
-        .map(|row| {
-            let (glyph, ring) = verify_ring(row.tone);
-            Line::from(vec![
-                Span::styled(format!("{glyph} "), ring),
-                Span::styled(
-                    format!("{:<8} ", row.label),
-                    Style::new().fg(theme::TEXT_TERTIARY),
-                ),
-                Span::styled(row.value.clone(), proof::style_for(row.tone)),
-            ])
-        })
+        .explain()
+        .iter()
+        .flat_map(|sentence| proof::wrap(sentence, width))
+        .map(|line| Line::from(Span::styled(line, style)))
         .collect()
 }
 
@@ -320,12 +335,11 @@ pub fn verification_rows(state: &ProofState) -> Vec<Line<'static>> {
 // Rendering
 // ---------------------------------------------------------------------------
 
-/// Draw the rail into `area`: PLAN on top, DONE VERIFICATION pinned to the
-/// bottom.
+/// Draw the rail into `area`: PLAN on top, PROOF pinned to the bottom.
 ///
-/// Verification takes its fixed seven rows first and the plan takes the rest,
-/// so the lights never move as the plan grows — a status light that changes
-/// position is a status light nobody learns to find.
+/// PROOF takes its fixed rows first and the plan takes the rest, so the light
+/// never moves as the plan grows — a status light that changes position is a
+/// status light nobody learns to find.
 pub fn render(sm: &SessionModel, now_ms: u64, animate: bool, area: Rect, buf: &mut Buffer) {
     if area.height < 3 || area.width < 4 {
         return;
@@ -336,23 +350,25 @@ pub fn render(sm: &SessionModel, now_ms: u64, animate: bool, area: Rect, buf: &m
     render_verification(&sm.proof, bands[1], buf);
 }
 
-/// Rows to give the verification panel out of a rail `height` rows tall.
+/// Rows to give the PROOF panel out of a rail `height` rows tall.
 ///
-/// The five lights are a fixed-height panel by design — a light that moves is
-/// a light nobody learns to find — but taking those seven rows unconditionally
-/// meant that on a frame with a gate card up, verification claimed everything
-/// and **PLAN disappeared entirely**. Both panels are supposed to be up
-/// always, so the fixed height yields before the plan does:
+/// PROOF is a fixed-height panel by design — a light that moves is a light
+/// nobody learns to find — but taking those rows unconditionally meant that on
+/// a frame with a gate card up, it claimed everything and **PLAN disappeared
+/// entirely**. Both panels are supposed to be up always, so the fixed height
+/// yields before the plan does:
 ///
-/// | Rail height | Verification |
+/// | Rail height | PROOF |
 /// |---|---|
-/// | ≥ `PLAN_MIN_H + VERIFY_H` | all five lights |
-/// | ≥ `PLAN_MIN_H + 3` | the one-line summary |
+/// | ≥ `PLAN_MIN_H + VERIFY_H` | the standing and its whole explanation |
+/// | ≥ `PLAN_MIN_H + 3` | the standing and the first line of it |
 /// | below that | nothing — the plan takes the rail |
 ///
-/// The middle rung is the point: [`ProofState::summary`] already says in one
-/// line what the five rows say in five, so a squeezed rail loses detail rather
-/// than losing the surface.
+/// The middle rung costs less than it looks: the standing rides in the title,
+/// so a squeezed panel is still a complete answer with a shorter reason. Before
+/// the standing moved into the title this rung had to swap the whole body for a
+/// hand-written summary line, because any prefix of five stage rows could drop
+/// the verdict and still look finished.
 fn verification_height(height: u16) -> u16 {
     if height >= PLAN_MIN_H + VERIFY_H {
         VERIFY_H
@@ -409,27 +425,30 @@ pub fn render_plan(plan: &Plan, now_ms: u64, animate: bool, area: Rect, buf: &mu
         .render(area, buf);
 }
 
-/// The DONE VERIFICATION panel. Public for the same reason.
+/// The PROOF panel. Public for the same reason.
+///
+/// The title carries the whole answer, so a squeezed panel simply explains
+/// itself in fewer words — there is no rung at which it stops saying where the
+/// proof stands. That is the structural win over the five-row version, which had
+/// to special-case a one-line summary because an arbitrary prefix of its rows
+/// could drop the verdict and still look complete.
 pub fn render_verification(state: &ProofState, area: Rect, buf: &mut Buffer) {
     if area.height < 3 {
         return;
     }
     let inner_w = area.width.saturating_sub(2) as usize;
     let capacity = (area.height as usize).saturating_sub(2);
-    // Too short for the full rail: one summary line rather than an arbitrary
-    // prefix of the five. A panel showing `warrant` and `witness` and silently
-    // dropping the verdict is worse than one that says where the proof stands.
-    let source = if capacity < proof::ROWS as usize {
-        let summary = state.summary();
-        let (glyph, ring) = verify_ring(summary.tone);
-        vec![Line::from(vec![
-            Span::styled(format!("{glyph} "), ring),
-            Span::styled(summary.value.clone(), proof::style_for(summary.tone)),
-        ])]
-    } else {
-        verification_rows(state)
-    };
-    let rows: Vec<Line<'static>> = source
+    let standing = state.standing();
+    let (glyph, ring) = verify_ring(standing.tone());
+    let title = Line::from(vec![
+        Span::styled(" PROOF ", Style::new().fg(theme::TEXT_SECONDARY)),
+        Span::styled(format!("{glyph} "), ring),
+        Span::styled(
+            format!("{} ", standing.word()),
+            proof::style_for(standing.tone()),
+        ),
+    ]);
+    let rows: Vec<Line<'static>> = proof_body(state, inner_w)
         .into_iter()
         .take(capacity)
         .map(|line| Line::from(truncate_spans(line.spans, inner_w)))
@@ -438,27 +457,20 @@ pub fn render_verification(state: &ProofState, area: Rect, buf: &mut Buffer) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(border_style(state))
-                .title(Span::styled(
-                    " DONE VERIFICATION ",
-                    Style::new().fg(theme::TEXT_SECONDARY),
-                )),
+                .border_style(border_style(standing))
+                .title(title),
         )
         .render(area, buf);
 }
 
-/// The verification border tracks its worst light, so an unproven turn is
-/// legible from the frame before a word is read.
-fn border_style(state: &ProofState) -> Style {
-    let tones: Vec<Tone> = state.rows().into_iter().map(|r| r.tone).collect();
-    if tones.contains(&Tone::Error) {
-        Style::new().fg(theme::DANGER)
-    } else if tones.contains(&Tone::Warn) {
-        Style::new().fg(theme::WARN)
-    } else if state.flip.achieved() {
-        Style::new().fg(theme::SUCCESS)
-    } else {
-        theme::rule()
+/// The PROOF border tracks the standing, so an unproven turn is legible from the
+/// frame before a word is read.
+fn border_style(standing: Standing) -> Style {
+    match standing.tone() {
+        Tone::Error => Style::new().fg(theme::DANGER),
+        Tone::Warn => Style::new().fg(theme::WARN),
+        Tone::Success => Style::new().fg(theme::SUCCESS),
+        _ => theme::rule(),
     }
 }
 
@@ -657,68 +669,172 @@ mod tests {
         assert!(text.iter().any(|r| r.contains("no plan yet")), "{text:?}");
     }
 
-    // ---- the verification panel ----
+    // ---- the PROOF panel ----
 
-    /// **The other half of the report.** All five lights, on a turn where
-    /// nothing has happened yet — the old band rendered zero rows here, which
-    /// is why the indicators "never updated": there was nothing on screen to
-    /// update.
+    /// **The guard on the copy.** Every standing's title must fit the narrowest
+    /// rail the layout will ever draw.
+    ///
+    /// A ratatui block title clips with **no ellipsis at all** — unlike the body
+    /// rows, which go through [`truncate_spans`] and at least admit the cut. So
+    /// a word a few characters too long does not wrap, elide, or fail: it
+    /// silently becomes a different word, in the one place on the frame that
+    /// carries the whole answer. `nothing to prove` was exactly that word, and
+    /// this test is why the copy reads `not needed`.
     #[test]
-    fn all_five_lights_are_up_before_anything_has_been_established() {
-        let rows = verification_rows(&ProofState::default());
-        assert_eq!(rows.len(), 5);
-        for label in ["warrant", "witness", "oracle", "tamper", "verdict"] {
+    fn every_standing_fits_the_narrowest_rail() {
+        // The title lives inside the block's borders: two columns of corner,
+        // then " PROOF " + a ring glyph and its space + the word + one trailing
+        // space.
+        let budget = RAIL_MIN_W as usize - 2;
+        for standing in Standing::ALL {
+            let cols = " PROOF ".chars().count() + 2 + standing.word().chars().count() + 1;
             assert!(
-                rows.iter().any(|r| text_of(r).contains(label)),
-                "missing {label}"
+                cols <= budget,
+                "`{}` needs {cols} columns of a {budget}-column title and would \
+                 be clipped without an ellipsis",
+                standing.word()
             );
         }
-        assert!(
-            rows.iter().all(|r| r.spans[0].content.as_ref() == "○ "),
-            "an unestablished light is a hollow grey ring"
+    }
+
+    /// The shape channel has to carry the meaning on its own, for a
+    /// colour-blind reader and for a monochrome terminal. Every tone therefore
+    /// gets a distinct glyph — it used to be `●` for four of the five, which
+    /// left colour as the only thing separating a proof from a failure.
+    #[test]
+    fn every_tone_has_its_own_shape_not_just_its_own_colour() {
+        let glyphs: Vec<&str> = [
+            Tone::Success,
+            Tone::Warn,
+            Tone::Error,
+            Tone::Info,
+            Tone::Muted,
+        ]
+        .into_iter()
+        .map(|t| verify_ring(t).0)
+        .collect();
+        let mut distinct = glyphs.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), glyphs.len(), "two tones share a shape");
+    }
+
+    /// And the guard is load-bearing at the real narrow width, not just in
+    /// arithmetic: the whole word survives a rendered minimum-width rail.
+    #[test]
+    fn the_standing_survives_a_minimum_width_rail() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::Assurance {
+            witness: false,
+            verifier: false,
+        });
+        let area = Rect::new(0, 0, RAIL_MIN_W, VERIFY_H);
+        let text = rendered(area, |b| render_verification(&state, area, b));
+        assert!(text.contains("not needed"), "{text}");
+    }
+
+    /// **The regression this panel's redesign exists for.** A reader must be
+    /// able to answer "is this proven?" from the title alone, in words they use
+    /// — never from five rows of `stella-pipeline` stage names.
+    #[test]
+    fn the_title_carries_the_answer_in_the_readers_own_words() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::WitnessAuthored {
+            path: "tests/clear_reset.rs".into(),
+            command: "cargo test clear_reset".into(),
+            fingerprint: "sha256:9f3c1d2e".into(),
+        });
+        state.apply(&ProofStep::Oracle {
+            command: "cargo test clear_reset".into(),
+            passed: false,
+            tree: stella_protocol::ProofTree::Baseline,
+            run: None,
+            runs_required: None,
+            seed: None,
+        });
+        state.apply(&ProofStep::Oracle {
+            command: "cargo test clear_reset".into(),
+            passed: true,
+            tree: stella_protocol::ProofTree::Candidate,
+            run: None,
+            runs_required: None,
+            seed: None,
+        });
+
+        let area = Rect::new(0, 0, 38, 5);
+        let text = rendered(area, |b| render_verification(&state, area, b));
+        assert!(text.contains("PROOF"), "{text}");
+        assert!(text.contains("proved"), "{text}");
+        for stage in ["warrant", "witness", "oracle", "tamper", "verdict"] {
+            assert!(
+                !text.contains(stage),
+                "the pipeline's `{stage}` reached the panel:\n{text}"
+            );
+        }
+    }
+
+    /// The panel explains itself in plain sentences under that title.
+    #[test]
+    fn the_body_explains_the_standing_in_plain_sentences() {
+        let mut state = ProofState::default();
+        state.apply(&ProofStep::Warrant {
+            required: false,
+            reason: Some("documentation only; prose has no runtime behavior to flip".into()),
+            diff_lines: 4,
+        });
+        let text: Vec<String> = proof_body(&state, 30).iter().map(text_of).collect();
+        assert_eq!(
+            text,
+            vec![
+                "documentation only; prose has",
+                "no runtime behavior to flip"
+            ],
+            "the warrant's own reason, wrapped to the rail"
         );
     }
 
-    /// And they change colour in place as the pipeline reports.
+    /// The light changes colour where it stands, and the panel never changes
+    /// height as it does — that fixed position is what makes it glanceable.
     #[test]
-    fn a_light_changes_colour_where_it_stands() {
+    fn the_light_changes_colour_without_the_panel_changing_height() {
+        let area = Rect::new(0, 0, 38, VERIFY_H);
+        let height_of = |state: &ProofState| -> usize {
+            rendered(area, |b| render_verification(state, area, b))
+                .lines()
+                .count()
+        };
         let mut state = ProofState::default();
-        let before = verification_rows(&state);
-        assert_eq!(before[1].spans[0].style.fg, Some(theme::TEXT_TERTIARY));
+        assert_eq!(state.standing().tone(), Tone::Muted);
+        let before = height_of(&state);
 
         state.apply(&ProofStep::Warrant {
             required: true,
             reason: None,
             diff_lines: 41,
         });
-        state.apply(&ProofStep::WitnessAuthored {
-            path: "tests/clear_reset.rs".into(),
-            command: "cargo test clear_reset".into(),
-            fingerprint: "sha256:9f3c1d2e".into(),
+        assert_eq!(state.standing().tone(), Tone::Info, "in flight");
+        assert_eq!(height_of(&state), before);
+
+        state.apply(&ProofStep::WitnessUnavailable {
+            reason: "no author independent of the worker".into(),
         });
-        let after = verification_rows(&state);
-        assert_eq!(after.len(), before.len(), "the panel never changes height");
-        assert_eq!(
-            after[1].spans[0].style.fg,
-            Some(theme::OK),
-            "the witness light went green"
-        );
-        assert!(text_of(&after[1]).contains("authored"));
+        assert_eq!(state.standing().tone(), Tone::Warn, "and then a problem");
+        assert_eq!(height_of(&state), before);
     }
 
+    /// A waived turn is a report, not an absence: the panel is up, and it says
+    /// what was decided rather than going blank.
     #[test]
-    fn a_clean_turn_still_shows_every_light() {
+    fn a_turn_with_nothing_to_prove_still_says_so() {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Assurance {
             witness: false,
             verifier: false,
         });
         state.finish();
-        assert_eq!(
-            verification_rows(&state).len(),
-            5,
-            "a waived turn is a report, not an absence"
-        );
+        let area = Rect::new(0, 0, 38, VERIFY_H);
+        let text = rendered(area, |b| render_verification(&state, area, b));
+        assert!(text.contains("not needed"), "{text}");
     }
 
     // ---- rendering ----
@@ -732,12 +848,10 @@ mod tests {
         let area = Rect::new(0, 0, 34, 20);
         let text = rendered(area, |b| render(&sm, 0, false, area, b));
         let plan_at = text.find("PLAN").expect("a PLAN panel");
-        let verify_at = text
-            .find("DONE VERIFICATION")
-            .expect("a verification panel");
-        assert!(plan_at < verify_at, "PLAN sits above DONE VERIFICATION");
+        let verify_at = text.find("PROOF").expect("a PROOF panel");
+        assert!(plan_at < verify_at, "PLAN sits above PROOF");
         assert!(text.contains("read the layout"), "{text}");
-        assert!(text.contains("warrant"), "{text}");
+        assert!(text.contains("checking"), "{text}");
     }
 
     /// The rail is narrow and `Paragraph` clips at its border with no ellipsis,
@@ -771,8 +885,8 @@ mod tests {
         );
         assert!(text.contains("one"), "…with its steps:\n{text}");
         assert!(
-            text.contains("DONE VERIFICATION"),
-            "…and verification is still present, just compact:\n{text}"
+            text.contains("PROOF"),
+            "…and PROOF is still present, just compact:\n{text}"
         );
     }
 
@@ -802,10 +916,10 @@ mod tests {
         }
     }
 
-    /// The verification panel is pinned to the bottom at a fixed height, so the
-    /// lights do not move as the plan above them grows.
+    /// PROOF is pinned to the bottom at a fixed height, so its light does not
+    /// move as the plan above it grows.
     #[test]
-    fn the_lights_hold_their_position_as_the_plan_grows() {
+    fn the_light_holds_its_position_as_the_plan_grows() {
         let area = Rect::new(0, 0, 34, 24);
         let row_of = |steps: &[&str]| -> usize {
             let mut sm = SessionModel::default();
@@ -813,8 +927,8 @@ mod tests {
             sm.plan.approve();
             let text = rendered(area, |b| render(&sm, 0, false, area, b));
             text.lines()
-                .position(|l| l.contains("warrant"))
-                .expect("a warrant row")
+                .position(|l| l.contains("PROOF"))
+                .expect("a PROOF title")
         };
         assert_eq!(row_of(&["one"]), row_of(&["one", "two", "three", "four"]));
     }

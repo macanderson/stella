@@ -102,14 +102,20 @@ fn tool_start(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
     }
 }
 
-/// One recalled context frame. The scenario only varies the citation label, the
-/// provider/source pair, the frame kind and the token cost — every demo frame
-/// is unmaterialized (`id: None`) and carries no receipt.
+/// One recalled context frame.
+///
+/// `uri` and `method` are populated — a symbol frame without its `path:line`
+/// renders a blank location column, which is exactly the case the golden frames
+/// must *not* pin as normal: locating the recalled symbol in the tree is the
+/// reason the column exists. Every demo frame stays unmaterialized (`id: None`)
+/// and carries no receipt, so the deck's "unverifiable (no digest)" path is
+/// what the scenario exercises.
 fn frame(
     citation_label: &str,
     provider: &str,
     source: &str,
     kind: &str,
+    uri: Option<&str>,
     token_cost: u32,
 ) -> ContextFrameRef {
     ContextFrameRef {
@@ -118,8 +124,12 @@ fn frame(
         provider: provider.into(),
         source: source.into(),
         kind: kind.into(),
-        uri: None,
-        method: None,
+        uri: uri.map(str::to_string),
+        method: Some(if provider == "code-graph" {
+            "symbol-name".into()
+        } else {
+            "embedding".into()
+        }),
         token_cost,
         block_id: None,
         content_digest: None,
@@ -186,21 +196,23 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::ContextRecall {
                 frames: vec![
                     frame(
-                        "engine step-driver (driver.rs)",
+                        "engine step-driver",
                         "code-graph",
-                        "code-graph",
+                        "stella-graph",
                         "symbol",
+                        Some("crates/stella-core/src/driver.rs:88"),
                         120,
                     ),
                     frame(
-                        "event-log REPL (stella-tui)",
+                        "event-log REPL",
                         "workspace-memory",
                         "stella-context",
                         "memory",
+                        None,
                         90,
                     ),
                 ],
-                provider_mix: vec![share("code-graph", 1), share("memory", 1)],
+                provider_mix: vec![share("code-graph", 1), share("workspace-memory", 1)],
                 tokens: 210,
                 usage: None,
                 latency_ms: 34,

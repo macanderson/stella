@@ -170,16 +170,41 @@ packages the session's telemetry into
 clock, not the moment you typed `/export`. Every entry nests under a matching
 `<timestamp>/` folder inside the archive:
 
-- `<timestamp>/raw/<table>.json` — a pretty-printed dump of every telemetry
+- `<timestamp>/raw/<table>.json` — a pretty-printed dump of each telemetry
   table (executions, telemetry, tool calls, files touched, MCP usage, skill
-  usage, reflections, …)
+  usage, reflections, …), holding **this session's rows only**
 - `<timestamp>/dashboard.html` — a **self-contained** HTML dashboard (no
   external CSS or JS) with KPI insights, cost &amp; efficiency by model, token
   economy, tool usage, files touched, and execution outcomes — openable
   offline, emailable, or committable to a PR as the receipt for what an agent
-  run did and cost
-- `<timestamp>/manifest.json` — the watermark (as `exported_at`) and
-  per-table row counts
+  run did and cost. Its totals cover the exported session, and it names that
+  session and what was excluded at the top of the page
+- `<timestamp>/manifest.json` — the watermark (as `exported_at`), the
+  exported `session` id, per-table row counts, and an `excluded` census of
+  what the scope left behind
+
+### The archive covers one session
+
+`/export` packages the session you are in — never the whole workspace store.
+That is a safety property, not a convenience: the archive is built to be
+shared, so credentials in the telemetry are masked and the file is written
+`0600`, and both of those defences assume the blast radius is one session.
+Until [#2558](https://github.com/macanderson/stella/issues/2558) it was every
+run the workspace had ever recorded, so attaching an export to a public PR to
+show one run disclosed every unrelated run in that project — its prompts, its
+tool arguments, its touched files' contents.
+
+Because rows are excluded rather than absent, the archive says so. The
+manifest's `excluded` object counts the executions belonging to other sessions,
+the executions carrying no session stamp at all (recorded before the
+`session_id` column existed), and reflections linked to no execution. Without
+those counts a reader cannot tell "this session did nothing else" from "the
+exporter dropped the rest".
+
+Workspace-wide analytics have their own home:
+[`stella stats`](/docs/commands/stats) and the
+[Observatory](/docs/telemetry/observatory) both read across every session, and
+neither produces a file that leaves the machine.
 
 <Callout type="info">
   The Observatory is for *living* workspaces — point it at your repo and

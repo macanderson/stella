@@ -126,7 +126,7 @@ fn deck_renders_every_tab_with_real_content() {
     // `/plan` is one case where there used to be three: `/tasks`, `/scope` and
     // `/witness` all described the same plan and none of them could show a
     // step's text. The verification records the witness panel carried are now
-    // the session frame's DONE VERIFICATION panel, not a card.
+    // the session frame's PROOF panel, not a card.
     let card_cases: [(stella_tui::deck_ui::cards::Card, &[&str]); 3] = [
         (
             stella_tui::deck_ui::cards::Card::Plan,
