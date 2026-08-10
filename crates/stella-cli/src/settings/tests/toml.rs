@@ -56,7 +56,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           "enable_recap": "off",
           "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
-          "reward": {"verifier_weight": 0.25, "per_usd": 0.75},
+          "reward": {"deterministic_weight": 0.25, "per_usd": 0.75},
           "mcp": {"registry_url": "https://registry.example"}
         }"#,
     );
@@ -73,7 +73,7 @@ recap = "off"
 trace_capture = "on"
 
 [reward]
-verifier_weight = 0.25
+deterministic_weight = 0.25
 per_usd = 0.75
 
 [providers.anthropic]
@@ -143,34 +143,29 @@ registry_url = "https://registry.example"
     assert_eq!(from_json.ui, from_toml.ui, "ui");
     assert_eq!(from_json.reward, from_toml.reward, "reward");
     assert_eq!(
-        from_toml.reward_policy().unwrap().outcome.judged,
+        from_toml.reward_policy().unwrap().outcome.deterministic,
         0.25,
-        "[reward].verifier_weight resolves into the policy"
+        "[reward].deterministic_weight resolves into the policy"
     );
     assert_eq!(
-        from_toml.reward_policy().unwrap().outcome.deterministic,
-        1.0,
+        from_toml.reward_policy().unwrap().shaping.per_step,
+        0.02,
         "an unset weight is the default, not zero"
     );
     assert_eq!(from_json.mcp, from_toml.mcp, "mcp");
 }
 
-/// A workspace that distrusts its verifier writes one key and inherits the rest.
-/// The alternative — an absent key meaning `0.0` — would silently discard every
-/// judged turn for anyone who set only `per_step`.
+/// A workspace that reprices one term writes one key and inherits the rest.
+/// The alternative — an absent key meaning `0.0` — would silently give the
+/// reward scale no unit for anyone who set only `per_step`.
 #[test]
 fn an_absent_reward_key_is_the_default_not_zero() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(
-        dir.path(),
-        "stella.toml",
-        "[reward]\nverifier_weight = 0.1\n",
-    );
+    let path = write(dir.path(), "stella.toml", "[reward]\nper_step = 0.1\n");
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let policy = settings.reward_policy().unwrap();
-    assert_eq!(policy.outcome.judged, 0.1);
+    assert_eq!(policy.shaping.per_step, 0.1);
     assert_eq!(policy.outcome.deterministic, 1.0);
-    assert_eq!(policy.shaping.per_step, 0.02);
     assert_eq!(policy.shaping.per_usd, 0.5);
     assert_eq!(policy.shaping.per_revision, 0.1);
 }
@@ -189,25 +184,24 @@ fn no_reward_block_is_exactly_the_defaults() {
     );
 }
 
-/// A verifier weight above the deterministic one is refused at load, by name.
+/// A reward weight that cannot carry a scale is refused at load, by name.
 /// Loud beats clamping: a silently-substituted weight produces correctly-shaped
 /// labels that mean something the operator never asked for.
 #[test]
-fn a_verifier_weight_above_the_ceiling_fails_the_load_by_name() {
+fn an_impossible_reward_weight_fails_the_load_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(
         dir.path(),
         "stella.toml",
-        "[reward]\nverifier_weight = 2.0\n",
+        "[reward]\ndeterministic_weight = 0.0\n",
     );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let error = settings
         .reward_policy()
-        .expect_err("a verifier outranking a test must not load");
-    assert!(error.contains("verifier_weight"), "{error}");
+        .expect_err("a scale with no unit must not load");
     assert!(error.contains("deterministic_weight"), "{error}");
     // The message has to say what to do, not just that something is wrong.
-    assert!(error.contains("Lower it"), "{error}");
+    assert!(error.contains("greater than zero"), "{error}");
 }
 
 #[test]

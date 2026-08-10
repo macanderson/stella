@@ -435,23 +435,13 @@ impl Settings {
             {
                 // Which vocabulary applies is a property of the FORMAT, not the
                 // scope — `agents` is a valid root in TOML and a typo in JSON.
-                let unknown = if toml_config::path_is_toml(path) {
+                let found = if toml_config::path_is_toml(path) {
                     super::unknown::unknown_toml_keys_in(path)
                 } else {
                     super::unknown::unknown_keys_in(path)
                 };
-                if !unknown.is_empty() {
-                    eprintln!(
-                        "  ! {}: unrecognized key{} ignored ({}) — check the spelling; \
-                         stella reads none of them",
-                        path.display(),
-                        if unknown.len() == 1 { "" } else { "s" },
-                        unknown
-                            .iter()
-                            .map(|key| key.escape_debug().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    );
+                for line in super::unknown::notices(&path.display().to_string(), found) {
+                    eprintln!("{line}");
                 }
             }
         }
