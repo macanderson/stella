@@ -422,29 +422,8 @@ fn shell_quote(s: &str) -> String {
 mod gate;
 pub(crate) use gate::{GATE_RESOLVED_KEY, thread_gate_resolution};
 
-/// Resolve and run one script — the single execution path shared by the
-/// `run_script` tool and `stella scripts run`.
-pub async fn run_by_name(
-    root: &Path,
-    script: &str,
-    dir: Option<&str>,
-    args: &[String],
-    timeout_secs: u64,
-    scratch_path: Option<&std::path::Path>,
-) -> ToolOutput {
-    let index = ScriptIndex::detect(root).await;
-    let entry = match index.resolve(script, dir) {
-        Ok(entry) => entry,
-        Err(message) => return ToolOutput::Error { message },
-    };
-    let command = compose_command(entry, args);
-    let cwd = if entry.dir == "." {
-        root.to_path_buf()
-    } else {
-        root.join(&entry.dir)
-    };
-    exec::run_and_report(&command, &cwd, timeout_secs, scratch_path).await
-}
+mod run;
+pub use run::run_by_name;
 
 fn string_args(input: &Value) -> Vec<String> {
     input

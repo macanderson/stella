@@ -155,7 +155,7 @@ pub(crate) async fn run_argv_untruncated(
         .chain(args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    drive(cmd, &display, dir, timeout_secs, &[]).await
+    drive(cmd, &display, dir, timeout_secs, &[], None).await
 }
 
 /// Outcome of [`run_captured`].
@@ -537,7 +537,7 @@ pub(crate) async fn run_argv_split(
         .chain(args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    drive_split(cmd, &display, dir, timeout_secs, &[]).await
+    drive_split(cmd, &display, dir, timeout_secs, &[], None).await
 }
 
 /// `run` with the PASSED/FAILED framing shared by `build_project`,
@@ -752,7 +752,7 @@ mod tests {
         // sleep is reaped by init, so a surviving pid means a real leak.
         let cmd = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
         let dir_path = dir.path().to_path_buf();
-        let handle = tokio::spawn(async move { run(&cmd, &dir_path, 60).await });
+        let handle = tokio::spawn(async move { run(&cmd, &dir_path, 60, None).await });
         let mut pid = None;
         for _ in 0..250 {
             if let Some(p) = std::fs::read_to_string(&pidfile)

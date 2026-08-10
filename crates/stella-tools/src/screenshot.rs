@@ -93,7 +93,7 @@ impl Tool for Screenshot {
         // otherwise close the literal and hand the remainder to `bash -c`
         // as code.
         let command = capture_command(&shell_quote(&file.to_string_lossy()));
-        match exec::run(&command, root, 30).await {
+        match exec::run(&command, root, 30, None).await {
             Ok((0, _)) => {
                 let size = tokio::fs::metadata(&file)
                     .await
