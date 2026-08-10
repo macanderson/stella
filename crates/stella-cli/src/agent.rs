@@ -413,9 +413,7 @@ async fn run_pipeline_one_shot(
         );
         // `--test-command` arms the deterministic verify ladder: the
         // fail→pass flip oracle and SubmitFast/Revise decisions all key off
-        // it. Left unset, nothing escalates — there is no model verdict to
-        // escalate to — so a turn the remaining deterministic probes cannot
-        // settle lands on the Unverified rung.
+        // it. Left unset, an unsettled turn is Unverified, never escalated.
         let mut pipeline_config = pipeline_config_for_approval_capability(
             cfg,
             approval_capability,
