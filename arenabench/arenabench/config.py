@@ -271,6 +271,17 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
                 f"{where}: bare_loop applies only to a stella seat — "
                 f"{agent!r} has no staged pipeline to switch off"
             )
+        if engine.responsibilities and agent and agent != "stella":
+            # The same refusal, for the same reason, on the knob that arrived
+            # after it (#2381). A roster on a comparator seat parsed cleanly and
+            # was dropped on the floor: the template said the arm ablated a
+            # stage, the arm ran whole, and the published number described
+            # neither. Asymmetry here was an oversight, not a policy — a
+            # declaration that reaches nothing must fail the file, always.
+            problems.append(
+                f"{where}: engine.responsibilities applies only to a stella "
+                f"seat — {agent!r} has no pipeline stages to reassign"
+            )
 
         env_raw = entry.get("env")
         declared: tuple[str, ...] = ()
@@ -436,13 +447,22 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
                     **{
                         k: v
                         for k, v in c.engine.to_json().items()
-                        if k not in ("roles", "qualified_model") and v is not None
+                        if k not in ("roles", "responsibilities", "qualified_model")
+                        and v is not None
                     },
                     "roles": {
                         name: {
                             k: v for k, v in role.to_json().items() if v is not None
                         }
                         for name, role in c.engine.roles.items()
+                    },
+                    # Rebuilt rather than passed through, so the inner `None`s
+                    # are dropped the same way `roles` drops them. TOML has no
+                    # spelling for one, and an inherited axis written out as a
+                    # key would record a pin the arm never made.
+                    "responsibilities": {
+                        name: {k: v for k, v in row.to_json().items() if v is not None}
+                        for name, row in c.engine.responsibilities.items()
                     },
                 },
             }
@@ -543,6 +563,25 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             for name, role in engine.roles.items():
                 out.append(f"    [contestant.engine.roles.{name}]")
                 for key, value in role.to_json().items():
+                    if value is not None:
+                        out.append("    " + _line(key, value))
+                out.append("")
+
+        if engine.responsibilities:
+            # The stage roster (#2381), on the same terms as `roles` above: only
+            # the fields the arm set, and nothing at all when it ablated nothing,
+            # so an existing template renders back byte-identical.
+            #
+            # Omitting this block was a silent drop on the one path whose entire
+            # purpose is reproducibility: "download this match" would hand back a
+            # .toml describing the full pipeline for a seat that had ablated a
+            # stage, and `arenabench run it.toml` would then run a different
+            # experiment than the one whose number was published.
+            out.append("")
+            out.append("  # Stage roster. Absent means the shipped binding, which is not `false`.")
+            for name, row in engine.responsibilities.items():
+                out.append(f"    [contestant.engine.responsibilities.{name}]")
+                for key, value in row.to_json().items():
                     if value is not None:
                         out.append("    " + _line(key, value))
                 out.append("")

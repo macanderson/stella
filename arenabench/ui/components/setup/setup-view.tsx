@@ -46,9 +46,9 @@ function defaultSeat(catalog: Catalog, agentSlug: string, index: number, id: str
       reasoning: true,
       effort: "high",
       base_url: "",
-      budget_usd: "",
-      max_tokens: "",
+      bare_loop: false,
       roles: {},
+      responsibilities: {},
     },
     env: "",
   };
@@ -80,15 +80,39 @@ function matchPayload(args: {
         if (cfg.model) entry.model = cfg.model;
         if (cfg.effort) entry.effort = cfg.effort;
         if (cfg.reasoning) entry.reasoning = cfg.reasoning;
-        if (cfg.max_tokens) entry.max_tokens = Number(cfg.max_tokens);
         if (Object.keys(entry).length) roles[role] = entry;
+      }
+      // Only the axes the operator actually set, per responsibility. A row
+      // spelling `enabled: true` for a stage nobody touched records a pin that
+      // was never made, and — because the posture is what the digest covers —
+      // re-hashes an arm that ablates nothing, making two runs of the same
+      // configuration incomparable.
+      const responsibilities: Record<string, Record<string, unknown>> = {};
+      for (const [name, cfg] of Object.entries(seat.engine.responsibilities)) {
+        const entry: Record<string, unknown> = {};
+        if (cfg.enabled) entry.enabled = cfg.enabled === "on";
+        if (cfg.agent.trim()) entry.agent = cfg.agent.trim();
+        if (Object.keys(entry).length) responsibilities[name] = entry;
       }
       return {
         id: seat.id,
         name: seat.name,
         agent: seat.agent,
         color: seat.color,
-        engine: { ...seat.engine, roles },
+        // Named field by field, never `{...seat.engine}`. The draft is a form
+        // shape and the payload is a wire contract; spreading one into the
+        // other is what shipped `budget_usd: ""` to a server that refuses the
+        // key by presence, so every launch from this form was refused (#2411).
+        engine: {
+          api: seat.engine.api,
+          model: seat.engine.model,
+          reasoning: seat.engine.reasoning,
+          effort: seat.engine.effort,
+          base_url: seat.engine.base_url,
+          bare_loop: seat.engine.bare_loop,
+          roles,
+          responsibilities,
+        },
         env: seat.env,
       };
     }),
@@ -282,8 +306,12 @@ export function SetupView({
             reasoning: c.engine.reasoning,
             effort: c.engine.effort,
             base_url: c.engine.base_url || "",
-            budget_usd: c.engine.budget_usd == null ? "" : String(c.engine.budget_usd),
-            max_tokens: c.engine.max_tokens == null ? "" : String(c.engine.max_tokens),
+            // Read, not dropped. Until #2374's roster knobs reached this
+            // applier, loading a template that ablated a stage produced a form
+            // showing the full pipeline and a launch that ran it — the operator
+            // told the ablation had loaded, and a number measuring the arm they
+            // did not configure.
+            bare_loop: !!c.engine.bare_loop,
             roles: Object.fromEntries(
               Object.entries(c.engine.roles || {}).map(([name, cfg]) => [
                 name,
@@ -295,7 +323,19 @@ export function SetupView({
                     : cfg.reasoning
                       ? "on"
                       : "off") as "" | "on" | "off",
-                  max_tokens: cfg.max_tokens == null ? "" : String(cfg.max_tokens),
+                },
+              ]),
+            ),
+            responsibilities: Object.fromEntries(
+              Object.entries(c.engine.responsibilities || {}).map(([name, cfg]) => [
+                name,
+                {
+                  enabled: (cfg.enabled == null
+                    ? ""
+                    : cfg.enabled
+                      ? "on"
+                      : "off") as "" | "on" | "off",
+                  agent: cfg.agent || "",
                 },
               ]),
             ),
@@ -707,6 +747,8 @@ export function SetupView({
                   agents={catalog.agents}
                   efforts={catalog.efforts}
                   roles={catalog.roles}
+                  responsibilities={catalog.responsibilities}
+                  responsibilityAgents={catalog.responsibility_agents}
                   models={models}
                   modelsError={modelsError}
                   removable={seats.length > 1}
