@@ -7,7 +7,14 @@
 
    `--accent` is therefore the text colour: "active" is an inversion of the
    page, and `--on-accent` is what sits on that fill. Dark is the default
-   (matching `arenabench serve`). */
+   (matching `arenabench serve`).
+
+   One hue is exempt, and only one: `--identity` is the brand's gold, and it
+   may appear on the wordmark, the favicon mark, and at most one primary
+   action per page. It may never encode a state — `--identity` #ffb000 against
+   `--warn` #c9a227 is 1.32:1, so "active" and "warning" would be one signal
+   to the reader. Values are taken from docs/brand/css/tokens.css
+   (--stella-gold-500 on ink, --stella-gold-800 on paper), never mixed here. */
 :root {
   color-scheme: dark;
   --bg: #0a0a0a;
@@ -17,6 +24,8 @@
   --dim: #6e6e6e;
   --accent: #ededed;
   --on-accent: #0a0a0a;
+  --identity: #ffb000;
+  --on-identity: #0b0b0c;
   --ok: #4cc38a;
   --bad: #e5715f;
 }
@@ -31,6 +40,8 @@
     --dim: #8f8f8f;
     --accent: #0a0a0a;
     --on-accent: #ffffff;
+    --identity: #795500;
+    --on-identity: #ffffff;
     --ok: #11703a;
     --bad: #a32f1f;
   }

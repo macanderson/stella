@@ -221,18 +221,6 @@ fn redact_dump(json: &str) -> String {
     }
 }
 
-/// A theme token as a CSS `#rrggbb` literal.
-///
-/// The dashboard is a standalone HTML file, so its palette has to be inlined —
-/// but inlining was being done by hand, and the hand-written block drifted two
-/// whole recolours behind the identity while sitting in an artifact users mail
-/// around. Generating the values means the export cannot disagree with the
-/// terminal it came from.
-fn css_hex(color: ratatui::style::Color) -> String {
-    let (r, g, b) = crate::plain::token_rgb(color);
-    format!("#{r:02x}{g:02x}{b:02x}")
-}
-
 /// Recursively replace every string value in `value` with its redacted form.
 fn redact_json_strings(value: &mut serde_json::Value) {
     match value {
@@ -422,22 +410,6 @@ fn render_dashboard(
     let stats_json =
         script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
-    // The `:root` custom properties, resolved from the live theme rather than
-    // typed into the template — see the `:root` block's own note.
-    let c_ground = css_hex(stella_tui::theme::GROUND);
-    let c_surface = css_hex(stella_tui::theme::SURFACE);
-    let c_raised = css_hex(stella_tui::theme::RAISED);
-    let c_text = css_hex(stella_tui::theme::TEXT_PRIMARY);
-    let c_text2 = css_hex(stella_tui::theme::TEXT_SECONDARY);
-    let c_text3 = css_hex(stella_tui::theme::TEXT_TERTIARY);
-    let c_brand = css_hex(stella_tui::theme::ACCENT);
-    let c_brand_fill = css_hex(stella_tui::theme::ACCENT_FILL);
-    let c_violet = css_hex(stella_tui::theme::VIOLET);
-    let c_success = css_hex(stella_tui::theme::SUCCESS);
-    let c_warn = css_hex(stella_tui::theme::WARNING);
-    let c_danger = css_hex(stella_tui::theme::DANGER);
-    let c_rule = css_hex(stella_tui::theme::HAIRLINE_STRONG);
-
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -449,77 +421,200 @@ fn render_dashboard(
      page itself declares it loads nothing and talks to no one — inline
      script/style only (its own), no frames, no forms, no external fetches. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'">
-<title>Stella Session Telemetry — {watermark}</title>
+<title>stella session telemetry — {watermark}</title>
 <style>
+  /* ── Instrument tokens ─────────────────────────────────────────────────
+     This file is the third surface on stella's web instrument system; the
+     other two are crates/stella-observatory/src/assets/index.html and
+     arenabench/ui/app/globals.css. That file's delimited palette block is
+     the single definition, and this block is a derivation of it —
+     crates/stella-cli/tests/design_token_parity.rs fails if any token they
+     both name disagrees, so the copy cannot drift the way the two before it
+     did.
+
+     The palette used to be interpolated from `stella_tui::theme`, which was
+     right when the export's only sibling was the terminal. It is wrong now:
+     the TUI palette is gold-chromed by design (ACCENT == BRAND == #FFB81A,
+     and gold there marks a Running state), while a web instrument's chrome
+     must not carry a hue at all. Generating from the terminal guaranteed the
+     export matched the one surface it should no longer match. The parity
+     test replaces that guarantee with the correct one.
+
+     Colour is meaning, and only meaning:
+       --ok / --warn / --bad   a verdict — it passed, it needs attention, it
+                               failed. Nothing else may take these.
+       --c1..--c4              categorical series, separated by LIGHTNESS not
+                               hue, so a series survives greyscale printing,
+                               colour-vision deficiency and a projector.
+       --identity              the wordmark and at most one primary action.
+                               Never a state: --identity #FFB000 against
+                               --warn #C9A227 is 1.32:1, so a reader cannot
+                               tell them apart by hue.
+       --accent                what is selected. It IS the text colour, so
+                               "active" is an ink/paper inversion rather than
+                               a colour — the one dimension a reader cannot
+                               mistake for a measurement.
+     Cost and token counts get none of these. They are measurements, not
+     verdicts; the old block painted cost in --warn, which told every reader
+     that spending money was a fault condition. */
   :root {{
-    /* Brand palette, INTERPOLATED from stella_tui::theme rather than typed
-       here. The export is a standalone file a user mails around or attaches to
-       a PR, so the tokens must be inlined — but "inlined" was being done by
-       hand, and the hand-written block had gone two recolours stale: a true
-       black ground and the retired sky/violet pair, on the artifact that
-       represents the product to whoever opens it. Values that ship to a reader
-       are generated now; only the variable NAMES live in this string. */
-    --bg: {c_ground};
-    --surface: {c_surface};
-    --raised: {c_raised};
-    --text: {c_text};
-    --text2: {c_text2};
-    --text3: {c_text3};
-    --brand: {c_brand};
-    --brand-fill: {c_brand_fill};
-    --violet: {c_violet};
-    --success: {c_success};
-    --warn: {c_warn};
-    --danger: {c_danger};
-    --rule: {c_rule};
+    --void: #060606; --ground: #0A0A0A; --surface: #0F0F0F; --raised: #111111;
+    --hairline: #1F1F1F; --hairline-strong: #2E2E2E;
+    --identity: #FFB000; --identity-ink: #0B0B0C;
+    --text: #EDEDED; --text-2: #A1A1A1; --text-3: #6E6E6E;
+    --ok: #4CC38A; --warn: #C9A227; --bad: #E5715F;
+    --c1: #EDEDED; --c2: #A1A1A1; --c3: #6E6E6E; --c4: #4A4A4A;
+    --neutral-mark: #4A4A4A;
+    --ink: #0A0A0A;
+    --accent: #EDEDED;
+    --accent-wash: rgba(237,237,237,.08);
+    --accent-edge: rgba(237,237,237,.38);
+    --sunken: #151515;
+    --control-edge: #6E6E6E;
+
+    /* One face. The product lives in a terminal, so the brand speaks in
+       monospace — and this artifact is a measurement, where a proportional
+       digit is a defect. Named, never fetched: the CSP below is
+       `default-src 'none'`, so an @font-face with a URL would be a page that
+       silently renders in the fallback. */
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --fs-micro: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 15px; --fs-xl: 28px;
+    /* One 8px unit; every gutter, gap and pad is a multiple of it. */
+    --sp1: 8px; --sp2: 16px; --sp3: 24px; --sp4: 32px;
+    /* Square. A rounded corner says "surface" where a hairline says
+       "boundary", and a telemetry report is all boundaries. Kept as a token
+       rather than deleted so the rules below stay honest about where a corner
+       is being set, and so the decision lives in one line. */
+    --radius: 0;
+  }}
+
+  /* ── Light mode ────────────────────────────────────────────────────────
+     Byte-identical to the Observatory's light scheme and to arenabench's.
+     This report is mailed around and attached to PRs, so it lands in readers'
+     browsers, not ours — it was dark-only, which meant half of them opened a
+     black page on a white desktop.
+
+     Contrast, computed against WCAG 2.1 relative luminance, worst case on
+     --surface (#FAFAFA):
+
+       --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
+       --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 6.46:1
+
+     and dark against --raised (#111111):
+
+       --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
+       --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 10.31:1
+
+     --text and --text-2 clear AAA on both; the semantic three and --identity
+     clear AA on both. --text-3 clears neither and is not meant to: it carries
+     labelling only — a units suffix, a legend key — never a value a reader
+     must act on.
+
+     Two gates, the same pattern as docs/brand/css/tokens.css: the OS
+     preference unless the page was told "dark" explicitly, and an explicit
+     `data-theme` the reader can stamp. No colour is defined only inside the
+     media query, so the attribute wins in both directions. */
+  @media (prefers-color-scheme: light) {{
+    :root:not([data-theme="dark"]) {{
+      color-scheme: light;
+      --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
+      --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
+      --identity: #795500; --identity-ink: #FFFFFF;
+      --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
+      --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
+      --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
+      --neutral-mark: #C4C4C4;
+      --ink: #FFFFFF;
+      --accent: #0A0A0A;
+      --accent-wash: rgba(10,10,10,.06);
+      --accent-edge: rgba(10,10,10,.28);
+      --sunken: #F6F6F6;
+      --control-edge: #8F8F8F;
+    }}
+  }}
+  :root[data-theme="light"] {{
+    color-scheme: light;
+    --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
+    --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
+    --identity: #795500; --identity-ink: #FFFFFF;
+    --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
+    --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
+    --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
+    --neutral-mark: #C4C4C4;
+    --ink: #FFFFFF;
+    --accent: #0A0A0A;
+    --accent-wash: rgba(10,10,10,.06);
+    --accent-edge: rgba(10,10,10,.28);
+    --sunken: #F6F6F6;
+    --control-edge: #8F8F8F;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  html {{ color-scheme: dark; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text);
-    line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
+    font-family: var(--mono); font-size: var(--fs-base);
+    background: var(--ground); color: var(--text);
+    line-height: 1.55; padding: var(--sp3); max-width: 1280px; margin: 0 auto;
   }}
-  h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
-  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 8px; font-family: monospace; }}
-  .scope {{ color: var(--text2); font-size: 0.8rem; margin-bottom: 24px; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; }}
-  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
+  /* The masthead. `stella` is the wordmark in text form, which is the one
+     place --identity is permitted; the rest of the title is --text. */
+  h1 {{ font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; margin-bottom: 4px; color: var(--text); }}
+  h1 .wordmark {{ color: var(--identity); }}
+  /* Section rules are boundaries, so they are hairlines and the heading is
+     ordinary text. This heading used to be painted in the brand hue, which
+     made every section title compete with the data underneath it. */
+  h2 {{ font-size: var(--fs-md); font-weight: 600; margin: var(--sp4) 0 var(--sp2); color: var(--text);
+       border-bottom: 1px solid var(--hairline-strong); padding-bottom: var(--sp1); letter-spacing: .02em; }}
+  .watermark {{ color: var(--text-3); font-size: var(--fs-micro); margin-bottom: var(--sp1); }}
+  .scope {{ color: var(--text-2); font-size: var(--fs-sm); margin-bottom: var(--sp3); padding: var(--sp1) var(--sp2);
+            background: var(--surface); border-left: 2px solid var(--accent-edge); border-radius: var(--radius); }}
+  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp1); margin-bottom: var(--sp1); }}
   .kpi {{
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); padding: var(--sp2);
   }}
-  .kpi .label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); margin-bottom: 4px; }}
-  .kpi .value {{ font-size: 1.8rem; font-weight: 700; }}
-  .kpi .sub {{ font-size: 0.75rem; color: var(--text2); margin-top: 2px; }}
-  .kpi.good .value {{ color: var(--success); }}
+  .kpi .label {{ font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .14em; color: var(--text-3); margin-bottom: 4px; }}
+  .kpi .value {{ font-size: var(--fs-xl); font-weight: 600; font-variant-numeric: tabular-nums; }}
+  .kpi .sub {{ font-size: var(--fs-micro); color: var(--text-2); margin-top: 2px; font-variant-numeric: tabular-nums; }}
+  .kpi.good .value {{ color: var(--ok); }}
   .kpi.warn .value {{ color: var(--warn); }}
-  .kpi.cost .value {{ color: var(--warn); }}
-  table {{ width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }}
-  th, td {{ padding: 8px 12px; text-align: left; font-size: 0.85rem; border-bottom: 1px solid var(--rule); }}
-  th {{ background: var(--raised); color: var(--text2); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  /* Cost deliberately takes no hue. It is a measurement, not a verdict — it
+     was painted --warn, which told the reader that spending was a fault. */
+  .kpi.cost .value {{ color: var(--text); }}
+  table {{ width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius); }}
+  th, td {{ padding: var(--sp1) var(--sp2); text-align: left; font-size: var(--fs-sm); border-bottom: 1px solid var(--hairline); }}
+  th {{ background: var(--raised); color: var(--text-2); font-weight: 600; font-size: var(--fs-micro);
+       text-transform: uppercase; letter-spacing: .14em; }}
   tr:last-child td {{ border-bottom: none; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }}
-  .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }}
-  .badge.completed {{ background: rgba(74,222,128,0.15); color: var(--success); }}
-  .badge.failed {{ background: rgba(255,92,122,0.15); color: var(--danger); }}
-  .badge.other {{ background: rgba(152,166,186,0.15); color: var(--text2); }}
-  .chart-container {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  /* Badges are hairline-edged rather than wash-filled: a filled chip reads as
+     a control the reader can press, and nothing on this page is operable. */
+  .badge {{ display: inline-block; padding: 1px 6px; border: 1px solid currentColor; border-radius: var(--radius);
+           font-size: var(--fs-micro); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }}
+  .badge.completed {{ color: var(--ok); }}
+  .badge.failed {{ color: var(--bad); }}
+  .badge.other {{ color: var(--text-2); }}
+  .chart-container {{ background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
+                     padding: var(--sp2); margin-bottom: var(--sp2); overflow-x: auto; }}
   .bar-chart {{ display: flex; flex-direction: column; gap: 4px; }}
-  .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }}
-  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-  .bar-row .bar-track {{ flex: 1; background: var(--raised); border-radius: 3px; height: 22px; position: relative; min-width: 100px; }}
-  .bar-row .bar-fill {{ height: 100%; border-radius: 3px; background: var(--violet); transition: width 0.3s; }}
-  .bar-row .bar-value {{ width: 60px; color: var(--text3); font-family: monospace; font-size: 0.75rem; }}
-  .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
+  .bar-row {{ display: flex; align-items: center; gap: var(--sp1); font-size: var(--fs-sm); }}
+  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .bar-row .bar-track {{ flex: 1; background: var(--sunken); border-radius: var(--radius); height: 22px; position: relative; min-width: 100px; }}
+  .bar-row .bar-fill {{ height: 100%; border-radius: var(--radius); background: var(--c1); transition: width 0.3s; }}
+  .bar-row .bar-value {{ width: 60px; color: var(--text-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }}
+  .pie-legend {{ display: flex; gap: var(--sp2); flex-wrap: wrap; margin-top: var(--sp1); font-size: var(--fs-sm); }}
   .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
-  .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--brand); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--brand); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-  .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
+  .dot {{ width: 10px; height: 10px; border-radius: var(--radius); display: inline-block; }}
+  .insight {{ background: var(--surface); border-left: 2px solid var(--accent-edge); padding: var(--sp2);
+             border-radius: var(--radius); margin-bottom: var(--sp1); font-size: var(--fs-base); }}
+  .insight .insight-label {{ color: var(--text); font-weight: 600; font-size: var(--fs-micro);
+                            text-transform: uppercase; letter-spacing: .14em; }}
+  .footer {{ margin-top: var(--sp4); padding-top: var(--sp2); border-top: 1px solid var(--hairline);
+            color: var(--text-3); font-size: var(--fs-micro); }}
+  .footer b {{ color: var(--identity); font-weight: 600; }}
 </style>
 </head>
 <body>
 
-<h1>⚡ Stella Session Telemetry</h1>
+<h1><span class="wordmark">stella</span> session telemetry</h1>
 <div class="watermark">session {session} · as of {watermark}</div>
 <div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
@@ -557,7 +652,7 @@ fn render_dashboard(
 </div>
 
 <div class="footer">
-  Exported by <strong>stella /export</strong> · {total_runs} executions ·
+  Exported by <b>stella</b> <code>/export</code> · {total_runs} executions ·
   All data is local (no server, no account) · Dashboard is fully self-contained
 </div>
 
@@ -626,7 +721,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
 // ── Stats table ─────────────────────────────────────────────────────────
 (function statsTable() {{
   const el = document.getElementById('stats-table');
-  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--text3)">No usage data.</p>'; return; }}
+  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--text-3)">No usage data.</p>'; return; }}
   let html = '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">Runs</th><th class="num">Resolved</th><th class="num">Rate</th><th class="num">Cost</th><th class="num">$/Resolved</th><th class="num">In Tok</th><th class="num">Out Tok</th><th class="num">Avg ms</th></tr></thead><tbody>';
   for (const r of USAGE) {{
     const rate = r.runs > 0 ? (r.resolved/r.runs*100).toFixed(1)+'%' : '-';
@@ -641,24 +736,30 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
   const outTok = USAGE.reduce((s,r)=>s+r.output_tokens,0);
   const rate = runs>0?(resolved/runs*100).toFixed(1)+'%':'-';
   const per = resolved>0?'$'+(cost/resolved).toFixed(4):'-';
-  html += `<tr style="border-top:2px solid var(--rule)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
+  html += `<tr style="border-top:2px solid var(--hairline-strong)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
   html += '</tbody></table>';
   el.innerHTML = html;
 }})();
 
 // ── Bar chart helper ────────────────────────────────────────────────────
+// `colorVar` is the series token for the whole chart; a datum may override it
+// with its own `colorVar` when the bar carries a verdict rather than a
+// position in a series (see the outcome chart). The token name is chart code's
+// own literal — never reader-supplied — so it is not run through `esc`, which
+// is for the label and display text either side of it.
 function barChart(containerId, data, colorVar) {{
   const el = document.getElementById(containerId);
-  if (!data.length) {{ el.innerHTML = '<p style="color:var(--text3)">No data.</p>'; return; }}
+  if (!data.length) {{ el.innerHTML = '<p style="color:var(--text-3)">No data.</p>'; return; }}
   const max = Math.max(...data.map(d=>d.value), 1);
   el.innerHTML = data.map(d => {{
     const pct = (d.value/max*100).toFixed(1);
-    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
+    const fill = d.colorVar || colorVar;
+    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{fill}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
   }}).join('');
 }}
 
 // ── Token economy chart ─────────────────────────────────────────────────
-barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--violet');
+barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--c1');
 
 // ── Tool frequency chart ────────────────────────────────────────────────
 (function toolChart() {{
@@ -668,7 +769,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('tool-chart', data, '--violet');
+  barChart('tool-chart', data, '--c2');
 }})();
 
 // ── Files touched chart ─────────────────────────────────────────────────
@@ -677,7 +778,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--brand-fill');
+  barChart('file-chart', data, '--c3');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
@@ -687,10 +788,18 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     const o = e.outcome || 'open';
     counts[o] = (counts[o]||0)+1;
   }}
+  // An outcome IS a verdict, so these bars are the one chart on the page
+  // entitled to semantic colour. Every bar used to be painted --success,
+  // including the failures — the chart said "pass" in the one channel the
+  // palette reserves for saying it, about rows that did not.
+  const verdict = o =>
+    o === 'completed' || o === 'resolved' || o === 'success' ? '--ok'
+    : o === 'failed' || o === 'error' || o === 'aborted' ? '--bad'
+    : '--neutral-mark';
   const data = Object.entries(counts)
-    .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
+    .map(([name,n])=>({{label:name, value:n, display:String(n), colorVar:verdict(name)}}))
     .sort((a,b)=>b.value-a.value);
-  barChart('outcome-chart', data, '--success');
+  barChart('outcome-chart', data, '--neutral-mark');
 }})();
 </script>
 

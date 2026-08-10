@@ -14,18 +14,30 @@ export interface ConnState {
 /*
  * The lockup: the stella wordmark from the brand kit, a hairline pipe, and
  * the arena's domain. The artwork is a byte-copy of
- * docs/brand/logo/svg/wordmark-mono-{dark,light}.svg served from
+ * docs/brand/logo/svg/wordmark-color-{dark,light}.svg served from
  * public/brand/ — never redrawn here, so the kit stays the single source of
  * the mark. Two fixed cuts swap with the scheme because next-themes stamps
  * `.dark` on <html>; the kit's *-adaptive.svg follows only the OS media
  * query and would ignore the in-app toggle.
  *
- * The MONO cuts, not the colour ones: this chrome carries no accent hue, and
- * the wordmark is the largest thing on the page — a gold mark here would
- * reintroduce, at the top of every view, exactly the competition with the
- * data that removing the gold accent was for. The mono cuts are a single
- * fill each (#F4F1EA on the ink page, #0B0B0C on the paper one), so the
- * lockup reads as type rather than as a logo.
+ * The COLOUR cuts. This reverses the note that stood here, which chose the
+ * mono cuts because "the wordmark is the largest thing on the page — a gold
+ * mark here would reintroduce, at the top of every view, exactly the
+ * competition with the data that removing the gold accent was for." That
+ * argument was about *area*, and it measured the wrong area: only the comet
+ * star is gold in these cuts (one fill each, #FFB000), while the six glyphs
+ * of the lockup stay Paper on ink and Ink on paper. What sits at the top of
+ * every view is a mark, not a gold field.
+ *
+ * The governing rule is now the one stated in
+ * crates/stella-observatory/src/assets/index.html: gold is permitted on
+ * identity — the wordmark, the favicon mark, one primary action — and
+ * nowhere else, and it may never encode a state. The chrome is unchanged:
+ * "active" is still an --accent inversion, and --ok/--bad still own the only
+ * other colour on the page. What it costs is honest to name — a gold star
+ * does now sit above every view, which is a cost the mono cuts did not pay.
+ * What it buys is that stella's instruments and stella's identity stop being
+ * two different products to anyone who sees both.
  */
 function Brand() {
   return (
@@ -37,14 +49,14 @@ function Brand() {
        * transparent frame, on the content edge.
        */}
       <img
-        src="/brand/wordmark-mono-light.svg"
+        src="/brand/wordmark-color-light.svg"
         alt="stella"
         width={157}
         height={57}
         className="brand-mark -ml-[5px] block h-[57px] w-auto flex-none dark:hidden"
       />
       <img
-        src="/brand/wordmark-mono-dark.svg"
+        src="/brand/wordmark-color-dark.svg"
         alt="stella"
         width={157}
         height={57}
