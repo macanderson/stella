@@ -10,18 +10,25 @@ It left the fourth. ``ui/components/setup/seat-card.tsx`` kept rendering a
 "Budget $/task" and a "Max output tok" input, and ``matchPayload`` shipped the
 whole draft object to the server with ``{...seat.engine}``.
 
-The server counts a cap key's *presence*, not its value, so a blank field was
+The server counted a cap key's *presence*, not its value, so a blank field was
 enough: **every** launch from the web UI was refused, with an error naming keys
 the operator could not see and had never set. The form was unusable from the
 moment #2461 landed (2026-08-09) and nothing failed.
 
-Two lessons are pinned below. First, the cap keys must be absent from the form's
-source, checked on the text the way the templates are. Second — the one that
-generalises — the form's engine literal and ``Engine.from_json`` must name the
-same fields, in both directions: a key the form sends that the engine does not
-read is #2411 again, and a key the engine reads that the form does not send is a
-Stella configuration an operator can only reach by hand-writing TOML, which is
-what ``bare_loop`` and ``responsibilities`` were.
+Removing the keys from the form fixed the source and not the operators: the
+built bundle is generated and gitignored, so an arena served from any checkout
+older than the last ``npm run build`` kept sending them. The server now drops a
+declared ceiling and runs uncapped instead of refusing — the same executed
+state, minus the wall. ``TestACeilingCannotBlockALaunch`` below is the witness.
+
+Three lessons are pinned below. First, the cap keys must be absent from the
+form's source, checked on the text the way the templates are. Second, a
+declared ceiling must never be the thing that stops a launch. Third — the one
+that generalises — the form's engine literal and ``Engine.from_json`` must name
+the same fields, in both directions: a key the form sends that the engine does
+not read is #2411 again, and a key the engine reads that the form does not send
+is a Stella configuration an operator can only reach by hand-writing TOML,
+which is what ``bare_loop`` and ``responsibilities`` were.
 
 No Docker, no network, no model key: the sources and one in-process server.
 """
@@ -35,7 +42,7 @@ import pytest
 
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import RESPONSIBILITIES, RESPONSIBILITY_AGENTS, Engine, MatchSpec
-from arenabench.server import ArenaServer, _declared_caps
+from arenabench.server import ArenaServer, _declared_caps, _uncapped
 
 _UI = Path(__file__).resolve().parents[1] / "ui"
 _SETUP_VIEW = _UI / "components" / "setup" / "setup-view.tsx"
@@ -130,16 +137,17 @@ class TestNoPerTrialCeilingInTheForm:
             and ("budget_usd" in line or "max_tokens" in line)
         ]
         assert not offenders, (
-            "the web form declares a per-trial ceiling, which the server refuses "
-            f"by presence — every launch from it fails: {offenders}"
+            "the web form declares a per-trial ceiling the server will drop, so "
+            "the page would offer a control that changes nothing about the run: "
+            f"{offenders}"
         )
 
-    def test_the_payload_the_form_sends_is_not_refused(self) -> None:
-        """The refusal that fired, on the shape the form now builds.
+    def test_the_payload_the_form_sends_declares_no_ceiling(self) -> None:
+        """The shape the form now builds, read by the launch path's own reader.
 
         The old form put ``budget_usd: ""`` in this object and `_declared_caps`
-        counted it, so this is the assertion that would have caught it — with
-        the launch path's own reader, not a paraphrase of it.
+        counted it, so this is the assertion that would have caught it — not a
+        paraphrase of the reader, the reader.
         """
         sent = _engine_literal_keys(
             _SETUP_VIEW.read_text(encoding="utf-8"), within="matchPayload"
@@ -155,6 +163,83 @@ class TestNoPerTrialCeilingInTheForm:
             ]
         }
         assert _declared_caps(payload) == []
+
+
+class TestACeilingCannotBlockALaunch:
+    """The second half of #2411's fix, and the one it was missing.
+
+    Refusing the key put a knob *nothing in this codebase can honour* on the
+    critical path of every launch. The built web bundle is generated and
+    gitignored, so an operator running an arena from a checkout newer than
+    their last ``npm run build`` kept POSTing ``budget_usd: ""`` from a form
+    whose source no longer had the field — and got an error naming two keys
+    they could neither see nor edit, on every launch, with no way through it.
+
+    The measurement argument is untouched: the run is still uncapped, because
+    `Engine` has nowhere to put a ceiling. What changes is that reaching that
+    state is the server's job rather than the operator's.
+    """
+
+    def _payload(self, engine: dict) -> dict:
+        return {
+            "name": "m",
+            "dataset": "terminal-bench-2.1",
+            "contestants": [
+                {
+                    "id": "stella",
+                    "name": "Stella",
+                    "agent": "stella",
+                    "engine": {"api": "openrouter", "model": "z-ai/glm-5.2", **engine},
+                    "env": {"required": ["OPENROUTER_API_KEY"]},
+                }
+            ],
+        }
+
+    @pytest.mark.parametrize(
+        "engine",
+        [
+            {"budget_usd": ""},
+            {"budget_usd": 1.0, "max_tokens": 64000},
+            {"roles": {"worker": {"max_tokens": 64000}}},
+        ],
+        ids=["blank-as-the-stale-bundle-sends-it", "engine-level", "role-level"],
+    )
+    def test_a_declared_ceiling_is_not_what_stops_the_launch(
+        self,
+        engine: dict,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Run without a credential, so creation still refuses — for the right
+        reason. The old path raised on the ceiling before ever looking at the
+        seat's credentials; this asserts the ceiling is no longer in the way,
+        without needing Docker to prove it.
+        """
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("ARENABENCH_CREDENTIALS", str(tmp_path / "none.env"))
+        arena = ArenaServer(tmp_path / "ws")
+        with pytest.raises(ValueError) as caught:
+            arena.create_match(self._payload(engine))
+        message = str(caught.value)
+        # Anchored on the whole message rather than a substring search: the
+        # temp path this test runs in carries the test's own name, which
+        # contains the words a `not in` check would look for.
+        assert message.startswith("required credentials are not set"), message
+
+    def test_the_stripped_payload_carries_no_ceiling_onward(self) -> None:
+        """What `MatchSpec.from_json` is handed, at both levels."""
+        cleaned = _uncapped(
+            self._payload(
+                {
+                    "budget_usd": 1.0,
+                    "roles": {"worker": {"max_tokens": 64000, "effort": "high"}},
+                }
+            )
+        )
+        (seat,) = cleaned["contestants"]
+        assert _declared_caps(cleaned) == []
+        assert seat["engine"]["model"] == "z-ai/glm-5.2", "only the cap is removed"
+        assert seat["engine"]["roles"]["worker"] == {"effort": "high"}
 
 
 class TestEngineKeyParity:

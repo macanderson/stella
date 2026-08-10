@@ -146,8 +146,10 @@ agent = "stella"
   api = "openrouter"
   model = "z-ai/glm-5.2"
   effort = "medium"
-  max_tokens = 128000
-  budget_usd = 6.0
+  # No per-trial ceiling. `max_tokens` and `budget_usd` are dropped with a
+  # warning if you write them (#2411): a cap only one seat carries stops that
+  # agent where the work finishes, and the scoreboard then reports our limit
+  # as its capability. Bound the spend at the provider key instead.
 
     [contestant.engine.roles.verifier]     # checks the worker's output
     model = "openai/gpt-5.5"               # a different family = independent

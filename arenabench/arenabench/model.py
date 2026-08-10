@@ -40,6 +40,7 @@ __all__ = [
     "MatchSpec",
     "RoleConfig",
     "declared_cap_keys",
+    "drop_cap_keys",
     "is_credential_name",
     "parse_dotenv",
     "screen_env",
@@ -211,8 +212,11 @@ EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 #: is the guard.
 ROLES: tuple[str, ...] = ("default", "worker", "verifier", "triage", "research", "plan")
 
-#: Engine keys that once pinned a per-trial ceiling. Declaring one is now a
-#: template error, and no type in this module has a field to hold it.
+#: Engine keys that once pinned a per-trial ceiling. No type in this module has
+#: a field to hold one, so declaring one is inert: every authoring surface drops
+#: the key and runs the match **uncapped**, which is the arm the paragraphs
+#: below argue for. It is reported where it is dropped, never refused — see
+#: :func:`drop_cap_keys`.
 #:
 #: A cap is not a tuning knob — it is a second experiment running inside the
 #: first, and it always terminates the run at the end, where the work finishes.
@@ -239,18 +243,43 @@ FORBIDDEN_CAP_KEYS: tuple[str, ...] = ("budget_usd", "max_tokens")
 def declared_cap_keys(raw: Any) -> tuple[str, ...]:
     """The :data:`FORBIDDEN_CAP_KEYS` a raw engine table declares.
 
-    Authoring surfaces call this and refuse what it returns; readers of
+    Authoring surfaces call this to *report* what they dropped; readers of
     archived matches do not, because a spec that already ran capped must stay
     loadable as the evidence it is.
 
     A key present but empty still counts. ``budget_usd = ""`` reads as "no cap"
     to the loaders below, so ignoring it here would let the word survive in a
-    committed template — and the next hand that fills the value in gets no
-    error at all.
+    committed template with nothing ever saying so.
     """
     if not isinstance(raw, dict):
         return ()
     return tuple(key for key in FORBIDDEN_CAP_KEYS if key in raw)
+
+
+def drop_cap_keys(raw: Any) -> Any:
+    """``raw`` without any :data:`FORBIDDEN_CAP_KEYS`, roles included.
+
+    The companion to :func:`declared_cap_keys`, and what the authoring surfaces
+    do instead of refusing. Both spellings reach the same executed state —
+    :class:`Engine` has no field a ceiling could land in, so a match runs
+    uncapped either way — and they differ only in who deletes the key. Refusing
+    made that the operator's job, which is fine when the operator can see the
+    key and fatal when they cannot: a stale built web bundle kept sending
+    ``budget_usd: ""`` long after #2602 removed it from the form's source, and
+    the arena answered every launch with an error naming a field the page no
+    longer had. A cap that cannot be honoured must not be able to stop a run
+    (#2411 for why it is never honoured; this is why it is never fatal).
+
+    Non-dicts pass through untouched, so a malformed table still reaches the
+    reader that reports it properly.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    cleaned = {key: value for key, value in raw.items() if key not in FORBIDDEN_CAP_KEYS}
+    roles = cleaned.get("roles")
+    if isinstance(roles, dict):
+        cleaned["roles"] = {name: drop_cap_keys(entry) for name, entry in roles.items()}
+    return cleaned
 
 
 @dataclass(frozen=True)

@@ -63,8 +63,9 @@ color = "#FF6B9D"
   effort = "medium"
   # No base_url: this seat runs at Anthropic itself, authenticated by the
   # subscription token. No per-trial ceiling either — and that is now every
-  # seat's rule rather than this one's property: ArenaBench refuses
-  # `budget_usd` and `max_tokens` outright (#2411).
+  # seat's rule rather than this one's property: ArenaBench drops
+  # `budget_usd` and `max_tokens` with a warning wherever they are written
+  # (#2411), so no seat can carry a ceiling its opponent does not.
 
   [contestant.env]
   # Names only — never values. Any ONE of these credentials the seat;

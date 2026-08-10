@@ -78,6 +78,7 @@ from .model import (
     ROLES,
     MatchSpec,
     declared_cap_keys,
+    drop_cap_keys,
 )
 from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
@@ -126,8 +127,8 @@ def _declared_caps(payload: dict[str, Any]) -> list[tuple[str, str]]:
     """``(seat, key)`` for every per-trial ceiling a create payload declares.
 
     Every seat and every role is reported rather than the first one found, so
-    an operator editing a two-seat match fixes both in one round trip instead
-    of discovering the second only after resubmitting.
+    the note on the match names all of them rather than the first one the
+    walker happened to reach.
     """
     found: list[tuple[str, str]] = []
     raw_contestants = payload.get("contestants")
@@ -147,6 +148,24 @@ def _declared_caps(payload: dict[str, Any]) -> list[tuple[str, str]]:
                     for key in declared_cap_keys(entry)
                 )
     return found
+
+
+def _uncapped(payload: dict[str, Any]) -> dict[str, Any]:
+    """``payload`` with every seat's per-trial ceiling removed.
+
+    Copies down to the tables it edits and no further: the seats it does not
+    touch are the caller's own objects, which is what keeps this cheap on the
+    ordinary path where nothing declares a cap at all.
+    """
+    contestants = payload.get("contestants")
+    if not isinstance(contestants, list):
+        return payload
+    rewritten = []
+    for contestant in contestants:
+        if isinstance(contestant, dict) and isinstance(contestant.get("engine"), dict):
+            contestant = {**contestant, "engine": drop_cap_keys(contestant["engine"])}
+        rewritten.append(contestant)
+    return {**payload, "contestants": rewritten}
 
 
 #: Ports `serve` sweeps looking for an arena that is already up. The default
@@ -380,22 +399,26 @@ class ArenaServer:
         payload.setdefault("id", uuid.uuid4().hex[:12])
         # Read off the raw payload, before `from_json`, which drops these keys
         # silently so archived specs stay loadable. Creating a match is an
-        # authoring act, so here the silence would be the bug: the operator
+        # authoring act, so the silence alone would be the bug: the operator
         # would be told the seat was configured and the run would ignore it.
+        # Hence dropped *and* named — never refused. Nothing here can honour a
+        # ceiling (`Engine` has no field for one), and a knob that cannot be
+        # honoured must not be able to stop a launch: the older refusal made an
+        # unlaunchable arena out of a stale web bundle sending `budget_usd: ""`
+        # from a form that no longer showed the field. The measurement argument
+        # for running uncapped is #2411 and is unaffected — this reaches the
+        # same uncapped run without asking the operator to delete a key they
+        # cannot see.
         capped = _declared_caps(payload)
+        cap_notes: list[str] = []
         if capped:
-            # The fourth refusal, and a sibling of the one below: both protect
-            # the meaning of the number rather than the apparatus. A ceiling
-            # only one seat carries stops that agent where the work finishes,
-            # and the scoreboard then reports our limit as its capability —
-            # measured in match 5292a68cdabf, where every one of the capped
-            # seat's three losses was the budget guard firing at roughly a
-            # third of the task's allowed wall clock (#2411).
-            raise ValueError(
-                "; ".join(f"{seat}: {key}" for seat, key in capped)
-                + " — per-trial ceilings are refused. Bound spend at the "
-                "provider key, which fails a run visibly instead of "
-                "truncating a trial into a loss"
+            payload = _uncapped(payload)
+            cap_notes.append(
+                "ran uncapped, ignoring "
+                + "; ".join(f"{seat}: {key}" for seat, key in capped)
+                + " — a per-trial ceiling stops an agent where the work "
+                "finishes, so the score would report our limit as its "
+                "capability (#2411). Bound spend at the provider key"
             )
         spec = MatchSpec.from_json(payload)
         # A seat's declared credential names resolve from the arena's own
@@ -442,7 +465,7 @@ class ArenaServer:
             # without a word.
             raise ValueError(problem)
         match = self.runner.create(spec)
-        for note in oauth_notes:
+        for note in (*cap_notes, *oauth_notes):
             match.note = f"{match.note}; {note}" if match.note else note
         if spec.record_video:
             ok, reason = recorder_preflight()

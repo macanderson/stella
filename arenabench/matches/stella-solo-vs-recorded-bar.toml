@@ -28,7 +28,7 @@
 # a capability comparison: its seat carried `budget_usd = 1.0` while the
 # comparator's was `null`, and all three losses were the budget guard firing at
 # roughly a third of each task's 900s allowance, every one within a step or
-# four of finishing (#2411). Per-trial ceilings are refused now, which is why
+# four of finishing (#2411). Per-trial ceilings are dropped now, which is why
 # this run is worth doing at all — it is the first measurement of these tasks
 # where nothing stops Stella before the work does.
 #
@@ -74,7 +74,7 @@ color = "#FFB000"
   # `xhigh` matches what the recorded bar ran at, which is the whole reason the
   # bar is quotable instead of needing a fresh comparator.
   effort = "xhigh"
-  # No `budget_usd` and no `max_tokens`: both are refused (#2411). Omitting the
+  # No `budget_usd` and no `max_tokens`: both are dropped (#2411). Omitting the
   # output ceiling is what asks for the model's own, which the engine seeds
   # from the catalog.
 
