@@ -101,6 +101,24 @@ const ONGOING_ACTIVITY_PREFIXES: &[&str] = &[
     "checking ",
 ];
 
+/// The registered name of the built-in verification tool and the leading
+/// marker of its success output. Owned by `stella-tools/src/verify.rs` and
+/// mirrored (not imported — the engine holds no tool concretions) the same
+/// way `stella-pipeline`'s execute stage mirrors them: both halves must
+/// match before a call counts as proof, because the name alone could be
+/// shadowed by an attached MCP tool and the marker alone echoed by a shell.
+const VERIFY_DONE_TOOL: &str = "verify_done";
+const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
+
+/// The prove-it nudge (#2663), and its once-only marker: the message is
+/// prefix-detected in the turn's own transcript, so "at most one nudge per
+/// turn" needs no state field and survives a checkpoint resume for free.
+const PROVE_IT_PREFIX: &str = "Before declaring this task complete:";
+const PROVE_IT_NUDGE: &str = "Before declaring this task complete: nothing in this turn proved \
+     the work. Run the task's own test or check command — or the `verify_done` tool — read what \
+     it actually says, and fix anything it reveals. If no check can exist for this change, say \
+     so explicitly and why, then declare completion.";
+
 /// This turn's tool-call tally, the evidence [`detect`] reasons over.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct TurnActivity {
@@ -183,6 +201,71 @@ fn detect(
     }
 }
 
+/// The window a prove-it decision reasons over: from the last user message
+/// that is NOT itself a prove-it nudge. [`turn_start_index`] restarts at any
+/// user message — including the nudge — so the plain window would put the
+/// once-only marker outside its own scan. Measured on the gate's first field
+/// trial (run `gate-ab`, task pypi-server): three nudges in one turn, each
+/// re-armed by that reset, riding a refuted `verify_done` into the 900s
+/// ceiling — the exact spend the gate exists to stop.
+fn prove_it_turn_start(messages: &[CompletionMessage]) -> usize {
+    messages
+        .iter()
+        .rposition(|m| m.role == MessageRole::User && !m.content.starts_with(PROVE_IT_PREFIX))
+        .unwrap_or(0)
+}
+
+/// True when this turn did mutating work, no `verify_done` call this turn
+/// came back confirmed, and the prove-it nudge has not been issued yet —
+/// the #2663 condition: work was declared, never proven, and not yet asked
+/// about. Windowed with [`prove_it_turn_start`], so the nudge itself never
+/// reopens the window it closed.
+fn wants_prove_it_nudge(messages: &[CompletionMessage], read_only_tools: &HashSet<String>) -> bool {
+    if turn_activity(messages, read_only_tools).artifact_calls == 0 {
+        return false;
+    }
+    let start = prove_it_turn_start(messages);
+    let mut verify_ids: Vec<&str> = Vec::new();
+    for message in &messages[start..] {
+        match message.role {
+            MessageRole::User if message.content.starts_with(PROVE_IT_PREFIX) => {
+                // One nudge per turn: asked and answered, whatever the answer.
+                return false;
+            }
+            MessageRole::Assistant => verify_ids.extend(
+                message
+                    .tool_calls
+                    .iter()
+                    .filter(|call| call.name == VERIFY_DONE_TOOL)
+                    .map(|call| call.call_id.as_str()),
+            ),
+            MessageRole::Tool => {
+                for result in &message.tool_results {
+                    if verify_ids.contains(&result.call_id.as_str())
+                        && let stella_protocol::ToolOutput::Ok { content } = &result.output
+                        && content.starts_with(WITNESS_CONFIRMED_MARKER)
+                    {
+                        // Proven: the declaration may stand.
+                        return false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// [`check`]'s verdict on a tool-less completing step. `Nudged` means the
+/// declaration and the prove-it reply are already appended to the transcript
+/// and the caller should let the turn continue; `Clean` means proceed to
+/// build `Completed` normally.
+pub(super) enum CompletionRuling {
+    Abort(TurnOutcome),
+    Nudged,
+    Clean,
+}
+
 /// The tool-less-completion legitimacy gate `dispatch_completion` calls
 /// before it is willing to build a `TurnOutcome::Completed`. Runs, in order:
 ///
@@ -195,19 +278,29 @@ fn detect(
 ///    out of room" ending (`driver::truncation`), not a voluntary stop, and
 ///    `dispatch_completion`'s own next block already tells the user so.
 /// 3. The confident-zero check ([`detect`], #1477).
+/// 4. When `completion_gate` is set: the prove-it nudge (#2663) — a turn
+///    that mutated the workspace and closes with no confirmed `verify_done`
+///    is sent back once, with a message asking it to prove the work (or say
+///    why nothing can), before its declaration is accepted. Off by default:
+///    hosts running task mode (the CLI's headless run path, the pipeline's
+///    execute stage) opt in; a conversational turn is never gated because a
+///    turn with no mutating calls never trips the condition anyway.
 ///
-/// `None` means dispatch should proceed to build `Completed` normally.
-#[allow(clippy::too_many_arguments)]
+/// On `Nudged`, the step's own declaration and the prove-it reply are
+/// appended here, so the transcript reads claim-then-challenge and the
+/// caller only has to keep looping.
 pub(super) fn check(
-    messages: &[CompletionMessage],
+    messages: &mut Vec<CompletionMessage>,
     read_only_tools: &HashSet<String>,
-    text: &str,
-    finish_reason: Option<FinishReason>,
-    output_tokens: u64,
+    result: &stella_protocol::CompletionResult,
     out_of_time: bool,
     total_cost_usd: f64,
+    completion_gate: bool,
     events: &EventSender,
-) -> Option<TurnOutcome> {
+) -> CompletionRuling {
+    let text = &result.text;
+    let finish_reason = result.finish_reason;
+    let output_tokens = result.usage.output_tokens;
     if text.trim().is_empty() && !out_of_time {
         let reason = match finish_reason {
             // Advised `/compact` until #712; no such command exists, and
@@ -230,33 +323,45 @@ pub(super) fn check(
         // A `Failure`, not a deliberate stop: the model produced nothing
         // usable, which is the run falling over — unlike the confident-zero
         // close below, where the engine itself refuses a trailing-off turn.
-        return Some(TurnOutcome::Aborted {
+        return CompletionRuling::Abort(TurnOutcome::Aborted {
             reason,
             kind: AbortKind::Failure,
             cost_usd: total_cost_usd,
         });
     }
     if finish_reason == Some(FinishReason::Length) {
-        return None;
+        return CompletionRuling::Clean;
     }
-    let zero = detect(messages, read_only_tools, text)?;
-    let reason = format!(
-        "the model ended this turn after {} tool call(s) that changed nothing in the workspace, \
-         closing on a line that narrates ongoing activity rather than stating a result (\"{}\") \
-         — this reads as an abandoned attempt, not a finished answer. Retry, or continue with \
-         more specific direction.",
-        zero.tool_calls,
-        text.trim(),
-    );
-    let _ = events.send(AgentEvent::Error {
-        message: reason.clone(),
-        retryable: true,
-    });
-    Some(TurnOutcome::Aborted {
-        reason,
-        kind: AbortKind::DeliberateStop,
-        cost_usd: total_cost_usd,
-    })
+    if let Some(zero) = detect(messages, read_only_tools, text) {
+        let reason = format!(
+            "the model ended this turn after {} tool call(s) that changed nothing in the \
+             workspace, closing on a line that narrates ongoing activity rather than stating a \
+             result (\"{}\") — this reads as an abandoned attempt, not a finished answer. Retry, \
+             or continue with more specific direction.",
+            zero.tool_calls,
+            text.trim(),
+        );
+        let _ = events.send(AgentEvent::Error {
+            message: reason.clone(),
+            retryable: true,
+        });
+        return CompletionRuling::Abort(TurnOutcome::Aborted {
+            reason,
+            kind: AbortKind::DeliberateStop,
+            cost_usd: total_cost_usd,
+        });
+    }
+    if completion_gate && wants_prove_it_nudge(messages, read_only_tools) {
+        let _ = events.send(AgentEvent::Text {
+            text: "\n⚖ Completion declared without proof — asking the model to verify its work \
+                   before accepting it."
+                .to_string(),
+        });
+        messages.push(CompletionMessage::assistant(text));
+        messages.push(CompletionMessage::user(PROVE_IT_NUDGE));
+        return CompletionRuling::Nudged;
+    }
+    CompletionRuling::Clean
 }
 
 #[cfg(test)]
@@ -405,5 +510,166 @@ mod tests {
             detect(&messages, &read_only(&["read_file"]), "looking into it"),
             Some(ConfidentZero { tool_calls: 1 })
         );
+    }
+
+    fn done_result(text: &str) -> stella_protocol::CompletionResult {
+        stella_protocol::CompletionResult {
+            text: text.into(),
+            tool_calls: vec![],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                output_tokens: 5,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "scripted".into(),
+            cost_usd: 0.0,
+            finish_reason: None,
+        }
+    }
+
+    fn events() -> crate::event_sender::EventSender {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::event_sender::EventSender::new(tx)
+    }
+
+    /// **The #2663 witness.** A gated turn that mutated the workspace and
+    /// declares done with no confirmed `verify_done` is nudged exactly once:
+    /// the first ruling is `Nudged` (and appends claim-then-challenge), the
+    /// second — same declaration, nudge already on the transcript — is
+    /// `Clean`. Fails on the old `check`, which had no gate and no ruling.
+    #[test]
+    fn a_mutating_turn_declared_without_proof_is_nudged_exactly_once() {
+        let mut messages = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+        ];
+        let ruling = super::check(
+            &mut messages,
+            &read_only(&["read_file"]),
+            &done_result("Done — the bug is fixed."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(matches!(ruling, super::CompletionRuling::Nudged));
+        assert!(
+            messages
+                .last()
+                .is_some_and(|m| m.content.starts_with(super::PROVE_IT_PREFIX)),
+            "the challenge follows the claim on the transcript"
+        );
+
+        let again = super::check(
+            &mut messages,
+            &read_only(&["read_file"]),
+            &done_result("Done — the bug is fixed."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(
+            matches!(again, super::CompletionRuling::Clean),
+            "asked and answered: one nudge per turn, whatever the answer"
+        );
+    }
+
+    /// **The `gate-ab` field regression, pinned.** The nudge is a user
+    /// message, so the plain turn window restarts right after it — and a
+    /// refuted `verify_done` plus one more edit then re-armed the nudge,
+    /// three times in one trial, into the 900s ceiling. With the window
+    /// anchored at the last NON-nudge user message, the answered nudge stays
+    /// in scope and the second declaration is `Clean`, whatever the
+    /// verification said. Fails on the `turn_start_index`-windowed code.
+    #[test]
+    fn a_refuted_verification_after_the_nudge_never_rearms_it() {
+        let mut messages = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+            CompletionMessage::assistant("Done — the bug is fixed."),
+            CompletionMessage::user(super::PROVE_IT_NUDGE),
+            assistant_call(super::VERIFY_DONE_TOOL, "c2"),
+            tool_result("c2", "WITNESS REFUTED — the test still fails"),
+            assistant_call("edit_file", "c3"),
+            tool_result("c3", "ok"),
+        ];
+        let ruling = super::check(
+            &mut messages,
+            &read_only(&["read_file"]),
+            &done_result("Done for real this time."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(
+            matches!(ruling, super::CompletionRuling::Clean),
+            "one nudge per turn means per TURN — its own message must not \
+             reopen the window it closed"
+        );
+    }
+
+    /// Proof stands down the gate: a `verify_done` call whose result opens
+    /// with the confirmed marker makes the same declaration `Clean` on the
+    /// first ask.
+    #[test]
+    fn a_confirmed_verify_done_makes_the_declaration_clean() {
+        let mut messages = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+            assistant_call(super::VERIFY_DONE_TOOL, "c2"),
+            tool_result("c2", "WITNESS CONFIRMED — fail→pass observed"),
+        ];
+        let ruling = super::check(
+            &mut messages,
+            &read_only(&["read_file"]),
+            &done_result("Done, and proven."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(matches!(ruling, super::CompletionRuling::Clean));
+    }
+
+    /// The gate off (every caller today except task mode) and the no-mutation
+    /// turn (a conversational answer) are both untouched.
+    #[test]
+    fn the_gate_never_fires_when_disabled_or_without_mutations() {
+        let mut mutated = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+        ];
+        let off = super::check(
+            &mut mutated,
+            &read_only(&["read_file"]),
+            &done_result("Done."),
+            false,
+            0.0,
+            false,
+            &events(),
+        );
+        assert!(matches!(off, super::CompletionRuling::Clean));
+
+        let mut read_only_turn = vec![
+            CompletionMessage::user("what does retry.rs do?"),
+            assistant_call("read_file", "c1"),
+            tool_result("c1", "contents"),
+        ];
+        let unmutated = super::check(
+            &mut read_only_turn,
+            &read_only(&["read_file"]),
+            &done_result("It implements the retry policy."),
+            false,
+            0.0,
+            true,
+            &events(),
+        );
+        assert!(matches!(unmutated, super::CompletionRuling::Clean));
     }
 }

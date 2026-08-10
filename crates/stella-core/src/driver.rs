@@ -310,18 +310,17 @@ pub struct EngineConfig {
     ///
     /// This exists because those are all *external* stopping conditions, and
     /// an agent that has already met its goal will happily keep spending
-    /// against them. Measured on Terminal-Bench 2.1 (run `or1`, task
-    /// `pypi-server`): Stella wrote a correct solution, then spent its
-    /// remaining wall clock re-litigating whether the verifier could see its
-    /// commits, and the harness killed it mid-sentence. The trial scored 1.0
-    /// only because the grader reads files on disk after the agent phase —
-    /// the same behaviour on a task where the late flailing *edits* the
-    /// answer converts a pass into a failure.
+    /// against them — the measured story (Terminal-Bench run `or1`, task
+    /// `pypi-server`) lives in `stella-pipeline::flip_halt`'s module doc.
     ///
     /// The host owns the predicate because only the host knows what "done"
     /// means. `stella-pipeline` supplies one that fires when its flip oracle
     /// observes the tracked test go fail→pass.
     pub turn_halt: Option<Arc<dyn TurnHalt>>,
+    /// Task-mode opt-in (#2663): a completing turn that mutated the workspace
+    /// with no confirmed `verify_done` is nudged once to prove its work
+    /// before the declaration is accepted (`confident_zero::check`, rung 4).
+    pub completion_gate: bool,
 }
 
 /// A caller's answer to "is the goal already met?", asked once per step
@@ -334,9 +333,9 @@ pub trait TurnHalt: Send + Sync + std::fmt::Debug {
     /// `Some(reason)` ends the turn cleanly at the next step boundary;
     /// `None` lets it continue.
     ///
-    /// Called once per committed step, so it must be cheap and must not
-    /// block. It is asked *between* steps and never mid-tool, which is what
-    /// lets the turn end with a well-paired transcript.
+    /// Asked per committed step AND inside the dispatch loop (#2661): cheap,
+    /// never blocking. A mid-dispatch fire kills in-flight sibling tools and
+    /// answers their calls synthetically — the transcript stays paired.
     fn halt_reason(&self) -> Option<String>;
 }
 
@@ -386,6 +385,7 @@ impl Default for EngineConfig {
             // the goal is met, and inventing one here would end turns that
             // had more to do.
             turn_halt: None,
+            completion_gate: false,
         }
     }
 }
@@ -2171,20 +2171,20 @@ impl<'a> Engine<'a> {
                     ContinuationPlan::AllowanceSpent => {}
                 }
             }
-            // The tool-less-completion legitimacy gate: empty-response abort
-            // and the #1477 confident-zero check, in order — see
-            // `confident_zero::check`.
-            if let Some(outcome) = confident_zero::check(
+            // The tool-less-completion legitimacy gate — empty-response
+            // abort, #1477 confident zero, #2663 prove-it nudge, in order.
+            match confident_zero::check(
                 messages,
                 &read_only_tools,
-                &result.text,
-                result.finish_reason,
-                result.usage.output_tokens,
+                &result,
                 out_of_time,
                 total_cost_usd,
+                self.config.completion_gate,
                 events,
             ) {
-                return Some(outcome);
+                confident_zero::CompletionRuling::Abort(outcome) => return Some(outcome),
+                confident_zero::CompletionRuling::Nudged => return None,
+                confident_zero::CompletionRuling::Clean => {}
             }
             // A non-empty answer truncated with the continuation allowance
             // spent: keep the partial answer (already emitted above) but tell

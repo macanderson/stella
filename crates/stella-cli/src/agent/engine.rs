@@ -196,6 +196,18 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
     )
 }
 
+/// [`engine_config_for`], with the prove-it completion gate (#2663) switched
+/// by the turn's execution kind: a headless `"run"` turn is graded on its
+/// result and must prove a mutation before its declaration stands; a
+/// `"chat"` turn is conversational and keeps the ungated shape. Keyed on the
+/// same `kind` string `begin_execution` records, so the gate and the
+/// telemetry cannot disagree about which mode a turn ran in.
+pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
+    let mut engine = engine_config_for(cfg);
+    engine.completion_gate = kind == "run";
+    engine
+}
+
 /// EngineConfig for a pipeline's execute turns — the WORKER agent's tuning
 /// (plan and witness ride it too, matching the router's tiering).
 /// `worker_model` is [`EngineWiring::worker_model`]: the model the worker
@@ -203,11 +215,15 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
 /// `agents.worker.*` when set (issue #276), falling back to the session
 /// default (`cfg.provider`/`cfg.model_id`) when unset.
 pub(crate) fn pipeline_engine_config_for(cfg: &Config, worker_model: &ModelRef) -> EngineConfig {
-    tuned_engine_config(
+    let mut engine = tuned_engine_config(
         cfg,
         crate::settings::EngineAgentKind::Worker,
         (&worker_model.provider, &worker_model.model_id),
-    )
+    );
+    // A pipeline execute turn is always task mode: its declaration is graded,
+    // so it proves a mutation before the declaration stands (#2663).
+    engine.completion_gate = true;
+    engine
 }
 
 /// The safe default for CLI-owned headless surfaces: no host approval port,
