@@ -1032,7 +1032,8 @@ impl ZaiProvider {
     /// aggregator, which announces each tool call as soon as the next one
     /// starts streaming. That is the only per-call boundary this dialect
     /// emits mid-stream, and it leaves the turn's last call unannounced —
-    /// see [`ToolCallAccumulator::announced`] for what that costs.
+    /// see `ToolCallAccumulator::announced` (`zai/stream.rs`) for what that
+    /// costs.
     async fn complete_inner(
         &self,
         req: CompletionRequestRef<'_>,

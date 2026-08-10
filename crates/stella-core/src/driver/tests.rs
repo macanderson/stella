@@ -97,6 +97,9 @@ fn clone_provider_error(e: &ProviderError) -> ProviderError {
         ProviderError::UnknownModel { slug } => ProviderError::UnknownModel { slug: slug.clone() },
         ProviderError::Malformed(m) => ProviderError::Malformed(m.clone()),
         ProviderError::Cancelled => ProviderError::Cancelled,
+        ProviderError::ContextOverflow { message } => ProviderError::ContextOverflow {
+            message: message.clone(),
+        },
         ProviderError::Terminal(m) => ProviderError::Terminal(m.clone()),
     }
 }
@@ -3071,6 +3074,7 @@ mod budget_boundaries;
 mod calibration;
 mod compute_passes;
 mod context_efficiency;
+mod context_overflow;
 mod lifecycle_bus;
 mod loop_abort;
 mod parked_wait;

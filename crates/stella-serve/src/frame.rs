@@ -290,6 +290,14 @@ pub enum ProviderErrorWire {
         message: String,
     },
     Cancelled,
+    /// The host's provider rejected the request as exceeding the model's
+    /// context window — the class the engine's reactive overflow recovery
+    /// keys on (#2680). Carried distinctly so a remote provider's overflow
+    /// recovers exactly as a local one's does instead of degrading to
+    /// `Terminal`'s abort.
+    ContextOverflow {
+        message: String,
+    },
     Terminal {
         message: String,
     },
@@ -316,6 +324,9 @@ impl From<ProviderErrorWire> for ProviderError {
             ProviderErrorWire::UnknownModel { slug } => ProviderError::UnknownModel { slug },
             ProviderErrorWire::Malformed { message } => ProviderError::Malformed(message),
             ProviderErrorWire::Cancelled => ProviderError::Cancelled,
+            ProviderErrorWire::ContextOverflow { message } => {
+                ProviderError::ContextOverflow { message }
+            }
             ProviderErrorWire::Terminal { message } => ProviderError::Terminal(message),
         }
     }
@@ -341,6 +352,9 @@ impl From<&ProviderError> for ProviderErrorWire {
             }
             ProviderError::Malformed(m) => ProviderErrorWire::Malformed { message: m.clone() },
             ProviderError::Cancelled => ProviderErrorWire::Cancelled,
+            ProviderError::ContextOverflow { message } => ProviderErrorWire::ContextOverflow {
+                message: message.clone(),
+            },
             ProviderError::Terminal(m) => ProviderErrorWire::Terminal { message: m.clone() },
         }
     }
