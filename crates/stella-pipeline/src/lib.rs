@@ -45,6 +45,7 @@
 //!   `docs/spec/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
+//!
 //! Historical verifier/witness wire tokens and pure parsers remain readable for
 //! stored traces and configuration compatibility, but live orchestration never
 //! dispatches those model roles.

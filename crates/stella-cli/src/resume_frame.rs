@@ -246,7 +246,7 @@ impl ResumeFrame {
     ///
     /// Written as a list of what will *not* run rather than a single sentence,
     /// because "the pipeline does not resume" is the summary an operator
-    /// already assumed was false; naming the verdict, the flip credit and the
+    /// already assumed was false; naming the lost oracle, revision loop, and
     /// candidate workspace individually is what makes it actionable.
     pub fn advisory(&self) -> Option<Vec<String>> {
         let frame = match self {
@@ -267,25 +267,16 @@ impl ResumeFrame {
         ];
         lines.push(match &frame.test_command {
             Some(command) => format!(
-                "  the verify stage will NOT re-run `{command}`, and no verdict is recorded"
+                "  deterministic verification will NOT re-run `{command}`, so this turn has no \
+                 completion authority"
             ),
-            None => {
-                "  the verifier will NOT re-read this work, and no verdict is recorded".to_string()
-            }
+            None => "  no deterministic verification request survived this frame, so this turn \
+                     has no completion authority"
+                .to_string(),
         });
-        // Through the roster, not the bool beside it, so this file reads the
-        // legacy field in exactly one place (#2458) — `PipelineFrame::roster`,
-        // which is also the only place that knows an old frame carries nothing
-        // else.
-        if frame.roster().enabled(ModelCallRole::WitnessAuthor) {
-            lines.push(
-                "  the witness test's fail→pass flip is NOT credited — nothing proves this done"
-                    .to_string(),
-            );
-        }
         if frame.max_revisions > 0 {
             lines.push(format!(
-                "  up to {} revision round(s) the verifier could have demanded will NOT happen",
+                "  up to {} deterministic revision round(s) will NOT happen",
                 frame.max_revisions
             ));
         }
@@ -303,7 +294,15 @@ impl ResumeFrame {
                     .to_string(),
             );
         }
-        lines.push("  re-verify it with `stella run` before treating this as done".to_string());
+        lines.push(match &frame.test_command {
+            Some(command) => format!(
+                "  re-verify it with `stella run --test-command \"{command}\"` before treating \
+                 this as done"
+            ),
+            None => "  re-run it through `stella run` with a deterministic oracle before \
+                     treating this as done"
+                .to_string(),
+        });
         Some(lines)
     }
 
@@ -450,9 +449,9 @@ mod tests {
 
     /// **The #1615 witness (report half).** A turn killed inside a staged
     /// pipeline resumes knowing it is coming back smaller: the advisory names
-    /// the verify command that will not re-run, the witness flip that will not
-    /// be credited, and the candidate worktree that died — and the audit row
-    /// is labelled `resumed_complete_unverified` rather than borrowing the
+    /// the deterministic command that will not re-run, the revision loop that
+    /// will not happen, and the candidate worktree that died — and the audit
+    /// row is labelled `resumed_complete_unverified` rather than borrowing the
     /// ordinary success label.
     ///
     /// On `main` there is no frame at all: `SessionDurability` has no
@@ -475,10 +474,15 @@ mod tests {
             text.contains("cargo test -p stella-core"),
             "the verify command that will not re-run is named: {text}"
         );
-        assert!(text.contains("no verdict is recorded"), "{text}");
-        assert!(text.contains("flip is NOT credited"), "{text}");
-        assert!(text.contains("revision round"), "{text}");
+        assert!(text.contains("no completion authority"), "{text}");
+        assert!(text.contains("deterministic revision round"), "{text}");
         assert!(text.contains("candidate worktree"), "{text}");
+        assert!(
+            text.contains("--test-command \"cargo test -p stella-core\""),
+            "the recovery command must carry the exact lost oracle: {text}"
+        );
+        assert!(!text.contains("verifier"), "{text}");
+        assert!(!text.contains("witness"), "{text}");
 
         // The delta: a plain engine turn is untouched by any of this.
         let bare = ResumeFrame::BareTurn;
