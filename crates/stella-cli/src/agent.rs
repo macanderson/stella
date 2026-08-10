@@ -315,15 +315,15 @@ async fn run_pipeline_one_shot(
     // are stderr diagnostics — stdout may be machine-readable JSON.
     let configured = crate::config::discover_configured_providers();
     let wiring = resolve_engine_wiring(cfg, &model_ref, &configured);
-    for notice in &wiring.notices {
-        eprintln!("  ! {notice}");
-    }
+    wiring.notices.iter().for_each(|n| eprintln!("  ! {n}"));
+    // Routing settled above: the environment block may name the running model (#2718).
+    let worker = Some(wiring.worker_model.clone());
     let resolver =
         RoleProviderResolver::new(&*provider, model_ref.clone(), &wiring.extra_providers);
 
     let mut messages = vec![CompletionMessage::system(
         with_session_hook_context(
-            build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+            build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, worker.as_ref()),
             cfg,
         )
         .await,

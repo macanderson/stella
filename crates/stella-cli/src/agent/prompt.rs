@@ -322,6 +322,7 @@ pub(crate) fn assemble_system_prompt(
     workspace_root: &std::path::Path,
     authority: &crate::settings::AuthorityPolicy,
     active_rules: &crate::rules::ResolvedRules,
+    worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
     let mut prompt = base.to_string();
     // Package-manager scripts are ordinary task source and remain part of the
@@ -331,7 +332,7 @@ pub(crate) fn assemble_system_prompt(
     // live process and workspace, never read from stored Stella state, so
     // claim-mode isolation (which excludes only state that could carry
     // preinstalled steering across trials) has nothing to exclude here.
-    append_session_environment(&mut prompt, workspace_root);
+    append_session_environment(&mut prompt, workspace_root, worker);
     if crate::settings::filesystem_settings_disabled() {
         append_project_scripts(&mut prompt, workspace_root);
         append_project_orientation(&mut prompt, workspace_root);
@@ -374,13 +375,21 @@ pub(crate) fn assemble_system_prompt(
 /// A linked worktree is recognized by its `.git` being a gitfile rather than
 /// a directory — that is the on-disk shape `git worktree add` creates.
 ///
-/// Model identity and knowledge cutoff are deliberately NOT here yet: the
-/// worker model can be re-routed after this prompt is assembled
-/// (`resolve_engine_wiring`), so a line naming `Config`'s model could name
-/// the wrong one — a false claim in the prefix is worse than an absent one.
-/// That half needs the router-resolved role model threaded in, plus a
-/// per-model cutoff table that does not exist today.
-fn append_session_environment(prompt: &mut String, workspace_root: &std::path::Path) {
+/// The model line ships only when the caller can pass a `worker` ref that is
+/// TRUE for the calls this prefix will ride (#2718). The non-pipeline persona
+/// always can — the raw step loop runs the session default
+/// (`build_provider(cfg)`), so `build_system_prompt` resolves it itself. The
+/// pipeline persona's worker can be re-routed by `resolve_engine_wiring`, so
+/// `build_pipeline_system_prompt` takes the resolved ref from callers that
+/// have it and `None` from callers that assemble before routing settles — an
+/// absent line, never a guessed one. The knowledge cutoff rides the same
+/// line when the catalog knows it: synced from the master list's `knowledge`
+/// field through the model cards, never hand-seeded.
+fn append_session_environment(
+    prompt: &mut String,
+    workspace_root: &std::path::Path,
+    worker: Option<&stella_protocol::role::ModelRef>,
+) {
     let git = workspace_root.join(".git");
     let repo_note = if git.is_file() {
         // A gitfile, not a directory: `git worktree add`'s link shape.
@@ -403,6 +412,14 @@ fn append_session_environment(prompt: &mut String, workspace_root: &std::path::P
         prompt.push_str(&format!(
             "\nShell: {shell} — write commands in its dialect rather than guessing"
         ));
+    }
+    if let Some(worker) = worker {
+        prompt.push_str(&format!("\nModel: {worker}"));
+        if let Some(cutoff) = knowledge_cutoff_for(worker) {
+            prompt.push_str(&format!(
+                " — knowledge cutoff {cutoff}; treat anything that may have moved since as unverified"
+            ));
+        }
     }
     prompt.push_str(
         "\nThese are constants for this session: read them from here instead of \
@@ -443,6 +460,20 @@ fn login_shell() -> Option<String> {
         .to_string_lossy()
         .into_owned();
     (!name.is_empty()).then_some(name)
+}
+
+/// The knowledge cutoff the catalog records for `worker`, if any. Reads the
+/// process-wide runtime catalog (seed merged with refreshed model cards), so
+/// the answer is fixed for the session — the catalog is installed once at
+/// startup, which is what lets this live in the byte-stable prefix. Seed rows
+/// carry no cutoff; the data arrives via `stella models refresh` and the
+/// line is simply absent until it does.
+fn knowledge_cutoff_for(worker: &stella_protocol::role::ModelRef) -> Option<String> {
+    stella_model::catalog::Catalog::current()
+        .resolve_for(&worker.provider, &worker.model_id)
+        .ok()?
+        .knowledge_cutoff
+        .clone()
 }
 
 /// The workspace-maps half of [`assemble_system_prompt`]: the exploration
@@ -649,11 +680,17 @@ pub(crate) fn build_system_prompt(
     active_rules: &crate::rules::ResolvedRules,
 ) -> String {
     let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Default);
+    // The raw step loop always runs the session default (`build_provider`
+    // reads `cfg` directly, and `--model` is already folded into it), so the
+    // non-pipeline persona resolves its own model ref — true at every surface.
+    let session_default =
+        stella_protocol::role::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     assemble_system_prompt(
         base.as_deref().unwrap_or(SYSTEM_PROMPT),
         workspace_root,
         &cfg.authority,
         active_rules,
+        Some(&session_default),
     )
 }
 
@@ -663,6 +700,7 @@ pub(crate) fn build_pipeline_system_prompt(
     cfg: &Config,
     workspace_root: &std::path::Path,
     active_rules: &crate::rules::ResolvedRules,
+    worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
     let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Worker);
     assemble_system_prompt(
@@ -670,6 +708,7 @@ pub(crate) fn build_pipeline_system_prompt(
         workspace_root,
         &cfg.authority,
         active_rules,
+        worker,
     )
 }
 
@@ -710,7 +749,7 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
 #[cfg(test)]
 pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path) -> String {
     let mut expected = PIPELINE_SYSTEM_PROMPT.to_string();
-    append_session_environment(&mut expected, workspace_root);
+    append_session_environment(&mut expected, workspace_root, None);
     expected
 }
 
@@ -1077,7 +1116,8 @@ mod tests {
         let root = workspace.path();
         let authority = crate::settings::AuthorityPolicy::default();
         let rules = crate::rules::ResolvedRules::default();
-        let first = super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules);
+        let first =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
         assert!(
             first.contains("## Session environment"),
             "the environment block must ship even when project prompts are untrusted — \
@@ -1095,11 +1135,49 @@ mod tests {
             first.contains(std::env::consts::OS),
             "the block must name the platform"
         );
-        let second = super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules);
+        let second =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
         assert_eq!(
             first, second,
             "the environment block sits in the cached prefix and must be byte-stable \
              across assemblies (L-E8)"
+        );
+    }
+
+    /// The model-identity half of #2718: a resolved worker ref renders a
+    /// `Model:` line inside the environment block, and `None` — a surface
+    /// that assembles before routing settles — renders no line at all, never
+    /// a guessed one. The seed catalog carries no knowledge cutoff by
+    /// construction (cutoffs are synced data, not curated code), so the
+    /// seeded model's line must also carry no cutoff clause — the "unknown
+    /// omits the line" posture, pinned from the prompt side.
+    #[test]
+    fn the_model_line_ships_resolved_and_never_guessed() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path();
+        let authority = crate::settings::AuthorityPolicy::default();
+        let rules = crate::rules::ResolvedRules::default();
+        let worker = stella_protocol::role::ModelRef::new("zai", "glm-5.2".to_string());
+        let with = super::assemble_system_prompt(
+            super::SYSTEM_PROMPT,
+            root,
+            &authority,
+            &rules,
+            Some(&worker),
+        );
+        assert!(
+            with.contains("\nModel: zai/glm-5.2"),
+            "a resolved worker ref must be named in the environment block: {with}"
+        );
+        assert!(
+            !with.contains("knowledge cutoff"),
+            "the seed catalog records no cutoff, so none may be claimed: {with}"
+        );
+        let without =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+        assert!(
+            !without.contains("\nModel:"),
+            "an unresolved worker renders no model line, never a guessed one: {without}"
         );
     }
 
@@ -1114,8 +1192,13 @@ mod tests {
 
         let primary = tempfile::tempdir().expect("primary");
         std::fs::create_dir(primary.path().join(".git")).unwrap();
-        let prompt =
-            super::assemble_system_prompt(super::SYSTEM_PROMPT, primary.path(), &authority, &rules);
+        let prompt = super::assemble_system_prompt(
+            super::SYSTEM_PROMPT,
+            primary.path(),
+            &authority,
+            &rules,
+            None,
+        );
         assert!(
             prompt.contains("a git repository") && !prompt.contains("LINKED WORKTREE"),
             "a primary checkout is a repository but not a worktree: {prompt}"
@@ -1132,6 +1215,7 @@ mod tests {
             worktree.path(),
             &authority,
             &rules,
+            None,
         );
         assert!(
             prompt.contains("LINKED WORKTREE")
