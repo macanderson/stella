@@ -50,7 +50,16 @@
 //! is detection, not repair: nothing here writes to the real repository, so
 //! the refusal quotes the value recorded at creation and the one command that
 //! puts it back. The structural fix — a candidate substrate that cannot reach
-//! the graded tree's refs at all — is #1383.
+//! the graded tree's refs at all — is #1383, and the residual repair gap is
+//! #2641.
+//!
+//! One coupling to know before changing either: the attribution probes run
+//! against the REAL repository yet name the candidate's private `baseline` and
+//! `HEAD`, which is only resolvable because the two share an object store —
+//! the very property this module exists to police. A substrate that separates
+//! the object stores (#1383) makes this module unnecessary *and* breaks its
+//! probes in the same stroke; it must be retired with that change, not ported
+//! across it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
