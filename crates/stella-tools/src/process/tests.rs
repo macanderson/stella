@@ -601,9 +601,14 @@ async fn start_process_injects_stella_scratch_into_spawned_process() {
 
     // Start a process that outputs the STELLA_SCRATCH environment variable.
     // Use printf to ensure output is flushed immediately.
-    let command = format!("printf 'STELLA_SCRATCH=%s\\n' \"$STELLA_SCRATCH\"; sleep 30");
-    let handle = start_with_scratch(&table, &root, &["sh", "-c", &command], Some(scratch_path.clone()))
-        .await;
+    let command = "printf 'STELLA_SCRATCH=%s\\n' \"$STELLA_SCRATCH\"; sleep 30".to_string();
+    let handle = start_with_scratch(
+        &table,
+        &root,
+        &["sh", "-c", &command],
+        Some(scratch_path.clone()),
+    )
+    .await;
 
     // Poll read_output until we see the STELLA_SCRATCH value in the output.
     let mut observed = String::new();
