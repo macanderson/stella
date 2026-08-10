@@ -214,6 +214,53 @@ fn surfaces() -> Vec<Surface> {
                 // No `identity`, for the same reason as the client above.
             ],
         },
+        // The two published benchmark pages. They are the reference the
+        // instrument palette was drawn FROM, and the report already agreed
+        // with the Observatory value for value — it simply had nothing
+        // holding it there, which is the drift condition, not the absence of
+        // it. The index did not agree: it carried a warm editorial palette and
+        // a bronze accent while the report one click away was achromatic, so a
+        // reader crossing that link watched the page change temperature.
+        //
+        // Both take the explicit `data-theme` gates rather than the media
+        // query, for the same reason `canonical()` does: identical values, and
+        // it is the gate a reader's own toggle reaches.
+        //
+        // These are published surfaces, and #2594 is right that a published
+        // surface is not automatically an instrument — but an index to a set
+        // of measurements, and the measurements themselves, are. Neither
+        // carries `identity`: the benchmark scores stella against another
+        // harness, so the same reasoning that keeps stella's mark out of the
+        // arena's chrome applies here.
+        Surface {
+            file: "docs/benchmarks/index.html",
+            dark: (r#":root[data-theme="dark"]{"#, "}"),
+            light: (r#":root[data-theme="light"]{"#, "}"),
+            names: &[
+                ("ground", "--bg"),
+                ("surface", "--sub"),
+                ("text", "--ink"),
+                ("text-2", "--ink-2"),
+                ("text-3", "--ink-3"),
+                ("ok", "--pass"),
+                // No `bad`: an index lists reports, and none of them is a
+                // failure state. No `warn` for the same reason.
+            ],
+        },
+        Surface {
+            file: "docs/benchmarks/terminal-bench-2-1-glm-5-2.html",
+            dark: (r#":root[data-theme="dark"]{"#, "}"),
+            light: (r#":root[data-theme="light"]{"#, "}"),
+            names: &[
+                ("ground", "--bg"),
+                ("surface", "--sub"),
+                ("text", "--ink"),
+                ("text-2", "--ink-2"),
+                ("text-3", "--ink-3"),
+                ("ok", "--pass"),
+                ("bad", "--fail"),
+            ],
+        },
     ]
 }
 
