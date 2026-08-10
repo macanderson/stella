@@ -312,5 +312,124 @@ case "$RUN_OUT" in
   *) ok "…and does not print the serving banner for a dead server" ;;
 esac
 
+# --- arena-local: the shell's argv order is a contract with argparse --------
+#
+# `arena_local.py` collects the `arenabench run` passthrough with
+# `nargs=REMAINDER`, and argparse stops parsing options at the first
+# positional. So every flag the launcher owns must be built *before* the
+# template and the passthrough *after* it. Assembled the other way round —
+# which is how it was written first — `--dry-run` was swallowed into the
+# passthrough and handed to `arenabench run` as an unknown argument, from
+# inside a launch whose preflight had already printed clean.
+#
+# Two tests, because the coupling has two halves and each can be broken alone:
+# the parser's behaviour, and the argv the shell actually builds.
+
+LOCAL_PY="$ROOT/scripts/arena_local.py"
+LOCAL_SH="$ROOT/scripts/arena-local.sh"
+
+PARSED="$(
+  PYTHONPATH="$ROOT/scripts" python3 - <<'PY' 2>&1
+import arena_local
+
+args = arena_local.build_parser().parse_args(
+    ["--dry-run", "--max-behind", "9", "m.toml", "--progress"]
+)
+print(f"{args.dry_run} {args.max_behind} {args.template} {args.passthrough}")
+PY
+)"
+check "arena-local parses its own flags when they precede the template" \
+  "$PARSED" "True 9 m.toml ['--progress']"
+
+# The failing shape, pinned so nobody "tidies" the shell's argv order back:
+# after the positional, the launcher's own flag is no longer its own.
+SWALLOWED="$(
+  PYTHONPATH="$ROOT/scripts" python3 - <<'PY' 2>&1
+import arena_local
+
+args = arena_local.build_parser().parse_args(["m.toml", "--dry-run"])
+print(f"{args.dry_run} {args.passthrough}")
+PY
+)"
+check "…and a flag placed after the template is swallowed as passthrough" \
+  "$SWALLOWED" "False ['--dry-run']"
+
+# The end-to-end half: the shell must emit flags, then template, then
+# passthrough. Fixtured in a throwaway repo with no `origin`, so the freshness
+# fetch fails instantly and this stays offline — the script reports "could not
+# reach origin" rather than assuming it is current, which is the behaviour we
+# want anyway.
+LOCAL_TMP="$(mktemp -d)"
+# Re-states the whole handler rather than adding to it: `trap` REPLACES the
+# action for a signal, it does not append. Installed as a bare
+# `rm -rf "$LOCAL_TMP"`, this silently dropped `cleanup_fakes` — and the
+# reap-seats fixtures it kills are long-lived fake seats, so they survived the
+# run, were still on the process table for the *next* one, and failed
+# "reap-seats spares a seat whose parent is alive" in a file whose tests had
+# not changed. A leaked fixture does not fail the run that leaks it.
+trap 'cleanup_fakes; rm -rf "$STUB_DIR" "$RUN_HOME" "$LOCAL_TMP"' EXIT
+LOCAL_ROOT="$LOCAL_TMP/repo"
+mkdir -p "$LOCAL_ROOT/scripts" "$LOCAL_ROOT/arenabench/arenabench" \
+         "$LOCAL_ROOT/bench/harbor_adapter/stella_harbor"
+cp "$LOCAL_SH" "$LOCAL_PY" "$LOCAL_ROOT/scripts/"
+: > "$LOCAL_ROOT/match.toml"
+git -C "$LOCAL_ROOT" init -q 2>/dev/null
+
+# Stands in for the adapter venv: satisfies the `import arenabench,
+# stella_harbor` preflight by exiting 0, and reports the argv it was handed.
+ARGV_STUB="$LOCAL_TMP/stub-python"
+cat > "$ARGV_STUB" <<'STUB'
+#!/usr/bin/env bash
+printf 'ARGV %s\n' "$*"
+exit 0
+STUB
+chmod +x "$ARGV_STUB"
+
+# Absolute, because the launcher resolves the template against *its caller's*
+# cwd — which is this test's, not the fixture's.
+LOCAL_OUT="$(
+  ARENA_PYTHON="$ARGV_STUB" "$LOCAL_ROOT/scripts/arena-local.sh" \
+    "$LOCAL_ROOT/match.toml" --dry-run --no-pull -- --progress 2>&1
+)"
+# The last ARGV line is the hand-off; the first is the import preflight.
+LOCAL_ARGV="$(printf '%s\n' "$LOCAL_OUT" | awk '/^ARGV /{ line = $0 } END { print line }')"
+ORDER="$(
+  printf '%s\n' "$LOCAL_ARGV" | awk '{
+    for (i = 1; i <= NF; i++) {
+      if ($i == "--repo")            repo = i
+      if ($i == "--dry-run")         dry  = i
+      if ($i ~ /\/match\.toml$/)     tpl  = i
+      if ($i == "--progress")        pass = i
+    }
+    print (repo && dry && tpl && pass && repo < tpl && dry < tpl && tpl < pass) \
+      ? "ordered" : "broken"
+  }'
+)"
+check "arena-local builds argv as flags, then template, then passthrough" \
+  "$ORDER" "ordered"
+
+# --- arena-local: the dotenv file fills gaps and never overwrites -----------
+#
+# The ordering ArenaBench uses everywhere else — a value supplied for *this*
+# run beats a stored default — so an `export` overrides the file for one match
+# without editing it. The shadow report is the other half: without it, an
+# operator edits the file, sees no change, and blames the agent.
+SEEDED="$(
+  PYTHONPATH="$ROOT/scripts" python3 - <<'PY' 2>&1
+import os
+
+import arena_local
+
+os.environ.pop("FIXTURE_API_KEY", None)
+os.environ["OTHER_API_KEY"] = "from-the-shell"
+filled, shadowed = arena_local.seed_environment(
+    {"FIXTURE_API_KEY": "from-the-file", "OTHER_API_KEY": "from-the-file"}
+)
+print(f"{filled} {shadowed} {os.environ['OTHER_API_KEY']}")
+PY
+)"
+check "arena-local seeds a gap and leaves an exported value alone" \
+  "$SEEDED" "['FIXTURE_API_KEY'] ['OTHER_API_KEY'] from-the-shell"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

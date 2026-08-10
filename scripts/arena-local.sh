@@ -53,8 +53,14 @@ set -uo pipefail
 TEMPLATE=""
 PULL_CHOICE=""
 DRY_RUN=0
-PASSTHRU=""
-FORWARD=""
+# Arrays, not accumulated strings: a string has to be left unquoted at the exec
+# to split back into words, which then also splits any path containing a space
+# and glob-expands anything holding a `*`. `--env-file` takes a path from the
+# operator's own argv, so that is a real shape, not a theoretical one. Arrays
+# are bash 3.2 (only *associative* arrays are 4.0), so this costs nothing on
+# stock macOS.
+PASSTHRU=()
+FORWARD=()
 
 usage() { sed -n '2,20p' "$0"; }
 
@@ -72,13 +78,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --pull)     PULL_CHOICE="yes" ;;
     --no-pull)  PULL_CHOICE="no" ;;
-    --dry-run|-n) DRY_RUN=1; FORWARD="$FORWARD --dry-run" ;;
+    --dry-run|-n) DRY_RUN=1; FORWARD+=("--dry-run") ;;
     -h|--help)  usage; exit 0 ;;
-    --)         shift; while [ $# -gt 0 ]; do PASSTHRU="$PASSTHRU $1"; shift; done; break ;;
-    --*=*)      FORWARD="$FORWARD $1" ;;
+    --)         shift; while [ $# -gt 0 ]; do PASSTHRU+=("$1"); shift; done; break ;;
+    --*=*)      FORWARD+=("$1") ;;
     --env-file|--max-behind|--repo)
-                FORWARD="$FORWARD $1 ${2:-}"; shift ;;
-    --*)        FORWARD="$FORWARD $1" ;;
+                FORWARD+=("$1" "${2:-}"); shift ;;
+    --*)        FORWARD+=("$1") ;;
     *)          if [ -z "$TEMPLATE" ]; then TEMPLATE="$1"; else
                   die "unexpected argument: $1"
                 fi ;;
@@ -218,9 +224,12 @@ printf '\n'
 # `--dry-run` ended up forwarded to `arenabench run` as an unknown argument,
 # *after* a preflight that had already printed clean.
 #
-# Unquoted on purpose: $FORWARD and $PASSTHRU are accumulated flag words that
-# must split. Neither can carry a path with a space today (the two options that
-# take one, --env-file and --repo, are the operator's own argv), and the dotenv
-# file's *contents* never pass through the shell at all — the Python side reads
-# the file itself.
-exec "$PY" "$ROOT/scripts/arena_local.py" --repo "$ROOT" $FORWARD "$TEMPLATE" $PASSTHRU
+# `${ARR[@]+"${ARR[@]}"}` rather than a bare `"${ARR[@]}"`: under `set -u`,
+# bash 3.2 treats an empty array's expansion as an unbound variable and aborts.
+# The launcher is normally invoked with neither list populated, so the plain
+# spelling would fail on stock macOS in the common case and nowhere else.
+exec "$PY" "$ROOT/scripts/arena_local.py" \
+  --repo "$ROOT" \
+  ${FORWARD[@]+"${FORWARD[@]}"} \
+  "$TEMPLATE" \
+  ${PASSTHRU[@]+"${PASSTHRU[@]}"}
