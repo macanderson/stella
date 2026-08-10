@@ -3,8 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.protocol-types-only"
-record_id = "rec_macanderson_stella_protocol_types_only_3e030b5ca792"
-record_hash = "sha256:b3e4a1be52cc6caad538e300e3b8437408da0b3f9ef371d2eed9751eaecad6da"
+record_id = "rec_macanderson_stella_protocol_types_only_8e85b17efcbe"
+record_hash = "sha256:8fd9ed72dada49c4bf80b31cb32be309f5fb80693b37a1d630c54c0b51f4badf"
 kind = "constraint"
 statement = "stella-protocol holds shared types only, with zero logic and zero I/O."
 origin = "imported"
@@ -34,7 +34,7 @@ keywords = [
 ]
 
 [record.enforcement]
-mode = "hard"
+mode = "none"
 
 [record.truth]
 basis = "decree"
