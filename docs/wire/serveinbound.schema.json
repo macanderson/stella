@@ -591,6 +591,23 @@
               "type": "object"
             },
             {
+              "description": "The host's provider rejected the request as exceeding the model's\ncontext window — the class the engine's reactive overflow recovery\nkeys on (#2680). Carried distinctly so a remote provider's overflow\nrecovers exactly as a local one's does instead of degrading to\n`Terminal`'s abort.",
+              "properties": {
+                "kind": {
+                  "const": "context_overflow",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "kind": {
                   "const": "terminal",

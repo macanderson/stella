@@ -135,6 +135,37 @@ async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     assert!(msg.contains("account balance depleted"), "{msg}");
 }
 
+/// End-to-end funnel proof for the shared chat-completions adapter (#2680):
+/// an OpenAI-dialect `context_length_exceeded` 400 must reach the caller as
+/// `ProviderError::ContextOverflow` — the class the engine's reactive
+/// overflow recovery keys on — through the public `complete()` API, not just
+/// through `classify_http_status` in isolation. Non-retryable: the recovery
+/// re-issues only after compacting, never verbatim.
+#[tokio::test]
+async fn complete_maps_a_context_length_exceeded_400_to_context_overflow() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"error":{"message":"This model's maximum context length is 131072 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+
+    let err = provider.complete(hi_request()).await.unwrap_err();
+    assert!(
+        matches!(err, ProviderError::ContextOverflow { .. }),
+        "overflow must classify distinctly, got {err:?}"
+    );
+    assert!(!err.is_retryable(), "verbatim re-issue rejects identically");
+    let msg = err.to_string();
+    assert!(msg.contains("context window"), "{msg}");
+}
+
 /// The 429 pre-check runs ahead of the shared ladder, so it is the one arm
 /// that could still hard-code "Z.ai" while every other status reports under
 /// the re-identified provider's label. It did — an OpenRouter throttle read

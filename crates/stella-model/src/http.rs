@@ -268,6 +268,86 @@ fn parse_error_reason(body: &str) -> Option<String> {
         .filter(|m| !m.is_empty())
 }
 
+/// The machine `code` from a provider's structured error body, when it is a
+/// string. OpenAI and every OpenAI-compatible gateway put it at `error.code`
+/// (`"context_length_exceeded"`); a numeric code there (OpenRouter echoes the
+/// HTTP status) carries no classification signal and yields `None`, as does a
+/// non-JSON body.
+fn parse_error_code(body: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Wrapped {
+        error: Inner,
+    }
+    #[derive(Deserialize, Default)]
+    struct Inner {
+        #[serde(default)]
+        code: Option<serde_json::Value>,
+    }
+    serde_json::from_str::<Wrapped>(body)
+        .ok()
+        .and_then(|w| w.error.code)
+        .and_then(|code| match code {
+            serde_json::Value::String(code) => Some(code),
+            _ => None,
+        })
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+}
+
+/// Whether a non-success response is the provider saying "this request
+/// exceeds the model's context window" — the one 4xx the engine can repair
+/// by compacting and re-issuing (#2680), so it must classify as
+/// `ProviderError::ContextOverflow` rather than fall into the terminal
+/// catch-all.
+///
+/// Providers share no wire standard for this, so detection is per-dialect
+/// signatures over the machine `code` and the human message — each declared
+/// per provider on the parity matrix's overflow axis
+/// (`crate::provider_parity::OVERFLOW_POSTURE`, invariant 8) rather than
+/// assumed:
+///
+/// - **HTTP 413** is unconditional: Payload Too Large has no other meaning
+///   on a completion endpoint.
+/// - **OpenAI / OpenAI-compatible** (and the gateways that forward it):
+///   `error.code == "context_length_exceeded"`, or the classic message
+///   "This model's maximum context length is N tokens", or the Responses
+///   API's "exceeds the context window".
+/// - **Anthropic**: 400 `invalid_request_error` with
+///   "prompt is too long: N tokens > M maximum".
+/// - **Bedrock**: `ValidationException` with "Input is too long for
+///   requested model" / "too many input tokens".
+/// - **Gemini / Vertex**: 400 `INVALID_ARGUMENT` with "input token count
+///   (N) exceeds the maximum number of tokens allowed".
+///
+/// Phrases are deliberately narrow — each is the vendor's documented
+/// overflow sentence, not a generic word like "context" or "long" — because
+/// a false positive here makes the engine compact and retry a request that
+/// failed for a different reason. An unmatched overflow shape degrades to
+/// `Terminal`, which is exactly today's abort: safe, just unrecovered.
+fn is_context_overflow(status: reqwest::StatusCode, body: &str, reason: Option<&str>) -> bool {
+    if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        return true;
+    }
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    if parse_error_code(body).as_deref() == Some("context_length_exceeded") {
+        return true;
+    }
+    let haystack = reason.unwrap_or(body).to_lowercase();
+    [
+        "prompt is too long",                    // Anthropic
+        "maximum context length",                // OpenAI chat completions
+        "exceeds the context window",            // OpenAI Responses API
+        "context_length_exceeded",               // code echoed in prose
+        "input is too long for requested model", // Bedrock Converse
+        "too many input tokens",                 // Bedrock (alternate)
+        "exceeds the maximum number of tokens",  // Gemini / Vertex
+    ]
+    .iter()
+    .any(|phrase| haystack.contains(phrase))
+}
+
 /// Longest raw response body (in characters) echoed back in a classified
 /// HTTP error. A provider fronted by a CDN or a reverse proxy answers a 5xx
 /// with a multi-kilobyte HTML error page, and a gateway can dump an equally
@@ -367,6 +447,10 @@ fn mentions_configured_model(body: &str, model: &str) -> bool {
 /// - 5xx → retryable `Transport` (includes 529, which Anthropic and Z.ai
 ///   use for load shedding). Without this a momentary blip aborts the whole
 ///   turn (`Terminal.is_retryable() == false`).
+/// - a 400 carrying a provider's context-overflow signature, or a bare 413
+///   ([`is_context_overflow`]) → non-retryable `ContextOverflow`, the one
+///   4xx split out of the catch-all because the engine repairs it (forced
+///   compaction + re-issue, #2680) instead of aborting on it.
 /// - anything else (400/404/422/...) → non-retryable `Terminal` — this call
 ///   can never succeed by retrying it verbatim (issue #271), so the
 ///   step-driver's retry loop never re-derives a classification here, it
@@ -417,6 +501,17 @@ pub(crate) fn classify_http_status(
             ProviderError::transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
         }
         _ => {
+            if is_context_overflow(status, body, reason.as_deref()) {
+                return ProviderError::ContextOverflow {
+                    message: format!(
+                        "{label} rejected the request as exceeding the model's context window \
+                         (HTTP {status}): {}",
+                        reason
+                            .as_deref()
+                            .map_or_else(|| body_snippet(body), str::to_string)
+                    ),
+                };
+            }
             let mut message = format!("{label} HTTP {status}: {}", body_snippet(body));
             if mentions_configured_model(body, model) {
                 message.push_str(
@@ -1094,6 +1189,146 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("lacks permission"), "{msg}");
         assert!(!msg.contains("enable it"), "{msg}");
+    }
+
+    /// Anthropic's documented overflow shape: HTTP 400 `invalid_request_error`
+    /// with "prompt is too long: N tokens > M maximum". Parity witness for the
+    /// `anthropic` row on the overflow axis (`provider_parity::OVERFLOW_POSTURE`).
+    #[test]
+    fn an_anthropic_prompt_too_long_400_classifies_as_context_overflow() {
+        let err = classify_http_status(
+            "Anthropic",
+            reqwest::StatusCode::BAD_REQUEST,
+            None,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 200468 tokens > 200000 maximum"}}"#,
+            "claude-opus",
+        );
+        assert!(
+            matches!(err, ProviderError::ContextOverflow { .. }),
+            "{err:?}"
+        );
+        assert!(
+            !err.is_retryable(),
+            "identical re-issue rejects identically"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("context window"), "{msg}");
+        assert!(msg.contains("prompt is too long"), "{msg}");
+    }
+
+    /// The OpenAI-compatible overflow shape, detected by the machine code
+    /// alone — the message is free to vary per gateway. Parity witness for the
+    /// `openai` row (and the shared-adapter rows that declare this signature).
+    #[test]
+    fn an_openai_context_length_exceeded_400_classifies_as_context_overflow() {
+        let err = classify_http_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_REQUEST,
+            None,
+            r#"{"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 143211 tokens.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}"#,
+            "gpt-5.5",
+        );
+        assert!(
+            matches!(err, ProviderError::ContextOverflow { .. }),
+            "{err:?}"
+        );
+        assert!(!err.is_retryable());
+
+        // The code alone is sufficient — a gateway that rewrites the prose
+        // but forwards the code still classifies.
+        let code_only = classify_http_status(
+            "OpenRouter",
+            reqwest::StatusCode::BAD_REQUEST,
+            None,
+            r#"{"error":{"message":"upstream rejected the request","code":"context_length_exceeded"}}"#,
+            "openrouter/auto",
+        );
+        assert!(
+            matches!(code_only, ProviderError::ContextOverflow { .. }),
+            "{code_only:?}"
+        );
+    }
+
+    /// Gemini/Vertex spell overflow as INVALID_ARGUMENT prose. Parity witness
+    /// for the `gemini` and `vertex` rows on the overflow axis.
+    #[test]
+    fn a_gemini_token_count_overflow_400_classifies_as_context_overflow() {
+        let err = classify_http_status(
+            "Gemini",
+            reqwest::StatusCode::BAD_REQUEST,
+            None,
+            r#"{"error":{"code":400,"message":"The input token count (1189033) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}"#,
+            "gemini-3-pro",
+        );
+        assert!(
+            matches!(err, ProviderError::ContextOverflow { .. }),
+            "{err:?}"
+        );
+        assert!(!err.is_retryable());
+    }
+
+    /// Bedrock's Converse ValidationException, reported flat at the top level
+    /// rather than under an `error` object. Parity witness for the `bedrock`
+    /// row on the overflow axis.
+    #[test]
+    fn a_bedrock_input_too_long_validation_400_classifies_as_context_overflow() {
+        let err = classify_http_status(
+            "Bedrock",
+            reqwest::StatusCode::BAD_REQUEST,
+            None,
+            r#"{"__type":"ValidationException","message":"Input is too long for requested model."}"#,
+            "us.anthropic.claude-opus",
+        );
+        assert!(
+            matches!(err, ProviderError::ContextOverflow { .. }),
+            "{err:?}"
+        );
+        assert!(!err.is_retryable());
+    }
+
+    /// A bare 413 needs no body at all: Payload Too Large has no other
+    /// meaning on a completion endpoint.
+    #[test]
+    fn a_413_classifies_as_context_overflow_without_a_body_signature() {
+        let err = classify_http_status(
+            "OpenAI",
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            None,
+            "",
+            "gpt-5.5",
+        );
+        assert!(
+            matches!(err, ProviderError::ContextOverflow { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Precision guard: a 400 whose message merely *mentions* size or context
+    /// in another sense must not classify as overflow — a false positive here
+    /// makes the engine compact and retry a request that failed for a
+    /// different reason entirely.
+    #[test]
+    fn an_unrelated_400_never_classifies_as_context_overflow() {
+        for body in [
+            r#"{"error":{"message":"messages: array is too long"}}"#,
+            r#"{"error":{"message":"tool schema too deeply nested for this context"}}"#,
+            r#"{"error":{"message":"invalid JSON in tool arguments","code":"invalid_request"}}"#,
+            // A numeric `code` (OpenRouter echoes the HTTP status) is not the
+            // overflow code.
+            r#"{"error":{"message":"bad request","code":400}}"#,
+        ] {
+            let err = classify_http_status(
+                "OpenAI",
+                reqwest::StatusCode::BAD_REQUEST,
+                None,
+                body,
+                "gpt-5.5",
+            );
+            assert!(
+                matches!(err, ProviderError::Terminal(_)),
+                "{body} must stay Terminal, got {err:?}"
+            );
+        }
     }
 
     /// 429/5xx stay retryable — pinned here so a future edit to the

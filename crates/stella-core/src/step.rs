@@ -54,6 +54,7 @@ use stella_protocol::{
 };
 
 use crate::budget::BudgetGuard;
+use crate::driver::overflow_recovery::OverflowRecovery;
 use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
 use crate::event_sender::EventSender;
@@ -330,9 +331,16 @@ pub struct TurnState {
     /// invalidates (`TurnMemos`) and is an opaque type with no accessor; this
     /// is its checkpointable twin — see [`Checkpoint::transcript_rewrites`].
     pub(crate) transcript_rewrites: u64,
-    /// The index of the step that will run next. Advanced only by a step that
-    /// COMMITTED and continued, so a terminal outcome leaves this naming the
-    /// step that ended the turn.
+    /// The reactive context-overflow recovery latch and budget clamp
+    /// (`crate::driver::overflow_recovery`, #2680). Like
+    /// [`Self::length_continuations`] it is deliberately not checkpointed: a
+    /// resumed turn starts the bounded allowance over.
+    pub(crate) overflow_recovery: OverflowRecovery,
+    /// The index of the step that will run next. Advanced by a step that
+    /// COMMITTED and continued — and by an overflow-recovery retry, whose
+    /// re-issued call is a new step so its receipts never collide with the
+    /// failed step's — so a terminal outcome leaves this naming the step
+    /// that ended the turn.
     pub(crate) step: usize,
     /// The per-turn memos a checkpoint deliberately drops (module docs).
     pub(crate) memos: TurnMemos,
@@ -377,6 +385,7 @@ impl TurnState {
             calibration_model: None,
             effective_budget: None,
             usage_anchor: None,
+            overflow_recovery: OverflowRecovery::default(),
             loop_steered: None,
             transcript_rewrites: 0,
             step: 0,
@@ -407,6 +416,9 @@ impl TurnState {
             // re-anchors from a fresh provider report over the transcript
             // as it is NOW, which a snapshot could only be staler than.
             usage_anchor: None,
+            // Not carried either: the bounded recovery allowance starts over,
+            // exactly as `length_continuations` does.
+            overflow_recovery: OverflowRecovery::default(),
             loop_steered: checkpoint.loop_steered.then_some(LoopIdentity {
                 tools: checkpoint.loop_steered_pattern,
                 inputs: checkpoint.loop_steered_inputs,
