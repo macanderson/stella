@@ -65,7 +65,7 @@ fn candidate_port_keeps_the_exact_host_operation_journal() {
 /// (the verify_done test discipline — without it, running the suite from
 /// inside a git hook re-targets every command at the HOST repo) and
 /// return stdout. Panics on failure: these are test fixtures.
-fn scratch_git(root: &Path, args: &[&str]) -> String {
+pub(super) fn scratch_git(root: &Path, args: &[&str]) -> String {
     let mut cmd = std::process::Command::new("git");
     stella_tools::exec::scrub_sensitive_std_env(&mut cmd);
     cmd.args(args).current_dir(root);
