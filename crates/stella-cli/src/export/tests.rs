@@ -706,11 +706,25 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     }
 }
 
-/// The report is monospace with compact corners, like the transcript reference.
+/// The report is monospace and square.
 ///
-/// Sans-serif body text and 8px cards made the archived evidence harder to
-/// scan. The transcript restyle deliberately uses 3px surfaces and 2px event
-/// rows rather than the square instrument chrome used by live dashboards.
+/// Sans-serif body text and 8px corners were this file's most visible
+/// divergence from the Observatory and arenabench — and it is the surface
+/// users mail around, so it was the copy of the product most readers ever saw.
+///
+/// **The corner is a settled question, and this test is where it stays
+/// settled.** #2597 made every web surface stella renders square, arguing that
+/// a rounded corner says "surface" where a hairline says "boundary" and this
+/// page is all boundaries. #2606 then landed the transcript carrying the
+/// reference's 3px/2px corners, and the two repairs of the resulting collision
+/// (#2610, #2614) resolved it in opposite directions — one rewriting this test
+/// to demand 3px, the other restoring the square CSS — which is how `main`
+/// came to hold one design's stylesheet and the other's assertions.
+///
+/// It resolves to #2597 because that PR owns the decision repo-wide and argued
+/// it; the transcript's contribution was its ROW GRAMMAR, not its palette or
+/// its geometry. Anyone re-opening it should change `--radius` in the token
+/// block, where one line moves every corner, and not here.
 #[test]
 fn the_dashboard_is_monospace_and_square() {
     let html = render_dashboard(
@@ -765,8 +779,8 @@ fn the_dashboard_is_monospace_and_square() {
     }
     for rounded in ["border-radius: 8px", "border-radius: 6px"] {
         assert!(
-            !html.contains(rounded),
-            "`{rounded}` still ships: the archive has regressed to app-sized corners"
+            !html.contains(literal),
+            "`{literal}` bypasses `--radius`: set the token, not the rule"
         );
     }
 }
