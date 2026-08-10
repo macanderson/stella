@@ -506,17 +506,22 @@ pub struct AgentEngineConfig {
     /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    /// Refuse a run whose VERDICT call would resolve to the worker's own
-    /// model (`stella_pipeline::PipelineConfig::require_independent_verifier`,
-    /// #1795). Absent is off.
+    /// Legacy (#1795), retained so existing settings files keep decoding:
+    /// **setting it changes nothing about a run.**
     ///
-    /// Off is the right default for a single-provider BYOK seat, where the
-    /// verifier legitimately rides the worker and the verdict records that
-    /// fact on its ladder snapshot instead. Turn it on where the posture
-    /// claims an independent reviewer — a benchmark arm, a policy that treats
-    /// a self-graded PASS as no verdict at all — and a run that cannot honour
-    /// the claim should refuse before spending rather than produce a number
-    /// the configuration misdescribes.
+    /// It once refused a run whose VERDICT call would resolve to the worker's
+    /// own model. Verification makes no model calls now, so there is no
+    /// self-graded verdict left to refuse, and `PipelineConfig` no longer
+    /// carries the field this fed — the accessor that read it went with it.
+    /// The surviving independence question is about the *witness author*, and
+    /// it is answered by `pipeline_require_independent_witness` via
+    /// `agent::engine::trusted_posture_requires_independent_witness`, not by
+    /// this key.
+    ///
+    /// Deliberately still parsed rather than rejected, because a key that
+    /// hard-errors would break settings files written against a shipped
+    /// release. Retiring it — silently accepting a no-op key is its own defect
+    /// — is tracked in #2616.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation

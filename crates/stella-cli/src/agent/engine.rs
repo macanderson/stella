@@ -891,9 +891,10 @@ fn push_same_model_notice(wiring: &mut EngineWiring, verifier_pin: Option<&Model
         let model = &wiring.worker_model;
         wiring.notices.push(format!(
             "verifier and worker are both `{model}` — verification is degraded for `{model}`: \
-             no independent witness author, and verdicts are the same model reviewing its own \
-             work. The pipeline still runs; set `pipeline_verifier_model` (or \
-             `agents.verifier.model`) to a different model to restore independent verification"
+             the witness author is not independent, so an authored failing test is written by \
+             the same model whose work it exists to test. The pipeline still runs; set \
+             `pipeline_verifier_model` (or `agents.verifier.model`) to a different model to \
+             restore an independent witness author"
         ));
     }
 }
