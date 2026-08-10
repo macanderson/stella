@@ -337,10 +337,12 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    `crates/stella-protocol/src/event/consumers.rs`: one row per wire tag, each
    declaring a `ConsumerPosture` (`Behavioral` names the code that branches on
    it, `Surfaced` names the surfaces that select it, `RecordedOnly` and
-   `Unclassified` each cite the issue where the gap is being decided). Tests
-   enforce totality against `KNOWN_TYPE_TAGS` from both sides, so adding a
-   variant without declaring what consumes it is a red test, and
-   `MAX_UNCLASSIFIED` is a down-only ratchet on the unaudited backlog.
+   `Unclassified` each cite the issue where the gap is being decided). The
+   rows are generated from the same table as `KNOWN_TYPE_TAGS` and
+   `type_tag()` (`crates/stella-protocol/src/event/tags.rs`), so adding a
+   variant without declaring what consumes it is an `E0004` — a build error,
+   not a red test (#2730). `MAX_UNCLASSIFIED` is a down-only ratchet on the
+   unaudited backlog.
 
    Born from a repeated real defect, every instance of which was found by a
    bench run paying for it rather than by a test: `flip.json` written with
@@ -349,13 +351,13 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    certification panel before #2661 wired it; the flip transition still
    emitting nothing durable, so a shipped halt cannot be measured in the
    field. This is invariant #3's discipline pointed at consumption instead of
-   egress — a reviewed table plus tests that enforce it from both sides
-   (#2701).
+   egress — a reviewed table plus enforcement from both sides (#2701).
 
    What it does **not** prove: that a `Behavioral` row's `site` still points
    at live code. That string is prose for a reviewer. The enforced half is
-   totality, uniqueness, issue citation, and posture coherence — enough to
-   make a PR author answer "what reads this?" before the merge.
+   totality (by the compiler) plus issue citation and posture coherence (by
+   test) — enough to make a PR author answer "what reads this?" before the
+   merge.
 ---
 
 ## The definition of done: witness tests
