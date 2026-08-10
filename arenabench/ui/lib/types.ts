@@ -32,6 +32,14 @@ export interface Catalog {
   agents: AgentInfo[];
   efforts: string[];
   roles: string[];
+  /** Pipeline responsibilities an arm may ablate or reassign, from the server's
+   *  RESPONSIBILITIES. Never hardcoded here: the engine refuses a roster key it
+   *  does not know, so the form must offer only names the server named. */
+  responsibilities: string[];
+  /** Agents a responsibility may be reassigned to (Stella's AgentId::BUILTIN).
+   *  A name off this list fails inside the container after the image is built,
+   *  which is why this is a select and not a text field. */
+  responsibility_agents: string[];
 }
 
 /** One selectable model from /api/models (#2065). `benchmarked` mirrors the
@@ -53,18 +61,35 @@ export interface RoleDraft {
   model: string;
   effort: string;
   reasoning: "" | "on" | "off";
-  max_tokens: string;
 }
 
+/** One responsibility's ablation/reassignment as the form holds it (#2381).
+ *  `enabled: ""` is inherit — leave the shipped binding alone — which is not
+ *  the same as `"off"`, and conflating them would silently ablate a stage. */
+export interface ResponsibilityDraft {
+  enabled: "" | "on" | "off";
+  agent: string;
+}
+
+/** The engine as the *form* holds it, which is deliberately not the wire shape:
+ *  every field here is a string or a boolean a control can bind to.
+ *
+ *  No `budget_usd`, no `max_tokens`, at engine or role level. The server refuses
+ *  those keys by name on the create path, and it counts a key's *presence* — so
+ *  a draft field left blank was still enough to make every launch from this form
+ *  fail (#2411). The fix is structural: the type cannot hold one, and
+ *  `matchPayload` names the fields it sends rather than spreading this object. */
 export interface EngineDraft {
   api: string;
   model: string;
   reasoning: boolean;
   effort: string;
   base_url: string;
-  budget_usd: string;
-  max_tokens: string;
+  /** Run the agent's raw step loop instead of its staged pipeline
+   *  (Stella's `--no-pipeline`). Settles triage, witness and verify together. */
+  bare_loop: boolean;
   roles: Record<string, RoleDraft>;
+  responsibilities: Record<string, ResponsibilityDraft>;
 }
 
 export interface Seat {
@@ -493,16 +518,18 @@ export interface ParsedMatch {
       reasoning: boolean;
       effort: string;
       base_url?: string;
-      budget_usd?: number | string | null;
-      max_tokens?: number | string | null;
+      bare_loop?: boolean;
       roles?: Record<
         string,
         {
           model?: string;
           effort?: string;
           reasoning?: boolean | null;
-          max_tokens?: number | string | null;
         }
+      >;
+      responsibilities?: Record<
+        string,
+        { enabled?: boolean | null; agent?: string | null }
       >;
     };
   }>;

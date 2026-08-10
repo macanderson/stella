@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import type { AgentInfo, ModelsPayload, RoleDraft, Seat } from "@/lib/types";
+import type {
+  AgentInfo,
+  ModelsPayload,
+  ResponsibilityDraft,
+  RoleDraft,
+  Seat,
+} from "@/lib/types";
 import { envStatus, CREDENTIALS } from "@/lib/env";
 import { cn, seatStyle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -9,7 +15,17 @@ import { Field, Input, Textarea } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/ui/select";
 import { Disclosure } from "@/components/ui/collapsible";
 
-const EMPTY_ROLE: RoleDraft = { model: "", effort: "", reasoning: "", max_tokens: "" };
+const EMPTY_ROLE: RoleDraft = { model: "", effort: "", reasoning: "" };
+const EMPTY_RESPONSIBILITY: ResponsibilityDraft = { enabled: "", agent: "" };
+
+/** Inherit, on, off — the three states every pipeline override has.
+ *  `""` is inherit and is not `"off"`: conflating them turns an untouched
+ *  stage into an ablated one, which is a different experiment. */
+const INHERIT_ON_OFF = [
+  { value: "", label: "inherit" },
+  { value: "on", label: "on" },
+  { value: "off", label: "off" },
+];
 
 export function SeatCard({
   seat,
@@ -17,6 +33,8 @@ export function SeatCard({
   agents,
   efforts,
   roles,
+  responsibilities,
+  responsibilityAgents,
   models,
   modelsError,
   removable,
@@ -29,6 +47,8 @@ export function SeatCard({
   agents: AgentInfo[];
   efforts: string[];
   roles: string[];
+  responsibilities: string[];
+  responsibilityAgents: string[];
   models: ModelsPayload | null;
   modelsError: string | null;
   removable: boolean;
@@ -78,6 +98,24 @@ export function SeatCard({
         roles: { ...s.engine.roles, [role]: { ...(s.engine.roles[role] ?? EMPTY_ROLE), ...patch } },
       },
     }));
+  const setResponsibility = (name: string, patch: Partial<ResponsibilityDraft>) =>
+    onChange((s) => ({
+      ...s,
+      engine: {
+        ...s.engine,
+        responsibilities: {
+          ...s.engine.responsibilities,
+          [name]: { ...(s.engine.responsibilities[name] ?? EMPTY_RESPONSIBILITY), ...patch },
+        },
+      },
+    }));
+
+  // A bare-loop arm has no staged pipeline, so every override below it is
+  // inert — the runner never consults `roles` once the loop is settled. The
+  // controls stay visible and disabled rather than hidden: a template that
+  // loaded with both set is exactly the incoherence an operator needs to see,
+  // and hiding it would present a coherent form for an arm that is not.
+  const pipelineInert = seat.engine.bare_loop;
 
   return (
     <div
@@ -152,7 +190,8 @@ export function SeatCard({
       <Disclosure
         className="mt-3.5"
         summary={
-          "advanced — base URL, budget, output cap" + (spec?.has_pipeline ? ", pipeline roles" : "")
+          "advanced — base URL" +
+          (spec?.has_pipeline ? ", loop mode, pipeline roles, stage roster" : "")
         }
       >
         <div className="mt-2.5 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
@@ -164,24 +203,26 @@ export function SeatCard({
               onChange={(e) => setEngine({ base_url: e.target.value })}
             />
           </Field>
-          <Field label="Budget $/task" className="max-w-[130px]">
-            <Input
-              type="number"
-              step="0.01"
-              placeholder="none"
-              value={seat.engine.budget_usd}
-              onChange={(e) => setEngine({ budget_usd: e.target.value })}
-            />
-          </Field>
-          <Field label="Max output tok" className="max-w-[130px]">
-            <Input
-              type="number"
-              step="1000"
-              placeholder="agent default"
-              value={seat.engine.max_tokens}
-              onChange={(e) => setEngine({ max_tokens: e.target.value })}
-            />
-          </Field>
+          {/* No budget and no output cap, at engine or role level. A ceiling only
+              one seat carries stops that agent where the work finishes, and the
+              scoreboard then reports our limit as its capability — measured on
+              match 5292a68cdabf, where all three of the capped seat's losses
+              were the guard firing at a third of the allowed clock (#2411). The
+              server refuses the keys by name; offering them here made every
+              launch from this form fail. Bound spend at the provider key. */}
+          {spec?.has_pipeline && (
+            <Field label="Loop" className="max-w-[190px]">
+              <SimpleSelect
+                ariaLabel="loop mode"
+                value={seat.engine.bare_loop ? "bare" : "pipeline"}
+                onValueChange={(v) => setEngine({ bare_loop: v === "bare" })}
+                items={[
+                  { value: "pipeline", label: "staged pipeline" },
+                  { value: "bare", label: "bare loop (--no-pipeline)" },
+                ]}
+              />
+            </Field>
+          )}
         </div>
 
         {spec?.has_pipeline && (
@@ -190,6 +231,12 @@ export function SeatCard({
               Per-role overrides. Blank inherits the engine baseline above.
               {roleModelFallback && (
                 <span className="text-warn"> Model list unavailable ({roleModelFallback}) — free text.</span>
+              )}
+              {pipelineInert && (
+                <span className="text-warn">
+                  {" "}
+                  Inert — this seat runs the bare loop, so no staged role is consulted.
+                </span>
               )}
             </div>
             {roles.map((role) => {
@@ -209,13 +256,14 @@ export function SeatCard({
               return (
                 <div
                   key={role}
-                  className="grid items-center gap-2 [grid-template-columns:74px_1fr_108px_96px_96px] max-lg:[grid-template-columns:1fr_1fr]"
+                  className="grid items-center gap-2 [grid-template-columns:74px_1fr_108px_108px] max-lg:[grid-template-columns:1fr_1fr]"
                 >
                   <span className="font-mono text-[11.5px] text-muted">{role}</span>
                   {items ? (
                     <SimpleSelect
                       ariaLabel={`${role} model`}
                       size="sm"
+                      disabled={pipelineInert}
                       value={current.model}
                       onValueChange={(model) => setRole(role, { model })}
                       items={items}
@@ -225,6 +273,7 @@ export function SeatCard({
                       type="text"
                       placeholder="inherit model"
                       title={roleModelFallback ?? undefined}
+                      disabled={pipelineInert}
                       value={current.model}
                       onChange={(e) => setRole(role, { model: e.target.value })}
                       className="px-2 py-[5px] text-xs"
@@ -233,6 +282,7 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${role} effort`}
                     size="sm"
+                    disabled={pipelineInert}
                     value={current.effort}
                     onValueChange={(effort) => setRole(role, { effort })}
                     items={[
@@ -243,20 +293,67 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${role} reasoning`}
                     size="sm"
+                    disabled={pipelineInert}
                     value={current.reasoning}
                     onValueChange={(v) => setRole(role, { reasoning: v as RoleDraft["reasoning"] })}
-                    items={[
-                      { value: "", label: "inherit" },
-                      { value: "on", label: "on" },
-                      { value: "off", label: "off" },
-                    ]}
+                    items={INHERIT_ON_OFF}
                   />
-                  <Input
-                    type="number"
-                    placeholder="max tok"
-                    value={current.max_tokens}
-                    onChange={(e) => setRole(role, { max_tokens: e.target.value })}
-                    className="px-2 py-[5px] text-xs"
+                  {/* No per-role output cap. Omitting `max_tokens` is what asks
+                      for the model's own ceiling; sending a number would mean
+                      knowing every booked model's real limit, and guessing one
+                      is what #2128 was. */}
+                </div>
+              );
+            })}
+
+            {/* The stage roster (#2381): the narrow instrument next to the
+                bare loop's blunt one. Turning off exactly triage, or handing
+                the verdict to a different agent, is the only way a measured
+                difference can be attributed to one stage. */}
+            <div className="mt-3.5 text-[11.5px] text-muted">
+              Stage roster — ablate or reassign one responsibility.{" "}
+              <strong>inherit</strong> leaves the shipped binding alone; it is not{" "}
+              <strong>off</strong>.
+              {pipelineInert && (
+                <span className="text-warn">
+                  {" "}
+                  Inert under the bare loop, which settles every stage at once.
+                </span>
+              )}
+            </div>
+            {responsibilities.map((name) => {
+              const current = seat.engine.responsibilities[name] ?? EMPTY_RESPONSIBILITY;
+              return (
+                <div
+                  key={name}
+                  className="grid items-center gap-2 [grid-template-columns:150px_108px_1fr] max-lg:[grid-template-columns:1fr_1fr]"
+                >
+                  <span className="font-mono text-[11.5px] text-muted">{name}</span>
+                  <SimpleSelect
+                    ariaLabel={`${name} enabled`}
+                    size="sm"
+                    disabled={pipelineInert}
+                    value={current.enabled}
+                    onValueChange={(v) =>
+                      setResponsibility(name, {
+                        enabled: v as ResponsibilityDraft["enabled"],
+                      })
+                    }
+                    items={INHERIT_ON_OFF}
+                  />
+                  <SimpleSelect
+                    ariaLabel={`${name} agent`}
+                    size="sm"
+                    disabled={pipelineInert}
+                    value={current.agent}
+                    onValueChange={(agent) => setResponsibility(name, { agent })}
+                    items={[
+                      { value: "", label: "default agent" },
+                      ...responsibilityAgents.map((a) => ({
+                        value: a,
+                        label: `run by ${a}`,
+                      })),
+                    ]}
                   />
                 </div>
               );

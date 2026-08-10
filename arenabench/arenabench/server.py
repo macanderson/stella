@@ -71,7 +71,14 @@ from .credentials import (
     credentials_path,
     missing_required_credentials,
 )
-from .model import EFFORTS, ROLES, MatchSpec, declared_cap_keys
+from .model import (
+    EFFORTS,
+    RESPONSIBILITIES,
+    RESPONSIBILITY_AGENTS,
+    ROLES,
+    MatchSpec,
+    declared_cap_keys,
+)
 from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
@@ -310,10 +317,20 @@ class ArenaServer:
         }
 
     def agents(self) -> Any:
+        """The seat-configuration vocabulary, served rather than duplicated.
+
+        Every list here is a Python constant the UI renders one control per.
+        Sending them means adding a role or a responsibility in ``model.py``
+        reaches the form with no TypeScript edit — and, more to the point, a
+        name the engine would refuse cannot appear in the form at all, because
+        the form has no other source for the names.
+        """
         return {
             "agents": [spec.to_json() for spec in AGENTS.values()],
             "efforts": list(EFFORTS),
             "roles": list(ROLES),
+            "responsibilities": list(RESPONSIBILITIES),
+            "responsibility_agents": list(RESPONSIBILITY_AGENTS),
         }
 
     def presets(self) -> Any:

@@ -158,14 +158,20 @@ pub(super) async fn wait_for_code(
 
         let page = match &outcome {
             Ok(_) => {
-                "<!doctype html><meta charset=\"utf-8\"><title>stella</title>\
-                 <body style=\"font-family:system-ui;padding:3rem\">\
-                 <h2>✓ Signed in</h2><p>You can close this tab and return to stella.</p>"
+                concat!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>stella</title>",
+                    include_str!("callback_page.css"),
+                    "<body><h2><i class=ok>&check;</i> Signed in</h2>",
+                    "<p>You can close this tab and return to <b>stella</b>.</p>"
+                )
             }
             Err(_) => {
-                "<!doctype html><meta charset=\"utf-8\"><title>stella</title>\
-                 <body style=\"font-family:system-ui;padding:3rem\">\
-                 <h2>Sign-in failed</h2><p>Return to stella for details.</p>"
+                concat!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>stella</title>",
+                    include_str!("callback_page.css"),
+                    "<body><h2><i class=bad>&times;</i> Sign-in failed</h2>",
+                    "<p>Return to <b>stella</b> for details.</p>"
+                )
             }
         };
         let response = format!(

@@ -177,6 +177,7 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
         "now",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     // The payload does reach the page — escaping at the sink, not
@@ -212,6 +213,33 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
     ] {
         assert!(!html.contains(raw), "no unescaped sink remains: {raw}");
     }
+}
+
+#[test]
+fn the_transcript_is_readable_with_scripts_disabled() {
+    // The tabs hide inactive panels with `display:none` and the script adds
+    // the `on` class — so a JS-assigned initial class opens the archive to a
+    // blank page for any reader with scripts off. That is a nuisance in a live
+    // dashboard and a failure in an artifact whose stated job is to be
+    // attached to a PR as evidence, which is why the class is emitted here
+    // and the script only takes over afterwards.
+    let html = render_dashboard(
+        &[],
+        &[],
+        "now",
+        "ses-x",
+        &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
+    );
+
+    assert!(
+        html.contains(r#"<section id="transcript" class="panel on""#),
+        "the transcript panel is visible before any script runs"
+    );
+    assert!(
+        html.contains(r#"data-target="transcript" role="tab" aria-selected="true""#),
+        "and its tab reads as selected without JS"
+    );
 }
 
 #[test]
@@ -403,7 +431,7 @@ fn full_export_pipeline_creates_valid_zip_with_dashboard() {
     assert_eq!(&bytes[..2], b"PK", "valid ZIP magic bytes");
     let content = String::from_utf8_lossy(&bytes);
     assert!(
-        content.contains("Stella Session Telemetry"),
+        content.contains("stella session telemetry"),
         "HTML dashboard is embedded"
     );
     assert!(
@@ -512,6 +540,83 @@ fn the_archive_holds_one_session_and_states_what_it_left_out() {
 }
 
 #[test]
+fn the_archive_carries_the_session_transcript_and_only_that_session() {
+    // The transcript is a THIRD place a row can reach a recipient, beside the
+    // raw dumps and the dashboard's `<script>` blob — and it is folded from
+    // `session_events`, which neither of the other two touches. #2558 closed
+    // the first two channels; this asserts the new one was born closed.
+    //
+    // Scanning the written ZIP's bytes rather than the `Transcript` struct is
+    // deliberate, for the reason #2573 gives: the bytes are what a reader
+    // actually recovers, and an assertion over the in-memory fold would pass
+    // while the HTML someone opens still carried the other session.
+    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+
+    let tmp = tempfile::tempdir().unwrap();
+    seed_session(tmp.path(), "ses-mine", "anthropic", "src/mine.rs");
+    seed_session(tmp.path(), "ses-theirs", "openai", "src/theirs.rs");
+
+    let store = Store::open(tmp.path()).unwrap();
+    let ids = store.event_session_ids().unwrap_or_default();
+    // `seed_session` writes executions, not events — attach one journal to
+    // each session so there is something to interleave in the first place.
+    for (session, marker) in [
+        ("ses-mine", "MINE_RAN_THIS"),
+        ("ses-theirs", "THEIRS_RAN_THIS"),
+    ] {
+        let id = store
+            .begin_execution("deck", &format!("prompt of {session}"), "anthropic", "m")
+            .unwrap();
+        store.set_execution_session(id, session).unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolStart {
+                    call: ToolCall {
+                        call_id: format!("{session}-c1"),
+                        name: "bash".into(),
+                        input: serde_json::json!({"command": marker}),
+                    },
+                },
+            )
+            .unwrap();
+        store
+            .record_event(
+                id,
+                1,
+                &AgentEvent::ToolResult {
+                    call_id: format!("{session}-c1"),
+                    output: ToolOutput::Ok {
+                        content: format!("output of {marker}"),
+                    },
+                    duration_ms: 12,
+                    speculated: false,
+                },
+            )
+            .unwrap();
+    }
+    drop(ids);
+    drop(store);
+
+    let zip = export_session(tmp.path(), "ses-mine").expect("export succeeds");
+    let bytes = std::fs::read(&zip).unwrap();
+
+    assert!(
+        find_subsequence(&bytes, b"MINE_RAN_THIS").is_some(),
+        "the exported session's tool call is in the archive"
+    );
+    assert!(
+        find_subsequence(&bytes, b"THEIRS_RAN_THIS").is_none(),
+        "another session's tool call reached the transcript"
+    );
+    assert!(
+        find_subsequence(&bytes, br#"class="ev tool""#).is_some(),
+        "the transcript rendered in the dashboard's row grammar"
+    );
+}
+
+#[test]
 fn full_export_pipeline_errors_on_empty_store() {
     let tmp = tempfile::tempdir().unwrap();
     // Create the store (so .stella/ exists) but record nothing.
@@ -542,13 +647,135 @@ fn exporting_a_session_with_no_rows_refuses_rather_than_widening() {
     );
 }
 
-/// The dashboard's `:root` palette is generated from the live theme, not
-/// typed into the template. The block it replaced was two recolours stale
-/// — a true-black ground and the retired sky/violet pair — in an artifact
-/// users mail around and attach to PRs, so it was the most widely seen
-/// remnant of a retired identity in the product.
+/// The dashboard ships the web instrument palette, in both themes.
+///
+/// It used to interpolate its `:root` from `stella_tui::theme`, which was
+/// right while the terminal was its only sibling and wrong once the
+/// Observatory and arenabench existed. The TUI palette is gold-chromed by
+/// design — `ACCENT == BRAND == #FFB81A`, and gold there marks a *Running*
+/// state — so generating from it guaranteed this file matched the one
+/// surface a web instrument must not match. Replaces
+/// `the_dashboard_palette_is_generated_from_the_live_theme`, whose subject
+/// (the generation step) no longer exists; the anti-staleness job it did is
+/// now done by `tests/design_token_parity.rs`, which compares this block
+/// against the Observatory's rather than against the terminal's.
 #[test]
-fn the_dashboard_palette_is_generated_from_the_live_theme() {
+fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
+    let html = render_dashboard(
+        &[],
+        &[],
+        "2026-01-01 00:00:00",
+        "ses-x",
+        &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
+    );
+
+    for (var, token) in [
+        ("--ground", stella_tui::theme::GROUND),
+        ("--surface", stella_tui::theme::SURFACE),
+        ("--sunk", stella_tui::theme::RAISED),
+        ("--ink", stella_tui::theme::TEXT_PRIMARY),
+        ("--dim", stella_tui::theme::TEXT_SECONDARY),
+        ("--faint", stella_tui::theme::TEXT_TERTIARY),
+        ("--stella", stella_tui::theme::ACCENT),
+        ("--pass", stella_tui::theme::SUCCESS),
+        ("--fail", stella_tui::theme::DANGER),
+    ] {
+        let declaration = format!("{var}:{};", css_hex(token));
+        assert!(
+            html.contains(&declaration),
+            "expected `{declaration}` in the dashboard's dark palette"
+        );
+    }
+
+    // Light is real, not a media-query afterthought: BOTH gates present, and
+    // every light value declared in both of them. A colour defined only
+    // inside the media query is one an explicit `data-theme` cannot override,
+    // which is the exact bug the two-gate convention exists to prevent.
+    assert!(
+        html.contains("@media (prefers-color-scheme: light)"),
+        "the dashboard defines no light scheme for the OS preference"
+    );
+    assert!(
+        html.contains(r#":root[data-theme="light"]"#),
+        "the dashboard has no explicit light gate, so a toggle cannot win"
+    );
+    for declaration in [
+        "--ground: #FFFFFF;",
+        "--surface: #FAFAFA;",
+        "--text: #0A0A0A;",
+        "--accent: #0A0A0A;",
+        "--identity: #795500;",
+        "--ok: #11703A;",
+        "--bad: #A32F1F;",
+    ] {
+        assert_eq!(
+            html.matches(declaration).count(),
+            2,
+            "`{declaration}` must be declared in BOTH light gates, \
+             or the explicit theme choice loses to the OS preference"
+        );
+    }
+
+    // The retired values must not survive anywhere in the document —
+    // including the chart JS, which referenced a `--azure` the `:root`
+    // block no longer defines. The brand-chrome pair joins them: this
+    // surface no longer paints chrome in the terminal's gold or its violet.
+    for retired in [
+        "#7dd3fc",
+        "#38bdf8",
+        "#a78bfa",
+        "#6c7b90",
+        "#4d9fff",
+        "--sky",
+        "--azure",
+        "--brand-fill",
+        "var(--violet)",
+    ] {
+        assert!(
+            !html.contains(retired),
+            "retired brand value `{retired}` still ships in the dashboard"
+        );
+    }
+
+    // Every custom property referenced anywhere in the document — CSS rules
+    // and the chart JS alike — must be defined, or the rule silently paints
+    // nothing. The JS is the half that goes stale unnoticed: it names tokens
+    // in string literals, so a palette rename compiles and ships a colourless
+    // bar chart. Enumerating the references rather than listing the expected
+    // names is what makes this catch the NEXT rename too.
+    let mut referenced: Vec<String> = Vec::new();
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("var(--") {
+        rest = &rest[start + 4..];
+        if let Some(end) = rest.find(')') {
+            referenced.push(rest[..end].to_string());
+        }
+    }
+    referenced.sort();
+    referenced.dedup();
+    assert!(
+        !referenced.is_empty(),
+        "the document uses custom properties"
+    );
+    for name in referenced {
+        assert!(
+            html.contains(&format!("{name}:")),
+            "`var({name})` is referenced but never defined — it paints nothing"
+        );
+    }
+}
+
+/// The report is monospace and square, like every other stella instrument.
+///
+/// Sans-serif body text and 8px corners were this file's most visible
+/// divergence from the Observatory and arenabench — and it is the surface
+/// users mail around, so it was the copy of the product most readers ever
+/// saw. Proportional digits in a column of measurements are the substantive
+/// half: a table of costs that does not align is harder to read for a reason
+/// the reader cannot name.
+#[test]
+fn the_dashboard_is_monospace_and_square() {
     let html = render_dashboard(
         &[],
         &[],
@@ -557,40 +784,60 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         &ExportExclusions::default(),
     );
 
-    for (var, token) in [
-        ("--bg", stella_tui::theme::GROUND),
-        ("--brand", stella_tui::theme::ACCENT),
-        ("--brand-fill", stella_tui::theme::ACCENT_FILL),
-        ("--violet", stella_tui::theme::VIOLET),
-        ("--text3", stella_tui::theme::TEXT_TERTIARY),
+    assert!(
+        html.contains(r#"--mono: "JetBrains Mono""#),
+        "the dashboard does not declare the brand's mono stack"
+    );
+    assert!(
+        html.contains("font-family: var(--mono);"),
+        "the dashboard body does not use the mono token"
+    );
+    assert!(
+        !html.contains("-apple-system"),
+        "the dashboard still falls back to the system sans stack"
+    );
+    assert!(
+        html.contains("--radius: 0;"),
+        "the dashboard does not declare square corners"
+    );
+    for rounded in [
+        "border-radius: 8px",
+        "border-radius: 6px",
+        "border-radius: 3px",
+        "border-radius: 2px",
+        "border-radius: 0 6px 6px 0",
     ] {
-        let declaration = format!("{var}: {};", css_hex(token));
         assert!(
-            html.contains(&declaration),
-            "expected `{declaration}` in the dashboard's :root block"
+            !html.contains(rounded),
+            "`{rounded}` still ships: a rounded corner says \"surface\" \
+             where a hairline says \"boundary\", and this page is boundaries"
         );
     }
+}
 
-    // The retired values must not survive anywhere in the document —
-    // including the chart JS, which referenced a `--azure` the `:root`
-    // block no longer defines.
-    for retired in [
-        "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
-    ] {
-        assert!(
-            !html.contains(retired),
-            "retired brand value `{retired}` still ships in the dashboard"
-        );
-    }
+/// The wordmark is lowercase, everywhere the report says it.
+///
+/// `scripts/check-brand-case.sh` reads docs prose, not Rust string literals,
+/// so the `<title>` and `<h1>` here shipped "Stella" past the guard that
+/// exists to forbid exactly that — on the artifact a reader opens first.
+#[test]
+fn the_dashboard_spells_the_wordmark_lowercase() {
+    let html = render_dashboard(
+        &[],
+        &[],
+        "2026-01-01 00:00:00",
+        "ses-x",
+        &ExportExclusions::default(),
+    );
 
-    // Every custom property the chart code asks for must exist, or the bar
-    // renders with no colour at all.
-    for used in ["--brand-fill", "--violet", "--success"] {
-        assert!(
-            html.contains(&format!("{used}: #")),
-            "chart JS references `{used}` but :root never defines it"
-        );
-    }
+    assert!(
+        !html.contains("Stella"),
+        "the dashboard capitalises the wordmark; it is lowercase always"
+    );
+    assert!(
+        html.contains(r#"<span class="wordmark">stella</span>"#),
+        "the masthead does not carry the wordmark"
+    );
 }
 
 /// The watermark is the one store-supplied value that reaches markup

@@ -92,8 +92,26 @@ pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
         .usage_stats_for_session(session_id)
         .map_err(|e| format!("cannot read usage stats: {e}"))?;
 
+    // The transcript. The nine dumped tables say what the session cost and
+    // which tools it called; none of them holds what it actually did, because
+    // the ordered event stream is not one of them. `session_events` is already
+    // scoped to this session by the same predicate the dumps use.
+    //
+    // A journal that will not read must not sink the export: the tables and
+    // the dashboard are still worth having, and an empty transcript reports
+    // itself on the page rather than pretending the session was silent.
+    let journal = store.session_events(session_id).unwrap_or_default();
+    let transcript = transcript::render(&journal, &execution_prompts(&dumps));
+
     // Build the self-contained HTML dashboard.
-    let html = render_dashboard(&usage_stats, &dumps, &watermark, session_id, &excluded);
+    let html = render_dashboard(
+        &usage_stats,
+        &dumps,
+        &watermark,
+        session_id,
+        &excluded,
+        &transcript,
+    );
 
     // Assemble the ZIP.
     //
@@ -233,6 +251,48 @@ fn css_hex(color: ratatui::style::Color) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
+/// The dark-mode custom properties, resolved from `stella_tui::theme`.
+///
+/// Every value here is *derived*, never typed: the hand-written block this
+/// replaced had gone two recolours stale while sitting in an artifact users
+/// mail around, so only the slot NAMES live in the template. That constraint
+/// is what decides the mapping below — each reference slot takes the theme
+/// token that already means what the slot is for, rather than the nearest hex:
+///
+/// - `--faint` is the reference's timestamp/label tone. The theme's
+///   `TEXT_TERTIARY` is documented as exactly "labels, captions", and it is
+///   also the accessible choice: the reference's own `#55534F` measures
+///   **2.56:1** on its ground, where `TEXT_TERTIARY` is 5.71:1. That token
+///   paints `.t` and `.lbl` on every row in the transcript, so sub-AA there is
+///   not a detail.
+/// - `--fail` takes `DANGER` ("error / failed"), not `ORACLE_RED` — which
+///   happens to be the reference's exact `#F87171` but means "the test is red
+///   before the patch", a healthy state. Matching the hex would have meant
+///   borrowing a token whose whole purpose is to *not* say "something broke".
+///
+/// The light palette has no counterpart here and is written literally in the
+/// template: a TUI has no light theme, so there is no source to derive it from
+/// and nothing for it to drift against.
+fn dark_tokens() -> String {
+    use stella_tui::theme;
+    format!(
+        "--ground:{ground}; --surface:{surface}; --sunk:{sunk}; --line:{line};\n    \
+         --ink:{ink}; --dim:{dim}; --faint:{faint};\n    \
+         --stella:{stella}; --pass:{pass}; --fail:{fail}; --warn:{warn};",
+        ground = css_hex(theme::GROUND),
+        surface = css_hex(theme::SURFACE),
+        sunk = css_hex(theme::RAISED),
+        line = css_hex(theme::HAIRLINE_STRONG),
+        ink = css_hex(theme::TEXT_PRIMARY),
+        dim = css_hex(theme::TEXT_SECONDARY),
+        faint = css_hex(theme::TEXT_TERTIARY),
+        stella = css_hex(theme::ACCENT),
+        pass = css_hex(theme::SUCCESS),
+        fail = css_hex(theme::DANGER),
+        warn = css_hex(theme::WARNING),
+    )
+}
+
 /// Recursively replace every string value in `value` with its redacted form.
 fn redact_json_strings(value: &mut serde_json::Value) {
     match value {
@@ -306,6 +366,24 @@ fn pretty_json(compact: &str) -> String {
 
 // ── Self-contained HTML dashboard ───────────────────────────────────────────
 
+/// `execution_id` → that execution's prompt, read off the `executions` dump.
+///
+/// The transcript opens each turn with what was asked, and the prompt is a
+/// column rather than an event — it never appears in the journal. Taking it
+/// from the dump rather than re-querying means it has already been through
+/// [`redact_dump`], so the same masking covers it.
+fn execution_prompts(dumps: &[TableDump]) -> std::collections::HashMap<i64, String> {
+    serde_json::from_str::<Vec<serde_json::Value>>(table_json(dumps, "executions"))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_i64()?;
+            let prompt = row.get("prompt")?.as_str()?.to_string();
+            Some((id, prompt))
+        })
+        .collect()
+}
+
 /// One table's JSON array from the dump set, or an empty array when absent.
 fn table_json<'a>(dumps: &'a [TableDump], table: &str) -> &'a str {
     dumps
@@ -361,6 +439,7 @@ fn render_dashboard(
     watermark: &str,
     session_id: &str,
     excluded: &ExportExclusions,
+    transcript: &transcript::Transcript,
 ) -> String {
     let total_cost: f64 = usage_stats.iter().map(|r| r.total_cost_usd).sum();
     let total_runs: i64 = usage_stats.iter().map(|r| r.runs).sum();
@@ -422,21 +501,25 @@ fn render_dashboard(
     let stats_json =
         script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
-    // The `:root` custom properties, resolved from the live theme rather than
-    // typed into the template — see the `:root` block's own note.
-    let c_ground = css_hex(stella_tui::theme::GROUND);
-    let c_surface = css_hex(stella_tui::theme::SURFACE);
-    let c_raised = css_hex(stella_tui::theme::RAISED);
-    let c_text = css_hex(stella_tui::theme::TEXT_PRIMARY);
-    let c_text2 = css_hex(stella_tui::theme::TEXT_SECONDARY);
-    let c_text3 = css_hex(stella_tui::theme::TEXT_TERTIARY);
-    let c_brand = css_hex(stella_tui::theme::ACCENT);
-    let c_brand_fill = css_hex(stella_tui::theme::ACCENT_FILL);
-    let c_violet = css_hex(stella_tui::theme::VIOLET);
-    let c_success = css_hex(stella_tui::theme::SUCCESS);
-    let c_warn = css_hex(stella_tui::theme::WARNING);
-    let c_danger = css_hex(stella_tui::theme::DANGER);
-    let c_rule = css_hex(stella_tui::theme::HAIRLINE_STRONG);
+    // The dark palette, resolved from the live theme rather than typed into
+    // the template — see `dark_tokens`. Emitted twice (media query and
+    // explicit opt-in), so it is built once here.
+    let dark_tokens = dark_tokens();
+
+    // What the transcript panel says about itself, above its first row.
+    let transcript_provenance = transcript.provenance();
+    let transcript_rows = comma(transcript.rendered as i64);
+    // An empty transcript is a real state, not a bug: a session whose events
+    // were never persisted, or one recorded by a build old enough that none of
+    // them replay. Say which, rather than rendering a blank panel that reads
+    // as a broken page.
+    let transcript_body = if transcript.rendered > 0 {
+        transcript.body.clone()
+    } else {
+        "<p class=\"empty\">No replayable events were recorded for this session. \
+         The metrics tab and the archive's <code>raw/</code> dumps are unaffected.</p>"
+            .to_string()
+    };
 
     format!(
         r##"<!DOCTYPE html>
@@ -449,116 +532,204 @@ fn render_dashboard(
      page itself declares it loads nothing and talks to no one — inline
      script/style only (its own), no frames, no forms, no external fetches. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'">
-<title>Stella Session Telemetry — {watermark}</title>
+<title>stella session telemetry — {watermark}</title>
 <style>
+  /* The page is an instrument's printout, not an app: mono everywhere, corners
+     nearly square, and colour spent only where it carries meaning (the brand
+     rule on a stage, pass/fail on a verdict). One grammar covers the metrics
+     and the transcript, because they are two views of one run.
+
+     LIGHT is the default and is written literally: a terminal has no light
+     theme, so there is no token to derive these from and nothing for them to
+     drift against. DARK is interpolated from `stella_tui::theme` — see
+     `dark_tokens()` for why that half may never be typed by hand. */
   :root {{
-    /* Brand palette, INTERPOLATED from stella_tui::theme rather than typed
-       here. The export is a standalone file a user mails around or attaches to
-       a PR, so the tokens must be inlined — but "inlined" was being done by
-       hand, and the hand-written block had gone two recolours stale: a true
-       black ground and the retired sky/violet pair, on the artifact that
-       represents the product to whoever opens it. Values that ship to a reader
-       are generated now; only the variable NAMES live in this string. */
-    --bg: {c_ground};
-    --surface: {c_surface};
-    --raised: {c_raised};
-    --text: {c_text};
-    --text2: {c_text2};
-    --text3: {c_text3};
-    --brand: {c_brand};
-    --brand-fill: {c_brand_fill};
-    --violet: {c_violet};
-    --success: {c_success};
-    --warn: {c_warn};
-    --danger: {c_danger};
-    --rule: {c_rule};
+    --ground:#FAFAF9; --surface:#FFFFFF; --sunk:#F2F1EE; --line:#E2E0DB;
+    --ink:#1A1917; --dim:#6B6862; --faint:#77736B;
+    --stella:#B57A00; --pass:#187A45; --fail:#C0392B; --warn:#7A5C00;
   }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  @media (prefers-color-scheme: dark) {{
+    :root:not([data-theme="light"]) {{ {dark_tokens} }}
+  }}
+  :root[data-theme="dark"] {{ {dark_tokens} }}
+
+  * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text);
-    line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 28px 20px 80px;
   }}
-  h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
-  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 8px; font-family: monospace; }}
-  .scope {{ color: var(--text2); font-size: 0.8rem; margin-bottom: 24px; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; }}
-  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
-  .kpi {{
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px;
-  }}
-  .kpi .label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); margin-bottom: 4px; }}
-  .kpi .value {{ font-size: 1.8rem; font-weight: 700; }}
-  .kpi .sub {{ font-size: 0.75rem; color: var(--text2); margin-top: 2px; }}
-  .kpi.good .value {{ color: var(--success); }}
-  .kpi.warn .value {{ color: var(--warn); }}
-  .kpi.cost .value {{ color: var(--warn); }}
-  table {{ width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }}
-  th, td {{ padding: 8px 12px; text-align: left; font-size: 0.85rem; border-bottom: 1px solid var(--rule); }}
-  th {{ background: var(--raised); color: var(--text2); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .wrap {{ max-width: 1100px; margin: 0 auto; }}
+  h1 {{ font-size: 16px; margin: 0 0 2px; letter-spacing: -.01em; }}
+  h2 {{ font-size: 13px; margin: 26px 0 12px; font-weight: 600; color: var(--stella);
+       border-top: 1px solid var(--line); padding-top: 10px; }}
+  .sub {{ color: var(--dim); margin: 0 0 14px; font-size: 12px; }}
+  .scope {{ color: var(--dim); font-size: 12px; margin: 0 0 22px; padding: 7px 10px;
+           background: var(--surface); border: 1px solid var(--line);
+           border-left: 3px solid var(--stella); border-radius: 3px; }}
+  code {{ font: inherit; color: var(--ink); }}
+
+  /* KPI cards — the reference's dl/dt/dd, one card per measure. */
+  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+           gap: 12px; margin-bottom: 22px; }}
+  .card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+          padding: 12px 14px; border-left-width: 3px; border-left-color: var(--stella); }}
+  dt {{ color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }}
+  dd {{ margin: 2px 0 0; font-size: 19px; font-variant-numeric: tabular-nums; }}
+  .card .sub {{ margin: 2px 0 0; font-size: 11px; color: var(--dim); }}
+  .card.good dd {{ color: var(--pass); }}
+  .card.cost dd {{ color: var(--warn); }}
+
+  /* Tabs — the reference's sticky bar; here it switches the metrics view for
+     the transcript rather than one arm for another. */
+  .tabs {{ display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; position: sticky;
+          top: 0; background: var(--ground); padding: 8px 0; z-index: 5;
+          border-bottom: 1px solid var(--line); }}
+  .tab {{ font: inherit; cursor: pointer; background: var(--surface); color: var(--dim);
+         border: 1px solid var(--line); border-radius: 3px; padding: 6px 12px; }}
+  .tab[aria-selected="true"] {{ color: var(--stella); border-color: var(--stella); }}
+  .tab .n {{ color: var(--faint); font-size: 11px; }}
+  .tab:focus-visible {{ outline: 2px solid var(--stella); outline-offset: 2px; }}
+  .panel {{ display: none; }} .panel.on {{ display: block; }}
+
+  /* Row grammar — every transcript entry is `.ev` with a timestamp, a kind
+     label, and content. Kept identical across kinds so the eye can scan the
+     left two columns and never re-learn the row. */
+  .ev {{ margin: 0 0 3px; padding: 5px 8px; border-left: 2px solid transparent;
+        background: var(--surface); border-radius: 2px; }}
+  .t {{ color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 10px;
+       font-size: 11px; white-space: pre; }}
+  .lbl {{ display: inline-block; min-width: 74px; color: var(--faint); font-size: 10px;
+         letter-spacing: .07em; margin-right: 8px; }}
+  .meta {{ color: var(--dim); font-size: 11px; margin-left: 92px; }}
+  .ev.stage {{ background: transparent; border-left-color: var(--stella); margin: 18px 0 6px;
+              padding-top: 8px; border-top: 1px solid var(--line); border-radius: 0; }}
+  .ev.stage b {{ letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }}
+  .ev.step {{ background: var(--sunk); }}
+  .ev.say .prose, .ev.user .prose, .ev.think .prose {{
+    margin-left: 92px; white-space: pre-wrap; word-break: break-word; max-width: 78ch; }}
+  .ev.say {{ border-left-color: var(--pass); }}
+  .ev.user {{ border-left-color: var(--dim); }}
+  .ev.think .prose {{ color: var(--dim); font-style: italic; }}
+  .ev.verdict, .ev.proof {{ border-left-color: var(--stella); }}
+  .ev.err, .ev.tool.err, .ev.verdict.err {{ border-left-color: var(--fail); }}
+  details.ev {{ padding: 0; border-left-color: var(--dim); }}
+  details.ev summary {{ cursor: pointer; padding: 5px 8px; list-style: none; }}
+  details.ev summary::-webkit-details-marker {{ display: none; }}
+  details.ev summary:hover {{ background: var(--sunk); }}
+  details.ev[open] summary {{ border-bottom: 1px solid var(--line); }}
+  .ev pre {{ margin: 0; padding: 8px 10px 8px 100px; white-space: pre-wrap;
+            word-break: break-word; font: inherit; overflow-x: auto; }}
+  pre.in {{ color: var(--ink); background: var(--sunk); }}
+  pre.out {{ color: var(--dim); border-top: 1px dashed var(--line); max-height: 340px; overflow: auto; }}
+  pre.out.err {{ color: var(--fail); }}
+  pre.out.pending {{ color: var(--faint); font-style: italic; }}
+  pre.diff {{ color: var(--dim); max-height: 300px; overflow: auto; }}
+  .empty {{ color: var(--dim); padding: 10px 0; }}
+
+  /* Metrics view. */
+  table {{ width: 100%; border-collapse: collapse; background: var(--surface);
+          border: 1px solid var(--line); border-radius: 3px; }}
+  th, td {{ padding: 6px 10px; text-align: left; font-size: 12px; border-bottom: 1px solid var(--line); }}
+  th {{ background: var(--sunk); color: var(--faint); font-weight: 600; font-size: 10px;
+       text-transform: uppercase; letter-spacing: .06em; }}
   tr:last-child td {{ border-bottom: none; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }}
-  .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }}
-  .badge.completed {{ background: rgba(74,222,128,0.15); color: var(--success); }}
-  .badge.failed {{ background: rgba(255,92,122,0.15); color: var(--danger); }}
-  .badge.other {{ background: rgba(152,166,186,0.15); color: var(--text2); }}
-  .chart-container {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }}
+  td.num, th.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .badge {{ display: inline-block; padding: 0 5px; border-radius: 2px; font-size: 10px;
+           letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--line); }}
+  .badge.completed {{ color: var(--pass); border-color: var(--pass); }}
+  .badge.failed {{ color: var(--fail); border-color: var(--fail); }}
+  .badge.other {{ color: var(--dim); }}
+  .chart-container {{ background: var(--surface); border: 1px solid var(--line);
+                     border-radius: 3px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }}
   .bar-chart {{ display: flex; flex-direction: column; gap: 4px; }}
-  .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }}
-  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-  .bar-row .bar-track {{ flex: 1; background: var(--raised); border-radius: 3px; height: 22px; position: relative; min-width: 100px; }}
-  .bar-row .bar-fill {{ height: 100%; border-radius: 3px; background: var(--violet); transition: width 0.3s; }}
-  .bar-row .bar-value {{ width: 60px; color: var(--text3); font-family: monospace; font-size: 0.75rem; }}
-  .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
-  .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
-  .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--brand); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--brand); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-  .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
+  .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 12px; }}
+  .bar-row .bar-label {{ width: 200px; text-align: right; color: var(--dim); white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; }}
+  .bar-row .bar-track {{ flex: 1; background: var(--sunk); border-radius: 2px; height: 18px;
+                        min-width: 100px; }}
+  .bar-row .bar-fill {{ height: 100%; border-radius: 2px; background: var(--stella); }}
+  .bar-row .bar-value {{ width: 66px; color: var(--faint); font-size: 11px;
+                        font-variant-numeric: tabular-nums; }}
+  .insight {{ background: var(--surface); border: 1px solid var(--line);
+             border-left: 3px solid var(--stella); padding: 8px 12px; border-radius: 3px;
+             margin-bottom: 6px; font-size: 12px; }}
+  .insight .insight-label {{ color: var(--stella); font-size: 10px; text-transform: uppercase;
+                            letter-spacing: .06em; margin-right: 8px; }}
+  .footer {{ margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--line);
+            color: var(--faint); font-size: 11px; }}
+
+  /* Under 720px the 92px indent costs more than it buys — the label becomes a
+     row of its own and every indent collapses to the gutter. */
+  @media (max-width: 720px) {{
+    .lbl {{ min-width: 0; display: block; margin: 0 0 2px; }}
+    .meta, .ev .prose {{ margin-left: 0; }}
+    .ev pre {{ padding-left: 10px; }}
+    .bar-row .bar-label {{ width: 110px; }}
+  }}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<h1>⚡ Stella Session Telemetry</h1>
-<div class="watermark">session {session} · as of {watermark}</div>
+<h1>stella session — {session}</h1>
+<p class="sub">as of {watermark} · every model step, tool call and result, in order</p>
 <div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
-<div class="kpi-grid">
-  <div class="kpi"><div class="label">Total Runs</div><div class="value">{total_runs}</div><div class="sub">{total_resolved} resolved</div></div>
-  <div class="kpi good"><div class="label">Resolve Rate</div><div class="value">{resolve_rate:.1}%</div><div class="sub">{total_resolved}/{total_runs}</div></div>
-  <div class="kpi cost"><div class="label">Total Cost</div><div class="value">${total_cost:.4}</div><div class="sub">${cost_per_resolved:.4}/resolved</div></div>
-  <div class="kpi"><div class="label">Tokens In</div><div class="value">{total_input_fmt}</div><div class="sub">{total_cache_read_fmt} cache reads</div></div>
-  <div class="kpi"><div class="label">Tokens Out</div><div class="value">{total_output_fmt}</div><div class="sub">generated</div></div>
+<div class="cards">
+  <div class="card"><dl><dt>runs</dt><dd>{total_runs}</dd></dl><p class="sub">{total_resolved} resolved</p></div>
+  <div class="card good"><dl><dt>resolve rate</dt><dd>{resolve_rate:.1}%</dd></dl><p class="sub">{total_resolved}/{total_runs}</p></div>
+  <div class="card cost"><dl><dt>cost</dt><dd>${total_cost:.4}</dd></dl><p class="sub">${cost_per_resolved:.4}/resolved</p></div>
+  <div class="card"><dl><dt>tokens in</dt><dd>{total_input_fmt}</dd></dl><p class="sub">{total_cache_read_fmt} cache reads</p></div>
+  <div class="card"><dl><dt>tokens out</dt><dd>{total_output_fmt}</dd></dl><p class="sub">generated</p></div>
 </div>
 
-<div id="insights"></div>
-
-<h2>Cost &amp; Efficiency by Model</h2>
-<div id="stats-table"></div>
-
-<h2>Token Economy</h2>
-<div class="chart-container">
-  <div id="token-chart" class="bar-chart"></div>
+<div class="tabs" role="tablist">
+  <button class="tab" data-target="transcript" role="tab" aria-selected="true">Transcript <span class="n">{transcript_rows}</span></button>
+  <button class="tab" data-target="metrics" role="tab" aria-selected="false">Metrics</button>
 </div>
 
-<h2>Tool Usage</h2>
-<div class="chart-container">
-  <div id="tool-chart" class="bar-chart"></div>
-</div>
+<!-- `on` is set HERE, not by the script. The tabs are a convenience; the
+     archive is evidence, and a reader with scripts disabled must not open it
+     to a blank page — which is exactly what a JS-assigned initial class gives
+     them, since the CSP already forbids the page every other resource. The
+     script re-asserts this class on load and then owns it. -->
+<section id="transcript" class="panel on" role="tabpanel">
+  <p class="sub">{transcript_provenance}</p>
+  {transcript_body}
+</section>
 
-<h2>Files Touched</h2>
-<div class="chart-container">
-  <div id="file-chart" class="bar-chart"></div>
-</div>
+<section id="metrics" class="panel" role="tabpanel">
+  <div id="insights"></div>
 
-<h2>Execution Outcomes</h2>
-<div class="chart-container">
-  <div id="outcome-chart" class="bar-chart"></div>
-</div>
+  <h2>Cost &amp; efficiency by model</h2>
+  <div id="stats-table"></div>
+
+  <h2>Token economy</h2>
+  <div class="chart-container">
+    <div id="token-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Tool usage</h2>
+  <div class="chart-container">
+    <div id="tool-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Files touched</h2>
+  <div class="chart-container">
+    <div id="file-chart" class="bar-chart"></div>
+  </div>
+
+  <h2>Execution outcomes</h2>
+  <div class="chart-container">
+    <div id="outcome-chart" class="bar-chart"></div>
+  </div>
+</section>
 
 <div class="footer">
   Exported by <strong>stella /export</strong> · {total_runs} executions ·
-  All data is local (no server, no account) · Dashboard is fully self-contained
+  all data is local (no server, no account) · this page is fully self-contained
+</div>
 </div>
 
 <script>
@@ -578,6 +749,22 @@ const FILES = {files_json};
 // the sink, which is the only place that knows the value is about to
 // become markup.
 const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+
+// ── Tabs ────────────────────────────────────────────────────────────────
+// The transcript opens first: it is what the archive is for, and the metrics
+// are the summary of it. Everything is in the document either way — the tabs
+// only choose what is displayed, so Ctrl-F still finds a tool call on the tab
+// you are not looking at, and printing is unaffected.
+(function tabs() {{
+  const buttons = [...document.querySelectorAll('.tab')];
+  const panels = [...document.querySelectorAll('.panel')];
+  const show = id => {{
+    panels.forEach(p => p.classList.toggle('on', p.id === id));
+    buttons.forEach(b => b.setAttribute('aria-selected', String(b.dataset.target === id)));
+  }};
+  buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.target)));
+  if (buttons.length) show(buttons[0].dataset.target);
+}})();
 
 // ── KPI insights — surface the patterns that change quality ─────────────
 (function insights() {{
@@ -626,7 +813,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
 // ── Stats table ─────────────────────────────────────────────────────────
 (function statsTable() {{
   const el = document.getElementById('stats-table');
-  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--text3)">No usage data.</p>'; return; }}
+  if (!USAGE.length) {{ el.innerHTML = '<p style="color:var(--faint)">No usage data.</p>'; return; }}
   let html = '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">Runs</th><th class="num">Resolved</th><th class="num">Rate</th><th class="num">Cost</th><th class="num">$/Resolved</th><th class="num">In Tok</th><th class="num">Out Tok</th><th class="num">Avg ms</th></tr></thead><tbody>';
   for (const r of USAGE) {{
     const rate = r.runs > 0 ? (r.resolved/r.runs*100).toFixed(1)+'%' : '-';
@@ -641,24 +828,30 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
   const outTok = USAGE.reduce((s,r)=>s+r.output_tokens,0);
   const rate = runs>0?(resolved/runs*100).toFixed(1)+'%':'-';
   const per = resolved>0?'$'+(cost/resolved).toFixed(4):'-';
-  html += `<tr style="border-top:2px solid var(--rule)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
+  html += `<tr style="border-top:2px solid var(--line)"><td colspan="2"><strong>TOTAL</strong></td><td class="num"><strong>${{runs}}</strong></td><td class="num"><strong>${{resolved}}</strong></td><td class="num"><strong>${{rate}}</strong></td><td class="num"><strong>$${{cost.toFixed(4)}}</strong></td><td class="num"><strong>${{per}}</strong></td><td class="num"><strong>${{inTok.toLocaleString()}}</strong></td><td class="num"><strong>${{outTok.toLocaleString()}}</strong></td><td class="num">—</td></tr>`;
   html += '</tbody></table>';
   el.innerHTML = html;
 }})();
 
 // ── Bar chart helper ────────────────────────────────────────────────────
+// `colorVar` is the series token for the whole chart; a datum may override it
+// with its own `colorVar` when the bar carries a verdict rather than a
+// position in a series (see the outcome chart). The token name is chart code's
+// own literal — never reader-supplied — so it is not run through `esc`, which
+// is for the label and display text either side of it.
 function barChart(containerId, data, colorVar) {{
   const el = document.getElementById(containerId);
-  if (!data.length) {{ el.innerHTML = '<p style="color:var(--text3)">No data.</p>'; return; }}
+  if (!data.length) {{ el.innerHTML = '<p style="color:var(--faint)">No data.</p>'; return; }}
   const max = Math.max(...data.map(d=>d.value), 1);
   el.innerHTML = data.map(d => {{
     const pct = (d.value/max*100).toFixed(1);
-    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
+    const fill = d.colorVar || colorVar;
+    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{fill}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
   }}).join('');
 }}
 
 // ── Token economy chart ─────────────────────────────────────────────────
-barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--violet');
+barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--c1');
 
 // ── Tool frequency chart ────────────────────────────────────────────────
 (function toolChart() {{
@@ -668,7 +861,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('tool-chart', data, '--violet');
+  barChart('tool-chart', data, '--c2');
 }})();
 
 // ── Files touched chart ─────────────────────────────────────────────────
@@ -677,7 +870,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--brand-fill');
+  barChart('file-chart', data, '--c3');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
@@ -687,10 +880,18 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     const o = e.outcome || 'open';
     counts[o] = (counts[o]||0)+1;
   }}
+  // An outcome IS a verdict, so these bars are the one chart on the page
+  // entitled to semantic colour. Every bar used to be painted --success,
+  // including the failures — the chart said "pass" in the one channel the
+  // palette reserves for saying it, about rows that did not.
+  const verdict = o =>
+    o === 'completed' || o === 'resolved' || o === 'success' ? '--ok'
+    : o === 'failed' || o === 'error' || o === 'aborted' ? '--bad'
+    : '--neutral-mark';
   const data = Object.entries(counts)
-    .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
+    .map(([name,n])=>({{label:name, value:n, display:String(n), colorVar:verdict(name)}}))
     .sort((a,b)=>b.value-a.value);
-  barChart('outcome-chart', data, '--success');
+  barChart('outcome-chart', data, '--neutral-mark');
 }})();
 </script>
 
@@ -873,6 +1074,8 @@ impl ZipWriter {
         Ok(self.data)
     }
 }
+
+mod transcript;
 
 #[cfg(test)]
 mod tests;

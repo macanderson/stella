@@ -616,21 +616,205 @@ fn the_token_column_is_aligned_across_a_block() {
     // Frame rows only — the budget breakdown below them ends in `tok` too, and
     // it is a different table with its own columns.
     //
-    // Counted in *columns*, not bytes: an elided row carries a `…`, which is
-    // one column and three bytes, so `str::len` reports a phantom two-column
-    // drift on exactly the rows the elision touched.
+    // Measured in **display columns**, which is the unit a terminal lays out
+    // in and the unit the table is fitted in. `str::len` reports a phantom
+    // two-column drift on every row an elision touched (`…` is one column and
+    // three bytes), and `chars().count()` — which this asserted in before —
+    // agrees with the truth only while every character is one column wide, so
+    // it cannot see the failure `a_wide_citation_never_shifts_its_neighbours`
+    // is about.
     let ends: Vec<usize> = text
         .lines()
         .filter(|l| {
             l.ends_with(" tok")
                 && matches!(l.trim_start().split(' ').next(), Some("symbol" | "episode"))
         })
-        .map(|l| l.chars().count())
+        .map(columns)
         .collect();
     assert!(ends.len() >= 4, "expected frame rows, got {ends:?}");
     assert!(
         ends.iter().all(|e| *e == ends[0]),
         "token counts must share a column, got line ends {ends:?}:\n{text}"
+    );
+}
+
+/// Display columns a rendered row occupies — the unit the table is fitted in.
+fn columns(line: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(line)
+}
+
+/// A citation label of double-width characters does not move the columns to
+/// its right.
+///
+/// This is the failure a `char`-budgeted table cannot see and an ASCII fixture
+/// cannot provoke. The elision budget, the location's left-elision and the
+/// per-block column fit were all counted in `char`s while the padding that
+/// realises them was counted in display columns, so a 33-character CJK label
+/// passed a 34-*column* budget, rendered 66 columns wide, and shoved the
+/// location and the cost off the grid on that row alone. Recalled labels are
+/// model- and user-authored prose — a recalled Chinese commit message or an
+/// emoji in an episodic memory's title is an input, not a hypothetical.
+#[test]
+fn a_wide_citation_never_shifts_its_neighbours() {
+    let mut entry = screenshot_recall();
+    let TranscriptEntry::ContextRecall { frames, .. } = &mut entry else {
+        unreachable!()
+    };
+    // 40 double-width characters: 40 `char`s, 80 columns.
+    frames[0].label =
+        "在上下文中回忆一个符号并计算其令牌成本以便对齐列宽和缩进的一个很长的标题".into();
+    frames[1].label = "短标题".into();
+
+    let text = recall_text(&entry, true, 100);
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("symbol "))
+        .collect();
+    assert_eq!(rows.len(), 4, "expected the four symbol rows:\n{text}");
+
+    let widths: Vec<usize> = rows.iter().copied().map(columns).collect();
+    assert!(
+        widths.iter().all(|w| *w == widths[0]),
+        "a wide label must not change a row's width — got {widths:?}:\n{text}"
+    );
+    // The location column is what a shifted label displaces first, and the
+    // filename is what a reader came to the row for.
+    let starts: Vec<Option<usize>> = rows
+        .iter()
+        .map(|l| {
+            l.find(".py:")
+                .or_else(|| l.find(".sql:"))
+                .or_else(|| l.find(".rs:"))
+        })
+        .collect();
+    assert!(
+        starts.iter().all(Option::is_some),
+        "every location survives a wide neighbour: {starts:?}\n{text}"
+    );
+}
+
+/// Under `ctrl+o` the table names its columns, and the rule under each heading
+/// is exactly that column wide.
+///
+/// A heading that does not sit over its own cells is worse than none — it
+/// asserts a grid the rows do not keep — so the rule is drawn per column
+/// rather than as one hairline, which makes a drifted column visible in the
+/// chrome itself.
+#[test]
+fn the_expanded_table_names_its_columns() {
+    let text = recall_text(&screenshot_recall(), true, 100);
+    let head = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("kind "))
+        .unwrap_or_else(|| panic!("no column heading:\n{text}"));
+    let rule = text
+        .lines()
+        .find(|l| l.trim_start().starts_with('─'))
+        .unwrap_or_else(|| panic!("no column rule:\n{text}"));
+
+    for column in ["kind", "citation", "location", "cost"] {
+        assert!(head.contains(column), "heading names {column}:\n{text}");
+    }
+    // Same width to the column, and the same right edge as the rows they head.
+    assert_eq!(columns(head), columns(rule), "heading vs rule:\n{text}");
+    let row = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("symbol "))
+        .unwrap_or_else(|| panic!("no frame row:\n{text}"));
+    assert_eq!(columns(head), columns(row), "heading vs frame row:\n{text}");
+
+    // Each rule segment is one column's width: `kind` is fitted to the kinds
+    // present (`episode`, seven columns), never left at a constant.
+    let segments: Vec<usize> = rule
+        .trim()
+        .split(' ')
+        .filter(|s| !s.is_empty())
+        .map(columns)
+        .collect();
+    assert_eq!(
+        segments.first().copied(),
+        Some(7),
+        "the kind rule tracks the widest kind in the block: {segments:?}\n{text}"
+    );
+
+    // Collapsed the chrome is absent: the block is held to the height of the
+    // paragraph it replaced, and two rows of headings would spend that budget
+    // on labels rather than on frames.
+    let collapsed = recall_text(&screenshot_recall(), false, 100);
+    assert!(
+        !collapsed.contains("citation"),
+        "the heading is a ctrl+o affordance:\n{collapsed}"
+    );
+}
+
+/// The budget legs are a grid too — a `·`-joined line put two costs in
+/// different places on the one pair of rows where comparing them is the point.
+///
+/// `4 served · 343 tok` above `1 served · 2 rejected · 812 tok` is the shape
+/// this replaces: the rejected count pushes the cost eleven columns right, so
+/// the two numbers a reader is there to compare never share an edge.
+#[test]
+fn the_budget_legs_share_their_columns() {
+    let text = recall_text(&screenshot_recall(), true, 100);
+    let legs: Vec<&str> = text.lines().filter(|l| l.contains(" served")).collect();
+    assert_eq!(legs.len(), 2, "expected both legs:\n{text}");
+
+    let costs: Vec<usize> = legs
+        .iter()
+        .map(|l| columns(&l[..l.rfind(" tok").expect("a leg reports its cost")]))
+        .collect();
+    assert!(
+        costs.iter().all(|c| *c == costs[0]),
+        "leg costs must share a column, got {costs:?}:\n{text}"
+    );
+    let served: Vec<usize> = legs
+        .iter()
+        .map(|l| columns(&l[..l.find(" served").expect("a leg reports what it served")]))
+        .collect();
+    assert!(
+        served.iter().all(|s| *s == served[0]),
+        "served counts must share a column, got {served:?}:\n{text}"
+    );
+    // A leg that rejected nothing leaves the cell blank rather than writing a
+    // `0` the eye then has to filter out of the column it is scanning.
+    assert!(
+        !text.contains("0 rejected"),
+        "a zero rejection is an empty cell:\n{text}"
+    );
+}
+
+/// A kind longer than its column is elided into it, never allowed to overrun.
+///
+/// `kind` is wire text with nothing bounding it upstream, and a soft column —
+/// the deliberate posture for a tool name, where identity outranks alignment —
+/// would let one unknown provider's kind displace every cell to its right on
+/// that row alone.
+#[test]
+fn a_kind_wider_than_its_column_is_elided_not_overrun() {
+    let mut entry = screenshot_recall();
+    let TranscriptEntry::ContextRecall { frames, .. } = &mut entry else {
+        unreachable!()
+    };
+    frames[0].kind = "retrieved-document-fragment".into();
+
+    let text = recall_text(&entry, true, 100);
+    // Frame rows only: the budget summary and its legs end in `tok` too and
+    // belong to the other grid.
+    let rows: Vec<usize> = text
+        .lines()
+        .filter(|l| {
+            l.ends_with(" tok") && !l.contains(" served") && !l.trim_start().starts_with("budget ")
+        })
+        .map(columns)
+        .collect();
+    assert_eq!(rows.len(), 5, "expected the five frame rows, got {rows:?}");
+    assert!(
+        rows.iter().all(|w| *w == rows[0]),
+        "an over-wide kind must not change a row's width — got {rows:?}:\n{text}"
+    );
+    assert!(
+        !text.contains("retrieved-document-fragment"),
+        "the kind is elided into its column:\n{text}"
     );
 }
 
