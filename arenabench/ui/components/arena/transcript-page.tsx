@@ -249,6 +249,25 @@ function RecallEntry({
         ◉ <Highlight text={entry.title ?? "recall"} query={query} />
       </button>
       <table className="w-full border-collapse text-[11px]">
+        {/* The columns are named once they are worth naming. Collapsed this is
+            a three-row preview whose cells label themselves; expanded it is the
+            whole recall with a provenance line under each row, and there the
+            heading is what keeps `82 tok` readable as a per-frame cost rather
+            than a running total. Same reasoning, and the same wording, as the
+            deck's ctrl+o heading in
+            `crates/stella-tui/src/render/entry/recall.rs`. */}
+        {open && (
+          <thead>
+            <tr className="border-b border-line-soft text-left align-baseline text-dim">
+              <th className="w-[1%] whitespace-nowrap pr-3 font-normal">kind</th>
+              <th className="pr-3 font-normal">citation</th>
+              <th className="pr-3 font-normal">location</th>
+              <th className="w-[1%] whitespace-nowrap text-right font-normal">
+                cost
+              </th>
+            </tr>
+          </thead>
+        )}
         <tbody>
           {shown.map((frame, i) => (
             <React.Fragment key={`${frame.label}-${i}`}>
@@ -306,18 +325,34 @@ function RecallEntry({
           <div>
             budget {budget.consumed ?? 0} of {budget.requested ?? 0} tok
           </div>
-          {(budget.providers ?? []).map((leg) => (
-            <div key={leg.provider_id} className="pl-3">
-              {leg.provider_id} · {leg.frames_served ?? 0} served
-              {/* The number the frame list cannot carry — a rejected frame
-                  never reaches it — and so the only visible evidence that a
-                  provider misdeclared its cost. */}
-              {(leg.frames_rejected ?? 0) > 0 && (
-                <span className="text-warn"> · {leg.frames_rejected} rejected</span>
-              )}{" "}
-              · {leg.token_cost ?? 0} tok
-            </div>
-          ))}
+          {/* A grid, not a `·`-joined line. The legs are two or three rows of
+              the same four fields, and joined into prose the rejected count
+              pushes the cost eleven characters right on the one row that has
+              one — so the two numbers a reader is here to compare never share
+              an edge. `tabular-nums` keeps the digits themselves in a column,
+              which is the browser's half of what the deck's fitted `{n:>w}`
+              does in a terminal. */}
+          <table className="border-collapse pl-3 tabular-nums">
+            <tbody>
+              {(budget.providers ?? []).map((leg) => (
+                <tr key={leg.provider_id} className="align-baseline">
+                  <td className="pl-3 pr-3">{leg.provider_id}</td>
+                  <td className="pr-3 text-right">{leg.frames_served ?? 0} served</td>
+                  {/* The number the frame list cannot carry — a rejected frame
+                      never reaches it — and so the only visible evidence that a
+                      provider misdeclared its cost. A leg that rejected nothing
+                      leaves the cell empty rather than writing a `0` the eye
+                      then has to filter out of the column it is scanning. */}
+                  <td className="pr-3 text-right text-warn">
+                    {(leg.frames_rejected ?? 0) > 0
+                      ? `${leg.frames_rejected} rejected`
+                      : ""}
+                  </td>
+                  <td className="text-right">{leg.token_cost ?? 0} tok</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

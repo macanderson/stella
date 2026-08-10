@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,61 @@ RECALL_LABEL_COL = 40
 #: row is actionable because of its filename and line.
 RECALL_LOCATION_COL = 44
 
+#: The gutter between two columns of the recall table. Two, not one: a single
+#: space between an elided label ending in ``…`` and a location starting in
+#: ``…`` reads as one token rather than two cells.
+RECALL_GAP = "  "
+
+
+def _width(text: str) -> int:
+    """Columns ``text`` occupies in a monospaced cell.
+
+    Every width in the recall table is measured through here, because a
+    terminal — and the monospaced ``<pre>`` this body lands in — lays out in
+    *columns*, while ``len`` and ``str.ljust`` count *code points*. The two
+    agree only while every character is one column wide, which is why sizing a
+    table in ``len`` looks correct against an ASCII fixture and skews the whole
+    grid the first time a recalled label carries CJK text or an emoji. Recalled
+    labels are model- and user-authored prose, so that is an input.
+
+    East Asian *wide* and *fullwidth* characters take two columns; a combining
+    mark takes none, since it composes onto the character before it.
+    """
+    return sum(
+        0
+        if unicodedata.combining(ch)
+        else 2
+        if unicodedata.east_asian_width(ch) in ("W", "F")
+        else 1
+        for ch in text
+    )
+
+
+def _take(text: str, cap: int, *, right: bool = False) -> str:
+    """The longest prefix (or suffix) of ``text`` fitting in ``cap`` columns."""
+    kept: list[str] = []
+    used = 0
+    for ch in reversed(text) if right else text:
+        w = _width(ch)
+        if used + w > cap:
+            break
+        used += w
+        kept.append(ch)
+    return "".join(reversed(kept) if right else kept)
+
+
+def _cell(text: str, col: int, *, right: bool = False) -> str:
+    """One table cell: ``text`` in *exactly* ``col`` display columns.
+
+    Every cell of the rendered table goes through here, which is what makes
+    the alignment a property of the construction rather than a convention each
+    call site has to honour: a cell physically cannot displace the cell to its
+    right, so no future field can quietly break the grid.
+    """
+    text = _elide(text, col)
+    pad = " " * max(col - _width(text), 0)
+    return pad + text if right else text + pad
+
 
 def _elide_left(text: str, cap: int) -> str:
     """``…/command_deck/hunk_gate.rs:32`` — keep the tail, drop the prefix.
@@ -137,11 +193,19 @@ def _elide_left(text: str, cap: int) -> str:
     repo prefix every row on the page already shares. Cutting from the right —
     what a plain CSS truncation does — removes exactly the discriminating part.
     """
-    if len(text) <= cap:
+    if _width(text) <= cap:
         return text
-    tail = text[-(cap - 1):]
+    if cap <= 0:
+        return ""
+    tail = _take(text, cap - 1, right=True)
     cut = tail.find("/")
-    return "…" + (tail[cut:] if 0 <= cut <= cap // 3 else tail)
+    # Snap the elision to a separator so it lands between path segments rather
+    # than mid-directory-name, but only in the leading third — snapping near
+    # the end trades a readable ``…re/src/driver.rs:88`` for a bare filename.
+    # The third is measured in *columns*: ``find`` returns a code-point index,
+    # and comparing that to a column budget refuses the snap on any path with
+    # a wide character in front of the cut.
+    return "…" + (tail[cut:] if 0 <= _width(tail[:cut]) <= cap // 3 else tail)
 
 
 def _recall_line(event: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -201,22 +265,7 @@ def _recall_line(event: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
             }
         )
 
-    width = max((len(r["kind"]) for r in rows), default=0)
-    body = "\n".join(
-        "  ".join(
-            part
-            for part in (
-                r["kind"].ljust(width),
-                _elide(r["label"], RECALL_LABEL_COL).ljust(RECALL_LABEL_COL),
-                _elide_left(str(r["uri"]), RECALL_LOCATION_COL).ljust(RECALL_LOCATION_COL)
-                if r["uri"]
-                else " " * RECALL_LOCATION_COL,
-                f"{r['tokens']:>6} tok",
-            )
-            if part
-        ).rstrip()
-        for r in rows
-    )
+    body = _recall_table(rows)
 
     usage = event.get("usage")
     usage = usage if isinstance(usage, dict) else {}
@@ -243,9 +292,79 @@ def _recall_line(event: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     return head, body, meta
 
 
+def _recall_table(rows: list[dict[str, Any]]) -> str:
+    """The recall's frames as an aligned table: a heading, a rule, one row each.
+
+    Laid out the way the Command Deck lays it out
+    (``crates/stella-tui/src/render/entry/recall.rs``), because it is the same
+    data answering the same questions. The deck has a pane to fit and flushes
+    its cost column to the edge; this body has no width to track, so the grid
+    is fixed and every column closes up against the next.
+
+    Columns are fitted to the block rather than set to a constant — a page of
+    ``symbol`` frames should not reserve the width of the longest kind the
+    protocol can name — and capped, so one recalled user prompt cannot stretch
+    the citation column across the page. The location column is dropped whole
+    when no frame carries a URI, rather than left as a stripe of blanks.
+    """
+    if not rows:
+        return ""
+
+    def fit(values: list[str], heading: str) -> int:
+        """The column's width: its widest cell, but never narrower than the
+        heading it has to sit under — a heading elided into its own column
+        would name a column nothing else in the table keeps."""
+        return max(max((_width(v) for v in values), default=0), _width(heading))
+
+    locations = [
+        _elide_left(str(r["uri"]), RECALL_LOCATION_COL) for r in rows if r["uri"]
+    ]
+    labels = [_elide(str(r["label"]), RECALL_LABEL_COL) for r in rows]
+    costs = [f"{r['tokens']} tok" for r in rows]
+
+    kind_col = fit([str(r["kind"]) for r in rows], "kind")
+    label_col = fit(labels, "citation")
+    location_col = fit(locations, "location") if locations else 0
+    cost_col = fit(costs, "cost")
+
+    def line(kind: str, label: str, location: str, cost: str) -> str:
+        cells = [_cell(kind, kind_col), _cell(label, label_col)]
+        if location_col:
+            cells.append(_cell(location, location_col))
+        cells.append(_cell(cost, cost_col, right=True))
+        return RECALL_GAP.join(cells)
+
+    # The rule is drawn per column rather than as one hairline across the page,
+    # so it *shows* the grid: each segment is exactly its column's width, which
+    # makes a column that has drifted visible in the chrome itself.
+    out = [
+        line("kind", "citation", "location", "cost"),
+        line(*("─" * n for n in (kind_col, label_col, location_col, cost_col))),
+    ]
+    out += [
+        line(
+            str(r["kind"]),
+            _elide(str(r["label"]), RECALL_LABEL_COL),
+            _elide_left(str(r["uri"]), RECALL_LOCATION_COL) if r["uri"] else "",
+            f"{r['tokens']} tok",
+        )
+        for r in rows
+    ]
+    return "\n".join(out)
+
+
 def _elide(text: str, cap: int) -> str:
-    """Truncate to ``cap`` characters with a trailing ellipsis."""
-    return text if len(text) <= cap else text[: cap - 1].rstrip() + "…"
+    """Truncate to ``cap`` display columns with a trailing ellipsis.
+
+    The ``…`` is one column, so the kept text is budgeted ``cap - 1``. A cut
+    that would land mid-wide-character keeps the narrower text and lets
+    :func:`_cell` pad the hole, rather than emitting a cell one column over.
+    """
+    if _width(text) <= cap:
+        return text
+    if cap <= 0:
+        return ""
+    return _take(text, cap - 1).rstrip() + "…"
 
 
 @dataclass

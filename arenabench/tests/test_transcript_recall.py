@@ -20,9 +20,30 @@ the exact failure mode this module's siblings were written to stop.
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 
 from arenabench.transcript import TranscriptReader
+
+
+def _width(text: str) -> int:
+    """Display columns ``text`` occupies — an *independent* measurement.
+
+    Deliberately not imported from :mod:`arenabench.transcript`. The subject of
+    these assertions is that module's own column arithmetic, and a test that
+    borrows the arithmetic it is checking agrees with the implementation by
+    construction, including where the implementation is wrong. Kept to the two
+    rules that matter for a recall label: East Asian wide/fullwidth characters
+    take two columns, a combining mark takes none.
+    """
+    return sum(
+        0
+        if unicodedata.combining(ch)
+        else 2
+        if unicodedata.east_asian_width(ch) in ("W", "F")
+        else 1
+        for ch in text
+    )
 
 
 def write_events(path: Path, events: list[dict]) -> None:
@@ -132,16 +153,93 @@ class TestRecallReachesTheTranscript:
         """A recall is a small table. Rendered as comma-joined labels it loses
         the boundary between records, the kind that separates an 812-token
         episodic memory from an 82-token graph symbol, and the per-frame cost
-        that turns a total into a finding."""
+        that turns a total into a finding.
+
+        A heading and a rule precede the rows, so the body reads as the table
+        it is rather than as a run of aligned-looking text."""
         path = tmp_path / "e.jsonl"
         write_events(path, [recall_event()])
         body = TranscriptReader().read(path)[0]["body"]
-        rows = body.splitlines()
+        heading, rule, *rows = body.splitlines()
+        assert heading.split() == ["kind", "citation", "location", "cost"], body
+        assert set(rule) <= {"─", " "}, body
         assert len(rows) == 3, body
         assert all(row.endswith("tok") for row in rows), body
         assert "symbol" in rows[0]
         assert "episode" in rows[2]
         assert "812 tok" in rows[2]
+
+    def test_every_row_is_the_same_width_and_the_rule_proves_it(
+        self, tmp_path: Path
+    ):
+        """Alignment is the whole reason this is a table, and it is asserted in
+        *display columns* — the unit a monospaced cell lays out in — not in code
+        points, which agree with the truth only while every character is one
+        column wide."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [recall_event()])
+        body = TranscriptReader().read(path)[0]["body"]
+        widths = {_width(line) for line in body.splitlines()}
+        assert len(widths) == 1, f"ragged table {widths}:\n{body}"
+
+        # Each rule segment starts where its heading cell starts, so the chrome
+        # cannot drift away from the columns it claims to describe. Index
+        # arithmetic is safe here: every character in these two rows is one
+        # column wide, `─` included.
+        heading, rule = body.splitlines()[:2]
+        starts = [
+            i
+            for i, ch in enumerate(rule)
+            if ch == "─" and (i == 0 or rule[i - 1] == " ")
+        ]
+        assert len(starts) == 4, f"one rule segment per column:\n{body}"
+        for start, name in zip(starts, ["kind", "citation", "location"], strict=False):
+            assert heading[start:].startswith(name), f"{name} at {start}:\n{body}"
+        # `cost` is right-aligned over its digits, so it ends with its segment
+        # rather than starting with it.
+        assert heading.endswith("cost"), body
+        assert rule.endswith("─"), body
+
+    def test_a_wide_citation_never_shifts_the_columns(self, tmp_path: Path):
+        """The failure an ASCII fixture cannot provoke.
+
+        The label elision, the location's left-elision and the column fit were
+        all counted in ``len`` while ``str.ljust`` realises them in display
+        columns. The two agree until a recalled label carries CJK text — a
+        recalled Chinese commit message, an emoji in an episodic memory's title
+        — and then a 24-character label passes a 40-*column* budget, renders 48
+        columns wide, and pushes the location and the cost off the grid on that
+        row alone. Recalled labels are model- and user-authored prose, so this
+        is an input, not a hypothetical."""
+        path = tmp_path / "e.jsonl"
+        event = recall_event()
+        event["frames"][0]["citation_label"] = "在上下文中回忆一个符号并计算其令牌成本"
+        write_events(path, [event])
+        body = TranscriptReader().read(path)[0]["body"]
+        widths = {_width(line) for line in body.splitlines()}
+        assert len(widths) == 1, f"a wide label skewed the grid {widths}:\n{body}"
+        # The location is what a skewed label displaces first, and the filename
+        # is what a reader came to the row for.
+        assert "hunk_gate.rs:32" in body, body
+
+    def test_a_block_with_no_locations_drops_the_column(self, tmp_path: Path):
+        """A column no frame can fill is dropped whole rather than left as a
+        stripe of blanks — the same judgement the deck makes when a pane is too
+        narrow to hold a location that would still say something."""
+        path = tmp_path / "e.jsonl"
+        event = recall_event()
+        for f in event["frames"]:
+            f.pop("uri", None)
+        write_events(path, [event])
+        body = TranscriptReader().read(path)[0]["body"]
+        heading, _rule, *rows = body.splitlines()
+        # Three columns, not four with one left blank — which is what a fixed
+        # 44-column location cell produced: forty-four spaces on every row of
+        # every recall whose frames carry no URI.
+        assert heading.split() == ["kind", "citation", "cost"], body
+        assert len(rows) == 3, body
+        widths = {_width(line) for line in body.splitlines()}
+        assert len(widths) == 1, f"ragged table {widths}:\n{body}"
 
     def test_a_location_keeps_its_filename_and_line(self, tmp_path: Path):
         """Elided from the left. The tail is what identifies the frame; the
