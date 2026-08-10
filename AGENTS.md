@@ -317,6 +317,19 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    ran Claude models with ZERO prompt caching for months because nothing
    enforced the cache axis; the reasoning axis was added after the same
    silent-drop shape recurred for pinned `effort`.
+9. **Tool-first, single-purpose.** Every capability the agent has is a tool,
+   and a tool does exactly one thing. A parameter may *scope* the operation
+   (a key, a path, an offset); it may never *select* the operation —
+   `update_task(delete=true)` is two tools wearing one schema and gets split
+   (`edit_task` + `delete_task`). Enforced at review for two reasons: the
+   model decides whether to call a tool on `ToolSchema::description` alone,
+   and a two-verb tool teaches neither verb well; and per-tool policy
+   (`tools.<name>` toggles, the `command.started` gate) must be able to
+   withhold the destructive verb without withholding the benign one. A read
+   tool with a mutating arm also cannot declare `read_only` honestly, which
+   corrupts the engine's concurrency contract. The scratch state plane
+   (`save_state` / `get_state` / `list_state` / `delete_state`) is the
+   reference shape.
 
 ---
 
