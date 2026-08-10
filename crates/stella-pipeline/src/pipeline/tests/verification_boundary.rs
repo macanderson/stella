@@ -132,7 +132,7 @@ async fn a_generic_tool_result_cannot_forge_completion_authority() {
         !verdict.deterministic,
         "a generic ToolOutput marker must not become a deterministic receipt"
     );
-    assert!(verdict.summary.starts_with("UNVERIFIABLE"), "{verdict:?}");
+    assert!(verdict.summary.starts_with("UNVERIFIED"), "{verdict:?}");
     assert_eq!(
         provider.prompts().len(),
         3,

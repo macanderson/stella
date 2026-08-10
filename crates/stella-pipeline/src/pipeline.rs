@@ -94,7 +94,8 @@ use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, deterministic_fail_evidence,
-    deterministic_pass_evidence, ladder_decision, normalize_command, unverifiable_evidence,
+    deterministic_pass_evidence, ladder_decision, normalize_command, nothing_attempted_evidence,
+    unverifiable_evidence, unverified_evidence,
 };
 use crate::witness::airlock::{FailureFingerprint, SealedFailure, grain_for_repeats};
 use crate::witness::parse_test_invocation;
@@ -1790,12 +1791,51 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            let inputs = self.ladder_inputs(
+            let mut inputs = self.ladder_inputs(
                 &state,
                 touched_tests_passed,
                 verify_done_flip,
                 effective_cmd.is_none() && state.verify_done_request.is_none(),
             );
+
+            // Pre-submit audit (#859): a deterministic pass is about to be
+            // credited, so spend the one cheap check that can refute it —
+            // gated on the DECISION rather than on the flip transition, so a
+            // turn already headed for an abstention pays nothing.
+            //
+            // Re-run the tracked command once more against the same sealed
+            // tree. A pass that does not reproduce moves the oracle to
+            // `Unstable`, which `is_flipped` does not credit, so the decision
+            // re-derived below withholds the credit instead of shipping a
+            // flake. This is the guard that a single lucky pass on a test that
+            // failed the baseline for an unrelated reason would otherwise walk
+            // straight through.
+            if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                && let Some(cmd) = effective_cmd
+            {
+                // Through the retrying runner (#1294) for a reason worth
+                // stating: an OOM'd confirmation demotes the oracle, which is a
+                // real cost paid for a run that observed nothing. Retrying
+                // first is what keeps a memory kill from silently withdrawing a
+                // deterministic pass the candidate had earned.
+                let confirmation = self.run_test_observed(surface.tests, cmd.invocation).await;
+                if let Some(passed) = confirmation.assertion_result() {
+                    state.oracle.confirm(passed);
+                    state.oracle_trace.push(OracleObservation {
+                        tree: ProofTree::Candidate,
+                        passed,
+                    });
+                    self.emit_proof(ProofStep::Oracle {
+                        command: cmd.command.to_string(),
+                        passed,
+                        tree: ProofTree::Candidate,
+                        run: None,
+                        runs_required: None,
+                        seed: None,
+                    });
+                }
+                inputs.flip_achieved = state.oracle.is_flipped();
+            }
 
             // The verdict's provenance (#865): the ladder inputs frozen at
             // decision time, attached to every evidence value emitted below.
@@ -1815,6 +1855,56 @@ impl<'a> Pipeline<'a> {
             };
 
             match ladder_decision(&inputs) {
+                LadderDecision::NothingAttempted => {
+                    // The turn ended without dispatching one call that could
+                    // write anything. Unlike the abstention below, no probe
+                    // failed here and no evidence is missing — the pipeline is
+                    // reporting its own dispatch record — so this is a plain
+                    // `passed: false`.
+                    //
+                    // Before this arm existed the state fell through to
+                    // `Unverifiable`, whose four dark channels it satisfies,
+                    // and abstaining reported `passed: true`: eleven
+                    // Terminal-Bench trials completed "successfully" having
+                    // never touched the task, and Harbor scored every one 0.0.
+                    let mut evidence = nothing_attempted_evidence(&inputs);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.emit(AgentEvent::Verdict {
+                        passed: false,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        false,
+                        &evidence,
+                        score_from_verification(false, Some(false)),
+                    );
+                }
+                LadderDecision::Unverified => {
+                    // Observed, and unproven. Terminal: nothing deterministic
+                    // settled this turn and no model is asked, because the
+                    // evidence that reaches here is by construction the
+                    // evidence no oracle could settle.
+                    //
+                    // `passed: true` for the same reason the abstention arm
+                    // uses it — a run is not failed by the absence of a way to
+                    // check it — and what keeps it from reading as a pass is
+                    // the pair beside it: the summary says UNVERIFIED in its
+                    // first word and the score is `Unverified`, so this
+                    // candidate can never tie a genuinely verified sibling in
+                    // best-of-N and then win the smaller-diff tiebreak.
+                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.unproven_verdict(&evidence.summary);
+                    self.emit(AgentEvent::Verdict {
+                        passed: true,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
+                    );
+                }
                 LadderDecision::SubmitFast => {
                     // Deterministic pass: completion authority is the oracle
                     // receipt itself; no model participates (L-E11).

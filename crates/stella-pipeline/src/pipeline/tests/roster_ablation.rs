@@ -256,7 +256,7 @@ async fn model_independence_flags_are_noops_when_verification_is_model_free() {
     );
     let verdict = outcome.verdict.expect("the deterministic ladder resolves");
     assert!(!verdict.deterministic);
-    assert!(verdict.summary.starts_with("UNVERIFIABLE"));
+    assert!(verdict.summary.starts_with("UNVERIFIED"));
 }
 
 /// A roster that cannot be honoured refuses **before** any paid call, rather

@@ -85,6 +85,21 @@ pub enum ProofStep {
     /// step of its own, an abstention reaches the rail as `✓ passed · model
     /// verifier`, which is the same silent outcome in the other direction.
     VerificationUnavailable { reason: String },
+    /// The evidence channels worked, and what they returned did not amount to
+    /// a proof ([`crate::LadderRung::Unverified`]).
+    ///
+    /// The near-twin of [`Self::VerificationUnavailable`] and deliberately not
+    /// the same step, for the reason that one exists at all: a reader has to be
+    /// able to tell "the instruments were blind" from "the instruments worked
+    /// and the answer was not enough". They imply opposite repairs — fix the
+    /// probe, versus produce the missing observation — and a panel that renders
+    /// both as one row sends every reader to the wrong one half the time.
+    ///
+    /// This is the step that replaced the model verdict. Where a run used to
+    /// record a second model's opinion on inconclusive evidence, it now records
+    /// that the evidence was inconclusive and stops, so the trace states the
+    /// limit of what was established rather than papering over it.
+    VerificationUnproven { reason: String },
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
     /// flip; anything else is not.

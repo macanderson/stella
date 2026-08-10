@@ -82,9 +82,11 @@ fn only_a_deterministic_flip_lifts_the_turn_off_the_abstain_rung() {
         ),
     ] {
         assert!(!inputs.effects_escaped_collection(), "{label}");
+        // Not escaped, and not blind: something positively observed the turn.
+        // The shortfall is in the proof, so the rung says so.
         assert_eq!(
             ladder_decision(&inputs),
-            LadderDecision::Unverifiable,
+            LadderDecision::Unverified,
             "{label}"
         );
     }

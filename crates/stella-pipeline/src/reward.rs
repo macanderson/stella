@@ -284,9 +284,26 @@ pub enum DiscardReason {
     /// finding, and a valuable one — but not one the reward scale is
     /// calibrated for, so it is selected by rung rather than scored.
     NothingAttempted,
+    /// Deterministic evidence was collected and did not prove the outcome
+    /// either way ([`LadderRung::Unverified`]). Not a pass, not a failure, and
+    /// deliberately not a `0.0` — a zero would assert that a neutral outcome
+    /// was *observed*, which is the claim this rung exists to decline.
+    ///
+    /// Historical trajectories land here too. The rungs that recorded a model
+    /// verifier's opinion (`model_verdict`, `heuristic_fallback`,
+    /// `model_judge`) alias onto [`LadderRung::Unverified`], so a stored
+    /// session once scored `±judged` is now discarded. That is the intended
+    /// correction rather than a side effect: #871 had already established those
+    /// verdicts were not trustworthy enough to train on, and scoring them was
+    /// the last place that judgement had not been applied.
+    Unproven,
     /// The verifier call failed or returned something unparseable, and the
     /// conservative heuristic stood in. A fact about the pipeline's
     /// availability, not about the work.
+    ///
+    /// **Retired.** No run emits it: the pipeline makes no verifier call to
+    /// fail. Retained because this enum labels *stored* trajectories, and a
+    /// label already written must keep parsing.
     VerifierUnavailable,
     /// No independent review was bought at all, so nothing was determined
     /// either way.
@@ -499,13 +516,9 @@ pub fn outcome_term(
 ) -> Result<f64, DiscardReason> {
     let magnitude = match rung {
         LadderRung::SubmitFast | LadderRung::Revise => weights.deterministic,
-        LadderRung::ModelVerdict if weights.judged == 0.0 => {
-            return Err(DiscardReason::VerifierDistrusted);
-        }
-        LadderRung::ModelVerdict => weights.judged,
+        LadderRung::Unverified => return Err(DiscardReason::Unproven),
         LadderRung::Unverifiable => return Err(DiscardReason::Abstained),
         LadderRung::NothingAttempted => return Err(DiscardReason::NothingAttempted),
-        LadderRung::HeuristicFallback => return Err(DiscardReason::VerifierUnavailable),
         LadderRung::Waived => return Err(DiscardReason::ReviewWaived),
     };
     Ok(if passed { magnitude } else { -magnitude })

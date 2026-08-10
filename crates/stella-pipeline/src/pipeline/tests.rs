@@ -1047,7 +1047,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
     assert!(verdict.passed);
     assert!(!verdict.deterministic);
     assert!(
-        verdict.summary.contains("UNVERIFIABLE"),
+        verdict.summary.contains("UNVERIFIED"),
         "{}",
         verdict.summary
     );
@@ -1555,7 +1555,7 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
     );
     assert!(!s.contains(&StageKind::Verdict), "no reviewer stage: {s:?}");
     let verdict = outcome.verdict.expect("unverified result retained");
-    assert!(verdict.summary.contains("UNVERIFIABLE"));
+    assert!(verdict.summary.contains("UNVERIFIED"));
     // Two paid calls: triage and worker only.
     let calls = events
         .iter()

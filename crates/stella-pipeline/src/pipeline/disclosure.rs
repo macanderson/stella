@@ -27,6 +27,22 @@ impl Pipeline<'_> {
         });
     }
 
+    /// Record that verification was performed and did not prove the outcome:
+    /// the channels could look, they looked, and the evidence fell short.
+    ///
+    /// Both channels for the same reason as [`Self::unverifiable`], and a
+    /// *separate* method from it on purpose. That one says the instruments were
+    /// blind; this one says they worked and the answer was not enough. Merging
+    /// them would be the #973 conflation with its polarity flipped — a claim
+    /// about the evidence delivered as a claim about the instruments — and it
+    /// points a reader at the wrong repair.
+    pub(super) fn unproven_verdict(&self, reason: &str) {
+        self.warn(format!("verification did not prove this turn: {reason}"));
+        self.emit_proof(stella_protocol::ProofStep::VerificationUnproven {
+            reason: reason.to_string(),
+        });
+    }
+
     /// Build operator-facing failure evidence while preserving repeat identity.
     /// The returned brief is not sent to the worker; the worker receives the
     /// structured execution receipt assembled in `revision`.
