@@ -2020,9 +2020,9 @@ async fn run_turn(
         // every other driver path. Wrap the raw registry in `PolicyToolSet`
         // so disabled tools cannot be invoked here either.
         let permitted = PolicyToolSet::new(registry, session_tool_policy(cfg));
-        let engine =
-            Engine::with_sleeper(provider, &permitted, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration);
+        let config = engine::engine_config_for_kind(cfg, kind);
+        let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
+            .with_calibration(calibration);
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         let customs = CustomToolSet::new(
@@ -2046,9 +2046,9 @@ async fn run_turn(
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let hook_runner = ShellHookRunner;
-        let mut engine =
-            Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration);
+        let config = engine::engine_config_for_kind(cfg, kind);
+        let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
+            .with_calibration(calibration);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
