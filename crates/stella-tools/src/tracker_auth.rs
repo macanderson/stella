@@ -744,14 +744,20 @@ async fn wait_for_code(
 
         let page = match &outcome {
             Ok(_) => {
-                "<!doctype html><meta charset=\"utf-8\"><title>stella</title>\
-                 <body style=\"font-family:system-ui;padding:3rem\">\
-                 <h2>✓ Connected</h2><p>You can close this tab and return to stella.</p>"
+                concat!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>stella</title>",
+                    include_str!("tracker_auth_page.css"),
+                    "<body><h2><i class=ok>&check;</i> Connected</h2>",
+                    "<p>You can close this tab and return to <b>stella</b>.</p>"
+                )
             }
             Err(_) => {
-                "<!doctype html><meta charset=\"utf-8\"><title>stella</title>\
-                 <body style=\"font-family:system-ui;padding:3rem\">\
-                 <h2>Connection failed</h2><p>Return to stella for details.</p>"
+                concat!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>stella</title>",
+                    include_str!("tracker_auth_page.css"),
+                    "<body><h2><i class=bad>&times;</i> Connection failed</h2>",
+                    "<p>Return to <b>stella</b> for details.</p>"
+                )
             }
         };
         let response = format!(

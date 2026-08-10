@@ -532,7 +532,7 @@ fn render_dashboard(
      page itself declares it loads nothing and talks to no one — inline
      script/style only (its own), no frames, no forms, no external fetches. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'">
-<title>Stella Session Telemetry — {watermark}</title>
+<title>stella session telemetry — {watermark}</title>
 <style>
   /* The page is an instrument's printout, not an app: mono everywhere, corners
      nearly square, and colour spent only where it carries meaning (the brand
@@ -672,7 +672,7 @@ fn render_dashboard(
 <body>
 <div class="wrap">
 
-<h1>Stella session — {session}</h1>
+<h1>stella session — {session}</h1>
 <p class="sub">as of {watermark} · every model step, tool call and result, in order</p>
 <div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
@@ -834,18 +834,24 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>
 }})();
 
 // ── Bar chart helper ────────────────────────────────────────────────────
+// `colorVar` is the series token for the whole chart; a datum may override it
+// with its own `colorVar` when the bar carries a verdict rather than a
+// position in a series (see the outcome chart). The token name is chart code's
+// own literal — never reader-supplied — so it is not run through `esc`, which
+// is for the label and display text either side of it.
 function barChart(containerId, data, colorVar) {{
   const el = document.getElementById(containerId);
   if (!data.length) {{ el.innerHTML = '<p style="color:var(--faint)">No data.</p>'; return; }}
   const max = Math.max(...data.map(d=>d.value), 1);
   el.innerHTML = data.map(d => {{
     const pct = (d.value/max*100).toFixed(1);
-    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
+    const fill = d.colorVar || colorVar;
+    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{fill}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
   }}).join('');
 }}
 
 // ── Token economy chart ─────────────────────────────────────────────────
-barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--violet');
+barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.input_tokens, display:r.input_tokens.toLocaleString()}})), '--c1');
 
 // ── Tool frequency chart ────────────────────────────────────────────────
 (function toolChart() {{
@@ -855,7 +861,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('tool-chart', data, '--violet');
+  barChart('tool-chart', data, '--c2');
 }})();
 
 // ── Files touched chart ─────────────────────────────────────────────────
@@ -864,7 +870,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--brand-fill');
+  barChart('file-chart', data, '--c3');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
@@ -874,10 +880,18 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     const o = e.outcome || 'open';
     counts[o] = (counts[o]||0)+1;
   }}
+  // An outcome IS a verdict, so these bars are the one chart on the page
+  // entitled to semantic colour. Every bar used to be painted --success,
+  // including the failures — the chart said "pass" in the one channel the
+  // palette reserves for saying it, about rows that did not.
+  const verdict = o =>
+    o === 'completed' || o === 'resolved' || o === 'success' ? '--ok'
+    : o === 'failed' || o === 'error' || o === 'aborted' ? '--bad'
+    : '--neutral-mark';
   const data = Object.entries(counts)
-    .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
+    .map(([name,n])=>({{label:name, value:n, display:String(n), colorVar:verdict(name)}}))
     .sort((a,b)=>b.value-a.value);
-  barChart('outcome-chart', data, '--success');
+  barChart('outcome-chart', data, '--neutral-mark');
 }})();
 </script>
 

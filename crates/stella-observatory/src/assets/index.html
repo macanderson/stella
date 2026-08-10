@@ -12,13 +12,25 @@
    the one worth restating here: **no accent hue in the chrome. The only colour
    on the page is semantic** — a thing passed, or it did not.
 
-   That replaces the Phosphor Gold accent this file carried since the comet
+   That replaced the Phosphor Gold accent this file carried since the comet
    kit. Gold marked what was active, which meant an instrument's chrome
    competed with its data for the eye; the ink/paper inversion says the same
    thing (`background:var(--accent); color:var(--ink)`) and says it in the one
-   dimension a reader cannot mistake for a measurement. The brand's gold now
-   appears on exactly one surface — nowhere. The wordmark ships as the *mono*
-   cut for the same reason.
+   dimension a reader cannot mistake for a measurement.
+
+   The rule now carries one carve-out, and the carve-out is measured rather
+   than tasteful: **gold is permitted on identity, and nowhere else** — the
+   wordmark, the favicon mark, and at most one primary action per page. It may
+   never encode a state. `--identity` #FFB000 against `--warn` #C9A227 is
+   1.32:1, so a reader told to separate "active" from "warning" by hue would be
+   reading a difference that is not there. Three jobs, three channels, no
+   overlap: `--identity` says whose instrument this is, `--accent` says what is
+   selected, `--ok`/`--warn`/`--bad` say what happened.
+
+   What that costs: the product no longer matches the marketing site, which
+   fills its nav, buttons and active states with gold. That is the intended
+   trade — a marketing page has no data for its chrome to compete with, and
+   this page is nothing but data.
 
    Token NAMES are unchanged on purpose. Four hundred lines of component CSS
    below reference them, and re-pointing values leaves every one of those rules
@@ -37,6 +49,15 @@
      hue. The names survive so every existing rule keeps working. */
   --gold:#EDEDED; --gold-bright:#FFFFFF; --gold-deep:#A1A1A1;
   --text:#EDEDED; --text-2:#A1A1A1; --text-3:#6E6E6E;
+  /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
+     carve-out: wordmark, favicon mark, one primary action. Never a state.
+     Both values are taken from docs/brand/css/tokens.css rather than mixed
+     here — --stella-gold-500 on ink, --stella-gold-800 on paper. The light
+     value is NOT the brand's --stella-gold-deep (#A37200): that token is
+     documented for "small gold text on light surfaces" and measures 4.05:1 on
+     --surface, under AA. Gold-800 is 6.75:1 and does the job the deep token
+     names (#2591). */
+  --identity:#FFB000; --identity-ink:#0B0B0C;
   /* The three semantic colours, and the only colour anywhere. Desaturated to
      the reference's own register (its --pass/--fail), so they read as marks on
      an instrument rather than as UI chrome. --warn keeps a hue rather than
@@ -101,17 +122,21 @@
 
      --text 18.97:1   --text-2 7.49:1   --text-3 3.10:1
      --ok    5.91:1   --warn   5.99:1   --bad    6.74:1
+     --identity 6.46:1 (#795500)
 
    and on the dark side against --raised (#111111):
 
      --text 16.13:1   --text-2 7.31:1   --text-3 3.70:1
      --ok    8.52:1   --warn   7.81:1   --bad    6.17:1
+     --identity 10.31:1 (#FFB000)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
    AA (4.5:1) on both. --text-3 clears neither and is not meant to, which is
    the constraint to hold when editing: it carries non-essential labelling
    only — a legend key, a units suffix — and never a value a reader must act
-   on. The inversion pair (--ink on --accent) is 19.80:1 light, 16.91:1 dark.
+   on. The inversion pair (--ink on --accent) is 19.80:1 light, 16.91:1 dark,
+   and the identity fill pair (--identity-ink on --identity) is 6.75:1 light,
+   10.74:1 dark — both clear AA for the one primary action the rule allows.
 
    The --c1..--c4 series ramp is lightness-ordered rather than
    contrast-matched on purpose: a series is identified by its position in the
@@ -130,6 +155,7 @@
     --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
     --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
     --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
+    --identity:#795500; --identity-ink:#FFFFFF;
     --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
     --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
     --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
@@ -145,6 +171,7 @@
   --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
   --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
   --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
+  --identity:#795500; --identity-ink:#FFFFFF;
   --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
   --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
   --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
@@ -200,7 +227,17 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    Ink on the light one), so an OS-media-query-only adaptive mark would track
    the OS and ignore this page's own explicit toggle. Byte copies of
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
-   /assets/wordmark{,-light}.svg (src/lib.rs). */
+   /assets/wordmark{,-light}.svg (src/lib.rs).
+
+   These are the *color* cuts — the comet star is Phosphor Gold #FFB000 on
+   both grounds. This file shipped the mono cuts while this comment claimed
+   the color ones, which is the drift the identity carve-out above resolves:
+   the wordmark is the canonical case of identity, so it is the one place gold
+   is not merely allowed but expected. The star holds its full gold on paper
+   (1.76:1 against #FFFFFF) rather than dropping to the deep ramp, because
+   WCAG 1.4.11 exempts logotypes from contrast minima and the brand rule is
+   "shapes and marks stay full gold on both grounds"; the *text* half of the
+   lockup is baked Ink and carries the legibility. */
 .bword-light{display:none}
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]) .bword-dark{display:none}
@@ -559,7 +596,10 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .loop-strip b{color:var(--text-2);font-weight:600}
 footer{margin-top:var(--sp4);padding-top:var(--sp2);border-top:1px solid var(--hairline);
        font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3)}
-footer b{color:var(--text-2);font-weight:600}
+/* The footer's `stella` is the wordmark in text form — identity, not a state
+   and not a measurement — so it is the one element on this page that takes
+   --identity. Everything else in the footer stays --text-3. */
+footer b{color:var(--identity);font-weight:600}
 .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
     clip:rect(0 0 0 0);white-space:nowrap;border:0}
 </style>

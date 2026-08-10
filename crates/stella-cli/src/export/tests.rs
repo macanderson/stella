@@ -431,7 +431,7 @@ fn full_export_pipeline_creates_valid_zip_with_dashboard() {
     assert_eq!(&bytes[..2], b"PK", "valid ZIP magic bytes");
     let content = String::from_utf8_lossy(&bytes);
     assert!(
-        content.contains("Stella Session Telemetry"),
+        content.contains("stella session telemetry"),
         "HTML dashboard is embedded"
     );
     assert!(
@@ -647,13 +647,20 @@ fn exporting_a_session_with_no_rows_refuses_rather_than_widening() {
     );
 }
 
-/// The dashboard's `:root` palette is generated from the live theme, not
-/// typed into the template. The block it replaced was two recolours stale
-/// — a true-black ground and the retired sky/violet pair — in an artifact
-/// users mail around and attach to PRs, so it was the most widely seen
-/// remnant of a retired identity in the product.
+/// The dashboard ships the web instrument palette, in both themes.
+///
+/// It used to interpolate its `:root` from `stella_tui::theme`, which was
+/// right while the terminal was its only sibling and wrong once the
+/// Observatory and arenabench existed. The TUI palette is gold-chromed by
+/// design — `ACCENT == BRAND == #FFB81A`, and gold there marks a *Running*
+/// state — so generating from it guaranteed this file matched the one
+/// surface a web instrument must not match. Replaces
+/// `the_dashboard_palette_is_generated_from_the_live_theme`, whose subject
+/// (the generation step) no longer exists; the anti-staleness job it did is
+/// now done by `tests/design_token_parity.rs`, which compares this block
+/// against the Observatory's rather than against the terminal's.
 #[test]
-fn the_dashboard_palette_is_generated_from_the_live_theme() {
+fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
     let html = render_dashboard(
         &[],
         &[],
@@ -681,11 +688,49 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         );
     }
 
+    // Light is real, not a media-query afterthought: BOTH gates present, and
+    // every light value declared in both of them. A colour defined only
+    // inside the media query is one an explicit `data-theme` cannot override,
+    // which is the exact bug the two-gate convention exists to prevent.
+    assert!(
+        html.contains("@media (prefers-color-scheme: light)"),
+        "the dashboard defines no light scheme for the OS preference"
+    );
+    assert!(
+        html.contains(r#":root[data-theme="light"]"#),
+        "the dashboard has no explicit light gate, so a toggle cannot win"
+    );
+    for declaration in [
+        "--ground: #FFFFFF;",
+        "--surface: #FAFAFA;",
+        "--text: #0A0A0A;",
+        "--accent: #0A0A0A;",
+        "--identity: #795500;",
+        "--ok: #11703A;",
+        "--bad: #A32F1F;",
+    ] {
+        assert_eq!(
+            html.matches(declaration).count(),
+            2,
+            "`{declaration}` must be declared in BOTH light gates, \
+             or the explicit theme choice loses to the OS preference"
+        );
+    }
+
     // The retired values must not survive anywhere in the document —
     // including the chart JS, which referenced a `--azure` the `:root`
-    // block no longer defines.
+    // block no longer defines. The brand-chrome pair joins them: this
+    // surface no longer paints chrome in the terminal's gold or its violet.
     for retired in [
-        "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
+        "#7dd3fc",
+        "#38bdf8",
+        "#a78bfa",
+        "#6c7b90",
+        "#4d9fff",
+        "--sky",
+        "--azure",
+        "--brand-fill",
+        "var(--violet)",
     ] {
         assert!(
             !html.contains(retired),
@@ -719,6 +764,80 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
             "`var({name})` is referenced but never defined — it paints nothing"
         );
     }
+}
+
+/// The report is monospace and square, like every other stella instrument.
+///
+/// Sans-serif body text and 8px corners were this file's most visible
+/// divergence from the Observatory and arenabench — and it is the surface
+/// users mail around, so it was the copy of the product most readers ever
+/// saw. Proportional digits in a column of measurements are the substantive
+/// half: a table of costs that does not align is harder to read for a reason
+/// the reader cannot name.
+#[test]
+fn the_dashboard_is_monospace_and_square() {
+    let html = render_dashboard(
+        &[],
+        &[],
+        "2026-01-01 00:00:00",
+        "ses-x",
+        &ExportExclusions::default(),
+    );
+
+    assert!(
+        html.contains(r#"--mono: "JetBrains Mono""#),
+        "the dashboard does not declare the brand's mono stack"
+    );
+    assert!(
+        html.contains("font-family: var(--mono);"),
+        "the dashboard body does not use the mono token"
+    );
+    assert!(
+        !html.contains("-apple-system"),
+        "the dashboard still falls back to the system sans stack"
+    );
+    assert!(
+        html.contains("--radius: 0;"),
+        "the dashboard does not declare square corners"
+    );
+    for rounded in [
+        "border-radius: 8px",
+        "border-radius: 6px",
+        "border-radius: 3px",
+        "border-radius: 2px",
+        "border-radius: 0 6px 6px 0",
+    ] {
+        assert!(
+            !html.contains(rounded),
+            "`{rounded}` still ships: a rounded corner says \"surface\" \
+             where a hairline says \"boundary\", and this page is boundaries"
+        );
+    }
+}
+
+/// The wordmark is lowercase, everywhere the report says it.
+///
+/// `scripts/check-brand-case.sh` reads docs prose, not Rust string literals,
+/// so the `<title>` and `<h1>` here shipped "Stella" past the guard that
+/// exists to forbid exactly that — on the artifact a reader opens first.
+#[test]
+fn the_dashboard_spells_the_wordmark_lowercase() {
+    let html = render_dashboard(
+        &[],
+        &[],
+        "2026-01-01 00:00:00",
+        "ses-x",
+        &ExportExclusions::default(),
+    );
+
+    assert!(
+        !html.contains("Stella"),
+        "the dashboard capitalises the wordmark; it is lowercase always"
+    );
+    assert!(
+        html.contains(r#"<span class="wordmark">stella</span>"#),
+        "the masthead does not carry the wordmark"
+    );
 }
 
 /// The watermark is the one store-supplied value that reaches markup
