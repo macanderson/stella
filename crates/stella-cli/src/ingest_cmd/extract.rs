@@ -160,6 +160,9 @@ pub(super) struct DocSummary {
     pub withheld: usize,
     /// The run cost in USD.
     pub cost_usd: f64,
+    /// The candidate ids of every proposal written, so the source file's
+    /// lineage can name what it produced.
+    pub candidate_ids: Vec<String>,
 }
 
 /// Extract every named document, writing one proposal file each.
@@ -171,6 +174,7 @@ pub(super) struct DocSummary {
 pub(super) fn extract_all(
     root: &Path,
     docs: &[NamedDoc],
+    keep_dismissed: bool,
     model: Option<&str>,
     api_key: Option<&str>,
     base_url: Option<&str>,
@@ -205,6 +209,27 @@ pub(super) fn extract_all(
         )) {
             Ok(summary) => {
                 any = true;
+                // The lineage is the run's provenance receipt: the hash of the
+                // text extraction actually read (not whatever is on disk by
+                // now), and the candidates it minted. Best-effort — a failed
+                // ledger write must not fail an ingest that already succeeded.
+                super::lineage::record_ingest(
+                    root,
+                    &doc.rel,
+                    stella_core::ingest::lineage::Lineage {
+                        source_hash: super::lineage::ingested_content_hash(
+                            root,
+                            &doc.rel,
+                            &doc.content,
+                        ),
+                        commit: git(root, &["rev-parse", "--short", "HEAD"]),
+                        ingested_at: observed_at.clone(),
+                        ingest_run_id: ingest_run_id.clone(),
+                        candidate_ids: summary.candidate_ids.clone(),
+                        alerts: stella_core::ingest::lineage::AlertState::Active,
+                    },
+                    keep_dismissed,
+                );
                 report(doc, &summary);
             }
             Err(err) => {
@@ -278,6 +303,11 @@ async fn extract_document(
     }
 
     let written_to = write_proposals(root, &doc.rel, &file)?;
+    let candidate_ids = file
+        .proposals
+        .iter()
+        .map(|p| p.candidate_id.clone())
+        .collect();
     Ok(DocSummary {
         written_to,
         total: file.proposals.len(),
@@ -286,6 +316,7 @@ async fn extract_document(
         dismissed,
         withheld,
         cost_usd,
+        candidate_ids,
     })
 }
 

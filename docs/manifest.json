@@ -254,6 +254,11 @@
       "status": "living",
       "title": "The Deterministic Engine: Why Single-Thread Beats the Swarm"
     },
+    "diagnostic-codes": {
+      "path": "docs/reference/diagnostics.md",
+      "status": "living",
+      "title": "Diagnostic codes \u2014 every code the workspace emits, and what to do about each"
+    },
     "diagnostics": {
       "path": "docs/spec/diagnostics.md",
       "sections": [

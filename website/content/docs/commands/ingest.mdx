@@ -11,7 +11,10 @@ With **no arguments** it scans the workspace and shows you what it found, groupe
 
 ```bash
 stella ingest [--all]
-stella ingest <path>... 
+stella ingest [--keep-dismissed] <path>...
+stella ingest alerts list
+stella ingest alerts dismiss <path>
+stella ingest alerts restore <path>
 ```
 
 ## What it does
@@ -90,6 +93,45 @@ stella ingest docs/spec/storage-map.md ~/notes/deploy-runbook.md
 <Callout type="info">
 Extraction makes a model call, so it needs a resolvable credential — the same chain every other model call uses. The scan half does not. A document whose extraction fails (no key configured, an unparseable reply, a write error) is reported and skipped; one bad document never aborts the others.
 </Callout>
+
+## Lineages and staleness alerts
+
+Every extracted file leaves a **lineage** behind, in `.stella/private/ingest-lineages.json`: the content hash the file had when it was read (git's own blob hash where git can compute one, a plain sha256 otherwise), the commit it was read at, the ingest run id, and the candidate ids the run produced. Nothing about this is keyed to any particular filename — an agent-instruction file, a runbook, and a scratch note you wrote purely to be ingested are all just *ingested source files*.
+
+At session start — asynchronously, off the turn path — stella compares each lineage against the source's current hash. A file that **changed** or **disappeared** since its ingest produces a non-blocking inbox notification. The alert never enters the model's prompt, never blocks a turn, and never mutates anything: re-ingesting stays a deliberate act.
+
+Whether an alert matters is entirely your call, **per file**. A file authored as scaffolding — ingested, then deleted, because the records were the product — should never nag you:
+
+<CardGrid size="md">
+  <OptionCard name="alerts list">
+    Every tracked source file: when it was ingested, how many records it produced, its alert
+    state, and whether it has drifted.
+  </OptionCard>
+  <OptionCard name="alerts dismiss <path>">
+    Permanently silence staleness alerts for one file — not next session, not ever. Scoped to
+    exactly that file; every other lineage keeps alerting. Says nothing about the records:
+    they stay live, recallable, and re-ingestable.
+  </OptionCard>
+  <OptionCard name="alerts restore <path>">
+    Re-arm alerts for a dismissed file.
+  </OptionCard>
+  <OptionCard name="--keep-dismissed">
+    On re-ingest, keep an existing dismissal. By default a fresh ingest of the same path
+    re-arms alerts — re-ingesting re-declares the file a live source, which contradicts the
+    dismissal.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# What changed under my records?
+stella ingest alerts list
+
+# This file was scaffolding; the records are the product. Never tell me again.
+stella ingest alerts dismiss docs/onboarding-notes.md
+
+# The file changed — re-extract it (proposals already decided about are withheld)
+stella ingest docs/onboarding-notes.md
+```
 
 ## The safety gate is not in the prompt
 

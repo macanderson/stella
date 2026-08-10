@@ -357,7 +357,10 @@ pub async fn run_goal_cmd(
     let mut messages = vec![CompletionMessage::system(
         with_session_hook_context(
             if use_pipeline {
-                build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+                // Assembled before this run resolves its engine wiring, so the
+                // worker may still be re-routed: no model line rather than a
+                // possibly-false one (#2721 threads the wiring here).
+                build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
             } else {
                 build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
             },

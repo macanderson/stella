@@ -87,6 +87,7 @@ python3 ./scripts/check-doc-links.py check
 ./scripts/check-stat-portability.sh
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-typed-errors.py
+./scripts/check-diagnostic-codes.sh
 ./scripts/check-wire-schema.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 cargo fmt --check

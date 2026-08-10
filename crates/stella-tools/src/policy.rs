@@ -32,7 +32,7 @@
 //! 3. `"*"`, every tool
 //!
 //! So `{"*": "off", "read_file": "on"}` is a read-only agent in two lines, and
-//! `{"process": "off", "read_output": "on"}` keeps exactly one of the four
+//! `{"process": "off", "read_output": "on"}` keeps exactly one of the five
 //! process tools. Anything unmentioned is on.
 //!
 //! # Composing scopes

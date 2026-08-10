@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 53 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 55 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -127,10 +127,13 @@ These 53 tools register in every session — no configuration, no prerequisites.
 
 <CardGrid size="md">
   <ToolCard name="start_process" access="mutating">
-    Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other three.
+    Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other four.
   </ToolCard>
   <ToolCard name="read_output" access="mutating">
     Read a started process's buffered stdout+stderr since the last read, plus its running/exited state.
+  </ToolCard>
+  <ToolCard name="clear_output" access="mutating">
+    Discard a started process's buffered stdout+stderr without reading it. Does not stop the process.
   </ToolCard>
   <ToolCard name="send_stdin" access="mutating">
     Write text to a started process's stdin (e.g. a REPL command).
@@ -330,7 +333,7 @@ Two recipes that fall out of that rule:
 }
 ```
 
-```json title="Keep exactly one of the four process tools"
+```json title="Keep exactly one of the five process tools"
 {
   "tools": {
     "process": "off",
@@ -445,7 +448,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 53 always-on tools, up to 65 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 55 always-on tools, up to 66 native tools with the code graph, media keys, a search key, and an issue backend, plus the four scratch session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

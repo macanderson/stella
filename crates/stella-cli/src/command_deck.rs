@@ -447,7 +447,9 @@ pub async fn run_deck_session(
         .unwrap_or(true);
     let system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
-            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+            // Assembled once per session, before any turn resolves wiring: no
+            // model line rather than a possibly-false one (#2721).
+            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
         } else {
             agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
         },
@@ -838,6 +840,19 @@ pub async fn run_deck_session(
     // The inbox poller keeps the badge live as other sessions produce
     // persist-until-read notifications.
     spawn_notification_poller(in_tx.clone());
+
+    // Ingest staleness sweep: compare every alert-active ingested source file
+    // against the hash it was ingested at, and drop a deduped inbox item per
+    // drift (#2683). Its own blocking thread, not a deck task: the work is
+    // synchronous filesystem reads plus a `git hash-object` per lineage, it
+    // must never delay the splash gate or a turn, and the poller above picks
+    // up whatever it pushes. Best-effort — the handle is dropped on purpose.
+    {
+        let sweep_root = cfg.workspace_root.clone();
+        std::thread::spawn(move || {
+            let _ = crate::ingest_cmd::lineage::surface_stale_sources(&sweep_root);
+        });
+    }
 
     // The ISSUES tab's lazily-detected tracker backend (see
     // [`issue_backend`]); shared by every spawned issues task.

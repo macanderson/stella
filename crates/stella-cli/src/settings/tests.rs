@@ -554,7 +554,7 @@ fn a_tools_entry_switches_a_tool_off_and_the_project_scope_wins_per_key() {
 }
 
 /// **Witness: a group key covers its whole family in one line.**
-/// `{"process": "off"}` disables all four process tools — the case the
+/// `{"process": "off"}` disables all five process tools — the case the
 /// two-field `ToolsSettings` could not express at all.
 #[test]
 fn a_group_key_switches_off_the_whole_family() {
@@ -564,7 +564,7 @@ fn a_group_key_switches_off_the_whole_family() {
     let policy = merged.tool_policy();
 
     let family = stella_tools::catalog::names_in_group("process");
-    assert_eq!(family.len(), 4, "the process group is the four of them");
+    assert_eq!(family.len(), 5, "the process group is the five of them");
     for name in family {
         assert!(!policy.allows(name), "`{name}` must be off");
     }
