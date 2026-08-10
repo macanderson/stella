@@ -613,8 +613,14 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 15] {
-        [
+    /// Returned as a slice, not a sized array: the array length was one
+    /// shared cell every PR adding a source file had to write, and two green
+    /// PRs (#2748 adding `zai/tests/stream_fallback.rs`, #2752 adding
+    /// `http.rs`) composed into a red `main` when the merge kept both
+    /// entries and one length — the same shape that removed the spelled-out
+    /// total from `GATE_STEPS` (#1883).
+    fn adapter_sources() -> &'static [&'static str] {
+        &[
             // The overflow axis's witnesses live beside the classifier they
             // prove: overflow detection is shared plumbing
             // (`http::classify_http_status`), and its per-dialect tests
