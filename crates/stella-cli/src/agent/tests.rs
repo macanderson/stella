@@ -745,7 +745,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
         .map(|schema| schema.name)
         .collect();
 
-    assert_eq!(prompt, PIPELINE_SYSTEM_PROMPT);
+    assert_eq!(prompt, expected_isolated_pipeline_prompt(root));
     assert!(rules.is_empty(), "rules loaded under benchmark isolation");
     assert!(skills.is_empty(), "skills loaded under benchmark isolation");
     assert!(

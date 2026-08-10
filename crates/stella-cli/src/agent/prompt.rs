@@ -699,6 +699,21 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
     out
 }
 
+/// The exact prompt claim-mode isolation must yield: the pipeline persona
+/// plus the computed session-environment block and NOTHING else. The
+/// isolation gate excludes stored steering — memories, rules, skills, custom
+/// tools — never this block, which is computed from the live process and
+/// workspace at assembly (#2692). Lives here rather than beside its caller in
+/// `agent/tests.rs` because that file is a grandfathered god file closed to
+/// growth, and because "persona + environment, nothing appended" is this
+/// module's own contract to state.
+#[cfg(test)]
+pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path) -> String {
+    let mut expected = PIPELINE_SYSTEM_PROMPT.to_string();
+    append_session_environment(&mut expected, workspace_root);
+    expected
+}
+
 /// The structural half of the shared-contract discipline: the tests above are
 /// written one per contract, so they cover the contracts that exist and say
 /// nothing about the next one. This module derives the set from this file's own
