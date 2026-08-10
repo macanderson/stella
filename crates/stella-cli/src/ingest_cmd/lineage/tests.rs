@@ -191,6 +191,23 @@ fn dismissing_an_untracked_path_names_the_tracked_ones() {
     assert!(err.contains("tracked.md"), "{err}");
 }
 
+/// The ledger key is one derivation, everywhere: `display_path` normalizes
+/// backslashes even on the out-of-workspace fallback, so a lineage recorded
+/// on Windows is the same string a later `alerts dismiss` computes. Ingest
+/// used a raw fallback here once, and the two spellings could never meet.
+#[test]
+fn ledger_keys_normalize_backslashes_on_the_fallback_path() {
+    let root = std::path::Path::new("/ws");
+    assert_eq!(
+        display_path(root, std::path::Path::new("C:\\notes\\steering.md")),
+        "C:/notes/steering.md"
+    );
+    assert_eq!(
+        display_path(root, std::path::Path::new("/ws/docs/notes.md")),
+        "docs/notes.md"
+    );
+}
+
 /// Re-ingesting a dismissed file re-arms it by default; `--keep-dismissed`
 /// carries the dismissal forward. The core owns the rule — this pins that the
 /// flag actually reaches it through the persistence layer.

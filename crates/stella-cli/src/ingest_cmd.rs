@@ -364,7 +364,12 @@ fn run_named(
     let mut docs = Vec::new();
     println!();
     for path in paths {
-        let rel = relative(root, path).unwrap_or_else(|| path.to_string_lossy().to_string());
+        // `display_path`, not `relative`-with-a-raw-fallback: this string is
+        // also the lineage-ledger key, and `alerts dismiss`/`restore` derive
+        // theirs the same way. A raw fallback kept Windows backslashes for an
+        // out-of-workspace file, so its recorded key could never match the
+        // normalized one a dismissal looked up.
+        let rel = lineage::display_path(root, path);
         match fs::read_to_string(path) {
             Ok(content) => {
                 let candidate = ingest::classify(&rel, &content);
