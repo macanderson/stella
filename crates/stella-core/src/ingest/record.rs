@@ -315,6 +315,29 @@ impl Record {
         Ok(())
     }
 
+    /// The record's promotion tier: the explicit declaration when present,
+    /// else derived from `force` + `applies_to` (#2709). The derivation IS
+    /// the pre-tier channel contract, restated: `must`/`should` always rode
+    /// the cached prefix (pinned), a scoped `may`/`info` rendered only when
+    /// its trigger matched (scoped), and an unscoped `may`/`info` rode
+    /// ordinary recall (retrieved) — so a record with no `tier` field
+    /// behaves exactly as it did before the field existed.
+    pub fn tier(&self) -> Tier {
+        let Some(steering) = self.steering.as_ref() else {
+            return Tier::Retrieved;
+        };
+        if let Some(tier) = steering.tier {
+            return tier;
+        }
+        if steering.force.is_always_injected() {
+            return Tier::Pinned;
+        }
+        match &steering.applies_to {
+            Some(applies) if !applies.is_empty() => Tier::Scoped,
+            _ => Tier::Retrieved,
+        }
+    }
+
     /// The truth probe that may be re-run to re-check this record's claim, if
     /// any. Returns the record's own probe only when it is **honored** for the
     /// record's origin — a gated probe (`command_succeeds`/`http_ok`) is never
@@ -411,6 +434,15 @@ pub struct Steering {
     /// [sel]: super::super::records::select
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applies_to: Option<AppliesTo>,
+    /// The promotion tier, when declared explicitly (#2709). Absent — every
+    /// record written before the field existed, and most after — the tier
+    /// derives from `force` + `applies_to` exactly as the channels always
+    /// behaved, so this field changes nothing until someone sets it. Ingest
+    /// stamps the derived value explicitly so the classification is visible
+    /// in the proposal and overridable at review; `skip_serializing_if`
+    /// keeps the canonical hash of every existing record unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<Tier>,
 }
 
 /// The conditions under which a record applies. All fields are optional and
@@ -685,6 +717,42 @@ impl Force {
             Self::Should => 2,
             Self::May => 1,
             Self::Info => 0,
+        }
+    }
+}
+
+/// The promotion tier: where a record is guaranteed to surface (#2709, the
+/// "no gaps without bloat" mechanism from #2683).
+///
+/// The tier is an *override axis*: [`Record::tier`] derives it from
+/// `force` + `applies_to` when absent, reproducing the channel behavior that
+/// predates the field byte-for-byte. Declaring it explicitly is how a user
+/// (or ingest) moves a record between channels without contorting its force —
+/// a `may`-strength convention can be pinned, and a `must` that only matters
+/// under `src/api/**` can stop taxing every turn's prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tier {
+    /// A standing constraint binding on every turn: rides the byte-stable
+    /// cached prefix. Cache-safe by construction — pinned content changes
+    /// only at explicit re-ingest or review, never mid-session.
+    Pinned,
+    /// A conditional rule: rides the volatile recall block, and only on turns
+    /// whose facts trip its `applies_to` trigger. A scoped record with no
+    /// trigger never fires — `records::validate` names that as a finding.
+    Scoped,
+    /// Everything else: ordinary relevance-ranked recall in the volatile
+    /// block, competing under the channel budget.
+    Retrieved,
+}
+
+impl Tier {
+    /// The canonical `snake_case` string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pinned => "pinned",
+            Self::Scoped => "scoped",
+            Self::Retrieved => "retrieved",
         }
     }
 }

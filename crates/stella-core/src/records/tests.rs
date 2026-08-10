@@ -7,7 +7,7 @@
 use super::super::context_record::kind::{Origin, RecordStatus};
 use super::super::ingest::record::{
     AppliesTo, Enforcement, EnforcementMode, Force, Record, RecordKind, SharingScope, Steering,
-    Truth,
+    Tier, Truth,
 };
 use super::*;
 
@@ -26,6 +26,7 @@ pub(super) fn record_named(lineage: &str) -> Record {
         supersedes_record_id: None,
         provenance: None,
         steering: Some(Steering {
+            tier: None,
             force: Force::Must,
             precedence: Some(50),
             applies_to: None,
@@ -43,8 +44,20 @@ pub(super) fn with_truth(mut record: Record, truth: Truth) -> Record {
 }
 
 /// `record` at a different steering force.
+/// `record` with an explicit promotion tier on top of `force` (#2709).
+pub(super) fn with_tier(record: Record, force: Force, tier: Tier) -> Record {
+    let mut record = with_force(record, force);
+    record
+        .steering
+        .as_mut()
+        .expect("with_force set steering")
+        .tier = Some(tier);
+    record
+}
+
 pub(super) fn with_force(mut record: Record, force: Force) -> Record {
     record.steering = Some(Steering {
+        tier: None,
         force,
         precedence: Some(50),
         applies_to: None,
@@ -55,6 +68,7 @@ pub(super) fn with_force(mut record: Record, force: Force) -> Record {
 /// `record` scoped to `paths` at `precedence`.
 pub(super) fn with_scope(mut record: Record, paths: &[&str], precedence: u32) -> Record {
     record.steering = Some(Steering {
+        tier: None,
         force: Force::Must,
         precedence: Some(precedence),
         applies_to: Some(AppliesTo {
@@ -860,4 +874,34 @@ expect = "present"
             volatile.rendered
         );
     }
+}
+
+/// Witness for #2709: an explicit `tier = "scoped"` with no `applies_to`
+/// trigger is named — no turn can ever select it, so the declaration is a
+/// silent gap — while the derived tiers, which cannot produce the mismatch,
+/// stay finding-free.
+#[test]
+fn an_explicitly_scoped_record_without_a_trigger_is_named() {
+    let mut untriggered = loaded_from(with_tier(
+        record_named("ctx.acme.web.untriggered"),
+        Force::May,
+        Tier::Scoped,
+    ));
+    validate::check_record(&mut untriggered);
+    assert!(
+        untriggered
+            .findings
+            .contains(&RecordFinding::ScopedWithoutTrigger),
+        "scoped with nothing to fire on must be named: {:?}",
+        untriggered.findings
+    );
+
+    let mut derived = loaded_from(with_force(record_named("ctx.acme.web.plain"), Force::May));
+    validate::check_record(&mut derived);
+    assert!(
+        !derived
+            .findings
+            .contains(&RecordFinding::ScopedWithoutTrigger),
+        "a derived retrieved record carries no scoped-without-trigger finding"
+    );
 }

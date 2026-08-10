@@ -349,13 +349,33 @@ pub(crate) fn assemble_system_prompt(
     // construction — the truth sweep already demoted or dropped anything whose
     // freshness is in question, so no clock and no per-turn text enters here
     // (docs/spec/adaptive-context/context-record-examples/07-agent-projection.md).
-    let rules_section = active_rules
-        .registry()
-        .render(stella_core::records::Channel::Cached, None)
-        .text;
-    if !rules_section.is_empty() {
+    let rules_section = active_rules.registry().render(
+        stella_core::records::Channel::Cached,
+        // Capped since #2709: a pinned record is guaranteed a prefix seat
+        // only while the set fits, and a runaway ingest must not flood every
+        // future prompt. No real record set has approached this budget.
+        Some(stella_core::records::CACHED_RECORD_BUDGET_CHARS),
+    );
+    if !rules_section.text.is_empty() {
         prompt.push('\n');
-        prompt.push_str(&rules_section);
+        prompt.push_str(&rules_section.text);
+    }
+    // Overflow is named, never silent — the same contract the memory budget
+    // above keeps, and the render-time half of the ingest-time pinned-overflow
+    // diagnostic. Deterministic for a given record set (the drop list comes
+    // from the same stable render), so the prefix stays byte-stable (L-E8).
+    if !rules_section.dropped.is_empty() {
+        let handles: Vec<String> = rules_section
+            .dropped
+            .iter()
+            .map(|handle| format!("^{handle}"))
+            .collect();
+        prompt.push_str(&format!(
+            "\n({} pinned record(s) exceeded the prefix budget and were omitted: {} — \
+             retier or trim them via `stella context review`)",
+            rules_section.dropped.len(),
+            handles.join(" ")
+        ));
     }
     prompt
 }
@@ -1222,6 +1242,78 @@ mod tests {
                 && prompt.contains("never cd to the primary checkout"),
             "a gitfile checkout must be flagged as a linked worktree with the stay-inside \
              instruction: {prompt}"
+        );
+    }
+
+    /// Witness for #2709 at the assembly level: an explicitly pinned
+    /// `may`-strength record reaches the byte-stable prefix under the
+    /// `### Pinned` heading — the "no gaps" half of the tier contract, proven
+    /// where the prompt is actually built rather than at the renderer alone.
+    #[test]
+    fn a_pinned_record_reaches_the_stable_prefix() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path();
+        let rules_dir = root.join(".stella/rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        std::fs::write(
+            rules_dir.join("ctx.acme.style.toml"),
+            "schema = \"context-record/v0.1\"\nset_id = \"acme\"\n\
+             \n[[record]]\nlineage_id = \"ctx.acme.pinned-style\"\nkind = \"preference\"\n\
+             statement = \"ALWAYS_PIN_THIS_CONVENTION\"\nstatus = \"active\"\norigin = \"user\"\n\
+             \n[record.steering]\nforce = \"may\"\ntier = \"pinned\"\n",
+        )
+        .unwrap();
+        let authority = crate::settings::AuthorityPolicy {
+            project_prompts_allowed: true,
+            ..Default::default()
+        };
+        let rules = crate::rules::load_workspace_rules(root, &authority);
+        let prompt =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+        assert!(
+            prompt.contains("### Pinned") && prompt.contains("ALWAYS_PIN_THIS_CONVENTION"),
+            "a pinned may-record must reach the stable prefix: {prompt}"
+        );
+    }
+
+    /// Witness for #2709's overflow contract: pinned records past the cached
+    /// budget are dropped by declared precedence and the omission NAMES itself
+    /// in the prefix — deterministic for the record set, so byte-stability
+    /// holds — instead of the set silently thinning.
+    #[test]
+    fn pinned_overflow_names_itself_in_the_prefix() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path();
+        let rules_dir = root.join(".stella/rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        let mut contents = String::from("schema = \"context-record/v0.1\"\nset_id = \"acme\"\n");
+        // ~45 records x ~420 rendered chars comfortably exceeds the 16k budget.
+        for i in 0..45 {
+            let filler = "x".repeat(400);
+            contents.push_str(&format!(
+                "\n[[record]]\nlineage_id = \"ctx.acme.bulk-{i:02}\"\nkind = \"rule\"\n\
+                 statement = \"Rule {i:02} {filler}\"\nstatus = \"active\"\norigin = \"user\"\n\
+                 \n[record.steering]\nforce = \"must\"\nprecedence = {}\n",
+                100 - i
+            ));
+        }
+        std::fs::write(rules_dir.join("ctx.acme.toml"), contents).unwrap();
+        let authority = crate::settings::AuthorityPolicy {
+            project_prompts_allowed: true,
+            ..Default::default()
+        };
+        let rules = crate::rules::load_workspace_rules(root, &authority);
+        let first =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+        assert!(
+            first.contains("exceeded the prefix budget and were omitted"),
+            "the drop must name itself in the prefix, never truncate silently"
+        );
+        let second =
+            super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+        assert_eq!(
+            first, second,
+            "the overflow note is part of the prefix and must be byte-stable (L-E8)"
         );
     }
 

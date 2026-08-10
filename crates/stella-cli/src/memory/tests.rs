@@ -761,3 +761,45 @@ fn inject_still_appends_content_the_history_has_never_held() {
         .count();
     assert_eq!(markers, 3, "three distinct blocks are three appends");
 }
+
+/// Witness for #2709's coverage signal: a record that MATCHED this turn's
+/// facts but lost its seat to the record budget is reported, not silently
+/// absent — a scoped rule that systematically loses the budget contest looks
+/// exactly like a rule that never applied, unless someone says otherwise.
+#[test]
+fn a_matched_record_evicted_by_the_budget_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut memory =
+        SessionMemory::open_with_workspace_skills(dir.path(), false, true).expect("session memory");
+
+    // Five records at ~550 rendered chars each against the 2000-char budget:
+    // the lowest-precedence one must lose its seat.
+    let mut contents = String::from("schema = \"context-record/v0.1\"\nset_id = \"acme\"\n");
+    for i in 0..5 {
+        let filler = "x".repeat(500);
+        contents.push_str(&format!(
+            "\n[[record]]\nlineage_id = \"ctx.acme.bulk-{i}\"\nkind = \"fact\"\n\
+             statement = \"Rule {i} {filler}\"\nstatus = \"active\"\norigin = \"user\"\n\
+             \n[record.steering]\nforce = \"may\"\nprecedence = {}\n",
+            50 - i
+        ));
+    }
+    let record_file = stella_core::rules::RuleFile {
+        path: ".stella/rules/ctx.acme.toml".to_string(),
+        contents,
+    };
+    memory.set_record_registry(stella_core::records::registry::load(
+        &[],
+        &[record_file],
+        &stella_core::records::Facts::default(),
+    ));
+
+    let mut reports = Vec::new();
+    let section =
+        memory.turn_record_section_reporting("anything at all", |message| reports.push(message));
+    assert!(section.is_some(), "the surviving records still render");
+    assert!(
+        reports.iter().any(|m| m.contains("did not fit")),
+        "the evicted record must be reported, never silently absent: {reports:?}"
+    );
+}

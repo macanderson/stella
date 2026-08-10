@@ -60,7 +60,9 @@ pub use bridge::{
 pub use decision::{Decision, DecisionEvent, should_repropose};
 pub use handle::assign_handles;
 pub use registry::{Entry, Facts, Registry};
-pub use render::{Channel, RenderInput, RenderedChannel, render_channel};
+pub use render::{
+    CACHED_RECORD_BUDGET_CHARS, Channel, RenderInput, RenderedChannel, render_channel,
+};
 pub use select::{TurnFacts, applies_this_turn};
 pub use sweep::{Disposition, ExpiryAction, SweepInput, disposition, honored_probe, probe_is_due};
 pub use trust::Trust;
@@ -151,6 +153,13 @@ pub enum RecordFinding {
     /// empty pattern, an unbounded scope. A guard that cannot be evaluated is a
     /// guard that silently never fires.
     GuardLint(String),
+    /// The record declares `tier = "scoped"` but no `applies_to` trigger, so
+    /// no turn can ever select it — a scoped record with nothing to fire on
+    /// is a silent gap wearing a classification (#2709). The record still
+    /// loads (and, having no trigger, renders on every turn like a retrieved
+    /// one), but the mismatch between what was declared and what will happen
+    /// deserves a name.
+    ScopedWithoutTrigger,
     /// The record carries content that must never enter a Git-tracked policy file
     /// (§10): a secret, a credential, raw tool output.
     ForbiddenData {
@@ -182,6 +191,7 @@ impl RecordFinding {
             | Self::GatedProbeRefused(_)
             | Self::BlockingRefused(_)
             | Self::Conflict { .. }
+            | Self::ScopedWithoutTrigger
             | Self::HashMismatch { .. } => Severity::Warning,
             Self::GuardLint(_) | Self::ForbiddenData { .. } => Severity::Blocking,
         }
@@ -205,6 +215,11 @@ impl std::fmt::Display for RecordFinding {
                  — it will never match, so it silently skews relevance"
             ),
             Self::GuardLint(detail) => write!(f, "guard cannot be evaluated: {detail}"),
+            Self::ScopedWithoutTrigger => write!(
+                f,
+                "tier is scoped but applies_to declares no trigger — no turn can ever \
+                 select it; add paths/tasks/keywords or retier it"
+            ),
             Self::ForbiddenData { field } => write!(
                 f,
                 "{field} contains data that must not enter a Git-tracked record \

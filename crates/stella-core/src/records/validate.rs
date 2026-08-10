@@ -130,7 +130,27 @@ fn check_one(record: &Record) -> Vec<RecordFinding> {
     findings.extend(guard_lint(record));
     findings.extend(unknown_tasks(record));
     findings.extend(atomicity(record));
+    findings.extend(scoped_without_trigger(record));
     findings
+}
+
+/// An explicit `tier = "scoped"` with no `applies_to` trigger (#2709). Only
+/// the explicit declaration can produce this: a derived scoped tier requires a
+/// non-empty `applies_to` by construction ([`Record::tier`]).
+fn scoped_without_trigger(record: &Record) -> Vec<RecordFinding> {
+    let Some(steering) = record.steering.as_ref() else {
+        return Vec::new();
+    };
+    let scoped = steering.tier == Some(super::super::ingest::record::Tier::Scoped);
+    let untriggered = steering
+        .applies_to
+        .as_ref()
+        .is_none_or(super::super::ingest::record::AppliesTo::is_empty);
+    if scoped && untriggered {
+        vec![RecordFinding::ScopedWithoutTrigger]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Secrets, credentials, and raw pasted text must never enter a Git-tracked policy

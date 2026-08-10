@@ -29,6 +29,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use stella_core::context_record::Origin;
 use stella_core::ingest::Tier;
+use stella_core::ingest::record::Tier as PromotionTier;
 use stella_core::ingest::{
     AppliesTo, ContextFile, Defaults, Enforcement, EnforcementMode, Force, Probe, ProbeKind,
     Proposal, Provenance, Record, RecordKind, Refutation, Steering, Truth, TruthBasis, Verdict,
@@ -158,6 +159,12 @@ pub(super) struct DocSummary {
     /// How many were withheld because this workspace already decided about them —
     /// declined within a cooldown, or already published as a record.
     pub withheld: usize,
+    /// The pinned footprint: statement characters across this document's
+    /// eligible pinned-tier proposals, measured against the cached-channel
+    /// budget for the overflow diagnostic (#2709). An approximation from
+    /// below — the rendered bullet adds a handle and markers — so a warning
+    /// here is never a false alarm.
+    pub pinned_chars: usize,
     /// The run cost in USD.
     pub cost_usd: f64,
     /// The candidate ids of every proposal written, so the source file's
@@ -296,6 +303,7 @@ async fn extract_document(
     let mut file = ContextFile::new_ingest(set_id, ingest_run_id, defaults.clone());
     let (mut eligible, mut refuted, mut dismissed) = (0usize, 0usize, 0usize);
     let mut withheld = 0usize;
+    let mut pinned_chars = 0usize;
     let mut asserted = Vec::new();
     for claim in claims {
         let proposal = build_proposal(root, set_id, &defaults, observed_at, eligibility, claim);
@@ -311,6 +319,9 @@ async fn extract_document(
             dismissed += 1;
         } else {
             eligible += 1;
+            if proposal.record.tier() == PromotionTier::Pinned {
+                pinned_chars += proposal.record.statement.chars().count();
+            }
             if proposal
                 .refutation
                 .as_ref()
@@ -335,6 +346,7 @@ async fn extract_document(
         refuted,
         dismissed,
         withheld,
+        pinned_chars,
         cost_usd,
         candidate_ids,
         asserted,
@@ -558,10 +570,16 @@ fn build_proposal(
         .clone()
         .filter(|p| gate::probe_honored(Origin::Imported, p.kind));
 
+    let applies = applies_to(&claim);
     let steering = Steering {
         force,
         precedence: Some(precedence_for(force)),
-        applies_to: applies_to(&claim),
+        // Stamped explicitly even though it equals what `Record::tier` would
+        // derive: explicit is what makes the classification visible in the
+        // proposal TOML and overridable at review, and it stops a later force
+        // edit from silently re-tiering the record (#2709).
+        tier: Some(promotion_tier_for(force, applies.as_ref())),
+        applies_to: applies,
     };
     let enforcement = Enforcement {
         mode,
@@ -703,6 +721,25 @@ fn report(doc: &NamedDoc, summary: &DocSummary) {
         dismissed,
         format!("(${:.4})", summary.cost_usd).dimmed()
     );
+    // The "no gaps without bloat" half of the tier contract (#2709): pinned
+    // records are guaranteed a prefix seat only while they fit the cached
+    // budget, so an ingest that mints more pinned content than the budget
+    // holds is told so HERE, where the classification can still be fixed at
+    // review — not discovered later as a silently thinner prefix.
+    if summary.pinned_chars > stella_core::records::CACHED_RECORD_BUDGET_CHARS {
+        println!(
+            "    {}",
+            format!(
+                "pinned overflow: this ingest's pinned records total {} characters, over \
+                 the {}-character cached-prefix budget — the lowest-precedence ones will \
+                 be dropped from the prefix at session open. Retier or trim them in \
+                 `stella context review` before keeping.",
+                summary.pinned_chars,
+                stella_core::records::CACHED_RECORD_BUDGET_CHARS
+            )
+            .yellow()
+        );
+    }
     // Said out loud, because a claim that silently vanished from a re-run reads as
     // the extractor having missed it.
     if summary.withheld > 0 {
@@ -773,6 +810,20 @@ fn precedence_for(force: Force) -> u32 {
         Force::Should => 40,
         Force::May => 20,
         Force::Info => 15,
+    }
+}
+
+/// The classifier-assigned promotion tier (#2709): binding forces pin, a
+/// trigger scopes, everything else rides ordinary recall. Deterministic —
+/// the model already chose the force and the scope, and the tier is a
+/// restatement of those two, not a second model judgment.
+fn promotion_tier_for(force: Force, applies_to: Option<&AppliesTo>) -> PromotionTier {
+    if force.is_always_injected() {
+        PromotionTier::Pinned
+    } else if applies_to.is_some_and(|applies| !applies.is_empty()) {
+        PromotionTier::Scoped
+    } else {
+        PromotionTier::Retrieved
     }
 }
 
