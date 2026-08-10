@@ -12,7 +12,10 @@
 //! module owns the effects: the per-attempt usage envelopes, the
 //! `TurnParked`/`TurnWoken` span and per-chunk keep-alive narration, the
 //! soft-stop check that ends a multi-minute wait early, and the
-//! exhausted-ladder event pair. The park honors invariant 6's spirit the
+//! exhausted-ladder breaker feedback. The terminal event pair itself is
+//! emitted by `Engine::settle_model_call_failure`, which may first recover
+//! the turn instead — forced compaction for a context overflow (#2680), a
+//! provider fallback for an exhausted ladder (#2679). The park honors invariant 6's spirit the
 //! same way `driver/waiting.rs` does: the wait sits between model attempts,
 //! never mid-tool, and the budget's deadline bounds it from the outside.
 
@@ -126,7 +129,10 @@ impl<'a> Engine<'a> {
     /// failure. Owns everything between "the attempt closure exists" and
     /// "a result committed": the cancellation usage guard, the per-attempt
     /// incompleteness envelopes, the parked rate-limit recovery above, and —
-    /// on exhaustion — the `RetriesExhausted` + `Error` event pair. Returns
+    /// on exhaustion — the breaker feedback plus the withheld
+    /// [`ModelCallFailure`] that `Engine::settle_model_call_failure` either
+    /// recovers (overflow compaction, provider fallback — #2680, #2679) or
+    /// surfaces as the terminal `RetriesExhausted` + `Error` pair. Returns
     /// the instant the ladder started (the committed call's duration axis)
     /// alongside the outcome.
     pub(super) async fn drive_attempt_ladder<'f>(
@@ -155,7 +161,7 @@ impl<'a> Engine<'a> {
         let mut cancel_guard = CancelUsageGuard {
             events: events.clone(),
             role: self.call_role,
-            provider: self.provider.id().to_string(),
+            provider: self.active_provider().id().to_string(),
             started: call_started,
             armed: true,
             attempt_in_flight,
@@ -187,7 +193,7 @@ impl<'a> Engine<'a> {
                     .push(error.to_string());
                 let _ = incomplete_events.send(AgentEvent::UsageIncomplete {
                     role: self.call_role,
-                    provider: self.provider.id().to_string(),
+                    provider: self.active_provider().id().to_string(),
                     model: "unknown".into(),
                     reason: stella_protocol::UsageIncompleteReason::ProviderError,
                     duration_ms: attempt_duration.as_millis() as u64,
@@ -208,7 +214,7 @@ impl<'a> Engine<'a> {
                 // Call-outcome feedback (#2673): a committed step closes the
                 // routing circuit breaker's window for this provider.
                 if let Some(outcomes) = self.outcomes {
-                    outcomes.record_success(self.provider.id());
+                    outcomes.record_success(self.active_provider().id());
                 }
                 Ok((call_started, outcome))
             }
@@ -226,31 +232,31 @@ impl<'a> Engine<'a> {
                         attempt_reasons: reasons,
                     });
                 }
-                // Shared with the paired `Error` event below: whether the
-                // FINAL attempt's error is of a retryable class. `false`
-                // means every attempt (typically just one — see
+                // Whether the FINAL attempt's error is of a retryable class,
+                // forwarded onto the eventual terminal events. `false` means
+                // every attempt (typically just one — see
                 // `retry_with_backoff_observed`, which bails on the first
                 // non-retryable error) was doomed from the start, not
                 // exhausted by an actual retry loop (#926).
                 let retryable = error.is_retryable();
-                let _ = events.send(AgentEvent::RetriesExhausted {
-                    turn_instance: self.config.turn_instance,
-                    attempts: reasons.len() as u32,
-                    reasons,
-                    retryable,
-                });
-                let message = error.to_string();
-                let _ = events.send(AgentEvent::Error {
-                    message: message.clone(),
-                    retryable,
-                });
                 // Call-outcome feedback (#2673): an exhausted ladder is the
-                // signal the router's circuit breaker trips on.
+                // signal the router's circuit breaker trips on. Fed HERE,
+                // before settlement, so a fallback resolution that follows
+                // (`driver::model_fallback`, #2679) already routes around
+                // this failure.
                 if let Some(outcomes) = self.outcomes {
-                    outcomes.record_failure(self.provider.id());
+                    outcomes.record_failure(self.active_provider().id());
                 }
-                Err(ModelCallFailure::Fatal {
-                    reason: format!("model call failed: {message}"),
+                // The terminal event pair (`RetriesExhausted`, `Error`) is
+                // withheld, exactly as the overflow arm above withholds its
+                // own: the caller may still continue the turn on a fallback
+                // provider, and an observer must not tear down a session
+                // that is about to recover. `Engine::settle_model_call_failure`
+                // emits the pair when no fallback fires.
+                Err(ModelCallFailure::Exhausted {
+                    message: error.to_string(),
+                    attempt_reasons: reasons,
+                    retryable,
                 })
             }
         }

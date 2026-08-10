@@ -681,9 +681,11 @@ pub enum AgentEvent {
         reasoning: String,
         cost_usd: f64,
     },
-    /// A provider's circuit breaker opened and the router fell back to the
-    /// next configured provider of the same role's tier. Never silent
-    /// (L-M7) — no mid-turn family switch happens without this event.
+    /// A provider substitution: the router fell back to the next configured
+    /// provider of the same role's tier at resolution time (a breaker-open
+    /// skip), or the engine swapped mid-turn after an exhausted retry ladder
+    /// (`stella-core`'s `driver/model_fallback`, #2679). Never silent
+    /// (L-M7) — no provider switch happens without this event.
     ProviderFallback {
         from: String,
         to: String,

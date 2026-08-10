@@ -36,54 +36,73 @@
 //! - At most `MAX_LIVE_PROCESSES` processes may be LIVE at once; past
 //!   that `start_process` refuses with a named error rather than letting a
 //!   runaway loop spawn children without bound.
-//! - Output (stdout + stderr, interleaved by arrival) accumulates in a
-//!   capped ring buffer per process; when the cap overflows the oldest
-//!   bytes are dropped and the drop is FLAGGED on the next read.
-//! - `read_output` returns the output buffered since the last read —
-//!   middle-truncated at the shared 30 KB page cap, with the cut named —
-//!   and reports `running` / `exited (code N)`. Reading is itself
-//!   destructive: it drains the buffer it returns, exactly like
-//!   `clear_output` does, just without discarding the bytes unread. That
-//!   is why `read_output` stays `read_only: false` even after the split —
-//!   the engine's read-only concurrency contract
+//! - **Output survives the agent's own exit (#2666).** A child's stdout and
+//!   stderr are NOT an OS pipe this process owns the read end of — they are
+//!   redirected to a private log file, opened once and duplicated onto both
+//!   streams so writes interleave through one shared kernel file offset,
+//!   exactly like a shell's `2>&1`. A pipe's write end faults its writer
+//!   with `SIGPIPE`/`EPIPE` the moment the only reader goes away, which is
+//!   precisely what used to happen: Stella's own process exiting closed its
+//!   end of the pipe, and the next `print`/log line from a service the agent
+//!   had correctly started and left running killed it before the verifier
+//!   ever connected (kv-store-grpc, pypi-server — see #2666). A regular file
+//!   has no such reader; the child keeps writing to it, and keeps running,
+//!   whether or not anything is left to read the file back.
+//! - `read_output` returns the bytes written to the log since the last
+//!   read — middle-truncated at the shared 30 KB page cap, with the cut
+//!   named — and reports `running` / `exited (code N)`. A single call reads
+//!   at most `MAX_READ_BYTES`; unlike the old in-memory ring, anything
+//!   beyond that is never discarded — it simply waits in the file for the
+//!   next call. Reading is itself destructive in the sense that it advances
+//!   the read cursor past what it returns, exactly like `clear_output` does,
+//!   just without discarding the bytes unread. That is why `read_output`
+//!   stays `read_only: false` even after the split — the engine's read-only
+//!   concurrency contract
 //!   ([`stella_protocol::tool::ToolSchema::read_only`]) requires a call
 //!   to mutate no process/filesystem/environment state, and this one
-//!   always mutates the process table's buffer (and can reap the entry
-//!   into a tombstone) on every call, `clear` or not.
-//! - `clear_output` discards a process's buffered output without
-//!   returning it, for a caller that wants a clean slate before a noisy
-//!   step. It does not stop the process. Like `read_output`, it mutates
-//!   the table (and may reap a fully-drained, exited entry), so it is
-//!   also `read_only: false`.
-//! - Once a process has exited, both its pipes are at EOF, and its buffer
-//!   has been drained (by either `read_output` or `clear_output`), the
-//!   entry is REAPED — its `Child` and its buffer are released and a
-//!   small tombstone takes their place, so the handle still reports its
-//!   exit instead of degrading to "unknown handle".
+//!   always mutates the entry's read cursor (and can reap the entry into a
+//!   tombstone) on every call.
+//! - `clear_output` discards everything written to a process's log so far
+//!   without returning it, for a caller that wants a clean slate before a
+//!   noisy step. It does not stop the process. Like `read_output`, it
+//!   mutates the entry's read cursor (and may reap a fully-drained, exited
+//!   entry), so it is also `read_only: false`.
+//! - Once a process has exited and its log has been fully drained (by
+//!   either `read_output` or `clear_output`), the entry is REAPED — its
+//!   `Child` is released, its log file is deleted, and a small tombstone
+//!   takes their place, so the handle still reports its exit instead of
+//!   degrading to "unknown handle".
 //! - `stop_process` closes stdin, sends SIGTERM to the process group,
-//!   waits `STOP_GRACE_MS`, then SIGKILLs the group — and any process
-//!   still alive when the registry (and with it this table) drops is
-//!   killed the same way, so nothing outlives the session.
+//!   waits `STOP_GRACE_MS`, then SIGKILLs the group. This is the ONLY path
+//!   that kills a started process on Stella's own initiative — a process
+//!   the model never explicitly stopped is left running when the table
+//!   (and with it the whole tool registry) drops, on purpose, so that a
+//!   declared long-running service survives the turn that started it. A
+//!   process not reachable through this table at all (nothing spawned it
+//!   via `start_process`) is unaffected either way.
 //!
 //! All errors are typed and named: unknown handle, exited process, closed
 //! stdin, empty argv.
 
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
 
 use crate::registry::Tool;
 
-/// Byte cap on each process's buffered (unread) output.
-const MAX_BUFFER_BYTES: usize = 200_000;
-/// How much headroom an overflowing buffer reclaims in one drain — 25% of
-/// the cap, so the memmove amortizes instead of running per chunk.
-const BUFFER_DRAIN_SLACK: usize = MAX_BUFFER_BYTES / 4;
+/// Bytes read from a process's log in one `read_output`/`clear_output`
+/// call. Unlike the old in-memory ring this bounds only a single call —
+/// anything beyond it stays in the file for the next call, so nothing is
+/// ever permanently discarded except at reap time (see
+/// [`ProcessTombstone::discarded_bytes`]).
+const MAX_READ_BYTES: usize = 200_000;
 /// How long `stop_process` waits after SIGTERM before SIGKILL.
 const STOP_GRACE_MS: u64 = 2_000;
 /// How many LIVE processes one session may hold at once. Exited entries do
@@ -99,53 +118,17 @@ const MAX_TOMBSTONES: usize = 64;
 /// exempt from [`MAX_LIVE_PROCESSES`] on purpose (a finished process must
 /// never block a new start), but reaping only happens on `read_output` /
 /// `clear_output` — so without a bound of their own, a start/exit loop
-/// that never reads pins a `Child` plus up to [`MAX_BUFFER_BYTES`] per
-/// iteration for the rest of the session. 32 keeps twice the live cap's
-/// worth of recently finished output (~6.4 MB worst case) while bounding
-/// the table; the excess is evicted into a tombstone, so the handle still
-/// answers with its exit code.
+/// that never reads pins a `Child` plus its log file for the rest of the
+/// session. 32 keeps twice the live cap's worth of recently finished
+/// entries while bounding the table; the excess is evicted into a
+/// tombstone (and its log file deleted), so the handle still answers with
+/// its exit code.
 const MAX_EXITED_ENTRIES: usize = 32;
 
 /// The shared process table — held by the registry's five process tool
-/// instances, so it lives exactly as long as the registry and its `Drop`
-/// reaps whatever is still running when the session ends.
+/// instances, so it lives exactly as long as the registry. Its `Drop`
+/// deliberately does NOT kill what is still running — see the module doc.
 pub type ProcessTableHandle = Arc<Mutex<ProcessTable>>;
-
-/// Capped interleaved stdout+stderr buffer. Overflow drops the OLDEST
-/// bytes (a server's latest lines are the useful ones) and counts them so
-/// the next read can flag the gap.
-#[derive(Default)]
-struct OutputBuffer {
-    data: Vec<u8>,
-    dropped: u64,
-}
-
-impl OutputBuffer {
-    fn push(&mut self, chunk: &[u8]) {
-        self.data.extend_from_slice(chunk);
-        if self.data.len() > MAX_BUFFER_BYTES {
-            // Drain down to a slack line rather than to exactly the cap: at
-            // the cap, dropping only the excess memmoves the WHOLE 200 KB
-            // buffer for every arriving chunk (a chatty server at 8 KB
-            // chunks pays a 200 KB move 25 times per 200 KB of output).
-            // Draining a quantum amortizes that to one move per quantum, at
-            // the cost of reporting a few more dropped bytes — and dropped
-            // bytes are counted, never silent.
-            let excess = self.data.len() - (MAX_BUFFER_BYTES - BUFFER_DRAIN_SLACK);
-            self.data.drain(..excess);
-            self.dropped += excess as u64;
-        }
-    }
-
-    /// Take everything buffered since the last take, with the dropped-byte
-    /// count for the same window.
-    fn take(&mut self) -> (Vec<u8>, u64) {
-        (
-            std::mem::take(&mut self.data),
-            std::mem::take(&mut self.dropped),
-        )
-    }
-}
 
 /// One live (or recently exited) process.
 struct ProcessEntry {
@@ -163,11 +146,11 @@ struct ProcessEntry {
     /// resurrects the stdin the stop deliberately closed — revoking the EOF
     /// that lets a SIGTERM-ignoring REPL exit during the grace window.
     stdin_closed: bool,
-    output: Arc<Mutex<OutputBuffer>>,
-    /// Pumps still attached to this process's pipes. Zero means both pipes
-    /// hit EOF, so no further byte can ever arrive — the precondition for
-    /// reaping the entry without losing tail output.
-    pumps: Arc<std::sync::atomic::AtomicUsize>,
+    /// Where stdout+stderr are interleaved. Not a pipe this process reads:
+    /// see the module doc's #2666 note.
+    log_path: PathBuf,
+    /// Bytes of the log already delivered to a caller.
+    read_pos: u64,
     /// Group-kill target (unix); 0 when the pid was unavailable.
     pid: i32,
     /// Cached exit code once observed (signal exits report -1).
@@ -185,30 +168,82 @@ impl ProcessEntry {
         self.exit_code
     }
 
-    /// Can this entry be dropped? Only once it has exited, both pumps have
-    /// seen EOF, and the buffer they filled has been handed to the model.
+    /// Total bytes ever written to the log, or `read_pos` (nothing new) if
+    /// the file cannot be stat'd — a process that exited and had its log
+    /// already reaped by something else has nothing further to report.
+    fn log_len(&self) -> u64 {
+        std::fs::metadata(&self.log_path)
+            .map(|m| m.len())
+            .unwrap_or(self.read_pos)
+    }
+
+    /// Read up to [`MAX_READ_BYTES`] unread bytes from the log, advancing
+    /// the cursor. Returns empty on any I/O error rather than failing the
+    /// call — a log file that vanished (the process's own working directory
+    /// was recreated, say) is not a reason to error a status poll.
+    fn read_new(&mut self) -> Vec<u8> {
+        let Ok(mut file) = std::fs::File::open(&self.log_path) else {
+            return Vec::new();
+        };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(self.read_pos);
+        if self.read_pos >= len {
+            return Vec::new();
+        }
+        if file.seek(SeekFrom::Start(self.read_pos)).is_err() {
+            return Vec::new();
+        }
+        let take = (len - self.read_pos).min(MAX_READ_BYTES as u64) as usize;
+        let mut buf = vec![0u8; take];
+        let n = file.read(&mut buf).unwrap_or(0);
+        buf.truncate(n);
+        self.read_pos += n as u64;
+        buf
+    }
+
+    /// Can this entry be dropped? Only once it has exited, every byte it
+    /// ever wrote has been delivered to a caller, AND no other process in
+    /// its group is still alive holding the log open. `poll_exit` observes
+    /// only the DIRECT child; a `start_process(["sh","-c","server &"])`
+    /// backgrounds a grandchild that inherits the log fd and keeps writing
+    /// after the shell exits. Reaping (which deletes the log file) while
+    /// that grandchild is still alive would silently lose all of its
+    /// ongoing output, so the group check keeps the entry — and its log —
+    /// around until the whole group is gone.
     fn is_reapable(&mut self) -> bool {
         self.poll_exit().is_some()
-            && self.pumps.load(std::sync::atomic::Ordering::Acquire) == 0
-            && self
-                .output
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .data
-                .is_empty()
+            && self.read_pos >= self.log_len()
+            && !self.group_has_live_members()
+    }
+
+    /// Whether any process in this entry's process group is still alive.
+    /// The spawn places each child in its own session via `setsid`, so the
+    /// group id equals the direct child's pid; `kill(-pgid, 0)` sends no
+    /// signal but succeeds while any member (including an inherited-fd
+    /// grandchild) survives and fails with `ESRCH` once the group is empty.
+    /// Returns `false` when the pid was unavailable or off unix, falling
+    /// back to the drain-only gate.
+    fn group_has_live_members(&self) -> bool {
+        #[cfg(unix)]
+        if self.pid > 0 {
+            // SAFETY: signal 0 performs only the permission/existence check,
+            // delivering nothing; the negated pid targets the process group.
+            return unsafe { libc::kill(-self.pid, 0) } == 0;
+        }
+        false
     }
 }
 
 /// What survives a reaped process: enough to keep answering about a handle
-/// the model still holds, without keeping its `Child` and its buffer alive.
+/// the model still holds, without keeping its `Child` or its log file
+/// alive.
 struct ProcessTombstone {
     name: Option<String>,
     display: String,
     exit_code: i32,
-    /// Buffered output the model never read, discarded at reap time. Zero on
-    /// the ordinary drain-then-reap path; non-zero only when the exited-entry
-    /// cap evicted the entry — counted so the tombstone can say so instead of
-    /// pretending the buffer was drained.
+    /// Bytes the model never read, discarded at reap time. Zero on the
+    /// ordinary drain-then-reap path; non-zero only when the exited-entry
+    /// cap evicted the entry — counted so the tombstone can say so instead
+    /// of pretending the log was drained.
     discarded_bytes: u64,
 }
 
@@ -254,21 +289,15 @@ impl ProcessTable {
     /// Drop `handle`'s entry, leaving a tombstone so `read_output` /
     /// `clear_output` / `stop_process` can still explain it. Callers must have established
     /// [`ProcessEntry::is_reapable`] — except [`Self::enforce_exited_cap`],
-    /// whose evictions knowingly discard an unread buffer and record the
+    /// whose evictions knowingly discard an unread log tail and record the
     /// discard on the tombstone.
     fn reap(&mut self, handle: &str) {
         let Some(mut entry) = self.entries.remove(handle) else {
             return;
         };
         let exit_code = entry.poll_exit().unwrap_or(-1);
-        let discarded_bytes = {
-            let (bytes, dropped) = entry
-                .output
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .take();
-            bytes.len() as u64 + dropped
-        };
+        let discarded_bytes = entry.log_len().saturating_sub(entry.read_pos);
+        let _ = std::fs::remove_file(&entry.log_path);
         self.tombstones.insert(
             handle.to_string(),
             ProcessTombstone {
@@ -326,27 +355,6 @@ impl ProcessTable {
     }
 }
 
-impl Drop for ProcessTable {
-    /// Reap every process still running when the table (and the registry
-    /// holding it) drops: group-SIGKILL on unix so grandchildren die too;
-    /// `kill_on_drop` on each `Child` backs this up for the direct child.
-    fn drop(&mut self) {
-        for entry in self.entries.values_mut() {
-            if entry.poll_exit().is_none() {
-                #[cfg(unix)]
-                if entry.pid > 0 {
-                    // SAFETY: plain libc::kill on a recorded child pgid;
-                    // guarded > 0 so we never signal our own group.
-                    unsafe {
-                        libc::kill(-entry.pid, libc::SIGKILL);
-                    }
-                }
-                let _ = entry.child.start_kill();
-            }
-        }
-    }
-}
-
 fn unknown_handle_error(table: &ProcessTable, handle: &str) -> ToolOutput {
     ToolOutput::Error {
         message: format!(
@@ -354,31 +362,6 @@ fn unknown_handle_error(table: &ProcessTable, handle: &str) -> ToolOutput {
             table.known_handles()
         ),
     }
-}
-
-/// Pump one child stream into the shared buffer until EOF. The lock is
-/// held only for the synchronous push, never across an await. `live` is
-/// decremented at EOF so the table can tell when no more output can arrive.
-fn spawn_pump<R>(
-    mut reader: R,
-    output: Arc<Mutex<OutputBuffer>>,
-    live: Arc<std::sync::atomic::AtomicUsize>,
-) where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => output
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push(&buf[..n]),
-            }
-        }
-        live.fetch_sub(1, std::sync::atomic::Ordering::Release);
-    });
 }
 
 /// `start_process` — see the module doc.
@@ -394,8 +377,10 @@ impl Tool for StartProcess {
             name: "start_process".into(),
             description: "Start a LONG-RUNNING process (dev server, REPL, watcher) from an \
                           argv vector — no shell, cwd = workspace root. Returns a handle for \
-                          read_output / send_stdin / stop_process. For one-shot commands \
-                          prefer run_tests, build_project, or run_script instead."
+                          read_output / send_stdin / stop_process. The process is NOT stopped \
+                          when the turn ends — call stop_process when you are done with it. \
+                          For one-shot commands prefer run_tests, build_project, or run_script \
+                          instead."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -432,8 +417,8 @@ impl Tool for StartProcess {
             .map(str::to_string);
 
         // Refuse BEFORE spawning: nothing caps how many children a runaway
-        // loop can create, and each one holds a pipe pair and up to
-        // MAX_BUFFER_BYTES until it is stopped.
+        // loop can create, and each one holds a log file until it is
+        // stopped.
         {
             let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
             // Bound the exited-but-unread backlog before growing the table —
@@ -452,19 +437,55 @@ impl Tool for StartProcess {
             }
         }
 
+        // A private file, not a pipe: see the module doc's #2666 note on
+        // why the child's stdout/stderr must not depend on this process
+        // staying alive to read them.
+        let log_dir = self.scratch.clone().unwrap_or_else(std::env::temp_dir);
+        let named = match tempfile::Builder::new()
+            .prefix("stella-proc-")
+            .suffix(".log")
+            .tempfile_in(&log_dir)
+        {
+            Ok(named) => named,
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("failed to create a log file for the process: {e}"),
+                };
+            }
+        };
+        let (log_file, log_path) = match named.keep() {
+            Ok(kept) => kept,
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("failed to persist the process's log file: {e}"),
+                };
+            }
+        };
+        let stdout_stdio = match log_file.try_clone() {
+            Ok(f) => std::process::Stdio::from(f),
+            Err(e) => {
+                let _ = std::fs::remove_file(&log_path);
+                return ToolOutput::Error {
+                    message: format!("failed to duplicate the process log handle: {e}"),
+                };
+            }
+        };
+        let stderr_stdio = std::process::Stdio::from(log_file);
+
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
         cmd.current_dir(root);
         // Full spawn policy: git-repo retargeting and forced-color overrides
         // are scrubbed along with credentials, exactly like `exec::drive` —
-        // a server's output lands in the captured buffer, never a terminal.
+        // a server's output lands in its log file, never a terminal.
         crate::subprocess_env::scrub_spawn_env(&mut cmd);
         crate::subprocess_env::inject_scratch_env(&mut cmd, self.scratch.as_deref());
         cmd.stdin(std::process::Stdio::piped());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        cmd.kill_on_drop(true);
-        // Own process group so stop/reap can take down grandchildren.
+        cmd.stdout(stdout_stdio);
+        cmd.stderr(stderr_stdio);
+        // No `kill_on_drop`: a started process is deliberately left running
+        // when this Rust value drops — see the module doc.
+        // Own process group so `stop_process` can take down grandchildren.
         #[cfg(unix)]
         unsafe {
             cmd.pre_exec(|| {
@@ -475,6 +496,7 @@ impl Tool for StartProcess {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
+                let _ = std::fs::remove_file(&log_path);
                 return ToolOutput::Error {
                     message: format!("failed to spawn `{}`: {e}", argv.join(" ")),
                 };
@@ -482,16 +504,6 @@ impl Tool for StartProcess {
         };
         let pid = child.id().unwrap_or(0) as i32;
         let stdin = child.stdin.take();
-        let output: Arc<Mutex<OutputBuffer>> = Arc::default();
-        let pumps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        if let Some(stdout) = child.stdout.take() {
-            pumps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            spawn_pump(stdout, output.clone(), pumps.clone());
-        }
-        if let Some(stderr) = child.stderr.take() {
-            pumps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            spawn_pump(stderr, output.clone(), pumps.clone());
-        }
 
         let display = argv.join(" ");
         let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
@@ -505,8 +517,8 @@ impl Tool for StartProcess {
                 child,
                 stdin,
                 stdin_closed: false,
-                output,
-                pumps,
+                log_path,
+                read_pos: 0,
                 pid,
                 exit_code: None,
             },
@@ -580,7 +592,7 @@ impl Tool for ReadOutput {
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(tomb) = table.tombstones.get(handle) {
             // Discarded bytes are reported, never silent — same contract as
-            // the ring buffer's drop flag.
+            // the old ring buffer's drop flag.
             let note = if tomb.discarded_bytes > 0 {
                 format!(
                     "[{} unread bytes were discarded when this exited process was reaped to \
@@ -609,22 +621,13 @@ impl Tool for ReadOutput {
             Some(code) => format!("exited (code {code})"),
             None => "running".to_string(),
         };
-        let (bytes, dropped) = entry
-            .output
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
+        let bytes = entry.read_new();
         let label = entry
             .name
             .as_deref()
             .map(|n| format!(" ({n})"))
             .unwrap_or_default();
         let mut content = format!("{handle} `{}`{label}: {status}", entry.display);
-        if dropped > 0 {
-            content.push_str(&format!(
-                "\n[output truncated: {dropped} oldest bytes dropped before this read]"
-            ));
-        }
         if bytes.is_empty() {
             content.push_str("\n[no new output]");
         } else {
@@ -633,10 +636,9 @@ impl Tool for ReadOutput {
                 String::from_utf8_lossy(&bytes).into_owned(),
             ));
         }
-        // The entry has served its purpose: the process is gone, both pipes
-        // are at EOF, and everything they produced has now reached the
-        // model. Keeping it would hold a `Child` and up to MAX_BUFFER_BYTES
-        // for the rest of the session.
+        // The entry has served its purpose: the process is gone and
+        // everything it ever wrote has now reached the model. Keeping it
+        // would hold a `Child` and its log file for the rest of the session.
         if entry.is_reapable() {
             table.reap(handle);
         }
@@ -683,7 +685,7 @@ impl Tool for ClearOutput {
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(tomb) = table.tombstones.get(handle) {
-            // Already reaped: its buffer was drained (and any unread bytes
+            // Already reaped: its log was drained (and any unread bytes
             // counted) when it was reaped, so there is nothing left to
             // discard. Answering rather than erroring matches `read_output`
             // and `stop_process`'s posture on a tombstoned handle — the
@@ -712,23 +714,14 @@ impl Tool for ClearOutput {
             .as_deref()
             .map(|n| format!(" ({n})"))
             .unwrap_or_default();
-        let (bytes, dropped) = entry
-            .output
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
-        let mut content = format!(
-            "{handle} `{}`{label}: {status}\n[cleared {} buffered bytes]",
+        let cleared_len = entry.log_len().saturating_sub(entry.read_pos);
+        entry.read_pos = entry.log_len();
+        let content = format!(
+            "{handle} `{}`{label}: {status}\n[cleared {cleared_len} buffered bytes]",
             entry.display,
-            bytes.len()
         );
-        if dropped > 0 {
-            content.push_str(&format!(
-                " ({dropped} more were already dropped before this clear)"
-            ));
-        }
-        // Same reap contract as `read_output`: once exited, drained, and
-        // pump-quiet, nothing further can ever arrive on this handle.
+        // Same reap contract as `read_output`: once exited and drained,
+        // nothing further can ever be delivered from this handle.
         if entry.is_reapable() {
             table.reap(handle);
         }

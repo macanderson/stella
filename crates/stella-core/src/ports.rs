@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_protocol::{ToolOutput, ToolSchema};
+use stella_protocol::{Provider, ToolOutput, ToolSchema};
 
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
 /// by test doubles). The engine treats it as a black box that never panics.
@@ -204,6 +204,38 @@ pub trait ProviderOutcomes: Send + Sync {
     fn record_success(&self, provider_id: &str);
     /// A transport-class terminal failure from `provider_id`.
     fn record_failure(&self, provider_id: &str);
+}
+
+/// Mid-turn provider fallback (#2679) — the read half of the routing seam
+/// whose write half is [`ProviderOutcomes`]: when a model call's retry
+/// ladder exhausts against the active provider, the engine asks this port
+/// for a replacement instead of aborting the turn. The production impl
+/// re-resolves the engine's role through the same
+/// [`crate::router::Router::resolve`] that chose the primary — never a
+/// hardcoded model list — and the failing calls already fed that router's
+/// circuit breaker through [`ProviderOutcomes`] (#2673), so resolution
+/// naturally routes around the sick provider. `&self` for the same reason as
+/// [`ProviderOutcomes`]: the holder shares the router.
+pub trait FallbackResolver: Send + Sync {
+    /// Re-resolve the engine's role after `failed_provider_id` exhausted its
+    /// retry ladder. `None` means "no fallback": nothing else is configured,
+    /// every alternative is breaker-open, or resolution lands back on the
+    /// failed provider itself — the engine then surfaces the exhaustion
+    /// exactly as it did before this port existed.
+    fn resolve_fallback(&self, failed_provider_id: &str) -> Option<ResolvedFallback<'_>>;
+}
+
+/// A replacement provider from [`FallbackResolver::resolve_fallback`]. The
+/// adapter is owned by the resolver — the engine only borrows it for the
+/// rest of the turn — and `reason` is the resolver's human-readable account
+/// of why the route changed (e.g. [`crate::router::FallbackInfo::reason`]);
+/// it rides `AgentEvent::ProviderFallback` verbatim (L-M7: fallback is
+/// always visible, never a silent mid-turn family switch).
+pub struct ResolvedFallback<'p> {
+    /// The replacement adapter. Calls after the swap go here.
+    pub provider: &'p dyn Provider,
+    /// Why the route changed, verbatim onto the fallback event.
+    pub reason: String,
 }
 
 /// Boundary pause gate — polled by the engine between model calls, the same

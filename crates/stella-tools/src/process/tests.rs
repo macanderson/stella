@@ -39,51 +39,30 @@ async fn start_with_scratch(
     }
 }
 
-#[test]
-fn output_buffer_caps_and_counts_dropped_bytes() {
-    let mut buf = OutputBuffer::default();
-    buf.push(&vec![b'a'; MAX_BUFFER_BYTES]);
-    buf.push(&[b'z'; 10]);
-    let (bytes, dropped) = buf.take();
-    assert!(bytes.len() <= MAX_BUFFER_BYTES, "capped at the max");
-    // An overflow reclaims a slack quantum, so `dropped` exceeds the
-    // strict minimum — but nothing vanishes unaccounted: every byte
-    // pushed is either still buffered or counted as dropped, which is
-    // what makes the gap flag on the next read honest.
-    assert_eq!(
-        bytes.len() as u64 + dropped,
-        MAX_BUFFER_BYTES as u64 + 10,
-        "every pushed byte is either kept or counted"
-    );
-    assert!(dropped >= 10, "the oldest bytes were dropped: {dropped}");
-    assert!(bytes.ends_with(b"zzzzzzzzzz"), "newest bytes survive");
-    // Take drains: a second take is empty with no drop count.
-    assert_eq!(buf.take(), (Vec::new(), 0));
-}
-
-/// The point of the slack: a chatty stream at the cap must not memmove
-/// the whole buffer per chunk. One drain per quantum, not per push.
-#[test]
-fn a_buffer_at_the_cap_drains_a_quantum_not_every_chunk() {
-    let mut buf = OutputBuffer::default();
-    buf.push(&vec![b'a'; MAX_BUFFER_BYTES]);
-    let before = buf.data.len();
-    buf.push(&[b'z'; 8192]);
-    assert!(
-        buf.data.len() < before,
-        "the overflow reclaimed headroom: {} → {}",
-        before,
-        buf.data.len()
-    );
-    // The next several chunks fit in the reclaimed slack and drop nothing.
-    let after_first_drain = buf.dropped;
-    for _ in 0..4 {
-        buf.push(&[b'z'; 8192]);
+/// Poll until `read_output` sees the given substring, or panic — bounded so
+/// a stuck test fails fast instead of hanging.
+async fn wait_for_output(
+    table: &ProcessTableHandle,
+    root: &std::path::Path,
+    handle: &str,
+    needle: &str,
+) -> String {
+    let mut observed = String::new();
+    for _ in 0..250 {
+        let out = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), root)
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("read_output failed: {out:?}");
+        };
+        observed.push_str(&content);
+        observed.push('\n');
+        if observed.contains(needle) {
+            return observed;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert_eq!(
-        buf.dropped, after_first_drain,
-        "chunks inside the slack cost no further drops"
-    );
+    panic!("never observed {needle:?} in output: {observed}");
 }
 
 #[tokio::test]
@@ -148,30 +127,7 @@ async fn clear_output_discards_buffered_output_before_the_next_read() {
         &["sh", "-c", "echo written_before_clear; sleep 30"],
     )
     .await;
-
-    // Wait until the write has actually landed in the buffer, or
-    // clearing it would prove nothing.
-    let mut buffered = false;
-    for _ in 0..250 {
-        if table
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .entries
-            .get(&handle)
-            .is_some_and(|e| {
-                !e.output
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .data
-                    .is_empty()
-            })
-        {
-            buffered = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(buffered, "the process never produced buffered output");
+    wait_for_output(&table, &root, &handle, "written_before_clear").await;
 
     let cleared = ClearOutput(table.clone())
         .execute(&serde_json::json!({"handle": handle}), &root)
@@ -207,28 +163,7 @@ async fn clear_output_discards_buffered_output_before_the_next_read() {
 async fn read_output_clear_true_is_a_named_deprecation_error() {
     let (table, root) = tools();
     let handle = start(&table, &root, &["sh", "-c", "echo still_here; sleep 30"]).await;
-
-    let mut buffered = false;
-    for _ in 0..250 {
-        if table
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .entries
-            .get(&handle)
-            .is_some_and(|e| {
-                !e.output
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .data
-                    .is_empty()
-            })
-        {
-            buffered = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(buffered, "the process never produced buffered output");
+    wait_for_output(&table, &root, &handle, "still_here").await;
 
     let out = ReadOutput(table.clone())
         .execute(&serde_json::json!({"handle": handle, "clear": true}), &root)
@@ -336,22 +271,7 @@ async fn cat_echoes_stdin_and_stop_reports_the_lifecycle() {
         .await;
     assert!(!write.is_error(), "{write:?}");
 
-    // Poll until the pump has delivered the echo (bounded).
-    let mut echoed = String::new();
-    for _ in 0..50 {
-        let out = ReadOutput(table.clone())
-            .execute(&serde_json::json!({"handle": handle}), &root)
-            .await;
-        let ToolOutput::Ok { content } = out else {
-            panic!("read_output failed");
-        };
-        echoed.push_str(&content);
-        if echoed.contains("hello_process") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    assert!(echoed.contains("hello_process"), "{echoed}");
+    let echoed = wait_for_output(&table, &root, &handle, "hello_process").await;
     assert!(echoed.contains("running"), "{echoed}");
 
     // Stop: cat exits on stdin EOF/SIGTERM; afterwards the state is
@@ -402,11 +322,11 @@ async fn a_naturally_exited_process_reports_its_code() {
     panic!("`true` never reported exit");
 }
 
-/// An exited process used to keep its `Child` and up to 200 KB of buffer
-/// until the whole registry dropped. Once its output has reached the
-/// model there is nothing left to hold — but the handle must keep
-/// answering, or a model polling a finished server sees "unknown handle"
-/// and concludes something is wrong.
+/// An exited process used to keep its `Child` and its log file until the
+/// whole registry dropped. Once its output has reached the model there is
+/// nothing left to hold — but the handle must keep answering, or a model
+/// polling a finished server sees "unknown handle" and concludes something
+/// is wrong.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_drained_exited_process_is_reaped_but_its_handle_still_answers() {
@@ -501,11 +421,14 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
             .execute(&serde_json::json!({"handle": handle}), &root)
             .await;
     }
+    let _ = StopProcess(table)
+        .execute(&serde_json::json!({"handle": "proc-999"}), &root)
+        .await;
 }
 
 /// Exited entries are exempt from the live cap, so before the exited-entry
 /// bound a start/exit loop that never called read_output pinned a `Child`
-/// and up to 200 KB of buffer per iteration for the rest of the session.
+/// and its log file per iteration for the rest of the session.
 #[cfg(unix)]
 #[tokio::test]
 async fn exited_unread_entries_are_evicted_oldest_first_never_running_ones() {
@@ -516,21 +439,13 @@ async fn exited_unread_entries_are_evicted_oldest_first_never_running_ones() {
     let mut echo_handles = Vec::new();
     for _ in 0..MAX_EXITED_ENTRIES + 2 {
         let handle = start(&table, &root, &["sh", "-c", "echo unread_output"]).await;
-        // Wait until the exit is observable and the pump has delivered
-        // the output, so an eviction demonstrably discards unread bytes.
+        // Wait until the exit is observable and something has landed in
+        // the log, so an eviction demonstrably discards unread bytes.
         for _ in 0..250 {
             let ready = {
                 let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
                 match t.entries.get_mut(&handle) {
-                    Some(e) => {
-                        e.poll_exit().is_some()
-                            && !e
-                                .output
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner())
-                                .data
-                                .is_empty()
-                    }
+                    Some(e) => e.poll_exit().is_some() && e.log_len() > 0,
                     None => true,
                 }
             };
@@ -610,24 +525,7 @@ async fn start_process_injects_stella_scratch_into_spawned_process() {
     )
     .await;
 
-    // Poll read_output until we see the STELLA_SCRATCH value in the output.
-    let mut observed = String::new();
-    for attempt in 0..100 {
-        let out = ReadOutput(table.clone())
-            .execute(&serde_json::json!({"handle": handle}), &root)
-            .await;
-        let ToolOutput::Ok { content } = out else {
-            panic!("read_output failed on attempt {attempt}");
-        };
-        observed.push_str(&content);
-        // The injected scratch path should appear in the output.
-        if observed.contains(&expected_path) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    // Verify the scratch path was actually injected.
+    let observed = wait_for_output(&table, &root, &handle, &expected_path).await;
     assert!(
         observed.contains(&expected_path),
         "STELLA_SCRATCH should be set to the scratch path. Expected substring '{}' in output:\n{}",
@@ -732,4 +630,59 @@ async fn long_running_process_scrubs_inherited_credentials() {
         .execute(&serde_json::json!({"handle": handle}), &root)
         .await;
     assert!(!stopped.is_error(), "{stopped:?}");
+}
+
+/// The witness for #2666: a `start_process`d child used to be SIGKILLed the
+/// moment the `ProcessTable` (and with it the whole tool registry) dropped
+/// — the exact moment a bench trial's agent finishes and the verifier goes
+/// looking for the service it just proved was running. This test spawns a
+/// process that logs a line once a second, drops the table (simulating the
+/// registry going away at the end of a turn) WITHOUT calling
+/// `stop_process`, and then proves the process is still alive by signalling
+/// it with `kill(pid, 0)` directly — outside the table entirely, since the
+/// table that would normally answer `read_output` is gone.
+///
+/// This fails against the old pipe-owned-by-us design (verified by hand:
+/// the child gets SIGKILLed by `ProcessTable::drop`) and passes once output
+/// is file-backed and the table no longer kills on drop.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_started_child_outlives_the_process_tables_drop() {
+    let root = std::env::temp_dir();
+    let table: ProcessTableHandle = Arc::default();
+    let handle = start(
+        &table,
+        &root,
+        &[
+            "sh",
+            "-c",
+            "i=0; while [ $i -lt 30 ]; do echo tick $i; i=$((i+1)); sleep 1; done",
+        ],
+    )
+    .await;
+    wait_for_output(&table, &root, &handle, "tick 0").await;
+
+    let pid = {
+        let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = t.entries.get_mut(&handle).expect("entry still present");
+        entry.pid
+    };
+    assert!(pid > 0, "no pid recorded for the started process");
+
+    // Drop every reference to the table — this is what happens when the
+    // registry (and the whole tool set) is torn down at the end of a run,
+    // with no explicit `stop_process` call.
+    drop(table);
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        unsafe { libc::kill(pid, 0) == 0 },
+        "the started process (pid {pid}) did not survive the ProcessTable's drop"
+    );
+
+    // Clean up: kill the process group directly since nothing in-process
+    // holds a handle to it anymore.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
 }

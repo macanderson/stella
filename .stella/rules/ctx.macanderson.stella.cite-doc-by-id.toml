@@ -3,8 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.cite-doc-by-id"
-record_id = "rec_macanderson_stella_cite_doc_by_id_7d17012ac76c"
-record_hash = "sha256:4d5ef32113248adc1635ee0e3e5f39a4bc7199940888fafb419f8c25dd530640"
+record_id = "rec_macanderson_stella_cite_doc_by_id_3307f630b4a9"
+record_hash = "sha256:48c13aa824a66a568799c9be920ad3f987efcec79f4153c964e02fdba8299892"
 kind = "rule"
 statement = "A document under docs/ is cited by its stable frontmatter id (for example doc:context-reuse §4), not by its file path."
 origin = "imported"
@@ -30,10 +30,6 @@ paths = [
     "docs",
     "docs/manifest.json",
 ]
-tasks = [
-    "documentation",
-    "citation",
-]
 keywords = [
     "doc id",
     "citation",
@@ -41,7 +37,7 @@ keywords = [
 ]
 
 [record.enforcement]
-mode = "hard"
+mode = "none"
 
 [record.truth]
 basis = "decree"

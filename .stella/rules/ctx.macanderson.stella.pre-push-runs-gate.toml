@@ -3,8 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.pre-push-runs-gate"
-record_id = "rec_macanderson_stella_pre_push_runs_gate_2eb27e26c242"
-record_hash = "sha256:20b979cad42ffe161427ec3ea9817097e56c54b9909cddc09babb785587c634c"
+record_id = "rec_macanderson_stella_pre_push_runs_gate_8b481d0cc128"
+record_hash = "sha256:1d5432d70b7e07a3d4061eb9776a1abdaa606a1d719fb2471ed8be40f3d72091"
 kind = "fact"
 statement = "The pre-push hook runs the full gate automatically on every push and aborts the push if it fails."
 origin = "imported"
@@ -34,7 +34,7 @@ keywords = [
 ]
 
 [record.enforcement]
-mode = "hard"
+mode = "none"
 
 [record.truth]
 basis = "asserted"

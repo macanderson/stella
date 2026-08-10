@@ -282,54 +282,107 @@ impl CappedStream {
     }
 }
 
-/// Drain `reader` to EOF holding at most `cap` bytes (see [`CappedStream`]).
-async fn read_capped<R>(mut reader: R, cap: usize) -> std::io::Result<Vec<u8>>
+/// One `read` on a maybe-already-EOF'd stream. Never called with `reader ==
+/// None` in practice — every call site guards on `.is_some()` first — but
+/// takes the `Option` directly rather than an already-unwrapped reference so
+/// callers can hold the same slot across the two-phase wait below without a
+/// second `Option` wrapper at each call site.
+async fn read_into<R>(reader: &mut Option<R>, buf: &mut [u8]) -> std::io::Result<usize>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     use tokio::io::AsyncReadExt as _;
-    let mut acc = CappedStream::new(cap);
-    let mut buf = vec![0u8; 16 * 1024];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        acc.push(&buf[..n]);
+    match reader {
+        Some(r) => r.read(buf).await,
+        None => std::future::pending().await,
     }
-    Ok(acc.into_bytes())
 }
 
-/// [`tokio::process::Child::wait_with_output`] with a per-stream memory
-/// ceiling — see [`MAX_CAPTURE_BYTES`] for why the unbounded version is not
-/// safe on a path where the model chooses the command.
+/// After the direct child has exited, how much longer
+/// [`wait_with_capped_output`] keeps reading its stdout/stderr pipes before
+/// giving up on true EOF. A process that properly detaches (`setsid` with
+/// its streams redirected away, or anything spawned through
+/// [`crate::process::StartProcess`]) never touches this window: its own
+/// copy of the pipe's write end is already gone by the time we get here.
 ///
-/// Both pipes and the exit wait are polled concurrently, exactly as
-/// `wait_with_output` does, so a child that fills one pipe while the other is
-/// idle cannot deadlock.
+/// A plain `cmd &` backgrounded *inside* a `bash` invocation is different —
+/// it still holds THIS call's copy of the pipe open, because nothing told it
+/// to detach. Requiring true EOF from such a pipe used to mean the whole
+/// call hung until the caller's own timeout (seconds to minutes), even
+/// though the command the model actually asked for finished instantly:
+/// `nohup server &` inside `bash` blocked the tool for the full 120s
+/// default before the process-group kill on that timeout took the
+/// backgrounded server down with it (#2666). A short bounded drain gets the
+/// common case — output flushed before backgrounding — without paying that
+/// price for the uncommon one.
+const BACKGROUND_DRAIN_GRACE: Duration = Duration::from_millis(300);
+
+/// [`tokio::process::Child::wait_with_output`] with a per-stream memory
+/// ceiling (see [`MAX_CAPTURE_BYTES`]) and a bounded tolerance for a
+/// grandchild that outlives the direct child while still holding its
+/// inherited copy of the pipe (see [`BACKGROUND_DRAIN_GRACE`] and #2666).
+///
+/// Phase 1 races the exit wait against both pipes exactly as
+/// `wait_with_output` does, so a child that fills one pipe while the other
+/// is idle cannot deadlock. Phase 2 runs only once the direct child has
+/// exited and only for streams still open: it drains whatever is already
+/// sitting in the pipe, capped at [`BACKGROUND_DRAIN_GRACE`] rather than
+/// waiting for a holder that may never let go.
 pub(crate) async fn wait_with_capped_output(
     mut child: tokio::process::Child,
     cap: usize,
 ) -> std::io::Result<std::process::Output> {
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let out = async {
-        match stdout {
-            Some(reader) => read_capped(reader, cap).await,
-            None => Ok(Vec::new()),
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let mut out = CappedStream::new(cap);
+    let mut err = CappedStream::new(cap);
+    let mut out_buf = [0u8; 16 * 1024];
+    let mut err_buf = [0u8; 16 * 1024];
+
+    let status = loop {
+        tokio::select! {
+            biased;
+            res = child.wait() => break res?,
+            res = read_into(&mut stdout, &mut out_buf), if stdout.is_some() => {
+                match res? {
+                    0 => stdout = None,
+                    n => out.push(&out_buf[..n]),
+                }
+            }
+            res = read_into(&mut stderr, &mut err_buf), if stderr.is_some() => {
+                match res? {
+                    0 => stderr = None,
+                    n => err.push(&err_buf[..n]),
+                }
+            }
         }
     };
-    let err = async {
-        match stderr {
-            Some(reader) => read_capped(reader, cap).await,
-            None => Ok(Vec::new()),
+
+    let drain_deadline = tokio::time::sleep(BACKGROUND_DRAIN_GRACE);
+    tokio::pin!(drain_deadline);
+    while stdout.is_some() || stderr.is_some() {
+        tokio::select! {
+            biased;
+            () = &mut drain_deadline => break,
+            res = read_into(&mut stdout, &mut out_buf), if stdout.is_some() => {
+                match res {
+                    Ok(0) | Err(_) => stdout = None,
+                    Ok(n) => out.push(&out_buf[..n]),
+                }
+            }
+            res = read_into(&mut stderr, &mut err_buf), if stderr.is_some() => {
+                match res {
+                    Ok(0) | Err(_) => stderr = None,
+                    Ok(n) => err.push(&err_buf[..n]),
+                }
+            }
         }
-    };
-    let (status, stdout, stderr) = tokio::try_join!(child.wait(), out, err)?;
+    }
+
     Ok(std::process::Output {
         status,
-        stdout,
-        stderr,
+        stdout: out.into_bytes(),
+        stderr: err.into_bytes(),
     })
 }
 

@@ -1146,11 +1146,11 @@ pub(crate) fn resolve_cross_family_verifier(
 /// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the
 /// same wiring the pipeline paths build per run, held for the whole session
 /// so its breaker accumulates the observed outcome of every turn's model
-/// calls (#2673). The bare loops feed this router today and do not yet
-/// resolve from it (their provider is fixed at session start), which is why
-/// wiring notices are deliberately not surfaced here: none of the routing
-/// decisions they describe are operative on this path until mid-turn
-/// fallback (#2679) starts consulting the breaker at resolution time.
+/// calls (#2673). The bare loops feed this router every turn and consult it
+/// when a retry ladder exhausts ([`SessionFallback`], #2679); their primary
+/// provider is still fixed at session start, which is why wiring notices are
+/// deliberately not surfaced here — the start-of-turn routing decisions they
+/// describe are not operative on this path yet.
 pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
     let configured = crate::config::discover_configured_providers();
     let wiring = resolve_engine_wiring(cfg, worker_ref, &configured);
@@ -1159,6 +1159,76 @@ pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
         wiring.profiles,
         CircuitBreaker::new(Box::new(SystemClock::new())),
     )
+}
+
+/// Mid-turn fallback resolution for the bare (non-pipeline) loops (#2679):
+/// when the worker's retry ladder exhausts, the engine asks this port for a
+/// replacement, and the answer is a fresh [`Router::resolve`] of the worker
+/// role — whose breaker the failing calls already fed via
+/// `with_provider_outcomes`, so resolution routes around the sick provider.
+/// The replacement adapter is built from the discovered credentials on
+/// first use and owned here (set-once), so the engine can borrow it for the
+/// rest of the turn. Every miss is soft, matching
+/// [`resolve_cross_family_verifier`]: a resolve error, a resolution landing
+/// back on the failed provider, an uncredentialed target, or an adapter
+/// build failure all yield `None` — the turn then aborts exactly as it did
+/// before this seam existed.
+pub(crate) struct SessionFallback<'r> {
+    router: &'r Router,
+    built: std::sync::OnceLock<Box<dyn Provider>>,
+}
+
+impl<'r> SessionFallback<'r> {
+    pub(crate) fn new(router: &'r Router) -> Self {
+        Self {
+            router,
+            built: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl stella_core::ports::FallbackResolver for SessionFallback<'_> {
+    fn resolve_fallback(
+        &self,
+        failed_provider_id: &str,
+    ) -> Option<stella_core::ports::ResolvedFallback<'_>> {
+        let decision = self.router.resolve(Role::Worker).ok()?;
+        if decision.model_ref.provider == failed_provider_id {
+            return None;
+        }
+        let reason = match decision.fallback {
+            Some(fallback) => fallback.reason,
+            None => format!(
+                "worker role re-resolved to `{}` after `{failed_provider_id}` exhausted its \
+                 retries",
+                decision.model_ref.provider
+            ),
+        };
+        let configured = crate::config::discover_configured_providers();
+        let entry = configured
+            .iter()
+            .find(|c| c.config.id == decision.model_ref.provider)?;
+        let provider = build_provider_parts(
+            &entry.config,
+            &decision.model_ref.model_id,
+            entry.api_key.clone(),
+            entry.config.base_url.to_string(),
+            None,
+            entry.aux.clone(),
+            // Same reasoning as the routed verifier above: burst-shaped
+            // calls within a run want the 5-minute window (#1839).
+            stella_model::CacheTtl::default(),
+        )
+        .ok()?;
+        // The engine's own latch consumes at most one resolution per engine,
+        // so the set-once slot cannot serve a stale adapter to a second,
+        // different resolution.
+        let slot = self.built.get_or_init(|| provider);
+        Some(stella_core::ports::ResolvedFallback {
+            provider: slot.as_ref(),
+            reason,
+        })
+    }
 }
 
 /// Where post-turn reflection dispatches, and on what posture.

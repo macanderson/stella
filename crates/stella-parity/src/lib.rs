@@ -113,7 +113,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 4;
+pub const UNWITNESSED_BASELINE: usize = 5;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -571,6 +571,29 @@ pub static CAPABILITIES: &[Capability] = &[
                      threshold of consecutive calls surfaces as AllProvidersUnavailable until \
                      the cooldown's half-open trial (see stella-serve pipeline_run's WallClock \
                      doc), but cross-provider failover is the host's concern by design",
+        },
+    },
+    Capability {
+        id: "provider.midturn_fallback",
+        engine_home: "stella-core driver/model_fallback + the FallbackResolver port: a retry \
+                      ladder exhausting mid-turn re-resolves the role through the router — \
+                      whose breaker the failing calls already fed — and continues the turn on \
+                      the replacement, transcript repaired, at most one swap per engine (#2679)",
+        engine_entries: &["with_fallback_resolver"],
+        cli: SurfacePosture::ShippedUnwitnessed {
+            mechanism: "the bare loops attach a router-backed `SessionFallback` \
+                        (agent/engine.rs) beside the session router at both `run_turn` engine \
+                        sites — the seam itself is witnessed in stella-core by \
+                        `exhausted_retries_swap_to_the_resolved_fallback_and_the_turn_completes`, \
+                        which this sweep cannot see",
+            missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
+                      resolver (#2733 tracks the same gap for the router attachment), and the \
+                      pipeline execute-stage engines do not attach the port at all yet (#2765)",
+        },
+        api: SurfacePosture::NotApplicable {
+            reason: "a served run remotes every model call to the host, which owns keys and \
+                     provider selection — the Stella side has nothing to swap TO; the same \
+                     posture, for the same reason, as provider.breaker_feedback",
         },
     },
     Capability {
