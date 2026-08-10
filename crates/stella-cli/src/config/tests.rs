@@ -75,6 +75,26 @@ fn every_seeded_provider_declares_a_reasoning_posture() {
     }
 }
 
+/// The overflow-axis sibling (#2680): every seeded provider must declare how
+/// it signals a context-window overflow — either a verified wire signature
+/// with a witness test (`Detected`), or an explicit note that detection is
+/// best-effort through the shared funnel (`BestEffort`). Without a row, a
+/// provider's overflow rejections silently miss the engine's reactive
+/// recovery and abort the turn with nothing enforcing that the omission was
+/// deliberate.
+#[test]
+fn every_seeded_provider_declares_an_overflow_posture() {
+    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
+        assert!(
+            stella_model::provider_parity::overflow_posture(provider.id).is_some(),
+            "provider `{}` has no OverflowPosture row in \
+             stella-model/src/provider_parity.rs — add it (with a witness test for a \
+             Detected signature, or a note for a BestEffort row) in this PR",
+            provider.id
+        );
+    }
+}
+
 #[test]
 fn alias_env_var_resolves_when_the_primary_is_unset() {
     // Synthetic provider with unique var names so parallel tests can't
