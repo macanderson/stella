@@ -51,7 +51,7 @@
 //! [cited]: super::super::context_record::context_use::ContextUseKind::Cited
 //! [nr]: super::super::context_record::context_use::MissingContextKind
 
-use super::super::ingest::record::Force;
+use super::super::ingest::record::{Force, Tier};
 use super::LoadedRecord;
 use super::sweep::Disposition;
 
@@ -956,6 +956,103 @@ mod tests {
             advisory.text.contains("^no-force-push"),
             "{}",
             advisory.text
+        );
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::super::tests::{loaded_from, record_named, with_tier};
+    use super::*;
+    use crate::ingest::record::Tier;
+
+    fn input<'a>(record: &'a LoadedRecord, disposition: &'a Disposition) -> RenderInput<'a> {
+        RenderInput {
+            record,
+            disposition,
+            enforced: false,
+        }
+    }
+
+    /// Witness for #2709: an explicitly pinned `may`-strength record rides the
+    /// cached prefix — under its own `### Pinned` heading, so the Must/Should
+    /// bytes of every pre-tier record set are untouched — and leaves the
+    /// volatile channel entirely.
+    #[test]
+    fn an_explicitly_pinned_may_record_joins_the_cached_block() {
+        let record = loaded_from(with_tier(
+            record_named("ctx.acme.web.style"),
+            Force::May,
+            Tier::Pinned,
+        ));
+        let select = Disposition::Select;
+        let inputs = [input(&record, &select)];
+        let cached = render_channel(&inputs, Channel::Cached, None);
+        assert!(
+            cached.text.contains("### Pinned"),
+            "a pinned may-record earns the cached block: {}",
+            cached.text
+        );
+        assert!(
+            render_channel(&inputs, Channel::Volatile, None)
+                .text
+                .is_empty(),
+            "and no longer rides the volatile channel"
+        );
+    }
+
+    /// Witness for #2709: an explicitly scoped `must` record leaves the cached
+    /// prefix — its seat there was the whole cost the tier exists to avoid —
+    /// and rides the volatile channel, where per-turn selection gates it.
+    #[test]
+    fn an_explicitly_scoped_must_record_leaves_the_cached_block() {
+        let record = loaded_from(with_tier(
+            record_named("ctx.acme.web.api-only"),
+            Force::Must,
+            Tier::Scoped,
+        ));
+        let select = Disposition::Select;
+        let inputs = [input(&record, &select)];
+        assert!(
+            render_channel(&inputs, Channel::Cached, None)
+                .text
+                .is_empty(),
+            "a scoped must vacates the prefix"
+        );
+        let volatile = render_channel(&inputs, Channel::Volatile, None);
+        assert!(
+            volatile.text.contains("pnpm"),
+            "and renders in the volatile channel instead: {}",
+            volatile.text
+        );
+    }
+
+    /// The sweep constraint #2709 inherits: a stale-demoted pinned record
+    /// never enters the stable prefix — demotion outranks the tier exactly as
+    /// it outranked the declared force, because the reason for the demotion is
+    /// per-turn information the byte-stable block cannot carry.
+    #[test]
+    fn a_demoted_pinned_record_stays_out_of_the_cached_block() {
+        let record = loaded_from(with_tier(
+            record_named("ctx.acme.web.stale-pin"),
+            Force::May,
+            Tier::Pinned,
+        ));
+        let stale = Disposition::SelectStale {
+            reason: "ttl expired".to_string(),
+        };
+        let inputs = [input(&record, &stale)];
+        assert!(
+            render_channel(&inputs, Channel::Cached, None)
+                .text
+                .is_empty(),
+            "a demoted pinned record must never enter the stable prefix"
+        );
+        assert!(
+            !render_channel(&inputs, Channel::Volatile, None)
+                .text
+                .is_empty(),
+            "it demotes to the volatile channel rather than vanishing"
         );
     }
 }

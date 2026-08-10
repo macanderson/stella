@@ -87,7 +87,7 @@ impl SessionMemory {
     /// gap #2709 requires to be observable rather than silent: a scoped rule
     /// that systematically loses its seat looks exactly like a rule that
     /// never applied, unless someone says otherwise.
-    fn turn_record_section_reporting(
+    pub(super) fn turn_record_section_reporting(
         &self,
         prompt: &str,
         mut report: impl FnMut(String),
