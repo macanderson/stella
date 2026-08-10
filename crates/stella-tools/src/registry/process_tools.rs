@@ -54,6 +54,9 @@ pub(super) fn builtins(
         Arc::new(crate::ci::CiStatus::default()),
         Arc::new(crate::screenshot::Screenshot),
         Arc::new(crate::tasks::TaskAssign(task_board, spawn_queue)),
+        Arc::new(crate::environment::GetEnvironment {
+            scratch_dir: scratch_path.clone(),
+        }),
     ];
 
     if let Ok(scratch) = scratch {
