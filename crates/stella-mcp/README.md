@@ -53,9 +53,14 @@ it crosses.
 `ToolExecutor` port `stella-tools`' `ToolRegistry` implements, so composing it
 over the native set (`McpToolSet::connect(...).wrapping(native)`) makes MCP
 tools indistinguishable from built-ins. Every MCP tool is advertised as
-`mcp__<server>__<tool>`; a server name that is empty or contains the reserved
-`__` separator is skipped into `failed_servers()` rather than producing an
-ambiguous prefix. A non-`mcp__` name falls through to the native executor; an
+`mcp__<server>__<tool>` — composed by the one public `wire_name` function
+(inverse: `split_wire_name`); a server name that is empty, contains the
+reserved `__` separator, or starts/ends with `_` is skipped into
+`failed_servers()` rather than producing an ambiguous wire name — those rules
+make the encoding injective, and if two `(server, tool)` pairs collide anyway,
+both routes are dropped and reported via `wire_name_collisions()` instead of
+letting connect order pick a winner (#2675). A non-`mcp__` name falls through
+to the native executor; an
 `mcp__…` name that matches no route is a model-visible error and never falls
 through. `stella-cli` builds the set once per session
 (`load_mcp_plan` → `connect_mcp_servers` in

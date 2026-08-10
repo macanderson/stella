@@ -79,10 +79,16 @@ pub fn resolve_registry_url(workspace_root: &Path) -> String {
 /// and their kept tools route normally, so calling them "unavailable" would be
 /// false. Without this the cap is entirely silent — the model simply has fewer
 /// tools than the server offers and nothing says so (#689).
+/// `collisions` carries the wire names more than one `(server, tool)` pair
+/// claimed (#2675); every claimant's route was dropped rather than letting
+/// connect order pick which server answers. Reported separately from `failed`
+/// for the same reason truncation is: the claimant servers are connected and
+/// their uncontested tools route normally.
 pub(crate) fn mcp_outcome_report(
     connected: &[&str],
     failed: &[(String, String)],
     truncated: &[(&str, usize)],
+    collisions: &[stella_mcp::WireNameCollision],
 ) -> String {
     let mut lines = match connected.len() {
         0 => vec!["no MCP servers connected — continuing with native tools only".to_string()],
@@ -101,7 +107,26 @@ pub(crate) fn mcp_outcome_report(
             .iter()
             .map(|(name, dropped)| truncation_note(name, *dropped)),
     );
+    lines.extend(collisions.iter().map(collision_note));
     lines.join("\n")
+}
+
+/// One contested wire name's notice, shared by deck and text mode so the
+/// wording cannot drift between them. Names every claimant: the operator's
+/// next move is to rename one of those servers, so the sentence must say
+/// which ones are fighting over the name.
+pub(crate) fn collision_note(collision: &stella_mcp::WireNameCollision) -> String {
+    let claimants: Vec<String> = collision
+        .claimants
+        .iter()
+        .map(|(server, tool)| format!("`{server}` tool `{tool}`"))
+        .collect();
+    format!(
+        "MCP wire name `{}` is claimed by multiple servers ({}) — every claimant \
+         dropped and not callable this session; rename one of the servers",
+        collision.wire_name,
+        claimants.join(", ")
+    )
 }
 
 /// One server's truncation notice, shared by deck and text mode so the wording
@@ -133,6 +158,9 @@ pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
     }
     for (name, dropped) in set.over_advertising_servers() {
         eprintln!("  {} {}", "!".yellow(), truncation_note(name, dropped));
+    }
+    for collision in set.wire_name_collisions() {
+        eprintln!("  {} {}", "!".yellow(), collision_note(collision));
     }
     if set.connected_count() > 0 {
         println!(
