@@ -546,20 +546,13 @@ theme = "stella-dark"   # stella-dark | stella-light
 # What a finished turn's verdict is worth when it becomes a training label
 # (#1043). Whole-block last-wins across scopes, like `[ui]`; carries no
 # credential or egress authority, so no trust restoration — a project setting a
-# weight is stating an opinion about its own verifier, not borrowing permission.
+# weight is stating an opinion about its own evidence, not borrowing permission.
 #
-# WHY THIS IS CONFIGURABLE AT ALL: `verifier_weight = 0.5` is an estimate of ONE
-# verifier's accuracy — across an 89-task Terminal-Bench run the model verifier
-# agreed with the benchmark's own grader 46% of the time. A workspace pointing
-# a weaker model at the verifier role, or working in a domain where the verifier
-# keeps reading house style as a defect, is entitled to trust it less.
-#
-# LOWER IS SUPPORTED. HIGHER THAN `deterministic_weight` IS REFUSED: above that
-# line a model's opinion outranks a test's observation, which inverts the
-# premise the verification ladder is built on. `verifier_weight = 0.0` is legal and
-# means "do not train on this verifier at all" — those turns are DISCARDED (with
-# the reason `verifier_distrusted`), not scored as zero. A zero is a claim that a
-# neutral outcome was observed; a discard is the refusal to claim anything.
+# RETIRED KEY: `verifier_weight` priced a model verifier's opinion at half a
+# test's observation, and a workspace could lower it. The verdict call that
+# produced that tier is gone, so the weight priced nothing; it is removed rather
+# than kept as a no-op, and a file that still sets it is reported as an
+# unrecognized key (#2616).
 #
 # UNLIKE `[context.retrieval]` ABOVE, AN OUT-OF-RANGE VALUE HERE IS REJECTED,
 # NOT CLAMPED. The postures differ because the failures differ: a bad retrieval
@@ -577,7 +570,6 @@ theme = "stella-dark"   # stella-dark | stella-light
 
 [reward]
 deterministic_weight = 1.0    # a fail->pass flip, or touched tests red
-verifier_weight         = 0.5    # a model verifier's opinion; 0.0 discards instead
 per_step             = 0.02   # subtracted per model call
 per_usd              = 0.5    # subtracted per USD
 per_revision         = 0.1    # subtracted per verification round after the first

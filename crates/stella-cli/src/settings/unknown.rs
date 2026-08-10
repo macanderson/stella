@@ -67,7 +67,6 @@ const UI_FIELDS: &[&str] = &["theme"];
 /// until they pool the traces.
 const REWARD_FIELDS: &[&str] = &[
     "deterministic_weight",
-    "verifier_weight",
     "per_step",
     "per_usd",
     "per_revision",
@@ -470,6 +469,37 @@ mod tests {
                 "agent_engine_config.agents.verifier.modell".to_string(),
                 "agent_engine_config.agents.verifier.params.temperatur".to_string(),
             ]
+        );
+    }
+
+    /// A **retired** key is reported by exactly the same machinery as a typo,
+    /// and that is the point (#2616). Both `reward.verifier_weight` and
+    /// `agent_engine_config.pipeline_require_independent_verifier` steered a
+    /// verdict call that no longer runs. A retired key kept in the typed struct
+    /// is worse than an unknown one — it parses, merges across all three
+    /// scopes, and configures nothing, with no output whatsoever — so retiring
+    /// it means deleting the field, not keeping a no-op.
+    ///
+    /// The file still LOADS: this pass warns, it never gates, which is what
+    /// lets a settings file written against an older release keep working.
+    #[test]
+    fn the_retired_verdict_keys_are_named() {
+        let found = scan(
+            r#"{
+                 "reward": { "deterministic_weight": 1.0, "verifier_weight": 0.3 },
+                 "agent_engine_config": {
+                   "pipeline_require_diff_coverage": "on",
+                   "pipeline_require_independent_verifier": "on"
+                 }
+               }"#,
+        );
+        assert_eq!(
+            found,
+            vec![
+                "agent_engine_config.pipeline_require_independent_verifier".to_string(),
+                "reward.verifier_weight".to_string(),
+            ],
+            "a retired key must be named, and the keys beside it left alone"
         );
     }
 

@@ -56,7 +56,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           "enable_recap": "off",
           "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
-          "reward": {"verifier_weight": 0.25, "per_usd": 0.75},
+          "reward": {"deterministic_weight": 0.25, "per_usd": 0.75},
           "mcp": {"registry_url": "https://registry.example"}
         }"#,
     );
@@ -73,7 +73,7 @@ recap = "off"
 trace_capture = "on"
 
 [reward]
-verifier_weight = 0.25
+deterministic_weight = 0.25
 per_usd = 0.75
 
 [providers.anthropic]
@@ -143,33 +143,32 @@ registry_url = "https://registry.example"
     assert_eq!(from_json.ui, from_toml.ui, "ui");
     assert_eq!(from_json.reward, from_toml.reward, "reward");
     assert_eq!(
-        from_toml.reward_policy().unwrap().outcome.judged,
+        from_toml.reward_policy().unwrap().outcome.deterministic,
         0.25,
-        "[reward].verifier_weight resolves into the policy"
+        "[reward].deterministic_weight resolves into the policy"
     );
     assert_eq!(
-        from_toml.reward_policy().unwrap().outcome.deterministic,
-        1.0,
+        from_toml.reward_policy().unwrap().shaping.per_step,
+        0.02,
         "an unset weight is the default, not zero"
     );
     assert_eq!(from_json.mcp, from_toml.mcp, "mcp");
 }
 
-/// A workspace that distrusts its verifier writes one key and inherits the rest.
-/// The alternative — an absent key meaning `0.0` — would silently discard every
-/// judged turn for anyone who set only `per_step`.
+/// A workspace that reprices one term writes one key and inherits the rest.
+/// The alternative — an absent key meaning `0.0` — would silently flatten every
+/// shaping term for anyone who set only `deterministic_weight`.
 #[test]
 fn an_absent_reward_key_is_the_default_not_zero() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(
         dir.path(),
         "stella.toml",
-        "[reward]\nverifier_weight = 0.1\n",
+        "[reward]\ndeterministic_weight = 0.1\n",
     );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let policy = settings.reward_policy().unwrap();
-    assert_eq!(policy.outcome.judged, 0.1);
-    assert_eq!(policy.outcome.deterministic, 1.0);
+    assert_eq!(policy.outcome.deterministic, 0.1);
     assert_eq!(policy.shaping.per_step, 0.02);
     assert_eq!(policy.shaping.per_usd, 0.5);
     assert_eq!(policy.shaping.per_revision, 0.1);
@@ -189,25 +188,24 @@ fn no_reward_block_is_exactly_the_defaults() {
     );
 }
 
-/// A verifier weight above the deterministic one is refused at load, by name.
-/// Loud beats clamping: a silently-substituted weight produces correctly-shaped
-/// labels that mean something the operator never asked for.
+/// A reward scale with a zero unit is refused at load, by name. Loud beats
+/// clamping: a silently-substituted weight produces correctly-shaped labels
+/// that mean something the operator never asked for.
 #[test]
-fn a_verifier_weight_above_the_ceiling_fails_the_load_by_name() {
+fn an_unusable_reward_scale_fails_the_load_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(
         dir.path(),
         "stella.toml",
-        "[reward]\nverifier_weight = 2.0\n",
+        "[reward]\ndeterministic_weight = 0.0\n",
     );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let error = settings
         .reward_policy()
-        .expect_err("a verifier outranking a test must not load");
-    assert!(error.contains("verifier_weight"), "{error}");
+        .expect_err("a scale with no unit must not load");
     assert!(error.contains("deterministic_weight"), "{error}");
     // The message has to say what to do, not just that something is wrong.
-    assert!(error.contains("Lower it"), "{error}");
+    assert!(error.contains("greater than zero"), "{error}");
 }
 
 #[test]
@@ -658,6 +656,71 @@ fn migrating_a_settings_file_preserves_every_value_it_configured() {
     assert_eq!(before.mcp, after.mcp, "mcp");
     assert_eq!(before.context, after.context, "context");
     assert_eq!(before.hooks, after.hooks, "hooks");
+}
+
+/// A retired key does not survive the migration into a freshly-generated file
+/// (#2616).
+///
+/// This is where a no-op key does its lasting damage. `migrate config`
+/// serializes the parsed [`Settings`] rather than transcribing the JSON, so any
+/// key the typed struct still holds is COPIED into a brand-new `stella.toml` —
+/// a file a user is being told to read, commit, and keep. Deleting the field is
+/// what makes the migration drop it at the parse and leave the generated file
+/// stating only knobs that steer something. The live neighbour in the same
+/// block has to survive, or this would pass for the wrong reason.
+#[test]
+fn a_migration_drops_the_retired_verdict_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(
+        dir.path(),
+        "settings.json",
+        r#"{
+             "agent_engine_config": {
+               "default_model": "zai/glm-5.2",
+               "pipeline_require_diff_coverage": "on",
+               "pipeline_require_independent_verifier": "on"
+             }
+           }"#,
+    );
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+
+    let generated = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(
+        !generated.contains("pipeline_require_independent_verifier"),
+        "a retired engine key must not be copied into a generated file: {generated}"
+    );
+    assert!(
+        generated.contains("pipeline_require_diff_coverage"),
+        "the live neighbour must survive: {generated}"
+    );
+}
+
+/// The retired `verifier_weight` steers nothing AND blocks nothing (#2616).
+///
+/// It used to do the second: the key fed the judged weight, which was checked
+/// against `deterministic_weight`, so a workspace that had lowered its verifier
+/// and later raised it — over a tier that by then had no members — got a hard
+/// launch failure over a knob that could not have changed one label. Retiring
+/// the field is what makes the same file resolve to the shipped defaults. The
+/// unrecognized-key pass is what keeps that from being silent; see
+/// `settings::unknown::tests::the_retired_verdict_keys_are_named`.
+#[test]
+fn the_retired_verifier_weight_neither_steers_nor_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[reward]\nverifier_weight = 2.0\n",
+    );
+    let settings = load_toml(&path, ConfigScope::User).unwrap();
+    assert_eq!(
+        settings
+            .reward_policy()
+            .expect("a retired key must not fail a launch"),
+        stella_pipeline::reward::RewardPolicy::default(),
+        "a retired key must not steer the policy either"
+    );
 }
 
 #[test]

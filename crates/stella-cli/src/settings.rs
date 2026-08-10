@@ -506,24 +506,6 @@ pub struct AgentEngineConfig {
     /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
-    /// Legacy (#1795), retained so existing settings files keep decoding:
-    /// **setting it changes nothing about a run.**
-    ///
-    /// It once refused a run whose VERDICT call would resolve to the worker's
-    /// own model. Verification makes no model calls now, so there is no
-    /// self-graded verdict left to refuse, and `PipelineConfig` no longer
-    /// carries the field this fed — the accessor that read it went with it.
-    /// The surviving independence question is about the *witness author*, and
-    /// it is answered by `pipeline_require_independent_witness` via
-    /// `agent::engine::trusted_posture_requires_independent_witness`, not by
-    /// this key.
-    ///
-    /// Deliberately still parsed rather than rejected, because a key that
-    /// hard-errors would break settings files written against a shipped
-    /// release. Retiring it — silently accepting a no-op key is its own defect
-    /// — is tracked in #2616.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -844,7 +826,6 @@ impl AgentEngineConfig {
         take!(pipeline_candidates);
         take!(pipeline_verifier_evidence_demand);
         take!(pipeline_require_diff_coverage);
-        take!(pipeline_require_independent_verifier);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
@@ -1245,27 +1226,22 @@ impl ToolsSettings {
 /// it becomes a training label (#1043).
 ///
 /// Every field optional, and an absent field means the stated default rather
-/// than zero: a workspace that only wants to distrust its verifier writes
-/// `verifier_weight` alone and inherits the rest.
+/// than zero: a workspace that only wants to price steps differently writes
+/// `per_step` alone and inherits the rest.
 ///
-/// The reason this is configurable at all is that `verifier_weight`'s default of
-/// `0.5` describes *one* verifier's measured accuracy, and a workspace pointing a
-/// weaker model at the verifier role — or working in a domain where the verifier keeps
-/// mistaking house style for a defect — is entitled to trust it less. Lower is
-/// supported; higher than `deterministic_weight` is refused, because there a
-/// model's opinion would outrank a test's observation. See
-/// [`stella_pipeline::reward`] for the full argument.
+/// There used to be a `verifier_weight` here, priced against
+/// `deterministic_weight`, because the ladder had a tier whose magnitude came
+/// from a model verifier's opinion. That call is gone and so is the tier, so
+/// the key is retired rather than kept as a no-op: an accepted key that steers
+/// nothing is the settings failure mode this surface exists to avoid, and a
+/// retired one is at least reported by name by the unrecognized-key pass
+/// (#2616). See [`stella_pipeline::reward`] for the full argument.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct RewardSettings {
     /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit
-    /// every other weight is measured against.
+    /// the shaping prices are measured against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic_weight: Option<f64>,
-    /// Magnitude of a model verifier's pass or fail. Default `0.5`. `0.0` discards
-    /// judged turns instead of scoring them — which is a different record from
-    /// a `0.0` score, deliberately.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verifier_weight: Option<f64>,
     /// Reward subtracted per model call. Default `0.02`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_step: Option<f64>,
@@ -1290,7 +1266,6 @@ impl RewardSettings {
                 deterministic: self
                     .deterministic_weight
                     .unwrap_or(defaults.outcome.deterministic),
-                judged: self.verifier_weight.unwrap_or(defaults.outcome.judged),
             },
             shaping: RewardShaping {
                 per_step: self.per_step.unwrap_or(defaults.shaping.per_step),

@@ -32,18 +32,6 @@ pub enum PipelineError {
         "an independent witness author was required but {0} — refusing rather than running as the single-model arm under a configuration that claims otherwise"
     )]
     WitnessAuthorUnavailable(String),
-    /// Retained, no longer reachable: the `require_independent_verifier`
-    /// config it refused for is gone with the verdict call itself, and nothing
-    /// constructs this variant any more.
-    ///
-    /// It is kept rather than deleted because `RunError` is a wire-visible
-    /// enum a host may already match on, and removing a variant is a breaking
-    /// change that belongs with the rest of the verdict vocabulary retirement
-    /// rather than smuggled into this swap. Removal is tracked separately.
-    #[error(
-        "an independent verifier was required for the verdict but {0} — refusing before spend rather than letting the worker grade its own work under a configuration that claims otherwise"
-    )]
-    VerifierNotIndependent(String),
     /// The responsibility roster (#2381) says something that cannot be
     /// honoured — a key naming no responsibility, a binding naming no agent,
     /// a disabled worker.

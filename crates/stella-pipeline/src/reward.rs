@@ -18,49 +18,53 @@
 //! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no longer a model opinion to discount — see below. |
 //! | everything else | **discarded** | See below. |
 //!
-//! # Why the magnitudes are configurable, and why only downward
+//! # One tier, because there is one kind of evidence left
 //!
-//! The 0.5 is an estimate of one verifier's accuracy, and the verifier in question is
-//! whichever model a workspace pointed at it. A workspace whose verifier is worse
-//! than the one that produced the 46% figure — a cheaper model, an unfamiliar
-//! domain, a house style the verifier keeps mistaking for a defect — is entitled to
-//! trust it less, so [`OutcomeWeights`] carries both magnitudes and a workspace
-//! can lower the judged one.
+//! [`OutcomeWeights`] carries a single magnitude. It used to carry two: a
+//! *judged* weight priced a model verifier's opinion at half a test's
+//! observation, and a workspace could lower that half — never raise it past the
+//! deterministic weight, because above that line an opinion outranks an
+//! observation and the ladder inverts.
 //!
-//! It cannot raise it past the deterministic weight. Above that line a model's
-//! opinion outranks a test's observation, which inverts the premise the whole
-//! ladder is built on: deterministic evidence is tried *first* precisely because
-//! it is worth more. [`OutcomeWeights::validate`] refuses it, at config load and
-//! again at [`label`], so a policy that got past one path cannot get past the
-//! other.
+//! That whole apparatus described a tier with no members once the verdict call
+//! was removed (#2584): no rung's magnitude comes from a model any more, so a
+//! judged weight priced nothing, and the ceiling it was checked against refused
+//! launches over a knob that could not change a single label (#2616). Both are
+//! gone rather than retained, because a weight is not decode-compatibility
+//! trivia — it is stamped onto every new label as the scale a reader
+//! renormalizes by, and a scale with no members on it is a claim that a tier
+//! exists.
 //!
-//! **Refused, not clamped** — deliberately the opposite posture to
-//! `stella_context`'s retrieval tuning, which sanitizes an out-of-range knob
-//! rather than failing. The postures differ because the failures do. A bad
-//! retrieval knob degrades one turn, visibly, and the next turn recovers; the
-//! worse answer there is failing a person's work over a typo. A bad reward
-//! weight writes permanently mislabelled training data that is perfectly
-//! well-formed — there is no turn to fail, and nothing downstream can tell that
-//! a substituted weight was ever applied. So this one fails at launch, naming
-//! the key, before any work starts.
+//! Labels written before the removal still carry `outcome.judged` in their
+//! stamped policy, which is exactly what makes their `±0.5` outcome terms
+//! readable; this type ignores the field on the way back in. The retired
+//! discard reasons ([`DiscardReason::VerifierDistrusted`],
+//! [`DiscardReason::VerifierUnavailable`]) are kept for the opposite reason —
+//! they name stored records, and a label already written must keep parsing.
 //!
-//! A judged weight of exactly `0.0` is legal and means something specific: *do
-//! not train on this verifier at all*. It maps to [`DiscardReason::VerifierDistrusted`]
-//! rather than to a `0.0` scalar, because a zero reward is a claim — "we watched
-//! and it came out neutral" — and this setting is the opposite of a claim. That
-//! is the same distinction the abstain rungs exist to preserve, applied to a
-//! knob instead of a rung.
+//! What survives of the argument is the posture: an unusable weight is
+//! **refused, not clamped** — deliberately the opposite of `stella_context`'s
+//! retrieval tuning, which sanitizes an out-of-range knob rather than failing.
+//! The postures differ because the failures do. A bad retrieval knob degrades
+//! one turn, visibly, and the next turn recovers; the worse answer there is
+//! failing a person's work over a typo. A bad reward weight writes permanently
+//! mislabelled training data that is perfectly well-formed — there is no turn
+//! to fail, and nothing downstream can tell that a substituted weight was ever
+//! applied. So this one fails at launch, naming the key, before any work
+//! starts.
 //!
 //! # The policy travels with the label
 //!
 //! Every [`RewardLabel`] carries the [`RewardPolicy`] it was computed under.
 //! Without it, two workspaces on different weights emit rows that are
 //! arithmetically indistinguishable and silently incomparable — pooling them
-//! would average a 0.5-scale judged pass against a 0.2-scale one as though they
-//! were the same measurement. With it, a reader can renormalize, or select one
-//! policy and drop the rest. `stella_core::comparison::ComparisonReport` already
-//! stamps its own `RewardWeights` for the same reason; this is that rule applied
-//! to the per-turn label.
+//! would average a reward shaped at `per_usd = 0.5` against one shaped at
+//! `0.05` as though they were the same measurement, and would read an older
+//! row's `±0.5` judged outcome as a deterministic one. With it, a reader can
+//! renormalize, or select one policy and drop the rest.
+//! `stella_core::comparison::ComparisonReport` already stamps its own
+//! `RewardWeights` for the same reason; this is that rule applied to the
+//! per-turn label.
 //!
 //! # Why the abstain rungs are discarded rather than punished
 //!
@@ -102,32 +106,22 @@ use stella_protocol::{LadderRung, VerdictEvidence};
 /// Default magnitude of a label backed by a deterministic test observation.
 const DETERMINISTIC_WEIGHT: f64 = 1.0;
 
-/// Default magnitude of a label backed only by a model verifier's opinion. Half,
-/// and the halving is measured rather than aesthetic: across an 89-task
-/// Terminal-Bench run the verifier agreed with the benchmark's grader 46% of the
-/// time.
-const JUDGED_WEIGHT: f64 = 0.5;
-
-/// What each tier of evidence is worth, before shaping.
+/// What the one surviving tier of evidence is worth, before shaping.
 ///
-/// Two numbers, one ordering rule: a verifier's opinion may be worth less than a
-/// test's observation, never more. See the module docs for why the ceiling is
-/// not negotiable and why `judged = 0.0` is a discard rather than a zero.
+/// One number, because one tier scores: a deterministic observation. A second
+/// magnitude priced a model verifier's opinion until the verdict call that
+/// produced it was removed — see the module docs for why it went rather than
+/// staying as an inert stamp.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct OutcomeWeights {
-    /// Magnitude of a deterministic pass or fail. The unit the judged weight
-    /// is measured against.
+    /// Magnitude of a deterministic pass or fail.
     pub deterministic: f64,
-    /// Magnitude of a model verifier's pass or fail. `0.0` discards judged turns
-    /// instead of scoring them.
-    pub judged: f64,
 }
 
 impl Default for OutcomeWeights {
     fn default() -> Self {
         Self {
             deterministic: DETERMINISTIC_WEIGHT,
-            judged: JUDGED_WEIGHT,
         }
     }
 }
@@ -146,12 +140,6 @@ pub enum WeightError {
     /// zero has no directions in it, and a negative one silently inverts every
     /// label's sign.
     DeterministicNotPositive,
-    /// A negative judged weight. It would label a verifier's *pass* as a penalty,
-    /// which no configuration can have meant.
-    JudgedNegative,
-    /// The judged weight exceeds the deterministic one — an opinion outranking
-    /// an observation. See the module docs.
-    JudgedAboveDeterministic,
     /// A negative shaping price, which would pay a trajectory for spending
     /// more. See [`RewardShaping::validate`].
     ShapingNegative,
@@ -167,16 +155,6 @@ impl WeightError {
                 "deterministic_weight must be greater than zero — it is the unit \
                  every other weight is measured against"
             }
-            WeightError::JudgedNegative => {
-                "verifier_weight must not be negative — a negative weight scores a \
-                 verifier's pass as a penalty"
-            }
-            WeightError::JudgedAboveDeterministic => {
-                "verifier_weight must not exceed deterministic_weight — above it a \
-                 model's opinion outranks a test's observation, which inverts \
-                 the verification ladder. Lower it (0.0 discards judged turns \
-                 entirely) rather than raising the ceiling"
-            }
             WeightError::ShapingNegative => {
                 "shaping prices must not be negative — a negative price pays a \
                  trajectory for spending more"
@@ -186,22 +164,16 @@ impl WeightError {
 }
 
 impl OutcomeWeights {
-    /// Check the ordering rule. Called at config load so a bad value is a loud
-    /// launch failure, and again inside [`label`] so a policy that arrived by
-    /// some other path (a deserialized record, a direct struct literal) is
-    /// still refused rather than applied.
+    /// Check that the scale has a usable unit. Called at config load so a bad
+    /// value is a loud launch failure, and again inside [`label`] so a policy
+    /// that arrived by some other path (a deserialized record, a direct struct
+    /// literal) is still refused rather than applied.
     pub fn validate(&self) -> Result<(), WeightError> {
-        if !self.deterministic.is_finite() || !self.judged.is_finite() {
+        if !self.deterministic.is_finite() {
             return Err(WeightError::NotFinite);
         }
         if self.deterministic <= 0.0 {
             return Err(WeightError::DeterministicNotPositive);
-        }
-        if self.judged < 0.0 {
-            return Err(WeightError::JudgedNegative);
-        }
-        if self.judged > self.deterministic {
-            return Err(WeightError::JudgedAboveDeterministic);
         }
         Ok(())
     }
@@ -321,9 +293,9 @@ pub enum DiscardReason {
     ///
     /// **Retired**, and in the strongest possible sense: the workspace's
     /// distrust of the model verifier is now the architecture rather than a
-    /// weight, because the call it distrusted is not made. Retained for the
-    /// same reason as [`Self::VerifierUnavailable`] — stored labels must keep
-    /// parsing.
+    /// weight, because the call it distrusted is not made and the weight that
+    /// expressed the distrust no longer exists. Retained for the same reason as
+    /// [`Self::VerifierUnavailable`] — stored labels must keep parsing.
     VerifierDistrusted,
     /// The [`RewardPolicy`] itself is invalid, so no scalar computed under it
     /// would mean anything. The rung is still published, because the rung is
@@ -431,8 +403,9 @@ pub struct RewardLabel {
     /// The policy this label was computed under, stamped so the number above is
     /// interpretable outside the workspace that produced it. Always present,
     /// including on a discard — a reader pooling records has to be able to tell
-    /// a `VerifierDistrusted` discard from a `judged = 0.5` workspace that simply
-    /// never reached the verifier.
+    /// a discard from a scored row shaped under weights it does not share, and
+    /// an older row whose policy still names a judged weight from one written
+    /// after that tier was retired.
     pub policy: RewardPolicy,
 }
 
@@ -514,10 +487,8 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy
 /// **Only deterministic rungs score.** Every other rung is a discard with a
 /// named reason, never a `0.0`, because a zero asserts that a neutral outcome
 /// was observed and none of them observed anything. The judged tier is gone
-/// along with the call that produced it: there is no longer a rung whose
-/// magnitude comes from a model's opinion, so `weights.judged` is read by
-/// nothing here (its removal is tracked separately — it is a serde-config
-/// decision, not a verification one).
+/// along with the call that produced it: no rung's magnitude comes from a
+/// model's opinion, which is why [`OutcomeWeights`] carries one number.
 pub fn outcome_term(
     rung: LadderRung,
     passed: bool,
