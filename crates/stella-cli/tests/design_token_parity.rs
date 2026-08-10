@@ -61,13 +61,15 @@ fn declarations(css: &str) -> BTreeMap<String, String> {
     let mut found = BTreeMap::new();
     for (index, _) in css.match_indices("--") {
         let rest = &css[index..];
-        let Some(colon) = rest.find(':') else { continue };
+        let Some(colon) = rest.find(':') else {
+            continue;
+        };
         let name = &rest[2..colon];
         if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
             continue;
         }
         let value = rest[colon + 1..]
-            .split(|c| c == ';' || c == '\n')
+            .split([';', '\n'])
             .next()
             .unwrap_or("")
             .trim();
@@ -75,7 +77,10 @@ fn declarations(css: &str) -> BTreeMap<String, String> {
             && hex.len() == 6
             && hex.bytes().all(|b| b.is_ascii_hexdigit())
         {
-            found.insert(format!("--{name}"), format!("#{}", hex.to_ascii_lowercase()));
+            found.insert(
+                format!("--{name}"),
+                format!("#{}", hex.to_ascii_lowercase()),
+            );
         }
     }
     found
@@ -106,11 +111,7 @@ fn canonical() -> Vec<(&'static str, String, String)> {
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
     // The explicit gate, not the media query: identical values, and it is the
     // one a reader's own toggle reaches.
-    let light = declarations(between(
-        &observatory,
-        r#":root[data-theme="light"]"#,
-        "\n}",
-    ));
+    let light = declarations(between(&observatory, r#":root[data-theme="light"]"#, "\n}"));
 
     let role = |name: &str| -> (String, String) {
         (
@@ -218,10 +219,8 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
             let Some((_, token)) = surface.names.iter().find(|(r, _)| r == role) else {
                 continue;
             };
-            for (scheme, table, want) in [
-                ("dark", &dark, want_dark),
-                ("light", &light, want_light),
-            ] {
+            for (scheme, table, want) in [("dark", &dark, want_dark), ("light", &light, want_light)]
+            {
                 match table.get(*token) {
                     None => divergences.push(format!(
                         "{}: {scheme} scheme declares no `{token}` (role `{role}`)",
@@ -279,7 +278,10 @@ fn the_auth_landing_pages_use_the_instrument_palette() {
         // The page has no surfaces, no series and no --text-2-vs-warn
         // distinction to draw; it carries exactly what a two-state message
         // needs.
-        if !matches!(*role, "ground" | "text" | "text-2" | "ok" | "bad" | "identity") {
+        if !matches!(
+            *role,
+            "ground" | "text" | "text-2" | "ok" | "bad" | "identity"
+        ) {
             continue;
         }
         let token = format!("--{role}");
@@ -317,11 +319,7 @@ fn identity_gold_comes_from_the_brand_ramp() {
 
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
-    let light = declarations(between(
-        &observatory,
-        r#":root[data-theme="light"]"#,
-        "\n}",
-    ));
+    let light = declarations(between(&observatory, r#":root[data-theme="light"]"#, "\n}"));
 
     assert_eq!(
         dark.get("--identity"),
@@ -333,6 +331,6 @@ fn identity_gold_comes_from_the_brand_ramp() {
         Some(deep),
         "light identity must be --stella-gold-800. NOT --stella-gold-deep \
          (#a37200): that token is documented for small gold text on light \
-         surfaces and measures 4.05:1 there, under WCAG AA (#2571)."
+         surfaces and measures 4.05:1 there, under WCAG AA (#2591)."
     );
 }

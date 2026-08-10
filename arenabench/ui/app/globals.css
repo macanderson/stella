@@ -88,7 +88,7 @@
      Values come from docs/brand/css/tokens.css: --stella-gold-500 on ink,
      --stella-gold-800 on paper. NOT --stella-gold-deep (#a37200), which that
      file documents for "small gold text on light surfaces" and which measures
-     4.05:1 on --panel-2 — under AA. Gold-800 is 6.46:1 (#2571). */
+     4.05:1 on --panel-2 — under AA. Gold-800 is 6.46:1 (#2591). */
   --identity:    #795500;
   --on-identity: #ffffff;
 
