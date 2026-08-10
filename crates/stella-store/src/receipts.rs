@@ -330,18 +330,24 @@ impl Store {
     /// parses as an [`AgentEvent`] is skipped and counted, never fatal.
     pub fn execution_events(&self, execution_id: i64) -> Result<SessionJournal> {
         let conn = self.lock();
-        let mut stmt = conn
-            .prepare("SELECT seq, payload FROM events WHERE execution_id = ? ORDER BY seq ASC")?;
+        let mut stmt = conn.prepare(
+            "SELECT seq, ts, payload FROM events WHERE execution_id = ? ORDER BY seq ASC",
+        )?;
         let rows = stmt.query_map(params![execution_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
         let mut journal = SessionJournal::default();
         for row in rows {
-            let (seq, payload) = row?;
+            let (seq, ts, payload) = row?;
             match serde_json::from_str::<AgentEvent>(&payload) {
                 Ok(event) => journal.events.push(SessionEventRecord {
                     execution_id,
                     seq,
+                    ts,
                     event,
                 }),
                 Err(_) => journal.skipped += 1,
