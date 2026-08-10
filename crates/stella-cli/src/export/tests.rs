@@ -736,6 +736,12 @@ fn the_dashboard_is_monospace_and_square() {
         &transcript::render(&Default::default(), &Default::default()),
     );
 
+    // The face comes from the `--mono` token, not a hardcoded shorthand. This
+    // assertion asked for `font: 13px/1.55 ui-monospace` — the pre-design-system
+    // shorthand — while `export.rs` shipped `font-family: var(--mono)`, so the
+    // test and the file it tests asserted opposite things and `main` was red.
+    // The token is the correct half: the brand's face is JetBrains Mono, and a
+    // shorthand that starts at `ui-monospace` never names it.
     assert!(
         html.contains(r#"--mono: "JetBrains Mono""#),
         "the dashboard does not declare the brand's mono stack"
@@ -748,19 +754,30 @@ fn the_dashboard_is_monospace_and_square() {
         !html.contains("-apple-system"),
         "the dashboard still falls back to the system sans stack"
     );
+    // Square, not "compact". This asked for `border-radius: 3px` and `2px` —
+    // the pre-design-system corners — against a file that pins `--radius: 0`,
+    // which is the second half of why `main` was red. Square is the correct
+    // half twice over: the Instrument system allows 0 only for a surface like
+    // this, and a rounded corner says "surface" where a hairline says
+    // "boundary", on a page that is entirely boundaries.
     assert!(
         html.contains("--radius: 0;"),
-        "the dashboard does not declare the square corner token"
+        "the dashboard does not declare square corners"
     );
-    // Every corner goes through the token, so the decision lives in one line
-    // rather than in forty rules — including the transcript's, which is the
-    // densest surface here and the easiest place to reintroduce a stray value.
-    for literal in [
+    for rounded in [
         "border-radius: 8px",
         "border-radius: 6px",
         "border-radius: 3px",
         "border-radius: 2px",
+        "border-radius: 0 6px 6px 0",
     ] {
+        assert!(
+            !html.contains(rounded),
+            "`{rounded}` still ships: a rounded corner says \"surface\" \
+             where a hairline says \"boundary\", and this page is boundaries"
+        );
+    }
+    for rounded in ["border-radius: 8px", "border-radius: 6px"] {
         assert!(
             !html.contains(literal),
             "`{literal}` bypasses `--radius`: set the token, not the rule"
@@ -788,9 +805,13 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
         !html.contains("Stella"),
         "the dashboard capitalises the wordmark; it is lowercase always"
     );
+    // The wordmark is its own element, because it is the one place on this page
+    // where `--identity` gold is permitted — the rule is identity only, never a
+    // state. A bare `<h1>stella session —` cannot carry that, and asserting it
+    // is what put this test on the opposite side of `export.rs` from #2597.
     assert!(
         html.contains(r#"<span class="wordmark">stella</span>"#),
-        "the masthead does not carry the wordmark"
+        "the masthead does not carry the lowercase wordmark as its own element"
     );
 }
 
