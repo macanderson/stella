@@ -129,6 +129,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;
 mod drive;
+mod model_fallback;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod settlement;
@@ -517,6 +518,17 @@ pub struct Engine<'a> {
     /// model call reports its terminal verdict against `provider.id()` so a
     /// router's circuit breaker trips from observed outcomes (#2673).
     pub(crate) outcomes: Option<&'a dyn crate::ports::ProviderOutcomes>,
+    /// Mid-turn fallback resolution ([`crate::ports::FallbackResolver`]), off
+    /// by default. Attached via [`Engine::with_fallback_resolver`]; consulted
+    /// at the retries-exhausted settlement boundary, at most once per engine
+    /// (`driver::model_fallback`, #2679). `None` keeps the abort exactly as
+    /// it always was.
+    pub(crate) fallback: Option<&'a dyn crate::ports::FallbackResolver>,
+    /// The replacement provider once a fallback latched. Set-once by
+    /// construction — the cell IS the one-swap bound (`driver::model_fallback`);
+    /// every dispatch/attribution site reads it through
+    /// [`Engine::active_provider`], never `provider` directly.
+    pub(crate) provider_override: std::sync::OnceLock<&'a dyn Provider>,
 }
 
 /// Why a turn that never produced a terminal step ends. A function rather
@@ -604,6 +616,8 @@ impl<'a> Engine<'a> {
             steering: None,
             bus: None,
             outcomes: None,
+            fallback: None,
+            provider_override: std::sync::OnceLock::new(),
         }
     }
 
@@ -653,6 +667,11 @@ impl<'a> Engine<'a> {
             steering: self.steering,
             bus: self.bus,
             outcomes: self.outcomes,
+            fallback: self.fallback,
+            // Carries the latched replacement (and its spent latch) into the
+            // copy: a later turn on this execution must not re-attempt a
+            // primary the session already swapped away from (#2679).
+            provider_override: self.provider_override.clone(),
         }
     }
 
@@ -685,6 +704,11 @@ impl<'a> Engine<'a> {
             steering: self.steering,
             bus: self.bus,
             outcomes: self.outcomes,
+            fallback: self.fallback,
+            // Carries the latched replacement (and its spent latch) into the
+            // copy: a later turn on this execution must not re-attempt a
+            // primary the session already swapped away from (#2679).
+            provider_override: self.provider_override.clone(),
         }
     }
 
@@ -719,6 +743,18 @@ impl<'a> Engine<'a> {
         outcomes: &'a dyn crate::ports::ProviderOutcomes,
     ) -> Self {
         self.outcomes = Some(outcomes);
+        self
+    }
+
+    /// Attach mid-turn provider fallback, opt-in: when a model call's retry
+    /// ladder exhausts, the engine re-resolves through this port and
+    /// continues the turn on the replacement instead of aborting — at most
+    /// one swap per engine (`driver::model_fallback`, #2679).
+    pub fn with_fallback_resolver(
+        mut self,
+        fallback: &'a dyn crate::ports::FallbackResolver,
+    ) -> Self {
+        self.fallback = Some(fallback);
         self
     }
 
@@ -1365,7 +1401,7 @@ impl<'a> Engine<'a> {
         let estimated_input_tokens = estimate_conversation_tokens(&request.messages);
         let result = match run_accounted_call(
             AccountedCall {
-                provider: self.provider,
+                provider: self.active_provider(),
                 role: stella_protocol::ModelCallRole::Summarization,
                 model_hint: "unknown".into(),
                 request,
@@ -1680,7 +1716,9 @@ impl<'a> Engine<'a> {
                 let mut complete = Box::pin(async move {
                     let gate =
                         SpeculationGate::new(read_only, safe, gated, tx, delta_tx, gate_progress);
-                    self.provider.complete_observed_ref(req, &gate).await
+                    self.active_provider()
+                        .complete_observed_ref(req, &gate)
+                        .await
                     // `gate` (and its sender) drop here → the pump's
                     // stream ends once in-flight executions drain.
                 });
@@ -1748,7 +1786,7 @@ impl<'a> Engine<'a> {
             step,
             crate::receipts::ServedBy {
                 role: self.call_role,
-                provider: self.provider.id(),
+                provider: self.active_provider().id(),
                 model: &result.model,
             },
             events,
@@ -1760,7 +1798,7 @@ impl<'a> Engine<'a> {
         let _ = events.send(AgentEvent::StepUsage {
             step,
             role: self.call_role,
-            provider: self.provider.id().to_string(),
+            provider: self.active_provider().id().to_string(),
             // The engine's own step already streams its answer as a `Text`
             // event; duplicating it here would double the transcript.
             output_text: None,

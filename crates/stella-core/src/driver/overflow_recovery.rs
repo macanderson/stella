@@ -118,11 +118,23 @@ impl OverflowRecovery {
 /// caller may still do about it, which is the branch
 /// [`Engine::settle_model_call_failure`] takes.
 pub(crate) enum ModelCallFailure {
-    /// Unrecoverable. The attempt ladder (`driver/rate_limit.rs`) has
-    /// already emitted the terminal events (`RetriesExhausted`, `Error`)
-    /// and fed the provider-outcomes breaker; all that remains is the
-    /// turn's abort.
-    Fatal { reason: String },
+    /// The retry ladder exhausted against the active provider — transport,
+    /// 5xx, rate limiting that outlived the parked recovery, or a
+    /// first-attempt bail on a non-retryable class (auth, malformed). The
+    /// ladder (`driver/rate_limit.rs`) already fed the provider-outcomes
+    /// breaker; the terminal events are withheld — the caller decides
+    /// between a mid-turn provider fallback (`driver::model_fallback`,
+    /// #2679) and the terminal surfacing, and emits accordingly.
+    Exhausted {
+        /// The final attempt's classified error rendering.
+        message: String,
+        /// Every failed attempt's reason, in order — the `RetriesExhausted`
+        /// payload if this surfaces terminally.
+        attempt_reasons: Vec<String>,
+        /// Whether the final attempt's error class was retryable, forwarded
+        /// onto the terminal events exactly as before (#926).
+        retryable: bool,
+    },
     /// The provider rejected the request as exceeding its context window.
     /// Every event is withheld (module docs) — the caller decides between a
     /// recovery rung and the terminal surfacing, and emits accordingly.
@@ -136,10 +148,10 @@ pub(crate) enum ModelCallFailure {
 }
 
 impl<'a> Engine<'a> {
-    /// Settle a model call that could not commit: either arm the next
-    /// overflow-recovery rung — returning `None` so the caller re-runs the
-    /// step, now against the clamped compaction budget — or produce the
-    /// turn's abort.
+    /// Settle a model call that could not commit: arm the next
+    /// overflow-recovery rung, or latch a mid-turn provider fallback
+    /// (`driver::model_fallback`, #2679) — either returns `None` so the
+    /// caller re-runs the step — or produce the turn's abort.
     ///
     /// On the recovery path the step index still advances: the retried call
     /// is a new step, so its compaction pass (and a possible overflow-
@@ -152,11 +164,37 @@ impl<'a> Engine<'a> {
         events: &EventSender,
     ) -> Option<StepOutcome> {
         let (message, attempt_reasons) = match failure {
-            ModelCallFailure::Fatal { reason } => {
+            ModelCallFailure::Exhausted {
+                message,
+                attempt_reasons,
+                retryable,
+            } => {
+                // The abort string keeps its pre-#2679 bytes: consumers and
+                // transcripts read this exact rendering.
+                let reason = format!("model call failed: {message}");
                 self.emit_lifecycle(
                     bus::names::MODEL_REQUEST_FAILED,
                     || serde_json::json!({ "step": state.step, "reason": reason }),
                 );
+                // Mid-turn provider fallback (#2679): re-resolve through the
+                // router port and continue the turn on the replacement.
+                // `true` latched the swap — the step re-runs and the
+                // terminal events stay withheld, exactly as an armed
+                // overflow rung withholds them below.
+                if self.attempt_provider_fallback(&message, state, events) {
+                    return None;
+                }
+                // No fallback: surface the pre-#2679 terminal shape.
+                let _ = events.send(AgentEvent::RetriesExhausted {
+                    turn_instance: self.config.turn_instance,
+                    attempts: attempt_reasons.len() as u32,
+                    reasons: attempt_reasons,
+                    retryable,
+                });
+                let _ = events.send(AgentEvent::Error {
+                    message: message.clone(),
+                    retryable,
+                });
                 return Some(StepOutcome::Aborted {
                     reason,
                     kind: AbortKind::Failure,
@@ -208,7 +246,7 @@ impl<'a> Engine<'a> {
                     retryable,
                 });
                 if let Some(outcomes) = self.outcomes {
-                    outcomes.record_failure(self.provider.id());
+                    outcomes.record_failure(self.active_provider().id());
                 }
                 Some(StepOutcome::Aborted {
                     reason: format!("model call failed: {message}"),

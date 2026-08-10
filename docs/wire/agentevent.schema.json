@@ -2631,7 +2631,7 @@
       "type": "object"
     },
     {
-      "description": "A provider's circuit breaker opened and the router fell back to the\nnext configured provider of the same role's tier. Never silent\n(L-M7) — no mid-turn family switch happens without this event.",
+      "description": "A provider substitution: the router fell back to the next configured\nprovider of the same role's tier at resolution time (a breaker-open\nskip), or the engine swapped mid-turn after an exhausted retry ladder\n(`stella-core`'s `driver/model_fallback`, #2679). Never silent\n(L-M7) — no provider switch happens without this event.",
       "properties": {
         "from": {
           "type": "string"
