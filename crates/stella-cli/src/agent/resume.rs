@@ -35,7 +35,7 @@
 //!   frame says it can** (#1671). A frame carrying the pipeline's progress
 //!   record — class, goal, plan cursor, test baseline — restores through
 //!   [`stella_pipeline::Pipeline::resume`]: the turn finishes, the unreached
-//!   plan steps run, and the witness/verify/verdict stages run on the
+//!   plan steps run, and the witness and verify stages run on the
 //!   completed work, with the residual losses (lint baseline, authored
 //!   witness) named up front. A frame without that record — an older writer,
 //!   a kill before execution — falls back to the plain engine turn, and
@@ -151,7 +151,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // Restoration (#1671): when the frame carries the pipeline's progress
     // record and the killed run was executing un-isolated, this resume
     // re-enters the staged pipeline — the interrupted turn continues and the
-    // witness/verify/verdict stages run on the completed work. `None` keeps
+    // witness and verify stages run on the completed work. `None` keeps
     // the honest bare-turn path with its full advisory, and validation lives
     // in `PipelineResume::from_progress` so "restore approximately" is not a
     // state this driver can reach.
@@ -340,7 +340,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             };
             // A degraded resume does not get a green tick. The tick is this
             // surface's claim that the run finished as it was meant to, and a
-            // turn whose verify and verdict stages never ran did not.
+            // turn whose witness and verify stages never ran did not.
             let banner = matches!(outcome, TurnOutcome::Completed { .. })
                 .then(|| (!frame.degrades(), frame.completed_banner(step)));
             // The abort's typed `kind` decides the exit code here exactly as
