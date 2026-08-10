@@ -1,21 +1,25 @@
 //! The web instrument surfaces carry one palette, and this test is what makes
 //! that true rather than merely intended.
 //!
-//! Four files describe the same design system in three vocabularies:
+//! Three files describe the same instrument design system in three vocabularies:
 //!
 //! | file | names it uses |
 //! |---|---|
 //! | `crates/stella-observatory/src/assets/index.html` | `--ground` `--text-2` `--accent` |
-//! | `crates/stella-cli/src/export.rs` | the same (adopted deliberately) |
 //! | `arenabench/ui/app/globals.css` | `--background` `--muted` `--accent` |
 //! | `arenabench/web/app/globals.css` | `--bg` `--dim` `--accent` |
 //!
 //! The Observatory's delimited palette block is the single definition; the
-//! other three are derivations. Until this test existed the contract was a
+//! other two are derivations. Until this test existed the contract was a
 //! sentence in a comment — "a value that differs between them is a bug in
 //! whichever moved last" — which is a description of drift, not a defence
-//! against it, and the export dashboard had already drifted two whole
-//! recolours behind while nothing failed.
+//! against it.
+//!
+//! The standalone `/export` document is deliberately outside this matrix.
+//! Unlike the live instrument surfaces, it follows the transcript reference's
+//! compact row grammar and derives its dark palette from `stella_tui::theme`.
+//! Its own tests enforce that derivation and ensure every referenced custom
+//! property is defined.
 //!
 //! Why a test and not a `make gate` step: a gate step is five coupled edits
 //! (`GATE_STEPS`, the AGENTS.md block, the CONTRIBUTING.md block, the script,
@@ -25,11 +29,9 @@
 //! `crates/stella-model/src/provider_parity.rs`, which enforces invariant #8
 //! the same way: a matrix, checked from both sides, in a plain test.
 //!
-//! Why it lives in `stella-cli`: the export dashboard is the surface that
-//! drifted, `stella-cli` is a binary crate with no `lib.rs` (so an in-crate
-//! test cannot be imported from elsewhere), and this test reads all four files
-//! as text rather than linking any of them. It needs no crate it does not
-//! already have.
+//! Why it lives in `stella-cli`: this is a workspace-level integration test
+//! that reads all three files as text rather than linking any of them. It
+//! needs no crate `stella-cli` does not already have.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -148,22 +150,6 @@ struct Surface {
 
 fn surfaces() -> Vec<Surface> {
     vec![
-        Surface {
-            file: "crates/stella-cli/src/export.rs",
-            dark: (":root {{", "  }}"),
-            light: (r#":root[data-theme="light"] {{"#, "  }}"),
-            names: &[
-                ("ground", "--ground"),
-                ("surface", "--surface"),
-                ("text", "--text"),
-                ("text-2", "--text-2"),
-                ("text-3", "--text-3"),
-                ("ok", "--ok"),
-                ("bad", "--bad"),
-                ("warn", "--warn"),
-                ("identity", "--identity"),
-            ],
-        },
         Surface {
             file: "arenabench/ui/app/globals.css",
             dark: (".dark {", "\n}"),
