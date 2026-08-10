@@ -55,7 +55,8 @@ pub(crate) const PROPOSALS_DIR: &str = ".stella/proposals";
 /// Where kept repository-scoped records are published, relative to the root.
 pub(crate) const RULES_DIR: &str = ".stella/rules";
 
-/// The repository-visible, hash-chained promotion ledger (#994, ADR 0007).
+/// The repository-visible, hash-chained promotion ledger (#994, ADR 0007;
+/// lifecycle events — retirements and supersessions — joined it in #2728).
 /// Under `RULES_DIR` — NOT `.stella/private/` — because a team's enforcement
 /// grants must travel with the repository and be reviewed through the same
 /// pull requests as the rules they govern.

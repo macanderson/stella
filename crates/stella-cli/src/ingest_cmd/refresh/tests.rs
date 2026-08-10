@@ -90,6 +90,26 @@ fn a_dropped_claim_is_retired_and_an_unchanged_one_is_untouched() {
         Some(&*dropped_id),
         "the archived revision is a new revision, not an edit of the old one"
     );
+
+    // The accountable half (spec §4, #2728): the retirement appended one
+    // verifiable ledger event naming the record and the command.
+    let events = crate::context_records::read_promotions(root).expect("the chain verifies");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].action,
+        stella_core::records::promotion::LedgerAction::Retired
+    );
+    assert_eq!(events[0].lineage_id, "ctx.acme.web.deploy");
+    assert!(
+        events[0].reason.contains(&dropped_id),
+        "{}",
+        events[0].reason
+    );
+    assert!(
+        events[0].reason.contains("--refresh notes.md"),
+        "{}",
+        events[0].reason
+    );
 }
 
 /// A changed claim retires nothing: the replacement is a proposal until a

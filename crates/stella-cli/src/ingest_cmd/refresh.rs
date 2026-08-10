@@ -65,7 +65,11 @@ pub(crate) fn apply(root: &Path, rel: &str, asserted: &[AssertedClaim]) -> Resul
         let Some(entry) = published.iter().find(|p| p.claim == *retired) else {
             continue;
         };
-        match retire(entry) {
+        // File first, ledger second: the archived revision is the retirement;
+        // the event is its accountable record (spec §4, #2728). A ledger
+        // failure after a successful rewrite is loud, not absorbed — an
+        // unrecorded retirement is exactly what the ledger exists to prevent.
+        match retire(entry).and_then(|()| record_retirement(root, rel, &entry.claim)) {
             Ok(()) => println!(
                 "    {} {}  {}",
                 "retired".yellow(),
@@ -153,6 +157,37 @@ fn published_from_source(root: &Path, rel: &str) -> Vec<PublishedFile> {
         }
     }
     out
+}
+
+/// Append the accountable retirement event (spec §4): who retired which
+/// record, why, and under which governance mode — the same hash-chained
+/// ledger that carries enforcement grants, extended with a lifecycle
+/// vocabulary in #2728. As a side effect of the latest-event fold, this also
+/// revokes any blocking grant the lineage held, which is correct: a retired
+/// record must not keep the authority to deny tool calls.
+fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(), String> {
+    let governance = crate::context_records::read_governance(root);
+    crate::context_records::append_promotion(
+        root,
+        stella_core::records::promotion::PromotionEvent {
+            seq: 0,
+            prev: String::new(),
+            at: crate::context_records::now_rfc3339(),
+            lineage_id: claim.lineage_id.clone(),
+            from: "active".to_string(),
+            to: "archived".to_string(),
+            approver: crate::context_cmd::actor(),
+            proposer: None,
+            reason: format!(
+                "retired by `stella ingest --refresh {rel}`: the source no longer asserts \
+                 {} (was {})",
+                claim.lineage_id, claim.record_id
+            ),
+            mode: governance.mode.as_str().to_string(),
+            action: stella_core::records::promotion::LedgerAction::Retired,
+        },
+    )
+    .map(|_| ())
 }
 
 /// Rewrite one published file as an archived revision of its record.

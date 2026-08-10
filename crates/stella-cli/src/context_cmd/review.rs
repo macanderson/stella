@@ -292,8 +292,33 @@ pub fn run_keep(
         }
     }
 
-    match superseded {
-        Some(_) => replace_record(&path, &found.set_id, &record)?,
+    match &superseded {
+        Some(old_id) => {
+            replace_record(&path, &found.set_id, &record)?;
+            // The accountable supersession event (spec §4, #2728) — file
+            // first, ledger second, and a ledger failure is loud: an
+            // unrecorded supersession is what the ledger exists to prevent.
+            let governance = crate::context_records::read_governance(root);
+            crate::context_records::append_promotion(
+                root,
+                stella_core::records::promotion::PromotionEvent {
+                    seq: 0,
+                    prev: String::new(),
+                    at: now_rfc3339(),
+                    lineage_id: record.lineage_id.clone(),
+                    from: "active".to_string(),
+                    to: "superseded".to_string(),
+                    approver: actor(),
+                    proposer: None,
+                    reason: format!(
+                        "{old_id} superseded by {} via `stella context keep`",
+                        record.record_id.as_deref().unwrap_or("<unstamped>")
+                    ),
+                    mode: governance.mode.as_str().to_string(),
+                    action: stella_core::records::promotion::LedgerAction::Superseded,
+                },
+            )?;
+        }
         None => write_record(&path, &found.set_id, &record)?,
     }
 

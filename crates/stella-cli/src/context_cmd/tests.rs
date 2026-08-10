@@ -366,6 +366,23 @@ fn keeping_a_changed_claim_supersedes_the_published_revision() {
         Some(format!("supersedes {old_id}").as_str()),
         "the ledger must record the supersession, not just the file diff"
     );
+
+    // And the accountable promotion-ledger event (spec §4, #2728), chained
+    // and naming both revisions.
+    let events = crate::context_records::read_promotions(root.path()).expect("the chain verifies");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].action,
+        stella_core::records::promotion::LedgerAction::Superseded
+    );
+    assert!(events[0].reason.contains(&old_id), "{}", events[0].reason);
+    assert!(
+        events[0]
+            .reason
+            .contains(record.record_id.as_deref().expect("stamped")),
+        "{}",
+        events[0].reason
+    );
 }
 
 #[test]
