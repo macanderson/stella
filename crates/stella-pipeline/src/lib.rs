@@ -55,11 +55,6 @@
 //!   `docs/spec/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
-//! - **Distress guidance** — on a candidate's second deterministic
-//!   verification failure (cumulative, not necessarily consecutive — #868),
-//!   one verifier call steers the next revision (event-triggered
-//!   course-correction, never a fixed mid-run checkpoint).
-//!   [`verify::guidance_prompt`], wired in [`pipeline`].
 //!
 //! # The port surface the CLI glue implements
 //!

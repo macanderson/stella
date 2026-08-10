@@ -9,14 +9,13 @@
 //! module is the (pure, I/O-free) mapping from it to a label, and the rules it
 //! encodes are all about **what not to claim**.
 //!
-//! # Three tiers of confidence, and one refusal
+//! # Two tiers of confidence, and one refusal
 //!
 //! | Rung | Label | Why |
 //! |---|---|---|
 //! | [`LadderRung::SubmitFast`] | **+1.0** | A fail→pass flip of the tracked command. A hard label: a test observed it. |
 //! | [`LadderRung::Revise`] | **−1.0** | Touched tests red. Equally hard, in the other direction. |
-//! | [`LadderRung::ModelVerdict`] (pass) | **+0.5** | A model's opinion. Real signal, half the weight, because the verifier agreed with Terminal-Bench's own grader 46% of the time. |
-//! | [`LadderRung::ModelVerdict`] (fail) | **−0.5** | Same discount, same reason. |
+//! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no longer a model opinion to discount — see below. |
 //! | everything else | **discarded** | See below. |
 //!
 //! # Why the magnitudes are configurable, and why only downward
@@ -74,10 +73,10 @@
 //! that trajectory as a −1.0 would teach the model that a correct solution was
 //! wrong.
 //!
-//! [`LadderRung::HeuristicFallback`] is discarded for a different reason: it is
-//! not a verdict about the work at all, it is a verdict about the verifier being
-//! unavailable. [`LadderRung::Waived`] likewise — no reviewer was bought, so
-//! nothing was determined either way.
+//! [`LadderRung::Unverified`] is discarded for a different reason: it is not a
+//! statement about the work at all, it is a statement that the deterministic
+//! instruments ran and did not reach one. [`LadderRung::Waived`] likewise — no
+//! proof was owed, so nothing was determined either way.
 //!
 //! A discard is **not** a dropped record. [`RewardLabel`] always carries the
 //! rung and always carries the [`DiscardReason`], so a consumer that

@@ -282,13 +282,10 @@ pub struct PipelineConfig {
     ///   inside its own snapshot, because a witness written against a sibling's
     ///   tree witnesses nothing about this one's work. At the default
     ///   `candidates = None` that is once.
-    /// - **`distress_guidance`** — distress-triggered course-correction. On a
-    ///   candidate's *second* deterministic verification failure — cumulative,
-    ///   not necessarily consecutive (#868) — spend one call for guidance that
-    ///   rides with the next revision prompt
-    ///   ([`crate::verify::guidance_prompt`]). Event-triggered by design, never
-    ///   a fixed mid-run checkpoint, and bounded by [`Self::max_revisions`] (at
-    ///   most `max_revisions - 1` guidance calls per candidate).
+    ///
+    /// `distress_guidance` is deliberately absent: the responsibility is
+    /// unassignable, so no roster row can put a model back in the steering
+    /// seat on a twice-failed candidate.
     pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and

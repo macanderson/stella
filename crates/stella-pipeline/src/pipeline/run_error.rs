@@ -32,15 +32,14 @@ pub enum PipelineError {
         "an independent witness author was required but {0} — refusing rather than running as the single-model arm under a configuration that claims otherwise"
     )]
     WitnessAuthorUnavailable(String),
-    /// [`crate::PipelineConfig::require_independent_verifier`] is on and the
-    /// verdict call would resolve to the worker's own model — or to no model
-    /// at all (#1795).
+    /// Retained, no longer reachable: the `require_independent_verifier`
+    /// config it refused for is gone with the verdict call itself, and nothing
+    /// constructs this variant any more.
     ///
-    /// Same shape and same before-spend placement as the witness refusal
-    /// above, for the same caller: one that has published the claim that an
-    /// independent reviewer grades the work. The ordinary posture keeps the
-    /// soft path — the verdict runs self-graded, records the fact on its
-    /// ladder snapshot, and the router's caveat says so in prose.
+    /// It is kept rather than deleted because `RunError` is a wire-visible
+    /// enum a host may already match on, and removing a variant is a breaking
+    /// change that belongs with the rest of the verdict vocabulary retirement
+    /// rather than smuggled into this swap. Removal is tracked separately.
     #[error(
         "an independent verifier was required for the verdict but {0} — refusing before spend rather than letting the worker grade its own work under a configuration that claims otherwise"
     )]
