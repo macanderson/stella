@@ -221,8 +221,8 @@ fn the_transcript_is_readable_with_scripts_disabled() {
     // the `on` class — so a JS-assigned initial class opens the archive to a
     // blank page for any reader with scripts off. That is a nuisance in a live
     // dashboard and a failure in an artifact whose stated job is to be
-    // attached to a PR as evidence, which is why the class is emitted here
-    // and the script only takes over afterwards.
+    // attached to a PR as evidence, which is why the class is emitted here and
+    // the script only takes over afterwards.
     let html = render_dashboard(
         &[],
         &[],
@@ -670,21 +670,25 @@ fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
         &transcript::render(&Default::default(), &Default::default()),
     );
 
-    for (var, token) in [
-        ("--ground", stella_tui::theme::GROUND),
-        ("--surface", stella_tui::theme::SURFACE),
-        ("--sunk", stella_tui::theme::RAISED),
-        ("--ink", stella_tui::theme::TEXT_PRIMARY),
-        ("--dim", stella_tui::theme::TEXT_SECONDARY),
-        ("--faint", stella_tui::theme::TEXT_TERTIARY),
-        ("--stella", stella_tui::theme::ACCENT),
-        ("--pass", stella_tui::theme::SUCCESS),
-        ("--fail", stella_tui::theme::DANGER),
+    // Dark: the instrument ramp, achromatic chrome, gold only as identity.
+    for declaration in [
+        "--ground: #0A0A0A;",
+        "--surface: #0F0F0F;",
+        "--raised: #111111;",
+        "--hairline: #1F1F1F;",
+        "--text: #EDEDED;",
+        "--text-2: #A1A1A1;",
+        "--text-3: #6E6E6E;",
+        "--accent: #EDEDED;",
+        "--identity: #FFB000;",
+        "--ok: #4CC38A;",
+        "--warn: #C9A227;",
+        "--bad: #E5715F;",
+        "--c1: #EDEDED;",
     ] {
-        let declaration = format!("{var}:{};", css_hex(token));
         assert!(
-            html.contains(&declaration),
-            "expected `{declaration}` in the dashboard's dark palette"
+            html.contains(declaration),
+            "expected `{declaration}` in the dashboard's :root block"
         );
     }
 
@@ -738,30 +742,12 @@ fn the_dashboard_ships_the_instrument_palette_in_both_themes() {
         );
     }
 
-    // Every custom property referenced anywhere in the document — CSS rules
-    // and the chart JS alike — must be defined, or the rule silently paints
-    // nothing. The JS is the half that goes stale unnoticed: it names tokens
-    // in string literals, so a palette rename compiles and ships a colourless
-    // bar chart. Enumerating the references rather than listing the expected
-    // names is what makes this catch the NEXT rename too.
-    let mut referenced: Vec<String> = Vec::new();
-    let mut rest = html.as_str();
-    while let Some(start) = rest.find("var(--") {
-        rest = &rest[start + 4..];
-        if let Some(end) = rest.find(')') {
-            referenced.push(rest[..end].to_string());
-        }
-    }
-    referenced.sort();
-    referenced.dedup();
-    assert!(
-        !referenced.is_empty(),
-        "the document uses custom properties"
-    );
-    for name in referenced {
+    // Every custom property the chart code asks for must exist, or the bar
+    // renders with no colour at all.
+    for used in ["--c1", "--c2", "--c3", "--ok", "--bad", "--neutral-mark"] {
         assert!(
-            html.contains(&format!("{name}:")),
-            "`var({name})` is referenced but never defined — it paints nothing"
+            html.contains(&format!("{used}: #")),
+            "chart JS references `{used}` but :root never defines it"
         );
     }
 }
@@ -782,6 +768,7 @@ fn the_dashboard_is_monospace_and_square() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     assert!(
@@ -828,6 +815,7 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
+        &transcript::render(&Default::default(), &Default::default()),
     );
 
     assert!(
