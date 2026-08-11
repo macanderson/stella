@@ -113,6 +113,38 @@ def _terminate_process_group(process: subprocess.Popen) -> None:
             process.terminate()
 
 
+def _round_log_path(match: Match, contestant: Contestant, round_index: int) -> Path:
+    """Where one round of a seat writes its Harbor log.
+
+    One file per round, because the log is opened for *writing*: a re-dispatch
+    sharing the first round's path would truncate the log of the round that
+    died, deleting the evidence of the very failure the retry recovers from.
+    """
+    suffix = f".round{round_index}" if round_index else ""
+    return match.workspace / f"{contestant.slug}{suffix}.log"
+
+
+def _unlaunched_run(
+    match: Match, contestant: Contestant, exc: Exception, *, round_index: int = 0
+) -> ContestantRun:
+    """The record of a seat that could not be started at all.
+
+    A bad seat must not abort the match — nor a re-dispatch the rest of the
+    supervision — so the failure becomes a run in the ``error`` state, which
+    every reader (the badge, ``_no_trial_ever_ran``, ``_failure_note``) already
+    understands.
+    """
+    job_name = f"{match.spec.id}-{contestant.slug}"
+    return ContestantRun(
+        contestant=contestant,
+        job_name=job_name,
+        job_dir=match.jobs_root / job_name,
+        log_path=_round_log_path(match, contestant, round_index),
+        error=str(exc),
+        round=round_index,
+    )
+
+
 def _base_environment() -> dict[str, str]:
     """The arena's environment with every ambient credential removed.
 
@@ -834,13 +866,7 @@ class MatchRunner:
                 run = self._launch(match, contestant, resolved)
             except Exception as exc:  # a bad seat must not abort the match
                 log.exception("failed to launch %s", contestant.name)
-                run = ContestantRun(
-                    contestant=contestant,
-                    job_name=f"{match.spec.id}-{contestant.slug}",
-                    job_dir=match.jobs_root / f"{match.spec.id}-{contestant.slug}",
-                    log_path=match.workspace / f"{contestant.slug}.log",
-                    error=str(exc),
-                )
+                run = _unlaunched_run(match, contestant, exc)
             match.record_run(run)
 
         # Credential supervision is armed only after every seat has launched:
@@ -902,11 +928,7 @@ class MatchRunner:
         re-dispatch sends, so a retry round re-runs only the tasks a rotation
         left unmeasured and never re-runs a task the seat already answered.
 
-        ``round_index`` and ``reason`` are record-keeping for that retry, and
-        the round is why the log path is not a constant: the seat log is opened
-        for writing, so a second round on one path would truncate the log of
-        the round that died — deleting the evidence of the very failure the
-        retry exists to recover from.
+        ``round_index`` and ``reason`` are that retry's record-keeping.
         """
         spec = resolve_agent(contestant.agent)
         job_name = f"{match.spec.id}-{contestant.slug}"
@@ -915,8 +937,7 @@ class MatchRunner:
         # `Match.trial_dirs`'s measured-over-void rank publishes it with no
         # union across directories.
         job_dir = match.jobs_root / job_name
-        suffix = f".round{round_index}" if round_index else ""
-        log_path = match.workspace / f"{contestant.slug}{suffix}.log"
+        log_path = _round_log_path(match, contestant, round_index)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         dispatched = tuple(match.spec.tasks if tasks is None else tasks)
 
@@ -1258,32 +1279,13 @@ class MatchRunner:
     ) -> reauth.MatchReauth | None:
         """A rotation supervisor for every seat running on a subscription token.
 
-        Claude Code rotates its OAuth credential whenever any local session
-        refreshes, and rotation *revokes* the previous one. The token is baked
-        into the seat's ``harbor run`` environment at ``Popen`` time and cannot
-        be changed in flight, so a rotation at hour two of an 89-task sweep
-        voids every remaining trial of that arm — an arm measured on 20 of 89
-        tasks, short in the direction that flatters whoever was still running
-        (#2545). :mod:`.reauth` turns those voids back into measurements.
-
-        Two preconditions, both refusals rather than best guesses, because a
-        supervisor whose model of the sweep is wrong stops seats that were
-        working:
-
-        * **an explicit task list** — the supervisor decides what is left to
-          measure by differencing the sweep's tasks against the trials on disk,
-          and a job launched without ``--include-task-name`` has a task set
-          nothing here can see;
-        * **one attempt per task** — with ``--n-attempts > 1`` "this task has a
-          measured trial" stops meaning "this task is finished", so the
-          supervisor would both release its watch early and re-dispatch a whole
-          fresh attempt set for one voided attempt.
-
-        Only seats that actually carry the credential are supervised, and only
-        the seat that lost its own is ever stopped: the opposing arm is a
-        separate Harbor process with its own credential, and pausing both to fix
-        one is itself a confound — the arms would no longer have faced the same
-        machine load.
+        The wiring half of #2545: :mod:`.reauth` states why a Claude Code seat
+        dies mid-sweep and what to do about it; this binds one supervisor per
+        such seat to the processes and directories it acts on. Only seats
+        actually carrying the credential get one, and only the seat that lost
+        its own is ever stopped — the opposing arm is a separate Harbor process
+        with its own credential, and pausing both to fix one is itself a
+        confound.
         """
         candidates = [
             run
@@ -1292,67 +1294,46 @@ class MatchRunner:
         ]
         if not candidates or resolved is None:
             return None
-
-        blocked = ""
-        if not match.spec.tasks:
-            blocked = (
-                "credential-rotation recovery is off for this match: it runs the "
-                "whole dataset, and the supervisor cannot tell which tasks are "
-                "still owed without an explicit task list"
-            )
-        elif match.spec.attempts != 1:
-            blocked = (
-                f"credential-rotation recovery is off for this match: "
-                f"{match.spec.attempts} attempts per task, and the supervisor "
-                "measures completeness per task"
-            )
+        blocked = reauth.supervision_blocked(match.spec.tasks, match.spec.attempts)
         if blocked:
             for run in candidates:
                 run.warnings.append(blocked)
             return None
 
-        seats: list[reauth.SupervisedSeat] = []
-        for run in candidates:
-            if run.error or run.process is None:
-                continue  # nothing launched; there is no seat to supervise
-            contestant = run.contestant
-            token = contestant.env[CLAUDE_OAUTH_ENV]
-            supervisor = reauth.Supervisor(
-                tasks=tuple(match.spec.tasks),
-                token_source=reauth.own_login_source(token, local_claude_token),
-                stop=lambda cid=contestant.id: self._stop_seat(match, cid),
+        seats = [
+            reauth.supervise(
+                contestant=run.contestant.id,
+                name=run.contestant.name,
+                job_dir=run.job_dir,
+                tasks=match.spec.tasks,
+                token=run.contestant.env[CLAUDE_OAUTH_ENV],
+                read_local=local_claude_token,
+                stop=lambda cid=run.contestant.id: self._stop_seat(match, cid),
                 launch=(
-                    lambda tasks, fresh, c=contestant: self._redispatch(
+                    lambda tasks, fresh, c=run.contestant: self._redispatch(
                         match, c, resolved, tasks, fresh
                     )
                 ),
             )
-            supervisor.note_dispatch(token)
-            seats.append(
-                reauth.SupervisedSeat(
-                    contestant=contestant.id,
-                    name=contestant.name,
-                    job_dir=run.job_dir,
-                    supervisor=supervisor,
-                )
-            )
+            # A seat that never launched has no process to stop and no
+            # credential in flight to rotate.
+            for run in candidates
+            if not run.error and run.process is not None
+        ]
         return reauth.MatchReauth(tuple(seats)) if seats else None
 
     def _stop_seat(self, match: Match, contestant_id: str) -> None:
         """Stop one seat's Harbor process and reap the containers it owned.
 
-        The supervisor's ``stop``. Idempotent by contract, and it mirrors
-        :meth:`cancel` for one seat rather than the match: the same process
-        group, and the same reap afterwards, because the task containers are
-        children of the Docker daemon rather than of the group — ten of them
-        left resident by stopped matches once cost the *next* match five of six
-        trials to `Docker compose command failed`, every one scored as an agent
-        loss (#2329). A re-dispatch that inherited that host would reproduce it
-        exactly.
+        The supervisor's ``stop``, idempotent by contract. :meth:`cancel` for
+        one seat rather than the match, and it reaps for the same reason cancel
+        does: the task containers are the Docker daemon's children, not the
+        process group's, so a re-dispatch would otherwise inherit a host the
+        dead round is still holding — the #2329 shape, where trials that cannot
+        start are scored as agent losses.
 
-        Scoped to this seat's own job directory, never the match's: the
-        opposing arm is still running and its containers are not this seat's to
-        remove.
+        Scoped to this seat's own job directory: the opposing arm is still
+        running and its containers are not this seat's to remove.
         """
         run = match.runs.get(contestant_id)
         if run is None or run.process is None:
@@ -1378,45 +1359,30 @@ class MatchRunner:
     ) -> None:
         """Open another round for ``tasks`` on a fresh credential.
 
-        The supervisor's ``launch``. Goes through :meth:`_launch` rather than
-        rebuilding the Harbor command line, so the retry's provenance, seat
-        manifest and SUT pin are the first round's by construction — a retry
-        assembled some other way would be a second, unrecorded apparatus inside
-        one arm.
+        The supervisor's ``launch``. Through :meth:`_launch` rather than a
+        rebuilt Harbor command line, so the retry's provenance, seat manifest
+        and SUT pin are the first round's by construction — a retry assembled
+        any other way is a second, unrecorded apparatus inside one arm.
 
         The token rides in memory on a copy of the seat and is never persisted:
         ``Contestant.redacted`` — the only shape that reaches disk or the wire —
         discloses env *names* alone.
         """
         seat = replace(contestant, env={**contestant.env, CLAUDE_OAUTH_ENV: token})
-        round_index = len(match.rounds.get(contestant.id, ()))
+        index = len(match.rounds.get(contestant.id, ()))
         reason = (
             f"credential rotated mid-match; re-dispatching {len(tasks)} "
             f"unmeasured task(s) on a fresh token"
         )
         try:
             run = self._launch(
-                match,
-                seat,
-                resolved,
-                tasks=tasks,
-                round_index=round_index,
-                reason=reason,
+                match, seat, resolved, tasks=tasks, round_index=index, reason=reason
             )
         except Exception as exc:
             log.exception("could not re-dispatch %s", contestant.name)
-            match.record_run(
-                ContestantRun(
-                    contestant=seat,
-                    job_name=f"{match.spec.id}-{contestant.slug}",
-                    job_dir=match.jobs_root / f"{match.spec.id}-{contestant.slug}",
-                    log_path=match.workspace / f"{contestant.slug}.round{round_index}.log",
-                    error=str(exc),
-                    round=round_index,
-                    dispatched=tuple(tasks),
-                    reason=reason,
-                )
-            )
+            run = _unlaunched_run(match, seat, exc, round_index=index)
+            run.dispatched, run.reason = tuple(tasks), reason
+            match.record_run(run)
             raise
         match.record_run(run)
 
@@ -1428,12 +1394,10 @@ class MatchRunner:
         The operator's half of a pause, in memory: :mod:`.claude_oauth`'s
         contract is that a subscription token never touches disk, so the
         hand-off is a call into the process driving the match and deliberately
-        not a file. Returns the contestant ids that took it — empty when no seat
-        is waiting, so a caller reports that rather than claiming a resume.
-
-        The ordinary case needs nobody: rotation leaves the *new* token in the
-        local login, which every tick re-reads, so a seat usually heals before
-        an operator has read the warning.
+        not a file. Returns the ids that took it — empty when no seat is
+        waiting, so a caller reports that instead of claiming a resume. The
+        ordinary case needs nobody: rotation leaves the new token in the local
+        login, which every tick re-reads.
         """
         if match.reauth is None:
             return []

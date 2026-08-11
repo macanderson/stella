@@ -74,7 +74,11 @@ __all__ = [
     "seat_manifest_path",
 ]
 
-EVENTS_NAME = "agent/stella-events.jsonl"
+#: Stella's own event stream. Defined by the dialect that folds it
+#: (:data:`arenabench.harness.STELLA`) and re-exported here, so this reducer
+#: and the harness reducer can never disagree about which file they describe
+#: (#2519) — the name used to exist twice, which is how a shared cell dies.
+EVENTS_NAME = harness_mod.STELLA_EVENTS_NAME
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
@@ -84,17 +88,23 @@ SEAT_MANIFEST_SUFFIX = ".seat.json"
 #: imports it, so the two can never disagree about the location.
 FLIP_NAME = "arena/flip.json"
 
-#: Per-trial paths written incrementally *while the agent runs*, probed —
-#: never read — for liveness. Stella appends its event stream per event;
-#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
-#: tees its stdout to ``claude-code.txt`` and appends session transcripts
-#: under ``sessions/``. Deliberately an allowlist rather than the directory
-#: tree: the verifier and the arena write into the same trial directory, and
-#: their activity must not read as the agent's pulse (#1571).
+#: Per-trial paths written incrementally *while the agent runs*, probed for
+#: liveness. Stella appends its event stream per event; Harbor appends
+#: ``trial.log`` as the trial progresses; a Claude Code arm tees its stdout to
+#: ``claude-code.txt`` and appends session transcripts under ``sessions/``.
+#: Deliberately an allowlist rather than the directory tree: the verifier and
+#: the arena write into the same trial directory, and their activity must not
+#: read as the agent's pulse (#1571).
+#:
+#: Three of the four are now *read* as well as probed — the two streams by
+#: :mod:`arenabench.harness`, and the session transcript as the fallback for a
+#: gateway-routed seat whose streamed usage counters are zeroed (#2520). This
+#: list stays the liveness allowlist alone; what each artifact says is the
+#: dialect table's business.
 LIVENESS_NAMES: tuple[str, ...] = (
     EVENTS_NAME,
     "trial.log",
-    "agent/claude-code.txt",
+    harness_mod.STREAM_NAME,
     "agent/sessions",
 )
 
@@ -737,16 +747,24 @@ class MetricsReader:
                 if isinstance(extra, dict):
                     metrics.cache_write = int(extra.get("total_cache_write_tokens") or 0)
 
-        # The opponent's own stdout stream, where it has one. Richer than the
-        # trajectory and — the whole point — *current*: ATIF is written once at
-        # teardown, so before this a Claude Code arm read 0 steps, 0 tools, 0
-        # tokens and $0 for the entire length of a match and only became real
-        # when it was over. Same precedence as the trajectory it supersedes:
-        # Stella's stream below still wins on a Stella seat, which has no
-        # `claude-code.txt` to read anyway.
-        harness = self._harness.read(trial_dir / harness_mod.STREAM_NAME)
+        # The opponent's own stdout stream, where it has one — plus the session
+        # transcript behind it when a gateway route zeroed the stream's usage
+        # counters (#2520), which `read_arm` decides and this reader does not
+        # need to know. Richer than the trajectory and — the whole point —
+        # *current*: ATIF is written once at teardown, so before this a Claude
+        # Code arm read 0 steps, 0 tools, 0 tokens and $0 for the entire length
+        # of a match and only became real when it was over. Same precedence as
+        # the trajectory it supersedes: Stella's stream below still wins on a
+        # Stella seat, which has no `claude-code.txt` to read anyway.
+        #
+        # Deliberately the Claude Code dialect by name rather than every arm
+        # `read_trial` can read. A Stella seat's behaviour is folded here by
+        # `_reduce_events` already, and giving it a second reduction under
+        # `harness`/`behaviour` would put two answers for one seat in one
+        # payload — tracked instead as its own change (#2519's follow-up).
+        harness = self._harness.read_arm(trial_dir, harness_mod.CLAUDE_CODE)
         if harness is not None:
-            profile, totals = harness
+            profile, totals = harness.profile, harness.totals
             metrics.harness = profile
             metrics.behaviour = totals
             metrics.steps = totals.steps or metrics.steps

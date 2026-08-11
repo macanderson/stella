@@ -84,6 +84,8 @@ __all__ = [
     "is_credential_void",
     "own_login_source",
     "read_trials",
+    "supervise",
+    "supervision_blocked",
 ]
 
 
@@ -561,6 +563,64 @@ class SupervisedSeat:
             "shortfall": self.shortfall,
             "log": list(self.supervisor.log),
         }
+
+
+def supervision_blocked(tasks: Sequence[str], attempts: int) -> str:
+    """Why this match cannot be credential-supervised, or ``""`` when it can.
+
+    Both refusals rather than best guesses, because a supervisor whose model of
+    the sweep is wrong stops seats that were working:
+
+    * **an explicit task list** — the re-dispatch set is the sweep's tasks minus
+      the ones with a measured trial, and a job launched with no
+      ``--include-task-name`` filter has a task set nothing here can see;
+    * **one attempt per task** — with ``--n-attempts > 1``, "this task has a
+      measured trial" stops meaning "this task is finished", so a supervisor
+      would both release its watch early and re-dispatch a whole fresh attempt
+      set to recover one voided attempt.
+    """
+    if not tasks:
+        return (
+            "credential-rotation recovery is off for this match: it runs the "
+            "whole dataset, and the supervisor cannot tell which tasks are still "
+            "owed without an explicit task list"
+        )
+    if attempts != 1:
+        return (
+            f"credential-rotation recovery is off for this match: {attempts} "
+            "attempts per task, and the supervisor measures completeness per task"
+        )
+    return ""
+
+
+def supervise(
+    *,
+    contestant: str,
+    name: str,
+    job_dir: Path,
+    tasks: Sequence[str],
+    token: str,
+    read_local: TokenSource,
+    stop: Callable[[], None],
+    launch: Callable[[Sequence[str], str], None],
+) -> SupervisedSeat:
+    """One seat's supervisor, with the credential it launched on recorded.
+
+    ``token`` is the value the seat's Harbor process was started with. It is
+    held only as a :func:`credential_digest` — the supervisor's whole question
+    about a credential is "is this still the one that died", and a digest
+    answers it without the module ever holding the token again.
+    """
+    supervisor = Supervisor(
+        tasks=tuple(tasks),
+        token_source=own_login_source(token, read_local),
+        stop=stop,
+        launch=launch,
+    )
+    supervisor.note_dispatch(token)
+    return SupervisedSeat(
+        contestant=contestant, name=name, job_dir=job_dir, supervisor=supervisor
+    )
 
 
 @dataclass
