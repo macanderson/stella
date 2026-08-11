@@ -329,6 +329,17 @@ impl ToolExecutor for GrantedTools<'_> {
         self.inner.drain_sub_agent_spend_usd()
     }
 
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: a tool
+    /// running behind this view legitimately parks on external state, and
+    /// its probe replays through this same grant — so the scope holds while
+    /// parked too. Leaving it defaulted would silently turn parked waits off
+    /// for any turn scoped by a skill's `allowed-tools`, dropping the model
+    /// back to polling (the #1471 regression) and leaving the child's
+    /// undrained request to be picked up by the parent's next drain.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
     /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: the
     /// grant narrows which tools run, not which invocations are live.
     fn active_skill_slugs(&self) -> Vec<String> {
