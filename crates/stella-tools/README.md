@@ -105,6 +105,7 @@ tool's registration line in an already-oversized `registry.rs`), never as a plan
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate`. |
 | [`src/schema_gate.rs`](src/schema_gate.rs) | The pre-write storage gate that makes duplicate or misplaced schema hard to write. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
+| [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `HookApprovalRoute` port over the #2676 `ApprovalBroker`, so a hook's `require_approval` parks on the same emit → park → TTL flow as the registry's gates. |
 | [`src/screenshot.rs`](src/screenshot.rs) | `screenshot` — capture to `.stella/screenshots/` as visual evidence a verifier can demand. |
 
 ## Key concepts

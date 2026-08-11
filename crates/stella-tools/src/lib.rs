@@ -34,6 +34,7 @@ pub mod github_rest;
 pub mod glob;
 pub mod graph;
 pub mod grep;
+pub mod hook_bridge;
 pub mod hook_runner;
 pub mod hunk;
 pub mod hunk_review;
