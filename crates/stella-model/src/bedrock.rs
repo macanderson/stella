@@ -874,6 +874,8 @@ impl Provider for BedrockProvider {
             model: self.model.clone(),
             cost_usd,
             finish_reason,
+            // Direct endpoint — no gateway, so no upstream to name.
+            upstream_provider: None,
         })
     }
 

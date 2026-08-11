@@ -86,6 +86,19 @@ pub struct ProviderSettings {
     pub api_key_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// Pin a *gateway* provider to these upstreams, in preference order, and
+    /// forbid it from falling back to any other (OpenRouter
+    /// `provider.order` + `allow_fallbacks: false`). Honored today by the
+    /// OpenAI-compatible arm when it addresses OpenRouter; inert elsewhere,
+    /// because a direct endpoint has no upstream to choose.
+    ///
+    /// Absent — the normal case — lets the gateway route wherever it likes.
+    /// Set it when two runs must be comparable: the gateway picks per app
+    /// identity and can serve the same slug from a different vendor between
+    /// runs, which silently varies the model provider a head-to-head claims
+    /// to hold fixed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_pin: Option<Vec<String>>,
     /// Wire dialect for config-defined providers. Defaults to
     /// `openai-compatible`; ignored for built-in overrides (a built-in's
     /// dialect is fixed by its adapter).

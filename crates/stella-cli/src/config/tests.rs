@@ -101,6 +101,7 @@ fn alias_env_var_resolves_when_the_primary_is_unset() {
     // race on shared env state (the convention credential.rs's own
     // tests follow).
     let provider = ProviderConfig {
+        upstream_pin: &[],
         id: "alias-test",
         env_var: "STELLA_TEST_ALIAS_PRIMARY_KEY",
         env_var_aliases: &["STELLA_TEST_ALIAS_SECONDARY_KEY"],
@@ -141,6 +142,7 @@ fn alias_env_var_resolves_when_the_primary_is_unset() {
 #[test]
 fn empty_alias_env_var_errors_even_when_the_credentials_file_resolves() {
     let provider = ProviderConfig {
+        upstream_pin: &[],
         id: "alias-empty-file-test",
         env_var: "STELLA_TEST_ALIAS_EMPTY_FILE_PRIMARY",
         env_var_aliases: &["STELLA_TEST_ALIAS_EMPTY_FILE_SECONDARY"],
@@ -186,6 +188,7 @@ fn empty_alias_env_var_errors_even_when_the_credentials_file_resolves() {
 #[test]
 fn empty_alias_env_var_errors_when_nothing_else_resolves() {
     let provider = ProviderConfig {
+        upstream_pin: &[],
         id: "alias-empty-bare-test",
         env_var: "STELLA_TEST_ALIAS_EMPTY_BARE_PRIMARY",
         env_var_aliases: &["STELLA_TEST_ALIAS_EMPTY_BARE_SECONDARY"],
@@ -962,6 +965,7 @@ fn discovery_style_resolution_accepts_the_settings_literal_key() {
     // resolves non-interactively as SettingsJson — this is what puts
     // config-defined providers into auto-detection and verifier discovery.
     let provider = ProviderConfig {
+        upstream_pin: &[],
         id: "settings-key-test",
         env_var: "STELLA_TEST_SETTINGS_KEY_UNSET",
         env_var_aliases: &[],
@@ -997,6 +1001,7 @@ fn discovery_style_resolution_accepts_the_settings_literal_key() {
 #[test]
 fn settings_json_literal_is_reported_distinctly_from_a_real_credentials_toml_entry() {
     let provider = ProviderConfig {
+        upstream_pin: &[],
         id: "settings-vs-file-test",
         env_var: "STELLA_TEST_SETTINGS_VS_FILE_UNSET",
         env_var_aliases: &[],

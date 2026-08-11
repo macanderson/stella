@@ -108,6 +108,7 @@ impl Provider for HealthyRecording {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.seen.lock().unwrap().push(req.messages.to_vec());
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "rescued".to_string(),
             tool_calls: Vec::new(),
             usage: stella_protocol::CompletionUsage::default(),

@@ -229,6 +229,7 @@ impl Provider for CannedProvider {
         _request: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: self.reply.clone(),
             tool_calls: Vec::new(),
             usage: CompletionUsage {
@@ -286,6 +287,7 @@ impl Provider for TruncatesOnceProvider {
             )
         };
         Ok(CompletionResult {
+            upstream_provider: None,
             text,
             tool_calls: Vec::new(),
             usage: CompletionUsage {

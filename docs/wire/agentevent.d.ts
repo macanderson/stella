@@ -1554,6 +1554,10 @@ export type AgentEvent = {
   /**
    * Provider which actually served this call, never the session's
    * configured default. Empty only on legacy events.
+   *
+   * For a *gateway* this names the gateway (`openrouter`), which is as
+   * far as this field can honestly go — the silicon behind it rides in
+   * `upstream_provider`.
    */
   provider?: string;
   /**
@@ -1581,6 +1585,17 @@ export type AgentEvent = {
    */
   ts?: number;
   type: "step_usage";
+  /**
+   * The upstream the gateway routed to, when it names one
+   * (`CompletionResult::upstream_provider`). `None` on direct
+   * endpoints, where `provider` is already the answer.
+   *
+   * Without this a run through OpenRouter records `openrouter` for
+   * every call and cannot say which vendor served any of them, so two
+   * arms of a benchmark could differ in model provider while both
+   * traces claimed to be identical.
+   */
+  upstream_provider?: string | null;
 } | {
   duration_ms: number;
   model: string;

@@ -77,6 +77,7 @@ impl Provider for OneShotProvider {
         _req: stella_protocol::CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "the answer".to_string(),
             tool_calls: Vec::new(),
             usage: stella_protocol::CompletionUsage {

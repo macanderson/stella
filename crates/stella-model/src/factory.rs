@@ -109,6 +109,15 @@ pub struct ProviderSpec<'a> {
     /// change there. `CacheTtl::default()` (5 minutes) is the provider
     /// default and changes nothing on the wire.
     pub cache_ttl: crate::cache_economics::CacheTtl,
+    /// Upstreams a *gateway* provider is pinned to, in preference order
+    /// (OpenRouter `provider.order`, fallbacks refused). Empty — the default —
+    /// leaves routing to the gateway.
+    ///
+    /// Consumed only by the OpenAI-compatible arm serving OpenRouter; inert
+    /// everywhere else, because a direct endpoint has no upstream to choose.
+    /// It exists because a measured comparison must hold the model *provider*
+    /// fixed, and on a gateway that is a request field rather than a fact.
+    pub upstream_pin: &'a [String],
 }
 
 /// The provider id whose models are whatever the user pulled into their local
@@ -250,6 +259,12 @@ pub fn build_provider(
                     .with_attribution("https://stella.oxagen.sh", "Stella")
                     .with_usage_accounting();
             }
+            // Applied by "actually addresses the gateway", not by id, matching
+            // the cache opt-in's gate: a settings-defined provider pointing at
+            // OpenRouter is the same routing surface and needs the same pin.
+            if !spec.upstream_pin.is_empty() {
+                provider = provider.with_upstream_pin(spec.upstream_pin.to_vec());
+            }
             Ok(Box::new(provider))
         }
     }
@@ -267,6 +282,7 @@ mod tests {
             dialect,
             seeded,
             cache_ttl: crate::cache_economics::CacheTtl::default(),
+            upstream_pin: &[],
         }
     }
 

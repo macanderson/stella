@@ -66,6 +66,11 @@ pub struct ZaiProvider {
     /// carries a cost, it overrides catalog list pricing — the gateway
     /// routed the call, only it knows what the call cost.
     usage_accounting: bool,
+    /// Upstreams this provider is pinned to, in preference order, sent as
+    /// OpenRouter's `provider.order` with fallbacks refused. Empty means
+    /// unpinned — the gateway routes wherever it likes, which is the shipped
+    /// default and is only safe when nobody is comparing two runs.
+    upstream_pin: Vec<String>,
     /// Session-stable sticky-routing key, sent as OpenRouter's top-level
     /// `session_id` (only for the `openrouter` identity — see the field on
     /// [`ZaiRequest`]). One id per provider construction = one id per agent
@@ -158,6 +163,7 @@ impl ZaiProvider {
             label: "Z.ai".to_string(),
             extra_headers: Vec::new(),
             usage_accounting: false,
+            upstream_pin: Vec::new(),
             session_id: new_session_id(),
             recovery: StreamRecovery::default(),
             unary_client: http::unary_client(),
@@ -229,6 +235,21 @@ impl ZaiProvider {
     #[must_use]
     pub fn with_usage_accounting(mut self) -> Self {
         self.usage_accounting = true;
+        self
+    }
+
+    /// Pin the gateway to these upstreams, in preference order, and forbid it
+    /// from falling back to any other (OpenRouter `provider.order` +
+    /// `allow_fallbacks: false`).
+    ///
+    /// This is what makes a gateway run *comparable*. Without it the upstream
+    /// is chosen per app identity and can differ between two runs — or between
+    /// two trials of the same run — while both record the same provider id, so
+    /// a head-to-head silently varies the model provider it claims to hold
+    /// fixed. Empty order leaves routing to the gateway, which is the default.
+    #[must_use]
+    pub fn with_upstream_pin(mut self, order: Vec<String>) -> Self {
+        self.upstream_pin = order;
         self
     }
 
@@ -343,6 +364,29 @@ struct ZaiRequest<'a> {
     /// risk a hard 400. See [`xai_reasoning_effort`] for the shape rules.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
+    /// OpenRouter's routing preferences — sent only when the operator pinned
+    /// an upstream, and only when this adapter is actually addressing the
+    /// gateway. Absent means "let the gateway choose", which is the right
+    /// default for interactive use and the wrong one for a measured run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<OpenRouterProviderPin<'a>>,
+}
+
+/// OpenRouter's `provider` routing object, in the one shape this adapter
+/// sends: an explicit upstream order with fallbacks refused.
+///
+/// `allow_fallbacks: false` is the whole point and is not configurable. A pin
+/// that silently falls back to a second vendor when the first is busy is not
+/// a pin — it is a preference, and it would reintroduce exactly the
+/// uncontrolled variable the caller asked to remove, at the least convenient
+/// moment (under load, mid-run, on some trials and not others). Refusing the
+/// call is the honest failure: a 404 from the gateway is a measurable, fixable
+/// event, while a quietly re-routed trial is a corrupted data point that looks
+/// identical to a clean one.
+#[derive(Serialize)]
+struct OpenRouterProviderPin<'a> {
+    order: &'a [String],
+    allow_fallbacks: bool,
 }
 
 /// GLM's request-level thinking object: `{"type": "enabled"}` /
@@ -649,6 +693,12 @@ struct ZaiStreamChunk {
     choices: Vec<ZaiStreamChoice>,
     #[serde(default)]
     usage: Option<ZaiUsage>,
+    /// The upstream OpenRouter routed this call to, which it names on every
+    /// chunk. Absent on every direct endpoint. Recorded rather than merely
+    /// trusted, because "which silicon served this trial?" must be answerable
+    /// from the trace and not from the config that was *meant* to be in force.
+    #[serde(default)]
+    provider: Option<String>,
     /// An in-band error frame. The OpenAI-compatible gateways can emit
     /// `data: {"error":{...}}` mid-stream after already sending some content
     /// deltas — without this field it deserialized into an all-default,
@@ -1084,28 +1134,31 @@ impl ZaiProvider {
         }
         let body = self.build_body(req, force_default_reasoning, true);
         let response = self.dispatch(&self.client, &body, false).await?;
-        let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
-            stream::aggregate_zai_stream(
-                response,
-                &self.label,
-                observer,
-                self.pricing.as_ref(),
-                self.first_byte_deadline,
-            )
-            .await
-            .map_err(|fault| self.absorb_stream_fault(fault))?;
+        let outcome = stream::aggregate_zai_stream(
+            response,
+            &self.label,
+            observer,
+            self.pricing.as_ref(),
+            self.first_byte_deadline,
+        )
+        .await
+        .map_err(|fault| self.absorb_stream_fault(fault))?;
         // A gateway-reported cost (OpenRouter usage accounting) is
         // authoritative; catalog list pricing is the estimate for providers
         // that don't report one.
-        let cost_usd = reported_cost_usd
-            .unwrap_or_else(|| self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0));
+        let cost_usd = outcome.reported_cost_usd.unwrap_or_else(|| {
+            self.pricing
+                .map(|p| p.cost_usd(&outcome.usage))
+                .unwrap_or(0.0)
+        });
         Ok(CompletionResult {
-            text,
-            tool_calls,
-            usage,
+            text: outcome.text,
+            tool_calls: outcome.tool_calls,
+            usage: outcome.usage,
             model: self.model.clone(),
             cost_usd,
-            finish_reason,
+            finish_reason: outcome.finish_reason,
+            upstream_provider: outcome.upstream_provider,
         })
     }
 
@@ -1210,6 +1263,17 @@ impl ZaiProvider {
                 .serves_openrouter()
                 .then_some(ZaiCacheControl { kind: "ephemeral" }),
             session_id: self.serves_openrouter().then_some(self.session_id.as_str()),
+            // Same "actually talking to OpenRouter" gate as the cache opt-in,
+            // and additionally silent unless an upstream was pinned: no other
+            // Chat Completions server speaks `provider`, and an unpinned
+            // request must keep its pre-field bytes so the prompt cache is
+            // unaffected for everyone who never asked for a pin.
+            provider: (self.serves_openrouter() && !self.upstream_pin.is_empty()).then_some(
+                OpenRouterProviderPin {
+                    order: &self.upstream_pin,
+                    allow_fallbacks: false,
+                },
+            ),
         }
     }
 

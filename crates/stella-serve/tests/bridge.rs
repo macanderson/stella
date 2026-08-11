@@ -18,6 +18,7 @@ use stella_serve::{ProviderDelta, ServerFrame, Session, SessionSpec, TurnOutcome
 /// the engine treats this as "the turn is done."
 fn final_answer(text: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: text.to_string(),
         tool_calls: vec![],
         usage: CompletionUsage {
@@ -33,6 +34,7 @@ fn final_answer(text: &str) -> CompletionResult {
 /// Build a mock model result that asks for one tool call.
 fn wants_tool(call_id: &str, name: &str, input: serde_json::Value) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.to_string(),

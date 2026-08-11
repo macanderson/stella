@@ -28,6 +28,11 @@ pub struct ProviderConfig {
     /// data); `false` for `local` and settings.json-defined providers,
     /// whose models are whatever the user's endpoint actually serves.
     pub seeded: bool,
+    /// Upstreams a *gateway* provider is pinned to, in preference order, from
+    /// settings.json's `upstream_pin`. Empty for every built-in row: routing
+    /// is the gateway's choice until an operator says otherwise, and only a
+    /// measured comparison needs it fixed.
+    pub upstream_pin: &'static [String],
 }
 
 impl ProviderConfig {
@@ -58,6 +63,7 @@ impl ProviderConfig {
             base_url_override: base_url_override.map(str::to_string),
             aux,
             cache_ttl,
+            upstream_pin: self.upstream_pin.to_vec(),
         }
     }
 }
@@ -103,6 +109,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         // cost metering doesn't need list prices: the adapter requests the
         // gateway's usage accounting and takes the reported per-call cost.
         seeded: false,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "zai",
@@ -113,6 +120,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://api.z.ai/api/paas/v4",
         dialect: Dialect::OpenaiCompatible,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "anthropic",
@@ -123,6 +131,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://api.anthropic.com",
         dialect: Dialect::Anthropic,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "openai",
@@ -133,6 +142,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://api.openai.com/v1",
         dialect: Dialect::OpenaiResponses,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "xai",
@@ -143,6 +153,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://api.x.ai/v1",
         dialect: Dialect::OpenaiCompatible,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "deepseek",
@@ -153,6 +164,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://api.deepseek.com/v1",
         dialect: Dialect::OpenaiCompatible,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "gemini",
@@ -170,6 +182,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://generativelanguage.googleapis.com/v1beta",
         dialect: Dialect::Gemini,
         seeded: true,
+        upstream_pin: &[],
     },
     // Vertex and Bedrock are appended LAST so auto-detection (the no-`--model`
     // path picks the first provider with a resolvable credential) never
@@ -194,6 +207,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://aiplatform.googleapis.com",
         dialect: Dialect::Vertex,
         seeded: true,
+        upstream_pin: &[],
     },
     ProviderConfig {
         id: "bedrock",
@@ -215,6 +229,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         base_url: "https://bedrock-runtime.<AWS_REGION>.amazonaws.com",
         dialect: Dialect::Bedrock,
         seeded: true,
+        upstream_pin: &[],
     },
 ];
 
@@ -263,4 +278,5 @@ pub static LOCAL_PROVIDER: ProviderConfig = ProviderConfig {
     base_url: "",
     dialect: Dialect::OpenaiCompatible,
     seeded: false,
+    upstream_pin: &[],
 };

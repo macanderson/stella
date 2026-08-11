@@ -1739,6 +1739,7 @@ mod openrouter_effort;
 mod openrouter_stream;
 mod stream_fallback;
 mod stream_frame;
+mod upstream_pin;
 mod vision;
 mod zai_effort;
 

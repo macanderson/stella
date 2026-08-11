@@ -22,6 +22,7 @@ fn metered_result(
 fn repeated_tool_result(input_tokens: u64, output_tokens: u64) -> CompletionResult {
     metered_result(
         CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![ToolCall {
                 call_id: "same-call".into(),

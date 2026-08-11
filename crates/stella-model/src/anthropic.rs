@@ -977,6 +977,9 @@ impl AnthropicProvider {
             model: self.model.clone(),
             cost_usd,
             finish_reason,
+            // A direct endpoint: the provider id is already the whole answer
+            // to "who served this?", so there is no upstream to name.
+            upstream_provider: None,
         })
     }
 }

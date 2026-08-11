@@ -331,6 +331,7 @@ mod tests {
         ) -> Result<CompletionResult, ProviderError> {
             let text = self.responses.lock().await.remove(0);
             Ok(CompletionResult {
+                upstream_provider: None,
                 text,
                 tool_calls: Vec::new(),
                 usage: CompletionUsage {

@@ -630,6 +630,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
     events.extend(all_model_call_roles().into_iter().flat_map(|role| {
         [
             AgentEvent::StepUsage {
+                upstream_provider: None,
                 step: 0,
                 role,
                 provider: "anthropic".into(),
@@ -651,6 +652,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 finish_reason: Some(FinishReason::Stop),
             },
             AgentEvent::StepUsage {
+                upstream_provider: None,
                 step: 1,
                 role,
                 provider: String::new(),
@@ -681,6 +683,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         all_finish_reasons()
             .into_iter()
             .map(|finish_reason| AgentEvent::StepUsage {
+                upstream_provider: None,
                 step: 2,
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),

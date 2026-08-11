@@ -71,6 +71,10 @@ pub struct ProviderParts {
     /// Anthropic adapter only — see
     /// `stella_model::provider_honors_cache_ttl`.
     pub cache_ttl: stella_model::CacheTtl,
+    /// Upstreams a gateway provider is pinned to, in preference order
+    /// (`ProviderSpec::upstream_pin`). Empty leaves routing to the gateway,
+    /// which is the default for everything except a measured comparison.
+    pub upstream_pin: Vec<String>,
     /// The model slug to run.
     pub model_id: String,
     /// The credential, already wrapped in the zeroizing newtype — cloned
@@ -106,6 +110,7 @@ impl ProviderParts {
             dialect: self.dialect,
             seeded: self.seeded,
             cache_ttl: self.cache_ttl,
+            upstream_pin: &self.upstream_pin,
         }
     }
 }
