@@ -104,6 +104,17 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly" as const,
       priority: 0.8,
     },
+    {
+      // The engine tour is a React route with no MDX source and no derived
+      // date to stand in for one — its copy tracks the pipeline and
+      // self-improvement docs, but nothing here can observe when it last
+      // did. `lastModified` is therefore omitted rather than guessed, which
+      // is the same rule the docs rows follow when git history is
+      // unavailable: no claim beats a false claim.
+      url: `${SITE_URL}/engine`,
+      changeFrequency: "monthly" as const,
+      priority: 0.9,
+    },
     ...docs,
   ];
 }
