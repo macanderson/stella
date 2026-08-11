@@ -18,7 +18,6 @@
 2183 crates/stella-cli/src/agent.rs
 1730 crates/stella-cli/src/agent/tests.rs
 4565 crates/stella-cli/src/command_deck.rs
-1508 crates/stella-cli/src/fleet_cmd.rs
 1891 crates/stella-core/src/bus.rs
 2489 crates/stella-core/src/driver.rs
 3394 crates/stella-core/src/driver/tests.rs

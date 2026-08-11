@@ -11,6 +11,7 @@ every witness here proves an override, not just a fill.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -314,3 +315,150 @@ class TestDeclaredRequiredEnv:
                 assert seat.required_env, (
                     f"{template.name}: {seat.id} declares no credentials"
                 )
+
+
+class TestBothEntryPointsResolveOneSetOfCredentials:
+    """`arenabench run` and `POST /api/matches` must credential a seat alike.
+
+    They did not. The server filled from :func:`apply_ambient_credentials` —
+    declared names only — while ``arenabench run`` inlined its own fill over
+    :func:`~arenabench.config.required_env`'s *derived* candidate set, which
+    for an undeclared seat includes the agent's ``alt_credential_env``. So a
+    ``CLAUDE_CODE_OAUTH_TOKEN`` exported in the operator's shell silently
+    credentialled an undeclared ``claude-code`` seat through the CLI and
+    nothing at all through the UI: two arms an operator believed were on
+    separate credentials, both on one subscription, measuring one account's
+    rate limit rather than two agent architectures (#2654).
+
+    ``resolve_launch_credentials`` is the single implementation both now call,
+    so the parity is structural rather than a comment in a docstring.
+    """
+
+    UNDECLARED: ClassVar[dict[str, object]] = {
+        "name": "cc",
+        "agent": "claude-code",
+        "engine": {"api": "anthropic", "model": "claude-fable-5"},
+    }
+
+    def _isolate(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """No saved file, no local Claude login — the ambient layer alone."""
+        monkeypatch.setenv("ARENABENCH_CREDENTIALS", str(tmp_path / "absent.env"))
+        monkeypatch.setattr(
+            "arenabench.claude_oauth.local_claude_token", lambda: "", raising=True
+        )
+
+    def test_an_ambient_subscription_token_never_reaches_an_undeclared_seat(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The issue's reproduction, at the layer that had the second route.
+
+        `test_an_ambient_subscription_token_never_reaches_a_seat` in
+        `test_arena.py` asserts only on `_base_environment()`'s scrub, so it
+        never saw this one.
+        """
+        from arenabench.credentials import resolve_launch_credentials
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-ambient")
+        spec = MatchSpec.from_json(
+            {
+                "id": "probe",
+                "name": "probe",
+                "dataset": "terminal-bench-2.1",
+                "contestants": [self.UNDECLARED],
+            }
+        )
+        # The derived set does name it — the refusal is allowed to read that
+        # (#1827). The *fill* must not.
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in required_env(spec)[spec.contestants[0].id]
+        resolved, _notes = resolve_launch_credentials(spec)
+        assert resolved.contestants[0].env == {}
+
+    def test_the_run_path_and_the_server_path_resolve_identical_seat_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The contract `cli.py`'s `run` docstring claims, now checked.
+
+        Both a declared and an undeclared seat, because the two paths only ever
+        disagreed about the undeclared one.
+        """
+        from arenabench.cli import _cmd_run
+        from arenabench.credentials import resolve_launch_credentials
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-ambient")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-ambient")
+        payload = {
+            "id": "m",
+            "name": "m",
+            "dataset": "terminal-bench-2.1",
+            "contestants": [
+                self.UNDECLARED,
+                {
+                    "name": "stella",
+                    "agent": "stella",
+                    "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                    "env": {"required": ["OPENROUTER_API_KEY"]},
+                },
+            ],
+        }
+        spec = MatchSpec.from_json(payload)
+        server_env = [
+            dict(seat.env) for seat in resolve_launch_credentials(spec)[0].contestants
+        ]
+
+        # The CLI reaches the same resolution through the same function; assert
+        # it delegates rather than re-deriving, since re-deriving is the defect.
+        source = (
+            Path(_cmd_run.__code__.co_filename).read_text(encoding="utf-8")
+        )
+        assert "resolve_launch_credentials(spec)" in source
+        assert "os.environ[name] for name in candidates" not in source, (
+            "`run` is re-implementing the ambient fill again (#2654)"
+        )
+
+        assert server_env == [{}, {"OPENROUTER_API_KEY": "sk-or-ambient"}]
+
+    def test_run_refuses_an_undeclared_seat_and_names_the_fix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+    ) -> None:
+        """Refusing must not trade a quiet mis-credential for a quiet zero.
+
+        An undeclared seat now receives nothing, so it must be *refused* — and
+        with the fix that will actually work for it, since telling the operator
+        to export a variable that the declaration-only fill will ignore is the
+        misdirection that turns a five-second fix into an afternoon.
+        """
+        import argparse
+
+        from arenabench.cli import _cmd_run
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-ambient")
+        template = tmp_path / "match.toml"
+        template.write_text(
+            "[match]\n"
+            'name = "probe"\n'
+            'dataset = "terminal-bench-2.1"\n'
+            'tasks = ["fix-git"]\n\n'
+            "[[contestant]]\n"
+            'name = "cc"\n'
+            'agent = "claude-code"\n'
+            "[contestant.engine]\n"
+            'api = "anthropic"\n'
+            'model = "claude-fable-5"\n',
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(
+            template=str(template),
+            workspace=str(tmp_path / "ws"),
+            results=None,
+            poll=0.01,
+            progress=False,
+            allow_missing_env=False,
+        )
+        assert _cmd_run(args) == 2
+        err = capsys.readouterr().err
+        assert "declares no [contestant.env] required" in err
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in err
+        assert not (tmp_path / "ws").exists(), "a refused run must not build a workspace"

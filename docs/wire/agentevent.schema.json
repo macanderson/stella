@@ -454,6 +454,26 @@
         }
       ]
     },
+    "FlipOutcome": {
+      "description": "What the flip oracle found — and, when it found no flip, whether anything\nwas ever in a position to produce one (#2556).\n\n**A bool could not carry this, and the missing state is the one that\nmatters.** `flip_achieved: false` meant both \"a tracked command ran and did\nnot go fail→pass\" (a real negative about the work) and \"no command was ever\ntracked, so nothing could have flipped\" (a statement about the instrument,\nnot the work). #2531 fixed that conflation in the *verifier prompt* by\nrendering `unobserved`; the telemetry surface kept the bool, so anything\nreading `result.json` — bench scoring included — reproduced exactly the\nfalse negative the prompt had stopped making.\n\nThe fact was *recoverable* from `flip_achieved: false` plus\n`tracked_command: null`, and that is precisely the objection: a summary\nlayer that silently conflates \"not measured\" with \"measured and failed\"\nunless the reader knows to join two fields is the failure mode this\nrepository's bench discipline exists to prevent. Same reasoning as\n[`LadderSnapshot::diff_coverage`], which is a token for the same reason.\n\nSerialises as `unobserved` / `not_achieved` / `achieved`. A legacy bool is\nstill accepted on the way in — see the `Deserialize` impl — so snapshots\nrecorded before this existed keep parsing.",
+      "oneOf": [
+        {
+          "const": "unobserved",
+          "description": "The oracle never locked onto a command, so no fail→pass was reachable.\n**Not a negative finding about the change** — nothing was measured.\n\nThe default, because it is the all-dark value: a `LadderInputs` that\nnamed no channel has not observed a failed flip, it has observed\nnothing.",
+          "type": "string"
+        },
+        {
+          "const": "not_achieved",
+          "description": "The oracle tracked a command and it did not go fail→pass (or flipped\nand failed its confirmation re-run, which is `unstable_flip: true`\nbeside this). A real negative: something was measured and came back\nshort.",
+          "type": "string"
+        },
+        {
+          "const": "achieved",
+          "description": "The tracked command was observed failing and then passing, and the\nconfirmation re-run held.",
+          "type": "string"
+        }
+      ]
+    },
     "HunkProposal": {
       "description": "What a `HunkReview` gate presents for per-hunk approval before a mutating\ntool call writes anything (#1265).\n\nThe hunks are a **flat, ordered list across every file the call touches**,\nnot a per-file tree: the reviewer's answer is a set of indices into this\nlist, and one flat coordinate space is what keeps that answer unambiguous\nwhen two files change in the same call.",
       "properties": {
@@ -509,6 +529,11 @@
           "type": "string"
         },
         {
+          "const": "witness_unsatisfiable",
+          "description": "The authored witness produced the **same failure** before and after the\nwork, so it cannot discriminate: nothing it reports is a fact about the\nchange, and no revision can make it one (#2540).\n\nReads as a claim about the **witness**, not about the work — the same\n`-able` / `-ed` distinction [`LadderRung::Unverifiable`] and\n[`LadderRung::Unverified`] already carry. \"Unsatisfiable\" says the\ninstrument's demand cannot be met by doing the task; it says nothing\nabout whether the task was done.\n\nOrdered above [`LadderRung::Revise`] in the ladder, which is the whole\npoint of having it. A witness that fails post-execute reaches `Revise`\nat the ladder's first step, and `Revise` blames the worker: the failure\nis fed back as the thing to fix. On Terminal-Bench `fix-git` a witness\nenumerated every commit unreachable from `master` and counted the\npipeline's own snapshot commits among them, so it stayed red however\ncorrectly the agent merged the real one — and every revise cycle minted\nanother snapshot, hence another violation. The worker diagnosed it\nexactly and could do nothing; the run ended on the deadline rather than\non the logic.\n\nThe discriminator is **fingerprint equality**\n(`crate::witness::airlock::FailureFingerprint`), never \"it failed\ntwice\": a witness that fails *differently* after the work is genuine\nfeedback about the change and keeps reaching `Revise`.",
+          "type": "string"
+        },
+        {
           "const": "waived",
           "description": "No independent review was bought at all: triage waived it and the\nwarrant agreed, or the change warranted no witness test. A pass\ncarrying no evidence either way.",
           "type": "string"
@@ -553,9 +578,9 @@
           "minimum": 0,
           "type": "integer"
         },
-        "flip_achieved": {
-          "description": "Whether the oracle's flip was achieved — after the confirmation run,\nso an unconfirmed flip reads `false` here with `unstable_flip: true`.",
-          "type": "boolean"
+        "flip": {
+          "$ref": "#/$defs/FlipOutcome",
+          "description": "The flip oracle's finding — after the confirmation run, so an\nunconfirmed flip reads [`FlipOutcome::NotAchieved`] here with\n`unstable_flip: true`.\n\nThree states rather than a bool, for the reason [`Self::diff_coverage`]\nis a token rather than an `Option<bool>`: the third value is the whole\npoint (#2556). See [`FlipOutcome`]."
         },
         "flip_refused_different_failure": {
           "default": false,
@@ -581,7 +606,7 @@
         },
         "no_test_surface": {
           "default": false,
-          "description": "Positive claim that this round had NO tracked test command at all\n(#2129) — neither a configured `--test-command` nor an authored\nwitness — so \"no flip\" is a demand the task structurally cannot meet.\n\nOn the wire for the same reason as [`Self::verify_done_flip`]: it turns\na fallback FAIL into an upward abstention, and a reader auditing a pass\nthat rests on nothing deterministic needs to see that the demand was\nunmeetable rather than unmet. `false` on snapshots recorded before\nthis existed, which is the conservative reading — the dispensation is\nnever assumed.",
+          "description": "Positive claim that this round had NO tracked test command at all\n(#2129) — neither a configured `--test-command` nor an authored\nwitness — so \"no flip\" is a demand the task structurally cannot meet.\n\n**Recorded only — this field steers nothing.** It once turned a\nfallback FAIL into an upward abstention, but the fallback it fed\n(`verify::heuristic_fallback`) was deleted with the model verdict in\n#2584, and nothing replaced the read: `ladder_decision` does not\nconsult it, and two otherwise-identical inputs differing only here\nreturn the same decision. It survives because the question it answers —\nhow often a run is asked for a flip on a task that has no test surface\nto produce one — is one only aggregate traces can answer, and aggregate\ntraces read this snapshot. Whether to retire it or give it a decision\nrole is #2638.\n\n`false` on snapshots recorded before this existed, which is the\nconservative reading — the dispensation is never assumed.",
           "type": "boolean"
         },
         "oracle_trace": {
@@ -655,7 +680,7 @@
         }
       },
       "required": [
-        "flip_achieved",
+        "flip",
         "unstable_flip",
         "diff_lines",
         "diff_budget",

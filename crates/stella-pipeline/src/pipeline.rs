@@ -98,6 +98,7 @@ use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, deterministic_fail_evidence,
     deterministic_pass_evidence, evidence_demand_is_worth_a_turn, ladder_decision,
     nothing_attempted_evidence, unverifiable_evidence, unverified_evidence,
+    witness_unsatisfiable_evidence,
 };
 use crate::witness::airlock::{FailureFingerprint, SealedFailure, grain_for_repeats, redact};
 use crate::witness::warrant::{ChangeSignals, warrant};
@@ -649,6 +650,18 @@ impl Verdict {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineStatus {
     Completed,
+    /// The run finished and **nothing proved it** (#2569): the ladder came to
+    /// rest on an abstaining rung ([`crate::verify::standing::standing_of`]),
+    /// so the work may well be correct and no available instrument said so.
+    ///
+    /// Not `Completed`, and not [`Self::VerificationFailed`]. The verdict it
+    /// carries publishes `passed: true` on purpose — a run is not failed by
+    /// the absence of a way to check it — and this variant is what stops that
+    /// `true` being projected as a pass by every surface downstream. It is the
+    /// state a delivery gate must read as "not cleared".
+    Unverified {
+        verdict: Verdict,
+    },
     /// Verification remained red after the revision budget was exhausted.
     VerificationFailed {
         verdict: Verdict,
@@ -781,6 +794,14 @@ struct CandidateState {
     /// legitimate for a missing-API goal but weaker evidence than an
     /// assertion failure, and the verifier deserves to see which it was.
     witness_baseline_symptom: Option<&'static str>,
+    /// The authored witness's post-execution run failed with the same
+    /// [`FailureFingerprint`] as the baseline that armed it (#2540) — so it
+    /// does not discriminate, and the ladder must not blame the worker for it.
+    /// Re-observed every verification round; `false` before the first run, on
+    /// a configured `--test-command`, and whenever the failure moved.
+    ///
+    /// [`FailureFingerprint`]: crate::witness::airlock::FailureFingerprint
+    witness_unmoved_by_revision: bool,
     revisions: u32,
     /// How many of those revisions were spent asking for corroboration of a
     /// standalone verifier pass rather than fixing a failure (#1295). Capped at
@@ -1938,6 +1959,12 @@ impl<'a> Pipeline<'a> {
             messages: candidate_narration::messages_rooted_at(
                 frame.base_messages,
                 surface.workspace,
+                // The SESSION's root, never the candidate snapshot's — it is the
+                // prefix the GOAL's absolute paths are written against, and the
+                // one the notice tells the worker to strip. `witness_stage`
+                // threads the same value into `witness_prompt` for the author
+                // role, so the two roles read one fact from one place (#2206).
+                &self.config.engine.cwd,
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
@@ -1961,6 +1988,7 @@ impl<'a> Pipeline<'a> {
             evidence_demands: 0,
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
+            witness_unmoved_by_revision: false,
             failures: Vec::new(),
         };
 
@@ -2171,7 +2199,7 @@ impl<'a> Pipeline<'a> {
                         // (#860).
                         None => state.oracle.confirm(false),
                     }
-                    inputs.flip_achieved = state.oracle.is_flipped();
+                    inputs.flip = state.oracle.outcome();
                 }
 
                 // Diff coverage (#1291): did the passing run execute the
@@ -2378,6 +2406,39 @@ impl<'a> Pipeline<'a> {
                         score_from_verification(false, None),
                     );
                 }
+                LadderDecision::WitnessUnsatisfiable => {
+                    // #2540: the authored witness failed identically on both
+                    // trees. Terminal, and deliberately NOT a revise
+                    // back-edge: the failure it reports does not depend on
+                    // the change, so feeding it back would spend the whole
+                    // budget asking the worker to fix an instrument. On
+                    // `fix-git` it did exactly that — and each revision minted
+                    // another snapshot commit for the witness to count, so the
+                    // demand grew with every attempt to meet it.
+                    //
+                    // `passed: true` for the reason the abstaining arms below
+                    // use it — a run is not failed by the absence of a way to
+                    // check it — and what keeps it from reading as a pass is
+                    // the pair beside it: the rung is on the wire, so the
+                    // process boundary settles `PipelineStatus::Unverified`
+                    // (#2569), and the score is `Unverified` so this candidate
+                    // cannot tie a genuinely verified sibling in best-of-N.
+                    let mut evidence = witness_unsatisfiable_evidence(
+                        effective_cmd.map(|cmd| cmd.command),
+                        FailureFingerprint::of(&test_tail).as_str(),
+                    );
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    self.unproven_verdict(&evidence.summary);
+                    self.emit(AgentEvent::Verdict {
+                        passed: true,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
+                    );
+                }
                 LadderDecision::Revise => {
                     // Deterministic failure (touched tests red) — no verifier.
                     //
@@ -2548,11 +2609,13 @@ impl<'a> Pipeline<'a> {
                 .map(|command| EffectiveTestCommand {
                     command,
                     invocation,
+                    authored_baseline: None,
                 });
         }
         witness.map(|w| EffectiveTestCommand {
             command: &w.command,
             invocation: &w.invocation,
+            authored_baseline: Some(&w.baseline_output),
         })
     }
 
@@ -2799,6 +2862,15 @@ fn best_index(candidates: &[CandidateResult]) -> usize {
 struct EffectiveTestCommand<'c> {
     command: &'c str,
     invocation: &'c TestInvocation,
+    /// The **authored witness's** accepted failing baseline output, when this
+    /// command is that witness. `None` for a configured `--test-command`.
+    ///
+    /// Carried on the command rather than looked up beside it so the
+    /// command's *provenance* travels with it: the two-tree check (#2540)
+    /// applies only to an instrument the pipeline commissioned, and a caller
+    /// holding an `EffectiveTestCommand` must not have to re-derive which
+    /// branch of [`Pipeline::effective_test_command`] produced it.
+    authored_baseline: Option<&'c str>,
 }
 
 /// Assemble the volatile recall+goal user message that rides *after* the

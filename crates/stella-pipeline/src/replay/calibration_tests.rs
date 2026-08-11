@@ -41,10 +41,10 @@ fn a_verifier_pass_that_fails_ci_is_a_false_positive() {
         ci(CiStatus::Failing),
     ];
     let report = calibration(&events);
-    assert_eq!(report.verifier_passes, 1);
-    assert_eq!(report.verifier_reconciled, 1);
-    assert_eq!(report.verifier_false_positives, 1);
-    assert_eq!(report.verifier_false_positive_rate(), Some(1.0));
+    assert_eq!(report.unproven_passes, 1);
+    assert_eq!(report.unproven_reconciled, 1);
+    assert_eq!(report.unproven_false_positives, 1);
+    assert_eq!(report.unproven_false_positive_rate(), Some(1.0));
     assert_eq!(report.deterministic_false_positives, 1);
 }
 
@@ -59,13 +59,13 @@ fn non_terminal_ci_and_trailing_passes_stay_unreconciled() {
         verdict(true, false), // after the last terminal verdict
     ];
     let report = calibration(&events);
-    assert_eq!(report.verifier_passes, 2);
-    assert_eq!(report.verifier_reconciled, 1);
-    assert_eq!(report.verifier_false_positives, 0);
-    assert_eq!(report.verifier_false_positive_rate(), Some(0.0));
+    assert_eq!(report.unproven_passes, 2);
+    assert_eq!(report.unproven_reconciled, 1);
+    assert_eq!(report.unproven_false_positives, 0);
+    assert_eq!(report.unproven_false_positive_rate(), Some(0.0));
 
     let unmeasured = calibration(&[verdict(true, false)]);
-    assert_eq!(unmeasured.verifier_false_positive_rate(), None);
+    assert_eq!(unmeasured.unproven_false_positive_rate(), None);
 }
 
 /// Failed verdicts and revise-loop reds never enter the tallies — the
@@ -78,7 +78,7 @@ fn failed_verdicts_are_not_tallied() {
         ci(CiStatus::Passing),
     ];
     let report = calibration(&events);
-    assert_eq!(report.verifier_passes, 0);
+    assert_eq!(report.unproven_passes, 0);
     assert_eq!(report.deterministic_passes, 0);
 }
 
@@ -87,9 +87,9 @@ fn merge_adds_componentwise() {
     let a = calibration(&[verdict(true, false), ci(CiStatus::Failing)]);
     let b = calibration(&[verdict(true, false), ci(CiStatus::Passing)]);
     let merged = a.merge(b);
-    assert_eq!(merged.verifier_passes, 2);
-    assert_eq!(merged.verifier_reconciled, 2);
-    assert_eq!(merged.verifier_false_positives, 1);
+    assert_eq!(merged.unproven_passes, 2);
+    assert_eq!(merged.unproven_reconciled, 2);
+    assert_eq!(merged.unproven_false_positives, 1);
 }
 
 /// A snapshot observing nothing, for tests that set only the channels
@@ -101,7 +101,7 @@ fn bare_snapshot() -> stella_protocol::LadderSnapshot {
         rung: None,
         tracked_command: None,
         oracle_trace: vec![],
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         unstable_flip: false,
         flip_refused_different_failure: false,
         touched_tests_passed: None,
@@ -128,7 +128,11 @@ fn bare_snapshot() -> stella_protocol::LadderSnapshot {
 /// had a flip behind it.
 fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
     let snapshot = stella_protocol::LadderSnapshot {
-        flip_achieved: corroborated,
+        flip: if corroborated {
+            stella_protocol::FlipOutcome::Achieved
+        } else {
+            stella_protocol::FlipOutcome::NotAchieved
+        },
         touched_tests_passed: corroborated.then_some(true),
         ..bare_snapshot()
     };
@@ -165,11 +169,11 @@ fn the_verifier_alone_rate_is_measured_from_recorded_snapshots() {
     );
     assert_eq!(report.uncorroborated_rate(), Some(0.5));
     assert_eq!(
-        report.verifier_passes_standing_alone, 1,
+        report.unproven_passes_standing_alone, 1,
         "only the verifier PASS with no flip and no green test would be sent back"
     );
     // The pass cohorts are untouched by the new fold.
-    assert_eq!(report.verifier_passes, 2);
+    assert_eq!(report.unproven_passes, 2);
     assert_eq!(report.deterministic_passes, 1);
 }
 
@@ -187,17 +191,21 @@ fn the_verifier_alone_rate_is_measured_from_recorded_snapshots() {
 /// wearing a `Default` instead of a missing conjunct.
 #[test]
 fn the_snapshot_projection_agrees_with_the_live_predicate() {
-    for flip_achieved in [false, true] {
+    for flip in [
+        stella_protocol::FlipOutcome::Unobserved,
+        stella_protocol::FlipOutcome::NotAchieved,
+        stella_protocol::FlipOutcome::Achieved,
+    ] {
         for touched_tests_passed in [None, Some(false), Some(true)] {
             for verify_done_flip in [false, true] {
                 let inputs = LadderInputs {
-                    flip_achieved,
+                    flip,
                     touched_tests_passed,
                     verify_done_flip,
                     ..LadderInputs::default()
                 };
                 let snapshot = stella_protocol::LadderSnapshot {
-                    flip_achieved,
+                    flip,
                     touched_tests_passed,
                     verify_done_flip,
                     ..bare_snapshot()
@@ -210,7 +218,7 @@ fn the_snapshot_projection_agrees_with_the_live_predicate() {
                 assert_eq!(
                     stands_alone(&recorded),
                     inputs.verifier_pass_stands_alone(),
-                    "projection disagrees at flip={flip_achieved} \
+                    "projection disagrees at flip={flip:?} \
                      touched={touched_tests_passed:?} verify_done={verify_done_flip}"
                 );
             }
@@ -242,7 +250,7 @@ fn a_verify_done_rescued_verdict_is_not_counted_uncorroborated() {
         "a confirmed verify_done flip is deterministic corroboration, exactly as the \
          engine weighed it at decision time"
     );
-    assert_eq!(report.verifier_passes_standing_alone, 0);
+    assert_eq!(report.unproven_passes_standing_alone, 0);
 }
 
 /// A rate with no denominator is reported as unmeasured, never as 0% —
@@ -250,13 +258,59 @@ fn a_verify_done_rescued_verdict_is_not_counted_uncorroborated() {
 /// recorded before ladder snapshots existed (#865) contribute nothing
 /// rather than being assumed corroborated.
 #[test]
-fn a_stream_without_snapshots_leaves_the_verifier_alone_rate_unmeasured() {
+fn a_stream_without_snapshots_leaves_the_uncorroborated_rate_unmeasured() {
     let report = calibration(&[verdict(true, false), verdict(false, true)]);
     assert_eq!(report.snapshotted_verdicts, 0);
     assert_eq!(report.uncorroborated_rate(), None);
     assert!(
-        render_calibration(&report).contains("verifier-alone rate: unmeasured"),
+        render_calibration(&report).contains("uncorroborated rate: unmeasured"),
         "an unmeasured rate must say so: {}",
         render_calibration(&report)
+    );
+}
+
+/// #2635: the cohort names the property it selects on — a pass with no
+/// deterministic evidence — and nothing in the output claims a model judged it.
+///
+/// The predicate `passed && !deterministic` was exact while the only way to set
+/// it was a model verifier ruling on inconclusive evidence. #2584 removed that
+/// call, and the ladder's own non-determinate outcomes now set the same flag:
+/// `unverified`, `unverifiable`, and a triage `waived`. So the cohort counts
+/// unproven passes, no model was involved in any of them, and the old label was
+/// a measurement artifact asserting a mechanism that no longer contributes to
+/// it — which is worse than a missing number, because a consumer parsing
+/// `--format json` read `verifier_*` and got something else.
+#[test]
+fn the_unproven_cohort_never_claims_a_model_verifier() {
+    // A pass the ladder could not settle, carrying the rung that says so.
+    let unsettled = AgentEvent::Verdict {
+        passed: true,
+        evidence: VerdictEvidence {
+            summary: "UNVERIFIED: nothing deterministic settled this turn".into(),
+            deterministic: false,
+            evidence_refs: vec![],
+            ladder: Some(Box::new(stella_protocol::LadderSnapshot {
+                rung: Some(stella_protocol::LadderRung::Unverified),
+                ..bare_snapshot()
+            })),
+        },
+    };
+    let report = calibration(&[unsettled]);
+    assert_eq!(
+        report.unproven_passes, 1,
+        "a pass nothing proved belongs to the unproven cohort"
+    );
+
+    let rendered = render_calibration(&report);
+    for banned in ["model verifier", "model-verifier", "verifier calibration"] {
+        assert!(
+            !rendered.contains(banned),
+            "the calibration output still names `{banned}`, a mechanism #2584 \
+             removed and which contributes to none of these tallies:\n{rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("unproven"),
+        "the cohort must name what it selects on:\n{rendered}"
     );
 }

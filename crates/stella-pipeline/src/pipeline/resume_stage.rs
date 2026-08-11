@@ -331,6 +331,7 @@ impl<'a> Pipeline<'a> {
             evidence_demands: 0,
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
+            witness_unmoved_by_revision: false,
             failures: Vec::new(),
         };
         match outcome {
@@ -505,29 +506,60 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
         });
+        // #2569: three standings, not two. The ladder's abstaining rungs
+        // publish `passed: true` deliberately — an unprovable run is not a
+        // broken one — and reading only that flag collapsed them onto
+        // `Completed`, where every projection downstream (label, episode
+        // outcome, session row, exit code) reads a success. The rung the
+        // verdict came to rest on is the honest discriminator, and
+        // `standing_of` is a total match over it so a new rung cannot inherit
+        // a default here.
         let status = match &best.verdict {
-            Some(verdict) if !verdict.passed => PipelineStatus::VerificationFailed {
-                verdict: verdict.clone(),
+            Some(verdict) => match crate::verify::standing::standing_of(
+                verdict.ladder.as_ref().and_then(|ladder| ladder.rung),
+                verdict.passed,
+            ) {
+                crate::verify::standing::VerificationStanding::Cleared => PipelineStatus::Completed,
+                crate::verify::standing::VerificationStanding::Unproven => {
+                    PipelineStatus::Unverified {
+                        verdict: verdict.clone(),
+                    }
+                }
+                crate::verify::standing::VerificationStanding::Failed => {
+                    PipelineStatus::VerificationFailed {
+                        verdict: verdict.clone(),
+                    }
+                }
             },
-            _ => PipelineStatus::Completed,
+            // Verification never ran far enough to grade the work — a lookup
+            // the pipeline answered without touching anything. Unchanged:
+            // this is not the abstention #2569 is about, and routing it to
+            // `Unverified` would report every read-only turn as unproven.
+            None => PipelineStatus::Completed,
         };
         match &status {
-            PipelineStatus::Completed => self.emit(AgentEvent::Complete {
-                // The label is `None` only when the candidate path returned
-                // before it resolved a worker (a setup abort that then
-                // degraded to a bare run). Re-resolve rather than emit
-                // `Complete { model: "" }` — a terminal event that names no
-                // model reads to every consumer as "no model ran", which is
-                // exactly backwards on a path that did the work.
-                model: worker_model_label
-                    .or_else(|| {
-                        self.resolve_provider(Role::Worker)
-                            .ok()
-                            .map(|worker| worker.model_ref.to_string())
-                    })
-                    .unwrap_or_default(),
-                cost_usd: total_cost,
-            }),
+            // An unverified run still *completed*: it reached its terminal
+            // state without aborting, and the stream's terminal frame is the
+            // same one. What differs is the status the caller settles on, not
+            // whether the run ended.
+            PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {
+                self.emit(AgentEvent::Complete {
+                    // The label is `None` only when the candidate path returned
+                    // before it resolved a worker (a setup abort that then
+                    // degraded to a bare run). Re-resolve rather than emit
+                    // `Complete { model: "" }` — a terminal event that names no
+                    // model reads to every consumer as "no model ran", which is
+                    // exactly backwards on a path that did the work.
+                    model: worker_model_label
+                        .or_else(|| {
+                            self.resolve_provider(Role::Worker)
+                                .ok()
+                                .map(|worker| worker.model_ref.to_string())
+                        })
+                        .unwrap_or_default(),
+                    cost_usd: total_cost,
+                })
+            }
             PipelineStatus::VerificationFailed { verdict } => {
                 self.emit(AgentEvent::Error {
                     message: format!("verification failed: {}", verdict.summary),

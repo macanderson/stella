@@ -16,19 +16,31 @@ stella calibration --format json  # machine-readable tallies
 
 Two cohorts, deliberately side by side — a false-positive rate means nothing without the cohort it should be compared against:
 
-- **model verifier** — `Verdict` events with `passed: true` and `deterministic: false`.
+- **unproven** — `Verdict` events with `passed: true` and `deterministic: false`: a pass the ladder could not settle. Three different outcomes land here — *unverified* (the probes looked and did not settle it), *unverifiable* (no probe could look), and a triage-*waived* pass — and no model judged any of them.
 - **deterministic** — passes the ladder credited itself (fail→pass flip, green tests, budget, and every pre-submit audit).
 
 <Callout type="warn">
-**Read the first cohort's label as historical.** It was named when a
-`deterministic: false` pass could only have come from a model verifier ruling on
-inconclusive evidence. Since that call was removed, the same flag is set by the
-ladder's own non-determinate outcomes — *unverified*, *unverifiable*, and a
-triage-waived pass — so on sessions recorded after the removal this cohort counts
-**unproven passes, not judged ones**. The rate it reports is still meaningful (it
-is the false-positive rate of passes nothing proved); the word "verifier" in the
-label is not. Sessions recorded before the removal mix both populations under the
-one heading.
+**Sessions recorded before the model verdict call was removed mix two
+populations under the `unproven` heading.** The cohort used to be labelled
+*model verifier*, and that name was exact while a `deterministic: false` pass
+could only have come from a model ruling on inconclusive evidence. Removing that
+call left the same flag being set by the ladder's own non-determinate outcomes,
+so the label named a mechanism that had stopped contributing to it — and the
+JSON keys spelled `verifier_*`, so anything scripting `--format json` read
+"verifier" and got something else. The fields are now `unproven_*`, which is
+what they always selected on. Nothing in an old record distinguishes the two
+populations, so a report spanning the change cannot separate them.
+</Callout>
+
+<Callout type="warn">
+**Breaking change to `--format json`.** `verifier_passes`,
+`verifier_reconciled`, `verifier_false_positives`,
+`verifier_false_positive_rate`, `verifier_passes_standing_alone` and
+`verifier_reverted` are renamed to `unproven_*`. The old spellings are **not**
+emitted alongside the new ones: they named a mechanism that contributes nothing
+to the tallies, so keeping them would have kept serving the wrong answer to a
+consumer who never noticed. The human report's `verifier-alone rate` line is
+likewise now `uncorroborated rate`.
 </Callout>
 
 For each: how many passes were recorded, how many were **reconciled** — a terminal CI verdict (`Passing`/`Failing`) was observed later in the same session's stream — and how many of those reconciled passes failed CI. The rate is printed only over reconciled passes; with no CI ground truth yet, it is reported as **unmeasured**, never as zero.

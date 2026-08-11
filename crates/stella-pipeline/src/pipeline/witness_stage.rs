@@ -827,9 +827,35 @@ impl<'a> Pipeline<'a> {
         // left permanently inert for authored witnesses — a flip could be
         // credited to a pass whose listing never contained the baseline's
         // failing test.
+        //
+        // The same reasoning governs the *recording* half beneath it (#2272).
+        // For as long as this fold existed it mutated oracle state and nothing
+        // else, so on a run with no configured `--test-command` — every
+        // authored-witness run, by construction — no `ProofTree::Baseline` ever
+        // reached the wire, and the leading `✗` a reader saw in the trace was
+        // the post-execute *candidate* run. A consumer therefore could not
+        // distinguish "failed on the old tree, passed on the new" from "failed,
+        // then passed in the same tree". Publishing it here states on the wire
+        // exactly the observation the comment above argues was made; the
+        // constant `false` is not an assumption but the stage's postcondition —
+        // a baseline that passed enters the repair path, and one that passes
+        // after repair aborts as degradable, so no witness with a passing
+        // baseline can reach this line.
         state
             .oracle
             .observe_run(&witness.command, false, &witness.baseline_output);
+        state.oracle_trace.push(OracleObservation {
+            tree: ProofTree::Baseline,
+            passed: false,
+        });
+        self.emit_proof(ProofStep::Oracle {
+            command: witness.command.clone(),
+            passed: false,
+            tree: ProofTree::Baseline,
+            run: None,
+            runs_required: None,
+            seed: None,
+        });
         // Arm the mid-turn early stop for the revise loop (#1793). The same
         // rule as the configured-command arming — only a baseline observed
         // FAILING may arm, and the observation above is exactly that (the

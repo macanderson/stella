@@ -8,7 +8,7 @@
 use super::*;
 use stella_pipeline::reward::DiscardReason;
 use stella_protocol::{
-    FileChangeKind, LadderRung, LadderSnapshot, ModelCallRole, ToolCall, ToolOutput,
+    FileChangeKind, FlipOutcome, LadderRung, LadderSnapshot, ModelCallRole, ToolCall, ToolOutput,
     VerdictEvidence,
 };
 use stella_store::SessionEventRecord;
@@ -211,7 +211,7 @@ fn ladder_verdict(passed: bool, rung: Option<LadderRung>) -> AgentEvent {
                     rung: Some(rung),
                     tracked_command: None,
                     oracle_trace: Vec::new(),
-                    flip_achieved: false,
+                    flip: FlipOutcome::NotAchieved,
                     unstable_flip: false,
                     flip_refused_different_failure: false,
                     touched_tests_passed: None,

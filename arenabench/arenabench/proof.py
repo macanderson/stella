@@ -19,12 +19,15 @@ recorded fixtures — and :mod:`arenabench.telemetry` is already close enough to
 the 1500-line ratchet that growing it is the wrong move regardless.
 
 **The one thing to understand before reading a grade.** The pipeline emits
-``passed: true`` for three different situations: a real deterministic flip, an
-``unverifiable`` outcome where every channel was blind, and a ``waived`` one
-where triage skipped review. Only :attr:`TrialProof.rung` and the honesty
-prefix on the verdict summary tell them apart. A reader that trusts ``passed``
-alone cannot distinguish proven work from an unexamined claim, which is the
-exact confusion the proof rail exists to prevent — so
+``passed: true`` for several different situations: a real deterministic flip;
+an ``unverifiable`` outcome where every channel was blind; an ``unverified``
+one where the channels looked and did not settle it; a
+``witness_unsatisfiable`` one where the witness failed the same way before and
+after the work; and a ``waived`` one where triage skipped review. Only
+:attr:`TrialProof.rung` and the honesty prefix on the verdict summary tell them
+apart. A reader that trusts ``passed`` alone cannot distinguish proven work
+from an unexamined claim, which is the exact confusion the proof rail exists to
+prevent — so
 :attr:`TrialProof.claimed_without_proof` is computed here rather than left to
 each caller to rediscover.
 
@@ -42,12 +45,68 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "FLIP_ACHIEVED",
+    "FLIP_NOT_ACHIEVED",
+    "FLIP_UNKNOWN",
+    "FLIP_UNOBSERVED",
     "GRADES",
     "OracleRun",
     "RoleCall",
     "TrialProof",
     "distill",
+    "flip_outcome",
 ]
+
+#: The flip oracle's finding, as three wire tokens plus an absence.
+#: ``crates/stella-protocol/src/ladder.rs::FlipOutcome`` is the contract.
+#:
+#: **A bool could not carry this, and the missing state is the one that
+#: matters** (#2556). ``flip_achieved: false`` meant both "a tracked command
+#: ran and did not go fail→pass" — a real negative about the work — and "no
+#: command was ever tracked, so nothing could have flipped", which is a
+#: statement about the instrument. Reading the first as the second is how a
+#: scoreboard reports a shortfall it never measured.
+FLIP_ACHIEVED = "achieved"
+FLIP_NOT_ACHIEVED = "not_achieved"
+FLIP_UNOBSERVED = "unobserved"
+#: No ladder said anything at all — no verdict reached this trial. Distinct
+#: from :data:`FLIP_UNOBSERVED`, which is a ladder actively reporting that its
+#: oracle never armed.
+FLIP_UNKNOWN = ""
+
+_FLIP_TOKENS = frozenset({FLIP_ACHIEVED, FLIP_NOT_ACHIEVED, FLIP_UNOBSERVED})
+
+
+def flip_outcome(ladder: Mapping[str, Any]) -> str:
+    """The ladder's flip finding as a token, or :data:`FLIP_UNKNOWN`.
+
+    Reads ``flip``; falls back to the pre-#2556 ``flip_achieved`` bool for
+    records written before the tri-state existed — every committed fixture
+    under ``tests/fixtures/matches/`` is one of those, and a reader that
+    dropped them would be trading one silent misread for another.
+
+    The legacy mapping is **the reference decoder's**, deliberately: a legacy
+    ``true`` is unambiguous, and a legacy ``false`` reads
+    :data:`FLIP_NOT_ACHIEVED` — the value it was written to mean — because
+    nothing in that field can resolve the conflation it embodies. Joining
+    against ``tracked_command`` could resolve it for a reader who needs to, and
+    is deliberately not done here: two decoders of one wire contract disagreeing
+    is the class of defect this function exists to close, not to widen.
+
+    An unrecognised token is :data:`FLIP_UNKNOWN` rather than a guess. It must
+    never fall through to "not achieved": that would turn a token this build has
+    not learned yet into a negative finding about an agent's work, which is the
+    one direction a benchmark must not be wrong in.
+    """
+    token = ladder.get("flip")
+    if isinstance(token, str):
+        return token if token in _FLIP_TOKENS else FLIP_UNKNOWN
+    # `flip` is typed as the bool on a record old enough to predate the token,
+    # and Rust's own deserializer accepts that shape under the new name too.
+    legacy = token if isinstance(token, bool) else ladder.get("flip_achieved")
+    if isinstance(legacy, bool):
+        return FLIP_ACHIEVED if legacy else FLIP_NOT_ACHIEVED
+    return FLIP_UNKNOWN
 
 #: Verdict-summary prefixes the pipeline stamps when it is telling you the
 #: result is *not* backed by proof. Ordered most- to least-specific; the first
@@ -56,6 +115,7 @@ __all__ = [
 #: head of the string rather than anywhere in it, because a model's own prose
 #: quotes these words often enough to matter.
 _HONESTY_MARKERS: tuple[tuple[str, str], ...] = (
+    ("WITNESS UNSATISFIABLE", "witness_unsatisfiable"),
     ("NO WORK ATTEMPTED", "nothing_attempted"),
     ("UNVERIFIABLE", "unverifiable"),
     ("UNVERIFIED", "uncorroborated"),
@@ -80,6 +140,7 @@ GRADES: dict[str, str] = {
     "flip": "an independently authored witness test failed, then passed",
     "oracle": "a tracked test command flipped fail→pass",
     "refuted": "the oracle ran and never passed — the claim was caught",
+    "unsatisfiable": "the witness failed the same way before and after — it never discriminated",
     "unproven": "proof was warranted and no witness could be authored",
     "waived": "verification was waived; nothing checked the work",
     "unwarranted": "no proof was demanded of this change",
@@ -172,10 +233,16 @@ class TrialProof:
 
     # -- did it flip? -------------------------------------------------------
     oracle_runs: tuple[OracleRun, ...] = ()
-    #: The pipeline's own flip verdict from the ladder. Preferred over
-    #: re-deriving one from :attr:`oracle_runs`, which sees only the
-    #: observations that reached the stream.
-    flip_achieved: bool | None = None
+    #: The pipeline's own flip finding from the ladder — one of
+    #: :data:`FLIP_ACHIEVED` / :data:`FLIP_NOT_ACHIEVED` /
+    #: :data:`FLIP_UNOBSERVED`, or :data:`FLIP_UNKNOWN` when no verdict
+    #: reached this trial. Preferred over re-deriving one from
+    #: :attr:`oracle_runs`, which sees only the observations that reached the
+    #: stream.
+    #:
+    #: A token rather than a bool for the same reason :attr:`diff_coverage` is
+    #: one: the third value is the whole point (#2556).
+    flip: str = FLIP_UNKNOWN
     #: The command flipped, when one was tracked.
     tracked_command: str = ""
     #: The same command passed *and* failed across runs — a flip that proves
@@ -275,7 +342,7 @@ class TrialProof:
             "witness_unavailable": list(self.witness_unavailable),
             "oracle_runs": [run.to_json() for run in self.oracle_runs],
             "failed_attempts": self.failed_attempts,
-            "flip_achieved": self.flip_achieved,
+            "flip": self.flip,
             "tracked_command": self.tracked_command,
             "unstable_flip": self.unstable_flip,
             "flip_refused": self.flip_refused,
@@ -313,11 +380,33 @@ def _grade_of(proof: TrialProof) -> str:
     the rail working: the agent claimed done, the oracle disagreed, and the
     claim did not ship.
     """
-    if proof.flip_achieved and proof.witness_authored:
+    achieved = proof.flip == FLIP_ACHIEVED
+    if achieved and proof.witness_authored:
         return "flip"
-    if proof.flip_achieved:
+    if achieved:
         return "oracle"
-    if proof.oracle_runs and not any(run.passed for run in proof.oracle_runs):
+    # Checked BEFORE `refuted`, and that ordering is the whole reason this
+    # branch exists (#2540). A trial on this rung looks exactly like a
+    # refutation from the data: the oracle armed, ran twice, and never passed.
+    # But the two runs failed *identically*, so the witness never discriminated
+    # between the old code and the new — grading it `refuted` would publish
+    # "the agent claimed done and a test disagreed" about a test that would
+    # have said the same thing whatever the agent did. The verdict states the
+    # rung; the oracle trace cannot.
+    if proof.rung == "witness_unsatisfiable":
+        return "unsatisfiable"
+    # "The oracle ran and never passed" — so it must actually have run. An
+    # `unobserved` flip means nothing armed, and grading that `refuted` would
+    # publish "the claim was caught" about a claim nothing examined: a negative
+    # finding manufactured out of a blind instrument, which is precisely the
+    # conflation the tri-state was introduced to end (#2556). The observations
+    # can arrive from `proof.oracle` events independently of the ladder, so
+    # this is an explicit guard rather than something the data shape provides.
+    if (
+        proof.flip != FLIP_UNOBSERVED
+        and proof.oracle_runs
+        and not any(run.passed for run in proof.oracle_runs)
+    ):
         return "refuted"
     if proof.witness_unavailable:
         return "unproven"
@@ -442,7 +531,7 @@ def distill(events: Iterable[Mapping[str, Any]]) -> TrialProof:
             rung = str(ladder.get("rung") or "")
             # `model_judge` is the pre-rename spelling of `model_verdict`.
             proof.rung = "model_verdict" if rung == "model_judge" else rung
-            proof.flip_achieved = bool(ladder.get("flip_achieved"))
+            proof.flip = flip_outcome(ladder)
             proof.unstable_flip = bool(ladder.get("unstable_flip"))
             proof.flip_refused = bool(ladder.get("flip_refused_different_failure"))
             proof.tracked_command = str(ladder.get("tracked_command") or "")

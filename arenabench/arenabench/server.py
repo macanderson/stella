@@ -43,11 +43,13 @@ what gets executed.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import mimetypes
 import os
 import random
+import signal
 import threading
 import time
 import tomllib
@@ -60,16 +62,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .adapter import stella_seat_problem, stella_seat_problem_for
 from .agents import AGENTS, dead_seat_reason
 from .artifacts import MAX_TEXT_BYTES, preview_kind, resolve_within, tree
 from .catalog import models_payload
-from .claude_oauth import apply_local_claude_login
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
 from .credentials import (
-    apply_ambient_credentials,
-    apply_saved_credentials,
     credentials_path,
     missing_required_credentials,
+    resolve_launch_credentials,
 )
 from .model import (
     EFFORTS,
@@ -427,10 +428,9 @@ class ArenaServer:
         # Claude Code login, read fresh because the CLI rotates (and revokes)
         # that token underneath any saved copy. Every layer fills gaps only:
         # a seat's own pasted `.env` always wins — see
-        # `apply_saved_credentials`.
-        spec = apply_ambient_credentials(spec)
-        spec = apply_saved_credentials(spec)
-        spec, oauth_notes = apply_local_claude_login(spec)
+        # `apply_saved_credentials`. `arenabench run` calls the same function,
+        # which is what makes "reproduces this match exactly" checkable (#2654).
+        spec, oauth_notes = resolve_launch_credentials(spec)
         missing = missing_required_credentials(spec)
         if missing:
             # Refuse rather than launch: an unauthenticated arm scores a 0.0
@@ -464,6 +464,13 @@ class ArenaServer:
             # 291 commits behind main and every match in between reported it
             # without a word.
             raise ValueError(problem)
+        unrunnable = stella_seat_problem_for(spec)
+        if unrunnable:
+            # The fourth refusal, and the one that protects the *apparatus* of
+            # a Stella seat. An arena whose Harbor interpreter cannot import
+            # the adapter accepted the seat happily and the trial then exited
+            # 0 having measured nothing, which the UI shows as "done" (#2325).
+            raise ValueError(unrunnable)
         match = self.runner.create(spec)
         for note in (*cap_notes, *oauth_notes):
             match.note = f"{match.note}; {note}" if match.note else note
@@ -942,7 +949,23 @@ def _handler_factory(
         def _route_api_get(self, rest: list[str]) -> None:
             match rest:
                 case ["health"]:
-                    self._json({"ok": True, "workspace": str(arena.workspace)})
+                    # `stella_seats` is the degraded flag from #2325. An
+                    # arena whose Harbor interpreter cannot import the adapter
+                    # is *healthy* for a Claude-Code-vs-Codex contest and
+                    # cannot run a Stella seat at all, and a single `ok` bit
+                    # cannot say both. The reason travels with it because the
+                    # launch console is a terminal nobody reads twice.
+                    unrunnable = stella_seat_problem()
+                    self._json(
+                        {
+                            "ok": True,
+                            "workspace": str(arena.workspace),
+                            "stella_seats": {
+                                "ok": unrunnable is None,
+                                "reason": unrunnable or "",
+                            },
+                        }
+                    )
                 case ["datasets"]:
                     self._json(arena.datasets())
                 case ["datasets", key, "tasks"]:
@@ -1130,6 +1153,16 @@ def serve(
                 f"port {port} already serves a different arena "
                 f"(workspace {occupant}); choose another --port"
             )
+    # Asked **before** the socket opens, and the answer is memoized for the
+    # process. Both halves matter. The first probe spawns an interpreter, and
+    # `probe_arena` gives `/api/health` 0.6 seconds: a cold answer computed
+    # inside the first request would time that probe out, another `serve` would
+    # read "nothing is listening", and two arenas would end up driving one
+    # workspace — the exact conflation `find_running_arena` exists to prevent.
+    # Warming it here also means the banner below is printed before anything
+    # can be launched against a rig that cannot run the seat.
+    unrunnable = stella_seat_problem()
+
     arena = ArenaServer(workspace, registry)
     handler = _handler_factory(arena, allowed_hosts(host, port) if local else None)
     httpd = ThreadingHTTPServer((host, port), handler)
@@ -1143,11 +1176,36 @@ def serve(
             "  guard lifted. Anyone who can reach this port can launch runs that\n"
             "  spend your provider credits.\n"
         )
+    if unrunnable:
+        # Loud, before the first request, and repeated on `/api/health` — an
+        # arena that boots looking perfectly healthy and then reports every
+        # Stella seat as "done" having measured nothing is the failure #2325
+        # was filed about. Not a refusal: this arena can still run a contest
+        # between agents that need none of our adapter, and `create_match`
+        # rejects the seat it cannot serve rather than the server rejecting
+        # every contest.
+        print(
+            "\n  DEGRADED: this arena cannot run a Stella seat. A Stella\n"
+            "  contestant will be refused at match creation rather than\n"
+            f"  scored. {unrunnable}\n"
+        )
     print("  ctrl-c to stop\n")
     if open_browser:
         threading.Timer(
             0.5, lambda: __import__("webbrowser").open(url)
         ).start()
+    # `scripts/arena-kill.sh` — and `make kill-arena` behind it — stops an
+    # arena with SIGTERM, whose default disposition is to end the process
+    # without unwinding. Every in-flight match's task containers then survive
+    # with nothing to reap them, which is the leak #2329 measured. Routing the
+    # signal into the same `KeyboardInterrupt` path ctrl-c already takes means
+    # one shutdown, one cancel, one reap — rather than a second teardown to
+    # keep in step with the first.
+    def _interrupt(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError):  # not the main thread: no handler
+        signal.signal(signal.SIGTERM, _interrupt)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

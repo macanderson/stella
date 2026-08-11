@@ -13,11 +13,14 @@
 //! 4. one baseline commit sealed in the shadow's PRIVATE index (detached
 //!    HEAD — no ref of the user's repo moves).
 //!
-//! The user's working tree, index, and stash are NEVER touched: the stash is
+//! The user's working tree and index are NEVER touched, and the stash is
 //! shared machine state other sessions rely on, so it is banned outright —
-//! no `git stash` appears anywhere in this module, and every command that
-//! runs against the real repo is read-only except the final winner-adoption
-//! `git apply` (worktree only, no `--index`). Final verification first seals
+//! no `git stash push` appears anywhere in this module. Commands that run
+//! against the real repo are read-only with exactly two exceptions: the final
+//! winner-adoption `git apply` (worktree only, no `--index`), and the ref
+//! repair described below, which writes only a ref a candidate itself moved
+//! and only back to the value recorded before that candidate existed.
+//! Final verification first seals
 //! the shadow in a private commit. Adoption requires the shadow to remain
 //! byte-identical to that seal, diffs the immutable baseline against that
 //! exact verified commit, and applies the result in one `git apply`. The
@@ -35,14 +38,22 @@
 //! reads. Git's own interlock refuses to check out a branch another worktree
 //! holds, but a worker can defeat it (`git checkout
 //! --ignore-other-worktrees`) and then move the graded tree's branch out from
-//! under its index. Two guards close the observed hole, both on the seal:
+//! under its index. Three guards close the observed hole:
 //! [`ref_escape::detach_head`] re-detaches a `HEAD` the worker attached, so a
 //! machinery commit — witness scaffolding included — can never land in a
-//! history the user keeps; and [`GitCandidateWorkspace::escaped_refs_inner`]
-//! refuses to seal a candidate whose work has reached a shared ref, naming
-//! what moved and how to put it back. Detection and refusal, not repair:
-//! nothing here writes to the real repository. The structural fix — a
-//! substrate that cannot reach those refs at all — is #1383.
+//! history the user keeps; [`GitCandidateWorkspace::escaped_refs_inner`]
+//! refuses to seal a candidate whose work has reached a shared ref; and
+//! [`GitCandidateWorkspace::restore`] **puts that ref back** before the
+//! refusal is raised (#2641) — a refusal that only named the recovery command
+//! left the graded tree as corrupted as it found it, which cost a measured
+//! run its whole score. The detach runs first for that reason: a restore
+//! issued from the main worktree would otherwise drag an attached candidate
+//! `HEAD` back with the branch. The repair runs on the teardown path too
+//! ([`GitCandidateWorkspace::restore_escaped_refs_inner`]), because a run
+//! that dies on the turn budget never reaches a seal. See [`ref_escape`] for
+//! the compare-and-swap discipline, the `refs/stash` special case, and what a
+//! restore can unwind. The structural fix — a substrate that cannot reach
+//! those refs at all — is #1383.
 //!
 //! # What a candidate's engine can reach
 //!
@@ -702,21 +713,32 @@ impl GitCandidateWorkspace {
             reason,
             workspace: self.dir.display().to_string(),
         };
+        // A worker may have attached HEAD to a branch the user keeps, which
+        // would land this machinery commit — witness scaffolding included —
+        // in a history nobody asked to change. Detaching rewrites HEAD only;
+        // the candidate's tree and index are exactly as the worker left them.
+        //
+        // This runs BEFORE the ref audit, and the order is load-bearing
+        // (#2641): the audit now RESTORES what it finds, and a restore issued
+        // from the main worktree drags an attached candidate HEAD back with
+        // the branch — orphaning the candidate's own commits from its own
+        // checkout. Detaching first pins the candidate's work at the value
+        // the worker left before the branch is yanked back. Attribution is
+        // unaffected: `--no-deref` writes the commit HEAD already resolved
+        // to, so the audit's `rev-parse HEAD` reads the same value either
+        // way, and a `HEAD` too broken to detach is also too broken to
+        // attribute — the audit reports nothing in that case regardless.
+        ref_escape::detach_head(&self.dir).await.map_err(fail)?;
         // #2541: the seal is the moment this candidate's bytes are certified,
         // so it is also where a candidate that wrote into the GRADED tree's
         // ref namespace is refused. A worktree isolates files, not refs; the
-        // audit runs before anything else so a candidate that already escaped
-        // never gets a further commit built on top of the damage.
-        let escaped_refs = self.escaped_refs_inner().await;
-        if !escaped_refs.is_empty() {
-            return Err(fail(ref_escape::refusal(&escaped_refs)));
+        // audit runs before the commit below so a candidate that already
+        // escaped never gets a further commit built on top of the damage.
+        let audit = self.escaped_refs_inner().await;
+        if !audit.escaped.is_empty() {
+            let restored = self.restore(&audit.escaped).await;
+            return Err(fail(ref_escape::refusal(&restored, audit.unexamined)));
         }
-        // And the other half: a worker may have attached HEAD to a branch the
-        // user keeps, which would land this machinery commit — witness
-        // scaffolding included — in a history nobody asked to change.
-        // Detaching rewrites HEAD only; the candidate's tree and index are
-        // exactly as the worker left them.
-        ref_escape::detach_head(&self.dir).await.map_err(fail)?;
         git(&self.dir, &["add", "-A"]).await.map_err(fail)?;
         let mut commit_args: Vec<&str> = SNAPSHOT_IDENT.to_vec();
         commit_args.extend([
@@ -767,6 +789,40 @@ impl GitCandidateWorkspace {
         .await
         .map_err(fail)?;
         Ok(head.trim() == sealed && status.is_empty())
+    }
+
+    /// The teardown half of the ref repair (#2641): audit and restore the
+    /// shared ref namespace one last time, before `cleanup` removes the
+    /// candidate.
+    ///
+    /// [`Self::seal_inner`]'s repair only fires when a seal is reached. A run
+    /// that dies on the turn budget — the shape that cost a measured
+    /// Terminal-Bench trial its score — is torn down through
+    /// [`CandidateWorkspace::remove`] having never sealed, so without this the
+    /// graded tree keeps the moved ref.
+    ///
+    /// Order matters twice. It must precede `cleanup`, because the
+    /// attribution probes name the candidate's `HEAD` and private baseline
+    /// and are only resolvable while the worktree and its shared object store
+    /// are still there. And it must not detach `HEAD` first the way the seal
+    /// does: that write exists to keep the candidate's own commits reachable
+    /// from a checkout that is about to be deleted anyway, and the candidate's
+    /// value stays in the restored ref's reflog regardless.
+    ///
+    /// Cost on a clean candidate: one `for-each-ref`. Best-effort and silent
+    /// — [`CandidateWorkspace::remove`] returns `()`, so there is no channel
+    /// to report a teardown repair on; surfacing it is #2813.
+    ///
+    /// Both repair seams are in-process, and `refs_at_create` lives only in
+    /// this struct: a `stella` killed outright leaves the moved ref with
+    /// nothing on disk that knows what it should be. That residual gap — a
+    /// durable per-candidate record and a cross-process sweep, with the
+    /// liveness and consent questions it raises — is #2813 as well.
+    async fn restore_escaped_refs_inner(&self) {
+        let audit = self.escaped_refs_inner().await;
+        if !audit.escaped.is_empty() {
+            let _ = self.restore(&audit.escaped).await;
+        }
     }
 }
 
@@ -825,6 +881,7 @@ impl CandidateWorkspace for GitCandidateWorkspace {
     }
 
     async fn remove(&self) {
+        self.restore_escaped_refs_inner().await;
         cleanup(&self.toplevel, &self.dir).await;
     }
 }

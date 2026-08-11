@@ -8,11 +8,12 @@
 //! to write the workspace were dispatched.
 
 use crate::verify::{LadderDecision, LadderInputs, ladder_decision, unverifiable_evidence};
+use stella_protocol::FlipOutcome;
 
 /// The inputs shared by both cases: the nginx trial, read off its own stream.
 fn escaped() -> LadderInputs {
     LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 100,
@@ -84,7 +85,7 @@ fn one_corroborating_observation_lifts_the_turn_off_the_abstain_rung() {
         (
             "a flip is the strongest corroboration there is",
             LadderInputs {
-                flip_achieved: true,
+                flip: FlipOutcome::Achieved,
                 ..escaped()
             },
         ),

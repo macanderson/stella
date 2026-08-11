@@ -4,7 +4,12 @@ import * as React from "react";
 import type { TrialProof } from "@/lib/types";
 import { fmtMoney, fmtTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { FlipStrip, GRADE_COPY, flipSentence } from "@/components/arena/proof-badge";
+import {
+  FlipStrip,
+  GRADE_COPY,
+  flipSentence,
+  flipTone,
+} from "@/components/arena/proof-badge";
 
 /**
  * The proof rail of one trial, in full: what was demanded, who wrote the test,
@@ -151,7 +156,7 @@ export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) 
             <Row label="oracle">
               <span className="inline-flex items-center gap-2">
                 <FlipStrip proof={proof} />
-                <span className={proof.flip_achieved ? "text-ok" : "text-warn"}>
+                <span className={flipTone(proof)}>
                   {flipSentence(proof)}
                 </span>
               </span>

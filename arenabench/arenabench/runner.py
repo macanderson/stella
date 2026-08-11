@@ -28,12 +28,13 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import harbor, provenance, sut
-from .adapter import AdapterUnavailableError, stage_adapter
+from . import adapter, harbor, provenance, reap, reauth, reauth_wiring, sut
+from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -43,6 +44,7 @@ from .agents import (
     routes_directly,
 )
 from .artifacts import mp4_is_finalized
+from .claude_oauth import CLAUDE_OAUTH_ENV
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
@@ -88,6 +90,38 @@ _SCRUBBED_EXACT = frozenset(
         "ARENABENCH_SUT_COMMIT",
     }
 )
+
+
+def _round_log_path(match: Match, contestant: Contestant, round_index: int) -> Path:
+    """Where one round of a seat writes its Harbor log.
+
+    One file per round, because the log is opened for *writing*: a re-dispatch
+    sharing the first round's path would truncate the log of the round that
+    died, deleting the evidence of the very failure the retry recovers from.
+    """
+    suffix = f".round{round_index}" if round_index else ""
+    return match.workspace / f"{contestant.slug}{suffix}.log"
+
+
+def _unlaunched_run(
+    match: Match, contestant: Contestant, exc: Exception, *, round_index: int = 0
+) -> ContestantRun:
+    """The record of a seat that could not be started at all.
+
+    A bad seat must not abort the match — nor a re-dispatch the rest of the
+    supervision — so the failure becomes a run in the ``error`` state, which
+    every reader (the badge, ``_no_trial_ever_ran``, ``_failure_note``) already
+    understands.
+    """
+    job_name = f"{match.spec.id}-{contestant.slug}"
+    return ContestantRun(
+        contestant=contestant,
+        job_name=job_name,
+        job_dir=match.jobs_root / job_name,
+        log_path=_round_log_path(match, contestant, round_index),
+        error=str(exc),
+        round=round_index,
+    )
 
 
 def _base_environment() -> dict[str, str]:
@@ -216,6 +250,16 @@ class ContestantRun:
     #: agent reads. Separate from :attr:`warnings` because nothing is wrong;
     #: it is here so that no part of a contestant's routing is invisible.
     notes: list[str] = field(default_factory=list)
+    #: Which dispatch of this seat this is. ``0`` is the original launch; a
+    #: credential rotation re-dispatched by :mod:`.reauth` opens round 1, 2, …
+    #: A round is a whole Harbor process, so it is a whole ``ContestantRun``
+    #: (see :meth:`Match.record_run`).
+    round: int = 0
+    #: The tasks *this* round was dispatched for. Empty means the job carried
+    #: no ``--include-task-name`` filter at all, i.e. the whole dataset.
+    dispatched: tuple[str, ...] = ()
+    #: Why this round exists. Empty for the original launch.
+    reason: str = ""
 
     @property
     def state(self) -> str:
@@ -229,6 +273,20 @@ class ContestantRun:
         if self.process.poll() is None:
             return "running"
         return "done" if self.exit_code in (0, None) else "failed"
+
+    def to_json(self) -> dict[str, Any]:
+        """This round, for the match record. Names only — never the seat's env."""
+        return {
+            "round": self.round,
+            "tasks": list(self.dispatched),
+            "reason": self.reason,
+            "state": self.state,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "exit_code": self.exit_code,
+            "error": self.error,
+            "log": self.log_path.name,
+        }
 
 
 class Match:
@@ -247,7 +305,20 @@ class Match:
         #: What this match's numbers were measured with. Set at `start`, and
         #: read back from disk for a match reconstructed after the fact.
         self.provenance: provenance.Provenance | None = None
+        #: The seat's **live** round, per contestant. A re-dispatch replaces the
+        #: entry, so every existing reader — the process poll, `cancel`, `reap`
+        #: — keeps finding the running process exactly where it always did.
         self.runs: dict[str, ContestantRun] = {}
+        #: Every round of every seat, oldest first. The earlier rounds are the
+        #: half `runs` cannot hold, and without them a re-dispatch would be
+        #: invisible in the record — a reader could not tell a first-attempt
+        #: pass from a re-run one, which is a condition of #2545 being fixed
+        #: rather than traded.
+        self.rounds: dict[str, list[ContestantRun]] = {}
+        #: Credential-rotation supervision for this match's subscription seats,
+        #: or ``None`` when no seat qualifies (see
+        #: :func:`.reauth_wiring.supervise_match`).
+        self.reauth: reauth.MatchReauth | None = None
         self.recorder: RecorderSupervisor | None = None
         self.snapshots: SnapshotSupervisor | None = None
         self.note = ""
@@ -279,19 +350,82 @@ class Match:
             self._sut_pins[ref] = pin
         return pin
 
+    def record_run(self, run: ContestantRun) -> None:
+        """Make ``run`` this seat's live round, keeping the earlier ones.
+
+        The one seam a dispatch goes through, so that "which process is
+        running" and "how many times was this seat dispatched, and why" cannot
+        drift apart.
+        """
+        self.runs[run.contestant.id] = run
+        self.rounds.setdefault(run.contestant.id, []).append(run)
+
+    def rounds_for(self, contestant_id: str) -> list[ContestantRun]:
+        """Every dispatch of this seat, oldest first.
+
+        Falls back to the live run for a match assembled without
+        :meth:`record_run` — one restored from disk, or a test that seeded
+        ``runs`` directly — so the record never claims a seat that plainly ran
+        was never dispatched.
+        """
+        recorded = self.rounds.get(contestant_id)
+        if recorded:
+            return list(recorded)
+        run = self.runs.get(contestant_id)
+        return [run] if run is not None else []
+
     # -- reading ----------------------------------------------------------
 
+    #: How a trial ranks as the representative of its task. Lower wins.
+    #:
+    #: Only ever demotes an **unmeasured** trial below a measured one, and
+    #: never reorders two measured trials — so a loss can never be replaced by
+    #: a win from another attempt. Re-running a task to get a nicer number is
+    #: the dishonesty this must not enable; making a result that already exists
+    #: visible is the opposite of it.
+    _MEASURED, _IN_FLIGHT, _VOID = 0, 1, 2
+
+    def _representative_rank(self, trial_dir: Path, task: str) -> int:
+        """Whether this attempt is a result, a wait, or an operational abort.
+
+        With ``--n-attempts > 1`` — and, once a credential rotation can be
+        re-dispatched, on the ordinary path too — several attempts share a
+        task. Collapsing them by "first sorted wins" picks by attempt id, and
+        an attempt id says nothing about whether the trial measured anything:
+        a seat whose first attempt died on a revoked token and whose second
+        *solved the task* reported the void, so the arm read worse than it
+        performed (#2545). A scoreboard that hides a measured result is the
+        one direction a benchmark must never be wrong in.
+        """
+        metrics = self._metrics.read(trial_dir, task)
+        if metrics.infrastructure:
+            return self._VOID
+        if metrics.resolved is None:
+            return self._IN_FLIGHT
+        return self._MEASURED
+
     def trial_dirs(self, contestant_id: str) -> dict[str, Path]:
-        """Task name -> trial directory, for one contestant."""
+        """Task name -> the trial directory that represents it, per contestant.
+
+        Harbor names trials ``<task>__<attempt>``; attempts are collapsed to
+        the task so the grid stays one row per task. Which attempt survives the
+        collapse is decided by :meth:`_representative_rank`, then by sort order
+        among equals — so the fold is deterministic, and a measured attempt is
+        never hidden behind one that never ran.
+        """
         run = self.runs.get(contestant_id)
         if run is None or not run.job_dir.is_dir():
             return {}
         found: dict[str, Path] = {}
+        ranks: dict[str, int] = {}
         for entry in sorted(run.job_dir.iterdir()):
-            if entry.is_dir():
-                # Harbor names trials `<task>__<attempt>`; collapse attempts to
-                # the task so the grid stays one row per task.
-                found.setdefault(entry.name.rsplit("__", 1)[0], entry)
+            if not entry.is_dir():
+                continue
+            task = entry.name.rsplit("__", 1)[0]
+            rank = self._representative_rank(entry, task)
+            if task not in found or rank < ranks[task]:
+                found[task] = entry
+                ranks[task] = rank
         return found
 
     def metrics_for(self, contestant_id: str) -> dict[str, TrialMetrics]:
@@ -319,6 +453,12 @@ class Match:
             metrics = self.metrics_for(contestant.id)
             by_contestant[contestant.id] = metrics
             totals[contestant.id] = aggregate(metrics.values())
+
+        # Credential-rotation state, per seat. Absent for an unsupervised seat
+        # rather than defaulted to "running": "nothing is watching this seat"
+        # and "this seat is healthy" are different facts, and a badge that
+        # cannot tell them apart is how an unwired supervisor stayed unnoticed.
+        rotation = self.reauth.to_json() if self.reauth is not None else {}
 
         tasks = list(self.spec.tasks)
         if not tasks:
@@ -377,6 +517,10 @@ class Match:
                     if contestant.id in self.runs
                     else "",
                     "totals": totals[contestant.id],
+                    "reauth": rotation.get(contestant.id),
+                    "rounds": [
+                        run.to_json() for run in self.rounds_for(contestant.id)
+                    ],
                 }
                 for contestant in self.spec.contestants
             ],
@@ -621,7 +765,8 @@ class MatchRunner:
             )
             run.started_at = match.started_at
             run.finished_at = finished
-            match.runs[contestant.id] = run
+            run.dispatched = tuple(spec.tasks)
+            match.record_run(run)
         return match
 
     # -- launching --------------------------------------------------------
@@ -654,6 +799,18 @@ class MatchRunner:
             return
         match.status = "running"
         match.started_at = time.time()
+
+        # The `kill -9` half of #2329: an exit hook cannot run for a runner
+        # nobody asked to stop, so a hard-killed match's containers survive
+        # until something comes back for them. This is that something, and here
+        # is the moment the headroom is needed. Only matches this workspace has
+        # already recorded as *over* are swept — a container the arena cannot
+        # account for may belong to a live match in another process, and
+        # reaping it would manufacture the mis-scored loss this prevents.
+        with contextlib.suppress(Exception):
+            reap.reap_finished(
+                [other for other in self.matches.values() if other is not match]
+            )
 
         # Resolve Harbor once, for the whole match, before anything else needs
         # an answer. Three things follow from doing it here rather than inside
@@ -688,14 +845,21 @@ class MatchRunner:
                 run = self._launch(match, contestant, resolved)
             except Exception as exc:  # a bad seat must not abort the match
                 log.exception("failed to launch %s", contestant.name)
-                run = ContestantRun(
-                    contestant=contestant,
-                    job_name=f"{match.spec.id}-{contestant.slug}",
-                    job_dir=match.jobs_root / f"{match.spec.id}-{contestant.slug}",
-                    log_path=match.workspace / f"{contestant.slug}.log",
-                    error=str(exc),
-                )
-            match.runs[contestant.id] = run
+                run = _unlaunched_run(match, contestant, exc)
+            match.record_run(run)
+
+        # Credential supervision is armed only after every seat has launched:
+        # it reads the runs it is about to watch, and a seat that refused to
+        # start has no process to stop and no credential to rotate. A match
+        # whose Harbor never resolved launched nothing, so there is nothing to
+        # supervise.
+        if resolved is not None:
+            match.reauth = reauth_wiring.supervise_match(
+                match,
+                lambda contestant, tasks, token: self._redispatch(
+                    match, contestant, resolved, tasks, token
+                ),
+            )
 
         if match.spec.record_video:
             supervisor = RecorderSupervisor(
@@ -734,19 +898,44 @@ class MatchRunner:
         )
 
     def _launch(
-        self, match: Match, contestant: Contestant, resolved: harbor.Resolution
+        self,
+        match: Match,
+        contestant: Contestant,
+        resolved: harbor.Resolution,
+        *,
+        tasks: Sequence[str] | None = None,
+        round_index: int = 0,
+        reason: str = "",
     ) -> ContestantRun:
+        """Start one Harbor process for this seat. One call is one round.
+
+        ``tasks`` scopes the dispatch: ``None`` means the match's own task list
+        (which, when *it* is empty, means the whole dataset — Harbor's default
+        with no ``--include-task-name``), and a subset is what a credential
+        re-dispatch sends, so a retry round re-runs only the tasks a rotation
+        left unmeasured and never re-runs a task the seat already answered.
+
+        ``round_index`` and ``reason`` are that retry's record-keeping.
+        """
         spec = resolve_agent(contestant.agent)
         job_name = f"{match.spec.id}-{contestant.slug}"
+        # The same job directory for every round, deliberately (#2545): a
+        # retry's trial then lands beside the void it replaces, and
+        # `Match.trial_dirs`'s measured-over-void rank publishes it with no
+        # union across directories.
         job_dir = match.jobs_root / job_name
-        log_path = match.workspace / f"{contestant.slug}.log"
+        log_path = _round_log_path(match, contestant, round_index)
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        dispatched = tuple(match.spec.tasks if tasks is None else tasks)
 
         run = ContestantRun(
             contestant=contestant,
             job_name=job_name,
             job_dir=job_dir,
             log_path=log_path,
+            round=round_index,
+            dispatched=dispatched,
+            reason=reason,
         )
 
         missing = missing_credentials(contestant)
@@ -766,6 +955,20 @@ class MatchRunner:
         # somewhere nobody named (see `arenabench.harbor`).
         harbor_exe = resolved.binary
         run.notes.append(resolved.note)
+
+        # The authoritative half of #2325, asked of the *resolved* Harbor
+        # rather than a global lookup, because a dataset may pin its own and
+        # only this binary's interpreter will actually run the seat. A rig that
+        # cannot import `arenabench.harbor_agent` produces a Harbor run that
+        # dies constructing the agent and **exits 0**, so the seat reports done
+        # with zero steps and no model call — indistinguishable in the match UI
+        # from an agent that ran and lost. Refusing here costs no container and
+        # lands in `run.error`, which `INFRASTRUCTURE_FAILURES` already keeps
+        # out of `solve_rate`'s denominator.
+        if contestant.agent == "stella":
+            unrunnable = adapter.stella_seat_problem(harbor_exe)
+            if unrunnable:
+                raise AdapterUnavailableError(unrunnable)
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
@@ -820,7 +1023,7 @@ class MatchRunner:
         # an export on disk is just directories and answers to the bare name.
         # Sending the wrong form matches nothing and Harbor exits immediately —
         # loudly, at least, rather than by quietly running fewer tasks.
-        for task in match.spec.tasks:
+        for task in dispatched:
             command += [
                 "--include-task-name",
                 task if local_path is not None else f"{match.dataset.namespace}/{task}",
@@ -876,10 +1079,11 @@ class MatchRunner:
             )
 
         log.info(
-            "launching %s: %s (%d tasks)",
+            "launching %s%s: %s (%d tasks)",
             contestant.name,
+            f" round {round_index}" if round_index else "",
             " ".join(command[:8]),
-            len(match.spec.tasks),
+            len(dispatched),
         )
         handle = log_path.open("wb")
         run.process = subprocess.Popen(
@@ -997,19 +1201,7 @@ class MatchRunner:
         # four trials with it, each scored as an agent loss (#2127). Staging
         # is content-addressed and process-cached, so trial 2 never touches
         # the source tree trial 1 copied.
-        roots = [str(Path(__file__).resolve().parent.parent)]
-        adapter = os.environ.get("ARENABENCH_STELLA_ADAPTER")
-        if not adapter:
-            repo = sut.stella_repo()
-            if repo is not None and (repo / "bench" / "harbor_adapter").is_dir():
-                adapter = str(repo / "bench" / "harbor_adapter")
-        if not adapter:
-            raise AdapterUnavailableError(
-                "a Stella seat needs the harbor adapter, and neither "
-                "ARENABENCH_STELLA_ADAPTER nor a Stella checkout names one. "
-                "Point ARENABENCH_STELLA_ADAPTER at <stella>/bench/harbor_adapter."
-            )
-        roots.append(str(stage_adapter(Path(adapter))))
+        roots = seat_import_roots()
         existing = os.environ.get("PYTHONPATH", "")
         if existing:
             roots.append(existing)
@@ -1069,6 +1261,60 @@ class MatchRunner:
 
     # -- supervision ------------------------------------------------------
 
+    def _redispatch(
+        self,
+        match: Match,
+        contestant: Contestant,
+        resolved: harbor.Resolution,
+        tasks: Sequence[str],
+        token: str,
+    ) -> None:
+        """Open another round for ``tasks`` on a fresh credential.
+
+        The supervisor's ``launch``. Through :meth:`_launch` rather than a
+        rebuilt Harbor command line, so the retry's provenance, seat manifest
+        and SUT pin are the first round's by construction — a retry assembled
+        any other way is a second, unrecorded apparatus inside one arm.
+
+        The token rides in memory on a copy of the seat and is never persisted:
+        ``Contestant.redacted`` — the only shape that reaches disk or the wire —
+        discloses env *names* alone.
+        """
+        seat = replace(contestant, env={**contestant.env, CLAUDE_OAUTH_ENV: token})
+        index = len(match.rounds.get(contestant.id, ()))
+        reason = (
+            f"credential rotated mid-match; re-dispatching {len(tasks)} "
+            f"unmeasured task(s) on a fresh token"
+        )
+        try:
+            run = self._launch(
+                match, seat, resolved, tasks=tasks, round_index=index, reason=reason
+            )
+        except Exception as exc:
+            log.exception("could not re-dispatch %s", contestant.name)
+            run = _unlaunched_run(match, seat, exc, round_index=index)
+            run.dispatched, run.reason = tuple(tasks), reason
+            match.record_run(run)
+            raise
+        match.record_run(run)
+
+    def provide_token(
+        self, match: Match, token: str, *, contestant: str | None = None
+    ) -> list[str]:
+        """Hand a credential to whichever supervised seats are waiting for one.
+
+        The operator's half of a pause, in memory: :mod:`.claude_oauth`'s
+        contract is that a subscription token never touches disk, so the
+        hand-off is a call into the process driving the match and deliberately
+        not a file. Returns the ids that took it — empty when no seat is
+        waiting, so a caller reports that instead of claiming a resume. The
+        ordinary case needs nobody: rotation leaves the new token in the local
+        login, which every tick re-reads.
+        """
+        if match.reauth is None:
+            return []
+        return match.reauth.provide_token(token, contestant=contestant)
+
     def _await_completion(self, match: Match) -> None:
         while True:
             alive = [
@@ -1076,7 +1322,22 @@ class MatchRunner:
                 for run in match.runs.values()
                 if run.process is not None and run.process.poll() is None
             ]
-            if not alive:
+            # A paused seat has no live process and is not finished, and a
+            # healing one is between its stop and its re-dispatch — so "nothing
+            # is alive" is no longer the whole exit condition. Ticked after the
+            # poll rather than before it so the supervisor reads the same
+            # liveness this iteration measured.
+            try:
+                pending = reauth_wiring.tick(match)
+            except Exception:  # supervision must never wedge a match
+                log.exception(
+                    "credential supervision failed for %s; the match continues "
+                    "unsupervised",
+                    match.spec.id,
+                )
+                match.reauth = None
+                pending = False
+            if not alive and not pending:
                 break
             time.sleep(2.0)
 
@@ -1138,14 +1399,16 @@ class MatchRunner:
             process = run.process
             if process is None or process.poll() is not None:
                 continue
-            try:
-                # The whole process group: Harbor spawns Docker and helper
-                # children, and terminating only the parent leaves containers
-                # running and the job directory growing after "cancel".
-                os.killpg(os.getpgid(process.pid), 15)
-            except (OSError, ProcessLookupError):
-                with contextlib.suppress(OSError):
-                    process.terminate()
+            reauth_wiring.terminate_process_group(process)
+        # The process group does not contain the task containers: Harbor starts
+        # them through the Docker daemon, so killing the group stops the
+        # harness and leaves the containers running, owned by nothing. Ten of
+        # them accumulated over three stopped matches on one host and cost the
+        # *next* match five of six trials to `Docker compose command failed` —
+        # scored as agent losses (#2329).
+        reaped = reap.reap_match(match)
+        if reaped:
+            match.note = f"{match.note}; reaped {len(reaped)} container(s)"
         if match.recorder is not None:
             match.recorder.stop()
         if match.snapshots is not None:

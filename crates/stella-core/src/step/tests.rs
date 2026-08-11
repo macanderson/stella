@@ -36,10 +36,10 @@ fn checkpoint_fixture() -> Checkpoint {
     let mut state = state;
     state.total_cost_usd = 0.375;
     state.calibration_model = Some("glm-5.2".into());
-    state.loop_steered = Some(LoopIdentity {
+    state.loop_steer = LoopSteerBudget::resumed(Some(LoopIdentity {
         tools: vec!["bash".into()],
         inputs: Some(vec![r#"{"command":"cargo test"}"#.into()]),
-    });
+    }));
     state.step = 3;
     state.mark_transcript_rewritten();
     state.mark_transcript_rewritten();
@@ -73,8 +73,8 @@ fn a_restored_turn_state_carries_the_whole_checkpoint() {
     assert!((state.total_cost_usd() - checkpoint.total_cost_usd).abs() < 1e-12);
     assert_eq!(state.calibration_model.as_deref(), Some("glm-5.2"));
     assert_eq!(
-        state.loop_steered,
-        Some(LoopIdentity {
+        state.loop_steer.warned(),
+        Some(&LoopIdentity {
             tools: vec!["bash".to_string()],
             inputs: Some(vec![r#"{"command":"cargo test"}"#.to_string()]),
         }),

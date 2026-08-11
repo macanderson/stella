@@ -140,7 +140,13 @@ pub(crate) fn untracked_change_line(path: &str, added_lines: u32) -> String {
 /// but no path rule ever saw it, and the change skipped both the witness and
 /// the reviewer with a verdict asserting prose-only. Feeding these paths into
 /// the same "every path must agree" rules closes that hole.
-fn untracked_marker_paths(diff: &str) -> Vec<String> {
+///
+/// `pub(crate)` for the same reason [`changed_paths`] is: this is the seam the
+/// untracked half of a change travels through, and the property that a
+/// producer's rendered text parses back into exactly the intended path set is
+/// invisible from inside this module — it has to be asserted where the text is
+/// produced (`pipeline::verify_probes`).
+pub(crate) fn untracked_marker_paths(diff: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in diff.lines() {
         let Some(rest) = line.strip_prefix(UNTRACKED_CHANGE_PREFIX) else {
@@ -344,11 +350,42 @@ pub fn warrant(diff: &str, signals: ChangeSignals) -> WitnessWarrant {
     WitnessWarrant::Required
 }
 
+/// True for a workspace-relative path inside Stella's own per-workspace state
+/// directory (`.stella/`), which is the agent's own bookkeeping and never the
+/// agent's *work*.
+///
+/// This module owns the question "which changed paths count", so the exclusion
+/// belongs here rather than in an adapter: whether the SQLite sidecars under
+/// `.stella/private/` are part of the change being verified is a decision, and
+/// invariants #1/#2 put decisions in the engine plane. Filtering in the
+/// `RepoStatusPort` implementations would also put it out of reach of this
+/// crate's hermetic fakes.
+///
+/// The exclusion must be a property of the code, not of a generated file that
+/// may be absent (#2038). `GitRepoStatus::untracked_fingerprints` shells
+/// `git ls-files --others --exclude-standard`, which honours `.gitignore` and
+/// nothing else, so this repository's own generated `.stella/.gitignore` is
+/// the only reason the defect does not reproduce here. A Terminal-Bench task
+/// image, a fresh `git init`, or any tree where that file was never generated
+/// put `.stella/private/codegraph.db-wal` — binary escape bytes and all — into
+/// the verifier-facing diff and into the every-path-must-agree rules below,
+/// where a `.db-wal` is neither docs nor test and so silently defeated a
+/// `DocsOnly`/`TestsOnly` waiver the change had actually earned.
+///
+/// Deliberately spelled twice: `stella_tools::file_touch::is_stella_state_path`
+/// applies the same rule at the `FileChange` emission point, and this crate
+/// does not depend on `stella-tools`. The repo's established answer to a
+/// duplicated spelling is a parity test pinning the two together — see the
+/// note on `SNAPSHOT_IDENT` in `crates/stella-cli/src/candidate_ws.rs`.
+pub(crate) fn is_stella_state_path(path: &str) -> bool {
+    path == ".stella" || path.starts_with(".stella/")
+}
+
 /// Both the post-image (`+++ b/path`) and pre-image (`--- a/path`) paths from
-/// a unified diff, with `/dev/null` dropped and the `a/`/`b/` prefixes
-/// stripped — a deletion still reports what it removed, and a rename
-/// contributes both its old and new path to the "every path must agree"
-/// rules.
+/// a unified diff, with `/dev/null` dropped, the `a/`/`b/` prefixes stripped,
+/// and Stella's own `.stella/` state excluded — a deletion still reports what
+/// it removed, and a rename contributes both its old and new path to the
+/// "every path must agree" rules.
 /// `pub(crate)` so the authored-diff channel can assert, at its own seam, that
 /// what it renders is parsed here as real paths. That property is invisible
 /// from inside this module and silent when it breaks — the parser simply
@@ -372,6 +409,15 @@ pub(crate) fn changed_paths(diff: &str) -> Vec<String> {
             .strip_prefix("a/")
             .or_else(|| raw.strip_prefix("b/"))
             .unwrap_or(raw);
+        // Belt to the untracked filter's braces (#2038). That one keeps
+        // `.stella/` out of the diff TEXT, which is what the verifier reads;
+        // this one covers the case it structurally cannot see — a workspace
+        // where `.stella/private/` is *tracked*, whose `git diff HEAD` carries
+        // a real `+++ b/.stella/private/store.db` header no untracked probe
+        // ever visits.
+        if is_stella_state_path(path) {
+            continue;
+        }
         if !paths.iter().any(|seen| seen == path) {
             paths.push(path.to_string());
         }

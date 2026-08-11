@@ -107,6 +107,12 @@ class TestSeatEnvironmentIsScreened:
         monkeypatch.setattr(
             "arenabench.harbor.supports_agent_import_path", lambda binary=None: False
         )
+        # Same reason: `/usr/bin/harbor` is a stub with no interpreter to ask
+        # whether it can import the adapter (#2325), and this test is about the
+        # env screen.
+        monkeypatch.setattr(
+            "arenabench.adapter.stella_seat_problem", lambda binary=None, **_kw: None
+        )
         seen: dict = {}
 
         class _Fake:

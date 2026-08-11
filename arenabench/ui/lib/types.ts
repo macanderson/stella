@@ -241,6 +241,16 @@ export interface RoleCall {
 }
 
 /**
+ * The flip oracle's finding, as the wire spells it.
+ *
+ * `""` is not a wire token: it is this client's "no ladder said anything",
+ * kept distinct from `"unobserved"` — a ladder actively reporting that its
+ * oracle never armed — because a reader that folds them together is back to
+ * two meanings behind one value.
+ */
+export type FlipOutcome = "" | "unobserved" | "not_achieved" | "achieved";
+
+/**
  * What actually proved a trial. Absent on a payload recorded before the rail
  * was surfaced; `null` for a seat that publishes no Stella event stream at
  * all — the absence of the machinery rather than a failure of it.
@@ -272,7 +282,13 @@ export interface TrialProof {
   /** Failing observations before the first pass — and all of them when none
    *  passed, so `> 0` selects every trial where the model guessed wrong. */
   failed_attempts: number;
-  flip_achieved: boolean | null;
+  /** The flip oracle's finding. Three states, not a bool: `"not_achieved"`
+   *  is a real negative about the work, while `"unobserved"` says nothing was
+   *  ever in a position to observe a flip — a statement about the instrument.
+   *  Rendering the second like the first reports a shortfall nobody measured
+   *  (#2556). `""` means no verdict reached this trial at all.
+   *  Contract: `crates/stella-protocol/src/ladder.rs::FlipOutcome`. */
+  flip: FlipOutcome;
   tracked_command: string;
   unstable_flip: boolean;
   flip_refused: boolean;
@@ -284,8 +300,9 @@ export interface TrialProof {
   /** Whether a test was actually run and observed for this verdict. */
   deterministic: boolean;
   /** A passing verdict with nothing deterministic behind it. The honesty
-   *  trap: `unverifiable` and `waived` both publish `passed: true`, and a
-   *  model verdict is an assertion rather than an observation. */
+   *  trap: `unverifiable`, `unverified`, `witness_unsatisfiable` and `waived`
+   *  all publish `passed: true`, and a model verdict is an assertion rather
+   *  than an observation. */
   claimed_without_proof: boolean;
   verdict_passed: boolean | null;
   verdict_summary: string;

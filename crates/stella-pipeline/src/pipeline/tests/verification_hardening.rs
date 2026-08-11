@@ -21,12 +21,26 @@ mod flip_halt_arming;
 /// there, beside the only test that scripts it.
 mod witness_repair_bound;
 
+/// The authored witness's baseline-tree observation (#2272) — a child module
+/// for the same two reasons `flip_halt_arming` is: it reaches the shared fakes
+/// through this file's own `use super::*`, and the already-oversized `tests.rs`
+/// does not grow another module declaration.
+mod authored_witness_baseline_tree;
+
 /// The untracked-diff read bound (#2110) — a child module for the same two
 /// reasons `flip_halt_arming` is: it reaches the shared fakes through this
 /// file's own `use super::*`, and the already-oversized `tests.rs` does not
 /// grow another module declaration. The counting diagnostic runner it needs
 /// lives there, beside the only test that scripts it.
 mod untracked_render_bound;
+
+/// The `.stella/` state exclusion from the verifier diff and the warrant
+/// (#2038) — a child module for the same two reasons `flip_halt_arming` is:
+/// it reaches the shared fakes through this file's own `use super::*`, and the
+/// already-oversized `tests.rs` does not grow another module declaration. The
+/// untracked-only diagnostic tree it needs lives there, beside the only test
+/// that scripts it.
+mod stella_state_exclusion;
 
 /// The #1291 diff-coverage scenarios — a child module for the same two
 /// reasons `flip_halt_arming` is: it reaches the shared fakes through this
@@ -41,6 +55,11 @@ mod diff_coverage;
 /// module doc states what it is protecting and why a verdict assertion alone
 /// cannot.
 mod guard_wiring;
+
+/// The two-tree witness check (#2540) — a child module for the same two
+/// reasons `flip_halt_arming` is. Its module doc carries the `fix-git` trial
+/// this rung exists for, and both halves of the boundary it draws.
+mod witness_unsatisfiable;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
@@ -479,7 +498,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
         .ladder
         .as_deref()
         .expect("a fast-submit verdict records the snapshot it was decided from");
-    assert!(snapshot.flip_achieved);
+    assert!(snapshot.flip.is_achieved());
     assert!(!snapshot.unstable_flip);
     assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
     assert_eq!(

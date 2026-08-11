@@ -94,7 +94,7 @@ pub use event::{
 pub use journal::{StampedEvent, stamped_line};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
-pub use ladder::{LadderRung, LadderSnapshot, OracleObservation, ProofTree};
+pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};
 pub use subagent_event::{SubAgentPhase, SubAgentStatus};

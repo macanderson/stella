@@ -41,6 +41,16 @@ pub enum EpisodeOutcome {
     Failure,
     /// Some of the goal landed and some did not.
     Partial,
+    /// The episode ran to completion and **nothing proved it** (#2569).
+    ///
+    /// Deliberately not [`EpisodeOutcome::Success`]: episodes are recalled into
+    /// later sessions as grounding, and labelling an unproven run a success
+    /// hands a future turn a worked example that was never checked. Deliberately
+    /// not [`EpisodeOutcome::Failure`] either — nothing found the work wrong,
+    /// and a retrieval that reads it as a mistake teaches the opposite lesson.
+    /// Distinct from [`EpisodeOutcome::Partial`], which is a claim about how
+    /// much of the goal landed; this is a claim about the evidence.
+    Unverified,
     /// Stopped before finishing — cancelled, budget-exhausted, or interrupted.
     Aborted,
 }
@@ -53,6 +63,7 @@ impl EpisodeOutcome {
             EpisodeOutcome::Success => "success",
             EpisodeOutcome::Failure => "failure",
             EpisodeOutcome::Partial => "partial",
+            EpisodeOutcome::Unverified => "unverified",
             EpisodeOutcome::Aborted => "aborted",
         }
     }

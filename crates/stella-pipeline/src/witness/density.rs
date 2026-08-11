@@ -39,6 +39,8 @@
 //! posture above. The screen's claim is narrow and worth exactly what it says:
 //! the three vacuous shapes above never reach the oracle.
 
+mod shell;
+
 /// Why an authored witness source cannot witness anything. Each variant names
 /// the shape, because the message is what the author revises against.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -131,6 +133,11 @@ enum Lang {
     Script,
     Go,
     CSharp,
+    /// POSIX shell — the floor runner since #2064, and therefore the shape the
+    /// screen meets most often. Its assertion vocabulary is not a test
+    /// framework's but the exit status of `test`/`[`/`grep -q`, so the whole
+    /// arm lives in [`shell`] (#2207).
+    Shell,
 }
 
 impl Lang {
@@ -142,6 +149,11 @@ impl Lang {
             "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => Some(Lang::Script),
             "go" => Some(Lang::Go),
             "cs" => Some(Lang::CSharp),
+            // `bash` joins `sh` because [`super::is_witness_test_path`] keys on
+            // the extension while the author writes the shebang: an artifact
+            // named `.bash` is the same vocabulary and must not be the one
+            // shape that slips past the screen.
+            "sh" | "bash" => Some(Lang::Shell),
             _ => None,
         }
     }
@@ -171,6 +183,11 @@ enum Span {
     /// about the expression to their LEFT, which is the part that decides
     /// whether they assert anything (`Some(1).unwrap()` does not).
     Receiver,
+    /// Also backward to the start of the shell statement the marker sits in.
+    /// A shell check has no balanced call to walk and its evidence sits on
+    /// both sides of the marker — `openssl … | grep -q "CN=…"` names the
+    /// subject to the LEFT — so the statement is the only honest unit (#2207).
+    Statement,
 }
 
 /// The assertion vocabulary: a marker token and how far its site reaches.
@@ -232,6 +249,7 @@ fn markers(lang: Lang) -> &'static [(&'static str, Span)] {
             ("assert.", Span::Forward),
         ],
         Lang::CSharp => &[("Assert.", Span::Forward), (".Should(", Span::Receiver)],
+        Lang::Shell => shell::MARKERS,
     }
 }
 
@@ -412,6 +430,7 @@ fn neutral(lang: Lang) -> &'static [&'static str] {
             "HaveCount",
             "BeEquivalentTo",
         ]),
+        Lang::Shell => joined!(shell::NEUTRAL),
     }
 }
 
@@ -440,6 +459,7 @@ fn sites(sanitized: &str, lang: Lang) -> Vec<Site> {
             let start = match span {
                 Span::Forward => at,
                 Span::Receiver => receiver_start(bytes, at),
+                Span::Statement => shell::statement_start(bytes, at),
             };
             found.push(Site { start, end });
         }
@@ -536,6 +556,13 @@ enum Verdict {
 }
 
 fn classify(site: &str, lang: Lang) -> Verdict {
+    // Shell has no test-framework vocabulary to scan for: its operands are
+    // words rather than call arguments, and an unquoted bare word is a literal
+    // where an expansion is a value the run produced. Both rules below read
+    // the wrong thing there, so the whole verdict is the shell arm's (#2207).
+    if lang == Lang::Shell {
+        return shell::classify(site);
+    }
     if is_catch_all(site, lang) {
         return Verdict::CatchAll;
     }
@@ -577,6 +604,7 @@ fn is_catch_all(site: &str, lang: Lang) -> bool {
                 && !site.contains("match")
         }
         Lang::Script => squeezed.contains("toThrow()") || squeezed.contains("toThrowError()"),
+        Lang::Shell => shell::is_catch_all(site),
         Lang::Go | Lang::CSharp => false,
     }
 }
@@ -715,6 +743,10 @@ fn sanitize(source: &str, lang: Lang) -> String {
         // Line comments.
         let line_comment = match lang {
             Lang::Python => bytes[i] == b'#',
+            // A shell `#` comments only at a word boundary: `$#` and `${#v}`
+            // are parameter expansions, and eating from either to end of line
+            // deletes the assertion that follows.
+            Lang::Shell => bytes[i] == b'#' && shell::starts_comment(bytes, i),
             _ => bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/'),
         };
         if line_comment {
@@ -725,8 +757,13 @@ fn sanitize(source: &str, lang: Lang) -> String {
             i = end;
             continue;
         }
-        // Block comments (none in Python).
-        if lang != Lang::Python && bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+        // Block comments (none in Python; and in shell `/*` is a glob, so
+        // scanning for a `*/` that never comes would blank the rest of the
+        // file).
+        if !matches!(lang, Lang::Python | Lang::Shell)
+            && bytes[i] == b'/'
+            && bytes.get(i + 1) == Some(&b'*')
+        {
             let end = source[i + 2..]
                 .find("*/")
                 .map_or(bytes.len(), |offset| i + 2 + offset + 2);
@@ -774,7 +811,11 @@ fn sanitize(source: &str, lang: Lang) -> String {
                 if j >= bytes.len() {
                     break bytes.len();
                 }
-                if bytes[j] == b'\\' {
+                // A shell single-quoted string takes no escapes at all: `\` is
+                // an ordinary character there and the very next `'` closes the
+                // string, so skipping a pair would run past it and swallow
+                // every assertion in the rest of the file.
+                if bytes[j] == b'\\' && !(lang == Lang::Shell && quote == b'\'') {
                     j += 2;
                     continue;
                 }
@@ -787,7 +828,14 @@ fn sanitize(source: &str, lang: Lang) -> String {
                 j += 1;
             };
             let content_end = end.saturating_sub(terminator).max(content_start);
-            blank(&mut out, content_start..content_end, b'x');
+            if lang == Lang::Shell && quote == b'"' {
+                // Double quotes interpolate: `"$1"` is a value the run
+                // produces, not a literal, and blanking it would both hide the
+                // evidence and make any two same-length strings compare equal.
+                shell::blank_interpolated(&mut out, bytes, content_start..content_end);
+            } else {
+                blank(&mut out, content_start..content_end, b'x');
+            }
             i = end;
             continue;
         }

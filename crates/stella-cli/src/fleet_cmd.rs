@@ -803,7 +803,7 @@ async fn run_task(
     let (summary, success, outcome_label, force_incomplete): (String, bool, &str, bool) =
         if use_pipeline {
             use stella_core::router::{CircuitBreaker, Router};
-            use stella_pipeline::{NoContextRecall, PipelineConfig, PipelinePorts, PipelineStatus};
+            use stella_pipeline::{NoContextRecall, PipelineConfig, PipelinePorts};
             let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
             // Role wiring from `agent_engine_config` — fleet workers honor the
             // same worker/triage/verifier pins and per-role overrides as `stella run`.
@@ -895,20 +895,10 @@ async fn run_task(
                 _ = stop_wait => Raced::Stopped,
             };
             match raced {
-                Raced::Outcome(Ok(outcome)) => match outcome.status {
-                    PipelineStatus::Completed => {
-                        (truncate(&outcome.final_text), true, "completed", false)
-                    }
-                    PipelineStatus::VerificationFailed { verdict } => (
-                        truncate(&format!("verification failed: {}", verdict.summary)),
-                        false,
-                        "verification_failed",
-                        false,
-                    ),
-                    PipelineStatus::Aborted { reason, .. } => {
-                        (truncate(&reason), false, "aborted", false)
-                    }
-                },
+                Raced::Outcome(Ok(outcome)) => {
+                    let (text, ok, label) = crate::agent::outcome::fleet_attempt(&outcome);
+                    (truncate(&text), ok, label, false)
+                }
                 Raced::Outcome(Err(e)) => (truncate(&e.to_string()), false, "error", true),
                 Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
             }

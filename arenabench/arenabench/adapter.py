@@ -25,18 +25,31 @@ directory on the next match rather than being shadowed by a stale copy.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
-from .sut import arenabench_home
+from .sut import arenabench_home, stella_repo
 
 __all__ = [
+    "ADAPTER_ENV",
     "PACKAGE_NAME",
     "AdapterUnavailableError",
     "adapter_root",
+    "adapter_source",
+    "harbor_interpreter",
+    "seat_import_roots",
     "stage_adapter",
+    "stella_seat_problem",
+    "stella_seat_problem_for",
 ]
+
+#: Points the arena at the harbor adapter's sources.
+ADAPTER_ENV = "ARENABENCH_STELLA_ADAPTER"
 
 #: The package a Stella seat must be able to import. The adapter directory on
 #: ``PYTHONPATH`` is the one that *contains* it.
@@ -152,3 +165,206 @@ def stage_adapter(source: Path) -> Path:
 
     _staged[key] = destination
     return destination
+
+
+def adapter_source() -> Path:
+    """Where this rig's ``stella_harbor`` sources live.
+
+    :data:`ADAPTER_ENV` wins; failing that, the adapter ships inside the same
+    checkout :func:`~.sut.stella_repo` already found, so an arena running out
+    of a clone wires itself rather than depending on an operator remembering
+    one variable whose omission used to be invisible.
+
+    Raises :class:`AdapterUnavailableError` when neither answers — the honest
+    failure, since there is no adapter to run and every later step would
+    misreport why.
+    """
+    configured = os.environ.get(ADAPTER_ENV)
+    if configured:
+        return Path(configured)
+    repo = stella_repo()
+    if repo is not None and (repo / "bench" / "harbor_adapter").is_dir():
+        return repo / "bench" / "harbor_adapter"
+    raise AdapterUnavailableError(
+        "a Stella seat needs the harbor adapter, and neither "
+        f"{ADAPTER_ENV} nor a Stella checkout names one. "
+        f"Point {ADAPTER_ENV} at <stella>/bench/harbor_adapter."
+    )
+
+
+def seat_import_roots() -> list[str]:
+    """``PYTHONPATH`` entries a Stella seat's Harbor subprocess needs.
+
+    Two packages must be importable there: ``arenabench`` (Harbor loads
+    ``arenabench.harbor_agent:ArenaStellaAgent`` by import path) and the
+    ``stella_harbor`` base it subclasses. The second is *staged* rather than
+    read from the source checkout at every trial — the launch worktree was
+    deleted mid-match once and took four trials with it, each scored as an
+    agent loss (#2127).
+    """
+    return [
+        str(Path(__file__).resolve().parent.parent),
+        str(stage_adapter(adapter_source())),
+    ]
+
+
+def _probe_roots() -> list[str]:
+    """:func:`seat_import_roots`, answered from the source tree.
+
+    A preflight asks whether an interpreter *can* import the seat, and the
+    source tree and its staged copy are byte-identical by construction, so
+    the answer is the same from either. Reading the source keeps the question
+    free: staging copies the whole package to disk and is worth paying for
+    once per match, never per health check.
+    """
+    return [
+        str(Path(__file__).resolve().parent.parent),
+        str(adapter_source()),
+    ]
+
+
+def harbor_interpreter(binary: str) -> str:
+    """The Python that will execute ``binary``.
+
+    Read from the console script's shebang, because that is literally what the
+    kernel will exec — not a guess from the path. A wheel-installed ``harbor``
+    is a text stub beginning ``#!/…/.venv/bin/python``; the ``/usr/bin/env``
+    form is resolved through ``PATH`` the same way exec would. Falls back to
+    the interpreter beside the script, then to this process's own, so a probe
+    is always possible even against a binary that is not a Python stub.
+    """
+    path = Path(binary)
+    try:
+        with path.open("rb") as handle:
+            first = handle.readline(4096)
+    except OSError:
+        first = b""
+    if first.startswith(b"#!"):
+        line = first[2:].strip().decode("utf-8", "replace")
+        parts = line.split()
+        if parts:
+            head = parts[0]
+            if Path(head).name in {"env", "env.exe"} and len(parts) > 1:
+                resolved = shutil.which(parts[1])
+                if resolved:
+                    return resolved
+            elif Path(head).is_absolute():
+                return head
+    for name in ("python3", "python"):
+        beside = path.parent / name
+        if beside.exists():
+            return str(beside)
+    return sys.executable
+
+
+#: The exact command a seat's Harbor subprocess runs at agent construction,
+#: reduced to its import. Everything the seat needs is reachable from here:
+#: ``arenabench.harbor_agent`` imports ``stella_harbor``, which imports
+#: ``harbor``.
+_SEAT_IMPORT = "import arenabench.harbor_agent"
+
+
+def _probe(interpreter: str, roots: list[str]) -> tuple[int, str]:
+    """Ask ``interpreter`` whether it can build a Stella seat."""
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join([*roots, existing] if existing else roots)
+    try:
+        done = subprocess.run(
+            [interpreter, "-c", _SEAT_IMPORT],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+    return done.returncode, (done.stderr or done.stdout or "").strip()
+
+
+#: Probe answers already paid for, keyed by interpreter and import roots. The
+#: question is a property of an installation, and `serve()` plus every
+#: `create_match` would otherwise each spend a subprocess on it.
+_verdicts: dict[tuple[str, tuple[str, ...]], str | None] = {}
+
+
+def stella_seat_problem(
+    harbor_binary: str | None = None,
+    *,
+    probe: Callable[[str, list[str]], tuple[int, str]] | None = None,
+) -> str | None:
+    """Why a Stella seat launched from this rig would measure nothing.
+
+    ``None`` means "go". A string is a refusal, phrased for an operator who
+    now has to do something about it — the shape :func:`~.sut.sut_problem_for`
+    already established for the SUT.
+
+    **The interpreter asked is the one that will run the seat**, not this
+    process's. Harbor is launched as a console script, so the Python behind
+    *that* is what must import ``arenabench.harbor_agent`` — and through it
+    ``stella_harbor``, and through that ``harbor`` itself. Asking
+    ``sys.executable`` instead would be a proxy that is wrong in both
+    directions: an arena served by an interpreter with no ``harbor`` can still
+    launch seats perfectly well through a Harbor from another virtualenv.
+
+    Without this, an arena would accept a Stella seat it could not run and the
+    seat would report *done* having measured nothing: Harbor's exit status on
+    that path is 0 (#2325). The named refusal in :func:`._unavailable_base`
+    fixed the message; it did not stop the match from being accepted, and a
+    refusal at trial time has already spent the container.
+
+    ``harbor_binary`` should be the Harbor this match resolved when the caller
+    knows it — datasets may pin their own, so a global lookup can answer about
+    a different installation than the one that will grade. A caller that has
+    no resolution yet may omit it; if Harbor cannot be found at all this
+    returns ``None`` rather than a refusal, because "no Harbor" is a separate,
+    already-reported condition (:meth:`~.runner.MatchRunner.start` carries it
+    onto every seat) and answering it here would turn one machine-wide fact
+    into a different refusal than the one an operator is used to reading.
+    """
+    from . import harbor as harbor_module
+
+    try:
+        roots = _probe_roots()
+    except AdapterUnavailableError as exc:
+        return str(exc)
+    if harbor_binary is None:
+        try:
+            harbor_binary = harbor_module.harbor_bin()
+        except harbor_module.HarborUnavailableError:
+            return None
+    interpreter = harbor_interpreter(harbor_binary)
+
+    key = (interpreter, tuple(roots))
+    if probe is None and key in _verdicts:
+        return _verdicts[key]
+    code, detail = (probe or _probe)(interpreter, roots)
+    verdict: str | None = None
+    if code != 0:
+        tail = detail.strip().splitlines()
+        verdict = (
+            f"{interpreter} cannot build a Stella seat: "
+            f"`{_SEAT_IMPORT}` failed with {tail[-1] if tail else 'no output'}. "
+            "That interpreter is the one Harbor runs, so every Stella trial "
+            "would die in agent setup. Install the adapter's dependencies into "
+            "it — `uv sync --project <stella>/bench/harbor_adapter --locked "
+            "--extra dev` — and point ARENABENCH_HARBOR at "
+            "<stella>/bench/harbor_adapter/.venv/bin/harbor."
+        )
+    if probe is None:
+        _verdicts[key] = verdict
+    return verdict
+
+
+def stella_seat_problem_for(spec: object, harbor_binary: str | None = None) -> str | None:
+    """Why this match must not launch, as far as the Stella adapter is concerned.
+
+    ``None`` means "go". Checked only when a Stella seat is present: a
+    Claude-Code-vs-Codex contest loads none of our adapter and must not be
+    blocked by the state of an installation it never touches — the same
+    per-agent scoping :func:`~.sut.sut_problem_for` uses.
+    """
+    contestants = getattr(spec, "contestants", ())
+    if not any(getattr(c, "agent", "") == "stella" for c in contestants):
+        return None
+    return stella_seat_problem(harbor_binary)

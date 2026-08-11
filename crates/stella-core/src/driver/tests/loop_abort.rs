@@ -5,9 +5,13 @@
 //! the model ignores the warning immediately — three identical calls, then a
 //! fourth. That is the easy half. The half seen in the field is the one where
 //! the steer WORKS: the model breaks the streak, does one different thing, and
-//! then falls into a second loop on a different tool. The turn's steer is
-//! already spent at that point, so the very next detection is supposed to be
-//! the kill.
+//! then falls into a second loop.
+//!
+//! Which loop it falls into is the whole question, and the tests here cover
+//! all three answers: back into the loop it was warned about (the kill, on the
+//! first re-detection); into a provably different one (its own warning, up to
+//! `MAX_LOOP_STEERS` — #1743); and into a *third* one once the budget is spent
+//! (the kill again, so obedience buys warnings and never an open licence).
 //!
 //! # Confident-zero tests (#1477) live in this file too
 //!
@@ -26,6 +30,7 @@
 //! #1504 made for `driver/tests/budget_boundaries.rs`.
 
 use super::*;
+use crate::driver::loop_escalation::MAX_LOOP_STEERS;
 
 /// A tool executor that answers with a constant per tool name, so two calls
 /// with the same name AND the same input are byte-identical — the condition
@@ -163,28 +168,149 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
     );
 }
 
-/// The #1524 shape from the nightly's `prove-plus-comm` trial: the steer
-/// WORKS — the model stops repeating the warned tool — and a fresh loop
-/// forms on a *different* tool. The abort itself is correct policy (the
-/// turn's one warning is spent), but its reason must not claim the warned
-/// loop "persisted", and the whole abort must reach the bus as exactly one
-/// `Error` event.
+/// Only the exact-repeat rung, so a scripted ladder is decided by one
+/// detector and a future threshold change cannot silently re-time these
+/// tests. The same isolation `period_three_cycle_with_no_progress_steers_then_aborts`
+/// uses for the cycle rung.
+fn exact_repeat_only(max_steps: usize) -> EngineConfig {
+    EngineConfig {
+        max_steps,
+        loop_detection: LoopDetectionConfig {
+            exact_repeat_threshold: 3,
+            short_cycle_repeats: 0,
+            stagnation_threshold: 0,
+            interleaved_repeat_threshold: 0,
+        },
+        ..EngineConfig::default()
+    }
+}
+
+/// #1743's witness, taken from the run in the issue (`ses-1785988025124`,
+/// worker `moonshotai/kimi-k3`): the model is steered about one `grep`,
+/// **obeys** — different pattern, different file — and forms one new loop.
+///
+/// Before this, that model lost the entire turn (10m25s, $1.6182, verdict
+/// `none`) on the new loop's FIRST detection, having never been told about
+/// it. It now earns a second warning and gets to act on it; only when the
+/// loop it was warned about is re-detected does the turn end.
+///
+/// Both loops are `grep`, which is the half that makes this a witness rather
+/// than a restatement of #1524: tool-name identity called them one loop, so
+/// nothing short of comparing arguments can tell "obeyed" from "ignored".
 #[tokio::test]
-async fn a_fresh_loop_on_a_different_tool_is_not_blamed_on_the_warned_one() {
-    // grep ×3 (detect + steer) → read_file forever, byte-identical
-    // (ScriptedProvider repeats its last entry): the grep loop is broken,
-    // the read_file loop is new.
+async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
+    let grep_for = |call_id: &str, pattern: &str| {
+        call_of(
+            call_id,
+            "grep",
+            serde_json::json!({"pattern": pattern, "path": "crates/stella-graph/src/store.rs"}),
+        )
+    };
+    // grep{fn open} ×3 (detect → steer #1) → grep{fn index_all} ×3 (a
+    // DIFFERENT loop: detect → steer #2) → grep{fn index_all} forever
+    // (ScriptedProvider repeats its last entry), which is the warned loop
+    // re-detected and therefore the kill.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(grep_for("c1", "fn open")),
+            Ok(grep_for("c2", "fn open")),
+            Ok(grep_for("c3", "fn open")),
+            Ok(grep_for("c4", "fn index_all")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tool_calls = Arc::new(AtomicU32::new(0));
+    let tools = ConstantTools {
+        calls: tool_calls.clone(),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("where is the graph store opened?"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    let events = drain_events(&mut rx);
+    let steers: Vec<&String> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Steered { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    let detections: Vec<bool> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LoopDetected { aborted, .. } => Some(*aborted),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        steers.len(),
+        2,
+        "the model obeyed the first steer, so its NEW loop must be steered \
+         too rather than killed unwarned: {detections:?}"
+    );
+    assert!(
+        steers[1].contains("index_all"),
+        "the second warning must be about the loop the model actually \
+         formed: {}",
+        steers[1]
+    );
+    assert_eq!(
+        detections,
+        vec![false, false, true],
+        "two warnings, then the kill — and each detection reports honestly \
+         whether it was the one that ended the turn"
+    );
+    let TurnOutcome::Aborted { reason, kind, .. } = outcome else {
+        panic!("re-detecting the second loop must still end the turn: {outcome:?}");
+    };
+    assert!(
+        reason.contains("persisted"),
+        "the loop that finally aborted IS the one the last warning named: {reason}"
+    );
+    assert_eq!(kind, AbortKind::DeliberateStop);
+    assert!(
+        tool_calls.load(Ordering::SeqCst) <= 8,
+        "one extra warning, not an open-ended licence to loop: {} calls",
+        tool_calls.load(Ordering::SeqCst)
+    );
+}
+
+/// The cap ([`MAX_LOOP_STEERS`]) and the #1524 shape from the nightly's
+/// `prove-plus-comm` trial in one ladder: the steer WORKS twice — the model
+/// breaks each loop it is warned about — and a *third* loop forms. That one
+/// is not steered: the turn's budget is spent and it aborts on the third
+/// loop's first detection, which is what keeps a model that alternates
+/// between loops from grinding to `max_steps`.
+///
+/// The abort's reason must still not claim the warned loop "persisted" — it
+/// did not, this is a different loop — and the whole abort must reach the bus
+/// as exactly one `Error` event.
+#[tokio::test]
+async fn a_third_loop_is_not_steered_and_is_not_blamed_on_the_warned_one() {
+    let read_of = |call_id: &str, path: &str| {
+        call_of(call_id, "read_file", serde_json::json!({ "path": path }))
+    };
+    // grep ×3 (steer #1) → read_file{deck.rs} ×3 (steer #2) →
+    // read_file{engine.rs} forever: three distinct loops, two warnings.
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
             Ok(grep_call()),
             Ok(grep_call()),
             Ok(grep_call()),
-            Ok(call_of(
-                "c_read",
-                "read_file",
-                serde_json::json!({"path": "stella-tui/src/deck.rs"}),
-            )),
+            Ok(read_of("c_deck", "stella-tui/src/deck.rs")),
+            Ok(read_of("c_deck", "stella-tui/src/deck.rs")),
+            Ok(read_of("c_deck", "stella-tui/src/deck.rs")),
+            Ok(read_of("c_engine", "stella-tui/src/views/engine.rs")),
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
@@ -192,11 +318,7 @@ async fn a_fresh_loop_on_a_different_tool_is_not_blamed_on_the_warned_one() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let config = EngineConfig {
-        max_steps: 30,
-        ..EngineConfig::default()
-    };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("why is the cache write count wrong?"),
@@ -207,16 +329,16 @@ async fn a_fresh_loop_on_a_different_tool_is_not_blamed_on_the_warned_one() {
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     let TurnOutcome::Aborted { reason, kind, .. } = outcome else {
-        panic!("the second detection must abort the turn, got {outcome:?}");
+        panic!("the third loop must abort the turn, got {outcome:?}");
     };
     assert!(
         !reason.contains("persisted"),
-        "the model DID break the grep loop it was warned about — a fresh \
-         read_file loop must not be reported as that warning persisting: {reason}"
+        "the model DID break the read_file loop it was warned about — a \
+         fresh one must not be reported as that warning persisting: {reason}"
     );
     assert!(
-        reason.contains("grep"),
-        "the abort should name what the warning was actually about: {reason}"
+        reason.contains("deck.rs"),
+        "the abort should name what the last warning was actually about: {reason}"
     );
     assert_eq!(
         kind,
@@ -235,6 +357,15 @@ async fn a_fresh_loop_on_a_different_tool_is_not_blamed_on_the_warned_one() {
         errors.len(),
         1,
         "one abort is one error event on the raw engine path: {errors:?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Steered { .. }))
+            .count(),
+        MAX_LOOP_STEERS as usize,
+        "the budget is a cap, not a per-loop entitlement: a third distinct \
+         loop buys no third warning"
     );
 }
 

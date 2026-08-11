@@ -54,6 +54,7 @@ use stella_protocol::{
 };
 
 use crate::budget::BudgetGuard;
+use crate::driver::loop_escalation::LoopSteerBudget;
 use crate::driver::overflow_recovery::OverflowRecovery;
 use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
@@ -318,14 +319,15 @@ pub struct TurnState {
     /// prefix, not a converging correction, so re-reading it cannot
     /// oscillate the way #2133's factor did.
     pub(crate) usage_anchor: Option<UsageAnchor>,
-    /// The loop this turn's one stuck-loop steering warning was issued about
-    /// (`driver::loop_escalation`), or `None` while the warning is unspent.
-    /// The next detection after `Some` aborts instead of warning again;
-    /// whether it is the *same* loop is what decides if the abort may claim
-    /// the loop persisted (#1524). A [`LoopIdentity`] rather than a list of
-    /// tool names because `bash` is the tool most loops are made of, so
-    /// names alone made every `bash` loop in a turn read as one.
-    pub(crate) loop_steered: Option<LoopIdentity>,
+    /// This turn's stuck-loop steering budget (`driver::loop_escalation`):
+    /// the loop the most recent warning was issued about, and how many of
+    /// the turn's warnings are spent. A detection it cannot prove is a
+    /// *different* loop from the warned one aborts the turn instead of
+    /// warning again (#1743), and whether the abort may claim the warned
+    /// loop persisted is decided from the same identity (#1524). Identities
+    /// rather than tool names because `bash` is the tool most loops are made
+    /// of, so names alone made every `bash` loop in a turn read as one.
+    pub(crate) loop_steer: LoopSteerBudget,
     /// How many times the transcript has been rewritten in place rather than
     /// appended to. The live invalidation counter lives with the memos it
     /// invalidates (`TurnMemos`) and is an opaque type with no accessor; this
@@ -391,7 +393,7 @@ impl TurnState {
             effective_budget: None,
             usage_anchor: None,
             overflow_recovery: OverflowRecovery::default(),
-            loop_steered: None,
+            loop_steer: LoopSteerBudget::default(),
             transcript_rewrites: 0,
             step: 0,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -425,10 +427,10 @@ impl TurnState {
             // Not carried either: the bounded recovery allowance starts over,
             // exactly as `length_continuations` does.
             overflow_recovery: OverflowRecovery::default(),
-            loop_steered: checkpoint.loop_steered.then_some(LoopIdentity {
+            loop_steer: LoopSteerBudget::resumed(checkpoint.loop_steered.then_some(LoopIdentity {
                 tools: checkpoint.loop_steered_pattern,
                 inputs: checkpoint.loop_steered_inputs,
-            }),
+            })),
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -517,13 +519,13 @@ impl TurnState {
             budget: BudgetSnapshot::of(&self.budget),
             total_cost_usd: self.total_cost_usd,
             calibration_model: self.calibration_model.clone(),
-            loop_steered: self.loop_steered.is_some(),
+            loop_steered: self.loop_steer.warned().is_some(),
             loop_steered_pattern: self
-                .loop_steered
-                .as_ref()
+                .loop_steer
+                .warned()
                 .map(|l| l.tools.clone())
                 .unwrap_or_default(),
-            loop_steered_inputs: self.loop_steered.as_ref().and_then(|l| l.inputs.clone()),
+            loop_steered_inputs: self.loop_steer.warned().and_then(|l| l.inputs.clone()),
             transcript_rewrites: self.transcript_rewrites,
         }
     }
@@ -734,9 +736,18 @@ pub struct Checkpoint {
     pub total_cost_usd: f64,
     /// The model that served the last committed step, for drift correction.
     pub calibration_model: Option<String>,
-    /// Whether this turn already spent its one stuck-loop steering warning.
+    /// Whether this turn has already spent a stuck-loop steering warning.
     /// Restored so a resumed turn cannot earn a second warning for the same
     /// loop it was already told about.
+    ///
+    /// A bool, not a count, and the count is not on the wire at all: a turn
+    /// may spend up to `driver::loop_escalation::MAX_LOOP_STEERS` warnings
+    /// on *distinct* loops (#1743), and `LoopSteerBudget::resumed` reconciles
+    /// this flag as one spent steer — never zero, so a resume cannot refund
+    /// a warning, and never the exact figure, so a turn resumed after
+    /// exhausting the budget may pay for one more warning. Carrying the
+    /// exact count means a new field on this struct, which is a change every
+    /// crate that builds a `Checkpoint` literal has to see (#2809).
     pub loop_steered: bool,
     /// The tool pattern that warning was about, empty when `loop_steered` is
     /// `false` — or when the checkpoint predates this field (`#[serde(default)]`

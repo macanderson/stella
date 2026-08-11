@@ -14,8 +14,8 @@ use std::path::Path;
 use std::process::Command;
 
 use stella_protocol::{
-    AgentEvent, FileChangeKind, LadderRung, LadderSnapshot, ModelCallRole, ToolCall, ToolOutput,
-    VerdictEvidence,
+    AgentEvent, FileChangeKind, FlipOutcome, LadderRung, LadderSnapshot, ModelCallRole, ToolCall,
+    ToolOutput, VerdictEvidence,
 };
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store};
 
@@ -108,7 +108,11 @@ fn ladder(rung: LadderRung) -> Option<Box<LadderSnapshot>> {
         rung: Some(rung),
         tracked_command: None,
         oracle_trace: Vec::new(),
-        flip_achieved: matches!(rung, LadderRung::SubmitFast),
+        flip: if matches!(rung, LadderRung::SubmitFast) {
+            FlipOutcome::Achieved
+        } else {
+            FlipOutcome::NotAchieved
+        },
         unstable_flip: false,
         flip_refused_different_failure: false,
         touched_tests_passed: None,

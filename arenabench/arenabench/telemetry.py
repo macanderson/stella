@@ -69,11 +69,16 @@ __all__ = [
     "MetricsReader",
     "TrialMetrics",
     "aggregate",
+    "is_compose_failure",
     "leaders",
     "seat_manifest_path",
 ]
 
-EVENTS_NAME = "agent/stella-events.jsonl"
+#: Stella's own event stream. Defined by the dialect that folds it
+#: (:data:`arenabench.harness.STELLA`) and re-exported here, so this reducer
+#: and the harness reducer can never disagree about which file they describe
+#: (#2519) — the name used to exist twice, which is how a shared cell dies.
+EVENTS_NAME = harness_mod.STELLA_EVENTS_NAME
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
@@ -83,17 +88,23 @@ SEAT_MANIFEST_SUFFIX = ".seat.json"
 #: imports it, so the two can never disagree about the location.
 FLIP_NAME = "arena/flip.json"
 
-#: Per-trial paths written incrementally *while the agent runs*, probed —
-#: never read — for liveness. Stella appends its event stream per event;
-#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
-#: tees its stdout to ``claude-code.txt`` and appends session transcripts
-#: under ``sessions/``. Deliberately an allowlist rather than the directory
-#: tree: the verifier and the arena write into the same trial directory, and
-#: their activity must not read as the agent's pulse (#1571).
+#: Per-trial paths written incrementally *while the agent runs*, probed for
+#: liveness. Stella appends its event stream per event; Harbor appends
+#: ``trial.log`` as the trial progresses; a Claude Code arm tees its stdout to
+#: ``claude-code.txt`` and appends session transcripts under ``sessions/``.
+#: Deliberately an allowlist rather than the directory tree: the verifier and
+#: the arena write into the same trial directory, and their activity must not
+#: read as the agent's pulse (#1571).
+#:
+#: Three of the four are now *read* as well as probed — the two streams by
+#: :mod:`arenabench.harness`, and the session transcript as the fallback for a
+#: gateway-routed seat whose streamed usage counters are zeroed (#2520). This
+#: list stays the liveness allowlist alone; what each artifact says is the
+#: dialect table's business.
 LIVENESS_NAMES: tuple[str, ...] = (
     EVENTS_NAME,
     "trial.log",
-    "agent/claude-code.txt",
+    harness_mod.STREAM_NAME,
     "agent/sessions",
 )
 
@@ -255,6 +266,36 @@ VOID_VERIFIER: frozenset[str] = frozenset(
         "MultimodalExportError",
     }
 )
+
+
+#: The one failure classified by *message* rather than by exception name.
+#:
+#: Harbor raises a bare ``RuntimeError`` — "Docker compose command failed for
+#: …" — when the daemon will not bring a trial's project up, which is what a
+#: host out of headroom produces. The name is far too broad to put in
+#: :data:`INFRASTRUCTURE_FAILURES`: an honest agent-side ``RuntimeError`` would
+#: leave the denominator with it. The message is specific, and the condition it
+#: names is unambiguous — the container never started, so the agent was never
+#: asked the question. Measured on one host as five of six trials of a Claude
+#: Code arm, every one of them reading as a loss, against ten containers
+#: orphaned by a match that had ended half an hour earlier (#2329).
+_COMPOSE_FAILURE_NAMES: frozenset[str] = frozenset({"RuntimeError"})
+_COMPOSE_FAILURE_MARKER = "docker compose command failed"
+
+
+def is_compose_failure(exception: dict[str, Any]) -> bool:
+    """Whether an ``exception_info`` names a trial whose container never came up.
+
+    Deliberately narrow in both halves: the exception name must be one this
+    condition actually arrives as, *and* the message must carry the marker. A
+    match on the message alone would let any exception whose text happened to
+    quote a compose error out of the denominator, and the denominator is the
+    thing being protected.
+    """
+    if str(exception.get("exception_type") or "") not in _COMPOSE_FAILURE_NAMES:
+        return False
+    message = str(exception.get("exception_message") or "")
+    return _COMPOSE_FAILURE_MARKER in message.lower()
 
 
 @dataclass
@@ -706,16 +747,24 @@ class MetricsReader:
                 if isinstance(extra, dict):
                     metrics.cache_write = int(extra.get("total_cache_write_tokens") or 0)
 
-        # The opponent's own stdout stream, where it has one. Richer than the
-        # trajectory and — the whole point — *current*: ATIF is written once at
-        # teardown, so before this a Claude Code arm read 0 steps, 0 tools, 0
-        # tokens and $0 for the entire length of a match and only became real
-        # when it was over. Same precedence as the trajectory it supersedes:
-        # Stella's stream below still wins on a Stella seat, which has no
-        # `claude-code.txt` to read anyway.
-        harness = self._harness.read(trial_dir / harness_mod.STREAM_NAME)
+        # The opponent's own stdout stream, where it has one — plus the session
+        # transcript behind it when a gateway route zeroed the stream's usage
+        # counters (#2520), which `read_arm` decides and this reader does not
+        # need to know. Richer than the trajectory and — the whole point —
+        # *current*: ATIF is written once at teardown, so before this a Claude
+        # Code arm read 0 steps, 0 tools, 0 tokens and $0 for the entire length
+        # of a match and only became real when it was over. Same precedence as
+        # the trajectory it supersedes: Stella's stream below still wins on a
+        # Stella seat, which has no `claude-code.txt` to read anyway.
+        #
+        # Deliberately the Claude Code dialect by name rather than every arm
+        # `read_trial` can read. A Stella seat's behaviour is folded here by
+        # `_reduce_events` already, and giving it a second reduction under
+        # `harness`/`behaviour` would put two answers for one seat in one
+        # payload — tracked as its own change in #2850.
+        harness = self._harness.read_arm(trial_dir, harness_mod.CLAUDE_CODE)
         if harness is not None:
-            profile, totals = harness
+            profile, totals = harness.profile, harness.totals
             metrics.harness = profile
             metrics.behaviour = totals
             metrics.steps = totals.steps or metrics.steps
@@ -803,6 +852,17 @@ class MetricsReader:
             if isinstance(exception, dict) and exception.get("exception_type"):
                 metrics.failure = str(exception["exception_type"])
                 metrics.infrastructure = metrics.failure in INFRASTRUCTURE_FAILURES
+                if not metrics.infrastructure and is_compose_failure(exception):
+                    # Classified on the *message*, and only for this one shape,
+                    # because Harbor raises a bare `RuntimeError` when the
+                    # daemon refuses to bring a trial's project up — and
+                    # `RuntimeError` is far too broad a name for
+                    # `INFRASTRUCTURE_FAILURES`. The trial's container never
+                    # started, so the agent was never asked the question: five
+                    # such trials on one host read as Claude Code losses while
+                    # the true cause was ten orphaned containers from a match
+                    # that had ended half an hour earlier (#2329).
+                    metrics.infrastructure = True
                 if metrics.resolved is None and not metrics.infrastructure:
                     # An agent that ran and failed scores 0, as every
                     # leaderboard counts it. One that never started stays
@@ -1137,8 +1197,9 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         #: deliberately not folded into a failure count.
         "refuted": sum(1 for t in rail if t.proof.grade == "refuted"),
         #: Passing verdicts with nothing deterministic behind them. The
-        #: honesty trap: `unverifiable` and `waived` both publish
-        #: `passed: true`, and a model verdict is an assertion.
+        #: honesty trap: `unverifiable`, `unverified`,
+        #: `witness_unsatisfiable` and `waived` all publish `passed: true`,
+        #: and a model verdict is an assertion.
         "claimed_without_proof": (
             sum(1 for t in rail if t.proof.claimed_without_proof) if rail_trials else None
         ),

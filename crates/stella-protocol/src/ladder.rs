@@ -104,6 +104,32 @@ pub enum LadderRung {
         alias = "heuristic_fallback"
     )]
     Unverified,
+    /// The authored witness produced the **same failure** before and after the
+    /// work, so it cannot discriminate: nothing it reports is a fact about the
+    /// change, and no revision can make it one (#2540).
+    ///
+    /// Reads as a claim about the **witness**, not about the work — the same
+    /// `-able` / `-ed` distinction [`LadderRung::Unverifiable`] and
+    /// [`LadderRung::Unverified`] already carry. "Unsatisfiable" says the
+    /// instrument's demand cannot be met by doing the task; it says nothing
+    /// about whether the task was done.
+    ///
+    /// Ordered above [`LadderRung::Revise`] in the ladder, which is the whole
+    /// point of having it. A witness that fails post-execute reaches `Revise`
+    /// at the ladder's first step, and `Revise` blames the worker: the failure
+    /// is fed back as the thing to fix. On Terminal-Bench `fix-git` a witness
+    /// enumerated every commit unreachable from `master` and counted the
+    /// pipeline's own snapshot commits among them, so it stayed red however
+    /// correctly the agent merged the real one — and every revise cycle minted
+    /// another snapshot, hence another violation. The worker diagnosed it
+    /// exactly and could do nothing; the run ended on the deadline rather than
+    /// on the logic.
+    ///
+    /// The discriminator is **fingerprint equality**
+    /// (`crate::witness::airlock::FailureFingerprint`), never "it failed
+    /// twice": a witness that fails *differently* after the work is genuine
+    /// feedback about the change and keeps reaching `Revise`.
+    WitnessUnsatisfiable,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass
     /// carrying no evidence either way.
@@ -121,6 +147,7 @@ impl LadderRung {
             LadderRung::NothingAttempted => "nothing_attempted",
             LadderRung::Unverifiable => "unverifiable",
             LadderRung::Unverified => "unverified",
+            LadderRung::WitnessUnsatisfiable => "witness_unsatisfiable",
             LadderRung::Waived => "waived",
         }
     }
@@ -149,6 +176,114 @@ pub struct OracleObservation {
     pub passed: bool,
 }
 
+/// What the flip oracle found — and, when it found no flip, whether anything
+/// was ever in a position to produce one (#2556).
+///
+/// **A bool could not carry this, and the missing state is the one that
+/// matters.** `flip_achieved: false` meant both "a tracked command ran and did
+/// not go fail→pass" (a real negative about the work) and "no command was ever
+/// tracked, so nothing could have flipped" (a statement about the instrument,
+/// not the work). #2531 fixed that conflation in the *verifier prompt* by
+/// rendering `unobserved`; the telemetry surface kept the bool, so anything
+/// reading `result.json` — bench scoring included — reproduced exactly the
+/// false negative the prompt had stopped making.
+///
+/// The fact was *recoverable* from `flip_achieved: false` plus
+/// `tracked_command: null`, and that is precisely the objection: a summary
+/// layer that silently conflates "not measured" with "measured and failed"
+/// unless the reader knows to join two fields is the failure mode this
+/// repository's bench discipline exists to prevent. Same reasoning as
+/// [`LadderSnapshot::diff_coverage`], which is a token for the same reason.
+///
+/// Serialises as `unobserved` / `not_achieved` / `achieved`. A legacy bool is
+/// still accepted on the way in — see the `Deserialize` impl — so snapshots
+/// recorded before this existed keep parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FlipOutcome {
+    /// The oracle never locked onto a command, so no fail→pass was reachable.
+    /// **Not a negative finding about the change** — nothing was measured.
+    ///
+    /// The default, because it is the all-dark value: a `LadderInputs` that
+    /// named no channel has not observed a failed flip, it has observed
+    /// nothing.
+    #[default]
+    Unobserved,
+    /// The oracle tracked a command and it did not go fail→pass (or flipped
+    /// and failed its confirmation re-run, which is `unstable_flip: true`
+    /// beside this). A real negative: something was measured and came back
+    /// short.
+    NotAchieved,
+    /// The tracked command was observed failing and then passing, and the
+    /// confirmation re-run held.
+    Achieved,
+}
+
+impl FlipOutcome {
+    /// The wire token — the same string serde emits, so a rendered
+    /// explanation and a JSON stream name the outcome identically.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FlipOutcome::Unobserved => "unobserved",
+            FlipOutcome::NotAchieved => "not_achieved",
+            FlipOutcome::Achieved => "achieved",
+        }
+    }
+
+    /// Whether a flip was actually achieved — the one question the evidence
+    /// ladder's arithmetic asks, kept as a named predicate so a caller cannot
+    /// accidentally spell it `!= NotAchieved` and credit `Unobserved`.
+    #[must_use]
+    pub fn is_achieved(self) -> bool {
+        matches!(self, FlipOutcome::Achieved)
+    }
+
+    /// Whether anything was in a position to observe a flip at all. `false`
+    /// says the channel was blind, never that the change fell short.
+    #[must_use]
+    pub fn was_observed(self) -> bool {
+        !matches!(self, FlipOutcome::Unobserved)
+    }
+}
+
+/// Accepts the tri-state token and, for snapshots written before it existed,
+/// a bare bool.
+///
+/// A legacy `true` is unambiguous. A legacy `false` is exactly the conflation
+/// this type removes, and nothing in *this field* can resolve it — so it reads
+/// as [`FlipOutcome::NotAchieved`], the value it was written to mean, and the
+/// disambiguating join against `tracked_command` stays available to a reader
+/// who needs it on historical data. New snapshots never need that join.
+impl<'de> Deserialize<'de> for FlipOutcome {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Legacy(bool),
+            Token(String),
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Legacy(true) => Ok(FlipOutcome::Achieved),
+            Wire::Legacy(false) => Ok(FlipOutcome::NotAchieved),
+            Wire::Token(token) => match token.as_str() {
+                "unobserved" => Ok(FlipOutcome::Unobserved),
+                "not_achieved" => Ok(FlipOutcome::NotAchieved),
+                "achieved" => Ok(FlipOutcome::Achieved),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &["unobserved", "not_achieved", "achieved"],
+                )),
+            },
+        }
+    }
+}
+
 /// The deterministic evidence the ladder decided a verdict from, snapshotted
 /// at decision time (#865). Everything here existed when the decision was
 /// made; attaching it to the verdict is what makes "why?" answerable later
@@ -171,9 +306,15 @@ pub struct LadderSnapshot {
     /// pre-submit confirmation). Infra runs are absent by construction.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub oracle_trace: Vec<OracleObservation>,
-    /// Whether the oracle's flip was achieved — after the confirmation run,
-    /// so an unconfirmed flip reads `false` here with `unstable_flip: true`.
-    pub flip_achieved: bool,
+    /// The flip oracle's finding — after the confirmation run, so an
+    /// unconfirmed flip reads [`FlipOutcome::NotAchieved`] here with
+    /// `unstable_flip: true`.
+    ///
+    /// Three states rather than a bool, for the reason [`Self::diff_coverage`]
+    /// is a token rather than an `Option<bool>`: the third value is the whole
+    /// point (#2556). See [`FlipOutcome`].
+    #[serde(alias = "flip_achieved")]
+    pub flip: FlipOutcome,
     /// A flip was observed but its confirmation re-run did not pass (#859).
     pub unstable_flip: bool,
     /// A would-be flip was refused because the passing run named its tests
@@ -255,12 +396,19 @@ pub struct LadderSnapshot {
     /// (#2129) — neither a configured `--test-command` nor an authored
     /// witness — so "no flip" is a demand the task structurally cannot meet.
     ///
-    /// On the wire for the same reason as [`Self::verify_done_flip`]: it turns
-    /// a fallback FAIL into an upward abstention, and a reader auditing a pass
-    /// that rests on nothing deterministic needs to see that the demand was
-    /// unmeetable rather than unmet. `false` on snapshots recorded before
-    /// this existed, which is the conservative reading — the dispensation is
-    /// never assumed.
+    /// **Recorded only — this field steers nothing.** It once turned a
+    /// fallback FAIL into an upward abstention, but the fallback it fed
+    /// (`verify::heuristic_fallback`) was deleted with the model verdict in
+    /// #2584, and nothing replaced the read: `ladder_decision` does not
+    /// consult it, and two otherwise-identical inputs differing only here
+    /// return the same decision. It survives because the question it answers —
+    /// how often a run is asked for a flip on a task that has no test surface
+    /// to produce one — is one only aggregate traces can answer, and aggregate
+    /// traces read this snapshot. Whether to retire it or give it a decision
+    /// role is #2638.
+    ///
+    /// `false` on snapshots recorded before this existed, which is the
+    /// conservative reading — the dispensation is never assumed.
     #[serde(default)]
     pub no_test_surface: bool,
     /// Command chains this round that reported an error while exiting `0`
@@ -351,7 +499,7 @@ mod tests {
                     passed: true,
                 },
             ],
-            flip_achieved: true,
+            flip: FlipOutcome::Achieved,
             unstable_flip: false,
             flip_refused_different_failure: false,
             touched_tests_passed: Some(true),
@@ -429,6 +577,65 @@ mod tests {
         assert!(!parsed.verify_done_flip);
         assert!(!parsed.no_test_surface);
         assert_eq!(parsed.errored_commands, 0);
+    }
+
+    /// #2556: the two ways a run ends up without a flip serialise **differently**,
+    /// so a reader of `result.json` alone can tell them apart.
+    ///
+    /// This is the whole issue. Before, both spelled `"flip_achieved": false`,
+    /// and separating them meant knowing to join against `tracked_command` —
+    /// so every projection that read the flip field on its own (bench scoring
+    /// included) reported "the witness ran and failed" for a run where no
+    /// witness was ever provisioned.
+    #[test]
+    fn a_witness_that_never_ran_does_not_serialise_as_one_that_failed() {
+        let never_ran = serde_json::to_string(&LadderSnapshot {
+            flip: FlipOutcome::Unobserved,
+            tracked_command: None,
+            oracle_trace: vec![],
+            ..snapshot()
+        })
+        .unwrap();
+        let ran_and_failed = serde_json::to_string(&LadderSnapshot {
+            flip: FlipOutcome::NotAchieved,
+            ..snapshot()
+        })
+        .unwrap();
+
+        assert!(
+            never_ran.contains("\"flip\":\"unobserved\""),
+            "an unprovisioned witness must say so: {never_ran}"
+        );
+        assert!(
+            ran_and_failed.contains("\"flip\":\"not_achieved\""),
+            "a real negative must say so: {ran_and_failed}"
+        );
+
+        // The property that must survive any future rewording of the tokens:
+        // whatever they are, they are not the same string.
+        let flip_of =
+            |json: &str| serde_json::from_str::<serde_json::Value>(json).unwrap()["flip"].clone();
+        assert_ne!(
+            flip_of(&never_ran),
+            flip_of(&ran_and_failed),
+            "'never ran' and 'ran and failed' must not serialise identically"
+        );
+    }
+
+    /// The legacy bool still parses, and lands on the value it was written to
+    /// mean. A reader meeting an old snapshot gets a real answer, not an error
+    /// and not a silent `Unobserved` that would invent an absence of evidence.
+    #[test]
+    fn a_legacy_flip_bool_still_parses() {
+        let legacy = r#"{"flip_achieved":true,"unstable_flip":false,"diff_lines":0,
+            "diff_budget":0,"diff_available":false,"file_change_events":0,
+            "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
+        let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.flip, FlipOutcome::Achieved);
+
+        let legacy_false = legacy.replace("\"flip_achieved\":true", "\"flip_achieved\":false");
+        let parsed: LadderSnapshot = serde_json::from_str(&legacy_false).unwrap();
+        assert_eq!(parsed.flip, FlipOutcome::NotAchieved);
     }
 
     /// `rung` is additive: a snapshot recorded before it existed still parses,

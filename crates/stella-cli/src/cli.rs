@@ -528,6 +528,18 @@ pub(crate) enum Command {
         #[arg(long)]
         keep_witness: bool,
 
+        /// Exit non-zero unless the run was actually verified.
+        ///
+        /// The default is deliberately advisory: a run nothing could prove
+        /// reports `status: "unverified"` (label, JSON `reason`, recap, audit
+        /// row) and still exits 0, because with no --test-command that is the
+        /// ordinary outcome and flipping it would break every existing script.
+        /// Pass this in a delivery gate that must not ship unproven work — it
+        /// turns "completed but unproven" into a failure exactly like a
+        /// refuted verification.
+        #[arg(long)]
+        require_verified: bool,
+
         /// Output shape: text, json, or stream-json
         ///
         /// Declared here rather than globally because this is a promise about

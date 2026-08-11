@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .proof import flip_outcome
 from .toolout import (
     cap_middle,
     decode_tool_output,
@@ -700,7 +701,12 @@ class TranscriptReader:
                     passed=passed,
                     rung=ladder.get("rung"),
                     deterministic=evidence.get("deterministic"),
-                    flip_achieved=ladder.get("flip_achieved"),
+                    # The tri-state, through the one decoder (#2556): a bool
+                    # here could not tell "the oracle ran and came back short"
+                    # from "nothing was ever in a position to observe a flip",
+                    # and a transcript that shows the second as the first is
+                    # reporting a shortfall nobody measured.
+                    flip=flip_outcome(ladder),
                     witness_intact=ladder.get("witness_intact"),
                     verifier_independent=ladder.get("verifier_independent"),
                     diff_coverage=ladder.get("diff_coverage"),

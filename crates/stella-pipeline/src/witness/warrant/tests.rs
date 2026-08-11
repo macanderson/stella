@@ -400,6 +400,55 @@ fn a_source_file_under_a_docs_named_crate_is_not_docs() {
     assert_eq!(warrant(&d, observed(1)), WitnessWarrant::Required);
 }
 
+/// #2038, the tracked case the untracked filter in `pipeline::verify_probes`
+/// structurally cannot reach: in a workspace where `.stella/private/` is
+/// *tracked*, `git diff HEAD` carries a real `+++ b/.stella/private/store.db`
+/// header, and no untracked probe ever visits it.
+///
+/// Stella's own SQLite state is the agent's bookkeeping, never the agent's
+/// work, so it must not enter the every-path-must-agree rules — where a
+/// `.db`/`.db-wal` is neither docs nor test and silently defeats a waiver the
+/// change had earned.
+#[test]
+fn stella_state_is_dropped_from_the_changed_path_set() {
+    let d = diff(
+        &[".stella/private/store.db", "docs/guide.md"],
+        "+new wording\n",
+    );
+    assert_eq!(
+        changed_paths(&d),
+        vec!["docs/guide.md".to_string()],
+        "a tracked `.stella/` path is not a changed path of the agent's change"
+    );
+    assert_eq!(
+        warrant(&d, observed(1)),
+        WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly),
+        "and with it gone the prose-only waiver stands"
+    );
+}
+
+/// The exclusion is by identity and anchored, so it cannot swallow a
+/// neighbouring path that merely *looks* like one — a sibling directory, a
+/// nested `.stella` the workspace owns, or a file whose name ends in the same
+/// letters. Each of these is ordinary workspace content and must still buy the
+/// test.
+#[test]
+fn only_the_workspace_root_stella_directory_is_excluded() {
+    for path in [".stellar/x.rs", "src/.stella/y.rs", "x.stella"] {
+        assert!(
+            !is_stella_state_path(path),
+            "{path} is workspace content, not Stella's own state"
+        );
+        assert_eq!(
+            changed_paths(&diff(&[path], "+let x = 1;\n")),
+            vec![path.to_string()],
+            "{path} must survive into the path rules"
+        );
+    }
+    assert!(is_stella_state_path(".stella"));
+    assert!(is_stella_state_path(".stella/private/store.db-wal"));
+}
+
 #[test]
 fn every_reason_states_why_rather_than_merely_asserting() {
     for reason in [

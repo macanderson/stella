@@ -103,6 +103,10 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         // The arena verifiers the task result, not the scaffolding that proved
         // it — a witness left in the tree would show up as unexplained work.
         false,
+        // The arena scores from its journal, not the process exit (see below),
+        // so an unverified run must reach that journal rather than dying at
+        // the boundary — the advisory default is the only one that can.
+        false,
     )
     .await;
 

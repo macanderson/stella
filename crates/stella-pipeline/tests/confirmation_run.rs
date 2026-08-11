@@ -30,7 +30,7 @@ fn a_flaky_flip_is_caught_by_the_confirmation_run() {
 
     // The ladder must NOT credit a deterministic pass for an unstable oracle.
     let inputs = LadderInputs {
-        flip_achieved: oracle.is_flipped(), // false
+        flip: oracle.outcome(), // NotAchieved: a command was tracked
         touched_tests_passed: Some(true),
         diff_lines: 5,
         diff_budget: 100,

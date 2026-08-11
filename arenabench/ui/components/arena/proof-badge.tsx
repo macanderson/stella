@@ -12,8 +12,9 @@ import { Tip } from "@/components/ui/tooltip";
  * question underneath it — *what says so*. They come apart more often than
  * anyone expects: Stella's pipeline publishes `passed: true` for a real
  * deterministic flip, for an `unverifiable` outcome where every channel was
- * blind, and for a `waived` one where triage skipped review. Read the verdict
- * alone and those three are the same cell.
+ * blind, for a `witness_unsatisfiable` one where the witness never
+ * discriminated, and for a `waived` one where triage skipped review. Read the
+ * verdict alone and all of those are the same cell.
  *
  * Two deliberate choices about colour:
  *
@@ -50,6 +51,14 @@ const GRADE_COPY: Record<
       "The oracle ran and never passed: the agent's claim was caught before " +
       "it shipped. The rail working as designed, not an agent failure to " +
       "read twice.",
+  },
+  unsatisfiable: {
+    label: "unsatisfiable",
+    tone: "text-warn",
+    blurb:
+      "The witness failed the same way before and after the work: it never " +
+      "discriminated between them, so its red says nothing about the change. " +
+      "An instrument fault, not an agent one.",
   },
   unproven: {
     label: "unproven",
@@ -107,21 +116,45 @@ export function FlipStrip({ proof }: { proof: TrialProof }) {
   );
 }
 
+/**
+ * How the flip reads on screen: whether it is good news, bad news, or no news.
+ *
+ * The third case is why `flip` is three states rather than a bool (#2556).
+ * `"unobserved"` says nothing was ever in a position to observe a flip, which
+ * is a statement about the instrument and not a finding about the work — so it
+ * renders neutral. Painting it with the same warn styling as a real
+ * `"not_achieved"` tells a reader the agent fell short of something nobody
+ * measured.
+ */
+export function flipTone(proof: TrialProof): "text-ok" | "text-warn" | "text-dim" {
+  if (proof.flip === "achieved") return "text-ok";
+  if (proof.flip === "not_achieved") return "text-warn";
+  return "text-dim";
+}
+
 /** The sentence describing what the strip shows, for a tooltip or a caption. */
 export function flipSentence(proof: TrialProof): string {
-  const { failed_attempts: wrong, flip_achieved: flipped } = proof;
+  const { failed_attempts: wrong, flip } = proof;
   if (!proof.oracle_runs.length) return "The oracle never ran on this trial.";
-  if (flipped && wrong > 0) {
+  if (flip === "unobserved") {
+    return "No command was tracked, so nothing could have flipped — this is not a finding about the work.";
+  }
+  if (flip === "achieved" && wrong > 0) {
     return (
       `The model believed it was finished ${wrong} time${wrong === 1 ? "" : "s"} ` +
       `before the test agreed.`
     );
   }
-  if (flipped) return "The test passed on the first observation after the change.";
-  return (
-    `The test never passed — ${wrong} failing observation${wrong === 1 ? "" : "s"}, ` +
-    `and the work went back for revision.`
-  );
+  if (flip === "achieved") {
+    return "The test passed on the first observation after the change.";
+  }
+  if (flip === "not_achieved") {
+    return (
+      `The test never passed — ${wrong} failing observation${wrong === 1 ? "" : "s"}, ` +
+      `and the work went back for revision.`
+    );
+  }
+  return "No verdict recorded a flip finding for this trial.";
 }
 
 export function ProofBadge({

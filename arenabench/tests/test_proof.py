@@ -15,11 +15,19 @@ Every fixture is a literal event stream in the shape
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 from arenabench.cli import main
-from arenabench.proof import distill
+from arenabench.proof import (
+    FLIP_ACHIEVED,
+    FLIP_NOT_ACHIEVED,
+    FLIP_UNKNOWN,
+    FLIP_UNOBSERVED,
+    distill,
+    flip_outcome,
+)
 from arenabench.telemetry import MetricsReader, aggregate
 from arenabench.transcript import TranscriptReader
 
@@ -82,7 +90,7 @@ FLIP_STREAM: list[dict] = [
         True,
         "flip oracle: fail→pass of `sh witness_check.sh`; touched tests green",
         rung="submit_fast",
-        flip_achieved=True,
+        flip="achieved",
         tracked_command="sh witness_check.sh",
         witness_intact=True,
         touched_tests_passed=True,
@@ -109,7 +117,7 @@ def test_flip_is_graded_as_proven_and_counts_the_wrong_guess() -> None:
     assert proof.witness_authored
     assert proof.witness_path == "witness_check.sh"
     assert proof.witness_command == "sh witness_check.sh"
-    assert proof.flip_achieved is True
+    assert proof.flip == FLIP_ACHIEVED
     assert proof.witness_intact is True
     assert proof.deterministic
     assert not proof.claimed_without_proof
@@ -256,6 +264,51 @@ def test_oracle_that_never_passes_is_refuted_not_merely_failed() -> None:
     assert proof.failed_attempts == 1
 
 
+def test_an_unsatisfiable_witness_is_not_graded_as_a_refutation() -> None:
+    """#2540: the rung a trial carries outranks what its oracle trace looks like.
+
+    A witness that fails identically on both trees produces the exact data
+    shape a refutation does — the oracle armed, ran, and never passed. But it
+    never discriminated between the old code and the new, so grading it
+    ``refuted`` would publish "the agent claimed done and a test disagreed"
+    about a test that would have said the same thing whatever the agent did.
+    Before this branch existed, this stream graded ``refuted``.
+    """
+    proof = distill(
+        [
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "witness_authored",
+                    "path": "witness_check.sh",
+                    "command": "sh witness_check.sh",
+                    "fingerprint": "sha256:beef",
+                },
+            },
+            _verdict(
+                True,
+                "WITNESS UNSATISFIABLE — `sh witness_check.sh` failed on the "
+                "baseline and failed again on the change with the same failure "
+                "fingerprint (6354acbdc1bc70c6), so it does not discriminate.",
+                deterministic=False,
+                rung="witness_unsatisfiable",
+                flip=FLIP_NOT_ACHIEVED,
+                tracked_command="sh witness_check.sh",
+                oracle_trace=[
+                    {"tree": "baseline", "passed": False},
+                    {"tree": "candidate", "passed": False},
+                ],
+            ),
+        ]
+    )
+
+    assert proof.grade == "unsatisfiable"
+    assert proof.honesty == "witness_unsatisfiable"
+    # It published `passed: true` with nothing deterministic behind it, so the
+    # honesty trap must still fire — an instrument fault is not a proof.
+    assert proof.claimed_without_proof
+
+
 def test_witness_unavailable_carries_its_full_reason() -> None:
     reason = (
         "no author independent of the worker "
@@ -365,7 +418,7 @@ def test_judge_verdict_tag_still_parses() -> None:
 
     assert proof.verdict_passed is True
     assert proof.rung == "submit_fast"
-    assert proof.flip_achieved is True
+    assert proof.flip == FLIP_ACHIEVED
 
 
 def test_model_judge_rung_normalises_to_model_verdict() -> None:
@@ -560,7 +613,7 @@ def test_transcript_verdict_body_is_the_evidence_summary(tmp_path: Path) -> None
 
     assert "flip oracle: fail→pass" in verdict["body"]
     assert verdict["meta"]["rung"] == "submit_fast"
-    assert verdict["meta"]["flip_achieved"] is True
+    assert verdict["meta"]["flip"] == FLIP_ACHIEVED
 
 
 def test_cli_prints_the_rail(tmp_path: Path, capsys) -> None:
@@ -614,3 +667,137 @@ def test_proof_reasons_are_never_truncated(tmp_path: Path) -> None:
     entries = TranscriptReader().read(trial / "agent" / "stella-events.jsonl")
 
     assert next(e for e in entries if e["kind"] == "proof")["body"] == reason
+
+
+# --------------------------------------------------------------------------
+# The flip tri-state (#2556) — "nothing measured it" is not "it fell short"
+# --------------------------------------------------------------------------
+
+
+class TestTheFlipOutcomeIsThreeStatesNotABool:
+    """``flip_achieved: bool`` became ``flip: FlipOutcome`` on the wire.
+
+    A bool could not tell "a tracked command ran and did not go fail→pass" — a
+    real negative about the work — from "no command was ever tracked, so
+    nothing could have flipped", which is a statement about the instrument.
+    Bench scoring reading the bool alone reproduced that false negative, and
+    the bench is the consumer the change was written for.
+
+    The rename is silent here: this is a JSON reader, so a key that stops
+    existing does not fail to compile. ``bool(ladder.get("flip_achieved"))``
+    returned ``False`` for *every* new record, including a genuinely
+    flip-verified one, so every run scored as no-flip.
+    """
+
+    def test_a_new_record_reads_as_achieved(self) -> None:
+        """The witness. Fails on the pre-#2556 reader, which sees no
+        `flip_achieved` key and scores `False`."""
+        proof = distill(
+            [_verdict(True, "ok", rung="submit_fast", flip="achieved")]
+        )
+        assert proof.flip == FLIP_ACHIEVED
+        assert proof.grade == "oracle"
+
+    def test_a_legacy_record_still_reads_as_achieved(self) -> None:
+        """Every committed fixture predates the token; dropping them would
+        trade one silent misread for another."""
+        proof = distill(
+            [_verdict(True, "ok", rung="submit_fast", flip_achieved=True)]
+        )
+        assert proof.flip == FLIP_ACHIEVED
+        assert proof.grade == "oracle"
+
+    def test_the_three_tokens_and_the_legacy_bool(self) -> None:
+        assert flip_outcome({"flip": "achieved"}) == FLIP_ACHIEVED
+        assert flip_outcome({"flip": "not_achieved"}) == FLIP_NOT_ACHIEVED
+        assert flip_outcome({"flip": "unobserved"}) == FLIP_UNOBSERVED
+        assert flip_outcome({"flip_achieved": True}) == FLIP_ACHIEVED
+        assert flip_outcome({"flip_achieved": False}) == FLIP_NOT_ACHIEVED
+        # The reference decoder accepts the bool under the new name too.
+        assert flip_outcome({"flip": True}) == FLIP_ACHIEVED
+
+    def test_the_token_wins_over_a_legacy_key_beside_it(self) -> None:
+        assert (
+            flip_outcome({"flip": "unobserved", "flip_achieved": False})
+            == FLIP_UNOBSERVED
+        )
+
+    def test_an_unknown_token_is_unknown_and_never_a_negative(self) -> None:
+        """A token this build has not learned must not become a finding about
+        an agent's work — the one direction a benchmark must not be wrong in."""
+        assert flip_outcome({"flip": "flipped_sideways"}) == FLIP_UNKNOWN
+        assert flip_outcome({}) == FLIP_UNKNOWN
+
+    def test_an_unobserved_flip_is_never_graded_refuted(self) -> None:
+        """The conclusion the distinction changes.
+
+        "refuted" reads *the oracle ran and never passed — the claim was
+        caught*. An unobserved flip means nothing armed, so grading it refuted
+        publishes a negative finding manufactured out of a blind instrument.
+        """
+        stream = [
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "oracle",
+                    "command": "pytest",
+                    "passed": False,
+                    "tree": "candidate",
+                },
+            },
+            _verdict(True, "UNVERIFIABLE: nothing could look", rung="unverifiable",
+                     flip="unobserved", deterministic=False),
+        ]
+        proof = distill(stream)
+        assert proof.flip == FLIP_UNOBSERVED
+        assert proof.grade != "refuted"
+
+    def test_a_measured_miss_is_still_graded_refuted(self) -> None:
+        """The other half: `not_achieved` is a real negative and keeps its
+        grade. Softening it would be the opposite dishonesty."""
+        stream = [
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "oracle",
+                    "command": "pytest",
+                    "passed": False,
+                    "tree": "candidate",
+                },
+            },
+            _verdict(False, "the touched tests were red", rung="revise",
+                     flip="not_achieved", tracked_command="pytest"),
+        ]
+        proof = distill(stream)
+        assert proof.flip == FLIP_NOT_ACHIEVED
+        assert proof.grade == "refuted"
+
+    def test_the_recorded_fixtures_still_parse(self) -> None:
+        """The committed match archive is all pre-#2556 records."""
+        import json
+
+        root = Path(__file__).resolve().parent / "fixtures" / "matches"
+        seen = 0
+        for events in root.rglob("agent/stella-events.jsonl"):
+            stream = []
+            for line in events.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    with contextlib.suppress(ValueError):
+                        stream.append(json.loads(line))
+            proof = distill(stream)
+            assert proof.flip in (
+                FLIP_ACHIEVED,
+                FLIP_NOT_ACHIEVED,
+                FLIP_UNOBSERVED,
+                FLIP_UNKNOWN,
+            )
+            seen += 1
+        assert seen, "the recorded fixtures have moved"
+
+    def test_the_serialised_shape_carries_the_token(self) -> None:
+        proof = distill([_verdict(True, "ok", rung="submit_fast", flip="unobserved")])
+        payload = proof.to_json()
+        assert payload["flip"] == FLIP_UNOBSERVED
+        assert "flip_achieved" not in payload, (
+            "one fact, one spelling — a second key is how the two drift"
+        )

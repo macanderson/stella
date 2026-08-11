@@ -368,10 +368,30 @@ impl LoopIdentity {
     /// honest thing to say about a loop you cannot identify is nothing. A
     /// `bool` here would force "unknown" to collapse into one of the two
     /// claims, which is precisely the bug this type exists to end.
+    ///
+    /// **A cycle is compared up to rotation.** `detect_short_cycle` reports
+    /// the trailing period as it is standing when the check runs, so one
+    /// grinding read → edit → test cycle is reported as `read, edit, test`
+    /// on one step and `edit, test, read` on the next — the same loop, seen
+    /// one call later. Positional equality called those two different loops,
+    /// which was invisible while every re-detection aborted anyway and
+    /// became load-bearing the moment a different loop bought another
+    /// steering warning (#1743): a cycle could earn a fresh warning every
+    /// time the window shifted. Tools and arguments rotate together by the
+    /// same shift, so `[A, B]` with `[x, y]` is still a different loop from
+    /// `[A, B]` with `[y, x]`.
     #[must_use]
     pub fn same_loop_as(&self, other: &LoopIdentity) -> Option<bool> {
         let (mine, theirs) = (self.inputs.as_ref()?, other.inputs.as_ref()?);
-        Some(self.tools == other.tools && mine == theirs)
+        if self.tools.len() != other.tools.len() || mine.len() != theirs.len() {
+            return Some(false);
+        }
+        // `max(1)` so a stagnation identity — one tool, deliberately no
+        // arguments — is still compared once rather than skipped into a
+        // vacuous `false`.
+        Some((0..self.tools.len().max(1)).any(|shift| {
+            rotates_onto(&self.tools, &other.tools, shift) && rotates_onto(mine, theirs, shift)
+        }))
     }
 
     /// How to name this loop in a message: its tools, plus the arguments
@@ -396,6 +416,15 @@ impl LoopIdentity {
             _ => tools,
         }
     }
+}
+
+/// Whether `b` is `a` rotated left by `shift` — the equality
+/// [`LoopIdentity::same_loop_as`] needs, since a cycle has no first element.
+/// Equal lengths are the caller's precondition and re-checked here so a
+/// mismatch is `false` rather than an index out of bounds; an empty pair is
+/// trivially a rotation of itself.
+fn rotates_onto(a: &[String], b: &[String], shift: usize) -> bool {
+    a.len() == b.len() && (a.is_empty() || (0..a.len()).all(|i| a[(i + shift) % a.len()] == b[i]))
 }
 
 /// How much of a looped call's arguments a reason line quotes. Enough to

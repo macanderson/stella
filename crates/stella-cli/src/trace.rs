@@ -541,7 +541,8 @@ pub fn append_trace(workspace_root: &Path, record: &TraceRecord) -> Result<PathB
 mod tests {
     use super::*;
     use stella_protocol::{
-        LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput, VerdictEvidence,
+        FlipOutcome, LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput,
+        VerdictEvidence,
     };
     use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
 
@@ -871,7 +872,7 @@ mod tests {
             rung: None,
             tracked_command: None,
             oracle_trace: Vec::new(),
-            flip_achieved: false,
+            flip: FlipOutcome::NotAchieved,
             unstable_flip: false,
             flip_refused_different_failure: false,
             touched_tests_passed: None,

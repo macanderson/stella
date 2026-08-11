@@ -47,31 +47,45 @@ Two invariants hold throughout, and both are load-bearing:
 The decision half (:func:`decide`) is a pure function over an immutable
 snapshot, so every transition below is unit-testable without a keychain, a
 subprocess, or a clock.
+
+:class:`MatchReauth` is the other end: one supervisor per subscription seat,
+advanced from the loop :class:`~.runner.MatchRunner` already runs over the
+seats' processes. It exists because *when* a supervisor ticks relative to that
+loop is the whole wiring — a paused seat has no live process and is not
+finished, so :meth:`MatchReauth.tick` returns whether the match still owes work
+and the poll loop's exit condition reads it.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
-from enum import Enum
+import time
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Protocol
 
-from .telemetry import VOID_CREDENTIALS, MetricsReader
+from .telemetry import RESULT_NAME, VOID_CREDENTIALS, MetricsReader
 
 __all__ = [
+    "PAUSE_GRACE_SECONDS",
     "CredentialDigest",
+    "MatchReauth",
     "SeatState",
     "Snapshot",
     "Step",
+    "SupervisedSeat",
     "Supervisor",
     "TrialView",
     "credential_digest",
     "decide",
     "is_credential_void",
+    "own_login_source",
     "read_trials",
+    "supervise",
+    "supervision_blocked",
 ]
 
 
@@ -124,7 +138,7 @@ def is_credential_void(failure: str) -> bool:
 
 @dataclass(frozen=True)
 class TrialView:
-    """One trial, reduced to the three facts a re-dispatch decision needs."""
+    """One trial, reduced to the facts a re-dispatch decision needs."""
 
     task: str
     #: ``pending`` | ``running`` | ``done`` — Harbor's own vocabulary, carried
@@ -132,6 +146,32 @@ class TrialView:
     status: str
     #: The Harbor error class name, or ``""`` when the trial did not fail.
     failure: str = ""
+    #: Harbor's trial directory name, ``<task>__<attempt>``.
+    trial: str = ""
+    #: When Harbor concluded this trial (``result.json``'s mtime), or ``None``
+    #: while it is still in flight. Read as a *time* rather than an identity
+    #: on purpose — see :attr:`superseded`.
+    concluded_at: float | None = None
+    #: Whether this trial predates the credential currently dispatched.
+    #:
+    #: A void never leaves the disk, so without this the *first* tick after a
+    #: successful re-dispatch reads the old void, finds the keychain offering
+    #: nothing newer than the token it just launched with, and pauses — killing
+    #: the retry seconds after starting it. The trial is still counted as
+    #: evidence of what has been *measured*; it is no longer evidence about
+    #: whether the live credential works.
+    #:
+    #: Decided by :attr:`concluded_at`, never by :attr:`trial`. A re-dispatch
+    #: writes into the *same job directory* (#2545), so a name-keyed generation
+    #: would be resting on Harbor's attempt suffixes never colliding — an
+    #: external tool's invariant, unverifiable from this repository, whose
+    #: breach fails in the silent direction: a genuinely dead new credential
+    #: would be filtered out as old and the seat would spend its whole retry
+    #: budget re-dispatching against a token that can never work, every round
+    #: reading as progress. A conclusion time is this repository's own
+    #: observation, and ties resolve toward *not* superseded, so ambiguity
+    #: pauses loudly instead of continuing quietly.
+    superseded: bool = False
 
     @property
     def credential_void(self) -> bool:
@@ -150,7 +190,7 @@ class TrialView:
         return self.status == "done" and not self.credential_void
 
 
-class SeatState(str, Enum):
+class SeatState(StrEnum):
     """Where a supervised seat is in the rotation-recovery cycle."""
 
     #: Dispatched and believed healthy.
@@ -207,8 +247,15 @@ class Snapshot:
         return tuple(task for task in self.tasks if task not in measured)
 
     def voided(self) -> tuple[str, ...]:
-        """Tasks whose trial died specifically on a credential fault."""
-        dead = {t.task for t in self.trials if t.credential_void}
+        """Tasks whose trial died on a credential fault *under this credential*.
+
+        Superseded trials are excluded, and the asymmetry with
+        :meth:`unmeasured` is the point: a measurement is permanent, while "the
+        credential is dead" is a statement about the one in flight. Counting an
+        already-answered void here makes a healthy re-dispatch look like a
+        fresh failure.
+        """
+        dead = {t.task for t in self.trials if t.credential_void and not t.superseded}
         return tuple(task for task in self.tasks if task in dead)
 
 
@@ -247,10 +294,19 @@ def decide(snap: Snapshot) -> Step:
 
     # Nothing left to measure. True even with voids on the record: a task
     # re-run to a real result is measured, and the void is history.
+    #
+    # The seat is deliberately **not** stopped here, unlike every other
+    # terminal state. This module's authority is a credential fault; deciding
+    # that a Harbor job is finished is Harbor's, and the two disagree in ways
+    # that cost measurements: with ``--n-attempts > 1`` every task is measured
+    # long before the sweep is over, and a job launched without an explicit
+    # task list has a task set this snapshot cannot see at all. Killing a
+    # healthy seat on either reading destroys exactly the trials the module
+    # exists to save — and there is nothing to gain, because a job whose work
+    # is done exits on its own.
     if not unmeasured:
         return Step(
             state=SeatState.COMPLETE,
-            stop_seat=snap.seat_running,
             reason=f"all {len(snap.tasks)} tasks measured",
         )
 
@@ -350,9 +406,28 @@ def read_trials(job_dir: Path, reader: MetricsReader | None = None) -> list[Tria
         task = entry.name.rsplit("__", 1)[0]
         metrics = reader.read(entry, task)
         views.append(
-            TrialView(task=task, status=metrics.status, failure=metrics.failure)
+            TrialView(
+                task=task,
+                status=metrics.status,
+                failure=metrics.failure,
+                trial=entry.name,
+                concluded_at=_concluded_at(entry),
+            )
         )
     return views
+
+
+def _concluded_at(trial_dir: Path) -> float | None:
+    """When Harbor wrote this trial's verdict, or ``None`` if it has not.
+
+    Deliberately the *verdict* file rather than the directory: a directory's
+    mtime moves every time anything inside it is written, so a trial still
+    streaming would keep looking freshly concluded.
+    """
+    try:
+        return (trial_dir / RESULT_NAME).stat().st_mtime
+    except OSError:
+        return None
 
 
 class TokenSource(Protocol):
@@ -428,16 +503,351 @@ class Supervisor:
         )
         self.state = step.state
         if step.reason:
-            self.log.append(f"[{step.state.value}] {step.reason}")
+            # Consecutive duplicates are dropped, not deduplicated globally: a
+            # supervisor ticks every couple of seconds for the length of a
+            # match, so an unfiltered log is tens of thousands of copies of
+            # "89 task(s) outstanding" — in memory, and in every snapshot that
+            # carries the record. A state that recurs *after* something else
+            # happened is a real transition and is recorded again.
+            line = f"[{step.state.value}] {step.reason}"
+            if not self.log or self.log[-1] != line:
+                self.log.append(line)
         if step.stop_seat:
             self.stop()
         if step.dispatch:
             # `token` is not None here: a dispatch step is only ever reached
             # through the `have_fresh` branch, which required a digest, and a
             # digest exists only for a non-empty token.
-            assert token is not None  # noqa: S101 - invariant of `decide`
+            assert token is not None  # invariant of `decide`
             self.launch(step.dispatch, token)
             self.note_dispatch(token)
             self._offered = None
             self.rounds_used += 1
         return step
+
+
+# --------------------------------------------------------------------------
+# the match-level coordinator
+# --------------------------------------------------------------------------
+
+#: How long a seat may sit :attr:`SeatState.PAUSED` before the match gives up
+#: on it and reports the shortfall.
+#:
+#: A pause consumes no retry round, so unbounded waiting is a hang rather than
+#: a measurement: the match never finishes, the *opposing* arm's numbers are
+#: never published either, and an unattended sweep holds its containers until
+#: someone notices. Half an hour is long enough for an operator who saw the
+#: warning to run ``claude login`` — the local login is re-read on every tick,
+#: so that alone resumes the sweep with no further involvement — and short
+#: enough that a run nobody is watching ends with a named shortfall.
+PAUSE_GRACE_SECONDS = 1800.0
+
+
+def own_login_source(launched_with: str, read_local: TokenSource) -> TokenSource:
+    """An auto-heal source for a seat whose credential *is* this machine's login.
+
+    Healing means re-reading the local Claude Code login, which is only sound
+    for a seat that launched on that login in the first place. A seat carrying a
+    token from anywhere else — another machine, another account, a CI secret —
+    would otherwise be re-dispatched onto the operator's own subscription the
+    moment its own token died, and the second half of that arm would have run on
+    a different plan than the first. That is not a recovery; it is a silently
+    swapped variable in a controlled comparison, which is the failure this whole
+    module is a defence against.
+
+    Ownership is settled once, here, against the credential the seat launched
+    with: at launch the two agree, and it is precisely their *later* divergence
+    that :func:`decide` reads as a rotation. A seat that does not own the local
+    login gets a source that answers ``None``, so it pauses for an operator
+    rather than healing onto a stranger's plan.
+    """
+    if credential_digest(launched_with) != credential_digest(read_local()):
+        return lambda: None
+    return read_local
+
+
+@dataclass
+class SupervisedSeat:
+    """One seat's :class:`Supervisor`, bound to the job directory it reads."""
+
+    #: Contestant id — the key every other part of the match record uses.
+    contestant: str
+    #: Display name, for the one line an operator reads.
+    name: str
+    #: The seat's Harbor job directory. A re-dispatch writes into this *same*
+    #: directory, so a retry's trial lands beside the void it replaces and
+    #: :meth:`~.runner.Match.trial_dirs`'s measured-over-void rank surfaces it
+    #: with no union across directories (#2545).
+    job_dir: Path
+    supervisor: Supervisor
+    #: Monotonic stamp of when this seat entered :attr:`SeatState.PAUSED`.
+    paused_since: float | None = None
+    #: Wall clock at the moment this seat's current credential was dispatched,
+    #: or ``None`` for a seat still on its original launch (nothing can predate
+    #: that). Compared against :attr:`TrialView.concluded_at`, which is why it
+    #: has to be wall clock: it is measured against a filesystem mtime.
+    dispatched_at: float | None = None
+    #: Why this seat is no longer supervised, or ``""`` while it still is.
+    released: str = ""
+    #: Whether that release left tasks unmeasured. A completed sweep and an
+    #: abandoned one both stop being supervised, and a record that cannot tell
+    #: them apart is the "silently 20-of-89" this module exists to prevent.
+    shortfall: bool = False
+
+    @property
+    def state(self) -> SeatState:
+        return self.supervisor.state
+
+    def release(self, reason: str, *, shortfall: bool) -> None:
+        """Stop supervising this seat, recording why."""
+        self.released = reason
+        self.shortfall = shortfall
+        self.paused_since = None
+
+    def to_json(self) -> dict[str, Any]:
+        """This seat's rotation record, for the match snapshot.
+
+        Credential-free by construction: a state name, two counters, and the
+        reason strings :func:`decide` produced — which a test pins as free of
+        any token.
+        """
+        return {
+            "state": self.state.value,
+            "rounds_used": self.supervisor.rounds_used,
+            "max_rounds": self.supervisor.max_rounds,
+            "waiting": bool(not self.released and self.state is SeatState.PAUSED),
+            "released": self.released,
+            "shortfall": self.shortfall,
+            "log": list(self.supervisor.log),
+        }
+
+
+def supervision_blocked(tasks: Sequence[str], attempts: int) -> str:
+    """Why this match cannot be credential-supervised, or ``""`` when it can.
+
+    Both refusals rather than best guesses, because a supervisor whose model of
+    the sweep is wrong stops seats that were working:
+
+    * **an explicit task list** — the re-dispatch set is the sweep's tasks minus
+      the ones with a measured trial, and a job launched with no
+      ``--include-task-name`` filter has a task set nothing here can see;
+    * **one attempt per task** — with ``--n-attempts > 1``, "this task has a
+      measured trial" stops meaning "this task is finished", so a supervisor
+      would both release its watch early and re-dispatch a whole fresh attempt
+      set to recover one voided attempt.
+    """
+    if not tasks:
+        return (
+            "credential-rotation recovery is off for this match: it runs the "
+            "whole dataset, and the supervisor cannot tell which tasks are still "
+            "owed without an explicit task list"
+        )
+    if attempts != 1:
+        return (
+            f"credential-rotation recovery is off for this match: {attempts} "
+            "attempts per task, and the supervisor measures completeness per task"
+        )
+    return ""
+
+
+def supervise(
+    *,
+    contestant: str,
+    name: str,
+    job_dir: Path,
+    tasks: Sequence[str],
+    token: str,
+    read_local: TokenSource,
+    stop: Callable[[], None],
+    launch: Callable[[Sequence[str], str], None],
+) -> SupervisedSeat:
+    """One seat's supervisor, with the credential it launched on recorded.
+
+    ``token`` is the value the seat's Harbor process was started with. It is
+    held only as a :func:`credential_digest` — the supervisor's whole question
+    about a credential is "is this still the one that died", and a digest
+    answers it without the module ever holding the token again.
+    """
+    supervisor = Supervisor(
+        tasks=tuple(tasks),
+        token_source=own_login_source(token, read_local),
+        stop=stop,
+        launch=launch,
+    )
+    supervisor.note_dispatch(token)
+    return SupervisedSeat(
+        contestant=contestant, name=name, job_dir=job_dir, supervisor=supervisor
+    )
+
+
+@dataclass
+class MatchReauth:
+    """Every supervised seat in one match, advanced by the runner's poll loop.
+
+    Owns no thread and no timer, for the reason :class:`Supervisor` owns
+    neither: the ordering between "read the trials" and "is the process still
+    alive" has to be explicit, and a second thread would make it emergent.
+    """
+
+    seats: tuple[SupervisedSeat, ...]
+    #: Shared across ticks so a 90-trial job directory is not re-reduced from
+    #: scratch every two seconds. Deliberately **not** the match's own reader:
+    #: this one is read from the supervision thread while the match's is read
+    #: from every HTTP thread, and one cache mutated by both is a race nobody
+    #: would ever reproduce.
+    reader: MetricsReader = field(default_factory=MetricsReader)
+    pause_grace: float = PAUSE_GRACE_SECONDS
+    #: Elapsed time, for the pause grace. Injected so a test can expire a pause
+    #: without sleeping through one.
+    clock: Callable[[], float] = time.monotonic
+    #: Instants comparable with a file's mtime, for
+    #: :attr:`SupervisedSeat.dispatched_at`. A second clock because it answers a
+    #: different question, and a monotonic reading is meaningless against a
+    #: filesystem timestamp.
+    wall: Callable[[], float] = time.time
+    _noted: str = ""
+
+    def tick(self, seat_running: Callable[[str], bool]) -> bool:
+        """Advance every live seat. ``True`` while any still owes the match work.
+
+        That return value is the exit condition the runner's poll loop needs. A
+        paused or healing seat has **no live process and is not finished**, so a
+        loop that breaks on "nothing is alive" would end the match at the exact
+        instant the supervisor stopped the seat it is about to re-dispatch.
+        """
+        pending = False
+        for seat in self.seats:
+            if seat.released:
+                continue
+            if self._advance(seat, seat_running(seat.contestant)):
+                pending = True
+        return pending
+
+    def _advance(self, seat: SupervisedSeat, running: bool) -> bool:
+        since = seat.dispatched_at
+        try:
+            step = seat.supervisor.tick(
+                (
+                    replace(
+                        view,
+                        superseded=(
+                            since is not None
+                            and view.concluded_at is not None
+                            and view.concluded_at < since
+                        ),
+                    )
+                    for view in read_trials(seat.job_dir, self.reader)
+                ),
+                seat_running=running,
+            )
+        except Exception as exc:
+            # A re-dispatch that cannot launch (no Harbor, a broken SUT pin, a
+            # refused adapter) must not wedge the match in a supervision loop
+            # that can never make progress, and must not take the *other* arm's
+            # finished trials down with it. The seat stops being supervised and
+            # says so; the runner has already recorded the failed round.
+            seat.release(f"re-dispatch failed: {exc}", shortfall=True)
+            return False
+
+        if step.dispatch:
+            # Every verdict already on disk belongs to the credential that just
+            # died. Stamped after the launch returns, never before it: a
+            # dispatch that raised leaves the generation untouched, and a
+            # verdict written while the launch was in flight stays current.
+            seat.dispatched_at = self.wall()
+
+        if step.state is SeatState.PAUSED:
+            if seat.paused_since is None:
+                seat.paused_since = self.clock()
+            waited = self.clock() - seat.paused_since
+            if waited < self.pause_grace:
+                return True
+            seat.release(
+                f"paused {waited / 60:.0f}m with no credential to resume on; its "
+                "unmeasured tasks stay unmeasured and are a shortfall, not a result",
+                shortfall=True,
+            )
+            return False
+
+        seat.paused_since = None
+        if step.state is SeatState.HEALING:
+            return True
+        if step.state is SeatState.EXHAUSTED:
+            seat.release(step.reason, shortfall=True)
+        elif step.state is SeatState.COMPLETE:
+            seat.release(step.reason, shortfall=False)
+        # RUNNING is the only remaining state, and it is not this module's
+        # business: the seat is working, or it died of something a credential
+        # cannot fix. Either way the runner's own process poll decides when the
+        # match is over, exactly as it did before any of this existed.
+        return False
+
+    @property
+    def waiting(self) -> tuple[SupervisedSeat, ...]:
+        """Seats stopped and asking an operator for a credential."""
+        return tuple(
+            seat
+            for seat in self.seats
+            if not seat.released and seat.state is SeatState.PAUSED
+        )
+
+    def provide_token(self, token: str, *, contestant: str | None = None) -> list[str]:
+        """Hand an operator's credential to the seats waiting for one.
+
+        In memory, for exactly as long as the next :meth:`tick` needs to launch
+        with it. :mod:`.claude_oauth`'s contract is that the value never reaches
+        disk, and a resume path that wrote it to a file to cross a process
+        boundary would break that contract for every seat at once.
+
+        Only a **paused** seat takes one, and the ids that did are returned, so
+        a caller reports "no seat is waiting" instead of claiming a resume that
+        will not happen. A healthy seat handed a token would carry it into
+        whatever it decides later, and a stale operator token is exactly the
+        dead credential :func:`decide` refuses to re-dispatch on.
+        """
+        taken: list[str] = []
+        for seat in self.waiting:
+            if contestant is not None and seat.contestant != contestant:
+                continue
+            seat.supervisor.provide_token(token)
+            taken.append(seat.contestant)
+        return taken
+
+    def to_json(self) -> dict[str, dict[str, Any]]:
+        """The rotation record of every supervised seat, keyed by contestant."""
+        return {seat.contestant: seat.to_json() for seat in self.seats}
+
+    def take_status(self) -> str | None:
+        """The operator-facing line, when it changed since the last call.
+
+        ``None`` means "nothing new to say", which is what a poll loop needs to
+        avoid rewriting the same note onto the match every two seconds. An empty
+        string is a real answer: the condition cleared.
+        """
+        line = self._status_line()
+        if line == self._noted:
+            return None
+        self._noted = line
+        return line
+
+    def _status_line(self) -> str:
+        waiting = self.waiting
+        if waiting:
+            return (
+                "credential revoked mid-match for "
+                + ", ".join(seat.name for seat in waiting)
+                + " — the seat is stopped and its unmeasured tasks are held. Log "
+                "back in to Claude Code (the local login is re-read every few "
+                "seconds) or hand over a fresh token, and the sweep resumes"
+            )
+        short = [seat for seat in self.seats if seat.shortfall]
+        if short:
+            return "; ".join(f"{seat.name}: {seat.released}" for seat in short)
+        healed = [seat for seat in self.seats if seat.supervisor.rounds_used]
+        if healed:
+            return "; ".join(
+                f"{seat.name} resumed on a fresh credential "
+                f"({seat.supervisor.rounds_used} re-dispatch round(s))"
+                for seat in healed
+            )
+        return ""

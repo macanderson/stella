@@ -7,6 +7,7 @@ use proptest::prelude::*;
 
 mod uncollected;
 mod witness_strip;
+mod witness_unsatisfiable;
 
 // FlipOracle transitions
 
@@ -157,7 +158,7 @@ fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     oracle.observe("t", true);
     oracle.confirm(false);
     let inputs = LadderInputs {
-        flip_achieved: oracle.is_flipped(), // false
+        flip: oracle.outcome(), // NotAchieved: a command was tracked
         touched_tests_passed: Some(true),
         diff_lines: 5,
         diff_budget: 100,
@@ -202,7 +203,7 @@ fn normalize_collapses_whitespace_and_trims_but_keeps_order() {
 #[test]
 fn red_touched_tests_revise_without_a_verifier() {
     let decision = ladder_decision(&LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: Some(false),
         diff_lines: 3,
         diff_budget: 100,
@@ -217,7 +218,7 @@ fn red_touched_tests_revise_without_a_verifier() {
 #[test]
 fn full_deterministic_pass_submits_fast() {
     let decision = ladder_decision(&LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         touched_tests_passed: Some(true),
         diff_lines: 40,
         diff_budget: 100,
@@ -237,7 +238,7 @@ fn full_deterministic_pass_submits_fast() {
 #[test]
 fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 100,
@@ -268,7 +269,7 @@ fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
 #[test]
 fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 100,
@@ -290,7 +291,7 @@ fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
 #[test]
 fn a_red_test_outranks_blindness() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: Some(false),
         diff_lines: 0,
         diff_budget: 100,
@@ -317,7 +318,7 @@ fn a_red_test_outranks_blindness() {
 #[test]
 fn a_readable_empty_diff_is_not_blindness() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 100,
@@ -357,7 +358,7 @@ fn a_readable_empty_diff_is_not_blindness() {
 #[test]
 fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 400,
@@ -388,7 +389,7 @@ fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
 #[test]
 fn a_no_op_verdict_is_a_result_not_a_missing_one() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 400,
@@ -418,7 +419,7 @@ fn a_no_op_verdict_is_a_result_not_a_missing_one() {
 #[test]
 fn a_blind_turn_that_did_act_still_abstains() {
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 400,
@@ -446,7 +447,7 @@ fn a_blind_turn_that_did_act_still_abstains() {
 #[test]
 fn one_positive_observation_defeats_the_no_op_rung() {
     let base = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 0,
         diff_budget: 400,
@@ -466,7 +467,7 @@ fn one_positive_observation_defeats_the_no_op_rung() {
         ..base
     };
     let flipped = LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         ..base
     };
     let tests_ran = LadderInputs {
@@ -505,7 +506,7 @@ fn one_positive_observation_defeats_the_no_op_rung() {
 #[test]
 fn a_verify_done_receipt_is_a_deterministic_pass() {
     let base = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         mutating_actions: 6,
         file_change_events: 3,
@@ -601,7 +602,7 @@ fn an_unverified_summary_never_denies_a_verify_done_receipt() {
 #[test]
 fn new_warnings_veto_only_when_opted_in() {
     let base = LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         touched_tests_passed: Some(true),
         diff_lines: 10,
         diff_budget: 100,
@@ -632,7 +633,7 @@ fn new_warnings_veto_only_when_opted_in() {
 #[test]
 fn a_new_diagnostic_error_vetoes_the_fast_submit() {
     let clean = LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         touched_tests_passed: Some(true),
         diff_lines: 10,
         diff_budget: 100,
@@ -673,7 +674,7 @@ fn the_veto_touches_no_other_rung() {
 #[test]
 fn flip_and_green_but_over_diff_budget_is_unproven() {
     let decision = ladder_decision(&LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         touched_tests_passed: Some(true),
         diff_lines: 500,
         diff_budget: 100,
@@ -693,7 +694,7 @@ fn flip_and_green_but_over_diff_budget_is_unproven() {
 fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
     // Tests green but never flipped (they always passed) → inconclusive.
     let decision = ladder_decision(&LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: Some(true),
         diff_lines: 5,
         diff_budget: 100,
@@ -708,7 +709,7 @@ fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
 #[test]
 fn tests_indeterminate_escalates_to_verifier() {
     let decision = ladder_decision(&LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_lines: 5,
         diff_budget: 100,
@@ -888,7 +889,7 @@ proptest! {
         diff_budget in 0u32..1000,
     ) {
         let inputs = LadderInputs {
-            flip_achieved: false,
+            flip: FlipOutcome::NotAchieved,
             touched_tests_passed: None,
             diff_lines: 0,
             diff_budget,
@@ -914,14 +915,18 @@ proptest! {
     #[test]
     fn dispatching_anything_leaves_every_other_rung_untouched(
         mutating_actions in 1u32..50,
-        flip_achieved in any::<bool>(),
+        flip in prop::sample::select(vec![
+            FlipOutcome::Unobserved,
+            FlipOutcome::NotAchieved,
+            FlipOutcome::Achieved,
+        ]),
         touched in prop::option::of(any::<bool>()),
         diff_lines in 0u32..800,
         diff_available in any::<bool>(),
         file_change_events in 0u32..50,
     ) {
         let inputs = LadderInputs {
-            flip_achieved,
+            flip,
             touched_tests_passed: touched,
             diff_lines,
             diff_budget: 400,
@@ -1051,7 +1056,7 @@ fn a_newer_failure_replaces_the_tracked_fingerprint() {
 #[test]
 fn a_tautological_witness_blocks_the_fast_submit() {
     let sound = LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         touched_tests_passed: Some(true),
         diff_lines: 10,
         diff_budget: 100,
@@ -1079,7 +1084,7 @@ fn a_verifier_pass_with_no_flip_and_no_green_test_stands_alone() {
     // The benchmark's real state: work happened and was seen to happen, but
     // nothing test-shaped ever ran.
     let inputs = LadderInputs {
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         diff_available: true,
         diff_lines: 40,
@@ -1098,7 +1103,7 @@ fn a_verifier_pass_with_no_flip_and_no_green_test_stands_alone() {
 #[test]
 fn a_flip_or_a_green_test_corroborates_a_verifier_pass() {
     let flipped = LadderInputs {
-        flip_achieved: true,
+        flip: FlipOutcome::Achieved,
         ..Default::default()
     };
     assert!(!flipped.verifier_pass_stands_alone(), "a flip corroborates");
@@ -1176,6 +1181,53 @@ fn an_evidence_demand_is_bounded_on_every_axis() {
     assert!(
         evidence_demand_is_worth_a_turn(&on, 0, 1, cmd),
         "one revision left is enough to ask"
+    );
+}
+
+/// #2619: the ask states an observation, never a review.
+///
+/// The arm that sends this text is reached only after every deterministic
+/// channel came back empty, and no model was asked anything — `Verdict` has
+/// been unassignable since #2584. So a prompt claiming the work "was reviewed
+/// and looks correct" asserts a reviewer that cannot exist, and asserts it
+/// into the worker's own context, where it reads as an instruction not to
+/// re-examine the change at the exact moment nothing backs it.
+///
+/// Asserted as an absence because that is the property that must survive
+/// rewording: any future edit is free to change the sentence, and not free to
+/// reintroduce a claim about who looked at the work.
+#[test]
+fn the_evidence_demand_claims_no_review_of_the_change() {
+    let prompt = evidence_demand_prompt("cargo test");
+
+    for banned in [
+        "reviewed",
+        "review",
+        "reviewer",
+        "looks correct",
+        "opinion",
+        "verifier",
+    ] {
+        assert!(
+            !prompt.to_lowercase().contains(banned),
+            "the evidence demand names `{banned}`, claiming a review that no \
+             longer happens on this path (#2619); prompt was:\n{prompt}"
+        );
+    }
+
+    // The half that must stay: the ask is still concrete about the one
+    // observation that would settle the turn, and still offers the honest exit.
+    assert!(
+        prompt.contains("cargo test"),
+        "the ask must name the tracked command"
+    );
+    assert!(
+        prompt.contains("FAILS") && prompt.contains("PASSES"),
+        "the ask must still demand both directions"
+    );
+    assert!(
+        prompt.contains("unverified"),
+        "the ask must still offer the honest stop"
     );
 }
 

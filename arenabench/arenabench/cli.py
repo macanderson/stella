@@ -16,8 +16,9 @@ import logging
 import random
 import subprocess
 import sys
-from dataclasses import replace
+import textwrap
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import provenance
 from .agents import AGENTS
@@ -26,6 +27,9 @@ from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
 from .replay import ReplayError, replay_flip
 from .server import default_workspace, serve
 from .telemetry import EVENTS_NAME, MetricsReader, TrialMetrics, aggregate
+
+if TYPE_CHECKING:  # the harness reader is imported lazily, by command
+    from .harness import SeatBehaviour
 
 __all__ = ["main"]
 
@@ -70,8 +74,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
 
     Credentials are read from the process environment against each seat's
-    declared ``required`` list, never from the file — then from the saved
-    credential set at :func:`~.credentials.credentials_path`, and finally, for
+    declared ``required`` list, never from the file — through
+    :func:`~.credentials.apply_ambient_credentials`, the same function the
+    server calls, so "which ambient names may a seat receive" has exactly one
+    implementation (#2654) — then from the saved credential set at
+    :func:`~.credentials.credentials_path`, and finally, for
     a seat that declared the Claude subscription token, from this machine's own
     Claude Code login (:func:`~.claude_oauth.apply_local_claude_login`). So a
     local, repeat ``arenabench run`` does not need the same ``export`` lines
@@ -89,9 +96,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     import time
 
     from .agents import dead_seat_reason
-    from .claude_oauth import apply_local_claude_login
     from .config import MatchTemplateError, load_match, required_env
-    from .credentials import apply_saved_credentials, credentials_path, load_credentials
+    from .credentials import (
+        credentials_path,
+        load_credentials,
+        resolve_launch_credentials,
+    )
     from .monitor import MatchWatcher
     from .runner import MatchRunner
     from .server import ArenaServer, find_running_arena
@@ -104,15 +114,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     needed = required_env(spec)
-    seated: list = []
-    for contestant in spec.contestants:
-        candidates = needed.get(contestant.id, [])
-        env = {name: os.environ[name] for name in candidates if os.environ.get(name)}
-        seated.append(replace(contestant, env=env))
-    spec = replace(spec, contestants=tuple(seated))
-
     saved = load_credentials()
-    spec = apply_saved_credentials(spec)
+    # Every fill layer, through the one implementation the server also calls.
+    # This path used to inline its own ambient fill over `required_env`'s
+    # *derived* candidate set, which for an undeclared seat includes the
+    # agent's `alt_credential_env` — so a `CLAUDE_CODE_OAUTH_TOKEN` exported in
+    # the operator's shell silently credentialled an undeclared `claude-code`
+    # seat here and nothing through the UI (#2654). Two arms you believed were
+    # on different credentials, both on one plan, with only the entry point to
+    # tell them apart. The *refusal* below still reads the derived set: #1827
+    # keeps those two decisions separate on purpose.
+    spec, oauth_notes = resolve_launch_credentials(spec)
     if saved:
         filled = sum(
             1
@@ -122,8 +134,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
         if filled:
             print(f"credentials: {filled} value(s) filled in from {credentials_path()}")
-
-    spec, oauth_notes = apply_local_claude_login(spec)
     for note in oauth_notes:
         print(f"credentials: {note}")
 
@@ -133,10 +143,25 @@ def _cmd_run(args: argparse.Namespace) -> int:
         # The candidate names are alternatives, not a conjunction: a seat
         # carrying any one of them is credentialled (a Claude subscription
         # token authenticates a seat that has no ANTHROPIC_API_KEY at all).
-        if candidates and not contestant.env and not args.allow_missing_env:
+        if not candidates or contestant.env or args.allow_missing_env:
+            continue
+        if contestant.required_env:
             missing.append(f"{contestant.name}: any of {', '.join(candidates)}")
+        else:
+            # An undeclared seat is refused with the fix that will actually
+            # work for it. Since the ambient fill became declaration-only
+            # (#2654), exporting one of these names no longer reaches this
+            # seat — naming them as if it would is the misdirection that turns
+            # a five-second fix into an afternoon.
+            names = ", ".join(candidates)
+            missing.append(
+                f"{contestant.name}: declares no [contestant.env] required, so "
+                "an exported variable cannot reach it — add "
+                f"[contestant.env] required = [...] naming any of {names}, or "
+                f"save the value at {credentials_path()}"
+            )
     if missing:
-        print("error: required environment variables are not set:", file=sys.stderr)
+        print("error: required credentials are not set:", file=sys.stderr)
         for line in missing:
             print(f"  {line}", file=sys.stderr)
         print("  (use --allow-missing-env to run anyway)", file=sys.stderr)
@@ -417,10 +442,19 @@ def _cmd_harness(args: argparse.Namespace) -> int:
     files or permission modes differed while a match description said they were
     "the same configuration". This prints the evidence rather than the claim.
 
+    One block per arm, in one layout, from each arm's own stream — Stella's
+    event journal and Claude Code's stream-json tee are two spellings of one
+    vocabulary (:class:`arenabench.harness.HarnessDialect`), so the two are
+    read side by side rather than in two commands (#2519). Where the
+    vocabularies genuinely differ the block says so: Stella's ``steps`` counts
+    one model call per pipeline role and Claude Code's counts one assistant
+    turn, and a table that puts those in one column is the sort of plausible
+    number this repository treats as worse than a crash.
+
     Reads only artifacts, like everything else here, so it works the same on a
     live match and on an archive — and running it cannot perturb what it reads.
     """
-    from .harness import STREAM_NAME, HarnessProfile, StreamReader
+    from .harness import HarnessReading, StreamReader, summarize
 
     match_dir = Path(args.workspace).expanduser() / "matches" / args.match
     if not match_dir.is_dir():
@@ -428,50 +462,34 @@ def _cmd_harness(args: argparse.Namespace) -> int:
         return 1
 
     reader = StreamReader()
-    #: seat → (profile, summed behaviour across its trials, trial count)
-    seats: dict[str, tuple[HarnessProfile, dict, int]] = {}
+    #: (job, arm) → that arm's reading of every trial in the job. Keyed by arm
+    #: as well as by job because "which arm is this" is a fact about the files,
+    #: not about the directory's name.
+    seats: dict[tuple[str, str], list[HarnessReading]] = {}
     for job_dir in sorted((match_dir / "jobs").glob("*")):
         if not job_dir.is_dir():
             continue
         for trial_dir in sorted(job_dir.glob("*")):
-            read = reader.read(trial_dir / STREAM_NAME)
-            if read is None:
-                continue
-            profile, totals = read
-            name = job_dir.name
-            _, summed, count = seats.get(name, (profile, {}, 0))
-            payload = totals.to_json()
-            for key, value in payload.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    summed[key] = summed.get(key, 0) + value
-                elif isinstance(value, dict):
-                    bucket = summed.setdefault(key, {})
-                    for tool, n in value.items():
-                        bucket[tool] = bucket.get(tool, 0) + n
-            seats[name] = (profile, summed, count + 1)
+            for reading in reader.read_trial(trial_dir):
+                seats.setdefault((job_dir.name, reading.dialect.arm), []).append(reading)
 
     if not seats:
         print(
             f"{args.match}: no arm published a harness stream.\n"
-            "Only agents run through a stream-json CLI do — today that is the "
-            "Claude Code seat. A Stella arm's equivalent is its own event "
-            "stream; see `arenabench transcript`."
+            "An arm is read from its own append-only journal — Stella's "
+            "`agent/stella-events.jsonl` or a stream-json CLI's stdout tee. A "
+            "match with neither has only its ATIF trajectories; see "
+            "`arenabench series`."
         )
         return 0
 
-    for name, (profile, totals, trials) in seats.items():
-        print(f"\n=== {name}  ({trials} trial{'s' if trials != 1 else ''})")
-        print(f"  product        {profile.version or '?'}")
-        print(f"  model          {profile.model or '?'}")
-        print(f"  permission     {profile.permission_mode or '?'}")
-        print(f"  credential     {profile.api_key_source or '?'}")
-        print(f"  tools offered  {len(profile.tools)}  ({', '.join(profile.tools)})")
-        if profile.mcp_servers:
-            print(f"  mcp servers    {', '.join(profile.mcp_servers)}")
-        if profile.skills:
-            print(f"  skills         {len(profile.skills)}")
-        if profile.subagents:
-            print(f"  subagents      {', '.join(profile.subagents)}")
+    for (name, arm), readings in sorted(seats.items()):
+        seat = summarize(readings)
+        if seat is None:  # pragma: no cover - `seats` only holds non-empty lists
+            continue
+        totals, unpublished = seat.totals, seat.dialect.unpublished
+        print(f"\n=== {name}  ({seat.trials} trial{'s' if seat.trials != 1 else ''} · {arm})")
+        _print_harness_profile(seat)
         calls = totals.get("tool_calls") or {}
         elapsed = totals.get("tool_ms") or {}
         print(
@@ -479,51 +497,142 @@ def _cmd_harness(args: argparse.Namespace) -> int:
             f"{totals.get('tools', 0)} tool calls, "
             f"{totals.get('tool_errors', 0)} of them errors"
         )
+        # The vocabulary note, printed for every arm rather than only for the
+        # odd one out: a reader comparing two blocks needs both definitions in
+        # front of them, and only one of them being stated invites the reading
+        # that the unstated one is the default.
+        _print_harness_note(f"a step here is {seat.dialect.steps_are}")
         if calls:
             print("  tool mix       " + ", ".join(
                 f"{tool}x{n}"
                 + (f" ({elapsed[tool] / 1000:.0f}s)" if tool in elapsed else "")
                 for tool, n in sorted(calls.items(), key=lambda kv: -kv[1])
             ))
-        counted = totals.get("tokens_out", 0) or totals.get("prompt_tokens", 0)
-        if counted:
-            print(
-                f"  spend          {totals.get('tokens_out', 0)} out, "
-                f"{totals.get('prompt_tokens', 0)} in "
-                f"({totals.get('cache_read', 0)} from cache), "
-                f"{totals.get('thinking_tokens', 0)} reasoning (est.), "
-                f"${totals.get('total_cost', 0.0):.4f} self-reported"
-            )
-        else:
-            # Zeroed usage on the wire is a real, route-dependent thing: a seat
-            # pointed at a non-Anthropic endpoint through ANTHROPIC_BASE_URL
-            # gets `{"input_tokens": 0, "output_tokens": 0}` on every streamed
-            # message while the session transcript carries the true figures. It
-            # is not "this trial was free", and printing a 0 beside a nonzero
-            # cost would read as exactly that.
-            print(
-                f"  spend          stream reported no usage "
-                f"(gateway route); {totals.get('thinking_tokens', 0)} reasoning "
-                f"(est.), ${totals.get('total_cost', 0.0):.4f} self-reported"
-            )
-            print(
-                "                 token counts for this arm come from the ATIF "
-                "trajectory instead — see `arenabench series`"
-            )
-        print(
-            f"  clock          {totals.get('duration_ms', 0) / 1000:.0f}s wall, "
-            f"{totals.get('api_ms', 0) / 1000:.0f}s in provider calls, "
-            f"{totals.get('tool_wall_ms', 0) / 1000:.0f}s in tools"
-        )
-        # Deliberately not subtracted into an "overhead" figure: Harbor runs
-        # this CLI with background tasks forced on, so tools and provider calls
-        # overlap and the difference goes negative on real trials.
+        _print_harness_spend(seat)
+        clock = []
+        if "duration_ms" not in unpublished:
+            clock.append(f"{totals.get('duration_ms', 0) / 1000:.0f}s wall")
+        if "api_ms" not in unpublished:
+            clock.append(f"{totals.get('api_ms', 0) / 1000:.0f}s in provider calls")
+        clock.append(f"{totals.get('tool_wall_ms', 0) / 1000:.0f}s in tools")
+        # Deliberately not subtracted into an "overhead" figure: both harnesses
+        # overlap tools with provider calls — Harbor forces background tasks on
+        # for Claude Code, and Stella speculates read-only calls — so the
+        # difference goes negative on real trials.
+        print("  clock          " + ", ".join(clock))
+        if unpublished:
+            # Named, not omitted. A column this arm's stream never carries is
+            # a gap in the apparatus, and a reader who cannot see the list
+            # reads the arm as having scored zero on every one of them.
+            _print_harness_note(", ".join(sorted(unpublished)), label="not published")
+            _print_harness_note("(absent from this arm's stream — not zeros)")
     print(
         "\nCost is the agent's own figure and is never compared across seats — "
         "each vendor prices from its own table. `arenabench series` recomputes "
         "both arms at one rate."
     )
+    print(
+        "Read each block's step note before putting two arms' steps in one "
+        "column: they are different units."
+    )
     return 0
+
+
+#: Where a harness block's values start, in columns. The label column is
+#: 15 wide after a two-space indent, which is what every row here has always
+#: used; a wrapped continuation lines up under the value rather than under the
+#: label, so a long note reads as one field instead of as several.
+_HARNESS_LABEL = 15
+_HARNESS_INDENT = " " * (2 + _HARNESS_LABEL)
+
+
+def _print_harness_note(text: str, label: str = "") -> None:
+    """One field of a harness block, wrapped into the value column."""
+    lines = textwrap.wrap(text, width=96 - len(_HARNESS_INDENT)) or [""]
+    print(("  " + label.ljust(_HARNESS_LABEL) if label else _HARNESS_INDENT) + lines[0])
+    for line in lines[1:]:
+        print(_HARNESS_INDENT + line)
+
+
+def _print_harness_profile(seat: SeatBehaviour) -> None:
+    """The boot disclosure half of one arm's block.
+
+    An arm whose stream carries no self-description gets one line saying so
+    rather than a column of `?`: the absence is a property of that harness, and
+    the SUT commit in `provenance.sut_seats` is what identifies it instead.
+    """
+    if not seat.dialect.boot_disclosure:
+        _print_harness_note(
+            "not disclosed on this arm's stream — the SUT commit identifies it "
+            "(`arenabench provenance`)",
+            label="boot",
+        )
+        models = seat.totals.get("models") or []
+        _print_harness_note(", ".join(models) if models else "?", label="models")
+        return
+    profile = seat.profile
+    print(f"  product        {profile.version or '?'}")
+    print(f"  model          {profile.model or '?'}")
+    print(f"  permission     {profile.permission_mode or '?'}")
+    print(f"  credential     {profile.api_key_source or '?'}")
+    print(f"  tools offered  {len(profile.tools)}  ({', '.join(profile.tools)})")
+    if profile.mcp_servers:
+        print(f"  mcp servers    {', '.join(profile.mcp_servers)}")
+    if profile.skills:
+        print(f"  skills         {len(profile.skills)}")
+    if profile.subagents:
+        print(f"  subagents      {', '.join(profile.subagents)}")
+
+
+def _print_harness_spend(seat: SeatBehaviour) -> None:
+    """The token half of one arm's block, or an honest statement of its absence.
+
+    Three outcomes, never two. A seat routed through `ANTHROPIC_BASE_URL` to a
+    non-Anthropic gateway streams `{"input_tokens": 0, "output_tokens": 0}` on
+    every message while its own session transcript carries the real figures, so
+    the reader falls back to the transcript and says which source it used
+    (#2520). Only when *neither* source has published anything is the column
+    unknown — and unknown is printed as unknown, because a `0` beside a nonzero
+    self-reported cost reads as an efficiency claim.
+    """
+    from .harness import USAGE_STREAM, USAGE_TRANSCRIPT
+
+    totals, unpublished = seat.totals, seat.dialect.unpublished
+    reasoning = (
+        [] if "thinking_tokens" in unpublished
+        else [f"{totals.get('thinking_tokens', 0)} reasoning (est.)"]
+    )
+    cost = f"${totals.get('total_cost', 0.0):.4f} self-reported"
+    measured = {USAGE_STREAM, USAGE_TRANSCRIPT} & set(seat.usage_sources)
+    if not measured:
+        _print_harness_note(
+            "stream reported no usage (gateway route) and no session transcript "
+            "carried any either",
+            label="spend",
+        )
+        _print_harness_note(", ".join(["unknown, not zero", *reasoning, cost]))
+        _print_harness_note(
+            "token counts for this arm arrive with the ATIF trajectory at "
+            "teardown — see `arenabench series`"
+        )
+        return
+    _print_harness_note(
+        ", ".join(
+            [
+                f"{totals.get('tokens_out', 0)} out",
+                f"{totals.get('prompt_tokens', 0)} in "
+                f"({totals.get('cache_read', 0)} from cache)",
+                *reasoning,
+                cost,
+            ]
+        ),
+        label="spend",
+    )
+    if USAGE_TRANSCRIPT in seat.usage_sources:
+        _print_harness_note(
+            "read from the session transcript: this seat's streamed counters "
+            "are zeroed by its gateway route"
+        )
 
 
 def _cmd_provenance(args: argparse.Namespace) -> int:

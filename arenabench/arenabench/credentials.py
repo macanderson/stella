@@ -47,6 +47,7 @@ __all__ = [
     "credentials_path",
     "load_credentials",
     "missing_required_credentials",
+    "resolve_launch_credentials",
 ]
 
 
@@ -140,6 +141,38 @@ def apply_ambient_credentials(
     if all(new is old for new, old in zip(contestants, spec.contestants)):
         return spec
     return replace(spec, contestants=contestants)
+
+
+def resolve_launch_credentials(spec: MatchSpec) -> tuple[MatchSpec, list[str]]:
+    """Every fill layer, in the launch order, as one call.
+
+    The three layers below are the whole answer to "which credential reaches
+    which seat", and both entry points must get the same answer: a template
+    launched from the UI and the same template under ``arenabench run`` are
+    supposed to reproduce each other, and a divergence here is invisible in
+    every artifact either one writes.
+
+    They diverged for real. ``arenabench run`` inlined its own ambient fill
+    over :func:`~.config.required_env`'s *derived* candidate set rather than
+    calling :func:`apply_ambient_credentials`, so an undeclared ``claude-code``
+    seat picked up an ambient ``CLAUDE_CODE_OAUTH_TOKEN`` through the CLI and
+    nothing at all through the server — two arms an operator believed were on
+    separate credentials, both on one subscription, with only the entry point
+    to tell them apart (#2654). One implementation is the fix; this function
+    is it.
+
+    Order and gap-filling are load-bearing and documented on each layer: a
+    seat's own ``.env`` outranks the ambient environment, which outranks the
+    saved credential file, which outranks this machine's Claude login. Returns
+    the resolved spec and one note per seat filled from the local login, for a
+    caller that reports where a credential came from without ever saying what
+    it was.
+    """
+    from .claude_oauth import apply_local_claude_login
+
+    spec = apply_ambient_credentials(spec)
+    spec = apply_saved_credentials(spec)
+    return apply_local_claude_login(spec)
 
 
 def missing_required_credentials(spec: MatchSpec) -> dict[str, list[str]]:
