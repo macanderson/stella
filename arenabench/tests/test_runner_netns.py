@@ -20,7 +20,9 @@ namespace to manipulate and is covered by the smoke job.
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -57,15 +59,42 @@ def test_a_free_instance_is_claimed(tmp_path: Path) -> None:
 
 
 @needs_flock
+
+def _spawn_holder(lock: Path) -> subprocess.Popen[bytes]:
+    """A process that really holds ``lock``, and can really be killed.
+
+    ``flock <file> <cmd>`` opens the file, takes the lock, and runs ``cmd`` as a
+    **child** that inherits the open descriptor. So killing the `flock` pid
+    alone leaves that child alive still holding the descriptor — and therefore
+    still holding the lock. A test that did so would observe REFUSED after the
+    "holder" had died and read it as the guard being wrong, when what actually
+    survived was the test's own orphan. It also strands a `sleep` for the CI
+    runner to reap, which is the visible symptom.
+
+    So the holder gets its own session and is killed by process group.
+    """
+    return subprocess.Popen(
+        ["flock", str(lock), "sleep", "30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def _kill_holder(holder: "subprocess.Popen[bytes]") -> None:
+    """Kill the holder *and* the child holding the descriptor."""
+    try:
+        os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    holder.wait(timeout=10)
+
+
 def test_a_lock_held_by_a_live_process_is_refused(tmp_path: Path) -> None:
     lock = tmp_path / ".instance-netns.lock"
     lock.touch()
     # A neighbour that is genuinely still running: holds the lock and sleeps.
-    holder = subprocess.Popen(
-        ["flock", str(lock), "sleep", "30"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    holder = _spawn_holder(lock)
     try:
         # `flock` needs a moment to actually acquire before we race it.
         subprocess.run(["sleep", "0.5"], check=True)
@@ -73,8 +102,7 @@ def test_a_lock_held_by_a_live_process_is_refused(tmp_path: Path) -> None:
         assert result.returncode != 0, "a live neighbour must be refused"
         assert "REFUSED" in result.stdout
     finally:
-        holder.kill()
-        holder.wait(timeout=10)
+        _kill_holder(holder)
 
 
 @needs_flock
@@ -86,14 +114,9 @@ def test_a_lock_whose_holder_died_is_reclaimed(tmp_path: Path) -> None:
     kernel dropped the lock when the holder died, so the instance is free.
     """
     lock = tmp_path / ".instance-netns.lock"
-    holder = subprocess.Popen(
-        ["flock", str(lock), "sleep", "30"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    holder = _spawn_holder(lock)
     subprocess.run(["sleep", "0.5"], check=True)
-    holder.kill()
-    holder.wait(timeout=10)
+    _kill_holder(holder)
 
     assert lock.exists(), "the file outlives the holder; only the lock is dropped"
     assert "CLAIMED" in _claim(tmp_path).stdout
