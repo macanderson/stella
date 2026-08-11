@@ -53,6 +53,14 @@
 //!   of the *next* `verify_done`, because removing it requires an awaited
 //!   subprocess.
 //!
+//! # When the setup, not the test, is what defeated the proof
+//!
+//! A `cd` to an absolute path in `test_cmd` walks the shadow run out of the
+//! tree it was aimed at; naming the deliverable in `test_files` layers it onto
+//! the baseline. Both make a correct test look vacuous, and the verdict used
+//! to blame the test for each. The `defeater` submodule beside this one
+//! (`src/verify/defeater.rs`) detects them (#2871).
+//!
 //! # Reading the verdict
 //!
 //! The shadow run's output tail is always included: a shadow failure that
@@ -87,6 +95,7 @@
 //! own output.
 
 mod creation;
+mod defeater;
 mod memo;
 mod phases;
 
@@ -570,6 +579,10 @@ impl VerifyDone {
     ) -> Result<(ToolOutput, Verdict), String> {
         let setup = Phase::start();
         let test_cmd = crate::input::required_str(input, "test_cmd").map_err(|e| e.to_string())?;
+        // Before anything expensive, and refused rather than rewritten (#2871).
+        if let Some(refusal) = defeater::cwd_refusal(test_cmd) {
+            return Err(refusal);
+        }
         let test_files: Vec<String> = input
             .get("test_files")
             .and_then(|v| v.as_array())
@@ -780,21 +793,17 @@ impl VerifyDone {
         };
 
         if old_exit == 0 {
-            return Ok((
-                ToolOutput::Error {
-                    message: format!(
-                        "VACUOUS TEST — the witness test ALSO PASSES on the previous code \
-                         (baseline {}, {}). It does not witness your change: either the \
-                         behavior already existed, the test doesn't exercise the new behavior, \
-                         or your change isn't wired in. Strengthen the test so it fails without \
-                         your change.{reuse_note}\n--- previous-code output tail ---\n{}",
-                        baseline.short(),
-                        baseline.provenance,
-                        tail(&old_output)
-                    ),
-                },
-                Verdict::Vacuous,
-            ));
+            // Which defeater this names comes from observations of the
+            // workspace, never from the guesses it used to offer (#2871).
+            let message = defeater::vacuous_verdict(
+                root,
+                &baseline,
+                &resolved,
+                reuse_note,
+                tail(&old_output),
+            )
+            .await;
+            return Ok((ToolOutput::Error { message }, Verdict::Vacuous));
         }
 
         // A failure while LOADING the test is not a failure OF the test:
@@ -902,7 +911,7 @@ mod tests {
     /// exactly like the production paths (`git_in`) — without this, running
     /// the suite from inside a git hook (the pre-push gate) re-targets every
     /// command at the HOST repo. Returns stdout; panics on failure.
-    fn scratch_git(root: &std::path::Path, args: &[&str]) -> String {
+    pub(super) fn scratch_git(root: &std::path::Path, args: &[&str]) -> String {
         let mut cmd = std::process::Command::new("git");
         cmd.args(args).current_dir(root);
         for var in crate::exec::GIT_REPO_ENV_VARS {

@@ -183,6 +183,18 @@ verdict always includes the previous-code output tail: a *compile* error is a mu
 witness than an assertion failure, and the reader — model or verifier — is told to check which it
 got.
 
+**A negative verdict must name the defeater it observed, not guess at three.** `VACUOUS TEST`
+used to offer "the behavior already existed / the test doesn't exercise it / your change isn't
+wired in" and close with "strengthen the test" — advice that cannot terminate when the test was
+never the problem. Two setup defects produced nearly all of it on the 2026-08-11 Terminal-Bench
+panel, and both are decidable (#2871): a `cd` to an absolute path inside `test_cmd` walks the
+shadow run back out of the tree it was aimed at, and naming the change's deliverable in
+`test_files` layers that deliverable onto the baseline so the previous code cannot fail. The
+first is refused before either run; the second is read off a per-file comparison against the
+baseline blob and named in the verdict. `src/verify/defeater.rs` holds both, plus the discipline
+each message keeps — say the mechanism, name the observation it came from, state the repair, and
+never accuse the test of a fault the call did not observe.
+
 ## Gotchas
 
 - **A tool's timings never go in its `ToolOutput`.** That value is what
