@@ -39,6 +39,121 @@ are not user-facing and do not appear here.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-11
+
+Everything since 0.8.0 — the whole 0.8 line. Verification stopped buying model
+calls and started ending the turn the moment a proof lands; a turn now survives
+the provider failing underneath it instead of dying with it; and the tool
+surface grew a scratch state plane, environment probes, and an interactive
+approval/skill/hook layer a host process can drive.
+
+### Added
+
+- **Verification halts on proof.** Stop-on-proof kills in-flight tools the
+  moment the oracle flips, `verify_done` fires the halt rather than merely
+  being tallied, and task mode has to earn its declaration (#2662). A confirmed
+  `verify_done` now carries a deterministic pass (#2652).
+- **A turn survives its provider.** Mid-turn model fallback re-resolves through
+  the router when retries are exhausted, repairs the transcript, and continues
+  the turn (#2769) — wired into the pipeline in #2826. Alongside it: a
+  streaming→non-streaming fallback for hung or empty streams with a first-byte
+  deadline (#2686, #2748), reactive recovery from provider context-overflow
+  errors (#2680, #2752), a retry ladder that parks under sustained rate
+  limiting instead of aborting (#2677, #2744), and circuit-breaker feedback
+  wired so provider failover actually trips (#2673, #2734).
+- **A session scratch state plane** — `save_state` / `get_state` /
+  `list_state` / `delete_state`, the reference shape for the single-purpose
+  tool rule (#2696, #2714).
+- **Tools that answer what the environment is**: `get_environment` shares the
+  system prompt's own env probes (#2758), `probe_capability` does safe PATH
+  lookups (#2760), and `clear_output` is split out of `read_output` (#2717).
+  `repo_status` and `project_overview` were made worth calling (#2551), with
+  the three git readers turned into an explicit ladder (#2576).
+- **The interactive surface a host can drive** — approval flow, `invoke_skill`,
+  hook expansion, MCP auth and resources, working-set restore, and prompt
+  contracts (#2787), on top of four shared prompt contracts and a byte-stable
+  session-environment block (#2719).
+- **A signal-consumer ledger**: every `AgentEvent` variant declares what reads
+  it (#2720), generated from the tag table so totality is a compile error
+  rather than a red test (#2737). Diagnostics gained a generated code registry
+  with 43 codes documented and gated (#2693).
+- **Ingest grew a lifecycle.** Provenance lineages, staleness alerts, and
+  per-file dismissal (#2683, #2711); `--refresh` bitemporal retire-and-add with
+  supersession at keep and an accountable ledger (#2708, #2728, #2731); and
+  auto-promotion tiers for ingested records — pinned / scoped / retrieved
+  (#2709, #2762).
+- **Roles are configurable, so a stage can be ablated.** Research and plan are
+  independently configurable roles (#2553), and responsibility→agent binding is
+  configurable end to end (#2381, #2462).
+- **`/export` produces a replayable session transcript** in the row grammar the
+  page uses (#2606), scoped to one session rather than the whole workspace
+  store (#2573).
+- **The deck says more with less.** A `PROOF` panel that states its answer
+  replaces `DONE VERIFICATION` (#2568), a context recall renders as a table
+  instead of a paragraph (#2566), and the clock that will stop the run sits
+  beside the money (#2488). The plain surface renders markdown, stages,
+  reasoning, and git diffs (#2421, #2449).
+- **ArenaBench runs locally and records who served the call.** `arena-local`
+  launches a match with credentials resolved and a fresh SUT (#2655), the
+  opponent's harness is measured live and its product recorded (#2522), and the
+  gateway's upstream is pinned and carried through trial isolation (#2786,
+  #2788).
+- **A wall-clock journal axis and pipeline rung** (#2437), and tool-foundry
+  proposals ranked and gated on reuse ratio (#2441).
+
+### Changed
+
+- **Verification is model-free.** The model verdict and the distress-guidance
+  call are gone structurally, not by default — the roster rejects both keys, so
+  no configuration restores them (#2588, #2615, #2584). The one remaining
+  verifier-tier call authors the witness, because it creates the oracle rather
+  than substituting for one (#2637).
+- **Context-size accounting is anchored to provider-reported usage** rather
+  than estimated locally (#2739).
+- **Reflection asks the counterfactual**, not a proxy for it (#2465), and
+  selects its digest instead of truncating the tail — reading tool results for
+  the first time (#2460, #2494).
+- **MCP wire names are injective**, and colliding routes are dropped rather
+  than silently shadowed (#2675, #2729).
+- **The step loop is written once** — extracted as `Engine::drive` (#2452,
+  #2489).
+- **No benchmark trial carries a spend or token ceiling, for any agent**
+  (#2461), and a declared per-trial ceiling no longer blocks a launch (#2611).
+- **Every web surface stella renders is on one instrument palette** (#2597,
+  #2454, #2650).
+- **The tool-first, single-purpose rule is invariant #9**, written down instead
+  of enforced by habit (#2710).
+
+### Fixed
+
+- **A triage outage no longer routes the turn below `SingleTask`** — an
+  unavailable triage call downgraded the work it could not read (#2830).
+- **The witness stopped failing on the pipeline's own commits** (#2537), and
+  the evidence-routing chain that failed a correct git recovery was broken open
+  (#2531).
+- **A candidate worktree no longer moves the graded tree's refs** (#2643), and
+  an ambient `GIT_DIR` no longer retargets `project_overview` (#2561).
+  Read-only roles got a truthful route to git state (#2538).
+- **One roster answers who authors the witness, and a resume gets it back**
+  (#2458, #2467, #2493); a stage call the remaining task clock cannot fit is
+  declined (#2480), and the repair gate reads the clock that can actually stop
+  the run (#2470).
+- **Transcripts decode tool results and name the tool, on every surface**
+  (#2528).
+- **The observatory's ratings feed no longer lists turns the model never
+  graded** (#2443, #2501).
+- **A correct long-running service survives the agent's own exit** (#2766).
+- **Two open Dependabot alerts closed** (js-yaml, h2) (#2548).
+
+### Removed
+
+- **`STELLA_CONFIG_DIR`**, which named no resolver and quietly declined the
+  legacy-layout migration for processes sitting on the defaults (#2442, #2500).
+- **`Engine::run_session_start_hooks`** — `SessionStart` has one owner, the
+  host (#2674, #2727).
+- **The `require_independent_verifier` residue** (#2639) and the two inert
+  settings knobs left behind by the verdict removal (#2631).
+
 ## [0.8.0] — 2026-08-08
 
 Everything since 0.7.0 — the verification and scheduling gates got sharper,
