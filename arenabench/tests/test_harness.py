@@ -575,3 +575,431 @@ def test_zeroed_stream_usage_is_disclosed_not_printed_as_free(
     out = capsys.readouterr().out
     assert "stream reported no usage" in out
     assert "3.0200" in out
+
+
+# --------------------------------------------------------------------------
+# the Stella arm (#2519)
+# --------------------------------------------------------------------------
+
+
+def stella_tool_start(call_id: str, name: str, *, ts: float) -> dict:
+    return {
+        "type": "tool_start",
+        "ts": ts,
+        "call": {"call_id": call_id, "name": name, "input": {"command": "ls"}},
+    }
+
+
+def stella_tool_result(
+    call_id: str, *, ts: float, duration_ms: int | None = None, error: str = ""
+) -> dict:
+    # `ToolOutput` is externally tagged and carries no `is_error` field: the
+    # tag IS the verdict, which is the trap `arenabench.toolout` exists for.
+    output = {"error": {"message": error}} if error else {"ok": {"content": "ok"}}
+    event: dict = {"type": "tool_result", "ts": ts, "call_id": call_id, "output": output}
+    if duration_ms is not None:
+        event["duration_ms"] = duration_ms
+    return event
+
+
+def stella_step_usage(**kwargs) -> dict:
+    base = {
+        "type": "step_usage",
+        "ts": 1_000.0,
+        "step": 0,
+        "role": "worker",
+        "model": "anthropic/claude-opus-5",
+        "input_tokens": 120,
+        "output_tokens": 40,
+        "cached_input_tokens": 900,
+        "cache_write_tokens": 30,
+        "cost_usd": 0.0125,
+        "duration_ms": 3100,
+    }
+    base.update(kwargs)
+    return base
+
+
+def stella_stream() -> list[dict]:
+    """One small Stella trial: two tools, one of them failed, two model calls."""
+    return [
+        {"type": "stage", "name": "execute"},
+        stella_step_usage(),
+        stella_tool_start("c1", "bash", ts=1_000.0),
+        stella_tool_result("c1", ts=3_500.0, duration_ms=2_500),
+        stella_tool_start("c2", "read_file", ts=3_600.0),
+        stella_tool_result("c2", ts=4_560.0, duration_ms=960, error="no such file"),
+        stella_step_usage(step=1, role="verifier", model="openai/gpt-5", cost_usd=0.004),
+        {"type": "complete", "model": "anthropic/claude-opus-5", "cost_usd": 0.0165},
+    ]
+
+
+def test_a_stella_stream_folds_into_the_shared_vocabulary(tmp_path: Path) -> None:
+    """**The witness for #2519.** A Stella arm reduces to `HarnessTotals`.
+
+    Fails on the code this replaces: `harness.py` could fold exactly one
+    spelling — Claude Code's stream-json tee — so a Stella trial produced no
+    reading at all and the one command whose whole purpose is "compare the two
+    harnesses" could describe one of them.
+    """
+    path = tmp_path / STELLA_EVENTS_NAME
+    write_stream(path, stella_stream())
+
+    result = reduce_stream(path, STELLA)
+    assert result is not None
+    _, totals = result
+    assert totals.tools == 2
+    assert totals.tool_calls == {"bash": 1, "read_file": 1}
+    assert totals.tool_ms == {"bash": 2500, "read_file": 960}
+    assert totals.tool_wall_ms == 3460
+    assert totals.tool_errors == 1
+    assert totals.steps == 2
+    assert totals.tokens_in == 240
+    assert totals.tokens_out == 80
+    assert totals.cache_read == 1800
+    assert totals.cache_write == 60
+    assert totals.models == ("anthropic/claude-opus-5", "openai/gpt-5")
+    assert totals.total_cost == 0.0165
+    assert totals.complete is True
+    assert totals.usage_source == USAGE_STREAM
+
+
+def test_a_stella_tool_prefers_the_engines_own_duration(tmp_path: Path) -> None:
+    """`duration_ms` is a measurement; the timestamp gap is only a fallback.
+
+    The gap between two journal stamps also charges the tool for the time its
+    result spent being written. The engine measured the call itself, so its
+    figure wins — and a stream that carries no duration still gets the join,
+    rather than losing the call's wall clock entirely.
+    """
+    path = tmp_path / STELLA_EVENTS_NAME
+    write_stream(
+        path,
+        [
+            stella_tool_start("c1", "bash", ts=1_000.0),
+            stella_tool_result("c1", ts=9_000.0, duration_ms=2_500),
+            stella_tool_start("c2", "grep", ts=10_000.0),
+            stella_tool_result("c2", ts=10_400.0),
+        ],
+    )
+    _, totals = reduce_stream(path, STELLA)
+    assert totals.tool_ms == {"bash": 2500, "grep": 400}
+
+
+def test_discarded_speculation_counts_its_call_and_invents_no_duration(
+    tmp_path: Path,
+) -> None:
+    """A speculative call whose answer was thrown away still really ran.
+
+    It is not an error — the tool worked, the model never saw the result — and
+    it has no observed duration, so neither is fabricated.
+    """
+    path = tmp_path / STELLA_EVENTS_NAME
+    write_stream(
+        path,
+        [
+            stella_tool_start("c1", "read_file", ts=1_000.0),
+            {
+                "type": "speculation_discarded",
+                "ts": 1_200.0,
+                "call_id": "c1",
+                "name": "read_file",
+                "reason": "harvest_mismatch",
+            },
+        ],
+    )
+    _, totals = reduce_stream(path, STELLA)
+    assert totals.tool_calls == {"read_file": 1}
+    assert totals.tool_ms == {}
+    assert totals.tool_errors == 0
+
+
+def test_a_stella_stream_reads_incrementally_like_a_single_pass(tmp_path: Path) -> None:
+    """The cursor is shared machinery, so it must hold for the new arm too."""
+    path = tmp_path / STELLA_EVENTS_NAME
+    reader = StreamReader()
+    for event in stella_stream():
+        write_stream(path, [event])
+        reader.read(path, STELLA)
+    incremental = reader.read(path, STELLA)
+    oneshot = reduce_stream(path, STELLA)
+    assert incremental is not None and oneshot is not None
+    assert incremental[1].to_json() == oneshot[1].to_json()
+
+
+def test_stella_publishes_no_boot_disclosure_rather_than_an_invented_one(
+    tmp_path: Path,
+) -> None:
+    """The profile stays empty: Stella's stream has no boot event to read.
+
+    Back-filling `model` from the first `step_usage` would report a pipeline
+    role's model as the seat's, and back-filling `tools` from the calls the run
+    happened to make would report "used" as "offered". Both are the sort of
+    plausible wrong number this module refuses.
+    """
+    path = tmp_path / STELLA_EVENTS_NAME
+    write_stream(path, stella_stream())
+    profile, _ = reduce_stream(path, STELLA)
+    assert STELLA.boot_disclosure is False
+    assert profile.model == ""
+    assert profile.tools == ()
+
+
+def test_every_dialect_declares_only_fields_it_leaves_alone() -> None:
+    """`unpublished` is a claim about the fold, and it is checked against it.
+
+    Two halves, because either alone can rot: every name must be a real
+    `HarnessTotals` field (so a rename cannot strand an entry), and folding a
+    stream that exercises the dialect must leave each of those fields at its
+    default (so a dialect cannot declare a column absent while quietly filling
+    it in).
+    """
+    fields = {f.name: f for f in dataclasses.fields(HarnessTotals)}
+    streams = {CLAUDE_CODE.arm: [], STELLA.arm: stella_stream()}
+    for dialect in DIALECTS:
+        fold = dialect.new_fold()
+        for event in streams[dialect.arm]:
+            fold.consume([json.dumps(event).encode()])
+        for name in dialect.unpublished:
+            assert name in fields, f"{dialect.arm} declares unknown field {name}"
+            assert getattr(fold.totals, name) == fields[name].default
+
+
+def test_a_seat_summary_unions_models_and_never_sums_a_boolean(tmp_path: Path) -> None:
+    """One seat's trials fold to one block: counters add, model ids union."""
+    reader = StreamReader()
+    readings = []
+    for index in (1, 2):
+        trial = tmp_path / f"t{index}"
+        write_stream(trial / STELLA_EVENTS_NAME, stella_stream())
+        readings.append(reader.read_arm(trial, STELLA))
+    seat = summarize(readings)
+    assert seat is not None
+    assert seat.trials == 2
+    assert seat.totals["tools"] == 4
+    assert seat.totals["tool_calls"] == {"bash": 2, "read_file": 2}
+    assert seat.totals["models"] == ["anthropic/claude-opus-5", "openai/gpt-5"]
+    assert "complete" not in seat.totals
+    assert seat.usage_sources == (USAGE_STREAM,)
+    assert summarize([]) is None
+
+
+def test_the_harness_command_reports_both_arms(tmp_path: Path, capsys) -> None:
+    """**The witness for #2519, at the operator's surface.**
+
+    A match with one Stella job and one Claude Code job prints two blocks in
+    one layout, with comparable `tool_calls` and `tool_ms`. Before this the
+    same match printed "no arm published a harness stream" for the Stella half
+    — the comparison command describing one side of a comparison.
+    """
+    from arenabench.cli import _cmd_harness
+
+    jobs = tmp_path / "matches" / "m1" / "jobs"
+    write_stream(
+        jobs / "m1-claude-code" / "t__a" / STREAM_NAME,
+        [
+            init_event(),
+            assistant(
+                "msg_a",
+                blocks=[{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}],
+                usage={"input_tokens": 5, "output_tokens": 9},
+                timestamp="2026-08-09T00:00:00.000Z",
+            ),
+            tool_result("t1", timestamp="2026-08-09T00:00:01.000Z"),
+            result_event(),
+        ],
+    )
+    write_stream(jobs / "m1-stella" / "t__a" / STELLA_EVENTS_NAME, stella_stream())
+
+    args = argparse.Namespace(workspace=str(tmp_path), match="m1")
+    assert _cmd_harness(args) == 0
+    out = capsys.readouterr().out
+
+    assert "m1-claude-code" in out and "m1-stella" in out
+    # Comparable behaviour, in one vocabulary: both arms report their mix and
+    # their per-tool wall clock.
+    assert "Bashx1 (1s)" in out
+    assert "bashx1 (2s)" in out
+    assert "read_filex1 (1s)" in out
+    # …and the report says where the vocabularies genuinely differ, so nobody
+    # puts the two step counts in one column.
+    assert "one assistant message per model turn" in out
+    assert "one model call per pipeline role" in out
+    # Stella's stream carries no boot event and no reasoning estimate; both are
+    # disclosed as absent rather than printed as zero.
+    assert "not disclosed on this arm's stream" in out
+    assert "thinking_tokens" in out
+    assert "0 reasoning (est.)" not in out.split("m1-stella")[1]
+
+
+# --------------------------------------------------------------------------
+# a gateway-routed seat's tokens (#2520)
+# --------------------------------------------------------------------------
+
+#: Where Claude Code appends its own session transcript inside a trial, which
+#: is where the tokens are while the stdout stream reports zeros. Harbor points
+#: `CLAUDE_CONFIG_DIR` at `/logs/agent/sessions`.
+TRANSCRIPT_NAME = "agent/sessions/projects/-app-repo/e1b7.jsonl"
+
+
+def zeroed_stream() -> list[dict]:
+    """What a seat routed through `ANTHROPIC_BASE_URL` to a gateway streams.
+
+    Measured on a real archived trial: 87 assistant messages carrying usage, of
+    which zero had a nonzero counter.
+    """
+    return [
+        init_event(model="glm-5.2"),
+        assistant(
+            "msg_a",
+            blocks=[{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}],
+            usage={"input_tokens": 0, "output_tokens": 0},
+            timestamp="2026-08-09T00:00:00.000Z",
+        ),
+        tool_result("t1", timestamp="2026-08-09T00:00:02.000Z"),
+        assistant("msg_b", usage={"input_tokens": 0, "output_tokens": 0}),
+    ]
+
+
+def transcript_lines() -> list[dict]:
+    """The same two messages as the CLI's own session file records them.
+
+    One line per content block, each carrying the message's *accumulated*
+    usage — the same shape as the stdout stream, and the same over-counting
+    trap: a naive sum here reports 1.76x the output tokens.
+    """
+    return [
+        {"type": "summary", "summary": "make mips interpreter"},
+        assistant("msg_a", usage={"input_tokens": 11, "output_tokens": 40}),
+        assistant(
+            "msg_a",
+            usage={
+                "input_tokens": 11,
+                "output_tokens": 118,
+                "cache_read_input_tokens": 551_258,
+                "cache_creation_input_tokens": 18_006,
+            },
+        ),
+        assistant("msg_b", usage={"input_tokens": 26, "output_tokens": 7}),
+    ]
+
+
+def test_a_gateway_routed_seat_reads_its_tokens_from_the_transcript(
+    tmp_path: Path,
+) -> None:
+    """**The witness for #2520.** Live tokens for a seat the stream zeroes.
+
+    Fails on the code this replaces: the stdout stream was the only source, so
+    a gateway-routed arm's token and cache columns stayed dark until the ATIF
+    trajectory landed at teardown — deliberately absent here, which is what a
+    trial directory looks like while the agent is still working.
+    """
+    trial = tmp_path / "make-mips-interpreter__t9J"
+    write_stream(trial / STREAM_NAME, zeroed_stream())
+    write_stream(trial / TRANSCRIPT_NAME, transcript_lines())
+    assert not (trial / "agent" / "trajectory.json").exists()
+
+    metrics = MetricsReader().read(trial, task="make-mips-interpreter")
+
+    assert metrics.behaviour is not None
+    assert metrics.behaviour.usage_source == USAGE_TRANSCRIPT
+    # Credited per message id, not summed per line: 118 + 7, never 165.
+    assert metrics.behaviour.tokens_out == 125
+    assert metrics.behaviour.tokens_in == 37
+    assert metrics.behaviour.cache_read == 551_258
+    assert metrics.behaviour.cache_write == 18_006
+    assert metrics.tokens_out == 125
+    assert metrics.tokens_in == 569_301  # ATIF's convention: input + both legs
+    assert metrics.usage_measured is True
+    # The behaviour the stdout stream already carried is unchanged by the
+    # fallback — the transcript is consulted for the counters and nothing else.
+    assert metrics.steps == 2
+    assert metrics.tools == 1
+    assert metrics.behaviour.tool_ms == {"Bash": 2000}
+
+
+def test_the_transcript_is_a_fallback_and_never_an_addend(tmp_path: Path) -> None:
+    """Both sources describe the same messages, so a sum would double them."""
+    trial = tmp_path / "t__a"
+    write_stream(
+        trial / STREAM_NAME,
+        [init_event(), assistant("msg_a", usage={"input_tokens": 3, "output_tokens": 9})],
+    )
+    write_stream(
+        trial / TRANSCRIPT_NAME,
+        [assistant("msg_a", usage={"input_tokens": 3, "output_tokens": 9})],
+    )
+    reading = StreamReader().read_arm(trial, CLAUDE_CODE)
+    assert reading is not None
+    assert reading.totals.usage_source == USAGE_STREAM
+    assert reading.totals.tokens_out == 9
+
+
+def test_a_transcript_read_in_pieces_credits_each_message_once(tmp_path: Path) -> None:
+    """The fallback is incremental too: the transcript is stream-sized."""
+    trial = tmp_path / "t__a"
+    write_stream(trial / STREAM_NAME, zeroed_stream())
+    reader = StreamReader()
+    for line in transcript_lines():
+        write_stream(trial / TRANSCRIPT_NAME, [line])
+        reader.read_arm(trial, CLAUDE_CODE)
+    incremental = reader.read_arm(trial, CLAUDE_CODE)
+
+    fresh = StreamReader().read_arm(trial, CLAUDE_CODE)
+    assert incremental is not None and fresh is not None
+    assert incremental.totals.to_json() == fresh.totals.to_json()
+    assert incremental.totals.tokens_out == 125
+
+
+def test_no_source_publishing_usage_reads_as_unobserved_not_as_zero(
+    tmp_path: Path,
+) -> None:
+    """The distinction the whole fix turns on, and the one a `0` destroys."""
+    trial = tmp_path / "t__a"
+    write_stream(trial / STREAM_NAME, zeroed_stream())
+    reading = StreamReader().read_arm(trial, CLAUDE_CODE)
+    assert reading is not None
+    assert reading.totals.usage_source == USAGE_UNOBSERVED
+    assert reading.totals.tokens_out == 0
+    # …and the scoreboard still refuses to price it, because nothing measured
+    # it — the guard that keeps a real $0.79 from being published as $0.00.
+    metrics = MetricsReader().read(trial, task="t")
+    assert metrics.usage_measured is False
+    assert metrics.priced_cost is None
+
+
+def test_an_arm_on_a_working_route_never_opens_the_transcript(tmp_path: Path) -> None:
+    """The fallback costs the arm it is not for exactly nothing.
+
+    Asserted by making the transcript say something the totals must not
+    contain: a fold that drained it would report 4000 output tokens.
+    """
+    trial = tmp_path / "t__a"
+    write_stream(
+        trial / STREAM_NAME,
+        [init_event(), assistant("msg_a", usage={"input_tokens": 3, "output_tokens": 9})],
+    )
+    write_stream(
+        trial / TRANSCRIPT_NAME,
+        [assistant("msg_z", usage={"input_tokens": 1, "output_tokens": 4000})],
+    )
+    reading = StreamReader().read_arm(trial, CLAUDE_CODE)
+    assert reading is not None
+    assert reading.totals.tokens_out == 9
+
+
+def test_the_harness_command_says_which_source_the_tokens_came_from(
+    tmp_path: Path, capsys
+) -> None:
+    """A number a reader cannot source is a number they cannot defend."""
+    from arenabench.cli import _cmd_harness
+
+    trial = tmp_path / "matches" / "m1" / "jobs" / "m1-claude-code" / "t__a"
+    write_stream(trial / STREAM_NAME, zeroed_stream())
+    write_stream(trial / TRANSCRIPT_NAME, transcript_lines())
+    args = argparse.Namespace(workspace=str(tmp_path), match="m1")
+    assert _cmd_harness(args) == 0
+    out = capsys.readouterr().out
+    assert "125 out" in out
+    assert "read from the session transcript" in out
+    assert "stream reported no usage" not in out
