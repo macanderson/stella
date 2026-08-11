@@ -735,7 +735,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     );
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let interactive = InteractiveToolSet::new(&registry, event_tx, default_ask_io(false));
-    let interactive = match skill_registry_for_run(root.to_path_buf()) {
+    let interactive = match engine::skill_registry_for_run(root.to_path_buf()) {
         Some(registry) => interactive.with_skill_registry(registry),
         None => interactive,
     };
@@ -793,7 +793,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     assert!(!normal_rules.is_empty());
     assert_eq!(normal_skills.len(), 2);
     assert_eq!(normal_custom_tools.len(), 2);
-    assert!(skill_registry_for_run(root.to_path_buf()).is_some());
+    assert!(engine::skill_registry_for_run(root.to_path_buf()).is_some());
     assert!(matches!(load_mcp_plan(&cfg), McpPlan::Invalid(_)));
 }
 

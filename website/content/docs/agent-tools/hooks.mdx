@@ -1,6 +1,6 @@
 ---
 title: Hooks
-description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, and PostToolUse — configured under the hooks key in settings.json.
+description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, PostToolUse, Stop, and PreCompact — configured under the hooks key in settings.json.
 ---
 
 Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
@@ -16,7 +16,7 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 ## Events
 
-stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+stella fires hooks on five lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
 
 <HookLifecycleDiagram />
 
@@ -33,6 +33,14 @@ stella fires hooks on three lifecycle events. Each behaves differently, and each
     Runs after a tool executes. **Never blocks** — side effects only. The matcher is a glob
     over the tool name.
   </OptionCard>
+  <OptionCard name="Stop">
+    Runs when a turn is about to complete. A `deny` decision holds the turn open **once per
+    turn**, feeding its reason back to the model. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="PreCompact">
+    Runs before an overflow-summarization round. A `deny` decision vetoes the round; a
+    `modify` decision can steer the summarizer. The matcher is ignored.
+  </OptionCard>
 </CardGrid>
 
 ### `SessionStart`
@@ -43,9 +51,19 @@ Runs once before the turn begins. Anything the hook prints to **stdout is append
 
 Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `bash` or a family of tools.
 
+A `PreToolUse` hook can also **decide** rather than just block: print one JSON decision document on stdout — the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) speaks — and stella folds it exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
+
 ### `PostToolUse`
 
-Runs after a tool executes. It is for **side effects only and never blocks** — its exit status cannot stop or undo the tool call that already ran. Use it for logging, formatting, notifications, or similar follow-up work. The matcher is a **glob over the tool name**.
+Runs after a tool executes. It is for **side effects only and never blocks** — its exit status cannot stop or undo the tool call that already ran. Use it for logging, formatting, notifications, or similar follow-up work. The matcher is a **glob over the tool name**. When a `modify` decision rewrote the input, the `PostToolUse` payload reports the input the tool actually ran with.
+
+### `Stop`
+
+Runs when a turn is about to complete, with the would-be final text in the payload's `finalText`. Printing `{"action":"deny","reason":"…"}` holds the turn open: the reason is injected back to the model as a `[stop-hook feedback` message and the model gets one more round to act on it. The gate fires **at most once per turn** — the latch that stops a hook which always denies from holding a turn open forever. A `Stop` hook that fails (non-zero exit, spawn failure) never blocks completion; the failure surfaces as a diagnostic instead, because failing closed at a turn boundary would mean never completing. The matcher is **ignored**.
+
+### `PreCompact`
+
+Runs before each overflow-summarization round (the model-written summary that replaces the oldest span when the conversation outgrows its context budget). Printing `{"action":"deny","reason":"…"}` vetoes the round — the transcript is left intact, at the risk of a later hard overflow — and `{"action":"modify","payload":{"instructions":"…"}}` appends your instructions to the summarizer's prompt (for example, "keep every file path verbatim"). A failing `PreCompact` hook proceeds un-vetoed, so a broken hook cannot starve compaction. The matcher is **ignored**.
 
 ## The stdin payload
 
@@ -65,21 +83,27 @@ Every hook receives one JSON document on stdin. Its shape:
 
 <CardGrid size="md">
   <OptionCard name="event">
-    String, always present. `"SessionStart"`, `"PreToolUse"`, or `"PostToolUse"` — the same
-    PascalCase names as the config keys.
+    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`, or
+    `"PreCompact"` — the same PascalCase names as the config keys.
   </OptionCard>
   <OptionCard name="cwd">
     String, always present. The workspace root — also the hook's working directory.
   </OptionCard>
   <OptionCard name="tool">
-    Object, on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": … }` — the tool's
-    exact name and the model-produced JSON input it was (or will be) called with.
+    Object, on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": …, "read_only": … }` —
+    the tool's exact name, the JSON input it was (or will be) called with, and the
+    `read_only` bit its schema advertises, so "deny anything non-read-only" is one `jq`
+    expression. Further tool-contract metadata joins here as it lands (#2716).
   </OptionCard>
   <OptionCard name="toolResult">
     String, on `PostToolUse` only. The result string the tool returned — either the
     success content or the error message. **Nothing clips it.** A hook matched against a
     tool that returns a large body receives that whole body on stdin, so if you only want a
     summary, truncate on your own side.
+  </OptionCard>
+  <OptionCard name="finalText">
+    String, on `Stop` only. The text the turn is about to complete with — whole, same
+    unclipped posture as `toolResult`.
   </OptionCard>
 </CardGrid>
 
@@ -149,7 +173,25 @@ esac
 exit 0
 ```
 
-Blocking is **fail-closed** on `PreToolUse`: a hook that times out or fails to start at all also blocks the tool, with the failure message as the reason — a missing or broken guard script never silently waves a call through. (`PostToolUse` and `SessionStart` never block on either failure mode.)
+Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason — a missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` deliberately fail open — see their sections.)
+
+## Decisions on stdout
+
+A hook that exits `0` may print **one JSON decision document** on stdout (the whole stdout, or its last non-empty line). The vocabulary is exactly the extension bus's `HookDecision` — one enum, no shell-surface dialect:
+
+```json
+{ "action": "allow" }
+{ "action": "deny", "reason": "…" }
+{ "action": "require_approval", "reason": "…" }
+{ "action": "modify", "payload": { "input": { … } } }
+```
+
+- **`deny`** blocks with your reason (on `PreToolUse`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
+- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use: the question is emitted before the wait, a human answers through the interactive surface, and the wait is bounded — on an interactive run you get the yes/no prompt; headless runs refuse with a message naming the grant path.
+- **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse` — later hooks in the chain see the rewritten payload) or steers the summarizer (`payload.instructions`, on `PreCompact`).
+- **`allow`** — or any stdout that is *not* a decision document — continues the chain; a chain that only modified ends allowed. Precedence is fixed: an operator deny outranks everything, `require_approval` outranks any allow.
+
+Stdout that parses as JSON with an `action` key **must** be a well-formed decision — a typo there fails the evaluation and denies, rather than silently allowing.
 
 ### A `PostToolUse` logger that respects the unbounded result
 
