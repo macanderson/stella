@@ -8,6 +8,10 @@ file and line.
 
 ## Papers
 
+- [**Self-Evolving Coding Agents — comparison with Stella**](./self-evolving-coding-agents-assessment.md)
+  — compares Stella 0.8.40's shipped and planned self-improvement surfaces
+  with Zhou et al.'s 2026 survey and extracts concrete backlog considerations.
+
 - [**Stella: A Defensible Technology Position**](./stella-defensible-position.md)
   — the capstone analysis. Identifies seven architectural invariants that make
   Stella's design expensive to replicate and shows why their *combination* —

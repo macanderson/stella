@@ -266,12 +266,13 @@ not, while recalled ones are paid for only when retrieved.
 
 ## Known limits
 
-The digest this prompt reasons over is the last 12 messages, each truncated to
-300 characters. The expensive part of a turn is usually in its middle, and the
-middle is what the tail window drops — so the model is asked what would have
-made the turn faster by a witness that cannot see where it was slow. This caps
-how good any wording here can be; #2460 tracks selecting the digest from the
-event stream instead.
+The selection digest now preserves the goal, friction, and turn tail under a
+bounded budget rather than reading a fixed tail window. Its remaining evidence
+gap is surface coverage: the staged-pipeline one-shot supplies the event-derived
+friction ledger, while #2483 tracks wiring that ledger on the other three
+surfaces. On those surfaces the selector can still see errored tool results in
+the transcript, but not cost, retry, loop-detector, or latency signals that only
+the event stream carries.
 
 ## Related
 
