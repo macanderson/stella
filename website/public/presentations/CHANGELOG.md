@@ -311,3 +311,25 @@ scripting failure shows the true number rather than a zero.
 | 6 · ask-slide targets | **open — needs founder ratification**, and labelled as plan on-slide |
 | 7 · oracle-coverage percentage | still deliberately unnumbered; A2 says so on-slide |
 | 8 · ~90% cost reduction | **claim removed** |
+
+---
+
+# Revision 4 — 2026-08-11, the “why now” investment thesis
+
+The generic market-size slide was the weakest page in the core narrative: it
+proved that AI is large, but not that Oxagen's window is open **now**. It has
+been replaced with a convergence slide built around three sourced forces:
+
+- the best open model's gap to the best closed model compressed from 8.04% to
+  1.70% in one year;
+- open frontier-class inference launched at roughly 1/27th of o1's API price;
+- enterprise AI spend grew from $11.5B to $37B, with AI coding already a $4B
+  wedge.
+
+The new diagram makes the investment thesis visual: capability rising, cost
+falling, and demand rising converge on verified private AI infrastructure. It
+ends with the strategic claim the prior TAM chart never earned: **the labs won
+the model race; the control layer is still unclaimed.** No new forecast or
+unsourced company metric was introduced. The former third-party 2030 agents
+market projection was removed because it added less conviction than the three
+observable curves.
