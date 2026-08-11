@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,46 @@ def _claim(scratch: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _hold(scratch: Path) -> subprocess.Popen[bytes]:
+    """Spawn a neighbour that *is* the holder of the instance lock.
+
+    The obvious spelling — ``Popen(["flock", lock, "sleep", "30"])`` — does not
+    give you one. ``flock(1)`` forks and its child inherits the descriptor the
+    lock lives on, so killing the ``flock`` process leaves the orphaned child
+    holding the lock: the "holder died" state the reclaim path exists for is
+    never actually reached, and the caller is left with a stray ``sleep`` for
+    the rest of the session. Here the shell takes the lock on its own fd and
+    then ``exec``s, so exactly one process holds it and killing that process is
+    what releases it — which is also the shape the entrypoint itself uses.
+
+    Returns once the lock is genuinely held, signalled by the sentinel rather
+    than by a fixed sleep: a timer that is long enough today is a flake later.
+    """
+    ready = scratch / ".held"
+    holder = subprocess.Popen(
+        [
+            "sh",
+            "-c",
+            f'exec 9>>"{scratch}/.instance-netns.lock"\n'
+            "flock -n 9 || exit 1\n"
+            f'touch "{ready}"\n'
+            "exec sleep 30\n",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 10
+    while not ready.exists():
+        if holder.poll() is not None:
+            raise AssertionError("the neighbour exited before it took the lock")
+        if time.monotonic() > deadline:
+            holder.kill()
+            holder.wait(timeout=10)
+            raise AssertionError("the neighbour never took the lock")
+        time.sleep(0.01)
+    return holder
+
+
 @needs_flock
 def test_a_free_instance_is_claimed(tmp_path: Path) -> None:
     assert "CLAIMED" in _claim(tmp_path).stdout
@@ -58,17 +99,9 @@ def test_a_free_instance_is_claimed(tmp_path: Path) -> None:
 
 @needs_flock
 def test_a_lock_held_by_a_live_process_is_refused(tmp_path: Path) -> None:
-    lock = tmp_path / ".instance-netns.lock"
-    lock.touch()
     # A neighbour that is genuinely still running: holds the lock and sleeps.
-    holder = subprocess.Popen(
-        ["flock", str(lock), "sleep", "30"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    holder = _hold(tmp_path)
     try:
-        # `flock` needs a moment to actually acquire before we race it.
-        subprocess.run(["sleep", "0.5"], check=True)
         result = _claim(tmp_path)
         assert result.returncode != 0, "a live neighbour must be refused"
         assert "REFUSED" in result.stdout
@@ -86,12 +119,7 @@ def test_a_lock_whose_holder_died_is_reclaimed(tmp_path: Path) -> None:
     kernel dropped the lock when the holder died, so the instance is free.
     """
     lock = tmp_path / ".instance-netns.lock"
-    holder = subprocess.Popen(
-        ["flock", str(lock), "sleep", "30"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(["sleep", "0.5"], check=True)
+    holder = _hold(tmp_path)
     holder.kill()
     holder.wait(timeout=10)
 
