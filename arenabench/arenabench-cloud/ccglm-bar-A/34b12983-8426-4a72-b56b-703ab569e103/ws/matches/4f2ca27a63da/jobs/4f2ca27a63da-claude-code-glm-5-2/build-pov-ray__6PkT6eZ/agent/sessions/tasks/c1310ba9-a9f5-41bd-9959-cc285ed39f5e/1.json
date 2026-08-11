@@ -1,9 +1,0 @@
-{
-  "id": "1",
-  "subject": "Download and extract POV-Ray 2.2 source",
-  "description": "Download POVSRC.TAR.Z and POVDOC.TAR.Z from Wayback Machine, extract to /app/povray-2.2",
-  "activeForm": "Downloading POV-Ray 2.2 source",
-  "status": "completed",
-  "blocks": [],
-  "blockedBy": []
-}

@@ -1,9 +1,0 @@
-{
-  "id": "4",
-  "subject": "Verify ssh -p 2222 root@localhost works",
-  "description": "Verify password-based ssh login on port 2222 as root with password123 drops into a shell.",
-  "activeForm": "Verifying SSH login",
-  "status": "in_progress",
-  "blocks": [],
-  "blockedBy": []
-}

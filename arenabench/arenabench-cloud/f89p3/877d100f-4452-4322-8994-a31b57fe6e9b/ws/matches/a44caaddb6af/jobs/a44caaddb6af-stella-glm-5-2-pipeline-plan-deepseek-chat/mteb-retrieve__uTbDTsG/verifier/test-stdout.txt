@@ -1,123 +1,0 @@
-Hit:1 http://deb.debian.org/debian bookworm InRelease
-Hit:2 http://deb.debian.org/debian bookworm-updates InRelease
-Hit:3 http://deb.debian.org/debian-security bookworm-security InRelease
-Reading package lists...
-Reading package lists...
-Building dependency tree...
-Reading state information...
-The following additional packages will be installed:
-  libcurl4
-The following NEW packages will be installed:
-  curl libcurl4
-0 upgraded, 2 newly installed, 0 to remove and 30 not upgraded.
-Need to get 708 kB of archives.
-After this operation, 1361 kB of additional disk space will be used.
-Get:1 http://deb.debian.org/debian bookworm/main amd64 libcurl4 amd64 7.88.1-10+deb12u15 [392 kB]
-Get:2 http://deb.debian.org/debian bookworm/main amd64 curl amd64 7.88.1-10+deb12u15 [316 kB]
-debconf: delaying package configuration, since apt-utils is not installed
-Fetched 708 kB in 0s (37.1 MB/s)
-Selecting previously unselected package libcurl4:amd64.
-(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 17387 files and directories currently installed.)
-Preparing to unpack .../libcurl4_7.88.1-10+deb12u15_amd64.deb ...
-Unpacking libcurl4:amd64 (7.88.1-10+deb12u15) ...
-Selecting previously unselected package curl.
-Preparing to unpack .../curl_7.88.1-10+deb12u15_amd64.deb ...
-Unpacking curl (7.88.1-10+deb12u15) ...
-Setting up libcurl4:amd64 (7.88.1-10+deb12u15) ...
-Setting up curl (7.88.1-10+deb12u15) ...
-Processing triggers for libc-bin (2.36-9+deb12u13) ...
-downloading uv 0.9.5 x86_64-unknown-linux-gnu
-no checksums to verify
-installing to /root/.local/bin
-  uv
-  uvx
-everything's installed!
-
-To add $HOME/.local/bin to your PATH, either restart your shell or run:
-
-    source $HOME/.local/bin/env (sh, bash, zsh)
-    source $HOME/.local/bin/env.fish (fish)
-Downloading cpython-3.13.9-linux-x86_64-gnu (download) (32.0MiB)
- Downloading cpython-3.13.9-linux-x86_64-gnu (download)
-Downloading nvidia-cublas (403.5MiB)
-Downloading tokenizers (3.1MiB)
-Downloading nvidia-cuda-cupti (10.2MiB)
-Downloading networkx (2.0MiB)
-Downloading pygments (1.2MiB)
-Downloading nvidia-cufile (1.2MiB)
-Downloading pandas (10.4MiB)
-Downloading aiohttp (1.7MiB)
-Downloading nvidia-cudnn-cu13 (349.2MiB)
-Downloading nvidia-nccl-cu13 (196.4MiB)
-Downloading nvidia-cusolver (191.6MiB)
-Downloading nvidia-curand (56.8MiB)
-Downloading sympy (6.0MiB)
-Downloading nvidia-cuda-runtime (2.1MiB)
-Downloading pyarrow (47.8MiB)
-Downloading hf-xet (4.3MiB)
-Downloading nvidia-nvjitlink (38.9MiB)
-Downloading pydantic-core (2.0MiB)
-Downloading nvidia-cufft (204.2MiB)
-Downloading scikit-learn (8.7MiB)
-Downloading nvidia-cuda-nvrtc (86.0MiB)
-Downloading scipy (33.6MiB)
-Downloading cuda-bindings (6.2MiB)
-Downloading nvidia-cusparse (139.2MiB)
-Downloading nvidia-nvshmem-cu13 (57.6MiB)
-Downloading nvidia-cusparselt-cu13 (162.3MiB)
-Downloading torchvision (7.3MiB)
-Downloading mteb (1.8MiB)
-Downloading polars-runtime-32 (54.6MiB)
-Downloading pillow (6.6MiB)
-Downloading transformers (11.2MiB)
-Downloading numpy (15.9MiB)
-Downloading torch (502.2MiB)
-Downloading triton (188.6MiB)
- Downloading nvidia-cufile
- Downloading aiohttp
- Downloading pydantic-core
- Downloading nvidia-cuda-runtime
- Downloading pygments
- Downloading tokenizers
- Downloading networkx
- Downloading hf-xet
- Downloading cuda-bindings
- Downloading pillow
- Downloading torchvision
- Downloading mteb
- Downloading sympy
- Downloading scikit-learn
- Downloading nvidia-cuda-cupti
- Downloading numpy
- Downloading pandas
- Downloading transformers
- Downloading scipy
- Downloading nvidia-nvjitlink
- Downloading pyarrow
- Downloading polars-runtime-32
- Downloading nvidia-curand
- Downloading nvidia-nvshmem-cu13
- Downloading nvidia-cuda-nvrtc
- Downloading nvidia-cusparse
- Downloading nvidia-cusparselt-cu13
- Downloading nvidia-cusolver
- Downloading nvidia-nccl-cu13
- Downloading triton
- Downloading nvidia-cufft
- Downloading nvidia-cudnn-cu13
- Downloading nvidia-cublas
- Downloading torch
-Installed 93 packages in 1.69s
-============================= test session starts ==============================
-platform linux -- Python 3.13.9, pytest-8.4.1, pluggy-1.6.0
-rootdir: /tests
-plugins: anyio-4.14.2, json-ctrf-0.3.5
-collected 2 items
-
-../tests/test_outputs.py ..                                              [100%]
-
-==================================== PASSES ====================================
-=========================== short test summary info ============================
-PASSED ../tests/test_outputs.py::test_result_exists
-PASSED ../tests/test_outputs.py::test_data_matches
-============================== 2 passed in 0.05s ===============================

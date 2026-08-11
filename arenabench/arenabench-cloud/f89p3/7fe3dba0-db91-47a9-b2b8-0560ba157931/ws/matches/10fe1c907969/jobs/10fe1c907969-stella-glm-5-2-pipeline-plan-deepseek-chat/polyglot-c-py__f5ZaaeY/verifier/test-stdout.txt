@@ -1,110 +1,0 @@
-Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
-Hit:2 http://security.ubuntu.com/ubuntu noble-security InRelease
-Hit:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease
-Hit:4 http://archive.ubuntu.com/ubuntu noble-backports InRelease
-Reading package lists...
-Reading package lists...
-Building dependency tree...
-Reading state information...
-The following additional packages will be installed:
-  ca-certificates libcurl4t64 libssl3t64 openssl
-The following NEW packages will be installed:
-  ca-certificates curl libcurl4t64 openssl
-The following packages will be upgraded:
-  libssl3t64
-1 upgraded, 4 newly installed, 0 to remove and 72 not upgraded.
-Need to get 3653 kB of archives.
-After this operation, 3760 kB of additional disk space will be used.
-Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libssl3t64 amd64 3.0.13-0ubuntu3.12 [1942 kB]
-Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 openssl amd64 3.0.13-0ubuntu3.12 [1003 kB]
-Get:3 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 ca-certificates all 20260601~24.04.1 [139 kB]
-Get:4 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libcurl4t64 amd64 8.5.0-2ubuntu10.11 [342 kB]
-Get:5 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 curl amd64 8.5.0-2ubuntu10.11 [226 kB]
-debconf: delaying package configuration, since apt-utils is not installed
-Fetched 3653 kB in 1s (3591 kB/s)
-(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 13065 files and directories currently installed.)
-Preparing to unpack .../libssl3t64_3.0.13-0ubuntu3.12_amd64.deb ...
-Unpacking libssl3t64:amd64 (3.0.13-0ubuntu3.12) over (3.0.13-0ubuntu3.6) ...
-Setting up libssl3t64:amd64 (3.0.13-0ubuntu3.12) ...
-Selecting previously unselected package openssl.
-(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 13065 files and directories currently installed.)
-Preparing to unpack .../openssl_3.0.13-0ubuntu3.12_amd64.deb ...
-Unpacking openssl (3.0.13-0ubuntu3.12) ...
-Selecting previously unselected package ca-certificates.
-Preparing to unpack .../ca-certificates_20260601~24.04.1_all.deb ...
-Unpacking ca-certificates (20260601~24.04.1) ...
-Selecting previously unselected package libcurl4t64:amd64.
-Preparing to unpack .../libcurl4t64_8.5.0-2ubuntu10.11_amd64.deb ...
-Unpacking libcurl4t64:amd64 (8.5.0-2ubuntu10.11) ...
-Selecting previously unselected package curl.
-Preparing to unpack .../curl_8.5.0-2ubuntu10.11_amd64.deb ...
-Unpacking curl (8.5.0-2ubuntu10.11) ...
-Setting up libcurl4t64:amd64 (8.5.0-2ubuntu10.11) ...
-Setting up curl (8.5.0-2ubuntu10.11) ...
-Setting up openssl (3.0.13-0ubuntu3.12) ...
-Setting up ca-certificates (20260601~24.04.1) ...
-debconf: unable to initialize frontend: Dialog
-debconf: (TERM is not set, so the dialog frontend is not usable.)
-debconf: falling back to frontend: Readline
-debconf: unable to initialize frontend: Readline
-debconf: (This frontend requires a controlling tty.)
-debconf: falling back to frontend: Teletype
-Updating certificates in /etc/ssl/certs...
-121 added, 0 removed; done.
-Processing triggers for libc-bin (2.39-0ubuntu8.6) ...
-Processing triggers for ca-certificates (20260601~24.04.1) ...
-Updating certificates in /etc/ssl/certs...
-0 added, 0 removed; done.
-Running hooks in /etc/ca-certificates/update.d...
-done.
-downloading uv 0.9.5 x86_64-unknown-linux-gnu
-no checksums to verify
-installing to /root/.local/bin
-  uv
-  uvx
-everything's installed!
-
-To add $HOME/.local/bin to your PATH, either restart your shell or run:
-
-    source $HOME/.local/bin/env (sh, bash, zsh)
-    source $HOME/.local/bin/env.fish (fish)
-Downloading cpython-3.13.9-linux-x86_64-gnu (download) (32.0MiB)
- Downloading cpython-3.13.9-linux-x86_64-gnu (download)
-Downloading pygments (1.2MiB)
- Downloading pygments
-Installed 6 packages in 10ms
-============================= test session starts ==============================
-platform linux -- Python 3.13.9, pytest-8.4.1, pluggy-1.6.0
-rootdir: /tests
-plugins: json-ctrf-0.3.5
-collected 1 item
-
-../tests/test_outputs.py F                                               [100%]
-
-=================================== FAILURES ===================================
-___________________________ test_fibonacci_polyglot ____________________________
-
-    def test_fibonacci_polyglot():
-        """
-        Test that main.py.c is a valid polyglot that runs with both python3 and gcc,
-        produces correct Fibonacci numbers, and is contained in a single file.
-        """
-    
-        # Verify that main.py.c exists in /app/polyglot
-        # Note: The task description allows compiling to /app/polyglot/cmain,
-        # so we allow additional files like compiled binaries to exist
-        polyglot_dir = "/app/polyglot"
-        main_file = os.path.join(polyglot_dir, "main.py.c")
->       assert os.path.exists(main_file), (
-            f"Expected main.py.c to exist in {polyglot_dir}"
-        )
-E       AssertionError: Expected main.py.c to exist in /app/polyglot
-E       assert False
-E        +  where False = <function exists at 0x7fea025ab240>('/app/polyglot/main.py.c')
-E        +    where <function exists at 0x7fea025ab240> = <module 'posixpath' (frozen)>.exists
-E        +      where <module 'posixpath' (frozen)> = os.path
-
-/tests/test_outputs.py:21: AssertionError
-=========================== short test summary info ============================
-FAILED ../tests/test_outputs.py::test_fibonacci_polyglot - AssertionError: Ex...
-============================== 1 failed in 0.06s ===============================
