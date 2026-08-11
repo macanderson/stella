@@ -393,8 +393,10 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "hooks.lifecycle",
-        engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart) and the observer-only HookBus",
-        engine_entries: &["with_hooks", "with_bus"],
+        engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart/Stop/PreCompact, \
+                      the #2684 stdout-decision plane in hooks::decision) and the observer-only \
+                      HookBus",
+        engine_entries: &["with_hooks", "with_bus", "with_hook_approval_route"],
         cli: SurfacePosture::ShippedUnwitnessed {
             mechanism: "workspace hooks wired via with_session_hook_context on every driver \
                         path. SessionStart firing is a HOST obligation (#2674): the engine \
