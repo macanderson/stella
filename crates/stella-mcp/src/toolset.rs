@@ -60,7 +60,9 @@ use crate::oauth::OAuthManager;
 use crate::suppress::{ConnectGate, connect_gate, unix_now_secs};
 
 mod needs_auth;
+mod resources;
 pub use needs_auth::login_required_tool_name;
+pub use resources::{list_resources_tool_name, read_resource_tool_name};
 
 /// A session-scoped set of server names disabled by the operator. Shared with
 /// the CLI/TUI so a toggle takes effect on the next model call — the engine
@@ -815,6 +817,9 @@ impl ToolExecutor for McpToolSet {
         // Each auth-suppressed server advertises exactly one placeholder that
         // says how to log in (#2687) — subject to the same live disable.
         needs_auth::extend_schemas(self, &mut schemas);
+        // Each resources-capable server advertises `list_resources` /
+        // `read_resource` (#2678) — same live disable, real tools win a name.
+        resources::extend_schemas(self, &mut schemas);
         schemas
     }
 
@@ -834,6 +839,11 @@ impl ToolExecutor for McpToolSet {
         // The synthetic needs-auth tool (#2687): answered locally — there is
         // no connection to the suppressed server to route anything over.
         if let Some(output) = needs_auth::route(self, name) {
+            return output;
+        }
+        // The synthetic resource tools (#2678): not in the routing map, but
+        // they do drive a wire call on the named server's live client.
+        if let Some(output) = resources::route(self, name, input).await {
             return output;
         }
         // A namespaced name we don't recognize is an MCP miss, not a native

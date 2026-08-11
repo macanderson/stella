@@ -69,6 +69,14 @@
 //!   backoff** — a single blip self-heals within the turn, and a long-dead
 //!   server degrades gracefully instead of aborting the agent ([`toolset`],
 //!   [`client`]). Per-server status is exposed via [`McpToolSet::health`].
+//! - **Resources are tools** (#2678). A server that declared the `resources`
+//!   capability advertises two synthetic, single-purpose tools per invariant
+//!   #9 — `mcp__<server>__list_resources` and `mcp__<server>__read_resource`
+//!   ([`toolset`]) — driving `resources/list` / `resources/read` on its live
+//!   client. Embedded text resources in a `tools/call` result render inline
+//!   instead of degrading to a `[resource: <uri>]` placeholder; binary blobs
+//!   are summarized, never inlined; and every rendered payload is capped on
+//!   the same ingest budget as a tool result.
 //! - **Auth probes are suppressed, not repeated** (#2687). An HTTP server
 //!   that answered a connect with 401 — or whose stored login is known
 //!   unusable — is skipped entirely for [`suppress::AUTH_PROBE_TTL`] (no
@@ -105,6 +113,7 @@ pub use stdio::StdioTransport;
 pub use suppress::{AUTH_PROBE_TTL, AuthProbeCache, ConnectGate};
 pub use toolset::{
     DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity, WireNameCollision,
-    login_required_tool_name, split_wire_name, wire_name,
+    list_resources_tool_name, login_required_tool_name, read_resource_tool_name, split_wire_name,
+    wire_name,
 };
 pub use transport::Transport;

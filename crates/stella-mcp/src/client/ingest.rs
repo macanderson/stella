@@ -10,7 +10,8 @@
 //!   budget, plus how many tools were refused past [`MAX_TOOLS_PER_SERVER`].
 //! - **Results.** [`decode_call_result`] maps a `tools/call` result into
 //!   [`ToolOutput`], and [`render_content`] flattens an MCP content array into
-//!   one model-visible string.
+//!   one model-visible string — embedded text resources inline
+//!   ([`render_resource_contents`], #2678), binary payloads summarized.
 //!
 //! Split out of `client.rs` verbatim (#629's 1500-line ratchet).
 
@@ -23,7 +24,9 @@ use stella_protocol::ToolOutput;
 use super::to_value;
 use crate::error::McpError;
 use crate::http::{truncate, truncate_middle_out};
-use crate::protocol::{CallToolResult, ContentBlock, ListToolsParams, ListToolsResult};
+use crate::protocol::{
+    CallToolResult, ContentBlock, ListToolsParams, ListToolsResult, ResourceContents,
+};
 use crate::transport::Transport;
 
 /// A hard cap on `tools/list` pages, defending against a server that returns
@@ -253,8 +256,8 @@ pub(crate) fn render_content(blocks: &[ContentBlock]) -> String {
             "text" => Cow::Borrowed(block.text.as_deref().unwrap_or_default()),
             "image" => Cow::Borrowed("[image]"),
             "audio" => Cow::Borrowed("[audio]"),
-            "resource" => match block.resource.as_ref().and_then(|r| r.uri.as_deref()) {
-                Some(uri) => Cow::Owned(format!("[resource: {uri}]")),
+            "resource" => match block.resource.as_ref() {
+                Some(resource) => render_resource_contents(resource),
                 None => Cow::Borrowed("[resource]"),
             },
             "resource_link" => match block.uri.as_deref() {
@@ -276,6 +279,53 @@ pub(crate) fn render_content(blocks: &[ContentBlock]) -> String {
         out.push_str(&piece);
     }
     out
+}
+
+/// Render one resource's contents (#2678): text **inline** under a header
+/// naming the URI, binary summarized as a placeholder. Shared by the embedded
+/// `resource` blocks of a `tools/call` result ([`render_content`]) and the
+/// `resources/read` tool ([`crate::toolset`]), so the two doors a resource
+/// can arrive through read identically.
+///
+/// Before this, an embedded resource was degraded to `[resource: <uri>]` —
+/// the text a server chose to return was thrown away at the client boundary.
+/// The bound stays where it always was: the caller caps the whole rendered
+/// result at [`MAX_TOOL_RESULT_BYTES`] middle-out, so inlining changes what
+/// survives the budget, never the budget itself. A base64 `blob` is never
+/// inlined, on the same reasoning as `[image]`/`[audio]`.
+pub(crate) fn render_resource_contents(resource: &ResourceContents) -> Cow<'_, str> {
+    let uri = resource.uri.as_deref().unwrap_or_default();
+    match resource.text.as_deref() {
+        Some(text) if !text.is_empty() => {
+            if uri.is_empty() {
+                Cow::Borrowed(text)
+            } else {
+                Cow::Owned(format!("[resource: {uri}]\n{text}"))
+            }
+        }
+        // No text to inline: a binary blob names itself (and its type) so the
+        // model learns what came back; anything else keeps the bare placeholder.
+        _ => match (uri.is_empty(), resource.blob.is_some()) {
+            (false, true) => Cow::Owned(format!(
+                "[resource: {uri} — {}, not inlined]",
+                binary_kind(resource)
+            )),
+            (false, false) => Cow::Owned(format!("[resource: {uri}]")),
+            (true, true) => Cow::Owned(format!(
+                "[resource: {}, not inlined]",
+                binary_kind(resource)
+            )),
+            (true, false) => Cow::Borrowed("[resource]"),
+        },
+    }
+}
+
+/// `binary <mime>` when the mime type is known, plain `binary` otherwise.
+fn binary_kind(resource: &ResourceContents) -> String {
+    match resource.mime_type.as_deref().filter(|m| !m.is_empty()) {
+        Some(mime) => format!("binary {mime}"),
+        None => "binary".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -330,5 +380,108 @@ mod tests {
     #[test]
     fn empty_content_renders_empty() {
         assert_eq!(render_content(&[]), "");
+    }
+
+    /// #2678 witness: an embedded TEXT resource used to be degraded to the
+    /// `[resource: <uri>]` placeholder — the data the server chose to return
+    /// was thrown away at the client boundary. It now renders inline, under a
+    /// header naming the URI.
+    #[test]
+    fn an_embedded_text_resource_renders_its_text_inline() {
+        let blocks = vec![ContentBlock {
+            kind: "resource".into(),
+            resource: Some(ResourceContents {
+                uri: Some("file:///notes.md".into()),
+                text: Some("line one\nline two".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }];
+        assert_eq!(
+            render_content(&blocks),
+            "[resource: file:///notes.md]\nline one\nline two"
+        );
+    }
+
+    #[test]
+    fn a_text_resource_with_no_uri_renders_the_bare_text() {
+        let contents = ResourceContents {
+            text: Some("payload".into()),
+            ..Default::default()
+        };
+        assert_eq!(render_resource_contents(&contents), "payload");
+    }
+
+    #[test]
+    fn a_binary_blob_resource_is_summarized_never_inlined() {
+        let contents = ResourceContents {
+            uri: Some("file:///logo.png".into()),
+            blob: Some("QUFBQQ==".into()),
+            mime_type: Some("image/png".into()),
+            ..Default::default()
+        };
+        let rendered = render_resource_contents(&contents);
+        assert_eq!(
+            rendered,
+            "[resource: file:///logo.png — binary image/png, not inlined]"
+        );
+        assert!(!rendered.contains("QUFBQQ=="), "base64 must never inline");
+
+        // Without a mime type, it still names itself binary.
+        let untyped = ResourceContents {
+            blob: Some("QUFBQQ==".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            render_resource_contents(&untyped),
+            "[resource: binary, not inlined]"
+        );
+    }
+
+    #[test]
+    fn a_text_less_resource_keeps_the_placeholder_shape() {
+        // The pre-#2678 rendering, unchanged for resources with nothing to
+        // inline — metadata-only blocks stay a compact marker.
+        let contents = ResourceContents {
+            uri: Some("file:///a.txt".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            render_resource_contents(&contents),
+            "[resource: file:///a.txt]"
+        );
+        assert_eq!(
+            render_resource_contents(&ResourceContents::default()),
+            "[resource]"
+        );
+    }
+
+    /// The per-result ingest budget (#551) bounds inlined resource text like
+    /// any other content: an oversized embedded resource is middle-out
+    /// truncated by [`decode_call_result`], elision marker included.
+    #[test]
+    fn an_oversized_embedded_resource_is_truncated_under_the_result_budget() {
+        let raw = serde_json::json!({
+            "content": [{
+                "type": "resource",
+                "resource": {
+                    "uri": "file:///big.txt",
+                    "text": format!("HEAD{}TAIL", "x".repeat(MAX_TOOL_RESULT_BYTES * 2)),
+                }
+            }]
+        });
+        match decode_call_result("read_big", raw).unwrap() {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.len() < MAX_TOOL_RESULT_BYTES + 128,
+                    "kept text respects the budget: {} bytes",
+                    content.len()
+                );
+                assert!(content.starts_with("[resource: file:///big.txt]"));
+                assert!(content.contains("... [truncated "), "elision is explicit");
+                assert!(content.ends_with("TAIL"), "the tail survives (L-S3)");
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
     }
 }

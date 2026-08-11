@@ -1,7 +1,7 @@
 //! MCP wire types: JSON-RPC 2.0 envelopes plus the handful of MCP methods
 //! this client speaks (`initialize`, `notifications/initialized`,
-//! `tools/list`, `tools/call`). Protocol revision `2025-06-18`
-//! (<https://modelcontextprotocol.io>).
+//! `tools/list`, `tools/call`, `resources/list`, `resources/read`).
+//! Protocol revision `2025-06-18` (<https://modelcontextprotocol.io>).
 //!
 //! This crate is a *client of a public protocol*, so every inbound type is
 //! deliberately permissive: `#[serde(default)]` on optional fields and
@@ -291,15 +291,71 @@ pub struct ContentBlock {
     pub resource: Option<ResourceContents>,
 }
 
-/// The `resource` member of an embedded-resource content block.
+/// The contents of one resource: the `resource` member of an embedded
+/// content block, and each entry of a `resources/read` result's `contents`
+/// array — the MCP schema uses one shape for both. Text resources carry
+/// `text`; binary ones carry base64 `blob`, which is never inlined into the
+/// model-visible string, only summarized.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ResourceContents {
     #[serde(default)]
     pub uri: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
+    /// Base64 payload of a binary resource — summarized, never inlined.
+    #[serde(default)]
+    pub blob: Option<String>,
     #[serde(rename = "mimeType", default)]
     pub mime_type: Option<String>,
+}
+
+/// `resources/list` params — a lone optional pagination cursor, the same
+/// shape as [`ListToolsParams`].
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ListResourcesParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// `resources/list` result: one page of resources plus an optional
+/// continuation cursor.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ListResourcesResult {
+    #[serde(default)]
+    pub resources: Vec<ResourceInfo>,
+    #[serde(rename = "nextCursor", default)]
+    pub next_cursor: Option<String>,
+}
+
+/// One resource as advertised by `resources/list` — its address plus the
+/// metadata a caller uses to decide whether to read it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ResourceInfo {
+    #[serde(default)]
+    pub uri: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "mimeType", default)]
+    pub mime_type: Option<String>,
+    /// Size in bytes, when the server advertises one.
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+/// `resources/read` params — the URI of the resource to read.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadResourceParams {
+    pub uri: String,
+}
+
+/// `resources/read` result: the resource's contents. Usually one entry; a
+/// container-like resource may return several.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadResourceResult {
+    #[serde(default)]
+    pub contents: Vec<ResourceContents>,
 }
 
 #[cfg(test)]
@@ -381,6 +437,47 @@ mod tests {
             serde_json::from_str(r#"{"content":[{"type":"text","text":"hi"}]}"#).unwrap();
         assert!(!res.is_error);
         assert_eq!(res.content[0].text.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn resources_list_result_paginates_and_tolerates_unknown_fields() {
+        let page: ListResourcesResult = serde_json::from_str(
+            r#"{"resources":[{"uri":"file:///a.txt","name":"a.txt","mimeType":"text/plain",
+                "size":12,"annotations":{"audience":["user"]},"brandNew":true}],
+                "nextCursor":"p2"}"#,
+        )
+        .unwrap();
+        assert_eq!(page.resources.len(), 1);
+        assert_eq!(page.resources[0].uri, "file:///a.txt");
+        assert_eq!(page.resources[0].size, Some(12));
+        assert_eq!(page.next_cursor.as_deref(), Some("p2"));
+    }
+
+    #[test]
+    fn resources_list_params_omit_an_absent_cursor() {
+        let first = serde_json::to_value(ListResourcesParams { cursor: None }).unwrap();
+        assert!(first.get("cursor").is_none(), "no cursor key on page one");
+        let next = serde_json::to_value(ListResourcesParams {
+            cursor: Some("p2".into()),
+        })
+        .unwrap();
+        assert_eq!(next["cursor"], "p2");
+    }
+
+    #[test]
+    fn read_resource_result_decodes_text_and_blob_contents() {
+        let result: ReadResourceResult = serde_json::from_str(
+            r#"{"contents":[
+                {"uri":"file:///a.txt","mimeType":"text/plain","text":"hello"},
+                {"uri":"file:///b.png","mimeType":"image/png","blob":"AAAA"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(result.contents.len(), 2);
+        assert_eq!(result.contents[0].text.as_deref(), Some("hello"));
+        assert!(result.contents[0].blob.is_none());
+        assert_eq!(result.contents[1].blob.as_deref(), Some("AAAA"));
+        assert!(result.contents[1].text.is_none());
     }
 
     #[test]

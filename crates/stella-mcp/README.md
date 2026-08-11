@@ -5,9 +5,10 @@ An **MCP client**. It connects to external Model Context Protocol servers
 and merges them into the engine's tool registry so `stella-core::Engine` calls
 them exactly like a built-in tool.
 
-It is a client and nothing else. v1 drives `initialize` / `tools/list` /
-`tools/call` and deliberately ignores every server-initiated request or
-notification (sampling, roots, progress). It also does not decide *where*
+It is a client and nothing else. It drives `initialize` / `tools/list` /
+`tools/call` — plus `resources/list` / `resources/read` for servers that
+declare the `resources` capability (#2678) — and deliberately ignores every
+server-initiated request or notification (sampling, roots, progress). It also does not decide *where*
 anything lives on disk: [`config.rs`](src/config.rs) owns the shape of
 `mcp.toml`, not its path, and [`TokenStore`](src/oauth.rs) is handed a path by
 its caller. Path resolution, the `STELLA_TRUST_PROJECT` gate that decides
@@ -29,7 +30,7 @@ builds its own binary, `mcp-fixture-server`, which exists purely for
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's authoritative design notes and the flat re-export surface. Read this first. |
-| [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. [`src/toolset/needs_auth.rs`](src/toolset/needs_auth.rs) holds the synthetic `login_required` tool an auth-suppressed server advertises. |
+| [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. [`src/toolset/needs_auth.rs`](src/toolset/needs_auth.rs) holds the synthetic `login_required` tool an auth-suppressed server advertises; [`src/toolset/resources.rs`](src/toolset/resources.rs) the synthetic `list_resources`/`read_resource` pair a resources-capable server advertises (#2678). |
 | [`src/client.rs`](src/client.rs) | `McpClient` — handshake, version negotiation, paginated discovery, `tools/call`, the reconnect/backoff state machine, and every ingest budget. The largest file and the one with the most invariants. |
 | [`src/transport.rs`](src/transport.rs) | The `Transport` trait (framing only, no MCP methods) plus the `ScriptedTransport` test double used by the unit tests. |
 | [`src/stdio.rs`](src/stdio.rs) / [`src/http.rs`](src/http.rs) / [`src/sse.rs`](src/sse.rs) | The two transports and the SSE decoder streamable-HTTP needs. `http.rs` also owns the shared `truncate` / `truncate_middle_out` helpers. |
@@ -97,6 +98,21 @@ is still probed forever. `HealthState` (`Live` / `Reconnecting` / `Down` /
 `AuthRequired`) is surfaced per server through `McpToolSet::health` —
 `AuthRequired` is never produced by the connection state machine; it is
 synthesized for servers the set skipped before connect (below).
+
+**Resources are tools, and embedded resources render** (#2678). A server that
+declared the `resources` capability in its `initialize` result advertises two
+extra synthetic tools, `mcp__<server>__list_resources` and
+`mcp__<server>__read_resource` ([`src/toolset/resources.rs`](src/toolset/resources.rs))
+— two single-purpose verbs per invariant #9, driving `resources/list` /
+`resources/read` on the server's live client. A server whose *own* tool list
+claims one of those wire names keeps it (the synthetic stands aside), a server
+that never declared the capability is not probed for it, and — like
+`login_required` — the pair never enters the routing map, so Best-of-N
+candidates never see it. On the result side, an embedded **text** resource in
+a `tools/call` result renders its text inline under a `[resource: <uri>]`
+header instead of degrading to the bare placeholder; base64 `blob` payloads
+are summarized, never inlined; and both doors are capped on the same
+`MAX_TOOL_RESULT_BYTES` middle-out budget as every other result.
 
 **A server that needs a login is skipped, not hammered** (#2687). A connect
 answered `401 Unauthorized` is typed `McpError::Auth` (a redial cannot fix it;
@@ -178,9 +194,11 @@ protect the token, it just leaves the user re-authenticating every session.
   `McpConfig::upsert` preserves it across a reinstall.
 - **Every server-advertised MCP tool's `ToolSchema` is `read_only: false`.**
   External tools are unknown, so they are treated as mutating and never
-  auto-parallelized. The one exception is the synthetic `login_required` tool
-  (#2687), which is `read_only: true` — it is authored by this crate, not by
-  the untrusted server, and invoking it touches nothing.
+  auto-parallelized. The exceptions are the *synthetic* tools this crate
+  authors itself: `login_required` (#2687, invoking it touches nothing) and
+  the `list_resources`/`read_resource` pair (#2678, the protocol's read
+  surface) are `read_only: true` — none of them is `speculation_safe`, because
+  a server's request budget is not ours to spend twice.
 - **The token store is not locked across processes.** Two concurrent logins each
   rewrite from a pre-login snapshot and the later `rename` wins; one repeated
   login is cheaper than a stale-lock failure mode.
@@ -217,6 +235,12 @@ drive the full protocol state machine over `transport::testkit::ScriptedTranspor
   the pre-change surface; [`tests/auth_probe_integration.rs`](tests/auth_probe_integration.rs)
   covers the synthetic tool, login/TTL re-arm, and the skip-on-dead-tokens
   path.
+- [`tests/resources_integration.rs`](tests/resources_integration.rs) holds the
+  #2678 witnesses over the fixture server: embedded text resources render
+  inline, the `list_resources`/`read_resource` pair round-trips and is
+  `read_only`, and a `--no-resources` server advertises neither. Written
+  against the pre-change public surface, so it compiles on the base commit and
+  fails there on behavior.
 - [`tests/registry_integration.rs`](tests/registry_integration.rs) replays
   recorded JSON in [`tests/fixtures/`](tests/fixtures) — deterministic and
   offline.
@@ -239,8 +263,9 @@ drive both directions through the fixture server's `--protocol-version` flag,
 whose own default is `2025-06-18` and must move with it.
 
 **Add a fixture-server behavior.** New tools go in `all_tools()` /
-`tools_call_response`, new fault flags in `Flags::parse` — then document the
-flag in both the binary's `//!` header and the `[[bin]]` comment in
+`tools_call_response`, new resources in the `resources/list` arm +
+`resources_read_response`, new fault flags in `Flags::parse` — then document
+the flag in both the binary's `//!` header and the `[[bin]]` comment in
 [`Cargo.toml`](Cargo.toml).
 
 ## See also
