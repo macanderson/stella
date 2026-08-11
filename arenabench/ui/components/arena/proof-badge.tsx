@@ -107,21 +107,45 @@ export function FlipStrip({ proof }: { proof: TrialProof }) {
   );
 }
 
+/**
+ * How the flip reads on screen: whether it is good news, bad news, or no news.
+ *
+ * The third case is why `flip` is three states rather than a bool (#2556).
+ * `"unobserved"` says nothing was ever in a position to observe a flip, which
+ * is a statement about the instrument and not a finding about the work — so it
+ * renders neutral. Painting it with the same warn styling as a real
+ * `"not_achieved"` tells a reader the agent fell short of something nobody
+ * measured.
+ */
+export function flipTone(proof: TrialProof): "text-ok" | "text-warn" | "text-dim" {
+  if (proof.flip === "achieved") return "text-ok";
+  if (proof.flip === "not_achieved") return "text-warn";
+  return "text-dim";
+}
+
 /** The sentence describing what the strip shows, for a tooltip or a caption. */
 export function flipSentence(proof: TrialProof): string {
-  const { failed_attempts: wrong, flip_achieved: flipped } = proof;
+  const { failed_attempts: wrong, flip } = proof;
   if (!proof.oracle_runs.length) return "The oracle never ran on this trial.";
-  if (flipped && wrong > 0) {
+  if (flip === "unobserved") {
+    return "No command was tracked, so nothing could have flipped — this is not a finding about the work.";
+  }
+  if (flip === "achieved" && wrong > 0) {
     return (
       `The model believed it was finished ${wrong} time${wrong === 1 ? "" : "s"} ` +
       `before the test agreed.`
     );
   }
-  if (flipped) return "The test passed on the first observation after the change.";
-  return (
-    `The test never passed — ${wrong} failing observation${wrong === 1 ? "" : "s"}, ` +
-    `and the work went back for revision.`
-  );
+  if (flip === "achieved") {
+    return "The test passed on the first observation after the change.";
+  }
+  if (flip === "not_achieved") {
+    return (
+      `The test never passed — ${wrong} failing observation${wrong === 1 ? "" : "s"}, ` +
+      `and the work went back for revision.`
+    );
+  }
+  return "No verdict recorded a flip finding for this trial.";
 }
 
 export function ProofBadge({

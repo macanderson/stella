@@ -65,6 +65,15 @@ def _fake_harbor(monkeypatch, *, version: str = "0.20.0", import_path_flag: bool
         "arenabench.harbor.supports_agent_import_path",
         lambda binary=None: import_path_flag,
     )
+    # A stubbed Harbor also answers the seat preflight (#2325): `_launch` asks
+    # whether *this* binary's interpreter can import the adapter, and a stub
+    # binary has no interpreter to ask. Stubbed here rather than per test so a
+    # future launch test cannot forget it — the refusal itself is witnessed by
+    # `TestTheRigMustBeAbleToRunTheSeatItAccepts`, which does not use this
+    # helper.
+    monkeypatch.setattr(
+        "arenabench.adapter.stella_seat_problem", lambda binary=None, **_kw: None
+    )
 
 
 # --------------------------------------------------------------------------

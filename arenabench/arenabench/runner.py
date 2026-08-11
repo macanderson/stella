@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import harbor, provenance, sut
-from .adapter import AdapterUnavailableError, stage_adapter
+from . import adapter, harbor, provenance, reap, sut
+from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -281,17 +281,56 @@ class Match:
 
     # -- reading ----------------------------------------------------------
 
+    #: How a trial ranks as the representative of its task. Lower wins.
+    #:
+    #: Only ever demotes an **unmeasured** trial below a measured one, and
+    #: never reorders two measured trials — so a loss can never be replaced by
+    #: a win from another attempt. Re-running a task to get a nicer number is
+    #: the dishonesty this must not enable; making a result that already exists
+    #: visible is the opposite of it.
+    _MEASURED, _IN_FLIGHT, _VOID = 0, 1, 2
+
+    def _representative_rank(self, trial_dir: Path, task: str) -> int:
+        """Whether this attempt is a result, a wait, or an operational abort.
+
+        With ``--n-attempts > 1`` — and, once a credential rotation can be
+        re-dispatched, on the ordinary path too — several attempts share a
+        task. Collapsing them by "first sorted wins" picks by attempt id, and
+        an attempt id says nothing about whether the trial measured anything:
+        a seat whose first attempt died on a revoked token and whose second
+        *solved the task* reported the void, so the arm read worse than it
+        performed (#2545). A scoreboard that hides a measured result is the
+        one direction a benchmark must never be wrong in.
+        """
+        metrics = self._metrics.read(trial_dir, task)
+        if metrics.infrastructure:
+            return self._VOID
+        if metrics.resolved is None:
+            return self._IN_FLIGHT
+        return self._MEASURED
+
     def trial_dirs(self, contestant_id: str) -> dict[str, Path]:
-        """Task name -> trial directory, for one contestant."""
+        """Task name -> the trial directory that represents it, per contestant.
+
+        Harbor names trials ``<task>__<attempt>``; attempts are collapsed to
+        the task so the grid stays one row per task. Which attempt survives the
+        collapse is decided by :meth:`_representative_rank`, then by sort order
+        among equals — so the fold is deterministic, and a measured attempt is
+        never hidden behind one that never ran.
+        """
         run = self.runs.get(contestant_id)
         if run is None or not run.job_dir.is_dir():
             return {}
         found: dict[str, Path] = {}
+        ranks: dict[str, int] = {}
         for entry in sorted(run.job_dir.iterdir()):
-            if entry.is_dir():
-                # Harbor names trials `<task>__<attempt>`; collapse attempts to
-                # the task so the grid stays one row per task.
-                found.setdefault(entry.name.rsplit("__", 1)[0], entry)
+            if not entry.is_dir():
+                continue
+            task = entry.name.rsplit("__", 1)[0]
+            rank = self._representative_rank(entry, task)
+            if task not in found or rank < ranks[task]:
+                found[task] = entry
+                ranks[task] = rank
         return found
 
     def metrics_for(self, contestant_id: str) -> dict[str, TrialMetrics]:
@@ -655,6 +694,18 @@ class MatchRunner:
         match.status = "running"
         match.started_at = time.time()
 
+        # The `kill -9` half of #2329: an exit hook cannot run for a runner
+        # nobody asked to stop, so a hard-killed match's containers survive
+        # until something comes back for them. This is that something, and here
+        # is the moment the headroom is needed. Only matches this workspace has
+        # already recorded as *over* are swept — a container the arena cannot
+        # account for may belong to a live match in another process, and
+        # reaping it would manufacture the mis-scored loss this prevents.
+        with contextlib.suppress(Exception):
+            reap.reap_finished(
+                [other for other in self.matches.values() if other is not match]
+            )
+
         # Resolve Harbor once, for the whole match, before anything else needs
         # an answer. Three things follow from doing it here rather than inside
         # each seat's launch: provenance records the binary that actually
@@ -766,6 +817,20 @@ class MatchRunner:
         # somewhere nobody named (see `arenabench.harbor`).
         harbor_exe = resolved.binary
         run.notes.append(resolved.note)
+
+        # The authoritative half of #2325, asked of the *resolved* Harbor
+        # rather than a global lookup, because a dataset may pin its own and
+        # only this binary's interpreter will actually run the seat. A rig that
+        # cannot import `arenabench.harbor_agent` produces a Harbor run that
+        # dies constructing the agent and **exits 0**, so the seat reports done
+        # with zero steps and no model call — indistinguishable in the match UI
+        # from an agent that ran and lost. Refusing here costs no container and
+        # lands in `run.error`, which `INFRASTRUCTURE_FAILURES` already keeps
+        # out of `solve_rate`'s denominator.
+        if contestant.agent == "stella":
+            unrunnable = adapter.stella_seat_problem(harbor_exe)
+            if unrunnable:
+                raise AdapterUnavailableError(unrunnable)
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
@@ -997,19 +1062,7 @@ class MatchRunner:
         # four trials with it, each scored as an agent loss (#2127). Staging
         # is content-addressed and process-cached, so trial 2 never touches
         # the source tree trial 1 copied.
-        roots = [str(Path(__file__).resolve().parent.parent)]
-        adapter = os.environ.get("ARENABENCH_STELLA_ADAPTER")
-        if not adapter:
-            repo = sut.stella_repo()
-            if repo is not None and (repo / "bench" / "harbor_adapter").is_dir():
-                adapter = str(repo / "bench" / "harbor_adapter")
-        if not adapter:
-            raise AdapterUnavailableError(
-                "a Stella seat needs the harbor adapter, and neither "
-                "ARENABENCH_STELLA_ADAPTER nor a Stella checkout names one. "
-                "Point ARENABENCH_STELLA_ADAPTER at <stella>/bench/harbor_adapter."
-            )
-        roots.append(str(stage_adapter(Path(adapter))))
+        roots = seat_import_roots()
         existing = os.environ.get("PYTHONPATH", "")
         if existing:
             roots.append(existing)
@@ -1146,6 +1199,15 @@ class MatchRunner:
             except (OSError, ProcessLookupError):
                 with contextlib.suppress(OSError):
                     process.terminate()
+        # The process group does not contain the task containers: Harbor starts
+        # them through the Docker daemon, so killing the group stops the
+        # harness and leaves the containers running, owned by nothing. Ten of
+        # them accumulated over three stopped matches on one host and cost the
+        # *next* match five of six trials to `Docker compose command failed` —
+        # scored as agent losses (#2329).
+        reaped = reap.reap_match(match)
+        if reaped:
+            match.note = f"{match.note}; reaped {len(reaped)} container(s)"
         if match.recorder is not None:
             match.recorder.stop()
         if match.snapshots is not None:

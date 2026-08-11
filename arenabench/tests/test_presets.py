@@ -468,11 +468,48 @@ class TestBothLaunchPathsAgree:
 
     SOURCE = Path(__file__).resolve().parent.parent / "arenabench" / "cli.py"
 
-    def test_the_cli_run_path_fills_from_the_local_claude_login(self):
-        assert "apply_local_claude_login" in self.SOURCE.read_text(encoding="utf-8"), (
-            "a template declaring CLAUDE_CODE_OAUTH_TOKEN must resolve it the "
-            "same way from the CLI as from the UI"
+    def _spec(self, *, required: list[str]) -> MatchSpec:
+        return MatchSpec.from_json(
+            {
+                "name": "m",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "contestants": [
+                    {
+                        "name": "cc",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-fable-5"},
+                        "env": {"required": required},
+                    }
+                ],
+            }
         )
+
+    def test_the_cli_run_path_fills_from_the_local_claude_login(
+        self, monkeypatch, tmp_path
+    ):
+        """Both paths reach the login through one function, so assert on it.
+
+        This was a grep for ``apply_local_claude_login`` in ``cli.py``, which
+        stopped distinguishing anything once #2654 moved the layers behind
+        :func:`~arenabench.credentials.resolve_launch_credentials`: the name
+        survives in the docstring, so the grep passed while proving nothing.
+        A source grep cannot see which layers ran, or in what order, which is
+        the entire question here.
+        """
+        from arenabench.credentials import resolve_launch_credentials
+
+        monkeypatch.delenv(CLAUDE_OAUTH_ENV, raising=False)
+        monkeypatch.setenv("ARENABENCH_CREDENTIALS", str(tmp_path / "absent.env"))
+        monkeypatch.setattr(
+            "arenabench.claude_oauth.local_claude_token", lambda: "sk-ant-oat-local"
+        )
+        spec, notes = resolve_launch_credentials(self._spec(required=[CLAUDE_OAUTH_ENV]))
+        assert spec.contestants[0].env == {CLAUDE_OAUTH_ENV: "sk-ant-oat-local"}
+        assert notes and "never persisted" in notes[0]
+        assert "sk-ant-oat-local" not in " ".join(notes), "the token must never be said"
+        # And the CLI is on that function rather than back on its own layers.
+        assert "resolve_launch_credentials" in self.SOURCE.read_text(encoding="utf-8")
 
     def test_the_cli_run_path_refuses_a_dead_seat(self):
         assert "dead_seat_reason" in self.SOURCE.read_text(encoding="utf-8"), (

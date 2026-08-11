@@ -16,7 +16,6 @@ import logging
 import random
 import subprocess
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 from . import provenance
@@ -70,8 +69,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
 
     Credentials are read from the process environment against each seat's
-    declared ``required`` list, never from the file — then from the saved
-    credential set at :func:`~.credentials.credentials_path`, and finally, for
+    declared ``required`` list, never from the file — through
+    :func:`~.credentials.apply_ambient_credentials`, the same function the
+    server calls, so "which ambient names may a seat receive" has exactly one
+    implementation (#2654) — then from the saved credential set at
+    :func:`~.credentials.credentials_path`, and finally, for
     a seat that declared the Claude subscription token, from this machine's own
     Claude Code login (:func:`~.claude_oauth.apply_local_claude_login`). So a
     local, repeat ``arenabench run`` does not need the same ``export`` lines
@@ -89,9 +91,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     import time
 
     from .agents import dead_seat_reason
-    from .claude_oauth import apply_local_claude_login
     from .config import MatchTemplateError, load_match, required_env
-    from .credentials import apply_saved_credentials, credentials_path, load_credentials
+    from .credentials import (
+        credentials_path,
+        load_credentials,
+        resolve_launch_credentials,
+    )
     from .monitor import MatchWatcher
     from .runner import MatchRunner
     from .server import ArenaServer, find_running_arena
@@ -104,15 +109,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     needed = required_env(spec)
-    seated: list = []
-    for contestant in spec.contestants:
-        candidates = needed.get(contestant.id, [])
-        env = {name: os.environ[name] for name in candidates if os.environ.get(name)}
-        seated.append(replace(contestant, env=env))
-    spec = replace(spec, contestants=tuple(seated))
-
     saved = load_credentials()
-    spec = apply_saved_credentials(spec)
+    # Every fill layer, through the one implementation the server also calls.
+    # This path used to inline its own ambient fill over `required_env`'s
+    # *derived* candidate set, which for an undeclared seat includes the
+    # agent's `alt_credential_env` — so a `CLAUDE_CODE_OAUTH_TOKEN` exported in
+    # the operator's shell silently credentialled an undeclared `claude-code`
+    # seat here and nothing through the UI (#2654). Two arms you believed were
+    # on different credentials, both on one plan, with only the entry point to
+    # tell them apart. The *refusal* below still reads the derived set: #1827
+    # keeps those two decisions separate on purpose.
+    spec, oauth_notes = resolve_launch_credentials(spec)
     if saved:
         filled = sum(
             1
@@ -122,8 +129,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
         if filled:
             print(f"credentials: {filled} value(s) filled in from {credentials_path()}")
-
-    spec, oauth_notes = apply_local_claude_login(spec)
     for note in oauth_notes:
         print(f"credentials: {note}")
 
@@ -133,10 +138,25 @@ def _cmd_run(args: argparse.Namespace) -> int:
         # The candidate names are alternatives, not a conjunction: a seat
         # carrying any one of them is credentialled (a Claude subscription
         # token authenticates a seat that has no ANTHROPIC_API_KEY at all).
-        if candidates and not contestant.env and not args.allow_missing_env:
+        if not candidates or contestant.env or args.allow_missing_env:
+            continue
+        if contestant.required_env:
             missing.append(f"{contestant.name}: any of {', '.join(candidates)}")
+        else:
+            # An undeclared seat is refused with the fix that will actually
+            # work for it. Since the ambient fill became declaration-only
+            # (#2654), exporting one of these names no longer reaches this
+            # seat — naming them as if it would is the misdirection that turns
+            # a five-second fix into an afternoon.
+            names = ", ".join(candidates)
+            missing.append(
+                f"{contestant.name}: declares no [contestant.env] required, so "
+                "an exported variable cannot reach it — add "
+                f"[contestant.env] required = [...] naming any of {names}, or "
+                f"save the value at {credentials_path()}"
+            )
     if missing:
-        print("error: required environment variables are not set:", file=sys.stderr)
+        print("error: required credentials are not set:", file=sys.stderr)
         for line in missing:
             print(f"  {line}", file=sys.stderr)
         print("  (use --allow-missing-env to run anyway)", file=sys.stderr)

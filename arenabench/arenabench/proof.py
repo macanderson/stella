@@ -42,12 +42,68 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "FLIP_ACHIEVED",
+    "FLIP_NOT_ACHIEVED",
+    "FLIP_UNKNOWN",
+    "FLIP_UNOBSERVED",
     "GRADES",
     "OracleRun",
     "RoleCall",
     "TrialProof",
     "distill",
+    "flip_outcome",
 ]
+
+#: The flip oracle's finding, as three wire tokens plus an absence.
+#: ``crates/stella-protocol/src/ladder.rs::FlipOutcome`` is the contract.
+#:
+#: **A bool could not carry this, and the missing state is the one that
+#: matters** (#2556). ``flip_achieved: false`` meant both "a tracked command
+#: ran and did not go fail→pass" — a real negative about the work — and "no
+#: command was ever tracked, so nothing could have flipped", which is a
+#: statement about the instrument. Reading the first as the second is how a
+#: scoreboard reports a shortfall it never measured.
+FLIP_ACHIEVED = "achieved"
+FLIP_NOT_ACHIEVED = "not_achieved"
+FLIP_UNOBSERVED = "unobserved"
+#: No ladder said anything at all — no verdict reached this trial. Distinct
+#: from :data:`FLIP_UNOBSERVED`, which is a ladder actively reporting that its
+#: oracle never armed.
+FLIP_UNKNOWN = ""
+
+_FLIP_TOKENS = frozenset({FLIP_ACHIEVED, FLIP_NOT_ACHIEVED, FLIP_UNOBSERVED})
+
+
+def flip_outcome(ladder: Mapping[str, Any]) -> str:
+    """The ladder's flip finding as a token, or :data:`FLIP_UNKNOWN`.
+
+    Reads ``flip``; falls back to the pre-#2556 ``flip_achieved`` bool for
+    records written before the tri-state existed — every committed fixture
+    under ``tests/fixtures/matches/`` is one of those, and a reader that
+    dropped them would be trading one silent misread for another.
+
+    The legacy mapping is **the reference decoder's**, deliberately: a legacy
+    ``true`` is unambiguous, and a legacy ``false`` reads
+    :data:`FLIP_NOT_ACHIEVED` — the value it was written to mean — because
+    nothing in that field can resolve the conflation it embodies. Joining
+    against ``tracked_command`` could resolve it for a reader who needs to, and
+    is deliberately not done here: two decoders of one wire contract disagreeing
+    is the class of defect this function exists to close, not to widen.
+
+    An unrecognised token is :data:`FLIP_UNKNOWN` rather than a guess. It must
+    never fall through to "not achieved": that would turn a token this build has
+    not learned yet into a negative finding about an agent's work, which is the
+    one direction a benchmark must not be wrong in.
+    """
+    token = ladder.get("flip")
+    if isinstance(token, str):
+        return token if token in _FLIP_TOKENS else FLIP_UNKNOWN
+    # `flip` is typed as the bool on a record old enough to predate the token,
+    # and Rust's own deserializer accepts that shape under the new name too.
+    legacy = token if isinstance(token, bool) else ladder.get("flip_achieved")
+    if isinstance(legacy, bool):
+        return FLIP_ACHIEVED if legacy else FLIP_NOT_ACHIEVED
+    return FLIP_UNKNOWN
 
 #: Verdict-summary prefixes the pipeline stamps when it is telling you the
 #: result is *not* backed by proof. Ordered most- to least-specific; the first
@@ -172,10 +228,16 @@ class TrialProof:
 
     # -- did it flip? -------------------------------------------------------
     oracle_runs: tuple[OracleRun, ...] = ()
-    #: The pipeline's own flip verdict from the ladder. Preferred over
-    #: re-deriving one from :attr:`oracle_runs`, which sees only the
-    #: observations that reached the stream.
-    flip_achieved: bool | None = None
+    #: The pipeline's own flip finding from the ladder — one of
+    #: :data:`FLIP_ACHIEVED` / :data:`FLIP_NOT_ACHIEVED` /
+    #: :data:`FLIP_UNOBSERVED`, or :data:`FLIP_UNKNOWN` when no verdict
+    #: reached this trial. Preferred over re-deriving one from
+    #: :attr:`oracle_runs`, which sees only the observations that reached the
+    #: stream.
+    #:
+    #: A token rather than a bool for the same reason :attr:`diff_coverage` is
+    #: one: the third value is the whole point (#2556).
+    flip: str = FLIP_UNKNOWN
     #: The command flipped, when one was tracked.
     tracked_command: str = ""
     #: The same command passed *and* failed across runs — a flip that proves
@@ -275,7 +337,7 @@ class TrialProof:
             "witness_unavailable": list(self.witness_unavailable),
             "oracle_runs": [run.to_json() for run in self.oracle_runs],
             "failed_attempts": self.failed_attempts,
-            "flip_achieved": self.flip_achieved,
+            "flip": self.flip,
             "tracked_command": self.tracked_command,
             "unstable_flip": self.unstable_flip,
             "flip_refused": self.flip_refused,
@@ -313,11 +375,23 @@ def _grade_of(proof: TrialProof) -> str:
     the rail working: the agent claimed done, the oracle disagreed, and the
     claim did not ship.
     """
-    if proof.flip_achieved and proof.witness_authored:
+    achieved = proof.flip == FLIP_ACHIEVED
+    if achieved and proof.witness_authored:
         return "flip"
-    if proof.flip_achieved:
+    if achieved:
         return "oracle"
-    if proof.oracle_runs and not any(run.passed for run in proof.oracle_runs):
+    # "The oracle ran and never passed" — so it must actually have run. An
+    # `unobserved` flip means nothing armed, and grading that `refuted` would
+    # publish "the claim was caught" about a claim nothing examined: a negative
+    # finding manufactured out of a blind instrument, which is precisely the
+    # conflation the tri-state was introduced to end (#2556). The observations
+    # can arrive from `proof.oracle` events independently of the ladder, so
+    # this is an explicit guard rather than something the data shape provides.
+    if (
+        proof.flip != FLIP_UNOBSERVED
+        and proof.oracle_runs
+        and not any(run.passed for run in proof.oracle_runs)
+    ):
         return "refuted"
     if proof.witness_unavailable:
         return "unproven"
@@ -442,7 +516,7 @@ def distill(events: Iterable[Mapping[str, Any]]) -> TrialProof:
             rung = str(ladder.get("rung") or "")
             # `model_judge` is the pre-rename spelling of `model_verdict`.
             proof.rung = "model_verdict" if rung == "model_judge" else rung
-            proof.flip_achieved = bool(ladder.get("flip_achieved"))
+            proof.flip = flip_outcome(ladder)
             proof.unstable_flip = bool(ladder.get("unstable_flip"))
             proof.flip_refused = bool(ladder.get("flip_refused_different_failure"))
             proof.tracked_command = str(ladder.get("tracked_command") or "")

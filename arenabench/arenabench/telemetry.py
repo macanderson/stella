@@ -69,6 +69,7 @@ __all__ = [
     "MetricsReader",
     "TrialMetrics",
     "aggregate",
+    "is_compose_failure",
     "leaders",
     "seat_manifest_path",
 ]
@@ -255,6 +256,36 @@ VOID_VERIFIER: frozenset[str] = frozenset(
         "MultimodalExportError",
     }
 )
+
+
+#: The one failure classified by *message* rather than by exception name.
+#:
+#: Harbor raises a bare ``RuntimeError`` — "Docker compose command failed for
+#: …" — when the daemon will not bring a trial's project up, which is what a
+#: host out of headroom produces. The name is far too broad to put in
+#: :data:`INFRASTRUCTURE_FAILURES`: an honest agent-side ``RuntimeError`` would
+#: leave the denominator with it. The message is specific, and the condition it
+#: names is unambiguous — the container never started, so the agent was never
+#: asked the question. Measured on one host as five of six trials of a Claude
+#: Code arm, every one of them reading as a loss, against ten containers
+#: orphaned by a match that had ended half an hour earlier (#2329).
+_COMPOSE_FAILURE_NAMES: frozenset[str] = frozenset({"RuntimeError"})
+_COMPOSE_FAILURE_MARKER = "docker compose command failed"
+
+
+def is_compose_failure(exception: dict[str, Any]) -> bool:
+    """Whether an ``exception_info`` names a trial whose container never came up.
+
+    Deliberately narrow in both halves: the exception name must be one this
+    condition actually arrives as, *and* the message must carry the marker. A
+    match on the message alone would let any exception whose text happened to
+    quote a compose error out of the denominator, and the denominator is the
+    thing being protected.
+    """
+    if str(exception.get("exception_type") or "") not in _COMPOSE_FAILURE_NAMES:
+        return False
+    message = str(exception.get("exception_message") or "")
+    return _COMPOSE_FAILURE_MARKER in message.lower()
 
 
 @dataclass
@@ -803,6 +834,17 @@ class MetricsReader:
             if isinstance(exception, dict) and exception.get("exception_type"):
                 metrics.failure = str(exception["exception_type"])
                 metrics.infrastructure = metrics.failure in INFRASTRUCTURE_FAILURES
+                if not metrics.infrastructure and is_compose_failure(exception):
+                    # Classified on the *message*, and only for this one shape,
+                    # because Harbor raises a bare `RuntimeError` when the
+                    # daemon refuses to bring a trial's project up — and
+                    # `RuntimeError` is far too broad a name for
+                    # `INFRASTRUCTURE_FAILURES`. The trial's container never
+                    # started, so the agent was never asked the question: five
+                    # such trials on one host read as Claude Code losses while
+                    # the true cause was ten orphaned containers from a match
+                    # that had ended half an hour earlier (#2329).
+                    metrics.infrastructure = True
                 if metrics.resolved is None and not metrics.infrastructure:
                     # An agent that ran and failed scores 0, as every
                     # leaderboard counts it. One that never started stays

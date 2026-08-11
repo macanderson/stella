@@ -24,6 +24,7 @@ from __future__ import annotations
 import itertools
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,206 @@ def test_both_failures_are_infrastructure_not_agent_losses():
 def test_the_named_error_is_still_an_import_error():
     """Existing ``except ImportError`` paths must keep catching it."""
     assert issubclass(StellaAdapterMissingError, ImportError)
+
+
+class TestTheRigMustBeAbleToRunTheSeatItAccepts:
+    """An arena that cannot run a Stella seat must not silently accept one.
+
+    ``arenabench serve`` booted happily on an interpreter that cannot import
+    ``stella_harbor``, and the server looked completely healthy. Every Stella
+    seat it launched then died constructing the agent — and Harbor **exits 0**
+    on that path, so the UI showed the seat as *done*. The match measured
+    nothing and did not say so (#2325).
+
+    The named refusal from #2192 fixed the *message*; it did not stop the match
+    from being accepted, and a refusal at trial time has already spent the
+    container. So the question is asked before anything launches — and asked of
+    the interpreter that will actually run the seat, which is the one behind
+    the resolved ``harbor`` console script, never ``sys.executable``.
+    """
+
+    def _fails(self, _interpreter: str, _roots: list[str]) -> tuple[int, str]:
+        return 1, "ModuleNotFoundError: No module named 'harbor'"
+
+    def _passes(self, _interpreter: str, _roots: list[str]) -> tuple[int, str]:
+        return 0, ""
+
+    def test_an_interpreter_that_cannot_import_the_seat_is_a_refusal(self) -> None:
+        problem = adapter.stella_seat_problem("/venv/bin/harbor", probe=self._fails)
+        assert problem
+        assert "No module named 'harbor'" in problem
+        # The message must name the fix, not merely the symptom: the whole
+        # incident was an operator looking at a healthy-looking arena.
+        assert "bench/harbor_adapter" in problem
+        assert "uv sync" in problem
+
+    def test_a_working_interpreter_is_no_refusal(self) -> None:
+        assert adapter.stella_seat_problem("/venv/bin/harbor", probe=self._passes) is None
+
+    def test_the_interpreter_asked_is_the_one_behind_the_harbor_script(
+        self, tmp_path: Path
+    ) -> None:
+        """A console script's shebang is what the kernel will exec.
+
+        Reading it is the difference between asking the interpreter that will
+        run the seat and asking this process's — a proxy that is wrong in both
+        directions, since an arena served by a Python with no ``harbor`` can
+        still launch seats through a Harbor from another virtualenv.
+        """
+        venv = tmp_path / "adapter-venv" / "bin"
+        venv.mkdir(parents=True)
+        interpreter = venv / "python"
+        interpreter.write_text("", encoding="utf-8")
+        script = venv / "harbor"
+        script.write_text(f"#!{interpreter}\n# console script\n", encoding="utf-8")
+        assert adapter.harbor_interpreter(str(script)) == str(interpreter)
+
+        asked: list[str] = []
+
+        def probe(interp: str, _roots: list[str]) -> tuple[int, str]:
+            asked.append(interp)
+            return 0, ""
+
+        adapter.stella_seat_problem(str(script), probe=probe)
+        assert asked == [str(interpreter)]
+
+    def test_a_non_stella_contest_is_never_blocked_by_our_adapter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Claude-Code-vs-Codex match loads none of this and must still run."""
+        from arenabench.model import Contestant, Engine, MatchSpec
+
+        monkeypatch.setattr(
+            adapter, "stella_seat_problem", lambda *_a, **_k: "would refuse"
+        )
+        spec = MatchSpec(
+            id="m",
+            name="m",
+            dataset="terminal-bench-2.1",
+            tasks=("fix-git",),
+            contestants=(
+                Contestant(
+                    id="cc",
+                    name="cc",
+                    agent="claude-code",
+                    engine=Engine(api="anthropic", model="claude-fable-5"),
+                ),
+            ),
+        )
+        assert adapter.stella_seat_problem_for(spec) is None
+
+    def test_the_launch_refuses_the_seat_rather_than_exiting_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The load-bearing witness: no container, and a named infrastructure
+        failure instead of a seat that reports done having measured nothing."""
+        import subprocess
+
+        from arenabench.registry import DEFAULT_REGISTRY
+        from arenabench.runner import MatchRunner
+
+        monkeypatch.setattr(
+            "arenabench.harbor.harbor_bin", lambda dataset_key=None: "/usr/bin/harbor"
+        )
+        monkeypatch.setattr(
+            "arenabench.harbor.harbor_version", lambda binary=None: "0.20.0"
+        )
+        monkeypatch.setattr(
+            "arenabench.harbor.supports_agent_import_path", lambda binary=None: False
+        )
+        monkeypatch.setattr(
+            adapter,
+            "stella_seat_problem",
+            lambda binary=None, **_kw: "this rig cannot build a Stella seat",
+        )
+
+        def _never(*_args, **_kwargs):
+            raise AssertionError("a refused seat must not start a Harbor subprocess")
+
+        monkeypatch.setattr(subprocess, "Popen", _never)
+
+        from arenabench.model import MatchSpec
+
+        spec = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["alpha"],
+                "sut_ref": "",
+                "contestants": [
+                    {
+                        "name": "s",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "x/y"},
+                    }
+                ],
+            }
+        )
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(spec)
+        runner.start(match)
+
+        (run,) = match.runs.values()
+        assert "cannot build a Stella seat" in run.error
+        assert run.process is None
+        # And the match says it failed rather than reporting a finished contest
+        # in which one seat happened to score nothing. `start` hands the
+        # settlement to a watcher thread, so wait for it rather than racing it.
+        deadline = time.monotonic() + 10.0
+        while match.status == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert match.status == "failed"
+
+    def test_the_refusal_name_is_classified_as_infrastructure(self) -> None:
+        """`AdapterUnavailableError` is what the launch raises, and it must stay
+        out of `solve_rate`'s denominator — a seat that never loaded did not
+        lose."""
+        assert AdapterUnavailableError.__name__ in INFRASTRUCTURE_FAILURES
+        assert AdapterUnavailableError.__name__ in VOID_SETUP
+
+
+class TestTheHealthProbeStaysCheap:
+    """`/api/health` must answer inside the discovery timeout.
+
+    `probe_arena` gives it 0.6 seconds. The seat preflight spawns an
+    interpreter on its first call, so an answer computed inside the first
+    request would time that probe out — another `serve` would read "nothing is
+    listening", and two arenas would drive one workspace, which is exactly the
+    conflation `find_running_arena` exists to prevent.
+
+    The guarantee is a memo warmed before the socket opens, so this asserts the
+    two halves that make it hold: the verdict is cached per interpreter, and
+    `serve` warms it ahead of the bind.
+    """
+
+    def test_a_second_call_spends_no_subprocess(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(adapter, "_verdicts", {})
+        calls: list[str] = []
+
+        def probe(interp: str, roots: list[str]) -> tuple[int, str]:
+            calls.append(interp)
+            return 0, ""
+
+        monkeypatch.setattr(adapter, "_probe", probe)
+        first = adapter.stella_seat_problem("/venv/bin/harbor")
+        second = adapter.stella_seat_problem("/venv/bin/harbor")
+        assert first is second is None
+        assert len(calls) == 1, "the health endpoint would pay this on every request"
+
+    def test_serve_warms_the_verdict_before_binding_the_socket(self) -> None:
+        """A source assertion, because the ordering is the whole guarantee and
+        there is no seam to observe it through: by the time a request can
+        arrive the answer must already be memoized."""
+        from pathlib import Path as _Path
+
+        import arenabench.server as server_module
+
+        source = _Path(server_module.__file__).read_text(encoding="utf-8")
+        body = source[source.index("def serve("):]
+        warm = body.index("unrunnable = stella_seat_problem()")
+        bind = body.index("httpd = ThreadingHTTPServer(")
+        assert warm < bind, (
+            "serve must warm the seat verdict before it binds, or the first "
+            "/api/health blows probe_arena's 0.6s timeout"
+        )
