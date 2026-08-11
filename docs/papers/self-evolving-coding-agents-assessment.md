@@ -1,7 +1,7 @@
 ---
 id: self-evolving-coding-agents-assessment
 title: "Self-Evolving Coding Agents — comparison with Stella"
-status: research-note
+status: living
 ---
 
 # *Self-Evolving Coding Agents* — comparison with Stella
