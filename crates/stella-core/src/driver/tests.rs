@@ -2675,6 +2675,7 @@ mod compute_passes;
 mod context_efficiency;
 mod context_overflow;
 mod lifecycle_bus;
+mod live_services;
 mod loop_abort;
 mod model_fallback;
 mod parked_wait;

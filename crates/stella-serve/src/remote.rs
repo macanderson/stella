@@ -477,6 +477,16 @@ impl ToolExecutor for RemoteToolExecutor {
         self.schemas.clone()
     }
 
+    // `live_services` keeps the empty default, declared rather than
+    // forgotten (#2764). This executor owns no process table: every call is
+    // remoted, so any long-running child belongs to the host, and there is no
+    // reverse request that asks about one. The end-of-turn assertion is
+    // therefore silent on a served run — the host, which spawned the child
+    // and holds the only handle to it, is the surface that can answer. Adding
+    // an `engine.tools.live_services` reverse request is the way in if a host
+    // ever wants Stella asking; it would be a wire-contract change, not a
+    // forward, and it is #2818.
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         // Every exit here is a `ToolOutput::Error`: the port contract is that
         // `execute` never returns `Err`, since a tool failure is model-visible

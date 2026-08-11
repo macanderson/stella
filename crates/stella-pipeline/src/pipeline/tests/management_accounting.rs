@@ -94,10 +94,14 @@ async fn late_triage_is_abandoned_and_reported_incomplete() {
         .expect("a missed triage deadline is never a run-ending failure");
 
     // The abandoned answer never classifies, so triage lands on the
-    // deterministic floor rather than a guess from a call it did not await.
+    // deterministic floor rather than a guess from a call it did not await —
+    // clamped at `SingleTask`, because a call that was never awaited earned no
+    // downgrade onto the path that skips the planner and the verifier
+    // (`triage_outage_floor`). The subject here is still "no guess from an
+    // unawaited call", which the floor comparison keeps.
     assert_eq!(
         class.class,
-        resolve_task_class(None, "What is two plus two?")
+        resolve_task_class(None, "What is two plus two?").max(TaskClass::SingleTask)
     );
     // Nothing settled, so nothing is charged — an unknowable envelope is
     // reported as incomplete instead of being invented.

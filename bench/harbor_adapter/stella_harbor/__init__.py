@@ -121,6 +121,7 @@ from .turn_budget import (
 from .turn_budget import (
     resolve_turn_budget as _resolve_turn_budget,
 )
+from . import upstream_pin
 
 try:
     # Harbor renders prompt templates onto the ``instruction`` argument of a
@@ -212,6 +213,7 @@ _LAUNCHER_CONTROLS: dict[str, str] = {
     "provider_proxy": "disabled",
     "base_url_authority": "validated-cli-argument",
     "engine_config_authority": "trusted-launcher-json",
+    "upstream_pin_authority": "validated-cli-argument",
 }
 
 _CLAIM_CONTAINER_ENV = frozenset(
@@ -257,6 +259,11 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # keeps the container environment exactly as narrow as it was.
         "STELLA_TARGET_TRIPLE",
         "STELLA_GLIBC_FLOOR",
+        # The gateway upstream pin (:mod:`upstream_pin`). Host-only for the
+        # same reason as STELLA_MODEL and STELLA_BASE_URL, and registered
+        # because the ambient check fails closed — an exported-but-unregistered
+        # name refuses the run rather than enabling the policy.
+        upstream_pin.ENV,
     }
 )
 
@@ -1292,6 +1299,11 @@ class StellaAgent(BaseInstalledAgent):
         if base_url:
             base_url = _validated_public_base_url(base_url)
             parts += ["--base-url", base_url]
+        # Host-only like `--model`/`--base-url`: read here, expressed as argv,
+        # never forwarded into the container. An argument rather than settings
+        # because trials run with `STELLA_NO_SETTINGS=1`, so a settings-defined
+        # pin cannot reach the very runs that need one (see `upstream_pin`).
+        parts += upstream_pin.pin_argv(self._configured_value(upstream_pin.ENV))
         # `--` ends option parsing so a task instruction that begins with a
         # dash (a markdown list, a CLI transcript) binds to the positional
         # instead of parsing as a flag. Without it, `stella run '- foo'`

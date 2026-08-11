@@ -404,7 +404,20 @@ impl<'a> Pipeline<'a> {
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
-        engine = self.attach(engine);
+        // Deliberately no mid-turn fallback (#2765). The author's whole value
+        // is that it is not the worker: `resolve_witness_author` establishes
+        // that independence before dispatch, and a re-resolution of
+        // `Role::Verifier` with the author's provider breaker-open can land on
+        // the worker's — the router's cross-family preference is a preference,
+        // not a refusal. That swap would leave the run authoring its own
+        // witness while `verifier_independent` still reported the pre-dispatch
+        // answer, which is the one failure mode this stage exists to exclude.
+        // An author-shaped resolver that refuses the worker's provider is the
+        // way in; it is #2806, not this change.
+        engine = self.attach(
+            engine,
+            FallbackPosture::Withheld("a swap could cost the witness its independence"),
+        );
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
@@ -547,7 +560,11 @@ impl<'a> Pipeline<'a> {
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
-            repair_engine = self.attach(repair_engine);
+            // Same independence reasoning as the author turn above.
+            repair_engine = self.attach(
+                repair_engine,
+                FallbackPosture::Withheld("a swap could cost the witness its independence"),
+            );
             let repair_turn = self.run_engine_turn(
                 &repair_engine,
                 &mut messages,

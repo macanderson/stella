@@ -20,6 +20,7 @@ use crate::file_touch::{
 pub mod approval;
 mod belief;
 mod classify;
+mod executor;
 mod options;
 mod process_tools;
 mod turn_probe;
@@ -73,6 +74,20 @@ pub trait Tool: Send + Sync {
     /// Defaults to `None`: almost no tool waits on external state.
     fn take_wait_request(&self) -> Option<stella_core::WaitRequest> {
         None
+    }
+
+    /// Long-running processes this tool started that are still up, read
+    /// non-destructively — the registry aggregates these into
+    /// `ToolExecutor::live_services` and the engine's end-of-turn assertion
+    /// names them before a turn's declaration stands (#2764,
+    /// `stella_core::driver::live_services`). Defaults to empty: almost no
+    /// tool owns state that outlives the turn that made it.
+    ///
+    /// Answering this must never change anything, least of all stop a
+    /// process — a service left running can be the correct final state
+    /// (#2666), and `stop_process` remains the only path that ends one.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        Vec::new()
     }
 }
 
@@ -1944,67 +1959,6 @@ impl ToolRegistry {
     pub fn update_storage_index(&self, snapshot: stella_graph::StorageSnapshot) {
         let mut index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
         index.baseline = snapshot;
-    }
-}
-
-/// `ToolRegistry` is the production implementation of `stella-core`'s
-/// `ToolExecutor` port — the engine drives every tool call through this
-/// impl, never through `stella-tools` types directly.
-#[async_trait]
-impl ToolExecutor for ToolRegistry {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        ToolRegistry::schemas(self)
-    }
-
-    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        ToolRegistry::execute(self, name, input).await
-    }
-
-    /// Take what the `task` tool's children cost since the last step
-    /// boundary. Destructive by the port's contract: the engine charges
-    /// whatever this returns, so reporting twice would bill twice.
-    fn drain_sub_agent_spend_usd(&self) -> f64 {
-        stella_core::subagent::drain_sub_agent_spend(&self.sub_agent_spend)
-    }
-
-    /// Collect the parked-wait request a tool deposited this step, if any
-    /// (#1471). Consults the primary map and the late-enabled overlay — the
-    /// same two sources every other read path reads. First hit wins: a step
-    /// dispatches at most a handful of calls, and `Tool::take_wait_request`
-    /// is destructive, so at most one request exists per boundary.
-    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
-        let from_primary = self
-            .tools
-            .values()
-            .find_map(|tool| tool.take_wait_request());
-        from_primary.or_else(|| {
-            self.late_tools
-                .read()
-                .ok()
-                .and_then(|late| late.values().find_map(|tool| tool.take_wait_request()))
-        })
-    }
-
-    /// Aggregate each registered tool's [`Tool::parallel_safe`] claim for the
-    /// engine's dispatch grouping. Consults the primary map and the
-    /// late-enabled overlay — the same two sources every other read path
-    /// (`schemas`, dispatch) reads, so a late-enabled tool's claim cannot be
-    /// lost.
-    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        let mut names: std::collections::HashSet<String> = self
-            .tools
-            .iter()
-            .filter(|(_, tool)| tool.parallel_safe())
-            .map(|(name, _)| name.clone())
-            .collect();
-        // Poison-tolerant like every sibling `late_tools` read path.
-        let late = self.late_tools.read().unwrap_or_else(|p| p.into_inner());
-        names.extend(
-            late.iter()
-                .filter(|(_, tool)| tool.parallel_safe())
-                .map(|(name, _)| name.clone()),
-        );
-        names
     }
 }
 
