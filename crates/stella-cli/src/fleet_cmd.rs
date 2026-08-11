@@ -1282,6 +1282,7 @@ mod tests {
             false,
         );
         tx.send(AgentEvent::StepUsage {
+            upstream_provider: None,
             reasoning_tokens: None,
             output_text: None,
             step: 0,

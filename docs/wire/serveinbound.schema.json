@@ -364,6 +364,13 @@
               },
               "type": "array"
             },
+            "upstream_provider": {
+              "description": "The upstream that actually served this call, when the endpoint is a\n*gateway* that routes to somebody else's silicon and names it in the\nresponse (OpenRouter's top-level `provider`).\n\n`None` on every direct endpoint, where the provider id already answers\n\"who served this?\" — Anthropic-direct is served by Anthropic. Only a\ngateway can make that question unanswerable, and one did: a probe\ncarrying Stella's own attribution asked OpenRouter for\n`anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no\ntrace could show because the adapter recorded the gateway and threw the\nupstream away. A head-to-head is only controlled if the model\n*provider* is held fixed, so an unrecorded upstream is an uncontrolled\nvariable hiding inside a field that reads as though it were pinned.\n\nIt rides here rather than in [`CompletionUsage`] because usage is a\n`Copy` envelope of counters; this is call metadata, like `model`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "usage": {
               "$ref": "#/$defs/CompletionUsage",
               "description": "Token accounting for this call ([`CompletionUsage`])."

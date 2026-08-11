@@ -572,8 +572,22 @@ pub enum AgentEvent {
         role: ModelCallRole,
         /// Provider which actually served this call, never the session's
         /// configured default. Empty only on legacy events.
+        ///
+        /// For a *gateway* this names the gateway (`openrouter`), which is as
+        /// far as this field can honestly go — the silicon behind it rides in
+        /// `upstream_provider`.
         #[serde(default)]
         provider: String,
+        /// The upstream the gateway routed to, when it names one
+        /// (`CompletionResult::upstream_provider`). `None` on direct
+        /// endpoints, where `provider` is already the answer.
+        ///
+        /// Without this a run through OpenRouter records `openrouter` for
+        /// every call and cannot say which vendor served any of them, so two
+        /// arms of a benchmark could differ in model provider while both
+        /// traces claimed to be identical.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        upstream_provider: Option<String>,
         /// Authoritative model output for calls that do not emit a separate
         /// [`AgentEvent::Text`] (pipeline management and compaction calls).
         /// Execute calls leave this `None`, avoiding duplicate transcript

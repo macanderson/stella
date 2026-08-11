@@ -352,6 +352,10 @@ export type AgentEvent = {
   /**
    * Provider which actually served this call, never the session's
    * configured default. Empty only on legacy events.
+   *
+   * For a *gateway* this names the gateway (`openrouter`), which is as
+   * far as this field can honestly go — the silicon behind it rides in
+   * `upstream_provider`.
    */
   provider?: string;
   /**
@@ -375,6 +379,17 @@ export type AgentEvent = {
   step: number;
   tool_calls: number;
   type: "step_usage";
+  /**
+   * The upstream the gateway routed to, when it names one
+   * (`CompletionResult::upstream_provider`). `None` on direct
+   * endpoints, where `provider` is already the answer.
+   *
+   * Without this a run through OpenRouter records `openrouter` for
+   * every call and cannot say which vendor served any of them, so two
+   * arms of a benchmark could differ in model provider while both
+   * traces claimed to be identical.
+   */
+  upstream_provider?: string | null;
 } | {
   duration_ms: number;
   model: string;
@@ -2184,6 +2199,25 @@ export interface CompletionResult {
    * Tool calls the model requested, in the order it made them.
    */
   tool_calls?: ToolCall[];
+  /**
+   * The upstream that actually served this call, when the endpoint is a
+   * *gateway* that routes to somebody else's silicon and names it in the
+   * response (OpenRouter's top-level `provider`).
+   *
+   * `None` on every direct endpoint, where the provider id already answers
+   * "who served this?" — Anthropic-direct is served by Anthropic. Only a
+   * gateway can make that question unanswerable, and one did: a probe
+   * carrying Stella's own attribution asked OpenRouter for
+   * `anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no
+   * trace could show because the adapter recorded the gateway and threw the
+   * upstream away. A head-to-head is only controlled if the model
+   * *provider* is held fixed, so an unrecorded upstream is an uncontrolled
+   * variable hiding inside a field that reads as though it were pinned.
+   *
+   * It rides here rather than in [`CompletionUsage`] because usage is a
+   * `Copy` envelope of counters; this is call metadata, like `model`.
+   */
+  upstream_provider?: string | null;
   /**
    * Token accounting for this call ([`CompletionUsage`]).
    */

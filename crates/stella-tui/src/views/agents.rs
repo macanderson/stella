@@ -481,6 +481,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::StepUsage {
+                upstream_provider: None,
                 output_text: None,
                 step: 1,
                 role: stella_protocol::ModelCallRole::Worker,
@@ -546,6 +547,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::StepUsage {
+                upstream_provider: None,
                 output_text: None,
                 step: 1,
                 role: stella_protocol::event::ModelCallRole::Worker,

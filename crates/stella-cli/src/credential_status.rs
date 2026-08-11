@@ -92,6 +92,7 @@ pub fn provider_config_for(id: &str, settings: &Settings) -> ProviderConfig {
         base_url: "",
         dialect: config::Dialect::OpenaiCompatible,
         seeded: false,
+        upstream_pin: &[],
     }
 }
 
@@ -171,6 +172,7 @@ mod tests {
             base_url: "https://x.example/v1",
             dialect: Dialect::OpenaiCompatible,
             seeded: false,
+            upstream_pin: &[],
         }
     }
 

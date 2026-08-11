@@ -870,7 +870,10 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
     let event = AgentEvent::StepUsage {
         step: 3,
         role: ModelCallRole::Plan,
-        provider: "zai".into(),
+        provider: "openrouter".into(),
+        // A gateway call: the pair must survive the round trip together, since
+        // the gateway id alone cannot answer who served the call.
+        upstream_provider: Some("Amazon Bedrock".into()),
         output_text: Some(r#"["inspect", "patch"]"#.into()),
         model: "glm-5.2".into(),
         input_tokens: 12_000,
@@ -895,6 +898,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         AgentEvent::StepUsage {
             step,
             role,
+            upstream_provider,
             output_text,
             cached_input_tokens,
             cache_write_tokens,
@@ -905,6 +909,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         } => {
             assert_eq!(step, 3);
             assert_eq!(role, ModelCallRole::Plan);
+            assert_eq!(upstream_provider.as_deref(), Some("Amazon Bedrock"));
             assert_eq!(output_text.as_deref(), Some(r#"["inspect", "patch"]"#));
             assert_eq!(cached_input_tokens, 9_000);
             assert_eq!(cache_write_tokens, 2_500);

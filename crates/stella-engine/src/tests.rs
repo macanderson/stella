@@ -106,6 +106,7 @@ impl ToolExecutor for CountingTools {
 
 fn text_result(text: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: text.into(),
         tool_calls: vec![],
         usage: CompletionUsage::reported_zero(),
@@ -117,6 +118,7 @@ fn text_result(text: &str) -> CompletionResult {
 
 fn tool_call_result(call_id: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.into(),

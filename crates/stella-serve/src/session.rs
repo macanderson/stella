@@ -828,6 +828,7 @@ mod tests {
         ) -> Result<CompletionResult, ProviderError> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             let mut result = CompletionResult {
+                upstream_provider: None,
                 text: String::new(),
                 tool_calls: vec![],
                 usage: CompletionUsage {

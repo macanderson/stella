@@ -56,6 +56,7 @@ impl Provider for HostProvider {
         _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "done".to_string(),
             tool_calls: Vec::new(),
             usage: CompletionUsage {

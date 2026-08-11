@@ -21,6 +21,7 @@ impl ToolExecutor for NeverTools {
 
 fn tool_result(name: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: format!("call-{name}"),

@@ -324,6 +324,7 @@ pub async fn run_accounted_call(
         step,
         role: call.role,
         provider: provider.to_string(),
+        upstream_provider: result.upstream_provider.clone(),
         // Every role routed through here is a management or compaction call —
         // none emit a separate `Text` event, so this is the only durable record
         // of what the model actually said (the bench harness's ATIF audit trail
@@ -455,6 +456,7 @@ mod tests {
                 return Err(ProviderError::transport("private failed body"));
             }
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "done".into(),
                 tool_calls: Vec::new(),
                 usage: CompletionUsage::reported_zero(),
@@ -547,6 +549,7 @@ mod tests {
             _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "summary".into(),
                 tool_calls: Vec::new(),
                 usage: CompletionUsage::reported_zero(),
@@ -946,6 +949,7 @@ mod tests {
             // arriving only after this gap.
             tokio::time::sleep(self.trailing_delay).await;
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "SIMPLE_LOOKUP".into(),
                 tool_calls: Vec::new(),
                 usage: CompletionUsage {

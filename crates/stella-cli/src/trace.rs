@@ -604,6 +604,7 @@ mod tests {
                 compiled_frame: None,
             },
             AgentEvent::StepUsage {
+                upstream_provider: None,
                 reasoning_tokens: None,
                 step: 0,
                 role: ModelCallRole::Worker,

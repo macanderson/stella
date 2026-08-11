@@ -555,6 +555,7 @@ impl ToolExecutor for OneWritingTool {
 
 fn text_result(text: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: text.into(),
         tool_calls: vec![],
         usage: CompletionUsage {

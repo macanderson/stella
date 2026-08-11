@@ -214,6 +214,7 @@ async fn reflect_and_record_stores_the_models_self_review_against_its_execution(
             _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: r#"{"lessons": [{"lesson": "prefer withTenantDb over raw db()",
                      "kind": "domain", "domains": []}],
                      "self_review": {"delivered": true, "rating": 6,
@@ -322,6 +323,7 @@ async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() 
             _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: r#"{"lessons": [{"lesson": "money is integer minor units",
                      "kind": "domain", "domains": []}],
                      "self_review": {"rating": 9}}"#
@@ -437,6 +439,7 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
             _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: r#"[{"lesson": "prefer withTenantDb over raw db()", "domains": []}]"#.into(),
                 tool_calls: vec![],
                 usage: CompletionUsage {
@@ -543,6 +546,7 @@ async fn an_unreadable_reflection_is_recorded_and_an_empty_one_is_not() {
             _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: self.0.into(),
                 tool_calls: vec![],
                 usage: CompletionUsage {
@@ -635,6 +639,7 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
             _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: r#"[{"lesson":"must not apply","domains":[]}]"#.into(),
                 tool_calls: Vec::new(),
                 usage: CompletionUsage {

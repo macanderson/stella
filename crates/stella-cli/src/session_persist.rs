@@ -1140,6 +1140,7 @@ mod tests {
             Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::StepUsage {
+                    upstream_provider: None,
                     reasoning_tokens: None,
                     output_text: None,
                     step: 1,

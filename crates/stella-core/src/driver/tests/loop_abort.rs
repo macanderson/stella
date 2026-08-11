@@ -69,6 +69,7 @@ impl ToolExecutor for ConstantTools {
 
 fn call_of(call_id: &str, name: &str, input: Value) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.into(),

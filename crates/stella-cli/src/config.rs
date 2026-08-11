@@ -227,6 +227,18 @@ pub(crate) fn effective_builtin(
     if let Some(default_model) = &entry.default_model {
         effective.default_model = leak(default_model);
     }
+    if let Some(upstream_pin) = &entry.upstream_pin {
+        // Not interned, for the same reason as the env-var alias slice below:
+        // a *slice* has no natural key to intern on, and the count is bounded
+        // by the configured providers rather than by anything the model or a
+        // tool can grow. See clippy.toml.
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "per-provider upstream list, bounded by configured providers; see clippy.toml"
+        )]
+        let pin: &'static [String] = Box::leak(upstream_pin.clone().into_boxed_slice());
+        effective.upstream_pin = pin;
+    }
     if let Some(api_key_env) = &entry.api_key_env {
         let mut aliases = vec![provider.env_var];
         aliases.extend_from_slice(provider.env_var_aliases);
@@ -297,6 +309,7 @@ pub(crate) fn custom_provider(
         base_url: leak(base_url),
         dialect,
         seeded: false,
+        upstream_pin: &[],
     })
 }
 

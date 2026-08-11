@@ -688,6 +688,7 @@ impl OpenAiProvider {
             model: self.model.clone(),
             cost_usd,
             finish_reason: Some(finish_reason),
+            upstream_provider: None,
         })
     }
 }

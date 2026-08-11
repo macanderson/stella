@@ -582,6 +582,7 @@ mod tests {
 
     fn text_result(text: &str, cost: f64) -> CompletionResult {
         CompletionResult {
+            upstream_provider: None,
             text: text.into(),
             tool_calls: vec![],
             usage: CompletionUsage {
@@ -1117,6 +1118,7 @@ mod tests {
         // into the budget guard), then its next model call errors → the turn
         // aborts. The reported cost must reflect that $0.05, not $0.
         let tool_step = CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![ToolCall {
                 call_id: "c1".into(),

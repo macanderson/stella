@@ -399,6 +399,7 @@ mod tests {
             _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "[]".into(),
                 tool_calls: Vec::new(),
                 usage: CompletionUsage {
@@ -492,6 +493,7 @@ mod tests {
                 .expect("shape lock")
                 .push((request.max_output_tokens, request.effort));
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "[]".into(),
                 tool_calls: Vec::new(),
                 // `reported: true` or the usage event lands incomplete and the
@@ -670,6 +672,7 @@ mod tests {
                     .push(request.max_output_tokens);
                 let first = self.attempts.fetch_add(1, Ordering::SeqCst) == 0;
                 Ok(CompletionResult {
+                    upstream_provider: None,
                     text: if first { String::new() } else { "[]".into() },
                     tool_calls: Vec::new(),
                     usage: CompletionUsage {

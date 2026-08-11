@@ -115,6 +115,7 @@ impl Provider for ScriptedProvider {
             return Err(ProviderError::Terminal(self.error.clone()));
         };
         Ok(CompletionResult {
+            upstream_provider: None,
             text,
             tool_calls: Vec::new(),
             // `reported: true` is load-bearing. The standalone call's accounting

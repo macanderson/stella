@@ -49,6 +49,7 @@ impl Provider for AlwaysCallsATool {
         _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![ToolCall {
                 call_id: "c1".into(),

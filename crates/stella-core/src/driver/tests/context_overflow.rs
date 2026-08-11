@@ -57,6 +57,7 @@ impl Provider for OverflowThenComplete {
             });
         }
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "recovered".to_string(),
             tool_calls: Vec::new(),
             usage: stella_protocol::CompletionUsage::default(),

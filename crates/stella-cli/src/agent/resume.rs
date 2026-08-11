@@ -518,6 +518,7 @@ mod tests {
                 .unwrap()
                 .push(request.messages.to_vec());
             Ok(CompletionResult {
+                upstream_provider: None,
                 text: "resumed answer".into(),
                 tool_calls: vec![],
                 usage: CompletionUsage {
