@@ -797,7 +797,7 @@
           "type": "object"
         },
         {
-          "description": "A file was read/created/modified/deleted by the agent, carrying both\nthe authoritative line delta and a diff for display.\n\nThe single emission point is `ToolRegistry::record_touch` — the same\nplace that writes the session's file-touch ledger and its telemetry\npayload — so the TUI, the audit log and the exported JSON can no longer\ndisagree about what a turn changed. (This doc once claimed one emission\npoint \"by construction\" while the deck in fact synthesized its own\nevents from tool inputs, in a wrapper that knew only four tool names and\nsat on one of three tool stacks. Files edited in bulk, or by a worker\nlane, were reported as `+0 -0`.)\n\n`added`/`removed` are the counts the recorder derived from the real pre-\nand post-images (`file_touch::line_diff`). Consumers **must** use them\nrather than counting `+`/`-` lines in `diff`: the diff is a bounded,\ndeliberately coarse rendering of the changed region, and re-deriving\nfrom it is what made the two disagree. Reads carry `0/0` and no diff;\nconsumers that only care about mutations filter on `kind`.",
+          "description": "A file was read/created/modified/deleted by the agent **through a\ntool**, carrying both the authoritative line delta and a diff for\ndisplay.\n\n**Observability, never evidence.** This stream records what the agent\ntouched through tools whose *input* names a path; it is **not** a\ncomplete record of workspace mutation, and nothing may found a claim\nabout what changed on counting it. `bash` names nothing — a heredoc, a\n`patch`, a `make`, or a `>` redirect mutates the tree and emits no event\nhere, which on Terminal-Bench is most of the work. The authority on what\nchanged is the git diff of the tree, and a consumer that needs that\nanswer takes it from there (#2873, which removed the last three\ndecisions that read a count of these events; the tally survives as a\nrecorded-only field on `LadderSnapshot`).\n\nThe single emission point is `ToolRegistry::record_touch` — the same\nplace that writes the session's file-touch ledger and its telemetry\npayload — so the TUI, the audit log and the exported JSON can no longer\ndisagree about what a turn changed. (This doc once claimed one emission\npoint \"by construction\" while the deck in fact synthesized its own\nevents from tool inputs, in a wrapper that knew only four tool names and\nsat on one of three tool stacks. Files edited in bulk, or by a worker\nlane, were reported as `+0 -0`.)\n\n`added`/`removed` are the counts the recorder derived from the real pre-\nand post-images (`file_touch::line_diff`). Consumers **must** use them\nrather than counting `+`/`-` lines in `diff`: the diff is a bounded,\ndeliberately coarse rendering of the changed region, and re-deriving\nfrom it is what made the two disagree. Reads carry `0/0` and no diff;\nconsumers that only care about mutations filter on `kind`.",
           "properties": {
             "added": {
               "default": 0,
@@ -1929,7 +1929,7 @@
       "type": "object"
     },
     "FileChangeKind": {
-      "description": "What happened to a file in a `FileChange` event.",
+      "description": "What happened to a file in a [`AgentEvent::FileChange`] event — as declared\nby the tool that touched it, which is why [`Self::is_mutation`] answers\n\"was this call a write\" and never \"did the tree change\". See the variant's\ndoc for the difference and why only git can answer the second.",
       "oneOf": [
         {
           "const": "read",
@@ -2175,7 +2175,7 @@
           "type": "integer"
         },
         "file_change_events": {
-          "description": "Mutating file touches the recorder observed.",
+          "description": "Mutating file touches the recorder observed — a tally of what the agent\ntouched **through tools**, which a shell redirect defeats, and which is\nzero inside a candidate workspace.\n\n**Recorded only: no ladder predicate reads it** (#2873). It is here so a\ncorpus of traces can be read after the fact, exactly like\n[`Self::no_test_surface`]. A consumer asking whether the tree changed\nreads [`Self::diff_available`] with [`Self::diff_lines`] — git is the\nauthority — and one asking whether anything was attempted reads\n[`Self::mutating_actions`].",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"

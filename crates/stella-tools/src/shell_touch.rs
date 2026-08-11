@@ -11,15 +11,16 @@
 //! The consequence was measured rather than assumed. Over a 20-task
 //! Terminal-Bench run, 757 of 1,063 tool calls were `bash` and the ledger
 //! recorded 131 events — one per CRUD-tool call, none from the shell. 71% of
-//! the agent's activity left no trace in the ledger, in the Files tab, or in
-//! the `file_change_events` channel the verification ladder reads.
+//! the agent's activity left no trace in the ledger or in the Files tab.
 //!
-//! That last one is why this matters beyond cosmetics. On Terminal-Bench the
-//! task directory is not a git repository, so the diff probe can only ever
-//! answer "I could not look" (`LadderInputs::diff_available == false`). With
-//! the diff channel dark, `file_change_events` is the *only* channel that can
-//! positively prove the tree changed — and it was blind to the exact tool
-//! doing nearly all of the changing.
+//! It once left no trace in the verification ladder either, and that framing is
+//! now wrong in a way worth stating: `LadderInputs::file_change_events` was
+//! read by three ladder predicates until #2873 and is read by none of them
+//! today. A tally of tool-declared touches cannot be an authority on whether
+//! the tree changed — this module exists because it is not one — so the ladder
+//! takes that answer from git and nowhere else. What this module buys is
+//! **observability**: the ledger, the Files tab, and the authored-diff channel
+//! see the tool that does nearly all of the changing.
 //!
 //! So this module answers the question the schema cannot: fingerprint the
 //! workspace either side of an opaque call and attribute the difference. The

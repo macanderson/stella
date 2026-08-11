@@ -1047,7 +1047,10 @@ export interface ContextUsage {
 }
 
 /**
- * What happened to a file in a `FileChange` event.
+ * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
+ * by the tool that touched it, which is why [`Self::is_mutation`] answers
+ * "was this call a write" and never "did the tree change". See the variant's
+ * doc for the difference and why only git can answer the second.
  */
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
@@ -1242,7 +1245,16 @@ export interface LadderSnapshot {
    */
   errored_commands?: number;
   /**
-   * Mutating file touches the recorder observed.
+   * Mutating file touches the recorder observed — a tally of what the agent
+   * touched **through tools**, which a shell redirect defeats, and which is
+   * zero inside a candidate workspace.
+   *
+   * **Recorded only: no ladder predicate reads it** (#2873). It is here so a
+   * corpus of traces can be read after the fact, exactly like
+   * [`Self::no_test_surface`]. A consumer asking whether the tree changed
+   * reads [`Self::diff_available`] with [`Self::diff_lines`] — git is the
+   * authority — and one asking whether anything was attempted reads
+   * [`Self::mutating_actions`].
    */
   file_change_events: number;
   /**

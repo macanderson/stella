@@ -28,7 +28,7 @@
 //! - **revise** on a clear failure (touched tests red), or on a turn that
 //!   never attempted anything (`NothingAttempted`);
 //! - **abstain** (`Unverifiable`) when every channel was blind — no flip, no
-//!   test result, an unreadable working tree, and no recorded file touch;
+//!   test result, and an unreadable working tree;
 //! - **report it unproven** (`Unverified`) on genuinely inconclusive evidence.
 //!
 //! That last rung used to escalate to a model verifier. It does not, and the
@@ -61,6 +61,16 @@
 //! abstain exists for is real: one of those eleven trials' siblings did the
 //! work entirely through shell redirects, recorded no touch, could not be
 //! diffed — and passed its Harbor verifier.
+//!
+//! # Git is the only authority on "the tree changed"
+//!
+//! Two streams in this codebase answer to that description and they disagree.
+//! `AgentEvent::FileChange` is emitted by tools whose *input* names a path, so
+//! it records what the agent touched **through tools** and misses every shell
+//! redirect, `patch` and `make`; the git diff of the tree misses nothing. Only
+//! the second may back a ladder decision. `LadderInputs::file_change_events`
+//! carries the first and is read by nothing here (#2873) — the ladder's
+//! channels are the flip receipt, the touched tests, and git.
 //!
 //! Linters and typecheckers are deliberately **excluded** from the flip
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
@@ -489,8 +499,36 @@ pub struct LadderInputs {
     /// answer `false`.
     pub diff_available: bool,
     /// Mutating file touches the recorder observed this turn, from the registry
-    /// that emitted the `FileChange` events (`FileTouchPort`). Non-zero is
-    /// positive proof the tree changed even when nothing can render *how*.
+    /// that emitted the `FileChange` events (`FileTouchPort`).
+    ///
+    /// **Recorded only: [`ladder_decision`] does not read it** (#2873). It is a
+    /// tally of what the agent touched **through tools**, which is a different
+    /// question from whether the tree changed — a `bash` heredoc mutates the
+    /// workspace and emits nothing here — and the ladder's authority on the
+    /// second question is git ([`Self::diff_available`] with
+    /// [`Self::diff_lines`]).
+    ///
+    /// Three predicates conjoined on it until #2873, each documented as if it
+    /// were a live channel, and it is **zero wherever the ladder actually
+    /// runs**. Measured, not inferred: on the 2026-08-11 Terminal-Bench panel,
+    /// across 53 pipeline trials that reached a verdict, the 49 that ran in a
+    /// candidate workspace **all** recorded `0` before the verdict and the 4
+    /// that did not **all** recorded a non-zero count — 53/53 — with
+    /// [`Self::mutating_actions`] between 6 and 147 beside it. Both operands of
+    /// the `max` in `observed_mutations` therefore read zero on every one of
+    /// those 49 runs; the tree's own account of the event half is
+    /// `verify_probes::DIFF_PROBE_FAILED` ("the engine emits no `FileChange`
+    /// events … inside a best-of-N or witness candidate the count is always
+    /// zero"), which `pipeline::tests::warrant` had already written down.
+    ///
+    /// It is deliberately not deleted with the read, for the same reason
+    /// [`Self::no_test_surface`] was not: the pipeline still sets it, the
+    /// snapshot still puts it on the wire, and `replay` still renders it,
+    /// because "the tools declared this many touches" is a fact worth reading
+    /// off a corpus of traces. Whether it should regain a decision role — which
+    /// needs a signal a candidate can actually feed, not a wider read of this
+    /// one — or be retired is #2873; what it must not do is keep claiming an
+    /// effect it never had.
     pub file_change_events: u32,
     /// Tool calls this turn that were *capable* of changing the workspace:
     /// every dispatched call except those whose tool the registry advertises
@@ -618,8 +656,8 @@ impl LadderInputs {
     }
 
     /// Whether every channel the ladder has was unable to observe anything:
-    /// no flip receipt, no test result, a diff probe that could not read the
-    /// tree, and no recorded file touch.
+    /// no flip receipt, no test result, and a diff probe that could not read
+    /// the tree.
     ///
     /// This is *not* "the turn changed nothing" — it is "nothing here can tell
     /// you either way", and the distinction is the whole value of the ladder.
@@ -629,19 +667,25 @@ impl LadderInputs {
     /// verifier asserted a file "likely does not exist" while it sat in the
     /// container.
     ///
-    /// Note the asymmetry: a *red* test or a non-zero touch count is real
-    /// evidence, so neither can be blind. Only the total absence qualifies.
+    /// Note the asymmetry: a *red* test is real evidence, so it cannot be
+    /// blind. Only the total absence qualifies.
     ///
     /// Reads [`Self::has_flip_receipt`] rather than [`Self::flip`]
     /// for the reason the abstention sits above the credit: a turn whose only
-    /// observation was a `verify_done` receipt satisfies all four dark
-    /// channels on the narrower predicate, so this rung would swallow it
-    /// before step 4 could ever look (#2618).
+    /// observation was a `verify_done` receipt satisfies every dark channel on
+    /// the narrower predicate, so this rung would swallow it before step 4
+    /// could ever look (#2618).
+    ///
+    /// Every conjunct is an **observation** channel. [`Self::mutating_actions`]
+    /// is absent because it is a dispatch record, not a look at the world, and
+    /// the rung above ([`Self::nothing_was_attempted`]) is where the ladder
+    /// reads it. [`Self::file_change_events`] was a fourth conjunct until
+    /// #2873 and belongs to that same dispatch side — it counts what the tools
+    /// declared, never what the tree did, and inside a candidate workspace it
+    /// is pinned at zero, so it contributed a constant `true` to a predicate
+    /// whose doc advertised it as a channel.
     pub fn evidence_is_blind(&self) -> bool {
-        !self.has_flip_receipt()
-            && self.touched_tests_passed.is_none()
-            && !self.diff_available
-            && self.file_change_events == 0
+        !self.has_flip_receipt() && self.touched_tests_passed.is_none() && !self.diff_available
     }
 
     /// Whether a model verifier's `passed` would be the *only* thing standing
@@ -692,12 +736,16 @@ impl LadderInputs {
     /// this state would otherwise satisfy on the way to reporting a pass.
     ///
     /// The remaining conjuncts are there so a single positive observation
-    /// always wins. A flip, a test result, a recorded touch or a non-empty
-    /// diff each mean *something* happened, whoever caused it — and a turn
-    /// with something to explain deserves a verdict, not this shortcut.
+    /// always wins. A flip, a test result or a non-empty diff each mean
+    /// *something* happened, whoever caused it — and a turn with something to
+    /// explain deserves a verdict, not this shortcut.
+    ///
+    /// [`Self::file_change_events`] was one of them until #2873, where it was
+    /// pure redundancy: every `FileChange` is emitted from a mutating tool
+    /// call, so a non-zero count implies a non-zero
+    /// [`Self::mutating_actions`], which the first conjunct already excludes.
     pub fn nothing_was_attempted(&self) -> bool {
         self.mutating_actions == 0
-            && self.file_change_events == 0
             && self.diff_lines == 0
             && !self.flip.is_achieved()
             && self.touched_tests_passed.is_none()
@@ -722,13 +770,21 @@ impl LadderInputs {
     /// will ever read — while the run collected a candidate root that stayed
     /// empty. Ten mutating calls, a readable zero-line diff, and a verdict of
     /// `passed: true, deterministic: true`. Note what does *not* reach here: a
-    /// flip, a green test, or a recorded touch each corroborate the work, and
-    /// any one of them sends the turn on to the rungs that can credit it.
+    /// flip or a green test each corroborate the work, and either one sends
+    /// the turn on to the rungs that can credit it.
+    ///
+    /// [`Self::file_change_events`] used to sit beside them as a third
+    /// corroborator, and it was pointing the wrong way (#2873). The premise of
+    /// this predicate is that git *looked at the collected tree and found it
+    /// unchanged*. A tool tally saying "I wrote files" against that reading is
+    /// evidence **for** the effects having landed somewhere this run does not
+    /// collect, not against it — so counting it as corroboration let a
+    /// tool-call tally overrule the one channel that had actually observed the
+    /// tree.
     pub fn effects_escaped_collection(&self) -> bool {
         self.mutating_actions > 0
             && self.diff_available
             && self.diff_lines == 0
-            && self.file_change_events == 0
             && !self.flip.is_achieved()
             && self.touched_tests_passed.is_none()
     }
@@ -940,8 +996,7 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
              diff probe then read the tree and found it unchanged, so nothing here observed the \
              work and nothing is claimed about it (this is NOT a finding that the work is absent \
              or wrong): the effects landed outside what this run collects. No fail→pass flip was \
-             observed; no touched-test result; file-change events recorded = 0. Verify the result \
-             on its own merits.",
+             observed; no touched-test result. Verify the result on its own merits.",
             inputs.mutating_actions
         )
     } else {
@@ -949,8 +1004,9 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
             "UNVERIFIABLE — no evidence channel could observe this turn, so nothing is claimed \
              about it (this is NOT a finding that the work is absent or wrong): flip oracle not \
              armed (no test command); touched tests not run; the diff probe could not read the \
-             working tree; file-change events recorded = {}. Verify the result on its own merits.",
-            inputs.file_change_events
+             working tree ({} mutating call(s) were dispatched). Verify the result on its own \
+             merits.",
+            inputs.mutating_actions
         )
     };
     VerdictEvidence {
@@ -1108,10 +1164,10 @@ pub fn nothing_attempted_evidence(inputs: &LadderInputs) -> VerdictEvidence {
     VerdictEvidence {
         summary: format!(
             "NO WORK ATTEMPTED — the turn ended without dispatching a single tool call that \
-             could change the workspace ({} mutating call(s), {} file-change event(s), {} \
-             diff line(s)). This is not an unverifiable result: nothing was asked to change, \
-             so nothing did, whatever the other channels could or could not see.",
-            inputs.mutating_actions, inputs.file_change_events, inputs.diff_lines
+             could change the workspace ({} mutating call(s), {} diff line(s)). This is not an \
+             unverifiable result: nothing was asked to change, so nothing did, whatever the \
+             other channels could or could not see.",
+            inputs.mutating_actions, inputs.diff_lines
         ),
         deterministic: true,
         evidence_refs: Vec::new(),
