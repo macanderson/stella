@@ -286,6 +286,18 @@ fn validate_local_args(program: &str, args: &[String]) -> Result<(), TestInvocat
 
 /// Validate the witness author's complete working-tree delta and return the
 /// content-hash baseline for the one accepted test artifact.
+///
+/// # The delta is not all the author's
+///
+/// The two `_after` maps are read *after the baseline oracle run*, not after
+/// the author's turn — the stage has to see the test fail before it will
+/// accept it. So the delta contains everything running that test produced, and
+/// on a Python workspace that is the interpreter's own
+/// `__pycache__/<witness>.cpython-*.pyc`. Judging that byte-compilation as a
+/// second authored file makes the run reject an artifact it created itself,
+/// which is what cost `build-cython-ext` a change a grader independently
+/// scored 9 of 11 passing. [`crate::scratch`] holds the one list of what
+/// running code writes, shared with adoption so the two cannot drift apart.
 pub fn validate_witness_artifact(
     tracked_before: &HashMap<String, String>,
     tracked_after: &HashMap<String, String>,
@@ -566,11 +578,20 @@ pub fn validate_witness_identity(
     }
 }
 
+/// The paths whose fingerprints differ between two snapshots, minus tool
+/// scratch.
+///
+/// The subtraction is here rather than at the call site because both sides of
+/// [`validate_witness_artifact`] need it and for the same reason: a snapshot
+/// pair that straddles a test run contains that run's own byte-compilation
+/// output, which no author wrote and no verdict depends on. See
+/// [`crate::scratch`] for the list and why adoption shares it.
 fn changed_paths(before: &HashMap<String, String>, after: &HashMap<String, String>) -> Vec<String> {
     let mut paths: Vec<String> = before
         .keys()
         .chain(after.keys())
         .filter(|path| before.get(*path) != after.get(*path))
+        .filter(|path| !crate::scratch::is_tool_scratch(path))
         .cloned()
         .collect();
     paths.sort();

@@ -535,8 +535,45 @@ fn assert_aborted_because(status: &PipelineStatus, expected: &str) {
     );
 }
 
+/// Assert a witness-integrity refusal cost the run its *claim* and nothing
+/// else (#2876): no witness, no flip, an `Unverified` verdict that names the
+/// refusal on the rail — and the executed work still adopted.
+///
+/// This is the shape the three tests below used to assert the inverse of. A
+/// refusal is a fact about scaffolding authored afterwards in a pristine
+/// sibling snapshot; it is not evidence about the change the worker already
+/// made, and treating it as such threw away a `build-cython-ext` candidate
+/// that a grader independently scored 9 of 11 passing.
+fn assert_refused_but_adopted(
+    status: &PipelineStatus,
+    events: &[AgentEvent],
+    log: &[String],
+    expected: &str,
+) {
+    assert!(
+        matches!(status, PipelineStatus::Unverified { .. }),
+        "a refused witness leaves the work unproven, never discarded: {status:?}"
+    );
+    let refusal = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Proof { step: stella_protocol::ProofStep::WitnessUnavailable { reason } }
+                if reason.contains("refused") && reason.contains(expected)
+        )
+    });
+    assert!(
+        refusal,
+        "the rail must state the refusal, not swallow it\n  expected to contain: \
+         {expected}\n  events: {events:?}"
+    );
+    assert!(
+        log.iter().any(|entry| entry.starts_with("adopt:")),
+        "the deliverable survives the refused claim: {log:?}"
+    );
+}
+
 #[tokio::test]
-async fn tracked_production_edit_by_witness_author_aborts_without_adoption() {
+async fn tracked_production_edit_by_witness_author_refuses_the_witness_and_still_adopts() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("worker done"),
@@ -558,20 +595,21 @@ async fn tracked_production_edit_by_witness_author_aborts_without_adoption() {
         FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(status);
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
 
-    let (outcome, _, _) = run_isolated(
+    let (outcome, events, _) = run_isolated(
         &provider,
         &port,
         PipelineConfig::default(),
         "Fix the failing test",
     )
     .await;
-    let outcome = outcome.expect("author mutation is an aborted candidate");
-    assert_aborted_because(
+    let outcome = outcome.expect("an author mutation degrades, it does not error");
+    let log = log.lock().unwrap().clone();
+    assert_refused_but_adopted(
         &outcome.status,
+        &events,
+        &log,
         "witness author modified tracked file(s): src/lib.rs",
     );
-    let log = log.lock().unwrap().clone();
-    assert!(!log.iter().any(|entry| entry.starts_with("adopt:")));
     assert!(log.contains(&"remove:0".to_string()));
     assert!(
         log.contains(&"remove:1".to_string()),
@@ -579,12 +617,13 @@ async fn tracked_production_edit_by_witness_author_aborts_without_adoption() {
     );
 }
 
-/// An artifact whose language does not match its runner is rejected — and now
-/// rejected *after* the worker has run, because that is when authoring happens.
-/// The fail-closed decision is unchanged; what it costs changed, and this pins
-/// both halves so the trade is visible rather than assumed.
+/// An artifact whose language does not match its runner is refused — and
+/// refused *after* the worker has run, because that is when authoring happens.
+/// The fail-closed decision is unchanged; since #2876 what it costs is the
+/// witness claim alone, and this pins both halves so the trade is visible
+/// rather than assumed.
 #[tokio::test]
-async fn witness_language_mismatch_aborts_after_worker_execution() {
+async fn witness_language_mismatch_refuses_the_witness_and_still_adopts() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("worker done"),
@@ -602,28 +641,35 @@ async fn witness_language_mismatch_aborts_after_worker_execution() {
     );
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
 
-    let (outcome, _, _) = run_isolated(
+    let (outcome, events, _) = run_isolated(
         &provider,
         &port,
         PipelineConfig::default(),
         "Fix the failing test",
     )
     .await;
-    let outcome = outcome.expect("mismatch is a truthful candidate abort");
-    assert_aborted_because(
+    let outcome = outcome.expect("a mismatch degrades, it does not error");
+    let log = log.lock().unwrap().clone();
+    assert_refused_but_adopted(
         &outcome.status,
+        &events,
+        &log,
         "witness artifact `tests/test_authority.py` does not match test runner `cargo`",
     );
-    // Two snapshots, both torn down, nothing adopted: a rejected witness never
-    // reaches the real tree and never leaks a workspace.
-    assert_eq!(
-        *log.lock().unwrap(),
-        vec!["create", "create", "remove:1", "remove:0"]
+    // Both snapshots torn down: a refused witness never reaches the real tree
+    // — only the worker's own change does — and never leaks a workspace.
+    assert!(
+        log.contains(&"remove:1".to_string()) && log.contains(&"remove:0".to_string()),
+        "{log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("graft:")),
+        "the refused artifact is never grafted into the candidate: {log:?}"
     );
 }
 
 #[tokio::test]
-async fn symlink_witness_artifact_aborts_after_worker_execution() {
+async fn symlink_witness_artifact_refuses_the_witness_and_still_adopts() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("worker done"),
@@ -648,24 +694,26 @@ async fn symlink_witness_artifact_aborts_after_worker_execution() {
         FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(status);
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
 
-    let (outcome, _, _) = run_isolated(
+    let (outcome, events, _) = run_isolated(
         &provider,
         &port,
         PipelineConfig::default(),
         "Fix the failing test",
     )
     .await;
-    let outcome = outcome.expect("symlink is a truthful candidate abort");
-    // Rejected in the tree that authored it, before any copy — a symlink must
+    let outcome = outcome.expect("a symlink artifact degrades, it does not error");
+    let log = log.lock().unwrap().clone();
+    // Refused in the tree that authored it, before any copy — a symlink must
     // never be resolved by the graft into the candidate.
-    assert_aborted_because(
+    assert_refused_but_adopted(
         &outcome.status,
+        &events,
+        &log,
         "witness artifact `tests/authority_witness.rs` has an unsafe or unstable filesystem identity",
     );
-    let log = log.lock().unwrap().clone();
     assert!(
         !log.iter().any(|entry| entry.starts_with("graft:")),
-        "a symlink artifact is rejected before it can be grafted: {log:?}"
+        "a symlink artifact is refused before it can be grafted: {log:?}"
     );
 }
 

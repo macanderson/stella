@@ -171,35 +171,51 @@ impl HookRunner for BoundHookRunner<'_> {
     }
 }
 
-/// Why an authored witness could not be produced or accepted, and whether the
-/// pipeline may degrade past it.
+/// Why an authored witness could not be produced or accepted.
 ///
-/// `degradable` = the witness simply couldn't be AUTHORED (no test command,
-/// an unusable command, a test that proves nothing, the author engine getting
-/// stuck, a budget stop mid-authoring — #1789: the worker's change is already
-/// done, and the budget guard still gates every later paid call, so degrading
-/// preserves the work without overspending). The task needs no witness to
-/// proceed, so the run degrades to a bare worker turn rather than dying. NOT
-/// degradable = an artifact-INTEGRITY violation (the author modified tracked
-/// files, produced a non-single-file / symlink artifact, or a runner/identity
-/// mismatch) — fail-closed decisions that surface the problem rather than
-/// silently completing unverified.
+/// # Both endings keep the work; they differ in what they say about it
+///
+/// [`Self::unauthorable`] = the witness simply couldn't be AUTHORED (no test
+/// command, an unusable command, a test that proves nothing, the author engine
+/// getting stuck, a budget stop mid-authoring — #1789: the worker's change is
+/// already done, and the budget guard still gates every later paid call, so
+/// degrading preserves the work without overspending).
+///
+/// [`Self::rejected`] = an artifact-INTEGRITY violation: the author modified
+/// tracked files, produced a non-single-file / symlink artifact, or a
+/// runner/identity mismatch. It stays fail-closed **for the claim** — no
+/// witness, no flip credit, and the refusal is stated on the rail — and it is
+/// deliberately fail-open **for the deliverable**.
+///
+/// That asymmetry is the correction. A refusal used to abort the candidate
+/// outright, which discarded an executed change on the strength of a fact
+/// about *scaffolding authored afterwards in a different snapshot*. Nothing
+/// the author does can corrupt the candidate's tree: it works in a pristine
+/// sibling that `witness_on_demand` deletes on every path. So the refusal was
+/// destroying work it had no evidence against — and did, on
+/// `build-cython-ext`, where the discarded change scored 9 of 11 on the
+/// grader's own tests. A post-hoc check may downgrade a claim; it must never
+/// discard a deliverable.
 pub(super) struct WitnessAbort {
     pub(super) reason: String,
-    pub(super) degradable: bool,
+    /// True when the artifact was refused on integrity grounds rather than
+    /// merely being unavailable. Selects how the degradation is worded on the
+    /// rail: a refusal is a defect in the run, not a fact about the workspace,
+    /// and a reader must be able to tell the two apart.
+    pub(super) refused: bool,
 }
 
 impl WitnessAbort {
-    pub(super) fn degradable(reason: String) -> Self {
+    pub(super) fn unauthorable(reason: String) -> Self {
         Self {
             reason,
-            degradable: true,
+            refused: false,
         }
     }
     pub(super) fn rejected(reason: String) -> Self {
         Self {
             reason,
-            degradable: false,
+            refused: true,
         }
     }
 }
@@ -240,6 +256,21 @@ impl<'a> Pipeline<'a> {
     pub(super) fn unproven(&self, reason: String) {
         self.warn(format!("continuing without an authored witness: {reason}"));
         self.emit_proof(stella_protocol::ProofStep::WitnessUnavailable { reason });
+    }
+
+    /// Record that a warranted witness was authored and then **refused** on
+    /// integrity grounds — the author touched tracked files, or produced an
+    /// artifact that is not one new test file with a safe filesystem identity.
+    ///
+    /// Routed through [`Self::unproven`] rather than a new event, because the
+    /// consequence is identical (no witness, no flip credit, the run continues
+    /// on the unauthored ladder) and only the account differs. The wording is
+    /// what carries the difference: "unavailable" is a fact about the
+    /// workspace a reader can do nothing about, while a refusal is a defect in
+    /// the run — the author misbehaved, or the validator is over-reading its
+    /// own oracle's leavings, and both are worth chasing.
+    pub(super) fn witness_refused(&self, reason: String) {
+        self.unproven(format!("the authored artifact was refused: {reason}"));
     }
 
     /// Record that verification could not be *performed*: every evidence
@@ -376,7 +407,7 @@ impl<'a> Pipeline<'a> {
         // now, honestly, with zero author spend.
         let available = runner_availability(baseline.tests).await;
         if available.is_empty() {
-            return Err(WitnessAbort::degradable(
+            return Err(WitnessAbort::unauthorable(
                 "no supported test runner is available in this workspace, so an authored \
                  witness could never be observed"
                     .to_string(),
@@ -391,7 +422,7 @@ impl<'a> Pipeline<'a> {
         // wiring a surface without a workspace is exactly such a case, and
         // the one stage designed to degrade must not be the one that panics.
         let Some(baseline_workspace) = baseline.workspace else {
-            return Err(WitnessAbort::degradable(
+            return Err(WitnessAbort::unauthorable(
                 "witness authoring requires a pristine baseline workspace and none was provided"
                     .to_string(),
             ));
@@ -477,25 +508,25 @@ impl<'a> Pipeline<'a> {
                 // deterministically-resolvable endings (a warranted waiver,
                 // an abstention) that need no further model spend at all.
                 if let Some(abort) = budget_abort(spend.budget.evaluate()) {
-                    return Err(WitnessAbort::degradable(format!(
+                    return Err(WitnessAbort::unauthorable(format!(
                         "witness authoring stopped by the budget ({}); the executed change \
                          stands unproven",
                         abort.reason
                     )));
                 }
-                return Err(WitnessAbort::degradable(format!(
+                return Err(WitnessAbort::unauthorable(format!(
                     "witness author turn aborted: {reason}"
                 )));
             }
         };
         let Some(mut command) = parse_witness_command(&text) else {
-            return Err(WitnessAbort::degradable(
+            return Err(WitnessAbort::unauthorable(
                 "witness author produced no TEST_COMMAND line".to_string(),
             ));
         };
 
         let Ok(mut invocation) = parse_test_invocation(&command) else {
-            return Err(WitnessAbort::degradable(format!(
+            return Err(WitnessAbort::unauthorable(format!(
                 "witness author produced an unsafe or unsupported test command `{command}`"
             )));
         };
@@ -504,7 +535,7 @@ impl<'a> Pipeline<'a> {
         // real reason — never by spending a baseline run to discover an
         // unobservable command and blaming generic infra.
         if !available.contains(&invocation.program) {
-            return Err(WitnessAbort::degradable(format!(
+            return Err(WitnessAbort::unauthorable(format!(
                 "witness author chose `{}`, which is not available in this workspace \
                  (available runners: {})",
                 invocation.program,
@@ -519,7 +550,7 @@ impl<'a> Pipeline<'a> {
         // and say why — cheaper and honest.
         let first_baseline = self.run_test_observed(baseline.tests, &invocation).await;
         if let Some(label) = first_baseline.infra_label() {
-            return Err(WitnessAbort::degradable(format!(
+            return Err(WitnessAbort::unauthorable(format!(
                 "witness baseline run was {label}; no assertion was observed, so a failing \
                  baseline cannot be established"
             )));
@@ -546,7 +577,7 @@ impl<'a> Pipeline<'a> {
             let repair_bound =
                 witness_repair_bound(self.remaining_wall_clock(spend.budget, Instant::now()));
             if repair_bound.is_zero() {
-                return Err(WitnessAbort::degradable(
+                return Err(WitnessAbort::unauthorable(
                     "no wall-clock room remains for a witness repair; the executed change \
                      stands unproven"
                         .to_string(),
@@ -590,7 +621,7 @@ impl<'a> Pipeline<'a> {
             // ceiling, not a budget stop.
             let repaired = match tokio::time::timeout(repair_bound, repair_turn).await {
                 Err(_elapsed) => {
-                    return Err(WitnessAbort::degradable(format!(
+                    return Err(WitnessAbort::unauthorable(format!(
                         "witness repair exceeded its wall-clock bound ({repair_bound:?}); \
                          the executed change stands unproven"
                     )));
@@ -606,13 +637,13 @@ impl<'a> Pipeline<'a> {
                     // Degradable for the same #1789 reason as the author
                     // turn's budget arm above.
                     if let Some(abort) = budget_abort(spend.budget.evaluate()) {
-                        return Err(WitnessAbort::degradable(format!(
+                        return Err(WitnessAbort::unauthorable(format!(
                             "witness repair stopped by the budget ({}); the executed change \
                              stands unproven",
                             abort.reason
                         )));
                     }
-                    return Err(WitnessAbort::degradable(format!(
+                    return Err(WitnessAbort::unauthorable(format!(
                         "witness repair turn aborted: {reason}"
                     )));
                 }
@@ -624,13 +655,13 @@ impl<'a> Pipeline<'a> {
             command = match parse_witness_command(&repaired) {
                 Some(repaired_command) => repaired_command,
                 None => {
-                    return Err(WitnessAbort::degradable(
+                    return Err(WitnessAbort::unauthorable(
                         "witness repair produced no TEST_COMMAND line".to_string(),
                     ));
                 }
             };
             let Ok(repaired_invocation) = parse_test_invocation(&command) else {
-                return Err(WitnessAbort::degradable(format!(
+                return Err(WitnessAbort::unauthorable(format!(
                     "witness repair produced an unsafe or unsupported test command `{command}`"
                 )));
             };
@@ -638,7 +669,7 @@ impl<'a> Pipeline<'a> {
             // may change the runner, and an unavailable one is just as
             // unobservable the second time.
             if !available.contains(&repaired_invocation.program) {
-                return Err(WitnessAbort::degradable(format!(
+                return Err(WitnessAbort::unauthorable(format!(
                     "witness repair chose `{}`, which is not available in this workspace \
                      (available runners: {})",
                     repaired_invocation.program,
@@ -648,12 +679,12 @@ impl<'a> Pipeline<'a> {
             invocation = repaired_invocation;
             let repaired_baseline = self.run_test_observed(baseline.tests, &invocation).await;
             if let Some(label) = repaired_baseline.infra_label() {
-                return Err(WitnessAbort::degradable(format!(
+                return Err(WitnessAbort::unauthorable(format!(
                     "witness baseline run after repair was {label}; no assertion was observed"
                 )));
             }
             if repaired_baseline.passed() {
-                return Err(WitnessAbort::degradable(
+                return Err(WitnessAbort::unauthorable(
                     "witness test still passes on the unmodified code after one repair".to_string(),
                 ));
             }
@@ -678,7 +709,7 @@ impl<'a> Pipeline<'a> {
             // PRODUCED must not throw it away. Everything else — tracked
             // mutations, wrong or multiple files — stays fail-closed.
             crate::witness::WitnessArtifactError::NothingCreated => {
-                WitnessAbort::degradable(error.to_string())
+                WitnessAbort::unauthorable(error.to_string())
             }
             _ => WitnessAbort::rejected(error.to_string()),
         })?;
@@ -707,7 +738,7 @@ impl<'a> Pipeline<'a> {
         // Same #1789 posture as the baseline workspace above: an absent
         // candidate workspace loses the witness, never the run.
         let Some(candidate_workspace) = candidate.workspace else {
-            return Err(WitnessAbort::degradable(
+            return Err(WitnessAbort::unauthorable(
                 "witness grafting requires the candidate workspace and none was provided"
                     .to_string(),
             ));
@@ -715,7 +746,7 @@ impl<'a> Pipeline<'a> {
         candidate_workspace
             .graft_witness(baseline_workspace.root(), path)
             .await
-            .map_err(|error| WitnessAbort::degradable(error.to_string()))?;
+            .map_err(|error| WitnessAbort::unauthorable(error.to_string()))?;
 
         // Re-pin against the *grafted* copy. Tamper exclusion runs against the
         // candidate's repo status for the rest of the run, so the baseline it
@@ -751,13 +782,15 @@ impl<'a> Pipeline<'a> {
     /// sometimes a repair turn) to produce a test for a change with nothing to
     /// prove, and only afterwards discovered the warrant.
     ///
-    /// `Err` is reserved for fail-closed integrity rejections. Everything else
-    /// — no isolation port for the baseline, an author that got stuck, an
-    /// artifact that could not be grafted — returns `Ok(None)` and lets the
-    /// candidate finish on the unauthored ladder. That asymmetry is new and
-    /// deliberate: the work is already done by the time this runs, so a witness
-    /// that cannot be *produced* must not throw away a real change, while a
-    /// witness that cannot be *trusted* must still stop the run.
+    /// **There is no failing return.** Every way this can go wrong — no
+    /// isolation port for the baseline, an author that got stuck, an artifact
+    /// that could not be grafted, and (since #2876) an artifact refused on
+    /// integrity grounds — answers `None` and lets the candidate finish on the
+    /// unauthored ladder, so its executed work still reaches a verdict and
+    /// still gets adopted. Nothing observed here is evidence about that work:
+    /// authoring happens afterwards, in a pristine sibling snapshot this
+    /// function deletes on every path. A refusal withholds the *witness*,
+    /// which is exactly what fail-closed should cost.
     pub(super) async fn witness_on_demand(
         &self,
         goal: &str,
@@ -765,17 +798,15 @@ impl<'a> Pipeline<'a> {
         surface: CandidateSurface<'_>,
         state: &mut CandidateState,
         spend: &mut Spend<'_>,
-    ) -> Result<Option<Witness>, String> {
-        let Some(authoring) = authoring else {
-            return Ok(None);
-        };
+    ) -> Option<Witness> {
+        let authoring = authoring?;
         if !warrant(&state.diff_text, state.signals).is_required() {
             // No Witness stage is emitted, because none runs. The reason is
             // not lost: `warranted_completion` reads the same warrant during
             // verification and records the sentence on the verdict, which is
             // the run's half of "a witness test, or a stated reason there
             // isn't one".
-            return Ok(None);
+            return None;
         }
 
         // A second snapshot of the same untouched tree. The candidate's edits
@@ -785,7 +816,7 @@ impl<'a> Pipeline<'a> {
             Ok(baseline) => baseline,
             Err(e) => {
                 self.unproven(format!("no pristine baseline to author against: {e}"));
-                return Ok(None);
+                return None;
             }
         };
         let baseline_surface = CandidateSurface {
@@ -810,12 +841,19 @@ impl<'a> Pipeline<'a> {
 
         let witness = match authored {
             Ok(Some(witness)) => witness,
-            Ok(None) => return Ok(None),
-            Err(abort) if abort.degradable => {
-                self.unproven(abort.reason.clone());
-                return Ok(None);
+            Ok(None) => return None,
+            // Both endings continue on the unauthored ladder: the executed
+            // change is already done and lives in a workspace the authoring
+            // snapshot never touched, so nothing learned here is evidence
+            // against it. What differs is the sentence the rail carries.
+            Err(abort) if abort.refused => {
+                self.witness_refused(abort.reason.clone());
+                return None;
             }
-            Err(abort) => return Err(abort.reason),
+            Err(abort) => {
+                self.unproven(abort.reason.clone());
+                return None;
+            }
         };
 
         // The artifact failed in the baseline — `witness_stage` cannot return
@@ -896,7 +934,7 @@ impl<'a> Pipeline<'a> {
                     .to_string(),
             );
         }
-        Ok(Some(witness))
+        Some(witness)
     }
 }
 

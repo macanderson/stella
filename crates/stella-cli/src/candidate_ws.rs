@@ -782,13 +782,25 @@ impl GitCandidateWorkspace {
             .clone()
             .ok_or_else(|| fail("candidate has no verified seal".to_string()))?;
         let head = git(&self.dir, &["rev-parse", "HEAD"]).await.map_err(fail)?;
+        // `-z` and `--no-renames` so [`adopt::drifted_paths`] gets a total
+        // record shape: unquoted paths, one path per record. The scratch
+        // subtraction it applies is argued there — in short, a mutation
+        // adoption already excludes by pathspec cannot make the sealed tree
+        // disagree with the tree that was verified, and the oracle runs in
+        // this worktree immediately before this check.
         let status = git(
             &self.dir,
-            &["status", "--porcelain", "--untracked-files=all"],
+            &[
+                "status",
+                "--porcelain",
+                "--no-renames",
+                "-z",
+                "--untracked-files=all",
+            ],
         )
         .await
         .map_err(fail)?;
-        Ok(head.trim() == sealed && status.is_empty())
+        Ok(head.trim() == sealed && adopt::drifted_paths(&status).is_empty())
     }
 
     /// The teardown half of the ref repair (#2641): audit and restore the

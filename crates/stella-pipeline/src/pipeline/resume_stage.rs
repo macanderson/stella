@@ -441,23 +441,12 @@ impl<'a> Pipeline<'a> {
             // `authoring: None` — no pristine pre-execution snapshot exists
             // to author in (module docs), the same degradation every
             // shared-tree candidate already takes.
-            let witness = match self
+            // Infallible: `authoring: None` returns `None` immediately, and
+            // since #2876 no witness-stage outcome can end a candidate that
+            // has already executed.
+            let witness = self
                 .witness_on_demand(goal, None, surface, &mut state, &mut spend)
-                .await
-            {
-                Ok(witness) => witness,
-                Err(reason) => {
-                    let best =
-                        CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
-                    return Ok(self.settle_outcome(
-                        best,
-                        task_class,
-                        total_cost,
-                        Some(worker_label),
-                        1,
-                    ));
-                }
-            };
+                .await;
             self.verify_candidate(frame, witness.as_ref(), &engine, surface, &mut spend, state)
                 .await
         };

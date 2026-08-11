@@ -106,6 +106,7 @@ pub mod research;
 pub mod reward;
 pub mod roster;
 pub mod scope;
+pub mod scratch;
 pub mod triage;
 pub mod verify;
 pub mod witness;

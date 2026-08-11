@@ -21,31 +21,10 @@ use std::sync::atomic::Ordering;
 
 use stella_fleet::git::{GitCli, SystemGitCli};
 use stella_pipeline::ports::{AdoptedChange, WorkspaceError};
+use stella_pipeline::scratch::{TOOL_SCRATCH_DIRS, is_tool_scratch};
 use stella_protocol::FileChangeKind;
 
 use super::{GitCandidateWorkspace, SHADOW_SEQ, git, git_stdout_to_file};
-
-/// Tool scratch directories that `adopt` never carries into the user's tree.
-///
-/// Deliberately short, and deliberately NOT build outputs (`target`, `dist`,
-/// `build`) — producing one of those is frequently the whole job, and the same
-/// reasoning keeps them out of `stella_tools::shell_touch::SKIP_DIRS`. What is
-/// listed here is scratch written by *running* code, which no task asks for.
-///
-/// The seal is a blanket `git add -A`, so anything a candidate's test run left
-/// behind is committed into `sealed`. That is right for the seal — it is a
-/// forensic record of the candidate — and wrong for adoption, which is the
-/// user's tree. It also closes a gap the withhold list cannot: withholding an
-/// authored witness does not withhold the `__pycache__/<witness>.cpython-*.pyc`
-/// that running it produced, so a run could ship the shadow of a file it had
-/// deliberately kept back.
-const ADOPT_CACHE_EXCLUDES: &[&str] = &[
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".tox",
-];
 
 impl GitCandidateWorkspace {
     /// Winner-only adoption: diff the immutable baseline→verified seal and
@@ -94,8 +73,12 @@ impl GitCandidateWorkspace {
         // vec as the withheld paths, so they reach the name-status listing and
         // the applied patch identically — the invariant above is what keeps the
         // event stream from claiming a file the user's tree does not have.
+        //
+        // The list itself lives in `stella_pipeline::scratch` (#2876) because
+        // two other checks have to answer the same question and answered it
+        // wrong while it lived here — see that module's docs.
         exclusions.extend(
-            ADOPT_CACHE_EXCLUDES
+            TOOL_SCRATCH_DIRS
                 .iter()
                 .map(|dir| format!(":(exclude,glob)**/{dir}/**")),
         );
@@ -270,6 +253,45 @@ impl GitCandidateWorkspace {
 /// the same three probes proactively.
 pub(super) fn blob_id(probe: Result<String, String>) -> Option<String> {
     probe.ok().map(|id| id.trim().to_string())
+}
+
+/// The paths a post-seal `git status --porcelain --no-renames -z
+/// --untracked-files=all` reports as having moved since the seal, minus tool
+/// scratch.
+///
+/// # Why scratch is subtracted here too
+///
+/// The seal check runs immediately after the flip oracle executed the test
+/// command in this very worktree, so a *test run's own leavings* are the
+/// expected content of that delta, not a signal about it. `sqlite-with-gcov`
+/// and `build-cython-ext` were both discarded whole — one of them carrying a
+/// 194,561-line built SQLite, the other a change a grader scored 9 of 11 —
+/// because the check read "not byte-identical" as "not trustworthy".
+///
+/// The subtraction is sound for exactly the paths [`is_tool_scratch`] names,
+/// and for a reason stronger than "they look like scratch": the adopted patch
+/// is `git diff baseline sealed`, computed from two immutable commit objects
+/// and *already* excluding these paths by pathspec. A mutation confined to
+/// them therefore cannot change one byte of what adoption delivers, so it
+/// cannot make the sealed tree disagree with the tree that was verified. A
+/// build artifact outside the list (a `.gcda`, an object file) still trips the
+/// check — that residue is #2877, and it needs a decision about what adoption
+/// carries, not a longer list here.
+///
+/// Records are `XY <space> path\0`. `--no-renames` is what makes that shape
+/// total: a rename record would carry two NUL-separated paths and shift every
+/// field after it.
+pub(crate) fn drifted_paths(status_z: &str) -> Vec<String> {
+    status_z
+        .split('\0')
+        .filter(|record| !record.is_empty())
+        // `XY ` — two status columns and a space. A record too short to hold
+        // them is not one git wrote, and is kept as drift rather than
+        // discarded: an unparseable status must fail the check, never pass it.
+        .map(|record| record.get(3..).unwrap_or(record))
+        .filter(|path| !is_tool_scratch(path))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Parse `git diff --name-status --no-renames -z` output — `S\0path\0`
@@ -832,6 +854,47 @@ deleted file mode 100644
             reason.contains("only the first conflicting paths were examined"),
             "a bounded examination must say it was bounded: {reason}"
         );
+    }
+
+    /// The `build-cython-ext` shape (#2876), at the other check that read it
+    /// as tampering: the oracle ran in this worktree moments ago, and what it
+    /// left is its own byte-compilation. Adoption excludes those paths by
+    /// pathspec, so nothing they do can change one byte of the delivered
+    /// patch — which is exactly why they cannot invalidate the seal.
+    #[test]
+    fn the_oracles_own_leavings_are_not_post_seal_drift() {
+        assert!(
+            drifted_paths(
+                "?? __pycache__/test_numpy_compatibility.cpython-313-pytest-9.1.1.pyc\0\
+                 ?? pkg/__pycache__/mod.cpython-312.pyc\0\
+                 ?? .pytest_cache/v/cache/lastfailed\0"
+            )
+            .is_empty()
+        );
+    }
+
+    /// The check still has to fire on a real one. A source file rewritten
+    /// after verification is drift, and so — deliberately — is a build
+    /// artifact outside the scratch list: whether adoption should carry a
+    /// `.gcda` is a decision this parser must not make silently (#2877).
+    #[test]
+    fn a_real_mutation_after_the_seal_is_still_drift() {
+        assert_eq!(
+            drifted_paths(" M src/lib.rs\0?? notes.txt\0?? __pycache__/x.pyc\0"),
+            vec!["src/lib.rs".to_string(), "notes.txt".to_string()]
+        );
+        assert_eq!(
+            drifted_paths("?? build/sqlite3-shell.gcda\0"),
+            vec!["build/sqlite3-shell.gcda".to_string()]
+        );
+    }
+
+    /// An unparseable record must fail the check, never pass it: a status
+    /// line this cannot read is one whose path it cannot clear.
+    #[test]
+    fn an_unreadable_status_record_counts_as_drift() {
+        assert_eq!(drifted_paths("??\0"), vec!["??".to_string()]);
+        assert!(drifted_paths("").is_empty(), "a clean tree is clean");
     }
 
     #[test]
