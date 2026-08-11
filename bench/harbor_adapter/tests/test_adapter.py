@@ -1560,6 +1560,7 @@ class TestRun:
             "provider_proxy": "disabled",
             "base_url_authority": "validated-cli-argument",
             "engine_config_authority": "trusted-launcher-json",
+            "upstream_pin_authority": "validated-cli-argument",
         }
 
         assert context.cost_usd == 0.31

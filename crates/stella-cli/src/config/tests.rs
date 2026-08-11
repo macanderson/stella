@@ -1425,3 +1425,52 @@ fn split_env(env: &str) -> (&str, Vec<&str>) {
         None => (env.trim(), vec![]),
     }
 }
+
+/// `--upstream-pin` outranks a settings entry.
+///
+/// The harness that most needs a pin runs with settings isolation
+/// (`STELLA_NO_SETTINGS`), so an argument is the only authority that reaches a
+/// measured trial. If a project file could override it, a run could be
+/// re-pointed to a different upstream without the operator who passed the flag
+/// ever seeing it — which is the uncontrolled variable the pin exists to
+/// remove.
+#[test]
+fn the_upstream_pin_flag_outranks_a_settings_entry() {
+    let flag = vec!["z-ai".to_string()];
+    let entry = vec!["anthropic".to_string()];
+
+    assert_eq!(
+        pin_source(Some(&flag), Some(&entry)),
+        Some(&flag[..]),
+        "the flag wins when both are present"
+    );
+    assert_eq!(
+        pin_source(None, Some(&entry)),
+        Some(&entry[..]),
+        "the settings entry applies when no flag was passed"
+    );
+    assert_eq!(
+        pin_source(Some(&flag), None),
+        Some(&flag[..]),
+        "the flag applies with no settings entry — the isolated-harness case"
+    );
+    assert_eq!(
+        pin_source(None, None),
+        None,
+        "unpinned by default: routing stays the gateway's choice"
+    );
+}
+
+/// The flag parses a comma-separated order into a preference list, and stays
+/// empty when absent — an unpinned run must send no `provider` field at all,
+/// since the request body is the prompt-cache key.
+#[test]
+fn the_upstream_pin_flag_parses_an_order() {
+    use clap::Parser;
+
+    let cli = crate::cli::Cli::parse_from(["stella", "--upstream-pin", "z-ai,anthropic", "models"]);
+    assert_eq!(cli.globals.upstream_pin, vec!["z-ai", "anthropic"]);
+
+    let bare = crate::cli::Cli::parse_from(["stella", "models"]);
+    assert!(bare.globals.upstream_pin.is_empty());
+}

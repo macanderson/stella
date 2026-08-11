@@ -136,6 +136,29 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_BASE_URL", hide_short_help = true)]
     pub(crate) base_url: Option<String>,
 
+    /// Pin a gateway to these upstreams, in order; refuse any fallback
+    ///
+    /// Only a gateway routes to somebody else's silicon, so this applies to
+    /// OpenRouter (`provider.order` + `allow_fallbacks: false`) and is inert
+    /// on a direct endpoint. Repeat the flag, or comma-separate, to express a
+    /// preference order: `--upstream-pin z-ai --upstream-pin anthropic`.
+    ///
+    /// Reach for it when two runs must be comparable. The gateway otherwise
+    /// picks per app identity and may serve the same slug from a different
+    /// vendor between runs — which silently varies the model provider a
+    /// head-to-head claims to hold fixed. A flag rather than settings-only
+    /// because the benchmark harness runs with settings isolation
+    /// (`STELLA_NO_SETTINGS`), so an argument is the only authority that
+    /// reaches a measured trial — the same reason `--base-url` is one.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_UPSTREAM_PIN",
+        value_delimiter = ',',
+        hide_short_help = true
+    )]
+    pub(crate) upstream_pin: Vec<String>,
+
     /// Hard USD spend limit for the whole session
     ///
     /// Scoped to the session, not the turn: enforced mode aborts cleanly
