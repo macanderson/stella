@@ -2170,6 +2170,9 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
+/// Mid-turn provider fallback on the execute stage (#2765). A child module,
+/// so it reaches the scripted ports above via `super::*`.
+mod midturn_fallback;
 /// The plan call's `[system, user]` split and its share of `agents.worker`
 /// (#2416). A child module, so it reaches the scripted ports above via
 /// `super::*`.

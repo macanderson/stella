@@ -123,6 +123,46 @@ pub(crate) fn forbid_interactive_credentials() {
     INTERACTIVE_CREDENTIALS.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// `--upstream-pin`: the gateway upstreams this invocation is pinned to.
+///
+/// A process-wide cell rather than a parameter threaded through `Config::load`
+/// for the same reason as [`INTERACTIVE_CREDENTIALS`] above: it is a fact about
+/// the *invocation* that `main` establishes once, and the non-`main` entry
+/// points into `Config::load` have no view of it and no business growing one.
+///
+/// It outranks settings deliberately. The benchmark harness runs with
+/// settings isolation (`STELLA_NO_SETTINGS`), so an argument is the only
+/// authority that reaches a measured trial — the same reason `--base-url` is
+/// a validated CLI argument there.
+static UPSTREAM_PIN: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Record `--upstream-pin` for the rest of this process. Called by `main`;
+/// a second call is ignored, so no later caller can re-route a running session.
+pub(crate) fn set_upstream_pin(order: Vec<String>) {
+    if !order.is_empty() {
+        let _ = UPSTREAM_PIN.set(order);
+    }
+}
+
+/// The invocation's pin, if one was given.
+fn upstream_pin_override() -> Option<&'static [String]> {
+    UPSTREAM_PIN.get().map(Vec::as_slice)
+}
+
+/// Which source supplies a provider's upstream pin: the flag outranks the
+/// settings entry, and absent both there is no pin.
+///
+/// Pure, and separated from the two call sites that leak, so the precedence
+/// that actually decides a measured run is testable without writing to the
+/// process-wide cell above — which is one-shot, and would leak into every
+/// sibling test sharing the process.
+fn pin_source<'a>(
+    flag: Option<&'a [String]>,
+    entry: Option<&'a Vec<String>>,
+) -> Option<&'a [String]> {
+    flag.or_else(|| entry.map(Vec::as_slice))
+}
+
 /// Whether `interactive` may still be honoured. `ApiKey::resolve` applies its
 /// own `stdin().is_terminal()` guard on top of this; this is the *policy*
 /// half, which a tty check cannot answer.
@@ -215,7 +255,14 @@ pub(crate) fn effective_builtin(
     settings: &crate::settings::Settings,
 ) -> ProviderConfig {
     let Some(entry) = settings.providers.get(provider.id) else {
-        return provider.clone();
+        // No settings entry is the common case, and `--upstream-pin` must
+        // still land: the harness that most needs it runs with settings
+        // isolation, so there is no entry to merge by construction.
+        let mut bare = provider.clone();
+        if let Some(pin) = upstream_pin_override() {
+            bare.upstream_pin = pin;
+        }
+        return bare;
     };
     let mut effective = provider.clone();
     if let Some(name) = &entry.name {
@@ -227,7 +274,12 @@ pub(crate) fn effective_builtin(
     if let Some(default_model) = &entry.default_model {
         effective.default_model = leak(default_model);
     }
-    if let Some(upstream_pin) = &entry.upstream_pin {
+    // `--upstream-pin` outranks the settings entry: an argument is the only
+    // authority that survives the benchmark's settings isolation, so a run
+    // that passed one must not be silently re-pointed by a project file.
+    if let Some(pin) = upstream_pin_override() {
+        effective.upstream_pin = pin;
+    } else if let Some(upstream_pin) = pin_source(None, entry.upstream_pin.as_ref()) {
         // Not interned, for the same reason as the env-var alias slice below:
         // a *slice* has no natural key to intern on, and the count is bounded
         // by the configured providers rather than by anything the model or a
@@ -236,7 +288,7 @@ pub(crate) fn effective_builtin(
             clippy::disallowed_methods,
             reason = "per-provider upstream list, bounded by configured providers; see clippy.toml"
         )]
-        let pin: &'static [String] = Box::leak(upstream_pin.clone().into_boxed_slice());
+        let pin: &'static [String] = Box::leak(upstream_pin.to_vec().into_boxed_slice());
         effective.upstream_pin = pin;
     }
     if let Some(api_key_env) = &entry.api_key_env {
@@ -309,7 +361,19 @@ pub(crate) fn custom_provider(
         base_url: leak(base_url),
         dialect,
         seeded: false,
-        upstream_pin: &[],
+        // A settings-defined provider can point at the gateway too, so the
+        // flag reaches it on the same terms as a built-in; its own
+        // `upstream_pin` entry applies when no flag was given.
+        upstream_pin: upstream_pin_override().unwrap_or_else(|| {
+            entry.upstream_pin.as_ref().map_or(&[][..], |pin| {
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "per-provider upstream list, bounded by configured providers; see clippy.toml"
+                )]
+                let leaked: &'static [String] = Box::leak(pin.clone().into_boxed_slice());
+                leaked
+            })
+        }),
     })
 }
 

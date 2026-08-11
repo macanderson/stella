@@ -110,6 +110,14 @@ impl ToolExecutor for PolicyToolSet<'_> {
         self.inner.get().drain_wait_request()
     }
 
+    /// Forwarded: a decorator that let the empty default stand would silently
+    /// turn the end-of-turn service assertion (#2764) off for every surface
+    /// composed through it — the agent goes back to declaring a service done
+    /// without ever being asked whether it is still listening.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.inner.get().live_services()
+    }
+
     /// Forwarded minus what the policy withholds. Letting the empty default
     /// stand would silently serialize the inner executor's sibling spawns —
     /// but blindly delegating would advertise names `execute` above refuses,

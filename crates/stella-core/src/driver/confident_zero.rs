@@ -113,7 +113,7 @@ const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
 /// The prove-it nudge (#2663), and its once-only marker: the message is
 /// prefix-detected in the turn's own transcript, so "at most one nudge per
 /// turn" needs no state field and survives a checkpoint resume for free.
-const PROVE_IT_PREFIX: &str = "Before declaring this task complete:";
+pub(super) const PROVE_IT_PREFIX: &str = "Before declaring this task complete:";
 const PROVE_IT_NUDGE: &str = "Before declaring this task complete: nothing in this turn proved \
      the work. Run the task's own test or check command — or the `verify_done` tool — read what \
      it actually says, and fix anything it reveals. If no check can exist for this change, say \
@@ -201,30 +201,45 @@ fn detect(
     }
 }
 
-/// The window a prove-it decision reasons over: from the last user message
-/// that is NOT itself a prove-it nudge. [`turn_start_index`] restarts at any
-/// user message — including the nudge — so the plain window would put the
-/// once-only marker outside its own scan. Measured on the gate's first field
-/// trial (run `gate-ab`, task pypi-server): three nudges in one turn, each
-/// re-armed by that reset, riding a refuted `verify_done` into the 900s
-/// ceiling — the exact spend the gate exists to stop.
-fn prove_it_turn_start(messages: &[CompletionMessage]) -> usize {
+/// The window a once-per-turn nudge reasons over: from the last user message
+/// that is NOT itself one. [`turn_start_index`] restarts at any user message
+/// — including a nudge — so the plain window would put the once-only marker
+/// outside its own scan. Measured on the prove-it gate's first field trial
+/// (run `gate-ab`, task pypi-server): three nudges in one turn, each re-armed
+/// by that reset, riding a refuted `verify_done` into the 900s ceiling — the
+/// exact spend the gate exists to stop.
+///
+/// **Every** engine-authored nudge prefix must be excluded here, not just the
+/// asking gate's own: two gates sharing a turn each append a user message, so
+/// a window that skipped only its own would let the other's message reopen it
+/// and reproduce that regression across gates rather than within one. The
+/// end-of-turn service assertion ([`super::live_services`], #2764) is the
+/// second such gate.
+pub(super) fn nudge_turn_start(messages: &[CompletionMessage]) -> usize {
     messages
         .iter()
-        .rposition(|m| m.role == MessageRole::User && !m.content.starts_with(PROVE_IT_PREFIX))
+        .rposition(|m| m.role == MessageRole::User && !is_engine_nudge(&m.content))
         .unwrap_or(0)
+}
+
+/// Whether a user message is one the engine wrote rather than one the user
+/// (or host) sent. Exactly the set of once-per-turn nudge prefixes; a new
+/// gate adds its own here in the same change that adds the gate.
+fn is_engine_nudge(content: &str) -> bool {
+    content.starts_with(PROVE_IT_PREFIX)
+        || content.starts_with(super::live_services::SERVICES_PREFIX)
 }
 
 /// True when this turn did mutating work, no `verify_done` call this turn
 /// came back confirmed, and the prove-it nudge has not been issued yet —
 /// the #2663 condition: work was declared, never proven, and not yet asked
-/// about. Windowed with [`prove_it_turn_start`], so the nudge itself never
+/// about. Windowed with [`nudge_turn_start`], so the nudge itself never
 /// reopens the window it closed.
 fn wants_prove_it_nudge(messages: &[CompletionMessage], read_only_tools: &HashSet<String>) -> bool {
     if turn_activity(messages, read_only_tools).artifact_calls == 0 {
         return false;
     }
-    let start = prove_it_turn_start(messages);
+    let start = nudge_turn_start(messages);
     let mut verify_ids: Vec<&str> = Vec::new();
     for message in &messages[start..] {
         match message.role {

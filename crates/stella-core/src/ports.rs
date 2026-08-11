@@ -99,6 +99,57 @@ pub trait ToolExecutor: Send + Sync {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         std::collections::HashSet::new()
     }
+
+    /// Long-running services this executor launched that are still up, read
+    /// (never taken) at the boundary where a turn is about to complete —
+    /// the end-of-turn assertion (#2764, `crate::driver::live_services`).
+    ///
+    /// # Why the executor and not the engine
+    ///
+    /// The engine holds no process table and must not: a started child is a
+    /// concretion of `stella-tools`, and reaching for it here would be
+    /// invariant 1 in reverse. What the engine needs is not the table, it is
+    /// the *answer* — "did this turn declare a service and leave it up?" —
+    /// which the executor that spawned the child is exactly the thing that
+    /// knows.
+    ///
+    /// Non-destructive, unlike the two drains above, and the difference is
+    /// the point: this is a question about state that outlives the turn, not
+    /// a ledger to be settled by whoever asks first. Two callers must get
+    /// the same answer, and asking must change nothing — least of all stop
+    /// anything, which the assertion this feeds is explicitly not for.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns empty, which reads as "nothing I run outlives a
+    /// turn" — correct for a leaf, and **wrong for a wrapper**. A decorator
+    /// that forgets to forward turns the assertion off for every surface
+    /// composed through it, silently and with no compiler complaint: the
+    /// agent goes back to declaring a service done without ever being asked
+    /// whether it is still listening. The shipped composition is pinned
+    /// end-to-end by `stella-cli`'s
+    /// `the_production_tool_stack_forwards_live_services`.
+    fn live_services(&self) -> Vec<LiveService> {
+        Vec::new()
+    }
+}
+
+/// One long-running process a tool started and nothing has stopped.
+///
+/// Deliberately not a handle onto the process: this type crosses the port
+/// boundary so the engine can *name* what is still up, and naming is all it
+/// is ever allowed to do with it. There is no stop, no signal, and no pid —
+/// #2666's whole finding is that a still-running declared service can be the
+/// correct final state, so the engine must not be handed a way to end one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveService {
+    /// The handle the model holds and would pass to `stop_process`
+    /// (`proc-3`).
+    pub handle: String,
+    /// The label the model gave the process at start, when it gave one.
+    pub name: Option<String>,
+    /// The command line it was started with, joined for display.
+    pub display: String,
 }
 
 /// A read-only view over another executor: advertises only the schemas
@@ -172,6 +223,16 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     /// this same view — so the read-only restriction holds while parked too.
     fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
         self.inner.drain_wait_request()
+    }
+
+    /// Forwarded, and the read-only filter is deliberately not applied to
+    /// it. A service is up or it is not, whatever view happens to be asking
+    /// — this reports state the workspace is in, not a capability this view
+    /// grants. Filtering here would let a sub-agent turn end silently on a
+    /// service its parent started, which is the same invisibility the
+    /// assertion exists to remove.
+    fn live_services(&self) -> Vec<LiveService> {
+        self.inner.live_services()
     }
 
     // `parallel_safe_names` deliberately keeps the empty default rather than

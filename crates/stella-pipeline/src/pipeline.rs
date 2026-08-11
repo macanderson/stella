@@ -116,6 +116,8 @@ mod candidate_result;
 mod disclosure;
 mod evidence;
 mod execute_stage;
+mod fallback;
+use fallback::{FallbackPosture, RoleFallbacks};
 mod fanout_stage;
 mod plan_steps;
 mod raw_usage;
@@ -717,6 +719,12 @@ pub struct PipelineOutcome {
 
 /// A role resolved to a concrete provider.
 struct ResolvedRole<'a> {
+    /// The role this resolution answered. Carried rather than re-declared at
+    /// the engine site so a mid-turn fallback re-resolves the route the
+    /// engine's own provider came from (#2765, `pipeline::fallback`) — the
+    /// roster can bind a responsibility to any role, so a literal at the call
+    /// site would be a second source of truth for the same fact.
+    role: Role,
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
@@ -902,6 +910,10 @@ pub struct Pipeline<'a> {
     /// Caller-owned token-drift model ([`Pipeline::with_calibration`]), lent to
     /// every engine this pipeline builds. `None` leaves estimation uncorrected.
     calibration: Option<&'a CalibrationMap>,
+    /// Mid-turn provider fallback, one resolver per role (#2765). Held here
+    /// rather than built at each engine site because the engine borrows the
+    /// resolver for the rest of its turn — see [`fallback::RoleFallbacks`].
+    fallbacks: RoleFallbacks<'a>,
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
@@ -972,6 +984,7 @@ impl<'a> Pipeline<'a> {
             steering: ports.steering,
             turn_gate: None,
             calibration: None,
+            fallbacks: RoleFallbacks::new(ports.router, ports.providers),
             events: events.into(),
             config,
             configured_test,
@@ -1603,7 +1616,7 @@ impl<'a> Pipeline<'a> {
             if let Some((hooks, runner)) = self.hooks {
                 engine = engine.with_hooks(hooks, runner);
             }
-            engine = self.attach(engine);
+            engine = self.attach(engine, FallbackPosture::ReResolve(worker.role));
             let view = fan.as_ref().map(|fan| fan.candidate());
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
@@ -2689,6 +2702,7 @@ impl<'a> Pipeline<'a> {
             .provider_for(&decision.model_ref)
             .ok_or_else(|| RoleResolveError::NoProvider(decision.model_ref.clone()))?;
         Ok(ResolvedRole {
+            role,
             model_ref: decision.model_ref,
             provider,
             fallback: decision.fallback,

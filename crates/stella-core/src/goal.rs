@@ -668,7 +668,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goal_loop_iterates_until_the_unproven_passes_it() {
+    async fn goal_loop_iterates_until_the_verifier_passes_it() {
         // Worker completes a turn each round; verifier fails round 1 with
         // feedback, passes round 2.
         let worker = ScriptedProvider::new(vec![

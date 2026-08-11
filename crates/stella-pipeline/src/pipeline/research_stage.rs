@@ -87,7 +87,20 @@ impl Pipeline<'_> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, runner);
         }
-        engine = self.attach(engine);
+        // No mid-turn fallback here, for a reason specific to this stage: ONE
+        // engine drives the whole fan-out below (`let engine = &engine`), so
+        // the engine's set-once swap latch would be shared by every concurrent
+        // sub-turn — a bound written for one turn deciding for several at
+        // once. Research is also the stage that already degrades to nothing on
+        // an unreachable provider (see the resolution above), so the failure
+        // this would recover from costs the run findings, never the task.
+        // Giving the fan-out per-question engines is what makes the swap
+        // meaningful here; tracked in #2806 (#2765 covers the execute-stage
+        // engines this pipeline actually grades).
+        engine = self.attach(
+            engine,
+            FallbackPosture::Withheld("one engine drives the whole research fan-out"),
+        );
 
         let width = u32::try_from(questions.len()).unwrap_or(u32::MAX);
         let fan = FanOutBudget::new(*budget, width);

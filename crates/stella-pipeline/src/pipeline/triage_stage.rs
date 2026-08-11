@@ -94,7 +94,7 @@ impl Pipeline<'_> {
             // very census the record exists to feed (#2414).
             Assigned::Unresolvable => {
                 self.triage_degraded("the triage role could not be routed to a provider");
-                return Ok((self.triage_floor(goal), Vec::new()));
+                return Ok((self.triage_outage_floor(goal), Vec::new()));
             }
             Assigned::Withheld => {
                 return Ok((self.triage_floor(goal), Vec::new()));
@@ -185,7 +185,13 @@ impl Pipeline<'_> {
                 }
             }
             None => {
-                let class = resolve_task_class(None, goal);
+                // No classification earned a downgrade, so none is taken: the
+                // floor's upward evidence stands, clamped at `SingleTask` so a
+                // failed or unparseable triage cannot route this turn onto the
+                // lookup path that skips the planner and the verifier. See
+                // `triage_outage_floor` for the panel that measured the old
+                // behaviour collapsing the pipeline into a bare loop.
+                let class = self.triage_outage_floor(goal).class;
                 TaskAssessment {
                     conversational,
                     require_witness: Some(resolve_witness(None, class, goal)),
@@ -258,6 +264,34 @@ impl Pipeline<'_> {
         }
     }
 
+    /// The class an **outage** may fall back to: the keyword floor, clamped
+    /// the same way [`Self::triage_ablated`] clamps it.
+    ///
+    /// The floor used to stand alone here, on the reasoning that a broken
+    /// triage should "spend as little as the evidence justifies". The measured
+    /// consequence is the opposite of cheap. On the 2026-08-10 TB2.1 panel,
+    /// four of eight pipeline trials met a rate-limited triage call, took this
+    /// path, and ran with **no management roles at all** — the floor's cheapest
+    /// class skips the planner *and* the verifier, so a provider hiccup
+    /// silently turned the staged pipeline into a bare loop that still paid the
+    /// pipeline's overhead. The cells still scored; they simply were not
+    /// measuring the pipeline.
+    ///
+    /// The error in the old reasoning is treating a missing answer as evidence.
+    /// A 429 says nothing about the task — and [`resolve_task_class`] is built
+    /// on exactly that principle everywhere else ("errs toward planning, never
+    /// away"). So an outage now gets the ablation's rule, which already stated
+    /// it correctly: nothing routes down to the lookup path without a
+    /// classification that earned it. The floor's *upward* evidence still
+    /// applies, so a goal that reads multi-step still plans.
+    fn triage_outage_floor(&self, goal: &str) -> TaskAssessment {
+        let floor = self.triage_floor(goal);
+        TaskAssessment {
+            class: floor.class.max(TaskClass::SingleTask),
+            ..floor
+        }
+    }
+
     /// The assessment a turn gets when triage was **deliberately ablated**
     /// (#2381) — which is not the same thing as triage having failed, and the
     /// difference is the whole point of the roster.
@@ -282,10 +316,10 @@ impl Pipeline<'_> {
     /// so a bare `hi` must not enter the work pipeline merely because triage
     /// was ablated.
     fn triage_ablated(&self, goal: &str) -> TaskAssessment {
-        let floor = self.triage_floor(goal);
-        TaskAssessment {
-            class: floor.class.max(TaskClass::SingleTask),
-            ..floor
-        }
+        // Identical in effect to the outage rule, and deliberately expressed by
+        // calling it: an ablation and an outage reach the same place from
+        // different directions — neither produced a classification that earned
+        // a downgrade — and two copies of one clamp is how the two drift apart.
+        self.triage_outage_floor(goal)
     }
 }
