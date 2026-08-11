@@ -1060,6 +1060,32 @@ export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
 
 /**
+ * What the flip oracle found — and, when it found no flip, whether anything
+ * was ever in a position to produce one (#2556).
+ *
+ * **A bool could not carry this, and the missing state is the one that
+ * matters.** `flip_achieved: false` meant both "a tracked command ran and did
+ * not go fail→pass" (a real negative about the work) and "no command was ever
+ * tracked, so nothing could have flipped" (a statement about the instrument,
+ * not the work). #2531 fixed that conflation in the *verifier prompt* by
+ * rendering `unobserved`; the telemetry surface kept the bool, so anything
+ * reading `result.json` — bench scoring included — reproduced exactly the
+ * false negative the prompt had stopped making.
+ *
+ * The fact was *recoverable* from `flip_achieved: false` plus
+ * `tracked_command: null`, and that is precisely the objection: a summary
+ * layer that silently conflates "not measured" with "measured and failed"
+ * unless the reader knows to join two fields is the failure mode this
+ * repository's bench discipline exists to prevent. Same reasoning as
+ * [`LadderSnapshot::diff_coverage`], which is a token for the same reason.
+ *
+ * Serialises as `unobserved` / `not_achieved` / `achieved`. A legacy bool is
+ * still accepted on the way in — see the `Deserialize` impl — so snapshots
+ * recorded before this existed keep parsing.
+ */
+export type FlipOutcome = "unobserved" | "not_achieved" | "achieved";
+
+/**
  * Optional sampling/routing parameter overrides riding a
  * [`CompletionRequest`]. Every field is independently optional —
  * "include" semantics: `None` leaves the provider's own default in place,
@@ -1220,10 +1246,15 @@ export interface LadderSnapshot {
    */
   file_change_events: number;
   /**
-   * Whether the oracle's flip was achieved — after the confirmation run,
-   * so an unconfirmed flip reads `false` here with `unstable_flip: true`.
+   * The flip oracle's finding — after the confirmation run, so an
+   * unconfirmed flip reads [`FlipOutcome::NotAchieved`] here with
+   * `unstable_flip: true`.
+   *
+   * Three states rather than a bool, for the reason [`Self::diff_coverage`]
+   * is a token rather than an `Option<bool>`: the third value is the whole
+   * point (#2556). See [`FlipOutcome`].
    */
-  flip_achieved: boolean;
+  flip: FlipOutcome;
   /**
    * A would-be flip was refused because the passing run named its tests
    * and none of the baseline's failing tests were among them — the pass

@@ -46,7 +46,9 @@ pub mod reference_adapter;
 use crate::verify::LadderInputs;
 use ground_truth::PendingPass;
 use independence::GraderCohorts;
-use stella_protocol::{AgentEvent, OracleObservation, ProofTree, StageKind, VerdictEvidence};
+use stella_protocol::{
+    AgentEvent, FlipOutcome, OracleObservation, ProofTree, StageKind, VerdictEvidence,
+};
 
 /// Verifier-calibration tallies folded from recorded event streams (#871).
 ///
@@ -378,7 +380,7 @@ pub fn calibration_pending(
 /// the second claim is what a pass makes.
 fn stands_alone(snapshot: &stella_protocol::LadderSnapshot) -> bool {
     LadderInputs {
-        flip_achieved: snapshot.flip_achieved,
+        flip: snapshot.flip,
         touched_tests_passed: snapshot.touched_tests_passed,
         verify_done_flip: snapshot.verify_done_flip,
         ..LadderInputs::default()
@@ -412,12 +414,16 @@ pub fn render_oracle_trace(trace: &[OracleObservation]) -> String {
 /// never as a reconstructed guess.
 pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
     let snapshot = evidence.ladder.as_deref()?;
-    let flip = if snapshot.flip_achieved {
-        "achieved".to_string()
-    } else if snapshot.unstable_flip {
-        "unstable (confirmation re-run did not pass)".to_string()
-    } else {
-        "none".to_string()
+    // Precedence is the snapshot's own: an achieved flip is never unstable, and
+    // an unstable one is a `NotAchieved` with a more specific story. The two
+    // remaining arms are the #2556 distinction this rendering used to lose by
+    // printing "none" for both — a reader could not tell a command that ran and
+    // fell short from no command at all.
+    let flip = match snapshot.flip {
+        FlipOutcome::Achieved => "achieved".to_string(),
+        _ if snapshot.unstable_flip => "unstable (confirmation re-run did not pass)".to_string(),
+        FlipOutcome::NotAchieved => "not achieved".to_string(),
+        FlipOutcome::Unobserved => "unobserved (no command was tracked)".to_string(),
     };
     // The rung leads, because it is the literal answer to the question this
     // function asks; everything after it is the evidence the rung was chosen

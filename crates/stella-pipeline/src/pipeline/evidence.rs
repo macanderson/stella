@@ -29,7 +29,7 @@ impl<'a> Pipeline<'a> {
         no_test_surface: bool,
     ) -> LadderInputs {
         LadderInputs {
-            flip_achieved: state.oracle.is_flipped(),
+            flip: state.oracle.outcome(),
             touched_tests_passed,
             diff_lines: state.diff_lines,
             diff_budget: self.config.diff_budget_lines,

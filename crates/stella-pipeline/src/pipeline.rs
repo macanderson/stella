@@ -2158,7 +2158,7 @@ impl<'a> Pipeline<'a> {
                         // (#860).
                         None => state.oracle.confirm(false),
                     }
-                    inputs.flip_achieved = state.oracle.is_flipped();
+                    inputs.flip = state.oracle.outcome();
                 }
 
                 // Diff coverage (#1291): did the passing run execute the

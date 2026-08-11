@@ -101,7 +101,7 @@ fn bare_snapshot() -> stella_protocol::LadderSnapshot {
         rung: None,
         tracked_command: None,
         oracle_trace: vec![],
-        flip_achieved: false,
+        flip: FlipOutcome::NotAchieved,
         unstable_flip: false,
         flip_refused_different_failure: false,
         touched_tests_passed: None,
@@ -128,7 +128,11 @@ fn bare_snapshot() -> stella_protocol::LadderSnapshot {
 /// had a flip behind it.
 fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
     let snapshot = stella_protocol::LadderSnapshot {
-        flip_achieved: corroborated,
+        flip: if corroborated {
+            stella_protocol::FlipOutcome::Achieved
+        } else {
+            stella_protocol::FlipOutcome::NotAchieved
+        },
         touched_tests_passed: corroborated.then_some(true),
         ..bare_snapshot()
     };
@@ -187,17 +191,21 @@ fn the_verifier_alone_rate_is_measured_from_recorded_snapshots() {
 /// wearing a `Default` instead of a missing conjunct.
 #[test]
 fn the_snapshot_projection_agrees_with_the_live_predicate() {
-    for flip_achieved in [false, true] {
+    for flip in [
+        stella_protocol::FlipOutcome::Unobserved,
+        stella_protocol::FlipOutcome::NotAchieved,
+        stella_protocol::FlipOutcome::Achieved,
+    ] {
         for touched_tests_passed in [None, Some(false), Some(true)] {
             for verify_done_flip in [false, true] {
                 let inputs = LadderInputs {
-                    flip_achieved,
+                    flip,
                     touched_tests_passed,
                     verify_done_flip,
                     ..LadderInputs::default()
                 };
                 let snapshot = stella_protocol::LadderSnapshot {
-                    flip_achieved,
+                    flip,
                     touched_tests_passed,
                     verify_done_flip,
                     ..bare_snapshot()
@@ -210,7 +218,7 @@ fn the_snapshot_projection_agrees_with_the_live_predicate() {
                 assert_eq!(
                     stands_alone(&recorded),
                     inputs.verifier_pass_stands_alone(),
-                    "projection disagrees at flip={flip_achieved} \
+                    "projection disagrees at flip={flip:?} \
                      touched={touched_tests_passed:?} verify_done={verify_done_flip}"
                 );
             }

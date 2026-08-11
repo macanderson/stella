@@ -454,6 +454,26 @@
         }
       ]
     },
+    "FlipOutcome": {
+      "description": "What the flip oracle found — and, when it found no flip, whether anything\nwas ever in a position to produce one (#2556).\n\n**A bool could not carry this, and the missing state is the one that\nmatters.** `flip_achieved: false` meant both \"a tracked command ran and did\nnot go fail→pass\" (a real negative about the work) and \"no command was ever\ntracked, so nothing could have flipped\" (a statement about the instrument,\nnot the work). #2531 fixed that conflation in the *verifier prompt* by\nrendering `unobserved`; the telemetry surface kept the bool, so anything\nreading `result.json` — bench scoring included — reproduced exactly the\nfalse negative the prompt had stopped making.\n\nThe fact was *recoverable* from `flip_achieved: false` plus\n`tracked_command: null`, and that is precisely the objection: a summary\nlayer that silently conflates \"not measured\" with \"measured and failed\"\nunless the reader knows to join two fields is the failure mode this\nrepository's bench discipline exists to prevent. Same reasoning as\n[`LadderSnapshot::diff_coverage`], which is a token for the same reason.\n\nSerialises as `unobserved` / `not_achieved` / `achieved`. A legacy bool is\nstill accepted on the way in — see the `Deserialize` impl — so snapshots\nrecorded before this existed keep parsing.",
+      "oneOf": [
+        {
+          "const": "unobserved",
+          "description": "The oracle never locked onto a command, so no fail→pass was reachable.\n**Not a negative finding about the change** — nothing was measured.\n\nThe default, because it is the all-dark value: a `LadderInputs` that\nnamed no channel has not observed a failed flip, it has observed\nnothing.",
+          "type": "string"
+        },
+        {
+          "const": "not_achieved",
+          "description": "The oracle tracked a command and it did not go fail→pass (or flipped\nand failed its confirmation re-run, which is `unstable_flip: true`\nbeside this). A real negative: something was measured and came back\nshort.",
+          "type": "string"
+        },
+        {
+          "const": "achieved",
+          "description": "The tracked command was observed failing and then passing, and the\nconfirmation re-run held.",
+          "type": "string"
+        }
+      ]
+    },
     "HunkProposal": {
       "description": "What a `HunkReview` gate presents for per-hunk approval before a mutating\ntool call writes anything (#1265).\n\nThe hunks are a **flat, ordered list across every file the call touches**,\nnot a per-file tree: the reviewer's answer is a set of indices into this\nlist, and one flat coordinate space is what keeps that answer unambiguous\nwhen two files change in the same call.",
       "properties": {
@@ -553,9 +573,9 @@
           "minimum": 0,
           "type": "integer"
         },
-        "flip_achieved": {
-          "description": "Whether the oracle's flip was achieved — after the confirmation run,\nso an unconfirmed flip reads `false` here with `unstable_flip: true`.",
-          "type": "boolean"
+        "flip": {
+          "$ref": "#/$defs/FlipOutcome",
+          "description": "The flip oracle's finding — after the confirmation run, so an\nunconfirmed flip reads [`FlipOutcome::NotAchieved`] here with\n`unstable_flip: true`.\n\nThree states rather than a bool, for the reason [`Self::diff_coverage`]\nis a token rather than an `Option<bool>`: the third value is the whole\npoint (#2556). See [`FlipOutcome`]."
         },
         "flip_refused_different_failure": {
           "default": false,
@@ -655,7 +675,7 @@
         }
       },
       "required": [
-        "flip_achieved",
+        "flip",
         "unstable_flip",
         "diff_lines",
         "diff_budget",

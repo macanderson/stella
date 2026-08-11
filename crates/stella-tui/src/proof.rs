@@ -696,7 +696,7 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use stella_protocol::LadderSnapshot;
+    use stella_protocol::{FlipOutcome, LadderSnapshot};
 
     fn authored() -> ProofStep {
         ProofStep::WitnessAuthored {
@@ -724,7 +724,7 @@ mod tests {
             rung: None,
             tracked_command: None,
             oracle_trace: Vec::new(),
-            flip_achieved: true,
+            flip: FlipOutcome::Achieved,
             unstable_flip: false,
             flip_refused_different_failure: false,
             touched_tests_passed: None,
@@ -860,7 +860,7 @@ mod tests {
         state.apply_verdict(
             true,
             &passed_with(LadderSnapshot {
-                flip_achieved: false,
+                flip: FlipOutcome::NotAchieved,
                 flip_refused_different_failure: true,
                 ..clean_ladder()
             }),
@@ -888,7 +888,7 @@ mod tests {
         state.apply_verdict(
             true,
             &passed_with(LadderSnapshot {
-                flip_achieved: false,
+                flip: FlipOutcome::NotAchieved,
                 unstable_flip: true,
                 ..clean_ladder()
             }),

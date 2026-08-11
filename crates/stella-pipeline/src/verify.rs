@@ -74,7 +74,7 @@ pub mod mutation;
 
 use std::collections::BTreeSet;
 
-use stella_protocol::{LadderRung, VerdictEvidence};
+use stella_protocol::{FlipOutcome, LadderRung, VerdictEvidence};
 
 /// The flip oracle's state. `None` = no failing observation yet; `Failing` =
 /// the tracked command has been seen failing; `Flipped` = the tracked command
@@ -165,6 +165,25 @@ impl FlipOracle {
     /// failed (#859) — is NOT flipped: the pass could not be reproduced.
     pub fn is_flipped(&self) -> bool {
         matches!(self.state, FlipState::Flipped)
+    }
+
+    /// The oracle's finding as the tri-state the ladder and the wire both
+    /// carry (#2556).
+    ///
+    /// The distinction a bool could not make is drawn here, at the one place
+    /// that holds both facts: `Unobserved` is *the oracle never locked onto a
+    /// command*, which is the same condition [`Self::tracked_command`] reports
+    /// as `None` and the same one the verifier prompt has rendered as
+    /// `unobserved` since #2531. Everything downstream reads this rather than
+    /// re-deriving it, so the prompt and the telemetry cannot drift apart.
+    pub fn outcome(&self) -> FlipOutcome {
+        if self.is_flipped() {
+            FlipOutcome::Achieved
+        } else if self.tracked.is_none() {
+            FlipOutcome::Unobserved
+        } else {
+            FlipOutcome::NotAchieved
+        }
     }
 
     /// Whether the oracle reached `Unstable`: a flip was observed but its
@@ -394,8 +413,11 @@ pub enum LadderDecision {
 /// it, so adding an evidence channel does not rewrite every literal.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LadderInputs {
-    /// The flip oracle reached `Flipped` for its tracked test command.
-    pub flip_achieved: bool,
+    /// What the flip oracle found for its tracked test command — including
+    /// whether it tracked one at all (#2556). The ladder's arithmetic asks
+    /// only [`FlipOutcome::is_achieved`]; the third state is carried so the
+    /// snapshot this becomes can state it.
+    pub flip: FlipOutcome,
     /// Whether the touched tests passed after execution. `None` when no test
     /// command was available/run — an *inconclusive* signal, not a pass.
     pub touched_tests_passed: Option<bool>,
@@ -470,7 +492,7 @@ pub struct LadderInputs {
     /// The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
     /// this candidate (#2129): a deterministic fail-on-baseline / pass-on-new
     /// shadow run, observed off the turn's `ToolResult` stream. Distinct from
-    /// [`Self::flip_achieved`] because the pipeline's oracle tracks only its
+    /// [`Self::flip`] because the pipeline's oracle tracks only its
     /// own command; before this field, a confirmed `verify_done` flip and a
     /// failing "no flip" fallback verdict coexisted in one trace.
     ///
@@ -510,7 +532,7 @@ impl LadderInputs {
     ///
     /// Two channels can produce one, and they are deliberately not merged into
     /// a single field because they are not interchangeable.
-    /// [`Self::flip_achieved`] is the pipeline's own tracked command measured
+    /// [`Self::flip`] is the pipeline's own tracked command measured
     /// against the pre-execution snapshot; [`Self::verify_done_flip`] is the
     /// `verify_done` tool's shadow run against the baseline *it* pinned
     /// (`WITNESS_BASELINE_WORKTREE_REF`, else the first-parent walk past the
@@ -527,7 +549,7 @@ impl LadderInputs {
     /// command was told "no test command was tracked, so no fail→pass flip
     /// could be observed" while one sat in the trace.
     pub fn has_flip_receipt(&self) -> bool {
-        self.flip_achieved || self.verify_done_flip
+        self.flip.is_achieved() || self.verify_done_flip
     }
 
     /// Whether every channel the ladder has was unable to observe anything:
@@ -545,7 +567,7 @@ impl LadderInputs {
     /// Note the asymmetry: a *red* test or a non-zero touch count is real
     /// evidence, so neither can be blind. Only the total absence qualifies.
     ///
-    /// Reads [`Self::has_flip_receipt`] rather than [`Self::flip_achieved`]
+    /// Reads [`Self::has_flip_receipt`] rather than [`Self::flip`]
     /// for the reason the abstention sits above the credit: a turn whose only
     /// observation was a `verify_done` receipt satisfies all four dark
     /// channels on the narrower predicate, so this rung would swallow it
@@ -587,7 +609,9 @@ impl LadderInputs {
     /// opinion, which is exactly the class of evidence this predicate exists
     /// to demand.
     pub fn verifier_pass_stands_alone(&self) -> bool {
-        !self.flip_achieved && self.touched_tests_passed != Some(true) && !self.verify_done_flip
+        !self.flip.is_achieved()
+            && self.touched_tests_passed != Some(true)
+            && !self.verify_done_flip
     }
 
     /// Whether this turn provably did nothing: it dispatched no call that
@@ -610,7 +634,7 @@ impl LadderInputs {
         self.mutating_actions == 0
             && self.file_change_events == 0
             && self.diff_lines == 0
-            && !self.flip_achieved
+            && !self.flip.is_achieved()
             && self.touched_tests_passed.is_none()
     }
 
@@ -640,7 +664,7 @@ impl LadderInputs {
             && self.diff_available
             && self.diff_lines == 0
             && self.file_change_events == 0
-            && !self.flip_achieved
+            && !self.flip.is_achieved()
             && self.touched_tests_passed.is_none()
     }
 }
@@ -720,7 +744,7 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     //    A red touched test still outranks both. It returned `Revise` at step
     //    1, above every receipt here, so neither channel can talk over a test
     //    that is failing now.
-    let receipt_is_corroborated = (inputs.flip_achieved
+    let receipt_is_corroborated = (inputs.flip.is_achieved()
         && inputs.touched_tests_passed == Some(true))
         || inputs.verify_done_flip;
     if receipt_is_corroborated
@@ -881,13 +905,13 @@ pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> 
     // `WITNESS_BASELINE_WORKTREE_REF` — so a reader deciding what to re-run
     // has to be told which one stood behind the turn, and "a flip was
     // observed" alone does not say.
-    let receipt = if inputs.flip_achieved {
+    let receipt = if inputs.flip.is_achieved() {
         "a flip was observed"
     } else {
         "a `verify_done` witness confirmation was observed"
     };
     let shortfall = if !inputs.has_flip_receipt() {
-        // Reads the receipt predicate, not `flip_achieved`. Saying "no
+        // Reads the receipt predicate, not `flip`. Saying "no
         // fail→pass flip could be observed" on a turn holding a confirmed
         // `verify_done` receipt told the operator the exact opposite of what
         // the trace recorded, and it was the commonest phrasing to hit,
@@ -1108,9 +1132,23 @@ pub fn evidence_demand_is_worth_a_turn(
         && tracked_command.is_some()
 }
 
-/// The feedback a turn carries back to the WORKER when a model verifier passed
-/// with nothing deterministic behind it (#1295) — no flip, no green test —
-/// and the run has a tracked command that could still carry that evidence.
+/// The feedback a turn carries back to the WORKER when the ladder reached the
+/// end of its deterministic channels without settling (#1295) — no flip, no
+/// green test — and the run has a tracked command that could still carry that
+/// evidence.
+///
+/// **It states only what was observed, and observation here is exhausted.**
+/// Nothing reviewed this change: the model verdict was removed in #2584 and
+/// [`crate::roster::ModelCallRole::Verdict`] is unassignable, so the arm that
+/// sends this text (`Pipeline::verify_candidate`'s
+/// [`LadderDecision::Unverified`]) is reached only after every deterministic
+/// channel has come back empty. An opening that told the worker its work "was
+/// reviewed and looks correct" therefore asserted a reviewer that cannot
+/// exist (#2619) — and asserted it in the worker's own context, where it reads
+/// as an instruction not to re-examine the change at the exact moment nothing
+/// backs it. That is the shape this module's docs argue against above: on
+/// `fix-git` a reviewer's unsubstantiated claim made a worker reset `master`
+/// and destroy a correctly-recovered commit, twice.
 ///
 /// Not a verifier prompt: this text goes to the worker as a revision reason, so
 /// it names the one thing the next turn has to produce rather than asking for
@@ -1124,10 +1162,11 @@ pub fn evidence_demand_is_worth_a_turn(
 /// the run pays a turn *and* ends up with a tautological witness.
 pub fn evidence_demand_prompt(command: &str) -> String {
     format!(
-        "Your work was reviewed and looks correct, but NOTHING deterministic backs that up: \
+        "NOTHING deterministic backs up this change: \
          `{command}` has not gone from failing to passing, and no test that covers your change \
-         has been observed green. A reviewer's opinion is the only thing standing behind this \
-         turn, and that is not enough to finish on.\n\n\
+         has been observed green. That is not a finding that the work is wrong — it is that \
+         nothing here can tell either way, and an unchecked change is not something to \
+         finish on.\n\n\
          Spend this turn producing that evidence, and nothing else:\n\
          - Run `{command}` and make it pass over the change you already made.\n\
          - If it does not cover your change, extend it (or add a test it runs) so that it FAILS \

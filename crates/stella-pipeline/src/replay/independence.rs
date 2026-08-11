@@ -146,7 +146,7 @@ mod tests {
                 rung: None,
                 tracked_command: None,
                 oracle_trace: vec![],
-                flip_achieved: false,
+                flip: FlipOutcome::NotAchieved,
                 unstable_flip: false,
                 flip_refused_different_failure: false,
                 touched_tests_passed: None,

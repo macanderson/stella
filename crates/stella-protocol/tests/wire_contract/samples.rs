@@ -15,7 +15,7 @@ use stella_protocol::event::{
     PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
     UsageIncompleteReason,
 };
-use stella_protocol::ladder::{LadderRung, LadderSnapshot, OracleObservation};
+use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
     BlockKind, BlockOrigin, CacheZone, ContextFrameRef, ContextProviderUsage, ContextUsage,
     ManifestEntry, ProviderShare,
@@ -106,6 +106,11 @@ pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
         Unverified,
         Waived,
     ]
+}
+
+pub(crate) fn all_flip_outcomes() -> Vec<FlipOutcome> {
+    use FlipOutcome::*;
+    vec![Unobserved, NotAchieved, Achieved]
 }
 
 pub(crate) fn all_media_kinds() -> Vec<MediaKind> {
@@ -922,7 +927,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                             tree: ProofTree::Candidate,
                             passed: true,
                         }],
-                        flip_achieved: true,
+                        flip: FlipOutcome::Achieved,
                         unstable_flip: false,
                         flip_refused_different_failure: false,
                         touched_tests_passed: Some(true),
@@ -941,6 +946,51 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                         no_test_surface: true,
                         errored_commands: 2,
                         verifier_independent: Some(false),
+                    })),
+                },
+            }),
+    );
+    // Every flip outcome (#2556). The rung sweep above pins only `achieved`,
+    // and the two it misses are the pair the tri-state exists to separate:
+    // `not_achieved` is a finding about the work, `unobserved` is a finding
+    // about the instrument. A sample that reached the wire for only one of
+    // them would leave the distinction unproven at exactly the surface — the
+    // recorded verdict — where the old boolean lost it.
+    events.extend(
+        all_flip_outcomes()
+            .into_iter()
+            .map(|flip| AgentEvent::Verdict {
+                passed: flip.is_achieved(),
+                evidence: VerdictEvidence {
+                    summary: "sampled for the flip outcome".into(),
+                    deterministic: flip.is_achieved(),
+                    evidence_refs: vec![],
+                    ladder: Some(Box::new(LadderSnapshot {
+                        rung: None,
+                        // `unobserved` is the state where no command was ever
+                        // tracked, so the sample states that pairing rather
+                        // than an impossible one.
+                        tracked_command: flip.was_observed().then(|| "cargo test -p x".to_string()),
+                        oracle_trace: vec![],
+                        flip,
+                        unstable_flip: false,
+                        flip_refused_different_failure: false,
+                        touched_tests_passed: None,
+                        test_infra: None,
+                        diff_lines: 3,
+                        diff_budget: 400,
+                        diff_available: true,
+                        file_change_events: 1,
+                        mutating_actions: 1,
+                        new_diag_errors: 0,
+                        new_diag_warnings: 0,
+                        witness_intact: None,
+                        witness_mutation: None,
+                        diff_coverage: None,
+                        verify_done_flip: false,
+                        no_test_surface: !flip.was_observed(),
+                        errored_commands: 0,
+                        verifier_independent: None,
                     })),
                 },
             }),

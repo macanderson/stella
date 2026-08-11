@@ -105,21 +105,25 @@ impl Pipeline<'_> {
         Some(evidence)
     }
 
-    /// The verdict for a verifier waiver that stands: triage said `VERIFIER: no`
-    /// and the warrant agrees ([`Pipeline::verifier_waiver_stands`]). A pass
-    /// carrying no independent evidence — the caller scores it `Unverified`,
-    /// never `DeterministicPass`, so a review-waived candidate cannot tie a
-    /// genuinely flip-verified sibling in best-of-N and then win the
-    /// smaller-diff tiebreak. The summary states plainly what was not done:
-    /// falling through to `heuristic_fallback` instead would report "verifier
-    /// unavailable", which describes a verifier that broke, not one that was
-    /// deliberately waived.
+    /// The verdict for a verification waiver that stands: triage said
+    /// `VERIFIER: no` and the warrant agrees ([`Pipeline::verifier_waiver_stands`]).
+    /// A pass carrying no independent evidence — the caller scores it
+    /// `Unverified`, never `DeterministicPass`, so a waived candidate cannot tie
+    /// a genuinely flip-verified sibling in best-of-N and then win the
+    /// smaller-diff tiebreak.
+    ///
+    /// The summary states what was skipped, and states it in the vocabulary the
+    /// pipeline still has. What triage waives is the **witness stage** — the
+    /// authoring and running of a failing test — because no model review exists
+    /// to waive: #2584 removed the verdict call, and saying "model review
+    /// waived" described a step this pipeline could not have taken even had
+    /// triage asked for it (#2619).
     pub(super) fn waived_completion(
         &self,
         snapshot: &stella_protocol::LadderSnapshot,
     ) -> VerdictEvidence {
         let evidence = VerdictEvidence {
-            summary: "model review waived by triage; no independent verification was performed"
+            summary: "independent verification waived by triage; nothing checked this change"
                 .to_string(),
             deterministic: false,
             evidence_refs: vec![],

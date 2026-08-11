@@ -4,6 +4,7 @@
 //! via `super::*`.
 
 use super::*;
+use crate::FlipOutcome;
 
 #[test]
 fn agent_event_roundtrips_with_type_tag() {
@@ -591,7 +592,7 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
                         passed: true,
                     },
                 ],
-                flip_achieved: true,
+                flip: FlipOutcome::Achieved,
                 unstable_flip: false,
                 flip_refused_different_failure: false,
                 touched_tests_passed: Some(true),
@@ -619,7 +620,7 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
         AgentEvent::Verdict { evidence, .. } => {
             let snapshot = evidence.ladder.expect("snapshot survives the wire");
             assert_eq!(snapshot.oracle_trace.len(), 2);
-            assert!(snapshot.flip_achieved);
+            assert!(snapshot.flip.is_achieved());
             assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
             assert_eq!(snapshot.rung, Some(crate::LadderRung::SubmitFast));
         }

@@ -479,7 +479,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
         .ladder
         .as_deref()
         .expect("a fast-submit verdict records the snapshot it was decided from");
-    assert!(snapshot.flip_achieved);
+    assert!(snapshot.flip.is_achieved());
     assert!(!snapshot.unstable_flip);
     assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
     assert_eq!(

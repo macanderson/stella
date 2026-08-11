@@ -180,7 +180,7 @@ impl<'a> Pipeline<'a> {
             rung: Some(ladder_decision(inputs).into()),
             tracked_command: state.oracle.tracked_command().map(str::to_string),
             oracle_trace: state.oracle_trace.clone(),
-            flip_achieved: inputs.flip_achieved,
+            flip: inputs.flip,
             unstable_flip: state.oracle.is_unstable(),
             flip_refused_different_failure: state.oracle.refused_different_failure(),
             touched_tests_passed: inputs.touched_tests_passed,
