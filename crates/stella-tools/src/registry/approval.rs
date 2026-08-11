@@ -1,6 +1,7 @@
 //! The approval flow behind `RequireApproval` gate decisions (#2676), plus
-//! the blocking policy chains ([`ToolRegistry::gate_tool_call`] /
-//! [`ToolRegistry::gate_side_effects`]) that produce them.
+//! the blocking policy chains (`ToolRegistry::gate_tool_call` /
+//! `ToolRegistry::gate_side_effects` — private, so cited as prose) that
+//! produce them.
 //!
 //! Before this module existed, a `RequireApproval` from a blocking policy
 //! chain dead-ended as a model-visible `ToolOutput::Error` — the human was
