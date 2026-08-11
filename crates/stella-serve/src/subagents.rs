@@ -445,6 +445,14 @@ impl ToolExecutor for DelegatingTools<'_> {
         self.inner.drain_wait_request()
     }
 
+    /// Forwarded: a decorator that let the empty default stand would silently
+    /// turn the end-of-turn service assertion (#2764) off for every surface
+    /// composed through it — the agent goes back to declaring a service done
+    /// without ever being asked whether it is still listening.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.inner.live_services()
+    }
+
     /// Forwarded: letting the empty default stand would silently serialize
     /// the host executor's sibling spawns (see the port's contract). The
     /// `task` this wrapper itself implements is deliberately not added here —

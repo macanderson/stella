@@ -1060,6 +1060,19 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    // (`drain_wait_request` and `parallel_safe_names` are NOT forwarded here,
+    // which is a defect this view predates rather than a decision — #2819.)
+    //
+    // Forwarded for the same decorator rule, and NOT filtered by the
+    // allowlist: a service the round's worker left running is a fact about
+    // the workspace the verifier is judging, not a capability this view
+    // grants. The verifier cannot start or stop one — `start_process` and
+    // `stop_process` are both off the allowlist — so the assertion (#2764)
+    // only tells it what is up, which is exactly what a verifier is for.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.inner.live_services()
+    }
 }
 
 #[cfg(test)]

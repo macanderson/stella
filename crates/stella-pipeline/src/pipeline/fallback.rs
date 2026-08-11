@@ -25,7 +25,7 @@
 //!
 //! # Re-resolving the stage's own role
 //!
-//! Each engine gets its provider from one [`ResolvedRole`], and the
+//! Each engine gets its provider from one `ResolvedRole`, and the
 //! [`StageFallback`] attached beside it re-resolves **that same role**. The
 //! tie is structural rather than a second declaration at the call site:
 //! [`super::Pipeline::attach`] takes the role from the resolution the engine

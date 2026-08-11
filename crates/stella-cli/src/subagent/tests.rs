@@ -201,6 +201,71 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
     );
 }
 
+/// **The end-of-turn assertion's counterpart** (#2764). `live_services` has
+/// an empty default, so any decorator that forgets to forward it makes the
+/// engine believe nothing is running — and the agent goes back to declaring
+/// a service done without ever being asked whether it is still listening,
+/// which is the exact silence #2666 was found by. Asserted through the
+/// shipped composition, so a future decorator inserted into the real stack
+/// fails here and nowhere else.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_live_services() {
+    /// A leaf holding one running service, standing in for the registry's
+    /// aggregation over `Tool::live_services`.
+    struct ServingBase;
+
+    #[async_trait]
+    impl ToolExecutor for ServingBase {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn live_services(&self) -> Vec<stella_core::LiveService> {
+            vec![stella_core::LiveService {
+                handle: "proc-1".into(),
+                name: Some("docs".into()),
+                display: "python3 -m http.server 8080".into(),
+            }]
+        }
+    }
+
+    let base = ServingBase;
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    let services = discovery.live_services();
+    assert_eq!(
+        services.len(),
+        1,
+        "a running service must survive every decorator between the engine \
+         and the registry — one that swallows it turns the assertion off"
+    );
+    assert_eq!(services[0].handle, "proc-1");
+    assert_eq!(services[0].name.as_deref(), Some("docs"));
+
+    // And it is a peek, not a drain: asking twice must give the same answer,
+    // because this reports state that outlives the turn rather than a ledger
+    // the first caller settles.
+    assert_eq!(
+        discovery.live_services(),
+        services,
+        "reading must not consume — two callers have to see the same services"
+    );
+}
+
 /// A dispatcher whose registry has been dropped reports a refusal rather
 /// than panicking a torn-down session.
 #[tokio::test]

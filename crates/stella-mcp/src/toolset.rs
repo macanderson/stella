@@ -801,6 +801,17 @@ impl ToolExecutor for McpToolSet {
             .and_then(|native| native.drain_wait_request())
     }
 
+    /// Forwarded from the native layer, which owns the process table. An
+    /// external MCP server's own long-running state is not reported here and
+    /// deliberately so: the end-of-turn assertion (#2764) names things the
+    /// model can act on with `stop_process`, and a remote server's children
+    /// are not among them.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.native
+            .as_ref()
+            .map_or_else(Vec::new, |native| native.live_services())
+    }
+
     /// Forwarded from the native layer: letting the empty default stand would
     /// silently serialize its sibling spawns (see the port's contract).
     /// External MCP tools never carry this claim — the port pins their
@@ -870,6 +881,13 @@ impl ToolExecutor for CandidateMcpView {
     /// this view executes (`ci_status` included) is the only depositor.
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.native.drain_wait_request()
+    }
+
+    /// Forwarded from the candidate's own `native` layer, for the same
+    /// reason `drain_wait_request` is: it is the executor that owns a
+    /// process table, and the one every non-`mcp__` name routes to above.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.native.live_services()
     }
 
     /// Forwarded from the candidate's own `native` layer — the executor every
