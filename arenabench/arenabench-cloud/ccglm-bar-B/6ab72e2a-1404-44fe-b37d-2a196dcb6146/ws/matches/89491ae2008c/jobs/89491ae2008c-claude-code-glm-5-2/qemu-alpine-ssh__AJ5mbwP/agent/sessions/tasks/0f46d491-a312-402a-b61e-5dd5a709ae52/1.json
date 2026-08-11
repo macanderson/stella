@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Extract kernel + initramfs from ISO",
+  "description": "Write an ISO9660 parser to extract /boot/vmlinuz-lts and /boot/initramfs-lts from /app/alpine.iso since loop-mount is unavailable in the container.",
+  "activeForm": "Extracting kernel and initramfs from ISO",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

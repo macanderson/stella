@@ -1,0 +1,34 @@
+{
+    "id": "45842700-b81f-40a0-89fc-c58dfb3e147e",
+    "started_at": "2026-08-10T08:35:57.159819",
+    "finished_at": "2026-08-10T08:43:30.076566",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 0,
+        "evals": {
+            "stella__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "extract-elf__tKDQKNQ"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 157412,
+        "n_cache_tokens": 149440,
+        "n_output_tokens": 21917,
+        "cost_usd": 0.069439
+    }
+}

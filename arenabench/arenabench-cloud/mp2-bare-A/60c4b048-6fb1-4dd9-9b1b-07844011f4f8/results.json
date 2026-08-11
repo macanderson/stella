@@ -1,0 +1,360 @@
+{
+  "match": {
+    "id": "5e1892de59c0",
+    "name": "Post-merge panel (bare, A): main@314344c",
+    "dataset": "terminal-bench-2.1",
+    "tasks": [
+      "pypi-server"
+    ],
+    "contestants": [
+      {
+        "id": "stella-bare",
+        "name": "Stella (GLM-5.2, bare loop)",
+        "slug": "stella-glm-5-2-bare-loop",
+        "agent": "stella",
+        "engine": {
+          "api": "zai",
+          "model": "glm-5.2",
+          "qualified_model": "zai/glm-5.2",
+          "reasoning": true,
+          "effort": "high",
+          "base_url": "https://api.z.ai/api/coding/paas/v4",
+          "bare_loop": true,
+          "roles": {},
+          "responsibilities": {}
+        },
+        "engine_label": "glm-5.2 \u00b7 high \u00b7 bare loop",
+        "env_keys": [
+          "ZAI_API_KEY"
+        ],
+        "ignored_env_keys": [],
+        "required_env": [
+          "ZAI_API_KEY"
+        ],
+        "color": "#4FC3F7",
+        "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+        "agent_version": ""
+      }
+    ],
+    "attempts": 1,
+    "concurrency": 1,
+    "setup_timeout_multiplier": 4.0,
+    "agent_timeout_multiplier": 1.0,
+    "record_video": false,
+    "capture_snapshots": false,
+    "snapshot_interval": 30.0,
+    "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019"
+  },
+  "dataset": {
+    "key": "terminal-bench-2.1",
+    "title": "Terminal-Bench 2.1",
+    "harbor_id": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "name": "terminal-bench/terminal-bench-2-1",
+    "digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "namespace": "terminal-bench",
+    "description": "89 end-to-end terminal tasks with canonical Docker images and independent verifiers. The agent gets a shell and an instruction; the verifier decides whether the task was actually solved.",
+    "homepage": "https://www.tbench.ai/",
+    "task_count": null
+  },
+  "provenance": {
+    "schema": 1,
+    "dataset_key": "terminal-bench-2.1",
+    "dataset_ref": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "dataset_digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "harbor_version": "0.6.1",
+    "harbor_bound": null,
+    "harbor_bin": "/usr/local/bin/harbor",
+    "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+    "sut_commit": "314344c79bb19e5442101a307310a4a29c3da019",
+    "sut_sha256": "81baa55f188f5b8e48602bc3ce441f0383386ea9d930d947c9a97e0815630096",
+    "sut_seats": {
+      "stella-bare": {
+        "name": "Stella (GLM-5.2, bare loop)",
+        "ref": "314344c79bb19e5442101a307310a4a29c3da019",
+        "commit": "314344c79bb19e5442101a307310a4a29c3da019",
+        "sha256": "81baa55f188f5b8e48602bc3ce441f0383386ea9d930d947c9a97e0815630096"
+      }
+    },
+    "agent_seats": {},
+    "arenabench_version": "0.1.0",
+    "recorded_at": 1786406382.189225,
+    "source": "recorded",
+    "comparability_key": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella314344c7",
+    "measured": true,
+    "comparability_key_by_seat": {
+      "stella-bare": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella314344c7"
+    }
+  },
+  "status": "finished",
+  "note": "",
+  "created_at": 1786406381.573206,
+  "started_at": 1786406381.5733948,
+  "finished_at": 1786406932.9370182,
+  "elapsed": 551.363623380661,
+  "recording": false,
+  "recording_active": 0,
+  "snapshotting": false,
+  "contestants": [
+    {
+      "id": "stella-bare",
+      "name": "Stella (GLM-5.2, bare loop)",
+      "slug": "stella-glm-5-2-bare-loop",
+      "agent": "stella",
+      "engine": {
+        "api": "zai",
+        "model": "glm-5.2",
+        "qualified_model": "zai/glm-5.2",
+        "reasoning": true,
+        "effort": "high",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "bare_loop": true,
+        "roles": {},
+        "responsibilities": {}
+      },
+      "engine_label": "glm-5.2 \u00b7 high \u00b7 bare loop",
+      "env_keys": [
+        "ZAI_API_KEY"
+      ],
+      "ignored_env_keys": [],
+      "required_env": [
+        "ZAI_API_KEY"
+      ],
+      "color": "#4FC3F7",
+      "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+      "agent_version": "",
+      "state": "done",
+      "warnings": [
+        "no local export: Harbor will resolve each task over the network mid-run, and one failed lookup ends the job. `arenabench export terminal-bench-2.1` removes that."
+      ],
+      "notes": [
+        "harbor 0.6.1 (/usr/local/bin/harbor) \u2014 found on PATH",
+        "stella 314344c7 (314344c79bb19e5442101a307310a4a29c3da019) sha256:81baa55f188f"
+      ],
+      "error": "",
+      "totals": {
+        "trials": 1,
+        "infrastructure": 0,
+        "never_ran": 0,
+        "running": 0,
+        "done": 1,
+        "judged": 1,
+        "passed": 1,
+        "solve_rate": 100.0,
+        "clock_time": 544.546468,
+        "tokens_in": 360839,
+        "tokens_out": 17147,
+        "cache_read": 351872,
+        "cache_write": 0,
+        "total_cost": 0.08180952,
+        "priced_cost": 0.08180951999999998,
+        "unmeasured_trials": 0,
+        "unpriced_models": [],
+        "cache_hit_rate": 97.51495819465191,
+        "tools": 27,
+        "steps": 26,
+        "cap_hits": 0,
+        "wasted_time": null,
+        "flip_trials": 0,
+        "rail_trials": 1,
+        "proven": 0,
+        "witnessed": 0,
+        "wrong_guesses": 0,
+        "refuted": 0,
+        "claimed_without_proof": 0,
+        "unproven": 0,
+        "self_graded": 0
+      }
+    }
+  ],
+  "rows": [
+    {
+      "task": "pypi-server",
+      "cells": {
+        "stella-bare": {
+          "task": "pypi-server",
+          "trial": "pypi-server__biestsC",
+          "status": "done",
+          "resolved": true,
+          "reward": 1.0,
+          "failure": "",
+          "outcome_reason": "solved_clean",
+          "infrastructure": false,
+          "steps": 26,
+          "tools": 27,
+          "tokens_in": 360839,
+          "tokens_out": 17147,
+          "cache_read": 351872,
+          "cache_write": 0,
+          "total_cost": 0.08181,
+          "priced_cost": 0.08181,
+          "unpriced_models": [],
+          "usage_measured": true,
+          "cache_hit_rate": 97.51495819465191,
+          "clock_time": 544.55,
+          "age_s": 23.959360361099243,
+          "cap_hits": 0,
+          "models": [
+            "glm-5.2",
+            "zai/glm-5.2"
+          ],
+          "has_video": false,
+          "declared_complete": true,
+          "usage_incomplete": 2,
+          "late_error": "",
+          "flip_elapsed": null,
+          "wasted_elapsed": null,
+          "proof": {
+            "grade": "none",
+            "warranted": null,
+            "warrant_reason": "",
+            "diff_lines": null,
+            "stage_ran": false,
+            "witness_authored": false,
+            "witness_path": "",
+            "witness_command": "",
+            "witness_fingerprint": "",
+            "witness_unavailable": [],
+            "oracle_runs": [],
+            "failed_attempts": 0,
+            "flip_achieved": null,
+            "tracked_command": "",
+            "unstable_flip": false,
+            "flip_refused": false,
+            "witness_intact": null,
+            "touched_tests_passed": null,
+            "rung": "",
+            "deterministic": false,
+            "claimed_without_proof": false,
+            "verdict_passed": null,
+            "verdict_summary": "",
+            "honesty": "",
+            "assurance_witness": null,
+            "assurance_verifier": null,
+            "verifier_independent": null,
+            "diff_coverage": "",
+            "verdict_degraded": [],
+            "verification_unavailable": [],
+            "roles": [
+              {
+                "role": "worker",
+                "model": "glm-5.2",
+                "calls": 26,
+                "tokens_in": 360839,
+                "tokens_out": 17147,
+                "cost_usd": 0.08181
+              }
+            ]
+          },
+          "harness": null,
+          "behaviour": null
+        }
+      }
+    }
+  ],
+  "detections": [],
+  "leaders": {
+    "solve_rate": [
+      "stella-bare"
+    ],
+    "proven": [
+      "stella-bare"
+    ],
+    "claimed_without_proof": [
+      "stella-bare"
+    ],
+    "clock_time": [
+      "stella-bare"
+    ],
+    "priced_cost": [
+      "stella-bare"
+    ],
+    "tokens_in": [
+      "stella-bare"
+    ],
+    "tokens_out": [
+      "stella-bare"
+    ],
+    "cache_read": [
+      "stella-bare"
+    ]
+  },
+  "dimensions": [
+    {
+      "key": "solve_rate",
+      "label": "Solve Rate",
+      "direction": "higher",
+      "unit": "%",
+      "blurb": "verifier rewards / trials completed"
+    },
+    {
+      "key": "proven",
+      "label": "Proven",
+      "direction": "higher",
+      "unit": "",
+      "blurb": "trials an authored witness or tracked command carried fail\u2192pass"
+    },
+    {
+      "key": "claimed_without_proof",
+      "label": "Unproven Claims",
+      "direction": "lower",
+      "unit": "",
+      "blurb": "passing verdicts with nothing deterministic behind them"
+    },
+    {
+      "key": "clock_time",
+      "label": "Clock Time",
+      "direction": "lower",
+      "unit": "s",
+      "blurb": "wall-clock across all trials"
+    },
+    {
+      "key": "wasted_time",
+      "label": "Wasted Time",
+      "direction": "lower",
+      "unit": "s",
+      "blurb": "time still running after the solution already passed (snapshot replay)"
+    },
+    {
+      "key": "priced_cost",
+      "label": "Total Cost",
+      "direction": "lower",
+      "unit": "$",
+      "blurb": "list price of every trial's tokens, one table for all seats"
+    },
+    {
+      "key": "total_cost",
+      "label": "Self-Reported",
+      "direction": "neutral",
+      "unit": "$",
+      "blurb": "what each agent said it spent, on its own table"
+    },
+    {
+      "key": "tokens_in",
+      "label": "Tokens In",
+      "direction": "lower",
+      "unit": "tok",
+      "blurb": "uncached prompt tokens billed"
+    },
+    {
+      "key": "tokens_out",
+      "label": "Tokens Out",
+      "direction": "lower",
+      "unit": "tok",
+      "blurb": "completion tokens billed"
+    },
+    {
+      "key": "cache_read",
+      "label": "Cache Read",
+      "direction": "higher",
+      "unit": "tok",
+      "blurb": "prompt tokens served from cache"
+    },
+    {
+      "key": "cache_write",
+      "label": "Cache Write",
+      "direction": "neutral",
+      "unit": "tok",
+      "blurb": "prompt tokens written to cache"
+    }
+  ]
+}

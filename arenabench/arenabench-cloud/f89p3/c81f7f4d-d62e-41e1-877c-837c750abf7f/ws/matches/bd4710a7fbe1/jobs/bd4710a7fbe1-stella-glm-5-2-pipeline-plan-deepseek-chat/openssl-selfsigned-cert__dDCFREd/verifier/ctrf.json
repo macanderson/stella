@@ -1,0 +1,77 @@
+{
+    "results": {
+        "tool": {
+            "name": "pytest",
+            "version": "8.4.1"
+        },
+        "summary": {
+            "tests": 6,
+            "passed": 5,
+            "failed": 1,
+            "skipped": 0,
+            "pending": 0,
+            "other": 0,
+            "start": 1786480286.9582758,
+            "stop": 1786480287.1788096
+        },
+        "tests": [
+            {
+                "name": "test_outputs.py::test_directory_structure",
+                "status": "passed",
+                "duration": 0.0004221010001401737,
+                "start": 1786480287.029189,
+                "stop": 1786480287.0298321,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            },
+            {
+                "name": "test_outputs.py::test_key_file",
+                "status": "failed",
+                "raw_status": "call_failed",
+                "duration": 0.00047227000004568254,
+                "start": 1786480287.0300066,
+                "stop": 1786480287.0400136,
+                "retries": 0,
+                "file_path": "test_outputs.py",
+                "trace": "def test_key_file():\n        \"\"\"Test that the private key file exists with correct permissions.\"\"\"\n        key_file = \"/app/ssl/server.key\"\n        assert os.path.exists(key_file), \"Private key file does not exist\"\n    \n        # Check key permissions (should be restrictive)\n        key_permissions = os.stat(key_file).st_mode & 0o777\n>       assert key_permissions <= 0o600, f\"Key permissions too open: {key_permissions:o}\"\nE       AssertionError: Key permissions too open: 666\nE       assert 438 <= 384\n\n/tests/test_outputs.py:22: AssertionError",
+                "message": "The test failed in the call phase due to an assertion error"
+            },
+            {
+                "name": "test_outputs.py::test_certificate_file",
+                "status": "passed",
+                "duration": 0.04948582800011536,
+                "start": 1786480287.040213,
+                "stop": 1786480287.0899138,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            },
+            {
+                "name": "test_outputs.py::test_combined_pem_file",
+                "status": "passed",
+                "duration": 0.024021728999741754,
+                "start": 1786480287.0901296,
+                "stop": 1786480287.114354,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            },
+            {
+                "name": "test_outputs.py::test_verification_file",
+                "status": "passed",
+                "duration": 0.000691991000167036,
+                "start": 1786480287.1145666,
+                "stop": 1786480287.1153824,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            },
+            {
+                "name": "test_outputs.py::test_python_verification_script",
+                "status": "passed",
+                "duration": 0.0628411849997974,
+                "start": 1786480287.1155438,
+                "stop": 1786480287.1785908,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            }
+        ]
+    }
+}

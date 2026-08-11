@@ -1,0 +1,284 @@
+{
+    "id": "a46b0755-569d-439b-946a-f3ac00d72d53",
+    "task_name": "terminal-bench/kv-store-grpc",
+    "trial_name": "kv-store-grpc__SYPorys",
+    "trial_uri": "file:///work/ws/matches/6c9fbd95048b/jobs/6c9fbd95048b-stella-glm-5-2-bare-loop-prove-it-gate/kv-store-grpc__SYPorys",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "kv-store-grpc",
+        "ref": "sha256:973c5d4c111fb61a344457936f1c36400acd2d9e44389e7b319586fe23a7a307"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "901a4dd5c3078d5155043875a0d07f3583f462c73f919b52855c025e680b1edd",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/kv-store-grpc",
+            "ref": "sha256:973c5d4c111fb61a344457936f1c36400acd2d9e44389e7b319586fe23a7a307",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "kv-store-grpc__SYPorys",
+        "trials_dir": "/work/ws/matches/6c9fbd95048b/jobs/6c9fbd95048b-stella-glm-5-2-bare-loop-prove-it-gate",
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": 4.0,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": null,
+            "import_path": "arenabench.harbor_agent:ArenaStellaAgent",
+            "model_name": "zai/glm-5.2",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {},
+            "env": {}
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+        },
+        "artifacts": [],
+        "job_id": "75512bff-d059-48aa-a2b5-187ce45f7390"
+    },
+    "agent_info": {
+        "name": "stella",
+        "version": "stella 0.8.24-dev.5e7e24f1d52c2df4e87b826cbb631f7eedfda28e [binary-sha256:619831ff1c0a0912c0b746c80322e272f85c403d2055f9808b09150761c20b26]",
+        "model_info": {
+            "name": "glm-5.2",
+            "provider": "zai"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 655692,
+        "n_cache_tokens": 637440,
+        "n_output_tokens": 22592,
+        "cost_usd": 0.130772,
+        "rollout_details": null,
+        "metadata": {
+            "stella_status": "completed",
+            "stella_model": "glm-5.2",
+            "stella_steps": 41,
+            "stella_return_code": 0,
+            "stella_return_code_state": "known",
+            "stella_binary_sha256": "619831ff1c0a0912c0b746c80322e272f85c403d2055f9808b09150761c20b26",
+            "stella_binary_sha256_verified_in_container": true,
+            "stella_source_commit": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+            "stella_source_commit_verified_in_binary": true,
+            "stella_agent_version": "stella 0.8.24-dev.5e7e24f1d52c2df4e87b826cbb631f7eedfda28e [binary-sha256:619831ff1c0a0912c0b746c80322e272f85c403d2055f9808b09150761c20b26]",
+            "stella_adapter_version": "0.6.0",
+            "stella_adapter_sha256": "68df3e48e574c1975092b0044ba07c14193a209ebfe50815b8bf44a466ea7bce",
+            "stella_harbor_version": "0.6.1",
+            "stella_harbor_sha256": "ae71004577634f20c8bf16e4d8571ade78b3d4023dc18b54de973b3f4410f3fb",
+            "stella_base_url": "https://api.z.ai/api/coding/paas/v4",
+            "stella_provider_route_policy": "direct",
+            "stella_budget_usd": "unbounded",
+            "stella_turn_budget_sec": "unarmed",
+            "stella_output_format": "stream-json",
+            "stella_loop_mode": "bare_step_loop",
+            "stella_disable_reflection": "1",
+            "stella_reflection_policy": "disabled_for_ephemeral_benchmark",
+            "stella_credential_handoff": "anonymous-fd",
+            "stella_host_credential_source": "environment-fallback",
+            "stella_host_credential_bundle_count": 0,
+            "stella_container_credential_absence_verified": false,
+            "stella_launcher_controls": {
+                "process_invocation": "docker-compose-direct-argv",
+                "repository_env_file": "disabled",
+                "project_env_files": "disabled",
+                "filesystem_settings": "disabled",
+                "filesystem_credentials": "disabled",
+                "subprocess_credential_scrub": "enabled",
+                "project_trust": "disabled",
+                "project_hooks": "disabled",
+                "catalog_auto_refresh": "disabled",
+                "provider_proxy": "disabled",
+                "base_url_authority": "validated-cli-argument",
+                "engine_config_authority": "trusted-launcher-json"
+            },
+            "stella_engine_posture_version": "stella-tb21-engine-posture-v1",
+            "stella_engine_posture": {
+                "default_model": "zai/glm-5.2",
+                "auto_mode": "off",
+                "effort_auto": "off",
+                "reasoning_auto": "off",
+                "headless_scope_bypass": "on",
+                "agents": {
+                    "default": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "worker": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "verifier": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "triage": {
+                        "effort": "low",
+                        "reasoning": "off"
+                    }
+                },
+                "allowed_models": [
+                    "zai/glm-5.2"
+                ]
+            },
+            "stella_engine_posture_json": "{\"agents\":{\"default\":{\"effort\":\"high\",\"reasoning\":\"on\"},\"triage\":{\"effort\":\"low\",\"reasoning\":\"off\"},\"verifier\":{\"effort\":\"high\",\"reasoning\":\"on\"},\"worker\":{\"effort\":\"high\",\"reasoning\":\"on\"}},\"allowed_models\":[\"zai/glm-5.2\"],\"auto_mode\":\"off\",\"default_model\":\"zai/glm-5.2\",\"effort_auto\":\"off\",\"headless_scope_bypass\":\"on\",\"reasoning_auto\":\"off\"}",
+            "stella_engine_posture_sha256": "8bf6767de6cf62a16501530a985eff2b407970fe425c4941874fd4edc09c2417",
+            "stella_assurance_tiers_version": "stella-tb21-assurance-tiers-v2",
+            "stella_assurance_arm": "witness-off",
+            "stella_assurance_tiers": {
+                "version": "stella-tb21-assurance-tiers-v2",
+                "arm": "witness-off",
+                "worker_model": "zai/glm-5.2",
+                "verifier_model": null,
+                "tiers": {
+                    "deterministic_verify": "on",
+                    "authored_witness": "off",
+                    "model_verdict": "on-same-model-as-worker"
+                },
+                "authored_witness_off_reason": "no author independent of the worker: the engine posture resolves the verifier role to `zai/glm-5.2` (from `default_model`) and the worker role to the same model (from `default_model`), so the witness tier cannot be authored on any task in this run"
+            },
+            "stella_assurance_tiers_json": "{\"arm\":\"witness-off\",\"authored_witness_off_reason\":\"no author independent of the worker: the engine posture resolves the verifier role to `zai/glm-5.2` (from `default_model`) and the worker role to the same model (from `default_model`), so the witness tier cannot be authored on any task in this run\",\"tiers\":{\"authored_witness\":\"off\",\"deterministic_verify\":\"on\",\"model_verdict\":\"on-same-model-as-worker\"},\"verifier_model\":null,\"version\":\"stella-tb21-assurance-tiers-v2\",\"worker_model\":\"zai/glm-5.2\"}",
+            "stella_assurance_tiers_sha256": "9c1af22bf3d4c7c5ef3ef9b9f28057318f3ae21660763c942dbbff1ea8b2658a",
+            "stella_witness_authored_state": "not_reported",
+            "stella_self_verdict_state": "not_reported",
+            "stella_workspace_git_baseline": {
+                "state": "created",
+                "commit": "c984ef0dc7801fc1f43d805ccdb459bae184677c"
+            },
+            "stella_accounting": {
+                "state": "complete",
+                "step_usage_records": 41,
+                "fields": {
+                    "input_tokens": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 655692
+                    },
+                    "output_tokens": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 22592
+                    },
+                    "cached_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 637440
+                    },
+                    "cache_write_tokens": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 0
+                    },
+                    "estimated_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 381046
+                    },
+                    "cost_usd": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 0.130772
+                    },
+                    "duration_ms": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 460485
+                    },
+                    "retries": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 0
+                    },
+                    "tool_calls": {
+                        "state": "complete",
+                        "reported_records": 41,
+                        "total": 38
+                    }
+                },
+                "envelope_total_cost_usd": 0.130772,
+                "step_usage_total_cost_usd": 0.130772,
+                "cost_consistency": "consistent",
+                "cost_difference_usd": 0.0,
+                "model_state": "complete",
+                "model_records": 41,
+                "models": [
+                    "glm-5.2"
+                ]
+            },
+            "stella_stream": {
+                "event_count": 17504,
+                "diagnostic_lines": 0,
+                "ignored_json_objects": 0,
+                "terminal_event": "complete",
+                "stream_complete": true,
+                "process_returned": true,
+                "step_usage_count": 41,
+                "complete_event_count": 1,
+                "error_event_count": 0,
+                "cost_source": "complete_event",
+                "proof_step_counts": {},
+                "witness_authored": null,
+                "witness_authored_state": "not_reported",
+                "witness_authored_count": 0,
+                "witness_unavailable_count": 0,
+                "witness_unavailable_reasons": [],
+                "witness_warranted_count": 0,
+                "assurance_witness_planned": null,
+                "self_verdict_passed": null,
+                "self_verdict_state": "not_reported",
+                "self_verdict_deterministic": null,
+                "self_verdict_count": 0,
+                "verification_unavailable_count": 0
+            }
+        }
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.0
+        }
+    },
+    "exception_info": null,
+    "started_at": "2026-08-10T13:07:22.479003Z",
+    "finished_at": "2026-08-10T13:15:35.441873Z",
+    "environment_setup": {
+        "started_at": "2026-08-10T13:07:22.496142Z",
+        "finished_at": "2026-08-10T13:07:25.789402Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-10T13:07:25.789447Z",
+        "finished_at": "2026-08-10T13:07:31.980870Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-10T13:07:31.980962Z",
+        "finished_at": "2026-08-10T13:15:21.176020Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-10T13:15:21.254295Z",
+        "finished_at": "2026-08-10T13:15:24.109823Z"
+    },
+    "step_results": null
+}

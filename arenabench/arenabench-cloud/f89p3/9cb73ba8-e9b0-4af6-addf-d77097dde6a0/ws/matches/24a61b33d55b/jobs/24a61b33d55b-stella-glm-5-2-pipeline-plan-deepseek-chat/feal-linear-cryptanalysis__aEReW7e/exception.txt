@@ -1,0 +1,48 @@
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/harbor/agents/installed/base.py", line 42, in wrapper
+    return await fn(self, instruction, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/__init__.py", line 1070, in run
+    result = await _secure_exec_with_credential_fd(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/__init__.py", line 718, in _secure_exec_with_credential_fd
+    return await exec_with_agent_reap(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/timeout_reap.py", line 252, in exec_with_agent_reap
+    return await communicate_with_release(process, wire, completion_probe)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/stream_release.py", line 190, in communicate_with_release
+    stdout_bytes, released = await communicate_with_completion_probe(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/stream_release.py", line 144, in communicate_with_completion_probe
+    done, _ = await asyncio.wait({communicate}, timeout=poll_seconds)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 464, in wait
+    return await _wait(fs, timeout, return_when, loop)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 550, in _wait
+    await waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py", line 370, in _execute_agent
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py", line 961, in run
+    await self._execute_agent()
+  File "/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py", line 379, in _execute_agent
+    raise AgentTimeoutError(
+harbor.trial.trial.AgentTimeoutError: Agent execution timed out after 1800.0 seconds

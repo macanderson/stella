@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "contestant": "stella-bare",
+  "agent": "stella",
+  "api": "zai",
+  "model": "glm-5.2",
+  "qualified_model": "zai/glm-5.2",
+  "launch_model": "zai/glm-5.2",
+  "base_url": "https://api.z.ai/api/coding/paas/v4",
+  "sut_ref": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+  "sut_commit": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+  "sut_sha256": "99e440ea812dded40c21d10fbd78fffbcab3ed96555431dc864dd468dc972cc4"
+}

@@ -1,0 +1,131 @@
+{
+  "status": "aborted",
+  "text": null,
+  "cost_usd": null,
+  "reason": "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+  "model": null,
+  "events": [
+    {
+      "ts": 1786345887707,
+      "type": "stage",
+      "name": "execute"
+    },
+    {
+      "ts": 1786345888682,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 973,
+      "retries": 0
+    },
+    {
+      "ts": 1786345889615,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 681,
+      "retries": 1
+    },
+    {
+      "ts": 1786345890784,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 687,
+      "retries": 2
+    },
+    {
+      "ts": 1786345892035,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 749,
+      "retries": 3
+    },
+    {
+      "ts": 1786345894697,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 759,
+      "retries": 4
+    },
+    {
+      "ts": 1786345895652,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 582,
+      "retries": 5
+    },
+    {
+      "ts": 1786345903083,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "zai",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 750,
+      "retries": 6
+    },
+    {
+      "ts": 1786345903083,
+      "type": "retries_exhausted",
+      "turn_instance": 0,
+      "attempts": 7,
+      "reasons": [
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+        "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests"
+      ],
+      "retryable": true
+    },
+    {
+      "ts": 1786345903083,
+      "type": "error",
+      "message": "provider rate limited: Z.ai HTTP 429: Rate limit reached for requests",
+      "retryable": true
+    }
+  ],
+  "_stella_stream": {
+    "event_count": 10,
+    "diagnostic_lines": 0,
+    "ignored_json_objects": 0,
+    "terminal_event": "error",
+    "stream_complete": true,
+    "process_returned": true,
+    "step_usage_count": 0,
+    "complete_event_count": 0,
+    "error_event_count": 1,
+    "cost_source": "unknown",
+    "proof_step_counts": {},
+    "witness_authored": null,
+    "witness_authored_state": "not_reported",
+    "witness_authored_count": 0,
+    "witness_unavailable_count": 0,
+    "witness_unavailable_reasons": [],
+    "witness_warranted_count": 0,
+    "assurance_witness_planned": null,
+    "self_verdict_passed": null,
+    "self_verdict_state": "not_reported",
+    "self_verdict_deterministic": null,
+    "self_verdict_count": 0,
+    "verification_unavailable_count": 0
+  }
+}

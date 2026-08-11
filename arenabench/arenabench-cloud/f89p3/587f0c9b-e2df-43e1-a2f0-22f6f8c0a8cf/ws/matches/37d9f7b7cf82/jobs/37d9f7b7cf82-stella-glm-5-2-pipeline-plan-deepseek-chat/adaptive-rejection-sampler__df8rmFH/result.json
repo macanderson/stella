@@ -1,0 +1,308 @@
+{
+    "id": "311c9c9c-a0b7-4d87-9c69-8f0031b92093",
+    "task_name": "terminal-bench/adaptive-rejection-sampler",
+    "trial_name": "adaptive-rejection-sampler__df8rmFH",
+    "trial_uri": "file:///work/ws/matches/37d9f7b7cf82/jobs/37d9f7b7cf82-stella-glm-5-2-pipeline-plan-deepseek-chat/adaptive-rejection-sampler__df8rmFH",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "adaptive-rejection-sampler",
+        "ref": "sha256:bcaa2399985cd57666018025846289ab25e193ae0dd8fb7f0ffab2410c24d4de"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "a4726253ad23c3fc46b5cb9c3d21025874e367b18643a3920f636a1fa89e1207",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/adaptive-rejection-sampler",
+            "ref": "sha256:bcaa2399985cd57666018025846289ab25e193ae0dd8fb7f0ffab2410c24d4de",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "adaptive-rejection-sampler__df8rmFH",
+        "trials_dir": "/work/ws/matches/37d9f7b7cf82/jobs/37d9f7b7cf82-stella-glm-5-2-pipeline-plan-deepseek-chat",
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": 4.0,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": null,
+            "import_path": "arenabench.harbor_agent:ArenaStellaAgent",
+            "model_name": "openrouter/z-ai/glm-5.2",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {},
+            "env": {}
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+        },
+        "artifacts": [],
+        "job_id": "38d051ee-f34d-4fe3-bb50-8263e0c8d986"
+    },
+    "agent_info": {
+        "name": "stella",
+        "version": "stella 0.8.45-dev.21933743049927b9ccf29375bd9c3ee6cd034b1d [binary-sha256:00146f5362420b8a1586da3100024043bfc2be262f2bf910f3e0dc26229250f8]",
+        "model_info": {
+            "name": "z-ai/glm-5.2",
+            "provider": "openrouter"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 105687,
+        "n_cache_tokens": 95989,
+        "n_output_tokens": 2861,
+        "cost_usd": 0.0148097893,
+        "rollout_details": null,
+        "metadata": {
+            "stella_status": "interrupted",
+            "stella_model": "z-ai/glm-5.2",
+            "stella_steps": 10,
+            "stella_return_code_state": "unknown",
+            "stella_binary_sha256": "00146f5362420b8a1586da3100024043bfc2be262f2bf910f3e0dc26229250f8",
+            "stella_binary_sha256_verified_in_container": true,
+            "stella_source_commit": "21933743049927b9ccf29375bd9c3ee6cd034b1d",
+            "stella_source_commit_verified_in_binary": true,
+            "stella_agent_version": "stella 0.8.45-dev.21933743049927b9ccf29375bd9c3ee6cd034b1d [binary-sha256:00146f5362420b8a1586da3100024043bfc2be262f2bf910f3e0dc26229250f8]",
+            "stella_adapter_version": "0.6.0",
+            "stella_adapter_sha256": "ea74216f5b88acdf51b22e6a4eb7ed7c52f2d5a94dd4f44c3abac30a2d7ade18",
+            "stella_harbor_version": "0.6.1",
+            "stella_harbor_sha256": "ae71004577634f20c8bf16e4d8571ade78b3d4023dc18b54de973b3f4410f3fb",
+            "stella_base_url": "https://openrouter.ai/api/v1",
+            "stella_provider_route_policy": "openrouter-auto",
+            "stella_budget_usd": "unbounded",
+            "stella_turn_budget_sec": "unarmed",
+            "stella_output_format": "stream-json",
+            "stella_loop_mode": "staged_pipeline",
+            "stella_disable_reflection": "1",
+            "stella_reflection_policy": "disabled_for_ephemeral_benchmark",
+            "stella_credential_handoff": "anonymous-fd",
+            "stella_host_credential_source": "environment-fallback",
+            "stella_host_credential_bundle_count": 0,
+            "stella_container_credential_absence_verified": false,
+            "stella_launcher_controls": {
+                "process_invocation": "docker-compose-direct-argv",
+                "repository_env_file": "disabled",
+                "project_env_files": "disabled",
+                "filesystem_settings": "disabled",
+                "filesystem_credentials": "disabled",
+                "subprocess_credential_scrub": "enabled",
+                "project_trust": "disabled",
+                "project_hooks": "disabled",
+                "catalog_auto_refresh": "disabled",
+                "provider_proxy": "disabled",
+                "base_url_authority": "validated-cli-argument",
+                "engine_config_authority": "trusted-launcher-json",
+                "upstream_pin_authority": "validated-cli-argument"
+            },
+            "stella_engine_posture_version": "stella-tb21-engine-posture-v1",
+            "stella_engine_posture": {
+                "default_model": "openrouter/z-ai/glm-5.2",
+                "auto_mode": "off",
+                "effort_auto": "off",
+                "reasoning_auto": "off",
+                "headless_scope_bypass": "on",
+                "pipeline_verifier_model": "openrouter/deepseek/deepseek-chat",
+                "pipeline_triage_model": "openrouter/z-ai/glm-4.7-flash",
+                "pipeline_research_model": "openrouter/deepseek/deepseek-chat",
+                "pipeline_plan_model": "openrouter/deepseek/deepseek-chat",
+                "agents": {
+                    "default": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "worker": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "verifier": {
+                        "effort": "high",
+                        "reasoning": "on"
+                    },
+                    "triage": {
+                        "effort": "low",
+                        "reasoning": "off"
+                    },
+                    "research": {
+                        "effort": "low",
+                        "reasoning": "on"
+                    },
+                    "plan": {
+                        "effort": "medium",
+                        "reasoning": "on"
+                    }
+                },
+                "allowed_models": [
+                    "openrouter/z-ai/glm-5.2",
+                    "openrouter/deepseek/deepseek-chat",
+                    "openrouter/z-ai/glm-4.7-flash"
+                ]
+            },
+            "stella_engine_posture_json": "{\"agents\":{\"default\":{\"effort\":\"high\",\"reasoning\":\"on\"},\"plan\":{\"effort\":\"medium\",\"reasoning\":\"on\"},\"research\":{\"effort\":\"low\",\"reasoning\":\"on\"},\"triage\":{\"effort\":\"low\",\"reasoning\":\"off\"},\"verifier\":{\"effort\":\"high\",\"reasoning\":\"on\"},\"worker\":{\"effort\":\"high\",\"reasoning\":\"on\"}},\"allowed_models\":[\"openrouter/z-ai/glm-5.2\",\"openrouter/deepseek/deepseek-chat\",\"openrouter/z-ai/glm-4.7-flash\"],\"auto_mode\":\"off\",\"default_model\":\"openrouter/z-ai/glm-5.2\",\"effort_auto\":\"off\",\"headless_scope_bypass\":\"on\",\"pipeline_plan_model\":\"openrouter/deepseek/deepseek-chat\",\"pipeline_research_model\":\"openrouter/deepseek/deepseek-chat\",\"pipeline_triage_model\":\"openrouter/z-ai/glm-4.7-flash\",\"pipeline_verifier_model\":\"openrouter/deepseek/deepseek-chat\",\"reasoning_auto\":\"off\"}",
+            "stella_engine_posture_sha256": "83562d663897007546bcd3bc3ef618f833b780fa081a592517eb991c2c30f1d4",
+            "stella_assurance_tiers_version": "stella-tb21-assurance-tiers-v2",
+            "stella_assurance_arm": "witness-on",
+            "stella_assurance_tiers": {
+                "version": "stella-tb21-assurance-tiers-v2",
+                "arm": "witness-on",
+                "worker_model": "openrouter/z-ai/glm-5.2",
+                "verifier_model": "openrouter/deepseek/deepseek-chat",
+                "tiers": {
+                    "deterministic_verify": "on",
+                    "authored_witness": "on",
+                    "model_verdict": "on-independent-of-worker"
+                },
+                "authored_witness_off_reason": null
+            },
+            "stella_assurance_tiers_json": "{\"arm\":\"witness-on\",\"authored_witness_off_reason\":null,\"tiers\":{\"authored_witness\":\"on\",\"deterministic_verify\":\"on\",\"model_verdict\":\"on-independent-of-worker\"},\"verifier_model\":\"openrouter/deepseek/deepseek-chat\",\"version\":\"stella-tb21-assurance-tiers-v2\",\"worker_model\":\"openrouter/z-ai/glm-5.2\"}",
+            "stella_assurance_tiers_sha256": "d04b5936dc03006cc52cd07172534d5c6f31ac238a5a8959052e5755274de7a8",
+            "stella_verifier_model": "openrouter/deepseek/deepseek-chat",
+            "stella_witness_authored_state": "not_reported",
+            "stella_self_verdict_state": "not_reported",
+            "stella_workspace_git_baseline": {
+                "state": "created",
+                "commit": "9f3c177857ca19908634c1b1d61962f1f9d17d72"
+            },
+            "stella_accounting": {
+                "state": "incomplete",
+                "step_usage_records": 10,
+                "fields": {
+                    "input_tokens": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 105687
+                    },
+                    "output_tokens": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 2861
+                    },
+                    "cached_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 95989
+                    },
+                    "cache_write_tokens": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 0
+                    },
+                    "estimated_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 43803
+                    },
+                    "cost_usd": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 0.0148097893
+                    },
+                    "duration_ms": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 82880
+                    },
+                    "retries": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 0
+                    },
+                    "tool_calls": {
+                        "state": "complete",
+                        "reported_records": 10,
+                        "total": 6
+                    }
+                },
+                "envelope_total_cost_usd": 0.0148097893,
+                "step_usage_total_cost_usd": 0.0148097893,
+                "cost_consistency": "derived_from_step_usage",
+                "cost_difference_usd": 0.0,
+                "model_state": "complete",
+                "model_records": 10,
+                "models": [
+                    "deepseek/deepseek-chat",
+                    "z-ai/glm-4.7-flash",
+                    "z-ai/glm-5.2"
+                ]
+            },
+            "stella_stream": {
+                "event_count": 13101,
+                "diagnostic_lines": 0,
+                "ignored_json_objects": 0,
+                "terminal_event": null,
+                "stream_complete": false,
+                "process_returned": false,
+                "step_usage_count": 10,
+                "complete_event_count": 0,
+                "error_event_count": 0,
+                "cost_source": "summed_step_usage",
+                "proof_step_counts": {
+                    "assurance": 1
+                },
+                "witness_authored": null,
+                "witness_authored_state": "not_reported",
+                "witness_authored_count": 0,
+                "witness_unavailable_count": 0,
+                "witness_unavailable_reasons": [],
+                "witness_warranted_count": 0,
+                "assurance_witness_planned": true,
+                "self_verdict_passed": null,
+                "self_verdict_state": "not_reported",
+                "self_verdict_deterministic": null,
+                "self_verdict_count": 0,
+                "verification_unavailable_count": 0
+            }
+        }
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.0
+        }
+    },
+    "exception_info": {
+        "exception_type": "AgentTimeoutError",
+        "exception_message": "Agent execution timed out after 900.0 seconds",
+        "exception_traceback": "Traceback (most recent call last):\n  File \"/usr/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/harbor/agents/installed/base.py\", line 42, in wrapper\n    return await fn(self, instruction, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/stella_harbor/__init__.py\", line 1070, in run\n    result = await _secure_exec_with_credential_fd(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/stella_harbor/__init__.py\", line 718, in _secure_exec_with_credential_fd\n    return await exec_with_agent_reap(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/stella_harbor/timeout_reap.py\", line 252, in exec_with_agent_reap\n    return await communicate_with_release(process, wire, completion_probe)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/stella_harbor/stream_release.py\", line 190, in communicate_with_release\n    stdout_bytes, released = await communicate_with_completion_probe(\n                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/stella_harbor/stream_release.py\", line 144, in communicate_with_completion_probe\n    done, _ = await asyncio.wait({communicate}, timeout=poll_seconds)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/asyncio/tasks.py\", line 464, in wait\n    return await _wait(fs, timeout, return_when, loop)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/asyncio/tasks.py\", line 550, in _wait\n    await waiter\nasyncio.exceptions.CancelledError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py\", line 370, in _execute_agent\n    await asyncio.wait_for(\n  File \"/usr/lib/python3.12/asyncio/tasks.py\", line 519, in wait_for\n    async with timeouts.timeout(timeout):\n  File \"/usr/lib/python3.12/asyncio/timeouts.py\", line 115, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py\", line 961, in run\n    await self._execute_agent()\n  File \"/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py\", line 379, in _execute_agent\n    raise AgentTimeoutError(\nharbor.trial.trial.AgentTimeoutError: Agent execution timed out after 900.0 seconds\n",
+        "occurred_at": "2026-08-11T20:20:12.985878"
+    },
+    "started_at": "2026-08-11T20:05:01.780528Z",
+    "finished_at": "2026-08-11T20:20:32.016683Z",
+    "environment_setup": {
+        "started_at": "2026-08-11T20:05:01.796810Z",
+        "finished_at": "2026-08-11T20:05:04.449247Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-11T20:05:04.449291Z",
+        "finished_at": "2026-08-11T20:05:12.907173Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-11T20:05:12.907254Z",
+        "finished_at": "2026-08-11T20:20:12.984190Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-11T20:20:13.148090Z",
+        "finished_at": "2026-08-11T20:20:20.452907Z"
+    },
+    "step_results": null
+}

@@ -1,0 +1,34 @@
+{
+    "id": "f2b834a4-cc1d-4e1b-85e4-592a5b69a9d0",
+    "started_at": "2026-08-10T07:11:18.689674",
+    "finished_at": "2026-08-10T07:25:20.370950",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 0,
+        "evals": {
+            "stella__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "qemu-alpine-ssh__jP7Ay9E"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 1569229,
+        "n_cache_tokens": 1552768,
+        "n_output_tokens": 10330,
+        "cost_usd": 0.20340708000000005
+    }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "6bf10739a14b",
+  "name": "Turn-loop cert: bare vs pipeline, 8-task TB2.1 panel, main@f7faef6df (CC bar 5/8)",
+  "dataset": "terminal-bench-2.1",
+  "tasks": [
+    "pypi-server"
+  ],
+  "contestants": [
+    {
+      "id": "stella-pipeline",
+      "name": "Stella (GLM-5.2, full pipeline)",
+      "slug": "stella-glm-5-2-full-pipeline",
+      "agent": "stella",
+      "engine": {
+        "api": "zai",
+        "model": "glm-5.2",
+        "qualified_model": "zai/glm-5.2",
+        "reasoning": true,
+        "effort": "high",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "bare_loop": false,
+        "roles": {},
+        "responsibilities": {}
+      },
+      "engine_label": "glm-5.2 \u00b7 high",
+      "env_keys": [
+        "ZAI_API_KEY"
+      ],
+      "ignored_env_keys": [],
+      "required_env": [
+        "ZAI_API_KEY"
+      ],
+      "color": "#FFB000",
+      "sut_ref": null,
+      "agent_version": ""
+    }
+  ],
+  "attempts": 1,
+  "concurrency": 1,
+  "setup_timeout_multiplier": 4.0,
+  "agent_timeout_multiplier": 1.0,
+  "record_video": false,
+  "capture_snapshots": false,
+  "snapshot_interval": 30.0,
+  "sut_ref": "f7faef6df89ab39e251bb416ec2d41690e94e882"
+}

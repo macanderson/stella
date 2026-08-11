@@ -1,0 +1,9 @@
+{
+  "id": "2",
+  "subject": "Boot Alpine in QEMU with serial console",
+  "description": "Boot Alpine ISO + qcow2 in QEMU using extracted kernel/initrd, console=ttyS0, user-mode networking with hostfwd tcp::2222-:22.",
+  "activeForm": "Booting Alpine in QEMU",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,0 +1,38 @@
+{
+    "id": "3d55b8b7-fe86-47f7-b355-5fb2618b77ac",
+    "started_at": "2026-08-11T00:08:04.123154",
+    "finished_at": "2026-08-11T00:23:30.688002",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 1,
+        "evals": {
+            "stella__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "kv-store-grpc__46ESQVF"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "kv-store-grpc__46ESQVF"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 193420,
+        "n_cache_tokens": 184128,
+        "n_output_tokens": 3583,
+        "cost_usd": 0.03371188
+    }
+}

@@ -1,0 +1,105 @@
+{
+    "id": "add91f07-ddbe-47d2-8166-ef69462274ab",
+    "task_name": "terminal-bench/build-pov-ray",
+    "trial_name": "build-pov-ray__6PkT6eZ",
+    "trial_uri": "file:///work/ws/matches/4f2ca27a63da/jobs/4f2ca27a63da-claude-code-glm-5-2/build-pov-ray__6PkT6eZ",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "build-pov-ray",
+        "ref": "sha256:4f08dab602fe2e9e2f42051cc6aef684a88cf2822e8b499b3ca19e670759fddb"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "3426fb4714b5bb0463cc30bd872712a2400b23934b135c40ef7f88b27da4cd7a",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/build-pov-ray",
+            "ref": "sha256:4f08dab602fe2e9e2f42051cc6aef684a88cf2822e8b499b3ca19e670759fddb",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "build-pov-ray__6PkT6eZ",
+        "trials_dir": "/work/ws/matches/4f2ca27a63da/jobs/4f2ca27a63da-claude-code-glm-5-2",
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": 4.0,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "claude-code",
+            "import_path": null,
+            "model_name": "glm-5.2",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {},
+            "env": {}
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+        },
+        "artifacts": [],
+        "job_id": "8552c678-d559-427d-ac46-0340f32f9c22"
+    },
+    "agent_info": {
+        "name": "claude-code",
+        "version": "2.1.226",
+        "model_info": {
+            "name": "glm-5.2",
+            "provider": null
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 1061779,
+        "n_cache_tokens": 1030848,
+        "n_output_tokens": 12422,
+        "cost_usd": 1.087493,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "exception_info": null,
+    "started_at": "2026-08-10T10:18:21.896334Z",
+    "finished_at": "2026-08-10T10:24:56.930405Z",
+    "environment_setup": {
+        "started_at": "2026-08-10T10:18:21.912718Z",
+        "finished_at": "2026-08-10T10:18:29.392652Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-10T10:18:29.392693Z",
+        "finished_at": "2026-08-10T10:18:43.961556Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-10T10:18:43.961641Z",
+        "finished_at": "2026-08-10T10:24:31.996029Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-10T10:24:32.099318Z",
+        "finished_at": "2026-08-10T10:24:45.471829Z"
+    },
+    "step_results": null
+}

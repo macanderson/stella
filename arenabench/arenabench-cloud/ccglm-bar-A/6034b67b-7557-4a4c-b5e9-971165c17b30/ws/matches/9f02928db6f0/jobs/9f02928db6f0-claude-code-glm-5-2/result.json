@@ -1,0 +1,34 @@
+{
+    "id": "a44c7e4b-bcd1-4886-bf04-6378de9fe35a",
+    "started_at": "2026-08-10T10:18:21.393039",
+    "finished_at": "2026-08-10T10:24:04.416686",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 0,
+        "evals": {
+            "claude-code__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "mean": 1.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "cobol-modernization__DvJkpva"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 411677,
+        "n_cache_tokens": 385088,
+        "n_output_tokens": 21310,
+        "cost_usd": 0.858239
+    }
+}

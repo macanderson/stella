@@ -1,0 +1,38 @@
+{
+    "id": "ab99fc74-1757-4231-9afc-8d4deea2fecd",
+    "started_at": "2026-08-10T10:31:18.286109",
+    "finished_at": "2026-08-10T10:47:21.995694",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 1,
+        "evals": {
+            "claude-code__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "qemu-alpine-ssh__AJ5mbwP"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "qemu-alpine-ssh__AJ5mbwP"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 1695016,
+        "n_cache_tokens": 1646784,
+        "n_output_tokens": 36742,
+        "cost_usd": null
+    }
+}

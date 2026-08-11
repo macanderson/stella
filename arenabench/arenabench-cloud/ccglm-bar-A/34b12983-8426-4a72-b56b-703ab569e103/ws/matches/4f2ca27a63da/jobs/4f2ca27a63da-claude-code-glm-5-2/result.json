@@ -1,0 +1,34 @@
+{
+    "id": "8552c678-d559-427d-ac46-0340f32f9c22",
+    "started_at": "2026-08-10T10:18:19.780203",
+    "finished_at": "2026-08-10T10:24:56.932816",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 0,
+        "evals": {
+            "claude-code__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "mean": 1.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "build-pov-ray__6PkT6eZ"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 1061779,
+        "n_cache_tokens": 1030848,
+        "n_output_tokens": 12422,
+        "cost_usd": 1.087493
+    }
+}
