@@ -188,10 +188,14 @@ impl Store {
     /// - `runs` counts every execution; `resolved` counts
     ///   `outcome = 'completed'` (aborted and still-open runs are not
     ///   resolved).
-    /// - Cost comes from `executions.cost_usd` (the per-run total written
-    ///   at finish); token and duration sums come from `telemetry`,
-    ///   pre-aggregated per execution before the join so a multi-step run
-    ///   can never fan out the executions side.
+    /// - Cost comes from `executions.cost_usd` — the per-run total, kept at
+    ///   or above what that run's receipts prove as each call settles and
+    ///   floored again at finish ([`Store::finish_execution_accounted`]), so
+    ///   a run that was cancelled mid-flight is not summed here at a
+    ///   truncated prefix of the tokens it is summed at below (#2570). Token
+    ///   and duration sums come from `telemetry`, pre-aggregated per
+    ///   execution before the join so a multi-step run can never fan out the
+    ///   executions side.
     /// - `cost_per_resolved_usd` is `None` when `resolved = 0`.
     /// - Rows are ordered by total cost descending (ties broken by
     ///   provider, then model, so output is deterministic).
