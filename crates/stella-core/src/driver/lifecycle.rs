@@ -144,6 +144,25 @@ pub(super) fn turn_woken_payload(reason: &'static str, polls_used: u64) -> serde
     })
 }
 
+/// What `agent.working_set.restored` carries: counts and the estimated token
+/// cost of the restoration message (#2685). Deliberately not the paths or
+/// slugs — those are workspace content by another name, and this stream
+/// carries counts and identifiers only (see the module docs). The full
+/// restoration rides the transcript, which already has a considered
+/// exposure story.
+pub(super) fn working_set_restored_payload(
+    restoration: &crate::restore::Restoration,
+) -> serde_json::Value {
+    serde_json::json!({
+        "restored_files": restoration.restored_files.len(),
+        "dropped_files": restoration.dropped_files.len(),
+        "unreadable_files": restoration.unreadable_files.len(),
+        "restored_skills": restoration.restored_skills.len(),
+        "dropped_skills": restoration.dropped_skills.len(),
+        "tokens": restoration.tokens,
+    })
+}
+
 /// How one step ended, as the lifecycle stream names it.
 ///
 /// Three labels rather than the full reason string: an observer pairing

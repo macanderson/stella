@@ -109,8 +109,12 @@ pub(crate) async fn run_raw_one_shot(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // Interactive text output may ask the human mid-turn — the condition
+    // `default_ask_io` applies for `ask_user`, applied here to the #2676
+    // approval responder too.
+    let ask = format == OutputFormat::Text;
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code graph in the background so a
     // multi-step one-shot turn can reach for `graph_query` once the index is
     // ready. Status goes to stderr — stdout may be machine-readable JSON.
@@ -324,9 +328,11 @@ pub async fn run_goal_cmd(
     );
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // Goal mode renders human-readable output (its ask io is wired with
+    // `default_ask_io(true)` below), so approvals may ask the human too.
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, true);
     // Auto-build + live-refresh the code-graph index in the background so
     // `graph_query` is available for the goal loop without a manual `stella
     // init`. Non-blocking; status to stderr. Kept alive until the goal returns.
@@ -419,6 +425,7 @@ pub async fn run_goal_cmd(
             mcp.clone(),
             recall_event,
             memory.as_mut(),
+            sub_agents.clone(),
         )
         .await
     } else {
@@ -582,10 +589,19 @@ pub(crate) async fn run_goal_turn(
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        // Inline skill invocations (#2682) ride the engine's steering seam:
+        // arm the queue and publish it as this turn's steering, so an
+        // invoked body lands as a tail user-role message at the next step
+        // boundary.
+        let injections = tools.skill_injections();
+        injections.arm();
+        let controls =
+            stella_core::ports::TurnControls::none().with_steering(std::sync::Arc::new(injections));
         let hook_runner = ShellHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration);
+                .with_calibration(calibration)
+                .with_turn_controls(&controls);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -696,6 +712,9 @@ async fn run_goal_pipeline_turn(
     // the caller's memory and records this round's skill-version usage before
     // the turn runs, so reflection can name its row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
+    // The session's sub-agent runner (returned by `install_for_session`), so
+    // `context: fork` skills can dispatch children (#2682).
+    sub_agents: Arc<dyn stella_core::subagent::SubAgentDispatcher>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
@@ -784,7 +803,13 @@ async fn run_goal_pipeline_turn(
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_sub_agent_dispatcher(sub_agents);
+        // Inline skill invocations (#2682): armed here because the ports
+        // below publish the queue as the execute stage's steering, which is
+        // what turns a queued expansion into a tail user-role message.
+        let injections = tools.skill_injections();
+        injections.arm();
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
@@ -877,8 +902,10 @@ async fn run_goal_pipeline_turn(
                     .mcp_prefetch
                     .as_ref()
                     .map(|p| p as &dyn McpPrefetchPort),
-                // Goal pipeline rounds run without an interactive steer tap.
-                steering: None,
+                // No interactive steer tap on goal rounds — the tap here is
+                // the skill-invocation queue, whose only messages are the
+                // expansions invoke_skill queued this round (#2682).
+                steering: Some(&injections),
             };
             let pipeline =
                 crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), pipeline_config);

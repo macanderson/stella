@@ -5,9 +5,10 @@ An **MCP client**. It connects to external Model Context Protocol servers
 and merges them into the engine's tool registry so `stella-core::Engine` calls
 them exactly like a built-in tool.
 
-It is a client and nothing else. v1 drives `initialize` / `tools/list` /
-`tools/call` and deliberately ignores every server-initiated request or
-notification (sampling, roots, progress). It also does not decide *where*
+It is a client and nothing else. It drives `initialize` / `tools/list` /
+`tools/call` — plus `resources/list` / `resources/read` for servers that
+declare the `resources` capability (#2678) — and deliberately ignores every
+server-initiated request or notification (sampling, roots, progress). It also does not decide *where*
 anything lives on disk: [`config.rs`](src/config.rs) owns the shape of
 `mcp.toml`, not its path, and [`TokenStore`](src/oauth.rs) is handed a path by
 its caller. Path resolution, the `STELLA_TRUST_PROJECT` gate that decides
@@ -29,12 +30,13 @@ builds its own binary, `mcp-fixture-server`, which exists purely for
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's authoritative design notes and the flat re-export surface. Read this first. |
-| [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. |
+| [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. [`src/toolset/needs_auth.rs`](src/toolset/needs_auth.rs) holds the synthetic `login_required` tool an auth-suppressed server advertises; [`src/toolset/resources.rs`](src/toolset/resources.rs) the synthetic `list_resources`/`read_resource` pair a resources-capable server advertises (#2678). |
 | [`src/client.rs`](src/client.rs) | `McpClient` — handshake, version negotiation, paginated discovery, `tools/call`, the reconnect/backoff state machine, and every ingest budget. The largest file and the one with the most invariants. |
 | [`src/transport.rs`](src/transport.rs) | The `Transport` trait (framing only, no MCP methods) plus the `ScriptedTransport` test double used by the unit tests. |
 | [`src/stdio.rs`](src/stdio.rs) / [`src/http.rs`](src/http.rs) / [`src/sse.rs`](src/sse.rs) | The two transports and the SSE decoder streamable-HTTP needs. `http.rs` also owns the shared `truncate` / `truncate_middle_out` helpers. |
 | [`src/config.rs`](src/config.rs) | `mcp.toml`'s shape: `McpConfig` / `McpServerEntry` / `McpTransport`, the redacting `Debug`, and the `candidate_safe` opt-in. |
 | [`src/oauth.rs`](src/oauth.rs) | OAuth 2.1 login (`login`), the on-disk `TokenStore`, and the runtime `OAuthManager` / `OAuthTokenSource` pair. |
+| [`src/suppress.rs`](src/suppress.rs) | Auth-probe suppression (#2687): the on-disk 401 cache (`AuthProbeCache`, a sibling of the token store), the 15-minute TTL, and the pre-connect `connect_gate`. |
 | [`src/registry.rs`](src/registry.rs) | The MCP Server Registry API client (`GET /v0.1/servers`) and the mapping from a registry entry to a writable `McpTransport` + the `AuthField`s still to fill. |
 | [`src/error.rs`](src/error.rs) | `McpError` and `user_message()` — the length-bounded, credential-free rendering that reaches the model. |
 | [`src/bin/mcp-fixture-server.rs`](src/bin/mcp-fixture-server.rs) | The canned MCP server the integration tests spawn, with its fault-injection flags. |
@@ -92,8 +94,45 @@ whole budget, so it tears down and defers the reconnect. A *protocol* error is
 passed straight through: the server answered, it just answered badly.
 `backoff_delay` retries the first failure immediately (a single blip self-heals
 inside the turn) and then doubles from 1 s to a 30 s cap, so a long-dead server
-is still probed forever. `HealthState` (`Live` / `Reconnecting` / `Down`) is
-surfaced per server through `McpToolSet::health`.
+is still probed forever. `HealthState` (`Live` / `Reconnecting` / `Down` /
+`AuthRequired`) is surfaced per server through `McpToolSet::health` —
+`AuthRequired` is never produced by the connection state machine; it is
+synthesized for servers the set skipped before connect (below).
+
+**Resources are tools, and embedded resources render** (#2678). A server that
+declared the `resources` capability in its `initialize` result advertises two
+extra synthetic tools, `mcp__<server>__list_resources` and
+`mcp__<server>__read_resource` ([`src/toolset/resources.rs`](src/toolset/resources.rs))
+— two single-purpose verbs per invariant #9, driving `resources/list` /
+`resources/read` on the server's live client. A server whose *own* tool list
+claims one of those wire names keeps it (the synthetic stands aside), a server
+that never declared the capability is not probed for it, and — like
+`login_required` — the pair never enters the routing map, so Best-of-N
+candidates never see it. On the result side, an embedded **text** resource in
+a `tools/call` result renders its text inline under a `[resource: <uri>]`
+header instead of degrading to the bare placeholder; base64 `blob` payloads
+are summarized, never inlined; and both doors are capped on the same
+`MAX_TOOL_RESULT_BYTES` middle-out budget as every other result.
+
+**A server that needs a login is skipped, not hammered** (#2687). A connect
+answered `401 Unauthorized` is typed `McpError::Auth` (a redial cannot fix it;
+`stella mcp login` can) and recorded in [`suppress.rs`](src/suppress.rs)'s
+on-disk cache, a sibling file of the token store
+(`.stella/private/mcp_auth_probes.json` for `stella-cli`). For the next
+15 minutes (`AUTH_PROBE_TTL`) `McpToolSet::connect_with_auth` skips the server
+entirely — no connection, no round trip — and the token store alone can rule a
+dial out too: a stored login that is expired with no refresh token is
+known-doomed before a byte is sent. Skipped servers land in
+`auth_required_servers()` (deliberately not `failed_servers()`, which callers
+render as "unavailable") and each advertises one synthetic
+`mcp__<server>__login_required` tool
+([`toolset/needs_auth.rs`](src/toolset/needs_auth.rs)) whose description and
+invocation both carry the `stella mcp login <server>` instruction. Usable
+stored tokens always win over a probe record — that is how a completed login
+clears suppression with no back-channel — a successful connect retires the
+record, TTL lapse restores the probe, and a fresh 401 re-arms it. The cache
+fails open: corrupt or unreadable means "probe as before", never a wrongly
+withheld server.
 
 **A stdio server inherits no ambient credential.** `StdioTransport::spawn` uses
 `Command::env_clear`; only the keys in the server's config `env` reach the
@@ -153,8 +192,13 @@ protect the token, it just leaves the user re-authenticating every session.
   untrusted and cannot distinguish "reads an external system" from "reads the
   local tree", so the Best-of-N allowlist is a human-set flag in `mcp.toml`, and
   `McpConfig::upsert` preserves it across a reinstall.
-- **Every MCP tool's `ToolSchema` is `read_only: false`.** External tools are
-  unknown, so they are treated as mutating and never auto-parallelized.
+- **Every server-advertised MCP tool's `ToolSchema` is `read_only: false`.**
+  External tools are unknown, so they are treated as mutating and never
+  auto-parallelized. The exceptions are the *synthetic* tools this crate
+  authors itself: `login_required` (#2687, invoking it touches nothing) and
+  the `list_resources`/`read_resource` pair (#2678, the protocol's read
+  surface) are `read_only: true` — none of them is `speculation_safe`, because
+  a server's request budget is not ours to spend twice.
 - **The token store is not locked across processes.** Two concurrent logins each
   rewrite from a pre-login snapshot and the later `rename` wins; one repeated
   login is cheaper than a stale-lock failure mode.
@@ -185,6 +229,18 @@ drive the full protocol state machine over `transport::testkit::ScriptedTranspor
   [`tests/oauth_integration.rs`](tests/oauth_integration.rs) use `wiremock`.
   The OAuth suite runs mock MCP *and* authorization servers and simulates the
   browser by GETting the loopback redirect with a code and the right state.
+- [`tests/auth_probe_suppression.rs`](tests/auth_probe_suppression.rs) is the
+  #2687 witness — a 401'd server's wiremock receives **zero** requests on the
+  next startup within the TTL — kept alone in its file so it compiles against
+  the pre-change surface; [`tests/auth_probe_integration.rs`](tests/auth_probe_integration.rs)
+  covers the synthetic tool, login/TTL re-arm, and the skip-on-dead-tokens
+  path.
+- [`tests/resources_integration.rs`](tests/resources_integration.rs) holds the
+  #2678 witnesses over the fixture server: embedded text resources render
+  inline, the `list_resources`/`read_resource` pair round-trips and is
+  `read_only`, and a `--no-resources` server advertises neither. Written
+  against the pre-change public surface, so it compiles on the base commit and
+  fails there on behavior.
 - [`tests/registry_integration.rs`](tests/registry_integration.rs) replays
   recorded JSON in [`tests/fixtures/`](tests/fixtures) — deterministic and
   offline.
@@ -207,8 +263,9 @@ drive both directions through the fixture server's `--protocol-version` flag,
 whose own default is `2025-06-18` and must move with it.
 
 **Add a fixture-server behavior.** New tools go in `all_tools()` /
-`tools_call_response`, new fault flags in `Flags::parse` — then document the
-flag in both the binary's `//!` header and the `[[bin]]` comment in
+`tools_call_response`, new resources in the `resources/list` arm +
+`resources_read_response`, new fault flags in `Flags::parse` — then document
+the flag in both the binary's `//!` header and the `[[bin]]` comment in
 [`Cargo.toml`](Cargo.toml).
 
 ## See also

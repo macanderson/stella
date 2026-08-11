@@ -177,6 +177,11 @@ pub struct DiscoveryToolSet<'a> {
     lean: Option<LeanConfig>,
     activated: ActivatedTools,
     include_workspace_skills: bool,
+    /// The `invoke_skill` session tool (#2682) — mounted here because this
+    /// is the layer that already owns `skill_search`, and an invocation's
+    /// allowed-tools grant must scope the same complete surface discovery
+    /// sees.
+    invoke: crate::invoke_skill::InvokeSkillTools,
 }
 
 impl<'a> DiscoveryToolSet<'a> {
@@ -189,11 +194,39 @@ impl<'a> DiscoveryToolSet<'a> {
             registry: Box::new(HttpMcpRegistrySearch {
                 workspace_root: workspace_root.clone(),
             }),
+            invoke: crate::invoke_skill::InvokeSkillTools::new(workspace_root.clone()),
             workspace_root,
             lean: lean_from_env(),
             activated: new_activation(),
             include_workspace_skills: false,
         }
+    }
+
+    /// Attach the session's sub-agent runner so `context: fork` skills can
+    /// run (#2682). Without it fork-mode invocations are refused by name.
+    #[must_use]
+    pub fn with_sub_agent_dispatcher(
+        self,
+        dispatcher: std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+    ) -> Self {
+        self.invoke.set_dispatcher(dispatcher);
+        self
+    }
+
+    /// The inline-invocation injection queue — wire it into the turn's
+    /// steering and arm it so expansions land as tail user-role messages
+    /// (see `crate::invoke_skill::SkillInjections`).
+    #[must_use]
+    pub fn skill_injections(&self) -> crate::invoke_skill::SkillInjections {
+        self.invoke.injections()
+    }
+
+    /// Live skill invocations — the overflow summarizer's restoration seam:
+    /// surfaced to the engine as [`ToolExecutor::active_skill_slugs`], which
+    /// is how a live skill's body survives a summarization splice (#2685).
+    #[must_use]
+    pub fn active_skill_invocations(&self) -> stella_core::skills::invoke::ActiveSkillInvocations {
+        self.invoke.active_invocations()
     }
 
     /// Add workspace skill definitions only when the effective prompt-source
@@ -265,6 +298,8 @@ impl<'a> DiscoveryToolSet<'a> {
         if crate::settings::filesystem_settings_disabled() {
             return schemas;
         }
+        // Skills are searchable AND invocable from the same layer (#2682).
+        schemas.push(self.invoke.schema());
         schemas.extend([
             ToolSchema {
                 name: SKILL_SEARCH.into(),
@@ -764,13 +799,28 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
             schemas.retain(|s| lean.core.contains(&s.name) || activated.contains(&s.name));
         }
         schemas.extend(self.discovery_schemas());
+        // A live skill's allowed-tools grant narrows the whole advertised
+        // surface, this layer's own tools included (#2682).
+        self.invoke.filter_schemas(&mut schemas);
         schemas
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+        // Unlike lean hiding below, an allowed-tools grant IS a capability
+        // gate: it holds when the model calls a withheld name anyway. The
+        // operator's own policy is enforced by the PolicyToolSet beneath us,
+        // so the effective surface is structurally grant ∩ operator.
+        if let Some(refusal) = self.invoke.grant_refusal(name) {
+            return refusal;
+        }
         match name {
             TOOL_SEARCH => self.execute_tool_search(input).await,
             SKILL_SEARCH => self.execute_skill_search(input).await,
+            crate::invoke_skill::INVOKE_SKILL => {
+                self.invoke
+                    .execute(input, self.inner, self.include_workspace_skills)
+                    .await
+            }
             MCP_SEARCH => self.execute_mcp_search(input).await,
             // Deliberately permissive in lean mode: a hidden tool called by
             // name still executes — hiding is a prompt-budget measure, never
@@ -807,6 +857,14 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
     /// called by name still executes above.
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
+    }
+
+    /// This mount owns the invocation plane (#2682), so this is where the
+    /// port's answer is real rather than the empty default: the engine reads
+    /// it at the overflow-summarization boundary to restore a live skill's
+    /// body after the splice (#2685).
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.active_skill_invocations().active_slugs()
     }
 }
 
@@ -941,6 +999,29 @@ mod tests {
             ToolOutput::Ok { content } => content,
             ToolOutput::Error { message } => panic!("expected Ok, got error: {message}"),
         }
+    }
+
+    /// The mount is where `ToolExecutor::active_skill_slugs` stops being the
+    /// empty default (#2685): a span begun on the shared tracking handle must
+    /// surface to the engine through the port, and end structurally with its
+    /// guard — this is the wiring that lets a live skill body survive an
+    /// overflow-summarization splice.
+    #[test]
+    fn a_live_invocation_span_surfaces_through_the_executor_port() {
+        let inner = FakeInner;
+        let set = full_set(&inner, std::env::temp_dir());
+        assert!(set.active_skill_slugs().is_empty(), "nothing live yet");
+        let span = set.active_skill_invocations().begin("release-notes");
+        assert_eq!(
+            set.active_skill_slugs(),
+            vec!["release-notes".to_string()],
+            "the engine-facing port must see the live invocation"
+        );
+        drop(span);
+        assert!(
+            set.active_skill_slugs().is_empty(),
+            "teardown is structural — the dropped guard ends the span"
+        );
     }
 
     #[tokio::test]

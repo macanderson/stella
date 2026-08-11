@@ -33,8 +33,9 @@ libc.workspace = true
 wiremock.workspace = true
 
 # A tiny, self-contained MCP server used only by the integration tests. It
-# reads newline-delimited JSON-RPC on stdin and answers with canned responses;
-# the resilience flags (`--hang`, `--delay-call-ms`, `--die-after`, `--garbage`,
+# reads newline-delimited JSON-RPC on stdin and answers with canned responses
+# (tools and, unless `--no-resources`, a small resource set); the resilience
+# flags (`--hang`, `--delay-call-ms`, `--die-after`, `--garbage`,
 # `--protocol-version`) drive the fault-injection tests. `tests/` locate it via
 # `env!("CARGO_BIN_EXE_mcp-fixture-server")`.
 [[bin]]

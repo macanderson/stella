@@ -2,7 +2,9 @@
 //! runs the handshake (`initialize` → version negotiation →
 //! `notifications/initialized`), discovers tools (`tools/list` with cursor
 //! pagination), and invokes them (`tools/call`), translating MCP content
-//! arrays into the engine's [`ToolOutput`].
+//! arrays into the engine's [`ToolOutput`]. For a server that declared the
+//! `resources` capability it also speaks `resources/list` / `resources/read`
+//! ([`McpClient::list_resources`], [`McpClient::read_resource`], #2678).
 //!
 //! # Version negotiation
 //!
@@ -47,7 +49,8 @@ use crate::error::McpError;
 use crate::http::HttpTransport;
 use crate::oauth::OAuthManager;
 use crate::protocol::{
-    CallToolParams, Implementation, InitializeParams, InitializeResult, PREFERRED_PROTOCOL_VERSION,
+    CallToolParams, Implementation, InitializeParams, InitializeResult, ListResourcesParams,
+    ListResourcesResult, PREFERRED_PROTOCOL_VERSION, ReadResourceParams, ReadResourceResult,
     SUPPORTED_PROTOCOL_VERSIONS, is_supported_version,
 };
 use crate::stdio::StdioTransport;
@@ -104,6 +107,10 @@ pub struct McpClient {
     /// How many advertised tools were refused past [`MAX_TOOLS_PER_SERVER`]
     /// (#551). Non-fatal: the server is live and every kept tool routes.
     dropped_tools: usize,
+    /// Whether the server declared the `resources` capability at handshake
+    /// (#2678) — the gate for [`McpClient::list_resources`] /
+    /// [`McpClient::read_resource`] being advertised as tools.
+    resources_capability: bool,
 }
 
 /// The outcome of one bounded transport request, classified so the caller can
@@ -136,6 +143,7 @@ impl McpClient {
             instructions: None,
             tools: Vec::new(),
             dropped_tools: 0,
+            resources_capability: false,
         }
     }
 
@@ -208,6 +216,7 @@ impl McpClient {
         self.instructions = handshake.instructions;
         self.tools = handshake.tools;
         self.dropped_tools = handshake.dropped_tools;
+        self.resources_capability = handshake.resources_capability;
         // The handshake is itself a completed request round-trip
         // (`initialize` + `tools/list`), so a freshly-connected server is
         // legitimately `Live`.
@@ -312,6 +321,89 @@ impl McpClient {
             .iter()
             .find(|t| t.name == tool)
             .is_some_and(|t| t.safe_to_retry)
+    }
+
+    /// One page of `resources/list` (#2678). `cursor` continues a previous
+    /// page; `None` starts from the first. Typed decode only — rendering and
+    /// the context budget live with the synthetic tool in [`crate::toolset`].
+    ///
+    /// Not gated on [`McpClient::supports_resources`]: a server that never
+    /// declared the capability simply answers with a JSON-RPC error, which
+    /// maps like any other rejected request. The gate matters for what gets
+    /// *advertised*, not for what may be asked.
+    pub async fn list_resources(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let params = ListResourcesParams {
+            cursor: cursor.map(str::to_string),
+        };
+        let raw = self
+            .read_only_request("resources/list", to_value(&params)?)
+            .await?;
+        serde_json::from_value(raw)
+            .map_err(|e| McpError::Protocol(format!("could not decode resources/list result: {e}")))
+    }
+
+    /// Read one resource's contents by `uri` (#2678). Typed decode only, as
+    /// with [`McpClient::list_resources`].
+    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult, McpError> {
+        let params = ReadResourceParams {
+            uri: uri.to_string(),
+        };
+        let raw = self
+            .read_only_request("resources/read", to_value(&params)?)
+            .await?;
+        serde_json::from_value(raw)
+            .map_err(|e| McpError::Protocol(format!("could not decode resources/read result: {e}")))
+    }
+
+    /// One resilient wire request for a **read-only MCP method**
+    /// (`resources/list`, `resources/read`): bounded by the per-call timeout;
+    /// a drop reconnects and re-sends once — safe because the method itself
+    /// is a read, so the annotation check [`McpClient::call_tool`] performs
+    /// for server-advertised tools has a known answer here. The same
+    /// classification contract otherwise: a timeout tears down and defers the
+    /// reconnect, a protocol error passes straight through.
+    ///
+    /// Kept separate from [`McpClient::call_tool`] rather than folded into
+    /// it: that path avoids cloning its (possibly megabytes-large) params on
+    /// the no-drop common case, while these params are a URI or a cursor —
+    /// small enough that the retry clone costs nothing and the shared shape
+    /// would cost `call_tool` its no-clone property.
+    async fn read_only_request(&self, method: &str, params: Value) -> Result<Value, McpError> {
+        let mut conn = self.conn.lock().await;
+        if conn.transport.is_none() {
+            self.reconnect_locked(&mut conn).await?;
+        }
+        match self.request_once(&conn, method, params.clone()).await {
+            RequestOutcome::Ok(raw) => {
+                conn.mark_call_success();
+                Ok(raw)
+            }
+            RequestOutcome::Timeout(err) => {
+                conn.note_call_failure(&err);
+                Err(err)
+            }
+            RequestOutcome::Dropped(err) => {
+                conn.note_call_failure(&err);
+                if self.reconnect_locked(&mut conn).await.is_err() {
+                    return Err(err);
+                }
+                match self.request_once(&conn, method, params).await {
+                    RequestOutcome::Ok(raw) => {
+                        conn.mark_call_success();
+                        Ok(raw)
+                    }
+                    RequestOutcome::Timeout(e2) | RequestOutcome::Dropped(e2) => {
+                        conn.note_call_failure(&e2);
+                        Err(e2)
+                    }
+                    RequestOutcome::Protocol(e2) => Err(e2),
+                }
+            }
+            RequestOutcome::Protocol(err) => Err(err),
+        }
     }
 
     /// One bounded request on the *current* transport, classified into a
@@ -484,6 +576,16 @@ impl McpClient {
     pub fn dropped_tool_count(&self) -> usize {
         self.dropped_tools
     }
+
+    /// Whether the server declared the `resources` capability in its
+    /// `initialize` result (#2678). Gates the synthetic
+    /// `list_resources`/`read_resource` tools ([`crate::toolset`]) — a server
+    /// that never claimed the capability is not offered them. Fixed at the
+    /// first handshake, like the tool surface: reconnect restores
+    /// connectivity, it does not re-negotiate what the server supports.
+    pub fn supports_resources(&self) -> bool {
+        self.resources_capability
+    }
 }
 
 #[cfg(test)]
@@ -511,6 +613,8 @@ struct Handshake {
     /// Tools refused past [`MAX_TOOLS_PER_SERVER`] (#551) — see
     /// [`McpClient::dropped_tool_count`].
     dropped_tools: usize,
+    /// The server declared the `resources` capability (#2678).
+    resources_capability: bool,
 }
 
 /// Build a fresh (pre-handshake) transport for `config`. Shared by the first
@@ -573,6 +677,15 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
         });
     }
 
+    // The `resources` capability gates whether this server is offered the
+    // synthetic list/read tools (#2678). Presence of the key is the claim; a
+    // `null` value is read as absent (the lenient direction for a public
+    // protocol).
+    let resources_capability = result
+        .capabilities
+        .get("resources")
+        .is_some_and(|v| !v.is_null());
+
     // Complete the handshake, then discover tools.
     transport
         .notify("notifications/initialized", Value::Null)
@@ -584,6 +697,7 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
         instructions: result.instructions.filter(|i| !i.trim().is_empty()),
         tools,
         dropped_tools,
+        resources_capability,
     })
 }
 
@@ -1086,6 +1200,96 @@ mod tests {
             health.consecutive_failures()
         );
         assert!(health.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn the_handshake_records_the_resources_capability_both_ways() {
+        // Declared: an object value, however empty.
+        let declared = ScriptedTransport::new();
+        declared.push_ok(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": PREFERRED_PROTOCOL_VERSION,
+                "capabilities": { "tools": {}, "resources": { "subscribe": false } }
+            }),
+        );
+        declared.push_ok("tools/list", serde_json::json!({ "tools": [] }));
+        let mut client = McpClient::new("srv", Box::new(declared));
+        client.initialize().await.unwrap();
+        assert!(client.supports_resources());
+
+        // Absent (and the null-valued lenient reading): not declared.
+        for capabilities in [
+            serde_json::json!({ "tools": {} }),
+            serde_json::json!({ "tools": {}, "resources": null }),
+        ] {
+            let transport = ScriptedTransport::new();
+            transport.push_ok(
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": PREFERRED_PROTOCOL_VERSION,
+                    "capabilities": capabilities
+                }),
+            );
+            transport.push_ok("tools/list", serde_json::json!({ "tools": [] }));
+            let mut client = McpClient::new("srv", Box::new(transport));
+            client.initialize().await.unwrap();
+            assert!(!client.supports_resources());
+        }
+    }
+
+    #[tokio::test]
+    async fn list_resources_passes_the_cursor_and_decodes_the_page() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "resources/list",
+            serde_json::json!({
+                "resources": [{ "uri": "file:///a.txt", "name": "a.txt" }],
+                "nextCursor": "p2"
+            }),
+        );
+        let requests = transport.requests_handle();
+        let client = McpClient::new("srv", Box::new(transport));
+
+        let page = client.list_resources(Some("p1")).await.unwrap();
+        assert_eq!(page.resources.len(), 1);
+        assert_eq!(page.resources[0].uri, "file:///a.txt");
+        assert_eq!(page.next_cursor.as_deref(), Some("p2"));
+
+        let sent = requests.lock().unwrap();
+        let (method, params) = sent.last().unwrap();
+        assert_eq!(method, "resources/list");
+        assert_eq!(
+            params["cursor"], "p1",
+            "the cursor scopes the page: {params}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_resource_decodes_contents_and_propagates_a_jsonrpc_error() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "resources/read",
+            serde_json::json!({
+                "contents": [{ "uri": "file:///a.txt", "mimeType": "text/plain", "text": "hi" }]
+            }),
+        );
+        transport.push_err(
+            "resources/read",
+            McpError::JsonRpc {
+                code: -32002,
+                message: "resource not found".into(),
+                data: None,
+            },
+        );
+        let client = McpClient::new("srv", Box::new(transport));
+
+        let read = client.read_resource("file:///a.txt").await.unwrap();
+        assert_eq!(read.contents.len(), 1);
+        assert_eq!(read.contents[0].text.as_deref(), Some("hi"));
+
+        let err = client.read_resource("file:///nope").await.unwrap_err();
+        assert!(matches!(err, McpError::JsonRpc { code: -32002, .. }));
     }
 
     #[tokio::test]

@@ -262,6 +262,16 @@ pub struct SubAgentSpec {
     /// `None` inherits the parent's — the right default, since a child doing
     /// broad search needs no less room than the turn that spawned it.
     pub compaction_budget_tokens: Option<u64>,
+    /// Reasoning-effort override for the child's model calls (#2682 — a
+    /// forked skill's `effort:` frontmatter). `None` inherits the parent's.
+    pub effort: Option<stella_protocol::ReasoningEffort>,
+    /// Exact advertised tool names the child may see and execute (#2682 — a
+    /// forked skill's `allowed-tools` grant, already resolved to concrete
+    /// names by the caller). `None` leaves the surface unrestricted. This
+    /// only ever narrows: it composes with [`ReadOnlyTools`] and with
+    /// whatever policy layers the parent's tool stack already enforces, so a
+    /// grant can never re-enable a tool something above denied.
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 impl Default for SubAgentSpec {
@@ -285,6 +295,8 @@ impl Default for SubAgentSpec {
             turn_instance: 0,
             depth: 1,
             compaction_budget_tokens: None,
+            effort: None,
+            allowed_tools: None,
         }
     }
 }
@@ -629,13 +641,27 @@ impl Engine<'_> {
         // events wearing the child's id.
         let _attribution = AgentAttribution::enter(host.bus, &spec.agent_id);
 
+        // A skill's allowed-tools grant (#2682), enforced at execution time
+        // like the read-only view below: a child scoped to a grant
+        // structurally cannot see or call anything outside it. Layered
+        // UNDER the read-only view so both restrictions intersect — order
+        // is immaterial to the result, but the grant must wrap the parent's
+        // full stack so operator policy below it still holds.
+        let granted = spec
+            .allowed_tools
+            .as_deref()
+            .map(|names| crate::ports::GrantedTools::new(self.tools, names));
+        let grant_base: &dyn ToolExecutor = match &granted {
+            Some(view) => view,
+            None => self.tools,
+        };
         // Read-only is enforced at execution time by the view, not by the
         // prompt: a child without write access structurally cannot mutate
         // the workspace even if it tries.
-        let read_only = (!spec.write_access).then(|| ReadOnlyTools::new(self.tools));
+        let read_only = (!spec.write_access).then(|| ReadOnlyTools::new(grant_base));
         let tools: &dyn ToolExecutor = match &read_only {
             Some(view) => view,
-            None => self.tools,
+            None => grant_base,
         };
 
         let child_steering = self.steering.map(ChildSteering::new);
@@ -650,6 +676,9 @@ impl Engine<'_> {
             config: EngineConfig {
                 max_output_tokens: spec.max_output_tokens,
                 temperature: spec.temperature,
+                // A forked skill's `effort:` override (#2682); absent, the
+                // child thinks as hard as its parent does.
+                effort: spec.effort.or(self.config.effort),
                 max_steps: spec.max_steps,
                 turn_instance: spec.turn_instance,
                 compaction_budget_tokens: spec
@@ -681,6 +710,10 @@ impl Engine<'_> {
             // reason the child is built here rather than through
             // `Engine::with_sleeper`, which cannot carry these three.
             hooks: self.hooks,
+            // The child's hooks route approvals the same way the parent's
+            // do: a hook asking for a human is asking about the session's
+            // workspace, whichever agent's call tripped it (#2684).
+            hook_approvals: self.hook_approvals,
             // The drift map is keyed per model, so a cross-family child
             // learns its own model's drift without blending into the
             // parent's — and starts warm instead of cold.
@@ -933,5 +966,7 @@ fn last_assistant_text(messages: &[CompletionMessage]) -> Option<&str> {
         .find(|content| !content.is_empty())
 }
 
+#[cfg(test)]
+mod fork_scope_tests;
 #[cfg(test)]
 mod tests;

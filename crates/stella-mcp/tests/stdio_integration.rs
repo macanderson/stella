@@ -162,6 +162,9 @@ async fn non_text_content_is_summarized() {
         }
     );
 
+    // An embedded TEXT resource is no longer "non-text content": its text
+    // renders inline under a header naming the uri (#2678) — it used to be
+    // degraded to the bare `[resource: file:///r.txt]` placeholder.
     let resource = client
         .call_tool("make_resource", serde_json::json!({}))
         .await
@@ -169,7 +172,7 @@ async fn non_text_content_is_summarized() {
     assert_eq!(
         resource,
         ToolOutput::Ok {
-            content: "[resource: file:///r.txt]".into()
+            content: "[resource: file:///r.txt]\nhi".into()
         }
     );
     client.close().await.unwrap();

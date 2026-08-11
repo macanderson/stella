@@ -100,6 +100,31 @@ pub trait ToolExecutor: Send + Sync {
         std::collections::HashSet::new()
     }
 
+    /// Slugs of skills whose inline invocation is currently live in this
+    /// executor's stack (#2682) — read, never drained: the tool layer owns
+    /// the spans and ends them structurally when their guards drop.
+    ///
+    /// The engine consults this at the overflow-summarization boundary
+    /// (#2685): a live skill's invocation body folded into a summary is
+    /// procedure text the model is mid-way through executing, and the
+    /// working-set restoration re-attaches it verbatim
+    /// (`driver::restore`). The same "written by one object, read by
+    /// another" seam as [`Self::drain_wait_request`], for the same
+    /// structural reason: the invocation tracking lives in the tool stack
+    /// (`stella-cli`'s `invoke_skill` mount), and the engine only ever sees
+    /// the stack through this trait.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns an empty `Vec`, which reads as "this executor
+    /// mounts no skill-invocation plane" — correct for a leaf, and **wrong
+    /// for a wrapper**. A decorator that forgets to forward silently stops
+    /// active procedure text surviving summarization for every surface
+    /// composed through it, and no compiler will say so.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Long-running services this executor launched that are still up, read
     /// (never taken) at the boundary where a turn is about to complete —
     /// the end-of-turn assertion (#2764, `crate::driver::live_services`).
@@ -225,6 +250,13 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.drain_wait_request()
     }
 
+    /// Forwarded: the inner stack owns the invocation spans, and a child
+    /// running behind this view still deserves its live procedure text to
+    /// survive summarization (see the port's contract).
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
+
     /// Forwarded, and the read-only filter is deliberately not applied to
     /// it. A service is up or it is not, whatever view happens to be asking
     /// — this reports state the workspace is in, not a capability this view
@@ -240,6 +272,89 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     // parallel-safe tool is the sub-agent spawn, and this view exists to
     // strip exactly that from a child — advertising a name whose execution
     // the same view refuses would be an empty promise.
+}
+
+/// A name-scoped view over another executor: advertises and executes only
+/// an explicitly granted set of tool names, refusing everything else at
+/// execution time — the same structural-enforcement shape as
+/// [`ReadOnlyTools`], pointed at a *grant* instead of a mutability class.
+///
+/// This is how a forked skill's `allowed-tools` frontmatter reaches a child
+/// turn (#2682): the caller resolves the grant to concrete advertised names
+/// (groups and policy algebra live in `stella-tools::skill_grant`, which this
+/// crate must not import) and the child runs behind this view. It only ever
+/// narrows — a name the inner executor does not advertise stays unavailable
+/// whatever the grant says, so a grant can never re-enable a tool an
+/// operator or org scope denied below.
+pub struct GrantedTools<'a> {
+    inner: &'a dyn ToolExecutor,
+    granted: std::collections::HashSet<String>,
+}
+
+impl<'a> GrantedTools<'a> {
+    pub fn new(inner: &'a dyn ToolExecutor, granted: &[String]) -> Self {
+        Self {
+            inner,
+            granted: granted.iter().cloned().collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for GrantedTools<'_> {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        self.inner
+            .schemas()
+            .into_iter()
+            .filter(|s| self.granted.contains(&s.name))
+            .collect()
+    }
+
+    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+        if !self.granted.contains(name) {
+            return ToolOutput::Error {
+                message: format!(
+                    "`{name}` is not available here: this context is scoped to an \
+                     explicitly granted tool set (a skill's allowed-tools)"
+                ),
+            };
+        }
+        self.inner.execute(name, input).await
+    }
+
+    /// Forwarded, not zeroed, for the same reason as [`ReadOnlyTools`]: a
+    /// grandchild dispatched behind this view still settles into the carve
+    /// that bounds it.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: a tool
+    /// running behind this view legitimately parks on external state, and
+    /// its probe replays through this same grant — so the scope holds while
+    /// parked too. Leaving it defaulted would silently turn parked waits off
+    /// for any turn scoped by a skill's `allowed-tools`, dropping the model
+    /// back to polling (the #1471 regression) and leaving the child's
+    /// undrained request to be picked up by the parent's next drain.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: the
+    /// grant narrows which tools run, not which invocations are live.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
+
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: a grant
+    /// narrows which tools this view will *run*, and a live service is state
+    /// the workspace is in rather than a capability this view hands out.
+    /// Leaving it defaulted would turn the end-of-turn assertion (#2764) off
+    /// for any turn scoped by a skill's `allowed-tools`, silently — which is
+    /// the invisibility that assertion exists to remove.
+    fn live_services(&self) -> Vec<LiveService> {
+        self.inner.live_services()
+    }
 }
 
 /// Time source, injectable for deterministic tests. Only the trait lives

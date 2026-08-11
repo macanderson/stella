@@ -8,7 +8,7 @@
 //! conflict** — a plausible-but-wrong number that only CI (or nothing at all,
 //! on the docs side) caught after the fact.
 //!
-//! This module is the fix. Every built-in — plus the six the CLI layers on
+//! This module is the fix. Every built-in — plus the seven the CLI layers on
 //! top — is declared exactly once in the `catalog!` invocation below, with
 //! its read-only flag and what has to be true for it to register. Everything
 //! that used to be duplicated is now derived from it:
@@ -240,6 +240,9 @@ catalog! {
     "install_skill"       => (false, false, Session, "session"),
     "tool_search"         => (true, true, Session, "session"),
     "skill_search"        => (true, true, Session, "session"),
+    // Not read-only: an inline invocation mutates the turn's transcript and
+    // arms a tool grant; a forked one spends money (#2682).
+    "invoke_skill"        => (false, false, Session, "session"),
     "mcp_search"          => (true, false, Session, "session"),
 }
 

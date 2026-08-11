@@ -413,7 +413,7 @@ Two things it does **not** cover. If `HTTP_PROXY`/`HTTPS_PROXY` is set, requests
 
 ### Session tools
 
-The CLI layers **six** more tools on top of the native registry. Three belong to interactive sessions:
+The CLI layers **seven** more tools on top of the native registry. Three belong to interactive sessions:
 
 <CardGrid size="md">
   <ToolCard name="ask_user" access="mutating">
@@ -424,6 +424,14 @@ The CLI layers **six** more tools on top of the native registry. Three belong to
   </ToolCard>
   <ToolCard name="install_skill" access="mutating">
     Install a skill from the registry into the project's `.stella/skills/` — always asks for confirmation first.
+  </ToolCard>
+</CardGrid>
+
+One **executes** installed [skills](/docs/agent-tools/skills):
+
+<CardGrid size="md">
+  <ToolCard name="invoke_skill" access="mutating">
+    Invoke an installed skill by name, with optional arguments. The skill's own frontmatter decides how it runs: inline (the full body expands into the conversation with `$ARGUMENTS` substituted) or `context: fork` (a sub-agent runs it and only the result returns). An `allowed-tools` grant narrows the tool surface for the skill's span — and can never re-enable a tool the operator or an org scope switched off.
   </ToolCard>
 </CardGrid>
 
@@ -459,7 +467,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 56 always-on tools, up to 68 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 56 always-on tools, up to 68 native tools with the code graph, media keys, a search key, and an issue backend, plus the seven session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

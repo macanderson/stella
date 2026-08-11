@@ -1,8 +1,9 @@
 //! A tiny, self-contained MCP server for the `stella-mcp` integration tests.
 //! It speaks newline-delimited JSON-RPC on stdin/stdout with canned answers to
-//! `initialize`, `tools/list`, and `tools/call`, plus fault-injection flags
-//! for the resilience tests. It is **not** part of the shipping surface — only
-//! `tests/` build and launch it (via `env!("CARGO_BIN_EXE_mcp-fixture-server")`).
+//! `initialize`, `tools/list`, `tools/call`, `resources/list`, and
+//! `resources/read`, plus fault-injection flags for the resilience tests. It
+//! is **not** part of the shipping surface — only `tests/` build and launch it
+//! (via `env!("CARGO_BIN_EXE_mcp-fixture-server")`).
 //!
 //! Flags:
 //! - `--protocol-version <v>`: counter-offer `<v>` in the initialize result.
@@ -16,9 +17,13 @@
 //! - `--stderr <text>`: write `<text>` to stderr at startup and again before
 //!   every response — a server that logs (and, with `--die-after`, one whose
 //!   log is the only clue why it died).
+//! - `--no-resources`: omit the `resources` capability from `initialize` and
+//!   answer `resources/*` with method-not-found — a tools-only server (#2678).
 //!
 //! Tools it advertises: `echo`, `env_probe`, `make_image`, `make_resource`,
 //! `fail` (`isError:true`), `jsonrpc_error` (a JSON-RPC error response).
+//! Resources it serves (unless `--no-resources`): `file:///r.txt` (text) and
+//! `file:///data.bin` (a base64 blob); any other URI is a JSON-RPC error.
 
 use std::io::{self, BufRead, Write};
 use std::time::Duration;
@@ -33,6 +38,7 @@ struct Flags {
     paginate: bool,
     protocol_version: String,
     stderr: Option<String>,
+    no_resources: bool,
 }
 
 impl Flags {
@@ -45,6 +51,7 @@ impl Flags {
             paginate: false,
             protocol_version: "2025-06-18".to_string(),
             stderr: None,
+            no_resources: false,
         };
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut i = 0;
@@ -53,6 +60,7 @@ impl Flags {
                 "--hang" => flags.hang = true,
                 "--garbage" => flags.garbage = true,
                 "--paginate" => flags.paginate = true,
+                "--no-resources" => flags.no_resources = true,
                 "--die-after" => {
                     i += 1;
                     if i < args.len() {
@@ -128,16 +136,41 @@ fn main() {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
         let response = match method {
-            "initialize" => json!({
+            "initialize" => {
+                let capabilities = if flags.no_resources {
+                    json!({ "tools": {} })
+                } else {
+                    json!({ "tools": {}, "resources": {} })
+                };
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "protocolVersion": flags.protocol_version,
+                        "capabilities": capabilities,
+                        "serverInfo": { "name": "mcp-fixture-server", "version": "0.1.0" }
+                    }
+                })
+            }
+            "tools/list" => tools_list_response(&id, &params, &flags),
+            "resources/list" if !flags.no_resources => json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "result": {
-                    "protocolVersion": flags.protocol_version,
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "mcp-fixture-server", "version": "0.1.0" }
-                }
+                "result": { "resources": [
+                    {
+                        "uri": "file:///r.txt",
+                        "name": "r.txt",
+                        "mimeType": "text/plain",
+                        "description": "a small text resource"
+                    },
+                    {
+                        "uri": "file:///data.bin",
+                        "name": "data.bin",
+                        "mimeType": "application/octet-stream"
+                    }
+                ] }
             }),
-            "tools/list" => tools_list_response(&id, &params, &flags),
+            "resources/read" if !flags.no_resources => resources_read_response(&id, &params),
             "tools/call" => {
                 if flags.hang {
                     loop {
@@ -217,6 +250,34 @@ fn tools_list_response(id: &Value, params: &Value, flags: &Flags) -> Value {
         };
     }
     json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": all_tools() } })
+}
+
+/// `resources/read`: the text resource, the binary one, or a JSON-RPC
+/// "resource not found" error for any other URI (#2678).
+fn resources_read_response(id: &Value, params: &Value) -> Value {
+    let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+    match uri {
+        "file:///r.txt" => json!({
+            "jsonrpc": "2.0", "id": id,
+            "result": { "contents": [{
+                "uri": "file:///r.txt",
+                "mimeType": "text/plain",
+                "text": "hello from the fixture resource"
+            }] }
+        }),
+        "file:///data.bin" => json!({
+            "jsonrpc": "2.0", "id": id,
+            "result": { "contents": [{
+                "uri": "file:///data.bin",
+                "mimeType": "application/octet-stream",
+                "blob": "QUFBQQ=="
+            }] }
+        }),
+        other => json!({
+            "jsonrpc": "2.0", "id": id,
+            "error": { "code": -32002, "message": format!("resource not found: {other}") }
+        }),
+    }
 }
 
 fn tools_call_response(id: &Value, params: &Value, flags: &Flags) -> Value {

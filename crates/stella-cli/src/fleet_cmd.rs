@@ -59,10 +59,9 @@ use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::agent;
 use crate::config::Config;
-use crate::plain;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+use crate::{agent, plain, rules};
 
 /// Cap on the per-task summary line so the report table stays a table.
 const SUMMARY_CHARS: usize = 96;
@@ -685,7 +684,7 @@ async fn run_task(
     // reach. A worker's children inherit its headless posture through the
     // registry they run against.
     crate::subagent::install_for_session(&cfg, &registry)?;
-    let active_rules = crate::rules::enforce_workspace_rules(&registry, root, &cfg.authority);
+    let active_rules = rules::enforce_workspace_rules(&registry, root, &cfg.authority, false);
     // Commit attribution (#1216): records the `HEAD` advance this worker is
     // observed making. It sits UNDER the claim tap on purpose — the tap holds
     // the workspace-wide commit lane across the call, so the window this

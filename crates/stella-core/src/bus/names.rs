@@ -40,6 +40,13 @@ pub const AGENT_STEP_COMPLETED: &str = "agent.step.completed";
 pub const AGENT_TURN_PARKED: &str = "agent.turn.parked";
 /// The parked turn woke — closes the span `agent.turn.parked` opened.
 pub const AGENT_TURN_WOKEN: &str = "agent.turn.woken";
+/// The overflow summarizer's splice was followed by a working-set
+/// restoration (#2685): recently-read files re-read fresh and/or an active
+/// skill body re-attached as one tail message. Observer-only, counts only —
+/// deliberately NOT in [`BLOCKING`]: the restoration replays only read-only
+/// calls, so there is nothing policy-sensitive to intercept (the same
+/// posture as `agent.turn.parked`).
+pub const AGENT_WORKING_SET_RESTORED: &str = "agent.working_set.restored";
 pub const AGENT_ERROR: &str = "agent.error";
 pub const TRANSCRIPT_ENTRY_CREATED: &str = "transcript.entry.created";
 pub const TRANSCRIPT_ENTRY_UPDATED: &str = "transcript.entry.updated";
@@ -111,6 +118,14 @@ pub const PULL_REQUEST_CREATED: &str = "pull_request.created";
 pub const DEPLOYMENT_REQUESTED: &str = "deployment.requested";
 pub const DEPLOYMENT_COMPLETED: &str = "deployment.completed";
 pub const DEPLOYMENT_FAILED: &str = "deployment.failed";
+// ---- settings-declared user hooks (#2684) ----
+/// A `Stop` hook held a completing turn open; the payload carries the
+/// hook's reason, which also reaches the model as a marked tail message
+/// (`driver::user_hooks`).
+pub const HOOK_STOP_BLOCKED: &str = "hook.stop.blocked";
+/// A `PreCompact` hook vetoed an overflow-summarization round; the payload
+/// carries the hook's reason.
+pub const HOOK_PRE_COMPACT_VETOED: &str = "hook.pre_compact.vetoed";
 // ---- extensions + telemetry ----
 pub const EXTENSION_LOADED: &str = "extension.loaded";
 pub const EXTENSION_UNLOADED: &str = "extension.unloaded";
@@ -145,6 +160,7 @@ pub const ALL: &[&str] = &[
     AGENT_STEP_COMPLETED,
     AGENT_TURN_PARKED,
     AGENT_TURN_WOKEN,
+    AGENT_WORKING_SET_RESTORED,
     AGENT_TURN_COMPLETED,
     AGENT_ERROR,
     TRANSCRIPT_ENTRY_CREATED,
@@ -211,6 +227,8 @@ pub const ALL: &[&str] = &[
     DEPLOYMENT_REQUESTED,
     DEPLOYMENT_COMPLETED,
     DEPLOYMENT_FAILED,
+    HOOK_STOP_BLOCKED,
+    HOOK_PRE_COMPACT_VETOED,
     EXTENSION_LOADED,
     EXTENSION_UNLOADED,
     EXTENSION_ERROR,

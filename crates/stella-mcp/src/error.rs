@@ -91,6 +91,18 @@ impl McpError {
             rendered
         }
     }
+
+    /// Whether this failure means the server requires (re)authorization —
+    /// an HTTP 401 the transport's one forced refresh could not fix, a
+    /// stored login that expired without a refresh token, or a failed token
+    /// grant. Dialing again with the same credentials cannot succeed; the
+    /// fix is `stella mcp login`, which is why
+    /// [`crate::McpToolSet::connect_with_auth`] routes these into
+    /// auth-probe suppression (#2687, [`crate::suppress`]) instead of
+    /// `failed_servers`.
+    pub fn is_auth_error(&self) -> bool {
+        matches!(self, McpError::Auth(_))
+    }
 }
 
 #[cfg(test)]
