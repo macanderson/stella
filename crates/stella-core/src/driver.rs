@@ -87,6 +87,7 @@ use lifecycle::step_outcome_label;
 
 mod confident_zero;
 pub mod lifecycle;
+mod live_services;
 mod loop_escalation;
 pub mod loop_evidence;
 mod truncation;
@@ -2119,6 +2120,14 @@ impl<'a> Engine<'a> {
                 confident_zero::CompletionRuling::Abort(outcome) => return Some(outcome),
                 confident_zero::CompletionRuling::Nudged => return None,
                 confident_zero::CompletionRuling::Clean => {}
+            }
+            // The end-of-turn service assertion (#2764), after the gates
+            // above because a turn that is aborting has nothing to be asked
+            // about. The executor answers what is still up — the engine holds
+            // no process table and must not (invariant 1) — and the nudge
+            // only names it: nothing here stops anything (#2666).
+            if live_services::check(messages, &self.tools.live_services(), &result.text, events) {
+                return None;
             }
             // A non-empty answer truncated with the continuation allowance
             // spent: keep the partial answer (already emitted above) but tell

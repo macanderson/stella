@@ -535,6 +535,14 @@ impl ToolExecutor for InteractiveToolSet<'_> {
         self.inner.drain_wait_request()
     }
 
+    /// Forwarded: a decorator that let the empty default stand would silently
+    /// turn the end-of-turn service assertion (#2764) off for every surface
+    /// composed through it — the agent goes back to declaring a service done
+    /// without ever being asked whether it is still listening.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.inner.live_services()
+    }
+
     /// Forwarded: letting the empty default stand would silently serialize the
     /// inner executor's sibling spawns (see the port's contract). The tools
     /// added here (`ask_user`, skills) make no concurrency claim of their own.

@@ -62,12 +62,34 @@ impl<'a> Pipeline<'a> {
     /// author are all engines, and attaching to some but not others is how
     /// #1595 happened one level up. A new attachment is added once, here,
     /// rather than at each construction site.
-    pub(super) fn attach<'e>(&'e self, mut engine: Engine<'e>) -> Engine<'e> {
+    ///
+    /// `fallback` is the one attachment a site must decide for itself, and it
+    /// is a required argument rather than a default so that deciding is not
+    /// optional (#2765). See [`FallbackPosture`].
+    pub(super) fn attach<'e>(
+        &'e self,
+        mut engine: Engine<'e>,
+        fallback: FallbackPosture,
+    ) -> Engine<'e> {
         if let Some(gate) = self.turn_gate {
             engine = engine.with_gate(gate);
         }
         if let Some(calibration) = self.calibration {
             engine = engine.with_calibration(calibration);
+        }
+        // Mid-turn fallback (#2679/#2765): an exhausted retry ladder
+        // re-resolves this engine's own role and continues on the
+        // replacement instead of stranding every completed step's work.
+        // Ordered after nothing in particular and before the breaker
+        // feedback below only for reading: the two are independent
+        // attachments, but they are a pair — the failing calls this engine
+        // reports are exactly what makes the re-resolution route around the
+        // provider that just died.
+        match fallback {
+            FallbackPosture::ReResolve(role) => {
+                engine = engine.with_fallback_resolver(self.fallbacks.get(role));
+            }
+            FallbackPosture::Withheld(_reason) => {}
         }
         // Breaker feedback (#2673): every engine turn the pipeline runs
         // reports its call outcomes into the router it resolved from, so a

@@ -175,6 +175,12 @@ impl WitnessToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for WitnessToolExecutor {
+    // `live_services` keeps the empty default on purpose (#2764). This is a
+    // witness author's surface — `read_file`, `glob`, `create_witness_test`
+    // and nothing else — so it can neither start a service nor stop one, and
+    // reporting the SESSION's services here would interrupt one agent's turn
+    // about another agent's workspace state. The assertion belongs to the
+    // turn that owns the process, which is the worker's.
     fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas: Vec<_> = self
             .reads
