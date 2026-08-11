@@ -802,6 +802,11 @@ class _StellaFold(_Fold):
         cost of a false positive is a **lost** ``step_usage`` or
         ``tool_result``; the cost of parsing is time, paid once per line
         because the cursor never re-reads.
+
+        The Claude Code fold still has such a fast path, and carries the same
+        hazard for the same reason — tracked in #2853 rather than changed
+        here, because anchoring its mark is not available either and the
+        replacement wants a measurement against a real 15 MB stream.
         """
         for raw in lines:
             if not raw or not raw.lstrip().startswith(b"{"):
