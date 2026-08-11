@@ -28,11 +28,12 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import adapter, harbor, provenance, reap, sut
+from . import adapter, harbor, provenance, reap, reauth, sut
 from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
@@ -43,6 +44,7 @@ from .agents import (
     routes_directly,
 )
 from .artifacts import mp4_is_finalized
+from .claude_oauth import CLAUDE_OAUTH_ENV, local_claude_token
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
@@ -88,6 +90,27 @@ _SCRUBBED_EXACT = frozenset(
         "ARENABENCH_SUT_COMMIT",
     }
 )
+
+#: How long a stopped seat is given to die before the supervisor moves on.
+#: Only long enough to reap the child and record its exit code — nothing waits
+#: on it, because :func:`.reauth.decide` never dispatches while the seat's
+#: process is still alive, so a Harbor that ignores the signal simply gets
+#: signalled again on the next tick.
+_STOP_GRACE_SECONDS = 5.0
+
+
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    """Signal a seat's whole process group, falling back to the parent alone.
+
+    The group, not the process: Harbor spawns Docker and helper children, and
+    terminating only the parent leaves containers running and the job directory
+    growing afterwards.
+    """
+    try:
+        os.killpg(os.getpgid(process.pid), 15)
+    except (OSError, ProcessLookupError):
+        with contextlib.suppress(OSError):
+            process.terminate()
 
 
 def _base_environment() -> dict[str, str]:
@@ -216,6 +239,16 @@ class ContestantRun:
     #: agent reads. Separate from :attr:`warnings` because nothing is wrong;
     #: it is here so that no part of a contestant's routing is invisible.
     notes: list[str] = field(default_factory=list)
+    #: Which dispatch of this seat this is. ``0`` is the original launch; a
+    #: credential rotation re-dispatched by :mod:`.reauth` opens round 1, 2, …
+    #: A round is a whole Harbor process, so it is a whole ``ContestantRun``
+    #: (see :meth:`Match.record_run`).
+    round: int = 0
+    #: The tasks *this* round was dispatched for. Empty means the job carried
+    #: no ``--include-task-name`` filter at all, i.e. the whole dataset.
+    dispatched: tuple[str, ...] = ()
+    #: Why this round exists. Empty for the original launch.
+    reason: str = ""
 
     @property
     def state(self) -> str:
@@ -229,6 +262,20 @@ class ContestantRun:
         if self.process.poll() is None:
             return "running"
         return "done" if self.exit_code in (0, None) else "failed"
+
+    def to_json(self) -> dict[str, Any]:
+        """This round, for the match record. Names only — never the seat's env."""
+        return {
+            "round": self.round,
+            "tasks": list(self.dispatched),
+            "reason": self.reason,
+            "state": self.state,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "exit_code": self.exit_code,
+            "error": self.error,
+            "log": self.log_path.name,
+        }
 
 
 class Match:
@@ -247,7 +294,20 @@ class Match:
         #: What this match's numbers were measured with. Set at `start`, and
         #: read back from disk for a match reconstructed after the fact.
         self.provenance: provenance.Provenance | None = None
+        #: The seat's **live** round, per contestant. A re-dispatch replaces the
+        #: entry, so every existing reader — the process poll, `cancel`, `reap`
+        #: — keeps finding the running process exactly where it always did.
         self.runs: dict[str, ContestantRun] = {}
+        #: Every round of every seat, oldest first. The earlier rounds are the
+        #: half `runs` cannot hold, and without them a re-dispatch would be
+        #: invisible in the record — a reader could not tell a first-attempt
+        #: pass from a re-run one, which is a condition of #2545 being fixed
+        #: rather than traded.
+        self.rounds: dict[str, list[ContestantRun]] = {}
+        #: Credential-rotation supervision for this match's subscription seats,
+        #: or ``None`` when no seat qualifies (see
+        #: :meth:`MatchRunner._supervise_credentials`).
+        self.reauth: reauth.MatchReauth | None = None
         self.recorder: RecorderSupervisor | None = None
         self.snapshots: SnapshotSupervisor | None = None
         self.note = ""
@@ -278,6 +338,30 @@ class Match:
             pin = sut.resolve_pin(ref)
             self._sut_pins[ref] = pin
         return pin
+
+    def record_run(self, run: ContestantRun) -> None:
+        """Make ``run`` this seat's live round, keeping the earlier ones.
+
+        The one seam a dispatch goes through, so that "which process is
+        running" and "how many times was this seat dispatched, and why" cannot
+        drift apart.
+        """
+        self.runs[run.contestant.id] = run
+        self.rounds.setdefault(run.contestant.id, []).append(run)
+
+    def rounds_for(self, contestant_id: str) -> list[ContestantRun]:
+        """Every dispatch of this seat, oldest first.
+
+        Falls back to the live run for a match assembled without
+        :meth:`record_run` — one restored from disk, or a test that seeded
+        ``runs`` directly — so the record never claims a seat that plainly ran
+        was never dispatched.
+        """
+        recorded = self.rounds.get(contestant_id)
+        if recorded:
+            return list(recorded)
+        run = self.runs.get(contestant_id)
+        return [run] if run is not None else []
 
     # -- reading ----------------------------------------------------------
 
@@ -359,6 +443,12 @@ class Match:
             by_contestant[contestant.id] = metrics
             totals[contestant.id] = aggregate(metrics.values())
 
+        # Credential-rotation state, per seat. Absent for an unsupervised seat
+        # rather than defaulted to "running": "nothing is watching this seat"
+        # and "this seat is healthy" are different facts, and a badge that
+        # cannot tell them apart is how an unwired supervisor stayed unnoticed.
+        rotation = self.reauth.to_json() if self.reauth is not None else {}
+
         tasks = list(self.spec.tasks)
         if not tasks:
             seen: set[str] = set()
@@ -416,6 +506,10 @@ class Match:
                     if contestant.id in self.runs
                     else "",
                     "totals": totals[contestant.id],
+                    "reauth": rotation.get(contestant.id),
+                    "rounds": [
+                        run.to_json() for run in self.rounds_for(contestant.id)
+                    ],
                 }
                 for contestant in self.spec.contestants
             ],
@@ -660,7 +754,8 @@ class MatchRunner:
             )
             run.started_at = match.started_at
             run.finished_at = finished
-            match.runs[contestant.id] = run
+            run.dispatched = tuple(spec.tasks)
+            match.record_run(run)
         return match
 
     # -- launching --------------------------------------------------------
@@ -746,7 +841,12 @@ class MatchRunner:
                     log_path=match.workspace / f"{contestant.slug}.log",
                     error=str(exc),
                 )
-            match.runs[contestant.id] = run
+            match.record_run(run)
+
+        # Credential supervision is armed only after every seat has launched:
+        # it reads the runs it is about to watch, and a seat that refused to
+        # start has no process to stop and no credential to rotate.
+        match.reauth = self._supervise_credentials(match, resolved)
 
         if match.spec.record_video:
             supervisor = RecorderSupervisor(
@@ -785,19 +885,49 @@ class MatchRunner:
         )
 
     def _launch(
-        self, match: Match, contestant: Contestant, resolved: harbor.Resolution
+        self,
+        match: Match,
+        contestant: Contestant,
+        resolved: harbor.Resolution,
+        *,
+        tasks: Sequence[str] | None = None,
+        round_index: int = 0,
+        reason: str = "",
     ) -> ContestantRun:
+        """Start one Harbor process for this seat. One call is one round.
+
+        ``tasks`` scopes the dispatch: ``None`` means the match's own task list
+        (which, when *it* is empty, means the whole dataset — Harbor's default
+        with no ``--include-task-name``), and a subset is what a credential
+        re-dispatch sends, so a retry round re-runs only the tasks a rotation
+        left unmeasured and never re-runs a task the seat already answered.
+
+        ``round_index`` and ``reason`` are record-keeping for that retry, and
+        the round is why the log path is not a constant: the seat log is opened
+        for writing, so a second round on one path would truncate the log of
+        the round that died — deleting the evidence of the very failure the
+        retry exists to recover from.
+        """
         spec = resolve_agent(contestant.agent)
         job_name = f"{match.spec.id}-{contestant.slug}"
+        # The same job directory for every round, deliberately (#2545): a
+        # retry's trial then lands beside the void it replaces, and
+        # `Match.trial_dirs`'s measured-over-void rank publishes it with no
+        # union across directories.
         job_dir = match.jobs_root / job_name
-        log_path = match.workspace / f"{contestant.slug}.log"
+        suffix = f".round{round_index}" if round_index else ""
+        log_path = match.workspace / f"{contestant.slug}{suffix}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        dispatched = tuple(match.spec.tasks if tasks is None else tasks)
 
         run = ContestantRun(
             contestant=contestant,
             job_name=job_name,
             job_dir=job_dir,
             log_path=log_path,
+            round=round_index,
+            dispatched=dispatched,
+            reason=reason,
         )
 
         missing = missing_credentials(contestant)
@@ -885,7 +1015,7 @@ class MatchRunner:
         # an export on disk is just directories and answers to the bare name.
         # Sending the wrong form matches nothing and Harbor exits immediately —
         # loudly, at least, rather than by quietly running fewer tasks.
-        for task in match.spec.tasks:
+        for task in dispatched:
             command += [
                 "--include-task-name",
                 task if local_path is not None else f"{match.dataset.namespace}/{task}",
@@ -941,10 +1071,11 @@ class MatchRunner:
             )
 
         log.info(
-            "launching %s: %s (%d tasks)",
+            "launching %s%s: %s (%d tasks)",
             contestant.name,
+            f" round {round_index}" if round_index else "",
             " ".join(command[:8]),
-            len(match.spec.tasks),
+            len(dispatched),
         )
         handle = log_path.open("wb")
         run.process = subprocess.Popen(
@@ -1122,6 +1253,218 @@ class MatchRunner:
 
     # -- supervision ------------------------------------------------------
 
+    def _supervise_credentials(
+        self, match: Match, resolved: harbor.Resolution | None
+    ) -> reauth.MatchReauth | None:
+        """A rotation supervisor for every seat running on a subscription token.
+
+        Claude Code rotates its OAuth credential whenever any local session
+        refreshes, and rotation *revokes* the previous one. The token is baked
+        into the seat's ``harbor run`` environment at ``Popen`` time and cannot
+        be changed in flight, so a rotation at hour two of an 89-task sweep
+        voids every remaining trial of that arm — an arm measured on 20 of 89
+        tasks, short in the direction that flatters whoever was still running
+        (#2545). :mod:`.reauth` turns those voids back into measurements.
+
+        Two preconditions, both refusals rather than best guesses, because a
+        supervisor whose model of the sweep is wrong stops seats that were
+        working:
+
+        * **an explicit task list** — the supervisor decides what is left to
+          measure by differencing the sweep's tasks against the trials on disk,
+          and a job launched without ``--include-task-name`` has a task set
+          nothing here can see;
+        * **one attempt per task** — with ``--n-attempts > 1`` "this task has a
+          measured trial" stops meaning "this task is finished", so the
+          supervisor would both release its watch early and re-dispatch a whole
+          fresh attempt set for one voided attempt.
+
+        Only seats that actually carry the credential are supervised, and only
+        the seat that lost its own is ever stopped: the opposing arm is a
+        separate Harbor process with its own credential, and pausing both to fix
+        one is itself a confound — the arms would no longer have faced the same
+        machine load.
+        """
+        candidates = [
+            run
+            for run in match.runs.values()
+            if run.contestant.env.get(CLAUDE_OAUTH_ENV)
+        ]
+        if not candidates or resolved is None:
+            return None
+
+        blocked = ""
+        if not match.spec.tasks:
+            blocked = (
+                "credential-rotation recovery is off for this match: it runs the "
+                "whole dataset, and the supervisor cannot tell which tasks are "
+                "still owed without an explicit task list"
+            )
+        elif match.spec.attempts != 1:
+            blocked = (
+                f"credential-rotation recovery is off for this match: "
+                f"{match.spec.attempts} attempts per task, and the supervisor "
+                "measures completeness per task"
+            )
+        if blocked:
+            for run in candidates:
+                run.warnings.append(blocked)
+            return None
+
+        seats: list[reauth.SupervisedSeat] = []
+        for run in candidates:
+            if run.error or run.process is None:
+                continue  # nothing launched; there is no seat to supervise
+            contestant = run.contestant
+            token = contestant.env[CLAUDE_OAUTH_ENV]
+            supervisor = reauth.Supervisor(
+                tasks=tuple(match.spec.tasks),
+                token_source=reauth.own_login_source(token, local_claude_token),
+                stop=lambda cid=contestant.id: self._stop_seat(match, cid),
+                launch=(
+                    lambda tasks, fresh, c=contestant: self._redispatch(
+                        match, c, resolved, tasks, fresh
+                    )
+                ),
+            )
+            supervisor.note_dispatch(token)
+            seats.append(
+                reauth.SupervisedSeat(
+                    contestant=contestant.id,
+                    name=contestant.name,
+                    job_dir=run.job_dir,
+                    supervisor=supervisor,
+                )
+            )
+        return reauth.MatchReauth(tuple(seats)) if seats else None
+
+    def _stop_seat(self, match: Match, contestant_id: str) -> None:
+        """Stop one seat's Harbor process and reap the containers it owned.
+
+        The supervisor's ``stop``. Idempotent by contract, and it mirrors
+        :meth:`cancel` for one seat rather than the match: the same process
+        group, and the same reap afterwards, because the task containers are
+        children of the Docker daemon rather than of the group — ten of them
+        left resident by stopped matches once cost the *next* match five of six
+        trials to `Docker compose command failed`, every one scored as an agent
+        loss (#2329). A re-dispatch that inherited that host would reproduce it
+        exactly.
+
+        Scoped to this seat's own job directory, never the match's: the
+        opposing arm is still running and its containers are not this seat's to
+        remove.
+        """
+        run = match.runs.get(contestant_id)
+        if run is None or run.process is None:
+            return
+        process = run.process
+        if process.poll() is None:
+            _terminate_process_group(process)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=_STOP_GRACE_SECONDS)
+        if process.poll() is not None and run.exit_code is None:
+            run.exit_code = process.returncode
+            run.finished_at = time.time()
+        with contextlib.suppress(Exception):  # reaping is best-effort by contract
+            reap.remove_containers(reap.trial_containers(run.job_dir))
+
+    def _redispatch(
+        self,
+        match: Match,
+        contestant: Contestant,
+        resolved: harbor.Resolution,
+        tasks: Sequence[str],
+        token: str,
+    ) -> None:
+        """Open another round for ``tasks`` on a fresh credential.
+
+        The supervisor's ``launch``. Goes through :meth:`_launch` rather than
+        rebuilding the Harbor command line, so the retry's provenance, seat
+        manifest and SUT pin are the first round's by construction — a retry
+        assembled some other way would be a second, unrecorded apparatus inside
+        one arm.
+
+        The token rides in memory on a copy of the seat and is never persisted:
+        ``Contestant.redacted`` — the only shape that reaches disk or the wire —
+        discloses env *names* alone.
+        """
+        seat = replace(contestant, env={**contestant.env, CLAUDE_OAUTH_ENV: token})
+        round_index = len(match.rounds.get(contestant.id, ()))
+        reason = (
+            f"credential rotated mid-match; re-dispatching {len(tasks)} "
+            f"unmeasured task(s) on a fresh token"
+        )
+        try:
+            run = self._launch(
+                match,
+                seat,
+                resolved,
+                tasks=tasks,
+                round_index=round_index,
+                reason=reason,
+            )
+        except Exception as exc:
+            log.exception("could not re-dispatch %s", contestant.name)
+            match.record_run(
+                ContestantRun(
+                    contestant=seat,
+                    job_name=f"{match.spec.id}-{contestant.slug}",
+                    job_dir=match.jobs_root / f"{match.spec.id}-{contestant.slug}",
+                    log_path=match.workspace / f"{contestant.slug}.round{round_index}.log",
+                    error=str(exc),
+                    round=round_index,
+                    dispatched=tuple(tasks),
+                    reason=reason,
+                )
+            )
+            raise
+        match.record_run(run)
+
+    def provide_token(
+        self, match: Match, token: str, *, contestant: str | None = None
+    ) -> list[str]:
+        """Hand a credential to whichever supervised seats are waiting for one.
+
+        The operator's half of a pause, in memory: :mod:`.claude_oauth`'s
+        contract is that a subscription token never touches disk, so the
+        hand-off is a call into the process driving the match and deliberately
+        not a file. Returns the contestant ids that took it — empty when no seat
+        is waiting, so a caller reports that rather than claiming a resume.
+
+        The ordinary case needs nobody: rotation leaves the *new* token in the
+        local login, which every tick re-reads, so a seat usually heals before
+        an operator has read the warning.
+        """
+        if match.reauth is None:
+            return []
+        return match.reauth.provide_token(token, contestant=contestant)
+
+    def _tick_reauth(self, match: Match) -> bool:
+        """Advance credential supervision. ``True`` while a seat still owes work."""
+        supervisor = match.reauth
+        if supervisor is None:
+            return False
+
+        def alive(contestant_id: str) -> bool:
+            run = match.runs.get(contestant_id)
+            return (
+                run is not None
+                and run.process is not None
+                and run.process.poll() is None
+            )
+
+        pending = supervisor.tick(alive)
+        status = supervisor.take_status()
+        if status is not None:
+            match.note = status
+            if status:
+                # A pause is the one thing here an operator must act on, and
+                # `arenabench run` prints no snapshot field mid-match — the log
+                # is the surface it does have.
+                logger = log.warning if supervisor.waiting else log.info
+                logger("match %s: %s", match.spec.id, status)
+        return pending
+
     def _await_completion(self, match: Match) -> None:
         while True:
             alive = [
@@ -1129,7 +1472,22 @@ class MatchRunner:
                 for run in match.runs.values()
                 if run.process is not None and run.process.poll() is None
             ]
-            if not alive:
+            # A paused seat has no live process and is not finished, and a
+            # healing one is between its stop and its re-dispatch — so "nothing
+            # is alive" is no longer the whole exit condition. Ticked after the
+            # poll rather than before it so the supervisor reads the same
+            # liveness this iteration measured.
+            try:
+                pending = self._tick_reauth(match)
+            except Exception:  # supervision must never wedge a match
+                log.exception(
+                    "credential supervision failed for %s; the match continues "
+                    "unsupervised",
+                    match.spec.id,
+                )
+                match.reauth = None
+                pending = False
+            if not alive and not pending:
                 break
             time.sleep(2.0)
 
@@ -1191,14 +1549,7 @@ class MatchRunner:
             process = run.process
             if process is None or process.poll() is not None:
                 continue
-            try:
-                # The whole process group: Harbor spawns Docker and helper
-                # children, and terminating only the parent leaves containers
-                # running and the job directory growing after "cancel".
-                os.killpg(os.getpgid(process.pid), 15)
-            except (OSError, ProcessLookupError):
-                with contextlib.suppress(OSError):
-                    process.terminate()
+            _terminate_process_group(process)
         # The process group does not contain the task containers: Harbor starts
         # them through the Docker daemon, so killing the group stops the
         # harness and leaves the containers running, owned by nothing. Ten of
