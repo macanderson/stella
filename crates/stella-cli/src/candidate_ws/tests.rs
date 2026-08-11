@@ -817,3 +817,90 @@ async fn a_repo_without_commits_is_a_clean_snapshot_error() {
     assert_no_candidate_worktrees(&root);
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The `log-summary-date-ranges` loss, end to end through the real candidate
+/// tool surface (#2875): a candidate's shell must not be able to write the
+/// graded tree, whatever spelling it uses. That trial's escape was
+/// `write_file` refusing an absolute path and the model reissuing the same
+/// write through `bash`, so this asserts the two now agree — while the
+/// candidate's own tree stays writable, which is why the guard is not a
+/// blanket refusal of everything outside the workspace.
+#[tokio::test]
+async fn a_candidates_shell_cannot_write_the_graded_tree() {
+    let root = scaffold("shell-confinement");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+    let leaked = root.join("summary.csv");
+
+    let output = ws
+        .tools()
+        .execute(
+            "bash",
+            &serde_json::json!({
+                "command": format!("echo today,ERROR,414 > {}", leaked.display())
+            }),
+        )
+        .await;
+    let inside = ws
+        .tools()
+        .execute(
+            "bash",
+            &serde_json::json!({"command": "echo 370 > summary.csv"}),
+        )
+        .await;
+
+    let landed = leaked.exists();
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+
+    assert!(
+        !landed,
+        "a candidate's shell wrote the graded tree: {output:?}"
+    );
+    assert!(output.is_error(), "the write was not refused: {output:?}");
+    assert!(!inside.is_error(), "the candidate's own tree: {inside:?}");
+}
+
+/// `f89p3/code-from-image` steps 83–86, end to end: the ref `verify_done`
+/// pins its baseline to is not the candidate's to move (#2875).
+#[tokio::test]
+async fn a_candidates_shell_cannot_move_stellas_witness_baseline_ref() {
+    let root = scaffold("shell-ref-confinement");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+
+    let output = ws
+        .tools()
+        .execute(
+            "bash",
+            &serde_json::json!({
+                "command": format!(
+                    "git update-ref {} HEAD",
+                    stella_tools::verify::WITNESS_BASELINE_WORKTREE_REF
+                )
+            }),
+        )
+        .await;
+
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+
+    assert!(
+        output.is_error(),
+        "Stella's own ref was writable from a candidate: {output:?}"
+    );
+}

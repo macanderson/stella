@@ -353,8 +353,13 @@ impl GitCandidateWorkspaces {
         let toplevel = git(&canon_root, &["rev-parse", "--show-toplevel"])
             .await
             .map_err(snap)?;
-        let toplevel = PathBuf::from(toplevel.trim());
-        let toplevel = toplevel.canonicalize().unwrap_or(toplevel);
+        // Kept before canonicalization: it is the spelling the operator and
+        // the task statement use, and the shell confinement below has to
+        // refuse it by that name too.
+        let toplevel_as_git_spells_it = PathBuf::from(toplevel.trim());
+        let toplevel = toplevel_as_git_spells_it
+            .canonicalize()
+            .unwrap_or_else(|_| toplevel_as_git_spells_it.clone());
         let head = git(&toplevel, &["rev-parse", "HEAD"]).await.map_err(|e| {
             snap(format!(
                 "candidate isolation requires a git repository with at least one commit: {e}"
@@ -385,8 +390,29 @@ impl GitCandidateWorkspaces {
         match populate_snapshot(&toplevel, &dir, &root_rel).await {
             Ok((overlay_untracked, baseline)) => {
                 let ws_root = dir.join(&root_rel);
-                let registry =
-                    crate::agent::new_tool_registry(ws_root.clone(), self.options.clone()).await;
+                // This candidate's shell is the one tool that can still reach
+                // the real tree (#1300 removed the local sandbox), and two
+                // benchmark losses came of it: a wrong intermediate written
+                // straight to `/app/summary.csv`, and Stella's own
+                // witness-baseline ref rewritten from inside a candidate. The
+                // registry is told which tree it is delivering *into*, so the
+                // shell refuses to name it — see `stella_tools::bash::confine`
+                // for what that is worth and what it cannot enforce. The
+                // TOPLEVEL, not `canon_root`: adoption applies against the
+                // whole repository, so everything under it is graded.
+                //
+                // Every spelling the tree answers to is registered, not just
+                // the canonical one: the audit compares names, and on macOS
+                // `/var/folders/…` and `/private/var/folders/…` are the same
+                // directory — a guard that knew only the canonical form let
+                // the other straight through.
+                let mut options = self.options.clone();
+                options.shell_confinement =
+                    stella_tools::bash::ShellConfinement::graded_tree(toplevel.clone())
+                        .and_alias(toplevel_as_git_spells_it.clone())
+                        .and_alias(self.root.clone())
+                        .and_alias(canon_root.clone());
+                let registry = crate::agent::new_tool_registry(ws_root.clone(), options).await;
                 // Same governance as the session registry: workspace rules
                 // and the schema gate travel with the tree — best-of-N must
                 // not be a way around them. Applied while `registry` is still

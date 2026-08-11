@@ -24,6 +24,13 @@
 //! running interpreter as well. An operator who needs shell execution actually
 //! contained wants that chain plus a boundary the whole process sits inside.
 //!
+//! **What confinement there is, is a literal audit of the command text**
+//! ([`confine`]), performed before the spawn: an isolated candidate's shell is
+//! refused a command that names the graded tree it delivers into, and every
+//! shell is refused one that writes Stella's own git refs. It is not a sandbox
+//! and does not pretend to be one — read [`confine`]'s header for what it
+//! cannot enforce.
+//!
 //! **There is no per-command OS confinement here.** `STELLA_BASH_SANDBOX` —
 //! the opt-in Seatbelt/`bwrap` wrapper that used to sit on this spawn — was
 //! removed (#1300). It wrapped this one tool while `build_project`,
@@ -43,6 +50,10 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::process::Command;
 
 use crate::registry::Tool;
+
+pub mod confine;
+
+pub use confine::ShellConfinement;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Byte cap on one `bash` result before head+tail elision
@@ -206,7 +217,7 @@ fn bash_grep_is_symbol_shaped(command: &str) -> bool {
 /// `cd`-ing back to the original is the natural misreading — and it used to
 /// draw no response at all, leaving the turn's work split across two trees with
 /// the half outside this root silently uncollected.
-fn graph_advisory(command: &str, root: &Path) -> Option<String> {
+fn graph_advisory(command: &str, root: &Path, confinement: &ShellConfinement) -> Option<String> {
     let graphed = matches!(crate::graph::graph_available(root), Ok(true));
     if let Some(target) = cd_escape_target(command, root) {
         // Named only when the graph is real: pointing at graph_query as a
@@ -217,12 +228,30 @@ fn graph_advisory(command: &str, root: &Path) -> Option<String> {
         } else {
             ""
         };
+        // The remedy has to be one the *agent* can perform. "Re-root the
+        // session" is the user's move, not the model's, and offering it as
+        // the answer is how `build-cython-ext` step 5 concluded that the
+        // graded tree was its own workspace under another name and ran
+        // `rm -rf /app/pyknotid` — the exact two grader tests it then failed.
+        // Under a candidate the note also has to state the half it used to
+        // omit: work here is not stranded, it is *delivered* by adoption.
+        let remedy = match confinement.graded_root() {
+            Some(graded) => format!(
+                " Work under this session root is delivered to `{}` when the run \
+                 finishes, so bring what you need into this root and work here; \
+                 `{}` is not a second name for that tree.",
+                graded.display(),
+                root.display()
+            ),
+            None => " Copy what you need under the session root and work there; only the \
+                     user can re-root the session on another tree."
+                .to_string(),
+        };
         return Some(format!(
             "\n\nnote: this cd'd to `{target}`, outside the session root `{}`. Only \
              work under the session root is collected when the turn finishes — every \
              other tool is confined to it, so edits under `{target}` are invisible to \
-             the file tools, to this turn's diff, and to verification.{graph_note} To \
-             work on that tree, re-root the session on it (run stella from it).",
+             the file tools, to this turn's diff, and to verification.{graph_note}{remedy}",
             root.display()
         ));
     }
@@ -234,11 +263,27 @@ fn graph_advisory(command: &str, root: &Path) -> Option<String> {
 
 pub struct Bash {
     scratch: Option<std::path::PathBuf>,
+    confinement: ShellConfinement,
 }
 
 impl Bash {
     pub fn new(scratch: Option<std::path::PathBuf>) -> Self {
-        Self { scratch }
+        Self {
+            scratch,
+            confinement: ShellConfinement::unconfined(),
+        }
+    }
+
+    /// Keep this shell out of the territory `confinement` names — see
+    /// [`confine`] for what that is and what it is worth.
+    ///
+    /// A builder rather than a `new` parameter because the posture is set by
+    /// exactly one caller (the candidate-workspace registry) while every other
+    /// construction site wants the default, and a fourth positional argument
+    /// at ten call sites is how a default gets passed by accident.
+    pub fn confined_to(mut self, confinement: ShellConfinement) -> Self {
+        self.confinement = confinement;
+        self
     }
 }
 
@@ -271,6 +316,13 @@ impl Tool for Bash {
                 };
             }
         };
+        // Audited before the spawn, on the text the model wrote: a refusal
+        // that arrives after the process has run is a report, not a boundary.
+        if let Err(refusal) = self.confinement.audit(command, root) {
+            return ToolOutput::Error {
+                message: refusal.to_string(),
+            };
+        }
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a verifier can demand as evidence.
@@ -398,7 +450,7 @@ impl Tool for Bash {
         // Append after truncation so the steer is never the part that gets
         // cut: a cross-root `cd` warning or a symbol-shaped-grep graph_query
         // nudge, when an index exists.
-        if let Some(note) = graph_advisory(command, root) {
+        if let Some(note) = graph_advisory(command, root, &self.confinement) {
             combined.push_str(&note);
         }
 
@@ -892,6 +944,148 @@ mod tests {
         );
         assert!(!text.contains("graph_query"), "{text}");
         assert!(!text.contains("outside the session root"), "{text}");
+    }
+
+    /// The `log-summary-date-ranges` loss, reduced: a script that hardcodes a
+    /// path in the graded tree must not reach the disk. Before confinement the
+    /// write succeeded, the run was aborted before adoption, and the grader
+    /// read the leaked wrong intermediate — a solved task scoring zero.
+    #[tokio::test]
+    async fn a_write_into_the_graded_tree_never_reaches_the_disk() {
+        let graded = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let leaked = graded.path().join("summary.csv");
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+
+        let text = text_of(
+            tool.execute(
+                &serde_json::json!({
+                    "command": format!("echo today,ERROR,414 > {}", leaked.display())
+                }),
+                workspace.path(),
+            )
+            .await,
+        );
+
+        assert!(!leaked.exists(), "the graded tree was written: {text}");
+        assert!(text.contains("refused before running"), "{text}");
+        // The remedy names the file's address in this shell's own workspace.
+        assert!(
+            text.contains(&workspace.path().join("summary.csv").display().to_string()),
+            "{text}"
+        );
+    }
+
+    /// The same escape re-issued as the heredoc the model actually reaches for
+    /// once `write_file` refuses it: the path is not a shell word at all, so a
+    /// word-level check alone would let it straight through.
+    #[tokio::test]
+    async fn a_graded_path_buried_in_a_script_body_is_still_refused() {
+        let graded = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let leaked = graded.path().join("summary.csv");
+        let command = format!(
+            "cat <<'EOF' > /dev/null\nignored\nEOF\nprintf 'x' > '{}'",
+            leaked.display()
+        );
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+
+        let text = text_of(
+            tool.execute(&serde_json::json!({ "command": command }), workspace.path())
+                .await,
+        );
+
+        assert!(!leaked.exists(), "the graded tree was written: {text}");
+        assert!(text.contains("refused before running"), "{text}");
+    }
+
+    /// `f89p3/code-from-image` steps 83–86: the worker moved the very ref
+    /// `verify_done` pins its baseline to. Refused in every session, confined
+    /// or not — no task's work lives in Stella's ref namespace.
+    #[tokio::test]
+    async fn rewriting_stellas_own_ref_is_refused_and_leaves_the_ref_alone() {
+        let repo = tempfile::tempdir().unwrap();
+        let sentinel = repo.path().join("moved");
+        let text = text_of(
+            Bash::new(None)
+                .execute(
+                    &serde_json::json!({
+                        "command": format!(
+                            "touch {} && git update-ref {} HEAD",
+                            sentinel.display(),
+                            crate::verify::WITNESS_BASELINE_WORKTREE_REF
+                        )
+                    }),
+                    repo.path(),
+                )
+                .await,
+        );
+        assert!(
+            !sentinel.exists(),
+            "the command ran despite naming Stella's ref namespace: {text}"
+        );
+        assert!(text.contains(confine::STELLA_REF_NAMESPACE), "{text}");
+    }
+
+    /// The legitimate case a blanket refusal would break: `configure-git-webserver`
+    /// installs and configures system software, and that is the task, not an
+    /// escape. Confinement must leave every path outside the graded tree alone.
+    #[tokio::test]
+    async fn a_confined_shell_still_writes_system_paths_outside_the_graded_tree() {
+        let graded = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        let conf = system.path().join("nginx.conf");
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+
+        let text = text_of(
+            tool.execute(
+                &serde_json::json!({
+                    "command": format!("echo 'server {{}}' > {}", conf.display())
+                }),
+                workspace.path(),
+            )
+            .await,
+        );
+
+        assert!(
+            conf.exists(),
+            "a system path outside the graded tree: {text}"
+        );
+    }
+
+    /// The advisory that sent `build-cython-ext` into `rm -rf /app/pyknotid`:
+    /// it said work outside the root is not collected (true of the diff) and
+    /// offered a remedy the agent cannot perform, while omitting that work in
+    /// the candidate IS delivered to the graded tree by adoption.
+    #[tokio::test]
+    async fn the_drift_note_states_adoption_and_offers_a_remedy_the_agent_can_perform() {
+        let graded = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+
+        let text = text_of(
+            tool.execute(
+                &serde_json::json!({ "command": format!("cd {} && pwd", elsewhere.path().display()) }),
+                workspace.path(),
+            )
+            .await,
+        );
+
+        assert!(text.contains("outside the session root"), "{text}");
+        assert!(
+            text.contains("is delivered to"),
+            "the note must state that work here reaches the graded tree: {text}"
+        );
+        assert!(
+            !text.contains("re-root the session on it"),
+            "the remedy must be one the agent can perform: {text}"
+        );
     }
 
     /// Witness test for #2696: verify STELLA_SCRATCH is injected via constructor
