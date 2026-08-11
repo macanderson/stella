@@ -265,6 +265,68 @@ fn an_absent_artifact_is_nothing_created_not_an_integrity_violation() {
     assert!(matches!(error, WitnessArtifactError::NothingCreated));
 }
 
+/// The `build-cython-ext` loss (#2876). The `_after` snapshots are taken
+/// after the baseline oracle RAN the authored test, so on a Python workspace
+/// the delta contains CPython's own byte-compilation of it. Reading that as a
+/// second authored file made the run refuse an artifact it created itself —
+/// and the executed change it discarded scored 9 of 11 on the grader's tests.
+///
+/// The exact path is the one from the trace, `.pyc` tag and all.
+#[test]
+fn the_oracles_own_bytecode_is_not_a_second_authored_file() {
+    let accepted = validate_witness_artifact(
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &fps(&[
+            ("test_numpy_compatibility.py", "sha256:witness"),
+            (
+                "__pycache__/test_numpy_compatibility.cpython-313-pytest-9.1.1.pyc",
+                "sha256:compiled",
+            ),
+        ]),
+    )
+    .expect("the pipeline's own oracle artifact is not an author integrity violation");
+    assert_eq!(
+        accepted,
+        fps(&[("test_numpy_compatibility.py", "sha256:witness")]),
+        "only the authored test is pinned; scratch is neither accepted nor tracked"
+    );
+}
+
+/// The same subtraction on the tracked side, and the same reason: a
+/// repository that commits its `__pycache__` still has the oracle rewriting
+/// those bytes, and that is not the author editing production code.
+#[test]
+fn tracked_scratch_is_not_a_tracked_production_edit() {
+    let accepted = validate_witness_artifact(
+        &fps(&[("__pycache__/mod.cpython-313.pyc", "before")]),
+        &fps(&[("__pycache__/mod.cpython-313.pyc", "after")]),
+        &HashMap::new(),
+        &fps(&[("tests/authority_witness.rs", "sha256:witness")]),
+    )
+    .expect("committed scratch churn is not a tracked mutation");
+    assert_eq!(
+        accepted,
+        fps(&[("tests/authority_witness.rs", "sha256:witness")])
+    );
+}
+
+/// Scratch is subtracted, never *substituted*: a delta that is nothing but
+/// scratch has still created no witness, and must reach the degradable
+/// `NothingCreated` arm rather than an integrity refusal.
+#[test]
+fn a_delta_of_pure_scratch_is_nothing_created() {
+    let error = validate_witness_artifact(
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &fps(&[(".pytest_cache/v/cache/lastfailed", "sha256:junk")]),
+    )
+    .unwrap_err();
+    assert!(matches!(error, WitnessArtifactError::NothingCreated));
+}
+
 #[test]
 fn witness_artifact_rejects_tracked_production_edits() {
     let error = validate_witness_artifact(

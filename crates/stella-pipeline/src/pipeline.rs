@@ -2039,17 +2039,17 @@ impl<'a> Pipeline<'a> {
         // Buy the witness now, or not at all. Everything above this line has
         // already happened, so the diff is evidence rather than a prediction —
         // which is the whole reason authoring waits until here.
-        let witness = match self
+        //
+        // Infallible by construction (#2876): every witness-stage failure,
+        // integrity refusals included, degrades to `None` and lets the executed
+        // change finish on the unauthored ladder. Authoring runs afterwards in
+        // a pristine sibling snapshot, so nothing it discovers is evidence
+        // against work that was already done — and this used to return here
+        // with `AbortKind::DeliberateStop`, which cost a candidate its verdict
+        // and its adoption over a `.pyc` the pipeline's own oracle wrote.
+        let witness = self
             .witness_on_demand(frame.goal, authoring, surface, &mut state, spend)
-            .await
-        {
-            Ok(witness) => witness,
-            // A witness-stage budget stop: pipeline policy, so this abort is
-            // deliberate and still owes the stream its one error event.
-            Err(reason) => {
-                return CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
-            }
-        };
+            .await;
 
         self.verify_candidate(frame, witness.as_ref(), engine, surface, spend, state)
             .await

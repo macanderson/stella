@@ -691,6 +691,59 @@ async fn post_verification_worktree_drift_is_rejected_and_never_adopted() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// The other half of the drift rule (#2876): the flip oracle runs the test
+/// command *in this worktree* between the seal and this check, so its own
+/// byte-compilation is the expected content of that delta, not a signal about
+/// it. `sqlite-with-gcov` and `build-cython-ext` were both discarded whole for
+/// exactly this — one of them carrying a 194,561-line built SQLite.
+///
+/// Adoption already excludes these paths by pathspec, so the assertion is
+/// two-sided: the work lands, and the scratch does not ride in with it.
+#[tokio::test]
+async fn scratch_the_verification_run_wrote_does_not_discard_the_work() {
+    let root = scaffold("sealed-scratch");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+    std::fs::write(ws.dir().join("verified.txt"), "verified bytes\n").unwrap();
+
+    ws.seal()
+        .await
+        .expect("candidate state seals before verification");
+    // What running the witness test leaves behind, at two depths.
+    std::fs::create_dir_all(ws.dir().join("__pycache__")).unwrap();
+    std::fs::write(
+        ws.dir().join("__pycache__/test_witness.cpython-313.pyc"),
+        "compiled\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(ws.dir().join("pkg/__pycache__")).unwrap();
+    std::fs::write(ws.dir().join("pkg/__pycache__/mod.cpython-313.pyc"), "c\n").unwrap();
+
+    assert!(
+        ws.sealed_is_unchanged().await.unwrap(),
+        "the oracle's own leavings are not a tampering signal"
+    );
+    let adopted = ws.adopt(&[]).await.expect("the work is delivered");
+    assert_eq!(
+        adopted.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+        vec!["verified.txt"],
+        "the work lands and the scratch does not ride in with it"
+    );
+    assert_eq!(read(&root.join("verified.txt")), "verified bytes\n");
+    assert!(!root.join("__pycache__").exists());
+    assert!(!root.join("pkg/__pycache__").exists());
+
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[tokio::test]
 async fn a_mid_run_user_edit_fails_adoption_atomically_naming_the_path() {
     let root = scaffold("conflict");
