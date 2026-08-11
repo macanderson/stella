@@ -60,6 +60,16 @@
 //! HEAD) is a much weaker witness than an assertion failure — the agent
 //! (and any verifier) should check the tail for WHY the old code failed.
 //!
+//! # Creation tasks
+//!
+//! A previous-code run that dies while *loading* the test is normally not a
+//! flip — a stale build artifact produces the same text. On a creation task
+//! it can be the whole proof, because the deliverable is absent at the
+//! baseline by construction. The `creation` submodule beside this one
+//! (`src/verify/creation.rs`) carries the distinction, which is a git
+//! question rather than a textual one, and the cost of getting it wrong in
+//! either direction (#2668).
+//!
 //! # Running the same proof twice
 //!
 //! The shadow half is a pure function of `(baseline, test files, command,
@@ -76,6 +86,7 @@
 //! why the measurement was needed (#2486) and why it cannot ride the tool's
 //! own output.
 
+mod creation;
 mod memo;
 mod phases;
 
@@ -311,6 +322,12 @@ async fn resolve_witness_baseline(
 /// verdict. `SyntaxError` and "No such file or directory" are also absent —
 /// both can BE the witnessed behaviour (a fix-the-parse-error task; a shell
 /// witness asserting a file the change creates).
+///
+/// A match here is a *candidate* refusal, not the verdict: on a creation
+/// task the module that would not load can be the deliverable itself, absent
+/// at the baseline by construction. [`creation::confirm`] decides that from
+/// git — never from the text this function reads, which cannot tell the two
+/// apart (#2668).
 fn import_failure_signature(output: &str) -> Option<&'static str> {
     const SIGNATURES: &[(&str, &str)] = &[
         ("modulenotfounderror", "a Python `ModuleNotFoundError`"),
@@ -782,8 +799,23 @@ impl VerifyDone {
 
         // A failure while LOADING the test is not a failure OF the test:
         // classify before crediting, so a missing build artifact in the fresh
-        // shadow checkout cannot fake a flip (#2067).
+        // shadow checkout cannot fake a flip (#2067). Exception (#2668): on a
+        // creation task the "missing" thing named in the failure can BE the
+        // deliverable, absent at baseline by construction — mechanically
+        // distinguished from a stale artifact by asking git whether the named
+        // file is new relative to the baseline, never by trusting a claim.
         if let Some(label) = import_failure_signature(&old_output) {
+            let flip = creation::ImportFlip {
+                label,
+                test_cmd,
+                baseline: &baseline,
+                old_exit,
+                old_output: &old_output,
+                reuse_note,
+            };
+            if let Some(content) = creation::confirm(root, &flip).await {
+                return Ok((ToolOutput::Ok { content }, Verdict::Confirmed));
+            }
             return Ok((
                 ToolOutput::Error {
                     message: format!(
