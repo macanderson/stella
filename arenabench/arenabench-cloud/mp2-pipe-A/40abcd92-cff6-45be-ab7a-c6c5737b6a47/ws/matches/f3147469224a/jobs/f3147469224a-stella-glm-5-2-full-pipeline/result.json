@@ -1,0 +1,38 @@
+{
+    "id": "43706cb1-a49d-44f4-b0ff-0f4f0d117996",
+    "started_at": "2026-08-11T00:08:05.602628",
+    "finished_at": "2026-08-11T00:23:35.312563",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 1,
+        "evals": {
+            "stella__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 1.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "pypi-server__PhF6L3H"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "pypi-server__PhF6L3H"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 1443548,
+        "n_cache_tokens": 1423488,
+        "n_output_tokens": 27152,
+        "cost_usd": 0.22835408
+    }
+}

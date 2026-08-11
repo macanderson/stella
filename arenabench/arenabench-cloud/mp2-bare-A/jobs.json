@@ -1,0 +1,48 @@
+{
+  "run_id": "mp2-bare-A",
+  "queue": "arenabench-measure",
+  "job_definition": "arenabench-trial",
+  "sut": {
+    "ref": "314344c79bb19e5442101a307310a4a29c3da019",
+    "commit": "314344c79bb19e5442101a307310a4a29c3da019",
+    "uri": "s3://arenabench-artifacts-578673726240/binaries/314344c79bb19e5442101a307310a4a29c3da019/314344c79bb19e5442101a307310a4a29c3da019/stella"
+  },
+  "jobs": [
+    {
+      "id": "e0daed91-bef4-48e1-a47f-8e51fa07bb80",
+      "index": 0,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "build-pov-ray",
+      "attempt": 1,
+      "label": "000-stella-glm-5-2-bare-loop-build-pov-ray"
+    },
+    {
+      "id": "a7303873-fcbc-40ec-a208-0293d85e9e3f",
+      "index": 1,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "cobol-modernization",
+      "attempt": 1,
+      "label": "001-stella-glm-5-2-bare-loop-cobol-modernization"
+    },
+    {
+      "id": "1a1aebde-dca3-470c-a14f-791df4564630",
+      "index": 2,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "kv-store-grpc",
+      "attempt": 1,
+      "label": "002-stella-glm-5-2-bare-loop-kv-store-grpc"
+    },
+    {
+      "id": "60c4b048-6fb1-4dd9-9b1b-07844011f4f8",
+      "index": 3,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "pypi-server",
+      "attempt": 1,
+      "label": "003-stella-glm-5-2-bare-loop-pypi-server"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "3",
+  "subject": "Configure sshd on Alpine guest",
+  "description": "Via serial console (expect): log in as root, set root password to password123, enable sshd with PermitRootLogin yes, start sshd.",
+  "activeForm": "Configuring sshd on guest",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

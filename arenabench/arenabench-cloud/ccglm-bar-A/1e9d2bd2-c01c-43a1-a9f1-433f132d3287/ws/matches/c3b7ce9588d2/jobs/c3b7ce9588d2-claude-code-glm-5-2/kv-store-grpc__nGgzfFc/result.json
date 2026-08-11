@@ -1,0 +1,105 @@
+{
+    "id": "b586fe91-7135-4b8e-a0b3-43d34289a662",
+    "task_name": "terminal-bench/kv-store-grpc",
+    "trial_name": "kv-store-grpc__nGgzfFc",
+    "trial_uri": "file:///work/ws/matches/c3b7ce9588d2/jobs/c3b7ce9588d2-claude-code-glm-5-2/kv-store-grpc__nGgzfFc",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "kv-store-grpc",
+        "ref": "sha256:973c5d4c111fb61a344457936f1c36400acd2d9e44389e7b319586fe23a7a307"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "901a4dd5c3078d5155043875a0d07f3583f462c73f919b52855c025e680b1edd",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/kv-store-grpc",
+            "ref": "sha256:973c5d4c111fb61a344457936f1c36400acd2d9e44389e7b319586fe23a7a307",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "kv-store-grpc__nGgzfFc",
+        "trials_dir": "/work/ws/matches/c3b7ce9588d2/jobs/c3b7ce9588d2-claude-code-glm-5-2",
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": 4.0,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "claude-code",
+            "import_path": null,
+            "model_name": "glm-5.2",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {},
+            "env": {}
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+        },
+        "artifacts": [],
+        "job_id": "de752506-af08-4804-952e-1e743542fa98"
+    },
+    "agent_info": {
+        "name": "claude-code",
+        "version": "2.1.226",
+        "model_info": {
+            "name": "glm-5.2",
+            "provider": null
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 384095,
+        "n_cache_tokens": 373760,
+        "n_output_tokens": 6471,
+        "cost_usd": 0.40033,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "exception_info": null,
+    "started_at": "2026-08-10T10:18:33.820250Z",
+    "finished_at": "2026-08-10T10:21:17.414766Z",
+    "environment_setup": {
+        "started_at": "2026-08-10T10:18:33.836966Z",
+        "finished_at": "2026-08-10T10:18:36.993612Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-10T10:18:36.993655Z",
+        "finished_at": "2026-08-10T10:18:51.761711Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-10T10:18:51.761796Z",
+        "finished_at": "2026-08-10T10:21:03.102553Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-10T10:21:03.198091Z",
+        "finished_at": "2026-08-10T10:21:06.224739Z"
+    },
+    "step_results": null
+}

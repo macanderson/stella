@@ -1,0 +1,67 @@
+{
+  "id": "7718ed4fc794",
+  "name": "TB2.1 full 89 (pipeline v2, plan=deepseek): main@2193374",
+  "dataset": "terminal-bench-2.1",
+  "tasks": [
+    "vulnerable-secret"
+  ],
+  "contestants": [
+    {
+      "id": "stella-pipeline-v2",
+      "name": "Stella (GLM-5.2, pipeline, plan=deepseek-chat)",
+      "slug": "stella-glm-5-2-pipeline-plan-deepseek-chat",
+      "agent": "stella",
+      "engine": {
+        "api": "openrouter",
+        "model": "z-ai/glm-5.2",
+        "qualified_model": "openrouter/z-ai/glm-5.2",
+        "reasoning": true,
+        "effort": "high",
+        "base_url": "https://openrouter.ai/api/v1",
+        "bare_loop": false,
+        "roles": {
+          "verifier": {
+            "model": "openrouter/deepseek/deepseek-chat",
+            "reasoning": null,
+            "effort": null
+          },
+          "triage": {
+            "model": "openrouter/z-ai/glm-4.7-flash",
+            "reasoning": null,
+            "effort": null
+          },
+          "research": {
+            "model": "openrouter/deepseek/deepseek-chat",
+            "reasoning": null,
+            "effort": "low"
+          },
+          "plan": {
+            "model": "openrouter/deepseek/deepseek-chat",
+            "reasoning": null,
+            "effort": "medium"
+          }
+        },
+        "responsibilities": {}
+      },
+      "engine_label": "glm-5.2 \u00b7 high \u00b7 +4 roles",
+      "env_keys": [
+        "OPENROUTER_API_KEY"
+      ],
+      "ignored_env_keys": [],
+      "required_env": [
+        "OPENROUTER_API_KEY"
+      ],
+      "color": "#FFB000",
+      "sut_ref": "21933743049927b9ccf29375bd9c3ee6cd034b1d",
+      "agent_version": ""
+    }
+  ],
+  "attempts": 1,
+  "concurrency": 1,
+  "setup_timeout_multiplier": 4.0,
+  "agent_timeout_multiplier": 1.0,
+  "record_video": false,
+  "capture_snapshots": false,
+  "snapshot_interval": 30.0,
+  "sut_ref": "21933743049927b9ccf29375bd9c3ee6cd034b1d"
+}

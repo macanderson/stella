@@ -1,0 +1,48 @@
+{
+  "run_id": "gate-ab",
+  "queue": "arenabench-measure",
+  "job_definition": "arenabench-trial",
+  "sut": {
+    "ref": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+    "commit": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+    "uri": "s3://arenabench-artifacts-578673726240/binaries/5e7e24f1d52c2df4e87b826cbb631f7eedfda28e/5e7e24f1d52c2df4e87b826cbb631f7eedfda28e/stella"
+  },
+  "jobs": [
+    {
+      "id": "f75703ab-cf6e-496c-8e96-4bbcf1698def",
+      "index": 0,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop-prove-it-gate",
+      "task": "kv-store-grpc",
+      "attempt": 1,
+      "label": "000-stella-glm-5-2-bare-loop-prove-it-gate-kv-store-grpc"
+    },
+    {
+      "id": "50721131-aff3-48be-9bb1-6692837e5a77",
+      "index": 1,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop-prove-it-gate",
+      "task": "pypi-server",
+      "attempt": 1,
+      "label": "001-stella-glm-5-2-bare-loop-prove-it-gate-pypi-server"
+    },
+    {
+      "id": "438887d6-f605-43a6-9eff-da075be47f6a",
+      "index": 2,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop-prove-it-gate",
+      "task": "kv-store-grpc",
+      "attempt": 2,
+      "label": "002-stella-glm-5-2-bare-loop-prove-it-gate-kv-store-grpc-a2"
+    },
+    {
+      "id": "5cac5163-d858-44f2-94fe-d050a4cb6523",
+      "index": 3,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop-prove-it-gate",
+      "task": "pypi-server",
+      "attempt": 2,
+      "label": "003-stella-glm-5-2-bare-loop-prove-it-gate-pypi-server-a2"
+    }
+  ]
+}

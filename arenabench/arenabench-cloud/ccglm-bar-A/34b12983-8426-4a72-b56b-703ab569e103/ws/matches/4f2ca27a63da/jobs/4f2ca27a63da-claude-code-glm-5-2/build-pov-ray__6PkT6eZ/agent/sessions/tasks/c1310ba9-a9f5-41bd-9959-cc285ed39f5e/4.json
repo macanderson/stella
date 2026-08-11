@@ -1,0 +1,9 @@
+{
+  "id": "4",
+  "subject": "Install and verify with sanity check",
+  "description": "Install binary to /usr/local/bin/povray, run sanity check render command",
+  "activeForm": "Installing and verifying",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

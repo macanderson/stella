@@ -1,0 +1,57 @@
+{
+  "run_id": "turnloop-rerun-bare",
+  "queue": "arenabench-measure",
+  "job_definition": "arenabench-trial",
+  "sut": {
+    "ref": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+    "commit": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+    "uri": "s3://arenabench-artifacts-578673726240/binaries/f7faef6df89ab39e251bb416ec2d41690e94e882/f7faef6df89ab39e251bb416ec2d41690e94e882/stella"
+  },
+  "jobs": [
+    {
+      "id": "cc80020e-3e7d-471c-ba9d-74521d39c0f1",
+      "index": 0,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "build-pov-ray",
+      "attempt": 1,
+      "label": "000-stella-glm-5-2-bare-loop-build-pov-ray"
+    },
+    {
+      "id": "3ce63373-3c3c-4c0e-8dbb-d225947c7843",
+      "index": 1,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "cobol-modernization",
+      "attempt": 1,
+      "label": "001-stella-glm-5-2-bare-loop-cobol-modernization"
+    },
+    {
+      "id": "c10bfa53-64f0-4c52-b95f-bb7936cf8128",
+      "index": 2,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "raman-fitting",
+      "attempt": 1,
+      "label": "002-stella-glm-5-2-bare-loop-raman-fitting"
+    },
+    {
+      "id": "a6561c9a-45dc-44d8-989a-5dee5a5c1879",
+      "index": 3,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "extract-elf",
+      "attempt": 1,
+      "label": "003-stella-glm-5-2-bare-loop-extract-elf"
+    },
+    {
+      "id": "8919b8dd-82bd-4563-ac7f-f344fd36e0ca",
+      "index": 4,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "path-tracing",
+      "attempt": 1,
+      "label": "004-stella-glm-5-2-bare-loop-path-tracing"
+    }
+  ]
+}

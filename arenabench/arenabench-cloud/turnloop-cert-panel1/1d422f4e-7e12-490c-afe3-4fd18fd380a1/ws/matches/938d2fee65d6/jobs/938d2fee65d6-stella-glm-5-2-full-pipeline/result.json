@@ -1,0 +1,38 @@
+{
+    "id": "defa47da-af49-46ff-833c-1bca0b8da9ed",
+    "started_at": "2026-08-10T07:11:13.044242",
+    "finished_at": "2026-08-10T07:26:45.326152",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 1,
+        "evals": {
+            "stella__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 1.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "cobol-modernization__csrz8JY"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "cobol-modernization__csrz8JY"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 655054,
+        "n_cache_tokens": 631680,
+        "n_output_tokens": 41193,
+        "cost_usd": 0.1741338
+    }
+}

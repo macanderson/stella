@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "contestant": "cc-glm",
+  "agent": "claude-code",
+  "api": "zai",
+  "model": "glm-5.2",
+  "qualified_model": "zai/glm-5.2",
+  "launch_model": "glm-5.2",
+  "base_url": "https://api.z.ai/api/anthropic"
+}

@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py", line 961, in run
+    await self._execute_agent()
+  File "/usr/local/lib/python3.12/dist-packages/harbor/trial/trial.py", line 370, in _execute_agent
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/harbor/agents/installed/base.py", line 42, in wrapper
+    return await fn(self, instruction, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/stella_harbor/__init__.py", line 1153, in run
+    raise NonZeroAgentExitCodeError(
+harbor.agents.installed.base.NonZeroAgentExitCodeError: Stella exited with code 137; stream telemetry was preserved in /logs/agent/stella-events.jsonl. Exit 137 is SIGKILL, not a Stella exit path; verdict: oom-kill (docker reports State.OOMKilled on the task container) — evidence in stella-exit-cause.json. stderr: None

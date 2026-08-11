@@ -1,0 +1,156 @@
+{
+  "run_id": "turnloop-cert-panel1",
+  "queue": "arenabench-measure",
+  "job_definition": "arenabench-trial",
+  "sut": {
+    "ref": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+    "commit": "f7faef6df89ab39e251bb416ec2d41690e94e882",
+    "uri": "s3://arenabench-artifacts-578673726240/binaries/f7faef6df89ab39e251bb416ec2d41690e94e882/f7faef6df89ab39e251bb416ec2d41690e94e882/stella"
+  },
+  "jobs": [
+    {
+      "id": "a26c7943-e253-4841-956a-4588a1ceda6b",
+      "index": 0,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "build-pov-ray",
+      "attempt": 1,
+      "label": "000-stella-glm-5-2-bare-loop-build-pov-ray"
+    },
+    {
+      "id": "a488f184-dcb4-4f37-b4cb-cb649185cc65",
+      "index": 1,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "build-pov-ray",
+      "attempt": 1,
+      "label": "001-stella-glm-5-2-full-pipeline-build-pov-ray"
+    },
+    {
+      "id": "ecc87484-fd0f-4c44-8dd1-2a72c6311adc",
+      "index": 2,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "cobol-modernization",
+      "attempt": 1,
+      "label": "002-stella-glm-5-2-bare-loop-cobol-modernization"
+    },
+    {
+      "id": "1d422f4e-7e12-490c-afe3-4fd18fd380a1",
+      "index": 3,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "cobol-modernization",
+      "attempt": 1,
+      "label": "003-stella-glm-5-2-full-pipeline-cobol-modernization"
+    },
+    {
+      "id": "92546ff2-3bd7-47e5-85f3-f80155b56995",
+      "index": 4,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "kv-store-grpc",
+      "attempt": 1,
+      "label": "004-stella-glm-5-2-bare-loop-kv-store-grpc"
+    },
+    {
+      "id": "926b59bb-194d-48f2-8baa-8fdf7ea125b0",
+      "index": 5,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "kv-store-grpc",
+      "attempt": 1,
+      "label": "005-stella-glm-5-2-full-pipeline-kv-store-grpc"
+    },
+    {
+      "id": "71864865-5464-413b-9d84-b7e76b8856b0",
+      "index": 6,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "pypi-server",
+      "attempt": 1,
+      "label": "006-stella-glm-5-2-bare-loop-pypi-server"
+    },
+    {
+      "id": "874fadce-07d8-4599-a9e5-6df70f2fbe50",
+      "index": 7,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "pypi-server",
+      "attempt": 1,
+      "label": "007-stella-glm-5-2-full-pipeline-pypi-server"
+    },
+    {
+      "id": "ca874be4-2160-47ee-98cb-0c5fa9977db6",
+      "index": 8,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "raman-fitting",
+      "attempt": 1,
+      "label": "008-stella-glm-5-2-bare-loop-raman-fitting"
+    },
+    {
+      "id": "e4870d0c-3c7b-46e8-a375-58a505fdfb99",
+      "index": 9,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "raman-fitting",
+      "attempt": 1,
+      "label": "009-stella-glm-5-2-full-pipeline-raman-fitting"
+    },
+    {
+      "id": "a8d803a8-05c7-4949-a213-8bdcf4d9b102",
+      "index": 10,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "extract-elf",
+      "attempt": 1,
+      "label": "010-stella-glm-5-2-bare-loop-extract-elf"
+    },
+    {
+      "id": "5c7f0668-5bbe-4a97-9335-98ced80a173e",
+      "index": 11,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "extract-elf",
+      "attempt": 1,
+      "label": "011-stella-glm-5-2-full-pipeline-extract-elf"
+    },
+    {
+      "id": "278aee37-b55b-4fe0-a448-a334235d90a0",
+      "index": 12,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "path-tracing",
+      "attempt": 1,
+      "label": "012-stella-glm-5-2-bare-loop-path-tracing"
+    },
+    {
+      "id": "f9d8210b-1ad1-415e-8773-1f947a9d39f5",
+      "index": 13,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "path-tracing",
+      "attempt": 1,
+      "label": "013-stella-glm-5-2-full-pipeline-path-tracing"
+    },
+    {
+      "id": "17dcdeb0-c1a9-4454-9b47-6c68cd01c812",
+      "index": 14,
+      "contestant_id": "stella-bare",
+      "contestant_slug": "stella-glm-5-2-bare-loop",
+      "task": "qemu-alpine-ssh",
+      "attempt": 1,
+      "label": "014-stella-glm-5-2-bare-loop-qemu-alpine-ssh"
+    },
+    {
+      "id": "72405fa0-12ff-4635-b6f7-f0516e26239f",
+      "index": 15,
+      "contestant_id": "stella-pipeline",
+      "contestant_slug": "stella-glm-5-2-full-pipeline",
+      "task": "qemu-alpine-ssh",
+      "attempt": 1,
+      "label": "015-stella-glm-5-2-full-pipeline-qemu-alpine-ssh"
+    }
+  ]
+}

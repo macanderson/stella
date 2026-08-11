@@ -882,40 +882,48 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
   </div>
 </section>
 
-<!-- 13 · market -->
-<section class="slide" aria-label="the market">
+<!-- 13 · why now -->
+<section class="slide" aria-label="why now: capability, cost, and enterprise control are converging">
   <div class="frame">
-    <p class="overline rise">the market</p>
-    <h2 class="rise" style="--d:1">A new line item, <em>growing fast.</em></h2>
-    <div class="body cols c-6-4">
-      <svg class="dia rise" style="--d:2" viewBox="0 0 780 332" role="img" aria-label="column chart: enterprise AI spend grew from 11.5 billion dollars in 2024 to 37 billion in 2025, of which about 4 billion is AI coding; the AI agents market is projected at about 50 billion by 2030">
-        <line class="ln" x1="0" y1="266" x2="780" y2="266" stroke-width="1"/>
-        <rect x="40" y="200" width="120" height="66" rx="4" fill="#232327"/>
-        <text class="lbl" x="100" y="190" text-anchor="middle">$11.5B</text>
-        <text class="sm" x="100" y="286" text-anchor="middle">2024</text>
-        <rect x="230" y="52" width="120" height="214" rx="4" fill="#232327"/>
-        <rect x="230" y="243" width="120" height="23" rx="4" fill="#FFB000"/>
-        <text class="lbl gd" x="290" y="42" text-anchor="middle">$37B</text>
-        <text class="sm" x="290" y="286" text-anchor="middle">2025</text>
-        <path class="lng" d="M248 254 V308" stroke-width="1" stroke-dasharray="3 3"/>
-        <text class="sm gd" x="290" y="322" text-anchor="middle">$4B of it is AI coding &mdash; our wedge</text>
-        <rect x="420" y="98" width="120" height="168" rx="4" fill="none" stroke="#A37200" stroke-dasharray="6 5"/>
-        <text class="lbl" x="480" y="88" text-anchor="middle">~$50B</text>
-        <text class="sm" x="480" y="286" text-anchor="middle">2030 · projected</text>
-        <text class="sm" x="566" y="164">AI agents market,</text>
-        <text class="sm" x="566" y="182">growing ~46% a year</text>
-        <text class="sm" x="0" y="14">enterprise AI spend, and the agents market it is becoming</text>
+    <p class="overline rise">why now</p>
+    <h2 class="rise" style="--d:1">Three curves crossed. <em>A category opened.</em></h2>
+    <p class="lead rise" style="--d:2">Open models became capable enough, inference became cheap enough, and enterprise AI spend became large enough. Verification is the missing control layer that turns those forces into owned infrastructure.</p>
+    <div class="body cols c-7-5">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 820 390" role="img" aria-label="three forces converge on a market window: open-model capability, falling inference cost, and enterprise demand">
+        <defs>
+          <marker id="ar-now" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#FFB000"/></marker>
+        </defs>
+        <text class="sm" x="12" y="26">THE CONVERGENCE</text>
+        <rect class="box" x="12" y="52" width="258" height="82" rx="12"/>
+        <text class="lbl gd" x="34" y="82">CAPABILITY ↑</text>
+        <text class="sm" x="34" y="106">open / closed gap:</text>
+        <text class="lbl" x="34" y="126">8.04% → 1.70%</text>
+        <rect class="box" x="12" y="154" width="258" height="82" rx="12"/>
+        <text class="lbl gd" x="34" y="184">COST ↓</text>
+        <text class="sm" x="34" y="208">open frontier-class API:</text>
+        <text class="lbl" x="34" y="228">~1/27th the price</text>
+        <rect class="box" x="12" y="256" width="258" height="82" rx="12"/>
+        <text class="lbl gd" x="34" y="286">DEMAND ↑</text>
+        <text class="sm" x="34" y="310">enterprise AI spend:</text>
+        <text class="lbl" x="34" y="330">$11.5B → $37B</text>
+        <path class="lng draw" d="M282 93 C430 93 430 190 570 190" stroke-width="2" marker-end="url(#ar-now)"/>
+        <path class="lng draw" d="M282 195 H570" stroke-width="2" marker-end="url(#ar-now)"/>
+        <path class="lng draw" d="M282 297 C430 297 430 200 570 200" stroke-width="2" marker-end="url(#ar-now)"/>
+        <circle cx="650" cy="195" r="108" fill="#131315" stroke="#A37200" stroke-width="1"/>
+        <circle class="pulse" cx="650" cy="195" r="78" fill="none" stroke="#FFB000" stroke-width="2"/>
+        <text class="sm gd" x="650" y="166" text-anchor="middle">THE WINDOW</text>
+        <text class="lbl" x="650" y="194" text-anchor="middle">verified, private</text>
+        <text class="lbl" x="650" y="218" text-anchor="middle">AI infrastructure</text>
+        <text class="sm" x="650" y="244" text-anchor="middle">own the work · own the model</text>
       </svg>
-      <div class="stack">
-        <div class="tiles one stagger">
-          <div class="tile"><div class="big" data-count="3.2" data-dec="1" data-suffix="&times;">3.2&times;</div><div class="cap">growth in enterprise AI spend in a single year — $11.5B to $37B</div></div>
-          <div class="tile"><div class="big" data-count="4" data-prefix="$" data-suffix="B">$4B</div><div class="cap">of it on AI coding — the breakout enterprise category, and the wedge we enter through</div></div>
-        </div>
-        <p class="lead rise" style="--d:4; font-size: 0.95rem;">We sell to large enterprise and government: regulated, security-first, and where we already have warm relationships.</p>
+      <div class="stack stagger">
+        <div class="tile"><div class="tag">THE WEDGE</div><div class="big" data-count="4" data-prefix="$" data-suffix="B">$4B</div><div class="cap">AI coding is already the breakout enterprise category. Software gives us instant, deterministic oracles.</div></div>
+        <div class="tile"><div class="tag">THE BUYER</div><div class="name">Regulated enterprise + government</div><div class="cap">The customers with the strongest sovereignty, audit, and verification requirements — and where we already have warm relationships.</div></div>
+        <div class="callout">The labs won the model race. <span class="g2">The control layer is still unclaimed.</span></div>
       </div>
     </div>
     <div class="foot">
-      <p class="fine rise" style="--d:5">Sources: Menlo Ventures, 2025: The State of Generative AI in the Enterprise (Dec 2025); Grand View Research, AI Agents Market (2025). The 2030 figure is a third-party projection, not a company forecast.</p>
+      <p class="fine rise" style="--d:5">Sources: Stanford HAI, AI Index 2025 (open-vs-closed model gap); DeepSeek-R1 vs o1 API list pricing, Jan 2025; Menlo Ventures, State of Generative AI in the Enterprise (Dec 2025): $11.5B → $37B total spend and $4B AI coding category.</p>
     </div>
   </div>
 </section>

@@ -1,0 +1,50 @@
+{
+    "results": {
+        "tool": {
+            "name": "pytest",
+            "version": "8.4.1"
+        },
+        "summary": {
+            "tests": 3,
+            "passed": 2,
+            "failed": 1,
+            "skipped": 0,
+            "pending": 0,
+            "other": 0,
+            "start": 1786480319.0434086,
+            "stop": 1786480319.1650226
+        },
+        "tests": [
+            {
+                "name": "test_outputs.py::test_compcert_exists_and_executable",
+                "status": "passed",
+                "duration": 0.004558937999945556,
+                "start": 1786480319.1126783,
+                "stop": 1786480319.1175025,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            },
+            {
+                "name": "test_outputs.py::test_compcert_valid_and_functional",
+                "status": "failed",
+                "raw_status": "call_failed",
+                "duration": 0.02352003400005742,
+                "start": 1786480319.1177042,
+                "stop": 1786480319.150316,
+                "retries": 0,
+                "file_path": "test_outputs.py",
+                "trace": "def test_compcert_valid_and_functional():\n        \"\"\"Use positive_probe.c to check for CompCert authenticity (via __COMPCERT__ macro,\n        which is a robust and decisive indicator, and binary artifact analysis) and functionality.\"\"\"\n        positive_probe_bin = Path(\"/tests/positive_probe\")\n        rc_positive, _, err_positive = _run(\n            [str(CCOMP_PATH), \"/tests/positive_probe.c\", \"-o\", str(positive_probe_bin)],\n            timeout=15,\n        )\n>       assert rc_positive == 0, (\n            f\"CompCert inauthentic or not usable; stderr:\\n{err_positive}\"\n        )\nE       AssertionError: CompCert inauthentic or not usable; stderr:\nE         /usr/bin/ld: cannot find -lcompcert: No such file or directory\nE         collect2: error: ld returned 1 exit status\nE         ccomp: error: linker command failed with exit code 1 (use -v to see invocation)\nE         \nE         1 error detected.\nE         \nE       assert 2 == 0\n\n/tests/test_outputs.py:54: AssertionError",
+                "message": "The test failed in the call phase due to an assertion error"
+            },
+            {
+                "name": "test_outputs.py::test_compcert_rejects_unsupported_feature",
+                "status": "passed",
+                "duration": 0.014143689000093218,
+                "start": 1786480319.1505167,
+                "stop": 1786480319.1648438,
+                "retries": 0,
+                "file_path": "test_outputs.py"
+            }
+        ]
+    }
+}

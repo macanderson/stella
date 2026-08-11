@@ -1,0 +1,73 @@
+# arenabench match template
+#
+# Run it:      arenabench run this-file.toml
+# Or upload it in the web UI instead of walking the wizard.
+#
+# This file contains NO secrets. Each seat declares the environment
+# variables it needs by name; values come from the environment (or CI's
+# secret store) at launch. A missing one fails the match immediately
+# rather than running an unauthenticated arm that scores zero.
+
+[match]
+name = "TB2.1 full 89 (pipeline v2, plan=deepseek): main@2193374"
+dataset = "terminal-bench-2.1"
+# Empty list = run the whole dataset.
+tasks = ["constraints-scheduling"]
+attempts = 1
+# Concurrent trials PER CONTESTANT. Each task container wants ~2GB, so
+# 2 seats at concurrency 2 needs ~8GB of Docker memory before recorders.
+concurrency = 1
+# Real MP4 screen capture per trial (needs the recorder image built).
+record_video = false
+# Scales the agent-INSTALL budget. Agents that npm-install themselves
+# into an emulated container need >1 here or they never start.
+setup_timeout_multiplier = 4.0
+# Scales the agent-EXECUTION budget (Terminal-Bench pins 900s/task).
+# Same multiplier for every arm keeps a head-to-head fair; disclose it
+# next to any number compared outside this arena.
+agent_timeout_multiplier = 1.0
+# Periodic workspace snapshots, so `arenabench flip` can find the moment
+# the tests started passing and how long the agent kept going afterwards.
+capture_snapshots = false
+snapshot_interval = 30.0
+# Which Stella the seats under test run: a git ref, resolved to a commit
+# at launch and recorded in provenance.json. Pin a full commit id for a
+# result that names its own code; "" runs whatever STELLA_BINARY points
+# at, recorded as unverified. A seat may override this with its own
+# sut_ref line — that is how two Stella builds race the same tasks.
+sut_ref = "21933743049927b9ccf29375bd9c3ee6cd034b1d"
+
+[[contestant]]
+id = "stella-pipeline-v2"
+name = "Stella (GLM-5.2, pipeline, plan=deepseek-chat)"
+agent = "stella"
+color = "#FFB000"
+# This seat's own Stella build, overriding [match] sut_ref.
+sut_ref = "21933743049927b9ccf29375bd9c3ee6cd034b1d"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "z-ai/glm-5.2"
+  reasoning = true
+  effort = "high"
+  base_url = "https://openrouter.ai/api/v1"
+
+  # Per-role overrides. Blank inherits the engine baseline above.
+    [contestant.engine.roles.verifier]
+    model = "openrouter/deepseek/deepseek-chat"
+
+    [contestant.engine.roles.triage]
+    model = "openrouter/z-ai/glm-4.7-flash"
+
+    [contestant.engine.roles.research]
+    model = "openrouter/deepseek/deepseek-chat"
+    effort = "low"
+
+    [contestant.engine.roles.plan]
+    model = "openrouter/deepseek/deepseek-chat"
+    effort = "medium"
+
+
+  [contestant.env]
+  # Names only — never values. Supplied at launch.
+  required = ["OPENROUTER_API_KEY"]

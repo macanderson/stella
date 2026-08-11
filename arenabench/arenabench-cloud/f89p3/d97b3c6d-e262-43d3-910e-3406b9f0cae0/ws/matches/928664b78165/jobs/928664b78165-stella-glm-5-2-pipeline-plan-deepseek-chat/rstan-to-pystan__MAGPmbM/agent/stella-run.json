@@ -1,0 +1,132 @@
+{
+  "status": "completed",
+  "text": null,
+  "cost_usd": 0.0,
+  "reason": "terminal provider error: OpenRouter rejected the request (HTTP 402: payment required): Insufficient credits. Add more using https://openrouter.ai/settings/credits — the account is out of credits; add credit or switch to a funded provider/model",
+  "model": "openrouter/z-ai/glm-5.2",
+  "events": [
+    {
+      "ts": 1786480374774,
+      "type": "stage",
+      "name": "triage"
+    },
+    {
+      "ts": 1786480374775,
+      "type": "stage",
+      "name": "context_recall"
+    },
+    {
+      "ts": 1786480374932,
+      "type": "usage_incomplete",
+      "role": "triage",
+      "provider": "openrouter",
+      "model": "z-ai/glm-4.7-flash",
+      "reason": "provider_error",
+      "duration_ms": 36,
+      "retries": 0
+    },
+    {
+      "ts": 1786480374932,
+      "type": "error",
+      "message": "triage did not answer, so this turn's class came from the deterministic keyword floor: the triage call failed at the provider",
+      "retryable": true
+    },
+    {
+      "ts": 1786480374932,
+      "type": "proof",
+      "step": {
+        "kind": "triage_degraded",
+        "reason": "the triage call failed at the provider"
+      }
+    },
+    {
+      "ts": 1786480374932,
+      "type": "proof",
+      "step": {
+        "kind": "assurance",
+        "witness": true,
+        "verifier": true
+      }
+    },
+    {
+      "ts": 1786480375051,
+      "type": "stage",
+      "name": "plan"
+    },
+    {
+      "ts": 1786480375428,
+      "type": "usage_incomplete",
+      "role": "plan",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-chat",
+      "reason": "provider_error",
+      "duration_ms": 377,
+      "retries": 0
+    },
+    {
+      "ts": 1786480375450,
+      "type": "stage",
+      "name": "execute"
+    },
+    {
+      "ts": 1786480375530,
+      "type": "usage_incomplete",
+      "role": "worker",
+      "provider": "openrouter",
+      "model": "unknown",
+      "reason": "provider_error",
+      "duration_ms": 76,
+      "retries": 0
+    },
+    {
+      "ts": 1786480375530,
+      "type": "retries_exhausted",
+      "turn_instance": 0,
+      "attempts": 1,
+      "reasons": [
+        "terminal provider error: OpenRouter rejected the request (HTTP 402: payment required): Insufficient credits. Add more using https://openrouter.ai/settings/credits — the account is out of credits; add credit or switch to a funded provider/model"
+      ],
+      "retryable": false
+    },
+    {
+      "ts": 1786480375530,
+      "type": "error",
+      "message": "terminal provider error: OpenRouter rejected the request (HTTP 402: payment required): Insufficient credits. Add more using https://openrouter.ai/settings/credits — the account is out of credits; add credit or switch to a funded provider/model",
+      "retryable": false
+    },
+    {
+      "ts": 1786480375538,
+      "type": "complete",
+      "model": "openrouter/z-ai/glm-5.2",
+      "cost_usd": 0.0
+    }
+  ],
+  "_stella_stream": {
+    "event_count": 13,
+    "diagnostic_lines": 0,
+    "ignored_json_objects": 0,
+    "terminal_event": "complete",
+    "stream_complete": true,
+    "process_returned": true,
+    "step_usage_count": 0,
+    "complete_event_count": 1,
+    "error_event_count": 2,
+    "cost_source": "complete_event",
+    "proof_step_counts": {
+      "triage_degraded": 1,
+      "assurance": 1
+    },
+    "witness_authored": null,
+    "witness_authored_state": "not_reported",
+    "witness_authored_count": 0,
+    "witness_unavailable_count": 0,
+    "witness_unavailable_reasons": [],
+    "witness_warranted_count": 0,
+    "assurance_witness_planned": true,
+    "self_verdict_passed": null,
+    "self_verdict_state": "not_reported",
+    "self_verdict_deterministic": null,
+    "self_verdict_count": 0,
+    "verification_unavailable_count": 0
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "dataset_key": "terminal-bench-2.1",
+  "dataset_ref": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+  "dataset_digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+  "harbor_version": "0.6.1",
+  "harbor_bound": null,
+  "harbor_bin": "/usr/local/bin/harbor",
+  "sut_ref": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+  "sut_commit": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+  "sut_sha256": "619831ff1c0a0912c0b746c80322e272f85c403d2055f9808b09150761c20b26",
+  "sut_seats": {
+    "stella-bare": {
+      "name": "Stella (GLM-5.2, bare loop, prove-it gate)",
+      "ref": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+      "commit": "5e7e24f1d52c2df4e87b826cbb631f7eedfda28e",
+      "sha256": "619831ff1c0a0912c0b746c80322e272f85c403d2055f9808b09150761c20b26"
+    }
+  },
+  "agent_seats": {},
+  "arenabench_version": "0.1.0",
+  "recorded_at": 1786367239.6857524,
+  "source": "recorded",
+  "comparability_key": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella5e7e24f1",
+  "measured": true,
+  "comparability_key_by_seat": {
+    "stella-bare": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella5e7e24f1"
+  }
+}

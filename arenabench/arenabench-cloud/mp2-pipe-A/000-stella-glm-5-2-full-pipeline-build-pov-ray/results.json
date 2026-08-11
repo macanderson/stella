@@ -1,0 +1,360 @@
+{
+  "match": {
+    "id": "5289f9ab603e",
+    "name": "Post-merge panel (pipeline, A): main@314344c",
+    "dataset": "terminal-bench-2.1",
+    "tasks": [
+      "build-pov-ray"
+    ],
+    "contestants": [
+      {
+        "id": "stella-pipeline",
+        "name": "Stella (GLM-5.2, full pipeline)",
+        "slug": "stella-glm-5-2-full-pipeline",
+        "agent": "stella",
+        "engine": {
+          "api": "zai",
+          "model": "glm-5.2",
+          "qualified_model": "zai/glm-5.2",
+          "reasoning": true,
+          "effort": "high",
+          "base_url": "https://api.z.ai/api/coding/paas/v4",
+          "bare_loop": false,
+          "roles": {},
+          "responsibilities": {}
+        },
+        "engine_label": "glm-5.2 \u00b7 high",
+        "env_keys": [
+          "ZAI_API_KEY"
+        ],
+        "ignored_env_keys": [],
+        "required_env": [
+          "ZAI_API_KEY"
+        ],
+        "color": "#FFB000",
+        "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+        "agent_version": ""
+      }
+    ],
+    "attempts": 1,
+    "concurrency": 1,
+    "setup_timeout_multiplier": 4.0,
+    "agent_timeout_multiplier": 1.0,
+    "record_video": false,
+    "capture_snapshots": false,
+    "snapshot_interval": 30.0,
+    "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019"
+  },
+  "dataset": {
+    "key": "terminal-bench-2.1",
+    "title": "Terminal-Bench 2.1",
+    "harbor_id": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "name": "terminal-bench/terminal-bench-2-1",
+    "digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "namespace": "terminal-bench",
+    "description": "89 end-to-end terminal tasks with canonical Docker images and independent verifiers. The agent gets a shell and an instruction; the verifier decides whether the task was actually solved.",
+    "homepage": "https://www.tbench.ai/",
+    "task_count": null
+  },
+  "provenance": {
+    "schema": 1,
+    "dataset_key": "terminal-bench-2.1",
+    "dataset_ref": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "dataset_digest": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "harbor_version": "0.6.1",
+    "harbor_bound": null,
+    "harbor_bin": "/usr/local/bin/harbor",
+    "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+    "sut_commit": "314344c79bb19e5442101a307310a4a29c3da019",
+    "sut_sha256": "81baa55f188f5b8e48602bc3ce441f0383386ea9d930d947c9a97e0815630096",
+    "sut_seats": {
+      "stella-pipeline": {
+        "name": "Stella (GLM-5.2, full pipeline)",
+        "ref": "314344c79bb19e5442101a307310a4a29c3da019",
+        "commit": "314344c79bb19e5442101a307310a4a29c3da019",
+        "sha256": "81baa55f188f5b8e48602bc3ce441f0383386ea9d930d947c9a97e0815630096"
+      }
+    },
+    "agent_seats": {},
+    "arenabench_version": "0.1.0",
+    "recorded_at": 1786406888.5539658,
+    "source": "recorded",
+    "comparability_key": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella314344c7",
+    "measured": true,
+    "comparability_key_by_seat": {
+      "stella-pipeline": "terminal-bench-2.1@7d7bdc1c/harbor0.6.1/stella314344c7"
+    }
+  },
+  "status": "finished",
+  "note": "",
+  "created_at": 1786406887.8717935,
+  "started_at": 1786406887.8720407,
+  "finished_at": 1786408341.4193487,
+  "elapsed": 1453.5473079681396,
+  "recording": false,
+  "recording_active": 0,
+  "snapshotting": false,
+  "contestants": [
+    {
+      "id": "stella-pipeline",
+      "name": "Stella (GLM-5.2, full pipeline)",
+      "slug": "stella-glm-5-2-full-pipeline",
+      "agent": "stella",
+      "engine": {
+        "api": "zai",
+        "model": "glm-5.2",
+        "qualified_model": "zai/glm-5.2",
+        "reasoning": true,
+        "effort": "high",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "bare_loop": false,
+        "roles": {},
+        "responsibilities": {}
+      },
+      "engine_label": "glm-5.2 \u00b7 high",
+      "env_keys": [
+        "ZAI_API_KEY"
+      ],
+      "ignored_env_keys": [],
+      "required_env": [
+        "ZAI_API_KEY"
+      ],
+      "color": "#FFB000",
+      "sut_ref": "314344c79bb19e5442101a307310a4a29c3da019",
+      "agent_version": "",
+      "state": "done",
+      "warnings": [
+        "no local export: Harbor will resolve each task over the network mid-run, and one failed lookup ends the job. `arenabench export terminal-bench-2.1` removes that."
+      ],
+      "notes": [
+        "harbor 0.6.1 (/usr/local/bin/harbor) \u2014 found on PATH",
+        "stella 314344c7 (314344c79bb19e5442101a307310a4a29c3da019) sha256:81baa55f188f"
+      ],
+      "error": "",
+      "totals": {
+        "trials": 1,
+        "infrastructure": 0,
+        "never_ran": 0,
+        "running": 0,
+        "done": 1,
+        "judged": 1,
+        "passed": 1,
+        "solve_rate": 100.0,
+        "clock_time": 1446.918972,
+        "tokens_in": 4221059,
+        "tokens_out": 52302,
+        "cache_read": 4078656,
+        "cache_write": 0,
+        "total_cost": 0.6491583599999999,
+        "priced_cost": 0.6491583599999999,
+        "unmeasured_trials": 0,
+        "unpriced_models": [],
+        "cache_hit_rate": 96.62636793278654,
+        "tools": 121,
+        "steps": 103,
+        "cap_hits": 0,
+        "wasted_time": null,
+        "flip_trials": 0,
+        "rail_trials": 1,
+        "proven": 0,
+        "witnessed": 0,
+        "wrong_guesses": 0,
+        "refuted": 0,
+        "claimed_without_proof": 1,
+        "unproven": 0,
+        "self_graded": 0
+      }
+    }
+  ],
+  "rows": [
+    {
+      "task": "build-pov-ray",
+      "cells": {
+        "stella-pipeline": {
+          "task": "build-pov-ray",
+          "trial": "build-pov-ray__iUBmuBW",
+          "status": "done",
+          "resolved": true,
+          "reward": 1.0,
+          "failure": "",
+          "outcome_reason": "solved_clean",
+          "infrastructure": false,
+          "steps": 103,
+          "tools": 121,
+          "tokens_in": 4221059,
+          "tokens_out": 52302,
+          "cache_read": 4078656,
+          "cache_write": 0,
+          "total_cost": 0.649158,
+          "priced_cost": 0.649158,
+          "unpriced_models": [],
+          "usage_measured": true,
+          "cache_hit_rate": 96.62636793278654,
+          "clock_time": 1446.92,
+          "age_s": 45.39433145523071,
+          "cap_hits": 0,
+          "models": [
+            "glm-5.2",
+            "zai/glm-5.2"
+          ],
+          "has_video": false,
+          "declared_complete": true,
+          "usage_incomplete": 30,
+          "late_error": "verification did not prove this turn: UNVERIFIED \u2014 no test command was tracked, so no fail\u2192pass flip could be observed \u2014 the only thing that can prove this change is a test that failed before it and passes after it. This is NOT a finding that the work is absent or wrong: no model was asked for an opinion, because an opinion is not evidence. Verify the result on its own merits.",
+          "flip_elapsed": null,
+          "wasted_elapsed": null,
+          "proof": {
+            "grade": "model",
+            "warranted": true,
+            "warrant_reason": "",
+            "diff_lines": 3628,
+            "stage_ran": false,
+            "witness_authored": false,
+            "witness_path": "",
+            "witness_command": "",
+            "witness_fingerprint": "",
+            "witness_unavailable": [],
+            "oracle_runs": [],
+            "failed_attempts": 0,
+            "flip_achieved": false,
+            "tracked_command": "",
+            "unstable_flip": false,
+            "flip_refused": false,
+            "witness_intact": null,
+            "touched_tests_passed": null,
+            "rung": "unverified",
+            "deterministic": false,
+            "claimed_without_proof": true,
+            "verdict_passed": true,
+            "verdict_summary": "UNVERIFIED \u2014 no test command was tracked, so no fail\u2192pass flip could be observed \u2014 the only thing that can prove this change is a test that failed before it and passes after it. This is NOT a finding that the work is absent or wrong: no model was asked for an opinion, because an opinion is not evidence. Verify the result on its own merits.",
+            "honesty": "uncorroborated",
+            "assurance_witness": false,
+            "assurance_verifier": true,
+            "verifier_independent": null,
+            "diff_coverage": "unmeasured",
+            "verdict_degraded": [],
+            "verification_unavailable": [],
+            "roles": [
+              {
+                "role": "worker",
+                "model": "glm-5.2",
+                "calls": 103,
+                "tokens_in": 4221059,
+                "tokens_out": 52302,
+                "cost_usd": 0.649158
+              }
+            ]
+          },
+          "harness": null,
+          "behaviour": null
+        }
+      }
+    }
+  ],
+  "detections": [],
+  "leaders": {
+    "solve_rate": [
+      "stella-pipeline"
+    ],
+    "proven": [
+      "stella-pipeline"
+    ],
+    "claimed_without_proof": [
+      "stella-pipeline"
+    ],
+    "clock_time": [
+      "stella-pipeline"
+    ],
+    "priced_cost": [
+      "stella-pipeline"
+    ],
+    "tokens_in": [
+      "stella-pipeline"
+    ],
+    "tokens_out": [
+      "stella-pipeline"
+    ],
+    "cache_read": [
+      "stella-pipeline"
+    ]
+  },
+  "dimensions": [
+    {
+      "key": "solve_rate",
+      "label": "Solve Rate",
+      "direction": "higher",
+      "unit": "%",
+      "blurb": "verifier rewards / trials completed"
+    },
+    {
+      "key": "proven",
+      "label": "Proven",
+      "direction": "higher",
+      "unit": "",
+      "blurb": "trials an authored witness or tracked command carried fail\u2192pass"
+    },
+    {
+      "key": "claimed_without_proof",
+      "label": "Unproven Claims",
+      "direction": "lower",
+      "unit": "",
+      "blurb": "passing verdicts with nothing deterministic behind them"
+    },
+    {
+      "key": "clock_time",
+      "label": "Clock Time",
+      "direction": "lower",
+      "unit": "s",
+      "blurb": "wall-clock across all trials"
+    },
+    {
+      "key": "wasted_time",
+      "label": "Wasted Time",
+      "direction": "lower",
+      "unit": "s",
+      "blurb": "time still running after the solution already passed (snapshot replay)"
+    },
+    {
+      "key": "priced_cost",
+      "label": "Total Cost",
+      "direction": "lower",
+      "unit": "$",
+      "blurb": "list price of every trial's tokens, one table for all seats"
+    },
+    {
+      "key": "total_cost",
+      "label": "Self-Reported",
+      "direction": "neutral",
+      "unit": "$",
+      "blurb": "what each agent said it spent, on its own table"
+    },
+    {
+      "key": "tokens_in",
+      "label": "Tokens In",
+      "direction": "lower",
+      "unit": "tok",
+      "blurb": "uncached prompt tokens billed"
+    },
+    {
+      "key": "tokens_out",
+      "label": "Tokens Out",
+      "direction": "lower",
+      "unit": "tok",
+      "blurb": "completion tokens billed"
+    },
+    {
+      "key": "cache_read",
+      "label": "Cache Read",
+      "direction": "higher",
+      "unit": "tok",
+      "blurb": "prompt tokens served from cache"
+    },
+    {
+      "key": "cache_write",
+      "label": "Cache Write",
+      "direction": "neutral",
+      "unit": "tok",
+      "blurb": "prompt tokens written to cache"
+    }
+  ]
+}
