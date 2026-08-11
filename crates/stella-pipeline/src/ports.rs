@@ -874,6 +874,56 @@ pub trait CandidateWorkspace: Send + Sync {
     ///
     /// Default: no-op — a substrate with no task board has nothing to seed.
     fn seed_task_board(&self, _steps: &[String], _announce: bool) {}
+    /// Whether this candidate's **mutations** may ride the turn's event
+    /// channel as they happen, rather than only being re-emitted by adoption.
+    ///
+    /// Called once per workspace beside [`Self::seed_task_board`], with the
+    /// same `announce` answer and for the same reason: the caller who creates
+    /// the workspaces is the only one who knows the fan-out width.
+    ///
+    /// A candidate's edits live in a shadow the user's checkout has not
+    /// received, so announcing them is a claim — which is why the default
+    /// posture withholds them. But a **lone** candidate is the one case where
+    /// the claim is true in advance: there is exactly one tree of edits, and
+    /// it is the tree that becomes the user's if the run verifies. Withholding
+    /// there cost the transcript its single most useful row — an inline diff
+    /// is bound to a tool result at fold time from the `FileChange` emitted
+    /// *during* that call, so a suppressed change is not a diff shown later,
+    /// it is a diff shown never. On the deck's default path (one candidate,
+    /// always isolated) that meant no edit in any session ever rendered its
+    /// diff.
+    ///
+    /// A wider fan-out still withholds: several candidates' trees spliced into
+    /// one Files tab is nobody's tree, exactly as several private boards
+    /// reporting onto one channel is nobody's checklist.
+    ///
+    /// Default: no-op — a substrate whose edits are already the user's has
+    /// nothing to gate.
+    fn announce_changes(&self, _announce: bool) {}
+    /// Move one seeded plan step to `status` and announce the board.
+    ///
+    /// **The pipeline drives the board; the worker is not asked to.** #1719
+    /// made a candidate's `task_start "3"` resolve, which was necessary and
+    /// not sufficient: nothing ever *called* it. The execute stage walks the
+    /// plan one engine turn per step and each step's prompt says only what to
+    /// do — so on a real six-step run the deck's PLAN rail sat at `0/6` from
+    /// the first turn to the last while the transcript beneath it said the
+    /// work was being finished. The rail was not broken; it was never told.
+    ///
+    /// Deterministic, for the same reason `ladder_decision` is: the pipeline
+    /// *knows* which step is in flight — it wrote the prompt — so asking a
+    /// model to report it would buy a round trip per step for an answer
+    /// already in hand, and would then be wrong whenever the model forgot.
+    /// The board tools stay registered for work the worker adds itself; this
+    /// is the floor beneath them.
+    ///
+    /// Best-effort by contract: an id the board does not carry (a resumed run
+    /// past its seeded plan), or a step already terminal (a worker that
+    /// completed it through the tools first), is not an error worth failing a
+    /// turn over. Implementations swallow it.
+    ///
+    /// Default: no-op — a substrate with no task board has nothing to move.
+    fn mark_plan_step(&self, _id: &str, _status: stella_protocol::TaskStatus) {}
     /// Commit the current candidate bytes into its private immutable history
     /// immediately before a final verification observation.
     async fn seal(&self) -> Result<(), WorkspaceError>;

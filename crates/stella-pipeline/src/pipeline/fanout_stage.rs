@@ -151,6 +151,11 @@ impl<'a> Pipeline<'a> {
             match port.create().await {
                 Ok(ws) => {
                     ws.seed_task_board(&steps, n == 1);
+                    // Same latch, same reason — see `announce_changes`. A lone
+                    // candidate's edits are the ones that become the user's, so
+                    // its `FileChange`s ride the turn live and the transcript
+                    // can render each edit's diff under the call that made it.
+                    ws.announce_changes(n == 1);
                     workspaces.push(Ok(ws));
                 }
                 Err(e) => {

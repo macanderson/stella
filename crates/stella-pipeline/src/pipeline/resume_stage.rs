@@ -373,6 +373,12 @@ impl<'a> Pipeline<'a> {
                         next + 1,
                         plan.len(),
                         &engine,
+                        // A resume is headless by construction (see the
+                        // steering note above) and runs against the real tree
+                        // with no candidate workspace, so there is no private
+                        // board to move — the session's own tap still mirrors
+                        // whatever the worker's `task_*` calls do.
+                        None,
                         &mut spend,
                         &mut state,
                     )

@@ -49,6 +49,11 @@ pub(super) struct CandidateTaskBoard {
     /// author's pristine snapshot, which the pipeline deliberately does not
     /// seed) announces nothing.
     announce: Arc<AtomicBool>,
+    /// The turn's channel, for the transitions the *pipeline* drives
+    /// ([`Self::mark`]). The tap owns the copy that fires after a worker's own
+    /// `task_*` call; this one fires when nobody called anything, which on the
+    /// staged path is every step of every plan.
+    events: Option<stella_core::EventSender>,
 }
 
 impl CandidateTaskBoard {
@@ -63,6 +68,30 @@ impl CandidateTaskBoard {
             guard.seed_from_plan(steps);
         }
         self.announce.store(announce, Ordering::Relaxed);
+    }
+
+    /// Move one step and announce the whole board — the pipeline's own hand on
+    /// the checklist (see [`CandidateWorkspace::mark_plan_step`]).
+    ///
+    /// The transition's `Err` is dropped on purpose, and the two ways it
+    /// arrives are both ordinary: an unknown id (a resumed run walking past
+    /// the steps this board was seeded with) and a terminal step (a worker
+    /// that already called `task_complete` for it). Neither is a reason to
+    /// fail a turn, and the announce still fires so the rail reflects whatever
+    /// the board really holds.
+    ///
+    /// [`CandidateWorkspace::mark_plan_step`]: stella_pipeline::ports::CandidateWorkspace::mark_plan_step
+    pub(super) fn mark(&self, id: &str, status: stella_protocol::TaskStatus) {
+        let tasks: Vec<TaskItem> = {
+            let mut guard = self.board.lock().unwrap_or_else(|p| p.into_inner());
+            let _ = guard.set_status(id, status);
+            guard.items().to_vec()
+        };
+        if self.announce.load(Ordering::Relaxed)
+            && let Some(events) = &self.events
+        {
+            let _ = events.send(AgentEvent::TaskUpdate { tasks });
+        }
     }
 }
 
@@ -79,6 +108,7 @@ pub(super) fn tap(
     let seam = CandidateTaskBoard {
         board: board.clone(),
         announce: announce.clone(),
+        events: events.clone(),
     };
     let tools = match events {
         Some(events) => Box::new(CandidateTaskTap {

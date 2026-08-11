@@ -12,6 +12,8 @@
 
 use super::*;
 
+use stella_protocol::TaskStatus;
+
 /// The per-turn signal counters [`Pipeline::filtered_turn_events`] hands
 /// back beside its sender: read after the turn ends, folded into the
 /// candidate's [`ChangeSignals`]. Shared `Arc`s because the sender's closure
@@ -53,6 +55,7 @@ impl<'a> Pipeline<'a> {
         &self,
         plan: Option<&[PlanStep]>,
         engine: &Engine<'_>,
+        board: Option<&dyn CandidateWorkspace>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
@@ -88,7 +91,7 @@ impl<'a> Pipeline<'a> {
             }
             Ok(())
         } else {
-            self.run_plan_steps(steps, 0, steps.len(), engine, spend, state)
+            self.run_plan_steps(steps, 0, steps.len(), engine, board, spend, state)
                 .await
         }
     }
@@ -104,13 +107,26 @@ impl<'a> Pipeline<'a> {
         offset: usize,
         total: usize,
         engine: &Engine<'_>,
+        board: Option<&dyn CandidateWorkspace>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
+        // The board ids the scope gate numbered. `offset + i` is the position
+        // in the WHOLE plan, so a resumed run's tail still moves the rows a
+        // reader is looking at rather than restarting the checklist at 1.
+        let mark = |i: usize, status: TaskStatus| {
+            if let Some(ws) = board {
+                ws.mark_plan_step(&(offset + i + 1).to_string(), status);
+            }
+        };
         for (i, step) in steps.iter().enumerate() {
             // The resume frame's cursor: which step's turn is in flight, so a
             // kill during this turn resumes here and not at the plan's top.
             self.record_progress(|p| p.next_step = Some(offset + i));
+            // The plan rail's whole job, driven by the one party that knows
+            // the answer — see `CandidateWorkspace::mark_plan_step`. Before
+            // the turn, so the row is already pulsing while the step runs.
+            mark(i, TaskStatus::InProgress);
             state
                 .messages
                 .push(CompletionMessage::user(plan_steps::step_prompt(
@@ -130,6 +146,7 @@ impl<'a> Pipeline<'a> {
             {
                 TurnOutcome::Completed { text, cost_usd } => {
                     *spend.total += cost_usd;
+                    mark(i, TaskStatus::Completed);
                     // #1702: a worker that declares the whole goal done ends
                     // the walk — the remaining steps could only re-confirm
                     // finished work. The declaration is screened for polarity
@@ -141,6 +158,16 @@ impl<'a> Pipeline<'a> {
                     let closed_out = plan_steps::goal_declared_complete(&text);
                     state.final_text = text;
                     if closed_out {
+                        // #1702's early close-out: the remaining steps are not
+                        // abandoned, they are covered. Saying so on the rail is
+                        // the difference between a plan that reads `6/6 done`
+                        // and one that reads `2/6` beside an answer claiming
+                        // the work is finished — the second is the report a
+                        // reader cannot reconcile, and it is the one the rail
+                        // gave before this.
+                        for (j, _) in steps.iter().enumerate().skip(i + 1) {
+                            mark(j, TaskStatus::Completed);
+                        }
                         break;
                     }
                 }
@@ -150,6 +177,11 @@ impl<'a> Pipeline<'a> {
                     cost_usd,
                 } => {
                     *spend.total += cost_usd;
+                    // A step whose turn aborted did not finish, and a rail
+                    // that left it pulsing would keep implying work is in
+                    // flight after the run stopped — the same half-invariant
+                    // `Plan::finish` holds on the TUI side.
+                    mark(i, TaskStatus::Cancelled);
                     return Err(TurnAbort { reason, kind });
                 }
             }
