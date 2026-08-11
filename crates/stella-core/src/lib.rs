@@ -20,6 +20,7 @@ pub mod comparison;
 pub mod context_record;
 pub mod discovery;
 pub mod driver;
+pub mod engine_markers;
 pub mod estimator;
 pub mod event_sender;
 pub mod extensions;

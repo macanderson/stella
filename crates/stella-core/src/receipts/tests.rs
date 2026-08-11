@@ -323,6 +323,26 @@ fn the_drivers_own_messages_stop_being_attributed_to_the_user() {
     assert_eq!(user_block_kind("fix the failing test"), BlockKind::UserGoal);
 }
 
+/// The classifier half of the `engine_markers::ENGINE_MARKERS` tie (#2722):
+/// every entry of the exported table classifies as engine text, never
+/// [`BlockKind::UserGoal`]. The four seed entries reference the same constants
+/// the classifier matches, so this cannot fail today — its job is the fifth
+/// marker: an entry added to the table without a `user_block_kind` arm fails
+/// here by name, instead of the receipt misattributing the new engine message
+/// to the person.
+#[test]
+fn every_exported_engine_marker_is_classified_as_engine_text() {
+    for marker in crate::engine_markers::ENGINE_MARKERS {
+        let content = format!("{marker} engine-written payload");
+        assert_ne!(
+            user_block_kind(&content),
+            BlockKind::UserGoal,
+            "{marker:?} is in ENGINE_MARKERS but user_block_kind reads it as the \
+             user's own goal — add its classification arm in receipts.rs"
+        );
+    }
+}
+
 #[test]
 fn a_hydrated_attachment_never_puts_its_payload_on_the_event_stream() {
     // An at-rest attachment is metadata and rides as a gap kind. A hydrated
