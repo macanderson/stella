@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 the ArenaBench authors
-"""Reading a Claude Code arm out of the stream it was already writing.
+"""Reading each arm out of the stream it was already writing.
 
 The bias, as in :mod:`tests.test_telemetry`, is toward the paths where a bug
 yields a *plausible* number: the message-id deduplication (a naive sum
 overstates output tokens by 1.76x on measured data), the incremental cursor,
-and the token convention the archive's historical cache figures were computed
-under.
+the token convention the archive's historical cache figures were computed
+under, and — since #2519 and #2520 — the two ways an arm can be described in
+the wrong vocabulary or credited from the wrong source.
 
 No Docker, no network, no key: every fixture is a synthetic stream.
 """
@@ -14,10 +15,24 @@ No Docker, no network, no key: every fixture is a synthetic stream.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 
-from arenabench.harness import STREAM_NAME, HarnessTotals, StreamReader, reduce_stream
+from arenabench.harness import (
+    CLAUDE_CODE,
+    DIALECTS,
+    STELLA,
+    STELLA_EVENTS_NAME,
+    STREAM_NAME,
+    USAGE_STREAM,
+    USAGE_TRANSCRIPT,
+    USAGE_UNOBSERVED,
+    HarnessTotals,
+    StreamReader,
+    reduce_stream,
+    summarize,
+)
 from arenabench.telemetry import MetricsReader
 
 # --------------------------------------------------------------------------
