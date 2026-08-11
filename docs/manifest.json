@@ -522,6 +522,20 @@
       "status": "proposed",
       "title": "Self-driving missions \u2014 the objective schema, the improvement contract, and the session scorecard"
     },
+    "self-evolving-coding-agents-assessment": {
+      "path": "docs/papers/self-evolving-coding-agents-assessment.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "status": "living",
+      "title": "Self-Evolving Coding Agents \u2014 comparison with Stella"
+    },
     "semantic-resolution-bridge": {
       "path": "docs/spec/semantic-resolution-bridge.md",
       "status": "implemented",
