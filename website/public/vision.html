@@ -389,7 +389,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
     <div class="tile"><div class="big">21</div><div class="cap">focused Rust crates in one workspace — every boundary a port, every crossing type serialized and round-trip tested</div></div>
     <div class="tile"><div class="big">9 + local</div><div class="cap">model providers behind one trait, with cache, reasoning, and fallback parity declared per provider and witness-tested on the wire</div></div>
     <div class="tile"><div class="big">0 bytes</div><div class="cap">of telemetry leaving a default install — local-first SQLite; the enterprise rollup is content-free by CI-enforced allowlist</div></div>
-    <div class="tile"><div class="big">1 loop</div><div class="cap">no coordinator, no swarm — a single deterministic step loop whose every run replays from its event log</div></div>
+    <div class="tile"><div class="big">1 loop</div><div class="cap">no in-loop coordinator and no swarm inside the engine — one deterministic step loop, replayable from its event log. Fleet mode composes <em>many</em> workers, each running this same loop; it does not change what the loop is</div></div>
   </div>
   <div class="cols c-2">
     <div class="rise" style="--d:5">
