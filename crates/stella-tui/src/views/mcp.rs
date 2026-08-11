@@ -191,7 +191,7 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(theme::rule());
+        .border_style(theme::panel_rule());
     let inner = block.inner(area);
     block.render(area, buf);
 

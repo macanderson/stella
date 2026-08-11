@@ -412,7 +412,7 @@ pub fn render_plan(plan: &Plan, now_ms: u64, animate: bool, area: Rect, buf: &mu
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme::rule())
+                .border_style(theme::panel_rule())
                 .title(title)
                 .title_bottom(
                     Line::from(Span::styled(
@@ -470,7 +470,7 @@ fn border_style(standing: Standing) -> Style {
         Tone::Error => Style::new().fg(theme::DANGER),
         Tone::Warn => Style::new().fg(theme::WARN),
         Tone::Success => Style::new().fg(theme::SUCCESS),
-        _ => theme::rule(),
+        _ => theme::panel_rule(),
     }
 }
 

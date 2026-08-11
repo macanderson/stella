@@ -302,7 +302,7 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     let labels: Vec<&str> = DeckTab::ALL.iter().map(|t| t.title()).collect();
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::rule());
+        .border_style(theme::panel_rule());
     // The corner wordmark: the brand riding the top border row, which holds
     // nothing but rule characters — zero rows of chrome spent. Dropped on
     // narrow frames rather than crowding the border.

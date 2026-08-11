@@ -85,6 +85,7 @@ pub mod splash;
 pub mod statline;
 pub mod syntax;
 pub mod theme;
+pub mod tool_class;
 pub mod transcript_nav;
 pub mod views;
 

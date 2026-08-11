@@ -1416,6 +1416,16 @@ fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
         return truncate_field(&prompt, 80);
     }
 
+    // An argument-less call has nothing to summarize. `compact_json` renders
+    // `{}` for it, which the transcript then printed beside the tool name —
+    // and an empty object next to `project_overview` reads as an empty
+    // *result*, not as "this tool takes no arguments". Both this and the
+    // renderer treat the empty string as "no argument column"; saying it here
+    // as well is what keeps every consumer of `input` (the trace tab, the
+    // accessible renderer) agreeing about it.
+    if input.as_object().is_some_and(serde_json::Map::is_empty) || input.is_null() {
+        return String::new();
+    }
     // Fallback: compact JSON, summarized.
     summarize(&compact_json(input))
 }

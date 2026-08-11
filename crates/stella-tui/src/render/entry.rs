@@ -205,10 +205,18 @@ fn entry_body(
             // dropped with it: the label *is* the stage, and prefixing every
             // one with its own type name was three columns spent restating
             // what the divider already says.
+            //
+            // Hued by stage, not neutral. A rule may recede, but a stage
+            // boundary is the transcript's coarsest structure — the thing a
+            // reader scrolling back is looking *for* — and at
+            // `TEXT_SECONDARY` on a hairline it was the dimmest text on
+            // screen. `theme::stage_color` is the same mapping the statline's
+            // stage dot already uses, so the rule and the dot agree about
+            // which phase this is.
             push_rule(
                 stage_label(*name),
                 Style::new()
-                    .fg(theme::TEXT_SECONDARY)
+                    .fg(theme::stage_rule_color(*name))
                     .add_modifier(Modifier::BOLD),
                 width,
                 out,
@@ -294,17 +302,33 @@ fn entry_body(
             // long MCP name (`mcp__github__create_pull_request`) overruns the
             // column rather than being truncated, since the tool's identity
             // outranks the alignment it would cost.
-            // The tool name is the one thing in the transcript that carries
-            // the full brand accent. Everything a session did, it did through a
-            // tool call, so the names are the index to the whole scrollback —
-            // and they are the only rows a reader scans *for* rather than
-            // reads. The argument beside it stays white/dim (`path_spans`), so
-            // the accent marks the verb and never the object.
+            // The tool name is the one thing in the transcript that carries a
+            // categorical hue. Everything a session did, it did through a tool
+            // call, so the names are the index to the whole scrollback — and
+            // they are the only rows a reader scans *for* rather than reads.
+            // The hue is the call's CLASS (`crate::tool_class`), so the margin
+            // answers "was that a read, a write, a shell, a test, a push, a
+            // hand-off" before a name is read. The argument beside it stays
+            // white/dim (`path_spans`), so the colour marks the verb and never
+            // the object.
+            //
+            // Not the brand accent: gold means brand/active/focus, and every
+            // tool name wearing it made the accent mean "a tool ran", which is
+            // every row.
+            let class = crate::tool_class::classify(name);
             let mut left = vec![Span::styled(
                 pad_name(name),
-                Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                Style::new().fg(class.color()).add_modifier(Modifier::BOLD),
             )];
-            left.extend(path_spans(input, path.is_some()));
+            // An argument-less tool (`project_overview`, `repo_status`, a
+            // zero-argument `repo_push`) renders NO argument column at all.
+            // The compact-JSON fallback printed a literal `{}` there, which
+            // reads as an empty *result* — the deck's own owner read it that
+            // way and filed it as a bug. Absence is the honest rendering: the
+            // row is the call, and there was nothing to say about it.
+            if !input.is_empty() {
+                left.extend(path_spans(input, path.is_some()));
+            }
             push_row(Rail::Call, left, width, out);
             if expanded {
                 // ctrl+o: the full argument object, pretty-printed and dim.
@@ -695,9 +719,15 @@ fn entry_body(
             instruction_preview,
             write_access,
         } => match finished {
+            // A dispatch is the single most consequential row in a transcript
+            // — a whole other agent starts working here, with its own budget
+            // and its own tool calls — and it rendered in the quiet tier, the
+            // same one the bookkeeping notes use. It gets the delegation class
+            // hue, the same one `task`/`task_*` wear on the call rows around
+            // it, so the hand-off and the board it moves read as one family.
             None => push_note(
                 "⤷ sub-agent",
-                quiet(),
+                loud(crate::tool_class::ToolClass::Delegate.color()),
                 vec![
                     Span::styled(agent_id.clone(), value()),
                     Span::styled(
