@@ -55,8 +55,12 @@ use stella_core::ports::ToolExecutor;
 use stella_protocol::{ToolOutput, ToolSchema};
 
 use crate::client::{McpClient, McpToolInfo, ServerHealth};
-use crate::config::McpServerConfig;
+use crate::config::{McpServerConfig, McpTransport};
 use crate::oauth::OAuthManager;
+use crate::suppress::{ConnectGate, connect_gate, unix_now_secs};
+
+mod needs_auth;
+pub use needs_auth::login_required_tool_name;
 
 /// A session-scoped set of server names disabled by the operator. Shared with
 /// the CLI/TUI so a toggle takes effect on the next model call — the engine
@@ -147,6 +151,11 @@ pub struct McpToolSet {
     /// Servers that could not be connected or had invalid names: `(name,
     /// reason)`. They advertise no tools but never block the rest.
     failed: Vec<(String, String)>,
+    /// Servers skipped before connect — or refused with an HTTP 401 — because
+    /// they require authentication the user has not granted (#2687): `(name,
+    /// reason)`. Each advertises one synthetic [`needs_auth`] tool instead of
+    /// its real ones.
+    auth_required: Vec<(String, String)>,
     native: Option<Arc<dyn ToolExecutor>>,
     /// Where each successful MCP call is recorded (server, tool, reason, time)
     /// for the `mcp_usage` telemetry table. `None` = no telemetry (a no-op).
@@ -190,6 +199,7 @@ impl McpToolSet {
             .map(|c| c.name.clone())
             .collect();
 
+        let mut auth_required = Vec::new();
         for config in configs {
             if let Some(reason) = namespace_rejection(&config.name) {
                 failed.push((config.name.clone(), reason.into()));
@@ -199,13 +209,50 @@ impl McpToolSet {
                 failed.push((config.name.clone(), "duplicate server name".into()));
                 continue;
             }
+            // Auth-probe suppression (#2687): an HTTP server known to need a
+            // login the user has not granted is not dialed at all — no
+            // transport, no round trip. See [`crate::suppress`] for the gate.
+            let gated_http =
+                auth.is_some() && matches!(config.transport, McpTransport::Http { .. });
+            if let Some(manager) = auth.as_deref().filter(|_| gated_http)
+                && let ConnectGate::AuthRequired { reason } = connect_gate(
+                    manager.store(),
+                    manager.probe_cache(),
+                    &config.name,
+                    unix_now_secs(),
+                )
+            {
+                auth_required.push((config.name.clone(), reason));
+                continue;
+            }
             match tokio::time::timeout(
                 timeout,
                 McpClient::connect_with_auth(config, timeout, auth.clone()),
             )
             .await
             {
-                Ok(Ok(client)) => clients.push(client),
+                Ok(Ok(client)) => {
+                    if let Some(manager) = auth.as_deref().filter(|_| gated_http) {
+                        // A connect that succeeded proves the 401 gone —
+                        // retire any probe record so a later logout re-arms
+                        // from a fresh 401, never a stale timestamp.
+                        // Best-effort: losing the clear costs one TTL wait.
+                        let _ = manager.probe_cache().clear(&config.name);
+                    }
+                    clients.push(client);
+                }
+                Ok(Err(err)) if gated_http && err.is_auth_error() => {
+                    // A fresh 401 (or an unusable stored login): arm the
+                    // suppression window and surface the login affordance
+                    // instead of a generic failure. Best-effort write — a
+                    // failed record only means the next session probes again.
+                    if let Some(manager) = auth.as_deref() {
+                        let _ = manager
+                            .probe_cache()
+                            .record_unauthorized(&config.name, unix_now_secs());
+                    }
+                    auth_required.push((config.name.clone(), err.user_message()));
+                }
                 Ok(Err(err)) => failed.push((config.name.clone(), err.user_message())),
                 Err(_) => failed.push((
                     config.name.clone(),
@@ -219,6 +266,7 @@ impl McpToolSet {
             routes: HashMap::new(),
             collisions: Vec::new(),
             failed,
+            auth_required,
             native: None,
             usage: None,
             disabled: None,
@@ -254,6 +302,7 @@ impl McpToolSet {
             routes: HashMap::new(),
             collisions: Vec::new(),
             failed,
+            auth_required: Vec::new(),
             native: None,
             usage: None,
             disabled: None,
@@ -382,9 +431,14 @@ impl McpToolSet {
     /// Per-server connection health, for a non-fatal CLI/TUI/telemetry
     /// diagnostic (which servers are live, reconnecting, or backing off).
     pub async fn health(&self) -> Vec<ServerHealth> {
-        let mut out = Vec::with_capacity(self.clients.len());
+        let mut out = Vec::with_capacity(self.clients.len() + self.auth_required.len());
         for client in &self.clients {
             out.push(client.health().await);
+        }
+        // Auth-suppressed servers were never dialed, so no client exists to
+        // ask — their rows are synthesized (#2687).
+        for (name, reason) in &self.auth_required {
+            out.push(needs_auth::auth_required_health(name, reason));
         }
         out
     }
@@ -392,6 +446,16 @@ impl McpToolSet {
     /// Servers that were not connected, as `(name, reason)`.
     pub fn failed_servers(&self) -> &[(String, String)] {
         &self.failed
+    }
+
+    /// Servers skipped before connect — or refused with an HTTP 401 —
+    /// because they require authentication (#2687), as `(name, reason)`.
+    /// Deliberately not folded into [`McpToolSet::failed_servers`]: callers
+    /// render that as "server unavailable", and the actionable state here is
+    /// "run `stella mcp login <name>`". Each advertises one synthetic
+    /// [`login_required_tool_name`] tool in place of its real ones.
+    pub fn auth_required_servers(&self) -> &[(String, String)] {
+        &self.auth_required
     }
 
     /// What `server` said about itself during the handshake, or `None` if it
@@ -748,6 +812,9 @@ impl ToolExecutor for McpToolSet {
             schemas.extend(native.schemas());
         }
         schemas.extend(budget_segment(self.mcp_segment()).0);
+        // Each auth-suppressed server advertises exactly one placeholder that
+        // says how to log in (#2687) — subject to the same live disable.
+        needs_auth::extend_schemas(self, &mut schemas);
         schemas
     }
 
@@ -763,6 +830,11 @@ impl ToolExecutor for McpToolSet {
                 };
             }
             return self.execute_mcp(client, raw_tool, input).await;
+        }
+        // The synthetic needs-auth tool (#2687): answered locally — there is
+        // no connection to the suppressed server to route anything over.
+        if let Some(output) = needs_auth::route(self, name) {
+            return output;
         }
         // A namespaced name we don't recognize is an MCP miss, not a native
         // tool — never fall through to native for it.

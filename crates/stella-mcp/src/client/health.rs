@@ -63,6 +63,14 @@ pub enum HealthState {
     /// [`ServerHealth::retry_in`]) or it reconnects fine and its *calls* keep
     /// failing.
     Down,
+    /// The server requires authentication the user has not granted (#2687):
+    /// its connect was suppressed — or answered HTTP 401 — so no transport
+    /// exists at all. Never produced by the connection state machine in this
+    /// module: only [`crate::McpToolSet::health`] synthesizes it, for servers
+    /// it skipped before connect. No backoff clock is armed because a redial
+    /// cannot fix it — `stella mcp login <server>` can, after which the next
+    /// session connects normally ([`crate::suppress`]).
+    AuthRequired,
 }
 
 /// A point-in-time snapshot of a server's connection health.

@@ -69,6 +69,13 @@
 //!   backoff** — a single blip self-heals within the turn, and a long-dead
 //!   server degrades gracefully instead of aborting the agent ([`toolset`],
 //!   [`client`]). Per-server status is exposed via [`McpToolSet::health`].
+//! - **Auth probes are suppressed, not repeated** (#2687). An HTTP server
+//!   that answered a connect with 401 — or whose stored login is known
+//!   unusable — is skipped entirely for [`suppress::AUTH_PROBE_TTL`] (no
+//!   connection, no round trip) and advertises one synthetic
+//!   `mcp__<server>__login_required` tool naming the `stella mcp login` fix
+//!   in its place ([`suppress`], [`toolset`]). A completed login, a
+//!   successful connect, or the TTL lapsing restores the normal probe.
 
 pub mod client;
 pub mod config;
@@ -79,6 +86,7 @@ pub mod protocol;
 pub mod registry;
 mod sse;
 pub mod stdio;
+pub mod suppress;
 pub mod toolset;
 pub mod transport;
 
@@ -94,8 +102,9 @@ pub use registry::{
     RegistryPage, RegistryServer,
 };
 pub use stdio::StdioTransport;
+pub use suppress::{AUTH_PROBE_TTL, AuthProbeCache, ConnectGate};
 pub use toolset::{
     DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity, WireNameCollision,
-    split_wire_name, wire_name,
+    login_required_tool_name, split_wire_name, wire_name,
 };
 pub use transport::Transport;

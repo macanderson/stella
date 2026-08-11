@@ -70,6 +70,7 @@ use discovery::{
 use grant::{register_client, token_request};
 
 use crate::error::McpError;
+use crate::suppress::AuthProbeCache;
 
 /// Refresh an access token this many seconds *before* its stated expiry, so
 /// a token never expires mid-request.
@@ -264,7 +265,7 @@ impl TokenStore {
 }
 
 #[cfg(unix)]
-fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
+pub(crate) fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let parent = path
         .parent()
@@ -310,7 +311,7 @@ fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
 /// Stella does not manage rather than storing it under the OS's own
 /// permissions (#617).
 #[cfg(not(unix))]
-fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
+pub(crate) fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
     let parent = path
         .parent()
         .ok_or_else(|| McpError::Auth(format!("token store {} has no parent", path.display())))?;
@@ -403,12 +404,17 @@ fn open_private_token_file(
 #[derive(Debug)]
 pub struct OAuthManager {
     store: TokenStore,
+    /// The connect-time 401 cache (#2687), a sibling file of the token store
+    /// so the caller's one path choice places all MCP auth state together.
+    probes: AuthProbeCache,
     http: Client,
 }
 
 impl OAuthManager {
     pub fn new(store_path: impl Into<PathBuf>) -> Self {
+        let store_path = store_path.into();
         Self {
+            probes: AuthProbeCache::sibling_of(&store_path),
             store: TokenStore::new(store_path),
             http: http_client(),
         }
@@ -434,6 +440,13 @@ impl OAuthManager {
     /// The underlying store (login persistence, logout).
     pub fn store(&self) -> &TokenStore {
         &self.store
+    }
+
+    /// The connect-time 401 cache — [`crate::McpToolSet::connect_with_auth`]
+    /// consults it before dialing and records/retires entries on the outcome
+    /// (#2687, [`crate::suppress`]).
+    pub fn probe_cache(&self) -> &AuthProbeCache {
+        &self.probes
     }
 }
 
