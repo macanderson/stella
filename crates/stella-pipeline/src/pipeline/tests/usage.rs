@@ -181,7 +181,11 @@ async fn triage_provider_error_emits_content_free_incompleteness() {
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (result, _, events) =
         run_triage_only(&ErrorProvider, PipelineConfig::default(), &mut budget).await;
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
     let usage = usage_events(&events);
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0]["type"], "usage_incomplete");
@@ -201,7 +205,11 @@ async fn triage_timeout_emits_content_free_incompleteness() {
         ..PipelineConfig::default()
     };
     let (result, _, events) = run_triage_only(&SlowProvider, config, &mut budget).await;
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
     let usage = usage_events(&events);
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0]["type"], "usage_incomplete");
@@ -415,7 +423,11 @@ async fn a_timed_out_triage_records_that_the_class_came_from_the_floor() {
 
     // The fallback itself is unchanged and load-bearing: never fail a run on
     // triage.
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
 
     let reasons = triage_degraded_reasons(&events);
     assert_eq!(reasons.len(), 1, "exactly one record per degraded triage");
@@ -442,7 +454,11 @@ async fn a_failed_triage_call_records_a_provider_failure_not_a_timeout() {
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (result, _, events) =
         run_triage_only(&ErrorProvider, PipelineConfig::default(), &mut budget).await;
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
     let reasons = triage_degraded_reasons(&events);
     assert_eq!(reasons.len(), 1);
     assert!(
@@ -460,7 +476,11 @@ async fn an_off_protocol_triage_response_records_the_same_degradation() {
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (result, _, events) =
         run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
     let reasons = triage_degraded_reasons(&events);
     assert_eq!(reasons.len(), 1, "{reasons:?}");
     assert!(reasons[0].contains("did not follow the classification protocol"));
@@ -496,7 +516,11 @@ async fn an_unroutable_triage_records_that_it_could_not_be_routed() {
         run_triage_with_resolver(&NoProviderResolver, PipelineConfig::default(), &mut budget).await;
 
     // The fallback is unchanged and load-bearing: never fail a run on triage.
-    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    // `SingleTask`, not `SimpleLookup`: a triage that produced no
+    // classification cannot route the turn onto the path that skips the
+    // planner and the verifier (`triage_outage_floor`). The subject of this
+    // test is the recorded reason, not the class.
+    assert_eq!(result.unwrap().class, TaskClass::SingleTask);
     assert_eq!(total, 0.0, "an unroutable triage buys nothing");
 
     let reasons = triage_degraded_reasons(&events);
@@ -531,4 +555,40 @@ fn the_default_triage_ceiling_is_the_one_the_doc_comment_describes() {
         Duration::from_secs(30),
         "triage's ceiling regressed away from the measured value (#2414, #2429)"
     );
+}
+
+/// A triage outage must not route the turn onto the path that skips the
+/// planner and the verifier.
+///
+/// The measured defect. On the 2026-08-10 TB2.1 panel, four of eight pipeline
+/// trials met a rate-limited triage call, fell to the keyword floor, and ran
+/// with NO management roles at all — `SimpleLookup` skips both the planner and
+/// the verifier, so a provider hiccup silently turned the staged pipeline into
+/// a bare loop that still paid the pipeline's overhead. The trials still
+/// scored; they simply were not measuring the pipeline, and nothing in the
+/// solve count could show it.
+///
+/// The goal here carries no keyword the floor recognises, which is the whole
+/// hazard: the floor's evidence is absent, not cheap, and absence of a
+/// classification is not evidence that a task is simple. `resolve_task_class`
+/// errs toward planning everywhere else; the outage path is where it did not.
+#[tokio::test]
+async fn a_triage_outage_never_routes_the_turn_below_single_task() {
+    let off_protocol = ScriptedProvider::new(vec![text_result("Sure — happy to help.")]);
+    let cases: [(&str, &dyn stella_protocol::Provider); 2] = [
+        ("a provider error", &ErrorProvider),
+        ("an off-protocol answer", &off_protocol),
+    ];
+    for (label, provider) in cases {
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (result, _, _) =
+            run_triage_only(provider, PipelineConfig::default(), &mut budget).await;
+        let class = result.expect("triage never fails the run").class;
+
+        assert!(
+            class >= TaskClass::SingleTask,
+            "{label}: an outage routed the turn to {class:?}, which skips the \
+             verifier — the pipeline would run as a bare loop"
+        );
+    }
 }
