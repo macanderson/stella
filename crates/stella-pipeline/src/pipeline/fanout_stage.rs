@@ -312,7 +312,7 @@ impl<'a> Pipeline<'a> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
         }
-        engine = self.attach(engine);
+        engine = self.attach(engine, FallbackPosture::ReResolve(worker.role));
         let view = fan.map(SteeringFanOut::candidate);
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
