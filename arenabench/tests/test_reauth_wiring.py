@@ -18,6 +18,7 @@ process group is a recorder, the keychain is a lambda, and the trials are
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -26,10 +27,11 @@ from typing import Any
 
 import pytest
 
-from arenabench import reap, reauth, reauth_wiring, runner as runner_mod
+from arenabench import reap, reauth_wiring
+from arenabench import runner as runner_mod
 from arenabench.model import MatchSpec
-from arenabench.registry import DEFAULT_REGISTRY
 from arenabench.reauth import SeatState
+from arenabench.registry import DEFAULT_REGISTRY
 from arenabench.runner import MatchRunner
 
 TASKS = ("alpha", "beta", "gamma")
@@ -424,6 +426,31 @@ class TestOnlyAVoidComesBack:
         self._rotate(made)
         made.trial("alpha", VOID, attempt="retry")
         assert made.tick() is True
+        assert made.seat_state is SeatState.PAUSED
+
+    def test_a_retry_reusing_a_trial_id_still_pauses_when_it_dies(self, rig) -> None:
+        """The under-pausing direction, which fails silently.
+
+        A re-dispatch writes into the same job directory, so whether a retry's
+        trial gets a fresh ``<task>__<attempt>`` name is Harbor's business, not
+        this repository's. If a generation keyed on that name were wrong, a
+        dead *new* credential would read as old news: the seat would never
+        pause, and would spend its whole budget re-dispatching against a token
+        that can never work — each round looking like progress in the ledger.
+
+        So the same identifier is reused here deliberately. What decides is
+        when the verdict was written.
+        """
+        made = rig()
+        made.start()
+        made.trial("alpha", VOID)  # attempt "a"
+        self._rotate(made)
+        # The retry lands on the very same trial id and dies the same way.
+        trial = made.trial("alpha", VOID)
+        stamp = time.time() + 5.0
+        os.utime(trial / "result.json", (stamp, stamp))
+
+        assert made.tick() is True, "a dead new credential read as old news"
         assert made.seat_state is SeatState.PAUSED
 
     def test_the_retry_does_not_truncate_the_dead_round_s_log(self, rig) -> None:

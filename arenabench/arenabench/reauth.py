@@ -67,7 +67,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from .telemetry import VOID_CREDENTIALS, MetricsReader
+from .telemetry import RESULT_NAME, VOID_CREDENTIALS, MetricsReader
 
 __all__ = [
     "PAUSE_GRACE_SECONDS",
@@ -146,9 +146,12 @@ class TrialView:
     status: str
     #: The Harbor error class name, or ``""`` when the trial did not fail.
     failure: str = ""
-    #: Harbor's trial directory name, ``<task>__<attempt>``. The identity a
-    #: caller needs to tell one dispatch's trials from another's.
+    #: Harbor's trial directory name, ``<task>__<attempt>``.
     trial: str = ""
+    #: When Harbor concluded this trial (``result.json``'s mtime), or ``None``
+    #: while it is still in flight. Read as a *time* rather than an identity
+    #: on purpose — see :attr:`superseded`.
+    concluded_at: float | None = None
     #: Whether this trial predates the credential currently dispatched.
     #:
     #: A void never leaves the disk, so without this the *first* tick after a
@@ -157,6 +160,17 @@ class TrialView:
     #: the retry seconds after starting it. The trial is still counted as
     #: evidence of what has been *measured*; it is no longer evidence about
     #: whether the live credential works.
+    #:
+    #: Decided by :attr:`concluded_at`, never by :attr:`trial`. A re-dispatch
+    #: writes into the *same job directory* (#2545), so a name-keyed generation
+    #: would be resting on Harbor's attempt suffixes never colliding — an
+    #: external tool's invariant, unverifiable from this repository, whose
+    #: breach fails in the silent direction: a genuinely dead new credential
+    #: would be filtered out as old and the seat would spend its whole retry
+    #: budget re-dispatching against a token that can never work, every round
+    #: reading as progress. A conclusion time is this repository's own
+    #: observation, and ties resolve toward *not* superseded, so ambiguity
+    #: pauses loudly instead of continuing quietly.
     superseded: bool = False
 
     @property
@@ -397,9 +411,23 @@ def read_trials(job_dir: Path, reader: MetricsReader | None = None) -> list[Tria
                 status=metrics.status,
                 failure=metrics.failure,
                 trial=entry.name,
+                concluded_at=_concluded_at(entry),
             )
         )
     return views
+
+
+def _concluded_at(trial_dir: Path) -> float | None:
+    """When Harbor wrote this trial's verdict, or ``None`` if it has not.
+
+    Deliberately the *verdict* file rather than the directory: a directory's
+    mtime moves every time anything inside it is written, so a trial still
+    streaming would keep looking freshly concluded.
+    """
+    try:
+        return (trial_dir / RESULT_NAME).stat().st_mtime
+    except OSError:
+        return None
 
 
 class TokenSource(Protocol):
@@ -554,12 +582,11 @@ class SupervisedSeat:
     supervisor: Supervisor
     #: Monotonic stamp of when this seat entered :attr:`SeatState.PAUSED`.
     paused_since: float | None = None
-    #: Trial directory names that were already on disk when the seat's current
-    #: credential was dispatched. See :attr:`TrialView.superseded`: they still
-    #: count as measurements, but they are no longer evidence about the live
-    #: token. Harbor names every attempt with a fresh suffix, so a retry's
-    #: trials are never in this set.
-    superseded: frozenset[str] = frozenset()
+    #: Wall clock at the moment this seat's current credential was dispatched,
+    #: or ``None`` for a seat still on its original launch (nothing can predate
+    #: that). Compared against :attr:`TrialView.concluded_at`, which is why it
+    #: has to be wall clock: it is measured against a filesystem mtime.
+    dispatched_at: float | None = None
     #: Why this seat is no longer supervised, or ``""`` while it still is.
     released: str = ""
     #: Whether that release left tasks unmeasured. A completed sweep and an
@@ -670,8 +697,14 @@ class MatchReauth:
     #: would ever reproduce.
     reader: MetricsReader = field(default_factory=MetricsReader)
     pause_grace: float = PAUSE_GRACE_SECONDS
-    #: Injected so a test can expire a pause without sleeping through one.
+    #: Elapsed time, for the pause grace. Injected so a test can expire a pause
+    #: without sleeping through one.
     clock: Callable[[], float] = time.monotonic
+    #: Instants comparable with a file's mtime, for
+    #: :attr:`SupervisedSeat.dispatched_at`. A second clock because it answers a
+    #: different question, and a monotonic reading is meaningless against a
+    #: filesystem timestamp.
+    wall: Callable[[], float] = time.time
     _noted: str = ""
 
     def tick(self, seat_running: Callable[[str], bool]) -> bool:
@@ -691,12 +724,19 @@ class MatchReauth:
         return pending
 
     def _advance(self, seat: SupervisedSeat, running: bool) -> bool:
-        views = read_trials(seat.job_dir, self.reader)
+        since = seat.dispatched_at
         try:
             step = seat.supervisor.tick(
                 (
-                    replace(view, superseded=view.trial in seat.superseded)
-                    for view in views
+                    replace(
+                        view,
+                        superseded=(
+                            since is not None
+                            and view.concluded_at is not None
+                            and view.concluded_at < since
+                        ),
+                    )
+                    for view in read_trials(seat.job_dir, self.reader)
                 ),
                 seat_running=running,
             )
@@ -710,10 +750,11 @@ class MatchReauth:
             return False
 
         if step.dispatch:
-            # Everything on disk now belongs to the credential that just died.
-            # Recorded after the launch rather than before it so a dispatch that
-            # raised leaves the generation untouched.
-            seat.superseded = frozenset(view.trial for view in views)
+            # Every verdict already on disk belongs to the credential that just
+            # died. Stamped after the launch returns, never before it: a
+            # dispatch that raised leaves the generation untouched, and a
+            # verdict written while the launch was in flight stays current.
+            seat.dispatched_at = self.wall()
 
         if step.state is SeatState.PAUSED:
             if seat.paused_since is None:

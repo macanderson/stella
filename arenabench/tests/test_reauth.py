@@ -156,7 +156,12 @@ def test_once_the_seat_is_stopped_the_unmeasured_tasks_are_dispatched():
 def test_a_completed_sweep_reports_complete_even_with_voids_on_the_record():
     step = decide(
         snap(
-            trials=(done("alpha"), done("beta", "AuthenticationError"), done("beta"), done("gamma")),
+            trials=(
+                done("alpha"),
+                done("beta", "AuthenticationError"),
+                done("beta"),
+                done("gamma"),
+            ),
             available_digest=credential_digest("fresh-token"),
             seat_running=False,
         )
