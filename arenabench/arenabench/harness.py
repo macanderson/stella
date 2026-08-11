@@ -175,12 +175,6 @@ TRANSCRIPT_GLOB = "agent/sessions/projects/**/*.jsonl"
 #: the entire cost of reading the file.
 _THINKING_MARK = '"thinking_tokens"'
 
-#: The same idea for Stella's stream, which is overwhelmingly streamed text
-#: and reasoning fragments. A miss costs one wasted `json.loads` and nothing
-#: else — the fold ignores both types — so matching raw bytes here can never
-#: change an answer, only a runtime.
-_STELLA_DELTA_MARKS = (b'"type":"reasoning"', b'"type":"text_delta"')
-
 #: Content-block types that mean the model asked for a tool.
 _TOOL_USE = "tool_use"
 
@@ -421,6 +415,18 @@ def _as_int(value: Any) -> int:
     return int(value)
 
 
+def _epoch_ms(value: Any) -> float | None:
+    """A journal ``ts`` — epoch milliseconds, stamped by the sink — or ``None``.
+
+    ``None`` for a line recorded before the field existed, which the wire
+    contract says a reader must tolerate forever
+    (``stella_protocol::journal``), and for anything that is not a number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def _usage_values(usage: dict[str, Any], fields: tuple[str, ...]) -> tuple[int, ...]:
     """One usage object as the four counters, in :data:`_USAGE_SLOTS` order."""
     return tuple(_as_int(usage.get(name)) for name in fields)
@@ -483,6 +489,12 @@ class _Fold(ABC):
         after every drain. "All four zero" is never published as a
         measurement: no real model call reports zero of everything, so the
         honest reading of it is :data:`USAGE_UNOBSERVED`.
+
+        The choice is per *source*, never per counter. Splicing one source's
+        output tokens onto another's input would publish a total that no
+        single source ever reported and that nothing on disk can be checked
+        against — and the observed defect is a gateway zeroing all four at
+        once, not one of them.
         """
         if any(self._primary_usage):
             chosen, source = self._primary_usage, USAGE_STREAM
@@ -778,10 +790,21 @@ class _StellaFold(_Fold):
         self._seen_models: list[str] = []
 
     def consume(self, lines: list[bytes]) -> None:
+        """Parse every line, deliberately — no substring fast path.
+
+        Stella's stream is mostly `reasoning` and `text_delta` fragments, and
+        skipping them on a raw-bytes match would be the obvious economy. It is
+        not available *safely* here: the journal stamps each line
+        ``{"ts":…,"type":…}`` (``stella_protocol::journal``), so a mark cannot
+        be anchored at the start of a line, and an unanchored one also matches
+        the same bytes appearing inside a tool result — an agent that prints a
+        journal, which on this project's own tasks is not hypothetical. The
+        cost of a false positive is a **lost** ``step_usage`` or
+        ``tool_result``; the cost of parsing is time, paid once per line
+        because the cursor never re-reads.
+        """
         for raw in lines:
             if not raw or not raw.lstrip().startswith(b"{"):
-                continue
-            if any(mark in raw for mark in _STELLA_DELTA_MARKS):
                 continue
             event = _parse(raw)
             if event is not None:
@@ -791,8 +814,7 @@ class _StellaFold(_Fold):
     def _apply(self, event: dict[str, Any]) -> None:
         totals = self.totals
         kind = event.get("type")
-        stamp = event.get("ts")
-        stamp = float(stamp) if isinstance(stamp, (int, float)) else None
+        stamp = _epoch_ms(event.get("ts"))
 
         if kind == "tool_start":
             call = event.get("call")

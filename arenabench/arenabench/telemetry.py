@@ -761,7 +761,7 @@ class MetricsReader:
         # `read_trial` can read. A Stella seat's behaviour is folded here by
         # `_reduce_events` already, and giving it a second reduction under
         # `harness`/`behaviour` would put two answers for one seat in one
-        # payload — tracked instead as its own change (#2519's follow-up).
+        # payload — tracked as its own change in #2850.
         harness = self._harness.read_arm(trial_dir, harness_mod.CLAUDE_CODE)
         if harness is not None:
             profile, totals = harness.profile, harness.totals

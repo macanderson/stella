@@ -62,7 +62,7 @@ import hashlib
 import os
 import time
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
@@ -138,7 +138,7 @@ def is_credential_void(failure: str) -> bool:
 
 @dataclass(frozen=True)
 class TrialView:
-    """One trial, reduced to the three facts a re-dispatch decision needs."""
+    """One trial, reduced to the facts a re-dispatch decision needs."""
 
     task: str
     #: ``pending`` | ``running`` | ``done`` — Harbor's own vocabulary, carried
@@ -146,6 +146,18 @@ class TrialView:
     status: str
     #: The Harbor error class name, or ``""`` when the trial did not fail.
     failure: str = ""
+    #: Harbor's trial directory name, ``<task>__<attempt>``. The identity a
+    #: caller needs to tell one dispatch's trials from another's.
+    trial: str = ""
+    #: Whether this trial predates the credential currently dispatched.
+    #:
+    #: A void never leaves the disk, so without this the *first* tick after a
+    #: successful re-dispatch reads the old void, finds the keychain offering
+    #: nothing newer than the token it just launched with, and pauses — killing
+    #: the retry seconds after starting it. The trial is still counted as
+    #: evidence of what has been *measured*; it is no longer evidence about
+    #: whether the live credential works.
+    superseded: bool = False
 
     @property
     def credential_void(self) -> bool:
@@ -221,8 +233,15 @@ class Snapshot:
         return tuple(task for task in self.tasks if task not in measured)
 
     def voided(self) -> tuple[str, ...]:
-        """Tasks whose trial died specifically on a credential fault."""
-        dead = {t.task for t in self.trials if t.credential_void}
+        """Tasks whose trial died on a credential fault *under this credential*.
+
+        Superseded trials are excluded, and the asymmetry with
+        :meth:`unmeasured` is the point: a measurement is permanent, while "the
+        credential is dead" is a statement about the one in flight. Counting an
+        already-answered void here makes a healthy re-dispatch look like a
+        fresh failure.
+        """
+        dead = {t.task for t in self.trials if t.credential_void and not t.superseded}
         return tuple(task for task in self.tasks if task in dead)
 
 
@@ -373,7 +392,12 @@ def read_trials(job_dir: Path, reader: MetricsReader | None = None) -> list[Tria
         task = entry.name.rsplit("__", 1)[0]
         metrics = reader.read(entry, task)
         views.append(
-            TrialView(task=task, status=metrics.status, failure=metrics.failure)
+            TrialView(
+                task=task,
+                status=metrics.status,
+                failure=metrics.failure,
+                trial=entry.name,
+            )
         )
     return views
 
@@ -530,6 +554,12 @@ class SupervisedSeat:
     supervisor: Supervisor
     #: Monotonic stamp of when this seat entered :attr:`SeatState.PAUSED`.
     paused_since: float | None = None
+    #: Trial directory names that were already on disk when the seat's current
+    #: credential was dispatched. See :attr:`TrialView.superseded`: they still
+    #: count as measurements, but they are no longer evidence about the live
+    #: token. Harbor names every attempt with a fresh suffix, so a retry's
+    #: trials are never in this set.
+    superseded: frozenset[str] = frozenset()
     #: Why this seat is no longer supervised, or ``""`` while it still is.
     released: str = ""
     #: Whether that release left tasks unmeasured. A completed sweep and an
@@ -661,9 +691,14 @@ class MatchReauth:
         return pending
 
     def _advance(self, seat: SupervisedSeat, running: bool) -> bool:
+        views = read_trials(seat.job_dir, self.reader)
         try:
             step = seat.supervisor.tick(
-                read_trials(seat.job_dir, self.reader), seat_running=running
+                (
+                    replace(view, superseded=view.trial in seat.superseded)
+                    for view in views
+                ),
+                seat_running=running,
             )
         except Exception as exc:
             # A re-dispatch that cannot launch (no Harbor, a broken SUT pin, a
@@ -673,6 +708,12 @@ class MatchReauth:
             # says so; the runner has already recorded the failed round.
             seat.release(f"re-dispatch failed: {exc}", shortfall=True)
             return False
+
+        if step.dispatch:
+            # Everything on disk now belongs to the credential that just died.
+            # Recorded after the launch rather than before it so a dispatch that
+            # raised leaves the generation untouched.
+            seat.superseded = frozenset(view.trial for view in views)
 
         if step.state is SeatState.PAUSED:
             if seat.paused_since is None:
