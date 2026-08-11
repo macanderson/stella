@@ -31,27 +31,71 @@ cleanup_dockerd() {
     [ -n "${JOB_SLUG:-}" ] && rm -rf "/scratch/$JOB_SLUG" 2>/dev/null || true
 }
 
-assert_sole_dockerd() {
-    # Batch runs EC2 jobs with ECS `networkMode: host`, so a second trial
-    # placed on this instance would share our network namespace — and
-    # Docker's filter chains are named globally within a namespace. The
-    # second dockerd then dies on `DOCKER-BRIDGE: Chain already exists`
-    # after a 60-second wait, reported as fifty lines of daemon log that
-    # name neither the neighbour nor the placement that created it.
+discard_dead_docker_chains() {
+    # Only ever reached while THIS trial holds the instance lock, so every
+    # DOCKER* chain in the shared namespace is residue from a trial that has
+    # already exited: `cleanup_dockerd` kills the daemon, and the daemon's
+    # iptables rules are not its to take with it. dockerd rebuilds what it
+    # needs at startup, so removing them restores the namespace to the state a
+    # first-on-this-instance trial finds.
+    for table in filter nat; do
+        iptables -w -t "$table" -S 2>/dev/null \
+            | awk '/^-N DOCKER/ { print $2 }' \
+            | while read -r chain; do
+                iptables -w -t "$table" -F "$chain" 2>/dev/null || true
+                iptables -w -t "$table" -X "$chain" 2>/dev/null || true
+            done
+    done
+}
+
+claim_instance_netns() {
+    # Batch runs EC2 jobs with ECS `networkMode: host`, so every trial placed
+    # on this instance shares one network namespace — and Docker's chains are
+    # named globally within a namespace. A second *concurrent* dockerd dies on
+    # `DOCKER-BRIDGE: Chain already exists` after a 60-second wait, reported as
+    # fifty lines of daemon log naming neither the neighbour nor the placement.
     #
-    # The job definition and both compute environments size a trial to the
-    # whole instance so this cannot happen; this is the backstop for the
-    # ways that guarantee can be bypassed anyway — a submit-time
-    # `--vcpus` override, a hand-written job definition, a compute
-    # environment edited to allow a larger instance type. Refusing here
-    # costs one iptables read and turns a mystifying crash into its cause.
-    if iptables -w -t filter -n -L DOCKER-BRIDGE >/dev/null 2>&1; then
-        log "FATAL: another dockerd already owns this network namespace."
-        log "  Batch uses host networking, so two trials on one instance"
-        log "  share it and only the first dockerd can start. Give this"
-        log "  trial the whole instance (4 vCPU on m6i.xlarge) or give each"
-        log "  dockerd its own netns. See TrialTopology in infra/core.yaml."
+    # This used to refuse whenever those chains existed, reasoning that the job
+    # definition sizes a trial to the whole instance, so only a bypass could
+    # produce them. That reasoning holds across SPACE and fails across TIME:
+    # Batch reuses a warm instance for the next trial, and the previous trial's
+    # chains are still there. On 2026-08-11 that took out 157 of 178 trials in
+    # one panel — the 16 placed first, each on a fresh instance, ran; every
+    # trial placed on a reused instance died in about five seconds. The guard
+    # was reading a dead neighbour's residue as a live neighbour.
+    #
+    # An exclusive lock on the instance-wide scratch volume answers the
+    # question the chains only hinted at, because the kernel drops it when the
+    # holder dies: held means a trial is running here NOW and the original
+    # refusal stands; free means whatever left those chains is gone.
+    if [ ! -d /scratch ]; then
+        # No shared volume, so no liveness signal — keep the conservative
+        # refusal rather than flushing chains that might belong to somebody.
+        if iptables -w -t filter -n -L DOCKER-BRIDGE >/dev/null 2>&1; then
+            log "FATAL: another dockerd already owns this network namespace,"
+            log "  and without /scratch there is no way to tell a live trial"
+            log "  from a finished one's leftovers. Mount the scratch volume"
+            log "  (see TrialTopology in infra/core.yaml), or give each dockerd"
+            log "  its own netns."
+            return 1
+        fi
+        return 0
+    fi
+    # fd 9 stays open for the life of this shell: the lock belongs to the
+    # trial, not to this function, and releasing it early would admit a
+    # neighbour while our dockerd is still running.
+    exec 9>>/scratch/.instance-netns.lock
+    if ! flock -n 9; then
+        log "FATAL: another trial is running on this instance right now."
+        log "  Batch uses host networking, so two concurrent trials share one"
+        log "  network namespace and only the first dockerd can start. Give"
+        log "  this trial the whole instance (4 vCPU on m6i.xlarge), or give"
+        log "  each dockerd its own netns. See TrialTopology in infra/core.yaml."
         return 1
+    fi
+    if iptables -w -t filter -n -L DOCKER-BRIDGE >/dev/null 2>&1; then
+        log "reclaiming the network namespace from a finished trial"
+        discard_dead_docker_chains
     fi
 }
 
@@ -80,7 +124,7 @@ prepare_cgroup2() {
 }
 
 start_dockerd() {
-    assert_sole_dockerd || return 1
+    claim_instance_netns || return 1
     prepare_cgroup2
     # Overlayfs cannot nest: with /var/lib/docker on the container's own
     # overlay root, the inner dockerd's mounts fail with EINVAL. The job
