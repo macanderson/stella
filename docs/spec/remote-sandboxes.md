@@ -583,8 +583,8 @@ instead of quietly making remote sessions unusable.
 ### 9.3 The ladder must abstain, not fail
 
 **This is the trap most likely to be walked into.** If the workspace is
-unreachable, the diff probe and the `file_change_events` channel must
-report `NothingAttempted` / `Unverifiable` — **never `passed: false`.**
+unreachable, the diff probe and the dispatch record must report
+`NothingAttempted` / `Unverifiable` — **never `passed: false`.**
 A network partition is not a failed verification, and collapsing the two
 is exactly the distinction the abstain rung exists to preserve. Every new
 `SandboxError` path that feeds the ladder needs a test pinning it to the

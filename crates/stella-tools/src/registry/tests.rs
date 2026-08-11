@@ -65,9 +65,11 @@ async fn unknown_tool_returns_error_not_panic() {
 /// The measured defect: over a 20-task Terminal-Bench run, 757 of 1,063
 /// tool calls were `bash` and the ledger recorded none of them, because
 /// `classify_file_op` can only read a tool's *input* and a shell command
-/// is an opaque string. With the diff probe dark on a non-git task
-/// directory, `file_change_events` is the only channel left that can
-/// prove the tree changed — so a blind ledger there is a blind ladder.
+/// is an opaque string — so the ledger, the Files tab, and the authored-diff
+/// channel were all blind to the tool doing nearly all of the work. (It was
+/// once also the ladder's only channel on a non-git task directory; #2873
+/// retired that read, because a tally of tool-declared touches is not an
+/// authority on what the tree did. The ledger still has to be right.)
 #[tokio::test]
 async fn a_file_written_by_the_shell_reaches_the_ledger() {
     let (root, reg) = bare_registry(None);

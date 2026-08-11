@@ -705,8 +705,20 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was read/created/modified/deleted by the agent, carrying both
-    /// the authoritative line delta and a diff for display.
+    /// A file was read/created/modified/deleted by the agent **through a
+    /// tool**, carrying both the authoritative line delta and a diff for
+    /// display.
+    ///
+    /// **Observability, never evidence.** This stream records what the agent
+    /// touched through tools whose *input* names a path; it is **not** a
+    /// complete record of workspace mutation, and nothing may found a claim
+    /// about what changed on counting it. `bash` names nothing — a heredoc, a
+    /// `patch`, a `make`, or a `>` redirect mutates the tree and emits no event
+    /// here, which on Terminal-Bench is most of the work. The authority on what
+    /// changed is the git diff of the tree, and a consumer that needs that
+    /// answer takes it from there (#2873, which removed the last three
+    /// decisions that read a count of these events; the tally survives as a
+    /// recorded-only field on `LadderSnapshot`).
     ///
     /// The single emission point is `ToolRegistry::record_touch` — the same
     /// place that writes the session's file-touch ledger and its telemetry
@@ -1093,7 +1105,10 @@ impl<'de> Deserialize<'de> for AgentEvent {
     }
 }
 
-/// What happened to a file in a `FileChange` event.
+/// What happened to a file in a [`AgentEvent::FileChange`] event — as declared
+/// by the tool that touched it, which is why [`Self::is_mutation`] answers
+/// "was this call a write" and never "did the tree change". See the variant's
+/// doc for the difference and why only git can answer the second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -1111,9 +1126,13 @@ pub enum FileChangeKind {
 }
 
 impl FileChangeKind {
-    /// Whether this kind mutated the file — what the pipeline's zero-diff
-    /// guard and inline transcript diffs key on. Reads are observability,
-    /// not change.
+    /// Whether the tool call that emitted this kind was a write — what the
+    /// inline transcript diffs and the files-touched panel key on. Reads are
+    /// listed here so one panel sees both; they carry `0/0` and no diff.
+    ///
+    /// A `true` here is not a licence to claim the tree changed: it is one
+    /// tool's declaration about one call, and the calls it cannot see are the
+    /// majority (see [`AgentEvent::FileChange`]).
     #[must_use]
     pub fn is_mutation(self) -> bool {
         !matches!(self, FileChangeKind::Read)

@@ -5,6 +5,7 @@
 use super::*;
 use proptest::prelude::*;
 
+mod tool_tally;
 mod uncollected;
 mod witness_strip;
 mod witness_unsatisfiable;
@@ -261,13 +262,23 @@ fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
     );
 }
 
-/// The single signal that rescues the blind case, and the one the bug
-/// suppressed: the recorder saw the tree change even though nothing could
-/// render *how*. That is real evidence, so the ladder must report the turn
-/// unproven rather than abstain — the two are different claims, and only the
-/// first is true when something positively saw the tree move.
+/// The signal that was supposed to rescue the blind case, and could not
+/// (#2873). `a_recorded_file_touch_is_evidence_even_with_no_readable_diff`
+/// stood here and asserted the opposite: that six recorded touches lift a turn
+/// with no readable diff off the abstain rung.
+///
+/// They do not, for two reasons that compound. A `FileChange` is emitted by a
+/// tool whose *input* names a path, so the count is a tally of what the agent
+/// declared through tools and not an observation of the tree — `bash` writes
+/// most of a Terminal-Bench task's files and emits nothing. And inside a
+/// candidate workspace the count is pinned at zero besides, so the rescue this
+/// test described was unreachable on every run that reached the ladder.
+///
+/// The turn is genuinely unobserved, and `Unverifiable` is the honest answer.
+/// What the run does with it is unchanged: both rungs are terminal, neither is
+/// a failure, and the work is not touched by either.
 #[test]
-fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
+fn a_recorded_file_touch_is_not_evidence_of_a_changed_tree() {
     let inputs = LadderInputs {
         flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
@@ -279,10 +290,10 @@ fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
         ..Default::default()
     };
     assert!(
-        !inputs.evidence_is_blind(),
-        "six observed mutations are not an absence of evidence"
+        inputs.evidence_is_blind(),
+        "no channel could observe this turn; a tool tally is not a channel"
     );
-    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverified);
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
 }
 
 /// A red test is a real observation, so a turn carrying one is never blind
@@ -444,6 +455,11 @@ fn a_blind_turn_that_did_act_still_abstains() {
 /// Any single positive observation outranks the no-op rung, whatever the
 /// dispatch count says. Something changed; something changed is a thing to
 /// explain, and this shortcut does not get to skip explaining it.
+///
+/// A recorded file touch was a fourth arm until #2873. It is not an
+/// independent observation: every `FileChange` is emitted from a mutating tool
+/// call, so a non-zero tally already implies a non-zero `mutating_actions` and
+/// the arm described a state the pipeline cannot produce.
 #[test]
 fn one_positive_observation_defeats_the_no_op_rung() {
     let base = LadderInputs {
@@ -458,10 +474,6 @@ fn one_positive_observation_defeats_the_no_op_rung() {
     };
     assert!(base.nothing_was_attempted());
 
-    let recorded_touch = LadderInputs {
-        file_change_events: 1,
-        ..base
-    };
     let visible_diff = LadderInputs {
         diff_lines: 12,
         ..base
@@ -475,7 +487,6 @@ fn one_positive_observation_defeats_the_no_op_rung() {
         ..base
     };
     for (label, inputs) in [
-        ("a recorded file touch", recorded_touch),
         ("a non-empty diff", visible_diff),
         ("a flip", flipped),
         ("a test result", tests_ran),

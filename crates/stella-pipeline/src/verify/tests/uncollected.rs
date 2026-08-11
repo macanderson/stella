@@ -65,16 +65,16 @@ fn effects_that_escaped_collection_abstain_rather_than_claim_a_clean_tree() {
 /// The guard rails on the rung: any single corroborating observation takes the
 /// turn back to a rung that can credit it. Abstention is for the state where
 /// *nothing* saw the work, not for every empty diff.
+///
+/// A recorded file touch used to be a third arm here, and it was pointing the
+/// wrong way (#2873). The premise of this rung is that git read the collected
+/// tree and found it unchanged; a tool tally saying "I wrote files" against
+/// that reading is evidence *for* the effects having landed elsewhere, not
+/// corroboration that they landed here. `tool_tally.rs` now pins the opposite
+/// assertion.
 #[test]
 fn one_corroborating_observation_lifts_the_turn_off_the_abstain_rung() {
     for (label, inputs) in [
-        (
-            "a recorded file touch proves the tree moved",
-            LadderInputs {
-                file_change_events: 3,
-                ..escaped()
-            },
-        ),
         (
             "a green test is an observation of the work",
             LadderInputs {

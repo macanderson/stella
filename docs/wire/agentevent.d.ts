@@ -315,7 +315,10 @@ export interface ContextUsage {
 }
 
 /**
- * What happened to a file in a `FileChange` event.
+ * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
+ * by the tool that touched it, which is why [`Self::is_mutation`] answers
+ * "was this call a write" and never "did the tree change". See the variant's
+ * doc for the difference and why only git can answer the second.
  */
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
