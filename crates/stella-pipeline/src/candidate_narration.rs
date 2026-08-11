@@ -118,15 +118,20 @@ pub(crate) fn candidate_winner_notice(best_idx: usize, n: u32, ran: u32) -> Opti
 pub(crate) fn messages_rooted_at(
     base: &[CompletionMessage],
     workspace: Option<&dyn crate::ports::CandidateWorkspace>,
+    session_root: &str,
 ) -> Vec<CompletionMessage> {
     let mut messages = base.to_vec();
     if let Some(ws) = workspace {
         let root = ws.root();
         let mut notice = format!(
             "Workspace: your tools and shell are rooted at `{root}`, an isolated \
-             snapshot of the project. Absolute paths in the task above name the \
-             original tree; resolve them against this root instead \
-             (`/x/y` -> `{root}/x/y`).\n\
+             snapshot of the project. The project's own root is `{session_root}`, and \
+             this root is a copy of it — so a task path beginning with \
+             `{session_root}` names a file HERE at the same path with that prefix \
+             REPLACED, not appended: `{session_root}/x/y` is `{root}/x/y`. A relative \
+             task path is relative to this root. Absolute paths to the MACHINE rather \
+             than to the project (`/bin/sh`, `/usr/bin/openssl`) mean what they say and \
+             are not rewritten.\n\
              Your work is collected for you: if this turn is chosen, everything you \
              changed inside this root is applied to the real project automatically, \
              at the paths the task names. You never need to copy, move, or install \
@@ -249,7 +254,7 @@ mod tests {
             CompletionMessage::user("write vm.js to /app"),
         ];
         let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_64_0");
-        let rooted = messages_rooted_at(&base, Some(&ws));
+        let rooted = messages_rooted_at(&base, Some(&ws), "/app");
 
         assert_eq!(
             rooted.len(),
@@ -284,8 +289,11 @@ mod tests {
     #[test]
     fn an_isolated_candidate_is_told_its_work_is_adopted_for_it() {
         let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0");
-        let rooted =
-            messages_rooted_at(&[CompletionMessage::user("write vm.js to /app")], Some(&ws));
+        let rooted = messages_rooted_at(
+            &[CompletionMessage::user("write vm.js to /app")],
+            Some(&ws),
+            "/app",
+        );
         let notice = &rooted[1].content;
 
         assert!(
@@ -310,7 +318,7 @@ mod tests {
     #[test]
     fn a_shared_tree_candidate_is_told_nothing() {
         let base = vec![CompletionMessage::user("goal")];
-        assert_eq!(messages_rooted_at(&base, None), base);
+        assert_eq!(messages_rooted_at(&base, None, "/app"), base);
     }
 
     /// The failure this prevents: `npm test` dies on a missing module, in a
@@ -322,7 +330,7 @@ mod tests {
         let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0")
             .missing(&["node_modules/", ".venv/"]);
 
-        let notice = messages_rooted_at(&base, Some(&ws))
+        let notice = messages_rooted_at(&base, Some(&ws), "/app")
             .pop()
             .expect("a notice is appended")
             .content;
@@ -342,7 +350,7 @@ mod tests {
         let base = vec![CompletionMessage::user("goal")];
         let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_1");
 
-        let notice = messages_rooted_at(&base, Some(&ws))
+        let notice = messages_rooted_at(&base, Some(&ws), "/app")
             .pop()
             .expect("a notice is appended")
             .content;
@@ -395,5 +403,57 @@ mod tests {
     #[test]
     fn a_sequential_fan_out_promises_no_concurrency() {
         assert!(candidate_fanout_notice(3, 1).is_none());
+    }
+
+    /// #2206: the notice teaches STRIP-then-join, never concatenation.
+    ///
+    /// This is the defect verbatim, and the issue understates it: the notice did
+    /// not merely fail to state the mapping, it stated the wrong one. The rule was
+    /// `` `/x/y` -> `{root}/x/y` ``, which is correct only when the session root is
+    /// `/`. With session root `/app` and candidate root `/tmp/stella_candidate_7_0`
+    /// it sends the goal's `/app/ssl/server.crt` to
+    /// `/tmp/stella_candidate_7_0/app/ssl/server.crt` — one directory too deep. The
+    /// worker in match `cc00894779ff` did exactly what it was told, and the
+    /// deliverable landed where nothing graded it.
+    ///
+    /// The sibling role already had this right: `WITNESS_SYSTEM_PROMPT` says "If the
+    /// goal names a file absolutely, strip the project root and assert on the
+    /// remainder." Two roles, two rules, one of them wrong — so this test pins the
+    /// two together by asserting the concatenated form is absent.
+    #[test]
+    fn the_candidate_is_told_to_strip_the_session_root_not_paste_it() {
+        let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0");
+        let rooted = messages_rooted_at(
+            &[CompletionMessage::user("create /app/ssl/server.crt")],
+            Some(&ws),
+            "/app",
+        );
+        let notice = &rooted[1].content;
+
+        // The load-bearing assertion: the concatenated frame must not appear
+        // anywhere, in any example the notice gives.
+        assert!(
+            !notice.contains("/tmp/stella_candidate_7_0/app"),
+            "the notice teaches the concatenated frame, which is the #2206 defect: {notice}"
+        );
+        // The decisive assertion, and the one a generic example cannot satisfy:
+        // the notice must show the SESSION root as the prefix being replaced.
+        // The old rule read `` `/x/y` -> `{root}/x/y` `` — it never named the
+        // session root at all, which is precisely why it could not express
+        // strip-then-join and expressed concatenation instead.
+        assert!(
+            notice.contains("/app/x/y"),
+            "the substitution must be shown with the session root as the prefix \
+             being replaced, not a bare `/x/y`: {notice}"
+        );
+        assert!(
+            notice.contains("/tmp/stella_candidate_7_0/x/y"),
+            "...and with the candidate root as what it becomes: {notice}"
+        );
+        // And the machine carve-out, so a goal naming /etc or /usr is not rewritten.
+        assert!(
+            notice.contains("/bin/sh") || notice.contains("MACHINE"),
+            "an absolute path to the machine is not a project path: {notice}"
+        );
     }
 }

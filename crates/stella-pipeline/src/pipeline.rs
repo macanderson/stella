@@ -1925,6 +1925,12 @@ impl<'a> Pipeline<'a> {
             messages: candidate_narration::messages_rooted_at(
                 frame.base_messages,
                 surface.workspace,
+                // The SESSION's root, never the candidate snapshot's — it is the
+                // prefix the GOAL's absolute paths are written against, and the
+                // one the notice tells the worker to strip. `witness_stage`
+                // threads the same value into `witness_prompt` for the author
+                // role, so the two roles read one fact from one place (#2206).
+                &self.config.engine.cwd,
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
