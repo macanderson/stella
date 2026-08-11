@@ -58,6 +58,7 @@ pub mod scratch;
 pub mod screenshot;
 pub mod scripts;
 pub mod shell_touch;
+pub mod skill_grant;
 pub mod staleness;
 pub mod subagent;
 /// Shared environment policy for every subprocess that can execute model- or

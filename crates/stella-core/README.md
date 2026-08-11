@@ -102,7 +102,7 @@ lib.rs), never as a planning assumption.
 | [`src/driver.rs`](src/driver.rs) | `Engine`, `EngineConfig`, `TurnOutcome`, `run_turn`. The one file that sequences every other module against real I/O. Start here. |
 | [`src/driver/settlement.rs`](src/driver/settlement.rs) | The between-steps budget check and `BudgetTick`/warning emission, split out of the step loop. |
 | [`src/waiting.rs`](src/waiting.rs) + [`src/driver/waiting.rs`](src/driver/waiting.rs) | Parked waits (#1471): the pure change/deadline decision logic and `WaitRequest` types, and the driver's park loop that probes through the existing ports with zero model calls. |
-| [`src/ports.rs`](src/ports.rs) | The port boundary: `ToolExecutor`, `ReadOnlyTools`, `Clock`, `TurnGate`, `TurnSteering`. |
+| [`src/ports.rs`](src/ports.rs) | The port boundary: `ToolExecutor`, `ReadOnlyTools`, `GrantedTools`, `Clock`, `TurnGate`, `TurnSteering`. |
 | [`src/budget.rs`](src/budget.rs) | `BudgetGuard` — USD spend against a turn and/or session cap. Returns `BudgetOutcome`; aborts nothing itself. |
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
@@ -117,7 +117,7 @@ lib.rs), never as a planning assumption.
 | [`src/bus.rs`](src/bus.rs) | The in-process extension bus: observers (`emit`) and policy hooks (`emit_blocking`) over a dotted event-name catalog. |
 | [`src/hooks.rs`](src/hooks.rs) | Settings-declared *shell* hooks — `SessionStart`/`PreToolUse`/`PostToolUse` matching and blocking decisions. |
 | [`src/rules.rs`](src/rules.rs) | Rules engine: loading, precedence merge, Tier-1 rendering, Tier-2 `evaluate_guards`, candidate mining. |
-| [`src/skills.rs`](src/skills.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary. |
+| [`src/skills.rs`](src/skills.rs), [`src/skills/invoke.rs`](src/skills/invoke.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary — plus the invocation vocabulary (#2682): the `invoke_skill` directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). |
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
 | [`src/discovery.rs`](src/discovery.rs) | The ranker behind `tool_search`/`skill_search`/`mcp_search`: `select:` lookups, `+required` terms, field-weighted scoring. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |

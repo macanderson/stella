@@ -283,7 +283,9 @@ impl SessionSubAgents {
     }
 
     /// Build the dispatcher and hand it to the registry, so the `task` tool
-    /// stops reporting sub-agents as unavailable.
+    /// stops reporting sub-agents as unavailable. Also returned, so callers
+    /// can hand the same runner to the session layers that dispatch children
+    /// outside the native registry (`invoke_skill`'s fork mode, #2682).
     ///
     /// One call per session, next to where the registry is built. Kept a
     /// free function rather than folded into `ToolRegistry::new` because the
@@ -295,10 +297,11 @@ impl SessionSubAgents {
         config: EngineConfig,
         mode: stella_protocol::BudgetMode,
         pool_limit_usd: Option<f64>,
-    ) {
-        let dispatcher =
+    ) -> Arc<dyn SubAgentDispatcher> {
+        let dispatcher: Arc<dyn SubAgentDispatcher> =
             Arc::new(Self::new(provider, registry, config, mode).with_pool_limit(pool_limit_usd));
-        registry.attach_sub_agent_dispatcher(dispatcher);
+        registry.attach_sub_agent_dispatcher(dispatcher.clone());
+        dispatcher
     }
 }
 
@@ -318,15 +321,14 @@ impl SessionSubAgents {
 pub fn install_for_session(
     cfg: &crate::config::Config,
     registry: &Arc<ToolRegistry>,
-) -> Result<(), String> {
-    SessionSubAgents::install(
+) -> Result<Arc<dyn SubAgentDispatcher>, String> {
+    Ok(SessionSubAgents::install(
         Arc::from(crate::agent::build_provider(cfg)?),
         registry,
         crate::agent::engine_config_for(cfg),
         stella_protocol::BudgetMode::Observed,
         session_pool_limit_usd(),
-    );
-    Ok(())
+    ))
 }
 
 /// The sub-agent pool ceiling a session installs when nothing overrides it.

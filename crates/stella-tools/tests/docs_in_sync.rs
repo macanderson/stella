@@ -302,10 +302,10 @@ fn session_tool_count_prose_matches_the_catalog() {
 
     let session = catalog::names_where(|a| a == Availability::Session).len();
     let spelled = match session {
-        6 => "**six**",
+        7 => "**seven**",
         n => panic!(
             "the session-tool count changed to {n} — update the prose in \
-             {INDEX} (\"layers **six** more tools\", \"plus the six session \
+             {INDEX} (\"layers **seven** more tools\", \"plus the seven session \
              tools\") and this test's spelling table"
         ),
     };
@@ -314,7 +314,7 @@ fn session_tool_count_prose_matches_the_catalog() {
         "{INDEX} no longer spells the session-tool count as {spelled}"
     );
     assert!(
-        index.contains("plus the six session tools"),
+        index.contains("plus the seven session tools"),
         "{INDEX} no longer spells the session-tool count in the summary line"
     );
 }

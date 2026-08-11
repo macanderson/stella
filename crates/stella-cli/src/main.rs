@@ -71,6 +71,7 @@ mod ingest_cmd;
 mod init_fx;
 mod inspect;
 mod interactive;
+mod invoke_skill;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;

@@ -181,6 +181,62 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     // the same view refuses would be an empty promise.
 }
 
+/// A name-scoped view over another executor: advertises and executes only
+/// an explicitly granted set of tool names, refusing everything else at
+/// execution time — the same structural-enforcement shape as
+/// [`ReadOnlyTools`], pointed at a *grant* instead of a mutability class.
+///
+/// This is how a forked skill's `allowed-tools` frontmatter reaches a child
+/// turn (#2682): the caller resolves the grant to concrete advertised names
+/// (groups and policy algebra live in `stella-tools::skill_grant`, which this
+/// crate must not import) and the child runs behind this view. It only ever
+/// narrows — a name the inner executor does not advertise stays unavailable
+/// whatever the grant says, so a grant can never re-enable a tool an
+/// operator or org scope denied below.
+pub struct GrantedTools<'a> {
+    inner: &'a dyn ToolExecutor,
+    granted: std::collections::HashSet<String>,
+}
+
+impl<'a> GrantedTools<'a> {
+    pub fn new(inner: &'a dyn ToolExecutor, granted: &[String]) -> Self {
+        Self {
+            inner,
+            granted: granted.iter().cloned().collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for GrantedTools<'_> {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        self.inner
+            .schemas()
+            .into_iter()
+            .filter(|s| self.granted.contains(&s.name))
+            .collect()
+    }
+
+    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+        if !self.granted.contains(name) {
+            return ToolOutput::Error {
+                message: format!(
+                    "`{name}` is not available here: this context is scoped to an \
+                     explicitly granted tool set (a skill's allowed-tools)"
+                ),
+            };
+        }
+        self.inner.execute(name, input).await
+    }
+
+    /// Forwarded, not zeroed, for the same reason as [`ReadOnlyTools`]: a
+    /// grandchild dispatched behind this view still settles into the carve
+    /// that bounds it.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
+    }
+}
+
 /// Time source, injectable for deterministic tests. Only the trait lives
 /// here — the production implementation belongs to the binary that wires
 /// the engine (the CLI's `runtime` module), so `stella-core` never carries

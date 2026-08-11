@@ -177,6 +177,11 @@ pub struct DiscoveryToolSet<'a> {
     lean: Option<LeanConfig>,
     activated: ActivatedTools,
     include_workspace_skills: bool,
+    /// The `invoke_skill` session tool (#2682) — mounted here because this
+    /// is the layer that already owns `skill_search`, and an invocation's
+    /// allowed-tools grant must scope the same complete surface discovery
+    /// sees.
+    invoke: crate::invoke_skill::InvokeSkillTools,
 }
 
 impl<'a> DiscoveryToolSet<'a> {
@@ -189,11 +194,41 @@ impl<'a> DiscoveryToolSet<'a> {
             registry: Box::new(HttpMcpRegistrySearch {
                 workspace_root: workspace_root.clone(),
             }),
+            invoke: crate::invoke_skill::InvokeSkillTools::new(workspace_root.clone()),
             workspace_root,
             lean: lean_from_env(),
             activated: new_activation(),
             include_workspace_skills: false,
         }
+    }
+
+    /// Attach the session's sub-agent runner so `context: fork` skills can
+    /// run (#2682). Without it fork-mode invocations are refused by name.
+    #[must_use]
+    pub fn with_sub_agent_dispatcher(
+        self,
+        dispatcher: std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+    ) -> Self {
+        self.invoke.set_dispatcher(dispatcher);
+        self
+    }
+
+    /// The inline-invocation injection queue — wire it into the turn's
+    /// steering and arm it so expansions land as tail user-role messages
+    /// (see `crate::invoke_skill::SkillInjections`).
+    #[must_use]
+    pub fn skill_injections(&self) -> crate::invoke_skill::SkillInjections {
+        self.invoke.injections()
+    }
+
+    /// Live skill invocations — the overflow summarizer's protection seam
+    /// (#2685).
+    // dead_code: the consumer is #2685's summarizer span hook (next wave);
+    // the handle is exposed from the mount now so that wiring is one line.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn active_skill_invocations(&self) -> stella_core::skills::invoke::ActiveSkillInvocations {
+        self.invoke.active_invocations()
     }
 
     /// Add workspace skill definitions only when the effective prompt-source
@@ -265,6 +300,8 @@ impl<'a> DiscoveryToolSet<'a> {
         if crate::settings::filesystem_settings_disabled() {
             return schemas;
         }
+        // Skills are searchable AND invocable from the same layer (#2682).
+        schemas.push(self.invoke.schema());
         schemas.extend([
             ToolSchema {
                 name: SKILL_SEARCH.into(),
@@ -764,13 +801,28 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
             schemas.retain(|s| lean.core.contains(&s.name) || activated.contains(&s.name));
         }
         schemas.extend(self.discovery_schemas());
+        // A live skill's allowed-tools grant narrows the whole advertised
+        // surface, this layer's own tools included (#2682).
+        self.invoke.filter_schemas(&mut schemas);
         schemas
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+        // Unlike lean hiding below, an allowed-tools grant IS a capability
+        // gate: it holds when the model calls a withheld name anyway. The
+        // operator's own policy is enforced by the PolicyToolSet beneath us,
+        // so the effective surface is structurally grant ∩ operator.
+        if let Some(refusal) = self.invoke.grant_refusal(name) {
+            return refusal;
+        }
         match name {
             TOOL_SEARCH => self.execute_tool_search(input).await,
             SKILL_SEARCH => self.execute_skill_search(input).await,
+            crate::invoke_skill::INVOKE_SKILL => {
+                self.invoke
+                    .execute(input, self.inner, self.include_workspace_skills)
+                    .await
+            }
             MCP_SEARCH => self.execute_mcp_search(input).await,
             // Deliberately permissive in lean mode: a hidden tool called by
             // name still executes — hiding is a prompt-budget measure, never

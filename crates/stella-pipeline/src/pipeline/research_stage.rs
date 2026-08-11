@@ -128,6 +128,11 @@ impl Pipeline<'_> {
                     // contract); the pipeline dispatches from the top level.
                     depth: 1,
                     compaction_budget_tokens: None,
+                    // Research children inherit the parent's effort and the
+                    // full tool surface — the #2682 narrowing fields are for
+                    // forked skills, not the pipeline's own fan-out.
+                    effort: None,
+                    allowed_tools: None,
                 };
                 // The ceiling is per child, INSIDE the future, so a timed-out
                 // child settles its spend through the sub-agent primitive's

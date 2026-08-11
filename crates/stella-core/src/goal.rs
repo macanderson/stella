@@ -376,6 +376,10 @@ impl Engine<'_> {
             turn_instance,
             depth: 1,
             compaction_budget_tokens: None,
+            // The judge inherits the loop's effort and full read-only
+            // surface — no skill directives apply here (#2682).
+            effort: None,
+            allowed_tools: None,
         };
 
         match self
