@@ -1139,7 +1139,7 @@ pub fn evidence_demand_is_worth_a_turn(
 ///
 /// **It states only what was observed, and observation here is exhausted.**
 /// Nothing reviewed this change: the model verdict was removed in #2584 and
-/// [`crate::roster::ModelCallRole::Verdict`] is unassignable, so the arm that
+/// [`stella_protocol::ModelCallRole::Verdict`] is unassignable, so the arm that
 /// sends this text (`Pipeline::verify_candidate`'s
 /// [`LadderDecision::Unverified`]) is reached only after every deterministic
 /// channel has come back empty. An opening that told the worker its work "was
