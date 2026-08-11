@@ -129,8 +129,8 @@ impl HookAction {
 
 /// Groups hook actions under a tool-name pattern (TS: `HookMatcher`). For
 /// `PreToolUse`/`PostToolUse`, `matcher` is a glob over the tool name
-/// (e.g. `"bash"`, `"write_file"`, `"*"`). For `SessionStart` it is
-/// ignored — every action runs.
+/// (e.g. `"bash"`, `"write_file"`, `"*"`). The non-tool-scoped events
+/// (`SessionStart`, `Stop`, `PreCompact`) ignore it — every action runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookMatcher {
     #[serde(skip_serializing_if = "Option::is_none")]
