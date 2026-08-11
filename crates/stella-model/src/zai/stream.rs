@@ -210,22 +210,28 @@ fn announce_completed_below(
     }
 }
 
+/// Everything one assembled SSE body yields. A named struct rather than the
+/// tuple this used to return: the fifth and sixth members are both optional
+/// gateway-only metadata, and at that width a positional result invites the
+/// exact mix-up it cannot catch.
+pub(super) struct ZaiStreamOutcome {
+    pub text: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub usage: CompletionUsage,
+    pub finish_reason: Option<FinishReason>,
+    /// The gateway's own cost accounting, authoritative over list pricing.
+    pub reported_cost_usd: Option<f64>,
+    /// The upstream the gateway routed to, when it names one.
+    pub upstream_provider: Option<String>,
+}
+
 pub(super) async fn aggregate_zai_stream(
     response: reqwest::Response,
     label: &str,
     observer: Option<&dyn ToolCallObserver>,
     pricing: Option<&Pricing>,
     first_byte: Duration,
-) -> Result<
-    (
-        String,
-        Vec<ToolCall>,
-        CompletionUsage,
-        Option<FinishReason>,
-        Option<f64>,
-    ),
-    StreamFault,
-> {
+) -> Result<ZaiStreamOutcome, StreamFault> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
     // Chain-of-thought streamed under `reasoning_content`, kept separate from
@@ -242,6 +248,7 @@ pub(super) async fn aggregate_zai_stream(
     // final usage frame. `None` when the endpoint doesn't report one.
     let mut reported_cost_usd: Option<f64> = None;
     let mut usage_seen = false;
+    let mut upstream_provider: Option<String> = None;
     let mut terminal_seen = false;
     // The first body read runs against the (shorter) first-byte deadline
     // rather than the inter-fragment idle bound: a response that has sent
@@ -346,6 +353,13 @@ pub(super) async fn aggregate_zai_stream(
             if let Some(u) = parsed.usage {
                 usage_seen = true;
                 fold_usage(u, &mut usage, &mut reported_cost_usd);
+            }
+            // The gateway repeats its upstream on every chunk; first one wins,
+            // so a stream cut before its usage frame still records who served
+            // it. Kept out of `fold_usage` deliberately — that folds the usage
+            // envelope, and this rides the chunk itself.
+            if upstream_provider.is_none() {
+                upstream_provider = parsed.provider;
             }
             for choice in parsed.choices {
                 if choice.finish_reason.as_deref() == Some("length") {
@@ -502,5 +516,12 @@ pub(super) async fn aggregate_zai_stream(
 
     let finish_reason = final_finish_reason(truncated_at_token_limit, !calls.is_empty());
 
-    Ok((text, calls, usage, finish_reason, reported_cost_usd))
+    Ok(ZaiStreamOutcome {
+        text,
+        tool_calls: calls,
+        usage,
+        finish_reason,
+        reported_cost_usd,
+        upstream_provider,
+    })
 }

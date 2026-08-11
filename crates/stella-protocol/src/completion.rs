@@ -484,6 +484,24 @@ pub struct CompletionResult {
     /// serialized before this field existed still parse.
     #[serde(default)]
     pub finish_reason: Option<FinishReason>,
+    /// The upstream that actually served this call, when the endpoint is a
+    /// *gateway* that routes to somebody else's silicon and names it in the
+    /// response (OpenRouter's top-level `provider`).
+    ///
+    /// `None` on every direct endpoint, where the provider id already answers
+    /// "who served this?" — Anthropic-direct is served by Anthropic. Only a
+    /// gateway can make that question unanswerable, and one did: a probe
+    /// carrying Stella's own attribution asked OpenRouter for
+    /// `anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no
+    /// trace could show because the adapter recorded the gateway and threw the
+    /// upstream away. A head-to-head is only controlled if the model
+    /// *provider* is held fixed, so an unrecorded upstream is an uncontrolled
+    /// variable hiding inside a field that reads as though it were pinned.
+    ///
+    /// It rides here rather than in [`CompletionUsage`] because usage is a
+    /// `Copy` envelope of counters; this is call metadata, like `model`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_provider: Option<String>,
 }
 
 #[cfg(test)]
@@ -527,6 +545,7 @@ mod tests {
             model: "glm-5.2".into(),
             cost_usd: 0.0012,
             finish_reason: None,
+            upstream_provider: Some("Amazon Bedrock".into()),
         };
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(
@@ -536,6 +555,7 @@ mod tests {
         let back: CompletionResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.model, "glm-5.2");
         assert_eq!(back.usage.input_tokens, 100);
+        assert_eq!(back.upstream_provider.as_deref(), Some("Amazon Bedrock"));
     }
 
     #[test]

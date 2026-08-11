@@ -179,6 +179,7 @@ async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
     // carried a tool call proceeds normally — and used to retain its whole
     // cut-off narration as protected assistant text beside the call.
     let truncated_with_call = CompletionResultAlias {
+        upstream_provider: None,
         text: huge_partial(),
         tool_calls: vec![ToolCall {
             call_id: "c1".into(),

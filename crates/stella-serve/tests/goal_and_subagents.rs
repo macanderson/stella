@@ -20,6 +20,7 @@ use stella_serve::{
 
 fn answer(text: &str) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: text.to_string(),
         tool_calls: vec![],
         usage: CompletionUsage {
@@ -34,6 +35,7 @@ fn answer(text: &str) -> CompletionResult {
 
 fn wants_tool(call_id: &str, name: &str, input: serde_json::Value) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.to_string(),

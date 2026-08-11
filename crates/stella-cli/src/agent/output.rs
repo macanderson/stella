@@ -441,6 +441,7 @@ mod durable_stream_tests {
             name: stella_protocol::StageKind::Execute,
         };
         let usage = AgentEvent::StepUsage {
+            upstream_provider: None,
             reasoning_tokens: None,
             step: 0,
             role: stella_protocol::ModelCallRole::Worker,

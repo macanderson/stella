@@ -319,6 +319,7 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
     w.apply_inbound(&ev(
         "lead",
         AgentEvent::StepUsage {
+            upstream_provider: None,
             output_text: None,
             step: 1,
             role: stella_protocol::ModelCallRole::Worker,
@@ -411,6 +412,7 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));
     let step = |input: u64| AgentEvent::StepUsage {
+        upstream_provider: None,
         output_text: None,
         step: 1,
         role: stella_protocol::ModelCallRole::Worker,
@@ -445,6 +447,7 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
 #[test]
 fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
     let step = |cost_usd: f64| AgentEvent::StepUsage {
+        upstream_provider: None,
         output_text: None,
         step: 1,
         role: stella_protocol::ModelCallRole::Worker,

@@ -49,6 +49,7 @@ impl Provider for HealthyPrimary {
         _req: stella_protocol::CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "done".to_string(),
             tool_calls: Vec::new(),
             usage: stella_protocol::CompletionUsage::default(),

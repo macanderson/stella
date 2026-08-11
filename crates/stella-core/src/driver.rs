@@ -1799,6 +1799,7 @@ impl<'a> Engine<'a> {
             step,
             role: self.call_role,
             provider: self.active_provider().id().to_string(),
+            upstream_provider: result.upstream_provider.clone(),
             // The engine's own step already streams its answer as a `Text`
             // event; duplicating it here would double the transcript.
             output_text: None,

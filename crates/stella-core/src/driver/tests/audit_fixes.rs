@@ -1182,6 +1182,7 @@ impl Provider for MultiAnnounceProvider {
             tokio::task::yield_now().await;
         }
         Ok(CompletionResultAlias {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: self.commit.clone(),
             usage: CompletionUsage::reported_zero(),

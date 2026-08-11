@@ -36,6 +36,12 @@ struct ZaiUnaryResponse {
     choices: Vec<ZaiUnaryChoice>,
     #[serde(default)]
     usage: Option<ZaiUsage>,
+    /// The upstream OpenRouter routed to — see the sibling field on
+    /// `ZaiStreamChunk`. The unary path carries it too, and must record it
+    /// too: the stream→unary fallback (#2686) means a measured run can serve
+    /// some of its calls through this path without anyone choosing that.
+    #[serde(default)]
+    provider: Option<String>,
     /// Defensive: a gateway that reports an error inside a 200 body (the
     /// unary sibling of the in-band SSE error frame). Classified by the same
     /// shared classifier so the two paths agree on retryability.
@@ -194,6 +200,10 @@ impl ZaiProvider {
             model: self.model.clone(),
             cost_usd,
             finish_reason,
+            // Read off the envelope, not the usage frame: a gateway names its
+            // upstream on the response itself, so a call whose usage frame
+            // never arrived can still say who served it.
+            upstream_provider: parsed.provider,
         })
     }
 }

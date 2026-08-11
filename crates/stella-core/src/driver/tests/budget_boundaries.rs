@@ -36,6 +36,7 @@ impl Provider for BilledResultWithBlockedSpeculation {
         observer.tool_call_streamed(&call);
         self.provider_completed.notify_one();
         Ok(CompletionResultAlias {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![call],
             usage: CompletionUsage {

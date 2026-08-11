@@ -74,6 +74,7 @@ impl Provider for TwoSpawnsThenDone {
             ("done".to_string(), Vec::new())
         };
         Ok(CompletionResult {
+            upstream_provider: None,
             text,
             tool_calls,
             usage: CompletionUsage::reported_zero(),
@@ -162,6 +163,7 @@ impl Provider for SpawnEditSpawn {
         _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![
                 ToolCall {

@@ -58,6 +58,7 @@ impl Provider for CrossedTriggers {
         _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: r#"{"lessons": [
                 {"lesson": "money is stored in integer minor units, so a retry that re-reads a total must not divide",
                  "trigger": "the terminal resize path drops a redraw",
@@ -199,6 +200,7 @@ async fn a_paraphrase_under_a_new_trigger_is_still_a_restatement() {
             _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
+                upstream_provider: None,
                 // Every token of the stored ledger lesson bar one, so the pair
                 // is comfortably over the 0.5 Jaccard bar on bodies alone —
                 // and a trigger that shares nothing with the stored one, which

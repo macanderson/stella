@@ -125,6 +125,7 @@ impl ToolExecutor for MixedTools {
 
 fn text_result(text: &str, cost: f64) -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: text.into(),
         tool_calls: vec![],
         usage: CompletionUsage {
@@ -141,6 +142,7 @@ fn tool_call_result(name: &str, call_id: &str, cost: f64) -> CompletionResult {
     // `call_id` doubles as the argument so consecutive calls differ — see
     // `MixedTools::execute` on why identical calls are a loop, not a fixture.
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.into(),
@@ -601,6 +603,7 @@ async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
         Ok(CompletionResult {
+            upstream_provider: None,
             text: "partial finding: it is in retry.rs".into(),
             tool_calls: vec![ToolCall {
                 call_id: "c1".into(),

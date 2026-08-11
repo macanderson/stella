@@ -443,6 +443,7 @@ fn a_tool_calls_arguments_are_shown_because_the_argument_is_often_the_mistake() 
 
 fn step_usage(step: usize, role: ModelCallRole, cost_usd: f64, duration_ms: u64) -> AgentEvent {
     AgentEvent::StepUsage {
+        upstream_provider: None,
         step,
         role,
         provider: "anthropic".into(),

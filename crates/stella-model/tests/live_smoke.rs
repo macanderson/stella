@@ -288,6 +288,7 @@ struct LiveProvider {
 impl LiveProvider {
     fn spec(&self) -> ProviderSpec<'_> {
         ProviderSpec {
+            upstream_pin: &[],
             id: self.id,
             display_name: self.id,
             dialect: self.dialect,

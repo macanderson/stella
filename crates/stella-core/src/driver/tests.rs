@@ -106,6 +106,7 @@ fn clone_provider_error(e: &ProviderError) -> ProviderError {
 
 fn text_result(text: &str) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: text.into(),
         tool_calls: vec![],
         usage: CompletionUsage::reported_zero(),
@@ -117,6 +118,7 @@ fn text_result(text: &str) -> CompletionResultAlias {
 
 fn tool_call_result(call_id: &str, name: &str) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: call_id.into(),
@@ -175,6 +177,7 @@ impl Provider for SpeculatingProvider {
                 self.executed.notified().await;
             }
             Ok(CompletionResultAlias {
+                upstream_provider: None,
                 text: String::new(),
                 tool_calls: vec![self.commit.clone()],
                 usage: CompletionUsage::reported_zero(),
@@ -524,6 +527,7 @@ impl Provider for FlakySpeculatingProvider {
             1 => {
                 observer.tool_call_streamed(&self.announce);
                 Ok(CompletionResultAlias {
+                    upstream_provider: None,
                     text: String::new(),
                     tool_calls: vec![self.commit.clone()],
                     usage: CompletionUsage::reported_zero(),
@@ -1354,6 +1358,7 @@ async fn summarization_never_orphans_tool_results_at_the_span_edge() {
 
 fn empty_result(finish_reason: Option<FinishReason>) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![],
         usage: CompletionUsage {
@@ -1489,6 +1494,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
 /// shape (30/30 cap-hit steps in the 2026-07-31 Terminal-Bench bundle).
 fn length_text_result(text: &str) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: text.into(),
         tool_calls: vec![],
         usage: CompletionUsage {
@@ -1980,6 +1986,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
             _ => ("bash", serde_json::json!({"cmd": "cargo test"})),
         };
         Ok(CompletionResultAlias {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![ToolCall {
                 call_id: format!("call_{i}"),
@@ -2124,6 +2131,7 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         // an ever-larger prompt.
         let big_output_call_id = id_style(i);
         script.push(Ok(CompletionResultAlias {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![ToolCall {
                 call_id: big_output_call_id,
@@ -2245,6 +2253,7 @@ fn read_only_schema(name: &str) -> ToolSchema {
 
 fn multi_call_result(calls: &[(&str, &str)]) -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: calls
             .iter()

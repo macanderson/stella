@@ -514,6 +514,7 @@ mod tests {
 
     fn done_result(text: &str) -> stella_protocol::CompletionResult {
         stella_protocol::CompletionResult {
+            upstream_provider: None,
             text: text.into(),
             tool_calls: vec![],
             usage: stella_protocol::CompletionUsage {

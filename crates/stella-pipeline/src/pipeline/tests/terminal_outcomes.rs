@@ -31,6 +31,7 @@ impl ScriptedProvider {
 /// abort on the second).
 fn looping_tool_result() -> CompletionResult {
     CompletionResult {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: "same-call".into(),

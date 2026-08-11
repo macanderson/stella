@@ -91,6 +91,7 @@ fn ci_wait_request(timeout_secs: u64) -> WaitRequest {
 
 fn ci_wait_call() -> CompletionResultAlias {
     CompletionResultAlias {
+        upstream_provider: None,
         text: String::new(),
         tool_calls: vec![ToolCall {
             call_id: "w1".into(),

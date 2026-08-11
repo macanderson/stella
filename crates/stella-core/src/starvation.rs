@@ -94,6 +94,7 @@ mod tests {
 
     fn result(text: &str, finish_reason: Option<FinishReason>) -> CompletionResult {
         CompletionResult {
+            upstream_provider: None,
             text: text.to_string(),
             tool_calls: Vec::new(),
             usage: CompletionUsage::default(),

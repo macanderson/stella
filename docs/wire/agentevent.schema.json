@@ -2474,7 +2474,7 @@
         },
         "provider": {
           "default": "",
-          "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.",
+          "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.\n\nFor a *gateway* this names the gateway (`openrouter`), which is as\nfar as this field can honestly go — the silicon behind it rides in\n`upstream_provider`.",
           "type": "string"
         },
         "reasoning_tokens": {
@@ -2515,6 +2515,13 @@
         "type": {
           "const": "step_usage",
           "type": "string"
+        },
+        "upstream_provider": {
+          "description": "The upstream the gateway routed to, when it names one\n(`CompletionResult::upstream_provider`). `None` on direct\nendpoints, where `provider` is already the answer.\n\nWithout this a run through OpenRouter records `openrouter` for\nevery call and cannot say which vendor served any of them, so two\narms of a benchmark could differ in model provider while both\ntraces claimed to be identical.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

@@ -585,6 +585,7 @@ impl Provider for LoopingPaidProvider {
             }
         }
         Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             // Distinct arguments per call: identical calls are a stuck loop,
             // and `loop_detect` is right to abort one.
@@ -760,6 +761,7 @@ impl Provider for PanicAfterBillingProvider {
             panic!("scripted child panic (#1850)");
         }
         Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
             text: String::new(),
             tool_calls: vec![stella_protocol::ToolCall {
                 call_id: "c0".into(),

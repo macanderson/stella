@@ -1099,6 +1099,7 @@ mod tests {
                 reason: "x".into(),
             },
             AgentEvent::StepUsage {
+                upstream_provider: None,
                 output_text: None,
                 step: 0,
                 role: stella_protocol::ModelCallRole::Worker,

@@ -65,6 +65,7 @@ impl Provider for CapturingProvider {
         *self.shape.lock().expect("shape lock") = (req.effort, req.max_output_tokens);
         *self.reasoning.lock().expect("reasoning lock") = req.reasoning;
         Ok(CompletionResult {
+            upstream_provider: None,
             text: r#"{"lessons": []}"#.into(),
             tool_calls: vec![],
             usage: CompletionUsage {
@@ -568,6 +569,7 @@ async fn the_billed_prompt_size_is_reported_and_bounded() {
 async fn the_prompt_names_where_the_turn_spent_itself() {
     let mut friction = super::TurnFriction::default();
     friction.observe(&stella_protocol::AgentEvent::StepUsage {
+        upstream_provider: None,
         step: 9,
         role: stella_protocol::ModelCallRole::Worker,
         provider: "anthropic".into(),

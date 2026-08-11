@@ -50,6 +50,7 @@ impl Provider for ScriptedReflection {
         _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
+            upstream_provider: None,
             text: r#"{"lessons": [{"lesson": "prefer withTenantDb over raw db()",
                  "kind": "domain", "domains": []}]}"#
                 .into(),
