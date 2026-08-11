@@ -169,6 +169,20 @@ def test_a_completed_sweep_reports_complete_even_with_voids_on_the_record():
     assert step.state is SeatState.COMPLETE
 
 
+def test_a_completed_sweep_never_stops_a_seat_that_is_still_running():
+    """Deciding a Harbor job is finished is Harbor's job, not this module's.
+
+    Every other terminal state stops the seat; this one must not. The two
+    disagree in ways that cost measurements — with `--n-attempts > 1` every
+    task is measured long before the sweep is over, and a job launched without
+    an explicit task list has a task set this snapshot cannot see at all. There
+    is nothing to gain either way: a job whose work is done exits on its own.
+    """
+    step = decide(snap(trials=tuple(done(t) for t in TASKS), seat_running=True))
+    assert step.state is SeatState.COMPLETE
+    assert not step.stop_seat
+
+
 def test_completion_wins_over_an_exhausted_budget():
     """Finishing on the last permitted round is COMPLETE, not EXHAUSTED."""
     step = decide(
