@@ -230,22 +230,35 @@ impl std::error::Error for Refusal {}
 /// for why the graded-tree half is opt-in and the ref half is not.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShellConfinement {
-    /// The real workspace root this shell's work is *delivered into*, when
-    /// this shell is running somewhere else. `None` in an ordinary session,
-    /// where the workspace root and the graded tree are the same directory and
-    /// there is nothing to keep the shell out of.
-    graded_root: Option<PathBuf>,
+    /// Every spelling of the real workspace root this shell's work is
+    /// *delivered into*, when this shell is running somewhere else. Empty in
+    /// an ordinary session, where the workspace root and the graded tree are
+    /// the same directory and there is nothing to keep the shell out of.
+    ///
+    /// A list rather than one path because a text audit compares *names*, and
+    /// one directory has several: `/var/folders/…` and `/private/var/folders/…`
+    /// are the same tree on macOS, `/app` may be a symlink in a container, and
+    /// a task statement quotes whichever the operator configured. The first
+    /// entry is the canonical one and is what a refusal reports; the rest are
+    /// aliases that must refuse identically.
+    graded_roots: Vec<PathBuf>,
 }
 
 impl ShellConfinement {
     /// An ordinary session: the workspace root is the tree the work is judged
     /// on, so a write into it is the work, not an escape.
     pub fn unconfined() -> Self {
-        Self { graded_root: None }
+        Self {
+            graded_roots: Vec::new(),
+        }
     }
 
     /// Arm the graded-tree protection for a shell running in an isolated
     /// workspace whose output reaches `graded_root` only by adoption.
+    ///
+    /// The canonical spelling is registered alongside the given one when the
+    /// two differ, so a host that passes either gets both covered without
+    /// having to know which it holds.
     ///
     /// A root with no components of its own (`/`, or a relative path) does not
     /// arm: "everything is protected" is the blanket refusal this module
@@ -253,18 +266,41 @@ impl ShellConfinement {
     /// absolute literals a command contains.
     pub fn graded_tree(graded_root: impl Into<PathBuf>) -> Self {
         let graded_root = graded_root.into();
-        let armed = graded_root.is_absolute()
-            && graded_root
-                .components()
-                .any(|c| matches!(c, Component::Normal(_)));
+        let canonical = graded_root.canonicalize().ok();
         Self {
-            graded_root: armed.then_some(graded_root),
+            graded_roots: Vec::new(),
+        }
+        .and_alias(graded_root)
+        .and_alias_opt(canonical)
+    }
+
+    /// Register another name for the same graded tree — the spelling a host
+    /// held *before* it canonicalized, or the workspace root inside it. A
+    /// path that would not arm on its own is ignored rather than stored.
+    pub fn and_alias(mut self, alias: impl Into<PathBuf>) -> Self {
+        let alias = alias.into();
+        let arms = alias.is_absolute()
+            && alias
+                .components()
+                .any(|c| matches!(c, Component::Normal(_)))
+            && alias.to_str().is_some();
+        if arms && !self.graded_roots.contains(&alias) {
+            self.graded_roots.push(alias);
+        }
+        self
+    }
+
+    fn and_alias_opt(self, alias: Option<PathBuf>) -> Self {
+        match alias {
+            Some(alias) => self.and_alias(alias),
+            None => self,
         }
     }
 
-    /// The graded tree this shell is kept out of, if any.
+    /// The graded tree this shell is kept out of, if any — the first
+    /// registered spelling, which is what a refusal reports.
     pub fn graded_root(&self) -> Option<&Path> {
-        self.graded_root.as_deref()
+        self.graded_roots.first().map(PathBuf::as_path)
     }
 
     /// Refuse `command` if its text names protected territory, given the
@@ -278,25 +314,32 @@ impl ShellConfinement {
         if let Some(reference) = stella_ref_named(command) {
             return Err(Refusal::StellaRef { reference });
         }
-        let Some(graded_root) = self.graded_root.as_deref() else {
-            return Ok(());
-        };
-        if session_root == graded_root {
+        if self.graded_roots.is_empty()
+            || self
+                .graded_roots
+                .iter()
+                .any(|graded| session_root == graded)
+        {
             return Ok(());
         }
         if let Some(subcommand) = history_destroying_git(command) {
             return Err(Refusal::HistoryDestroying { subcommand });
         }
-        if let Some(literal) = graded_literal(command, graded_root, session_root) {
-            let substitute = Path::new(&literal)
-                .strip_prefix(graded_root)
-                .ok()
-                .map(|rel| session_root.join(rel));
-            return Err(Refusal::GradedTree {
-                literal,
-                graded_root: graded_root.to_path_buf(),
-                substitute,
-            });
+        // Every spelling refuses identically; the message reports the first
+        // registered one, so two refusals of the same tree read the same.
+        let reported = self.graded_root().unwrap_or(Path::new("/"));
+        for graded in &self.graded_roots {
+            if let Some(literal) = graded_literal(command, graded, session_root) {
+                let substitute = Path::new(&literal)
+                    .strip_prefix(graded)
+                    .ok()
+                    .map(|rel| session_root.join(rel));
+                return Err(Refusal::GradedTree {
+                    literal,
+                    graded_root: reported.to_path_buf(),
+                    substitute,
+                });
+            }
         }
         // A relative spelling of the same escape: `cd ../..` out of a
         // workspace that happens to sit beside the graded tree. Only words
@@ -308,16 +351,21 @@ impl ShellConfinement {
                 continue;
             }
             let resolved = lexical_join(session_root, path);
-            if resolved.starts_with(graded_root) && !resolved.starts_with(session_root) {
-                let substitute = resolved
-                    .strip_prefix(graded_root)
-                    .ok()
-                    .map(|rel| session_root.join(rel));
-                return Err(Refusal::GradedTree {
-                    literal: word,
-                    graded_root: graded_root.to_path_buf(),
-                    substitute,
-                });
+            if resolved.starts_with(session_root) {
+                continue;
+            }
+            for graded in &self.graded_roots {
+                if resolved.starts_with(graded) {
+                    let substitute = resolved
+                        .strip_prefix(graded)
+                        .ok()
+                        .map(|rel| session_root.join(rel));
+                    return Err(Refusal::GradedTree {
+                        literal: word,
+                        graded_root: reported.to_path_buf(),
+                        substitute,
+                    });
+                }
             }
         }
         Ok(())
@@ -331,9 +379,7 @@ impl ShellConfinement {
 fn stella_ref_named(command: &str) -> Option<String> {
     let at = command.find(STELLA_REF_NAMESPACE)?;
     let rest = &command[at..];
-    let end = rest
-        .find(|c: char| !is_path_char(c))
-        .unwrap_or(rest.len());
+    let end = rest.find(|c: char| !is_path_char(c)).unwrap_or(rest.len());
     Some(rest[..end].to_string())
 }
 
@@ -349,17 +395,12 @@ fn graded_literal(command: &str, graded_root: &Path, session_root: &Path) -> Opt
     while let Some(offset) = command[from..].find(needle) {
         let at = from + offset;
         let end = at + needle.len();
-        let before_ok = !command[..at]
-            .chars()
-            .next_back()
-            .is_some_and(is_path_char);
+        let before_ok = !command[..at].chars().next_back().is_some_and(is_path_char);
         let after = command[end..].chars().next();
         let after_ok = after == Some('/') || !after.is_some_and(is_path_char);
         if before_ok && after_ok {
             let rest = &command[at..];
-            let len = rest
-                .find(|c: char| !is_path_char(c))
-                .unwrap_or(rest.len());
+            let len = rest.find(|c: char| !is_path_char(c)).unwrap_or(rest.len());
             let literal = &rest[..len];
             if !Path::new(literal).starts_with(session_root) {
                 return Some(literal.to_string());
@@ -399,13 +440,13 @@ fn history_destroying_git(command: &str) -> Option<String> {
             subcommand = Some(next.clone());
             break;
         }
-        let Some(subcommand) = subcommand else { continue };
+        let Some(subcommand) = subcommand else {
+            continue;
+        };
         if HISTORY_DESTROYING.contains(&subcommand.as_str()) {
             return Some(subcommand);
         }
-        if subcommand == "reflog"
-            && rest.any(|w| matches!(w.as_str(), "expire" | "delete"))
-        {
+        if subcommand == "reflog" && rest.any(|w| matches!(w.as_str(), "expire" | "delete")) {
             return Some("reflog expire".to_string());
         }
     }
@@ -572,8 +613,48 @@ mod tests {
             Some(Path::new("/tmp/stella_candidate_63_0/summary.csv"))
         );
         let message = refusal.to_string();
-        assert!(message.contains("/tmp/stella_candidate_63_0/summary.csv"), "{message}");
+        assert!(
+            message.contains("/tmp/stella_candidate_63_0/summary.csv"),
+            "{message}"
+        );
         assert!(message.contains("delivered back to it"), "{message}");
+    }
+
+    /// One directory has several names, and a text audit compares names. The
+    /// macOS `/var` → `/private/var` symlink is the case that caught this in
+    /// development: the guard knew only the canonical spelling, and the
+    /// end-to-end candidate test wrote the graded tree straight through it.
+    #[test]
+    fn every_registered_spelling_of_the_graded_tree_refuses_identically() {
+        let confined = ShellConfinement::graded_tree("/private/var/graded")
+            .and_alias("/var/graded")
+            .and_alias("/private/var/graded");
+        let root = Path::new("/tmp/ws");
+        for command in [
+            "echo x > /private/var/graded/out.txt",
+            "echo x > /var/graded/out.txt",
+        ] {
+            let refusal = confined.audit(command, root).expect_err(command);
+            let Refusal::GradedTree {
+                graded_root,
+                substitute,
+                ..
+            } = &refusal
+            else {
+                panic!("{command}: {refusal:?}");
+            };
+            // Reported against one root whichever alias matched, so two
+            // refusals of the same tree read the same.
+            assert_eq!(graded_root, Path::new("/private/var/graded"), "{command}");
+            assert_eq!(substitute.as_deref(), Some(Path::new("/tmp/ws/out.txt")));
+        }
+        // Aliases are deduplicated, and one that would protect everything is
+        // dropped rather than stored as a root that matches every path.
+        let noisy = ShellConfinement::graded_tree("/graded")
+            .and_alias("/graded")
+            .and_alias("/")
+            .and_alias("relative");
+        assert!(noisy.audit("echo x > /etc/hosts", root).is_ok());
     }
 
     /// A blanket root would make every absolute path a refusal — the failure
@@ -581,7 +662,10 @@ mod tests {
     #[test]
     fn a_root_that_would_protect_everything_does_not_arm() {
         assert_eq!(ShellConfinement::graded_tree("/").graded_root(), None);
-        assert_eq!(ShellConfinement::graded_tree("relative").graded_root(), None);
+        assert_eq!(
+            ShellConfinement::graded_tree("relative").graded_root(),
+            None
+        );
         assert_eq!(
             ShellConfinement::graded_tree("/app").graded_root(),
             Some(Path::new("/app"))

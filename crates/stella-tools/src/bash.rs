@@ -217,11 +217,7 @@ fn bash_grep_is_symbol_shaped(command: &str) -> bool {
 /// `cd`-ing back to the original is the natural misreading — and it used to
 /// draw no response at all, leaving the turn's work split across two trees with
 /// the half outside this root silently uncollected.
-fn graph_advisory(
-    command: &str,
-    root: &Path,
-    confinement: &ShellConfinement,
-) -> Option<String> {
+fn graph_advisory(command: &str, root: &Path, confinement: &ShellConfinement) -> Option<String> {
     let graphed = matches!(crate::graph::graph_available(root), Ok(true));
     if let Some(target) = cd_escape_target(command, root) {
         // Named only when the graph is real: pointing at graph_query as a
@@ -959,8 +955,8 @@ mod tests {
         let graded = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let leaked = graded.path().join("summary.csv");
-        let tool = Bash::new(None)
-            .confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
 
         let text = text_of(
             tool.execute(
@@ -993,8 +989,8 @@ mod tests {
             "cat <<'EOF' > /dev/null\nignored\nEOF\nprintf 'x' > '{}'",
             leaked.display()
         );
-        let tool = Bash::new(None)
-            .confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
 
         let text = text_of(
             tool.execute(&serde_json::json!({ "command": command }), workspace.path())
@@ -1042,8 +1038,8 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let system = tempfile::tempdir().unwrap();
         let conf = system.path().join("nginx.conf");
-        let tool = Bash::new(None)
-            .confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
 
         let text = text_of(
             tool.execute(
@@ -1055,7 +1051,10 @@ mod tests {
             .await,
         );
 
-        assert!(conf.exists(), "a system path outside the graded tree: {text}");
+        assert!(
+            conf.exists(),
+            "a system path outside the graded tree: {text}"
+        );
     }
 
     /// The advisory that sent `build-cython-ext` into `rm -rf /app/pyknotid`:
@@ -1067,8 +1066,8 @@ mod tests {
         let graded = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let elsewhere = tempfile::tempdir().unwrap();
-        let tool = Bash::new(None)
-            .confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
+        let tool =
+            Bash::new(None).confined_to(ShellConfinement::graded_tree(graded.path().to_path_buf()));
 
         let text = text_of(
             tool.execute(
