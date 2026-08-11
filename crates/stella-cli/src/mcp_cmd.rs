@@ -162,6 +162,14 @@ pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
     for collision in set.wire_name_collisions() {
         eprintln!("  {} {}", "!".yellow(), collision_note(collision));
     }
+    // Auth-suppressed servers (#2687) are actionable, not broken — say the
+    // fix, never "unavailable" (which is what `failed_servers` renders as).
+    for (name, _) in set.auth_required_servers() {
+        eprintln!(
+            "  {} MCP server `{name}` requires authentication — run `stella mcp login {name}`",
+            "!".yellow()
+        );
+    }
     if set.connected_count() > 0 {
         println!(
             "  {} {} MCP server(s) connected",
@@ -196,6 +204,7 @@ pub(crate) fn health_label(health: &[stella_mcp::ServerHealth], name: &str) -> O
             stella_mcp::HealthState::Live => "live",
             stella_mcp::HealthState::Reconnecting => "reconnecting",
             stella_mcp::HealthState::Down => "down",
+            stella_mcp::HealthState::AuthRequired => "auth required",
         }
         .to_string()
     })

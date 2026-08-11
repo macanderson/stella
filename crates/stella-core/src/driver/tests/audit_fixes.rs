@@ -496,6 +496,7 @@ async fn overflow_summarizer_retries_a_transient_error() {
             1.0,
             &mut health,
             0,
+            None,
             &events,
         )
         .await;
@@ -551,6 +552,7 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
             1.0,
             &mut health,
             0,
+            None,
             &events,
         )
         .await;
@@ -648,6 +650,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
             1.0,
             &mut health,
             0,
+            None,
             &events,
         )
         .await;
@@ -710,6 +713,7 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
                 1.0,
                 &mut health,
                 0,
+                None,
                 &events,
             )
             .await;
@@ -753,6 +757,7 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
             1.0,
             &mut health,
             0,
+            None,
             &events,
         )
         .await;

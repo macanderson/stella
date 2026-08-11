@@ -159,6 +159,11 @@ impl<'a> Engine<'a> {
             name: call.name.clone(),
             input: call.input.clone(),
         };
-        self.execute_with_repair(&tool_call, Some(events)).await
+        // Cold path (one replay per poll interval), so the schema walk for
+        // the hook payload's `read_only` bit is affordable here where the
+        // hot dispatch path threads a precomputed set instead.
+        let read_only = self.advertised_read_only(&call.name);
+        self.execute_with_repair(&tool_call, read_only, Some(events))
+            .await
     }
 }

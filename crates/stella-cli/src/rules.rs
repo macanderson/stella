@@ -376,11 +376,21 @@ fn merge_rule_trust_tiers(mut user_rules: Vec<Rule>, project_rules: Vec<Rule>) -
 /// Session wiring shorthand: load the workspace rules and attach their
 /// Tier-2 guards to `registry`. Every session driver calls this right after
 /// constructing its registry (same rhythm as `populate_schema_index`).
+///
+/// `interactive_approvals` declares whether this driver's surface can ask a
+/// human mid-turn: `true` (a TTY REPL/goal surface) attaches the #2676
+/// approval responder so a gate's `RequireApproval` parks on a real yes/no;
+/// `false` (fleet workers, sub-agent lanes, machine-output runs, the deck
+/// until it grows an approval card) leaves the registry's broker headless,
+/// whose refusal names the grant path. It rides here because this is the
+/// same call that arms the guards able to produce a `RequireApproval`.
 pub(crate) fn enforce_workspace_rules(
     registry: &ToolRegistry,
     workspace_root: &Path,
     authority: &crate::settings::AuthorityPolicy,
+    interactive_approvals: bool,
 ) -> ResolvedRules {
+    crate::approval::attach_interactive_approvals(registry, interactive_approvals);
     let rules = load_workspace_rules(workspace_root, authority);
     attach_rule_guards(registry, &rules);
     rules
@@ -661,6 +671,7 @@ mod tests {
                 &registry,
                 root.path(),
                 &crate::settings::AuthorityPolicy::default(),
+                false,
             );
         }
 
@@ -809,7 +820,7 @@ mod tests {
                 .unwrap();
         }
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority());
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
             .execute(
@@ -843,7 +854,7 @@ mod tests {
         std::fs::write(&target, "SELECT 1;\n").unwrap();
 
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority());
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
             .execute(
@@ -901,7 +912,7 @@ mod tests {
             None,
             stella_tools::RegistryOptions::default(),
         );
-        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority());
+        enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
             .execute(

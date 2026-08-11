@@ -6,6 +6,7 @@
 use super::*;
 use crate::issues::IssueBackend;
 use std::sync::Mutex as StdMutex;
+use stella_core::bus::HookDecision;
 
 /// A registry over a fresh tempdir with the GitHub-CLI issue backend, so
 /// `start_work_on_issue` is registered.

@@ -485,6 +485,7 @@ async fn colliding_wire_names_drop_every_claimant_and_are_reported() {
         routes: HashMap::new(),
         collisions: Vec::new(),
         failed: Vec::new(),
+        auth_required: Vec::new(),
         native: None,
         usage: None,
         disabled: None,

@@ -119,13 +119,6 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     }
 }
 
-/// Public skill-registry commands are an extension surface omitted from a filesystem-isolated
-/// tool schema; ordinary sessions retain them.
-fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillRegistry> {
-    (!crate::settings::filesystem_settings_disabled())
-        .then(|| SkillRegistry::from_env(workspace_root))
-}
-
 /// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
 /// given, arms the pipeline's deterministic verification ladder (the
@@ -254,8 +247,10 @@ async fn run_pipeline_one_shot(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // Whether this surface may ask the human mid-turn (ask_user, approvals).
+    let ask = format == OutputFormat::Text;
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code graph in the background so the
     // pipeline's localize step can reach for `graph_query` once it is ready.
     // Status goes to stderr — stdout may be machine-readable JSON.
@@ -371,12 +366,8 @@ async fn run_pipeline_one_shot(
 
     let result = {
         let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
-        let interactive = InteractiveToolSet::new(
-            &customs,
-            tx.clone(),
-            default_ask_io(format == OutputFormat::Text),
-        );
-        let interactive = match skill_registry_for_run(cfg.workspace_root.clone()) {
+        let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(ask));
+        let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,
         };
@@ -742,7 +733,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, true);
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
     // `graph_query` becomes available this session without a manual `stella
@@ -1986,7 +1977,7 @@ async fn run_turn(
             tx.clone(),
             default_ask_io(format == OutputFormat::Text),
         );
-        let interactive = match skill_registry_for_run(cfg.workspace_root.clone()) {
+        let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,
         };
@@ -1997,13 +1988,19 @@ async fn run_turn(
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let hook_runner = ShellHookRunner;
+        // A PreToolUse hook's `require_approval` parks on the #2676 broker
+        // flow (#2684). Snapshotted here, after assembly attached any
+        // responder and bus, so the route asks the surface this run has.
+        let hook_approvals = stella_tools::hook_bridge::BrokerApprovalRoute::for_registry(registry);
         let config = engine::engine_config_for_kind(cfg, kind);
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)
             .with_fallback_resolver(&fallback);
         if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
+            engine = engine
+                .with_hooks(hooks, &hook_runner)
+                .with_hook_approval_route(&hook_approvals);
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };

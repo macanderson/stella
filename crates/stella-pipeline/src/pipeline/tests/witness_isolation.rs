@@ -122,6 +122,8 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
         }]),
         post_tool_use: None,
         session_start: None,
+        stop: None,
+        pre_compact: None,
     };
     let hook_runner = RecordingHookRunner::default();
     let (tx, _rx) = mpsc::unbounded_channel();

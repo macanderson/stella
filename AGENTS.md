@@ -609,6 +609,7 @@ editing Stella's own code should know what lives where:
 | `.stella/private/codegraph.db` | Tree-sitter code-graph index, built on `stella init`. |
 | `.stella/private/fleet.db` | Fleet run, attempt, commit, and spend ledger. |
 | `.stella/private/mcp_oauth.json` | MCP OAuth tokens. Secret local state; never commit it. |
+| `.stella/private/mcp_auth_probes.json` | Connect-time 401 cache for MCP auth-probe suppression (#2687): server names + timestamps, 15-minute TTL, fails open. Not secret, but lives with the rest of the MCP auth state. |
 
 Older releases wrote these private artifacts directly under `.stella/`. Path
 resolvers migrate a safe, closed legacy file into `.stella/private/`; unsafe

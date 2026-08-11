@@ -7,6 +7,13 @@
 
 use super::*;
 
+/// Public skill-registry commands are an extension surface omitted from a
+/// filesystem-isolated tool schema; ordinary sessions retain them.
+pub(crate) fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillRegistry> {
+    (!crate::settings::filesystem_settings_disabled())
+        .then(|| SkillRegistry::from_env(workspace_root))
+}
+
 /// EngineConfig for `kind`: defaults + the workspace root as hook `cwd`,
 /// with the agent's `agent_engine_config` tuning applied — temperature and
 /// max_tokens override the engine defaults only when set (the "Include"

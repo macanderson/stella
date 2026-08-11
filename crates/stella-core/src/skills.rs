@@ -68,6 +68,7 @@
 //! module closes.
 
 pub mod appraisal;
+pub mod invoke;
 
 use std::collections::{HashMap, HashSet};
 

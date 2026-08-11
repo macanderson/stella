@@ -26,20 +26,20 @@ use crate::retry::Sleeper;
 
 // ---- fakes -----------------------------------------------------------
 
-struct NoSleep;
+pub(crate) struct NoSleep;
 #[async_trait]
 impl Sleeper for NoSleep {
     async fn sleep(&self, _duration_ms: u64) {}
 }
 
 /// A provider that returns a fixed sequence of results, then errors.
-struct ScriptedProvider {
+pub(crate) struct ScriptedProvider {
     script: Mutex<Vec<Result<CompletionResult, ProviderError>>>,
     calls: AtomicU32,
 }
 
 impl ScriptedProvider {
-    fn new(script: Vec<Result<CompletionResult, ProviderError>>) -> Self {
+    pub(crate) fn new(script: Vec<Result<CompletionResult, ProviderError>>) -> Self {
         Self {
             script: Mutex::new(script),
             calls: AtomicU32::new(0),
@@ -71,9 +71,9 @@ impl Provider for ScriptedProvider {
 
 /// One read-only tool and one mutating tool, counting executions of each.
 #[derive(Default)]
-struct MixedTools {
-    reads: AtomicUsize,
-    writes: AtomicUsize,
+pub(crate) struct MixedTools {
+    pub(crate) reads: AtomicUsize,
+    pub(crate) writes: AtomicUsize,
 }
 
 #[async_trait]
@@ -123,7 +123,7 @@ impl ToolExecutor for MixedTools {
     }
 }
 
-fn text_result(text: &str, cost: f64) -> CompletionResult {
+pub(crate) fn text_result(text: &str, cost: f64) -> CompletionResult {
     CompletionResult {
         upstream_provider: None,
         text: text.into(),
@@ -138,7 +138,7 @@ fn text_result(text: &str, cost: f64) -> CompletionResult {
     }
 }
 
-fn tool_call_result(name: &str, call_id: &str, cost: f64) -> CompletionResult {
+pub(crate) fn tool_call_result(name: &str, call_id: &str, cost: f64) -> CompletionResult {
     // `call_id` doubles as the argument so consecutive calls differ — see
     // `MixedTools::execute` on why identical calls are a loop, not a fixture.
     CompletionResult {

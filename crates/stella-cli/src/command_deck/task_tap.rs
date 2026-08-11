@@ -75,6 +75,14 @@ impl ToolExecutor for TaskTap<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+
+    /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
+    /// the invocation plane) in this tap, so a tap that let the empty default
+    /// stand would silently stop active skill bodies surviving summarization
+    /// (#2685) for every deck session.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +105,9 @@ mod tests {
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
             std::collections::HashSet::from(["task".to_string()])
         }
+        fn active_skill_slugs(&self) -> Vec<String> {
+            vec!["deploy".to_string()]
+        }
     }
 
     /// The deck's lead lane wraps the whole stack in this tap last, so a tap
@@ -116,6 +127,27 @@ mod tests {
         assert!(
             tap.parallel_safe_names().contains("task"),
             "the tap must forward the inner executor's concurrency claims"
+        );
+    }
+
+    /// Same shape for the invocation plane (#2685): the tap sits above the
+    /// discovery mount, so swallowing the live-slug answer would stop active
+    /// skill bodies surviving summarization on every deck session.
+    #[test]
+    fn the_task_tap_forwards_active_skill_slugs() {
+        let inner = Claiming;
+        let registry = ToolRegistry::with_issue_backend(std::path::PathBuf::from("."), None);
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tap = TaskTap {
+            inner: &inner,
+            events,
+            registry: &registry,
+            supervisor: None,
+        };
+        assert_eq!(
+            tap.active_skill_slugs(),
+            vec!["deploy".to_string()],
+            "the tap must forward the inner executor's live invocations"
         );
     }
 }

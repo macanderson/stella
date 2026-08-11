@@ -103,10 +103,10 @@ use stella_tui::{
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::agent;
 use crate::claims::ClaimTap;
 use crate::config::Config;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
+use crate::{agent, rules};
 
 mod authoring;
 mod forwarder;
@@ -359,7 +359,7 @@ pub async fn run_deck_session(
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, false);
     let custom_tools = agent::discover_custom_tools(cfg, true).await;
     let mut budget = agent::build_budget_guard(budget_limit);
     let store = agent::open_store(&cfg.workspace_root);

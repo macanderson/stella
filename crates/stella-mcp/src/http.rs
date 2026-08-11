@@ -197,16 +197,25 @@ impl HttpTransport {
                 // gigabyte attached. A body that blows the cap (or is not
                 // UTF-8) simply contributes no detail to the diagnostic.
                 let text = self.read_body(response).await.unwrap_or_default();
-                let hint = if status == StatusCode::UNAUTHORIZED {
-                    format!(
-                        " — authorize with `stella mcp login {}` (or `o` on it in the deck's MCP tab)",
+                if status == StatusCode::UNAUTHORIZED {
+                    // A 401 the OAuth retry above could not fix is an
+                    // authorization failure, not a transport one: reconnecting
+                    // cannot help, logging in can. Typing it is what lets the
+                    // connect path suppress the next probe (#2687,
+                    // [`crate::suppress`]) instead of reporting a generic
+                    // outage — and keeps the reconnect machinery from tearing
+                    // down a transport a fresh dial would not heal.
+                    return Err(McpError::Auth(format!(
+                        "server `{}` returned HTTP 401 (authentication required): {} — \
+                         authorize with `stella mcp login {}` (or `o` on it in the deck's \
+                         MCP tab)",
+                        self.server_name,
+                        truncate(&text, 500),
                         self.server_name
-                    )
-                } else {
-                    String::new()
-                };
+                    )));
+                }
                 return Err(McpError::Transport(format!(
-                    "server `{}` returned HTTP {status}: {}{hint}",
+                    "server `{}` returned HTTP {status}: {}",
                     self.server_name,
                     truncate(&text, 500)
                 )));

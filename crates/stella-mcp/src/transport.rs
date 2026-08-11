@@ -90,6 +90,10 @@ pub(crate) mod testkit {
                 .push_back(Err(err));
         }
 
+        pub(crate) fn requests_handle(&self) -> Log {
+            self.requests.clone()
+        }
+
         pub(crate) fn notifications_handle(&self) -> Log {
             self.notifications.clone()
         }

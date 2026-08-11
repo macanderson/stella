@@ -95,7 +95,9 @@ it, and `.stella/.gitignore` enforces the line.
     │   ├── context.db .......... embeddings + recall index for adaptive context
     │   ├── fleet.db ............ fleet attempts, commits, and dollars
     │   ├── reflections.jsonl ... per-execution reflections (mined into skills)
-    │   └── mcp_oauth.json ...... OAuth tokens for MCP servers — SECRET
+    │   ├── mcp_oauth.json ...... OAuth tokens for MCP servers — SECRET
+    │   └── mcp_auth_probes.json  connect-time 401 cache (auth-probe
+    │                             suppression, #2687) — timestamps only
     │
     └── stella.duckdb ........... LEGACY, pre-migration telemetry. Read-only
                                   fallback; a newer store.db supersedes it.

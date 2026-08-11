@@ -39,6 +39,30 @@ needs_flock = pytest.mark.skipif(
 )
 
 
+def _holder(lock: Path) -> subprocess.Popen[bytes]:
+    """A neighbour holding the lock as ONE process, the way the entrypoint does.
+
+    ``--no-fork`` is load-bearing, not tidiness. Without it ``flock`` forks and
+    execs the command in a child, so two processes share the locked descriptor
+    — and an advisory lock is released only when the *last* one closes. Killing
+    the ``Popen`` pid then reaps the ``flock`` parent while the orphaned child
+    keeps the lock for the rest of its sleep, so "the holder died" is never
+    actually established and the reclaim is refused. Observed:
+
+        140  137  flock .instance-netns.lock sleep 30
+        142  140  sleep 30            # ppid becomes 1, still holding, after the kill
+
+    The single-process holder is also the truthful model: the entrypoint takes
+    the lock with ``exec 9>>`` in one shell, so its death is what the kernel
+    sees. The forking holder was an artifact of the scaffold, never the system.
+    """
+    return subprocess.Popen(
+        ["flock", "--no-fork", str(lock), "sleep", "30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def _claim(scratch: Path) -> subprocess.CompletedProcess[str]:
     """Run the claim's lock step exactly as the entrypoint does."""
     script = f"""
@@ -121,6 +145,9 @@ def test_a_lock_whose_holder_died_is_reclaimed(tmp_path: Path) -> None:
     lock = tmp_path / ".instance-netns.lock"
     holder = _hold(tmp_path)
     holder.kill()
+    # `wait` reaps the holder, and with a single-process holder that is also
+    # the moment its descriptor is closed — so the lock is provably free here,
+    # with no sleep-and-hope between the kill and the claim.
     holder.wait(timeout=10)
 
     assert lock.exists(), "the file outlives the holder; only the lock is dropped"

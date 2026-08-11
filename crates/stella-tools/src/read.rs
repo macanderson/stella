@@ -804,6 +804,28 @@ mod tests {
         }
     }
 
+    /// The engine's working-set restoration (#2685) replays this tool by the
+    /// name and path parameter `stella_core::restore` spells, and refuses the
+    /// replay unless the schema declares `read_only` — the same one-definition
+    /// tie as the footer test above. A drift on either side is not cosmetic:
+    /// it is restoration silently ceasing to restore files.
+    #[test]
+    fn the_read_tool_is_the_one_the_engines_restoration_replays() {
+        let schema = ReadFile::default().schema();
+        assert_eq!(schema.name, stella_core::restore::READ_TOOL);
+        assert!(
+            schema.read_only,
+            "restoration (and the parked-wait probe) replay only schema-declared \
+             read-only tools; dropping the claim silently disables both"
+        );
+        assert!(
+            schema.input_schema["properties"]
+                .get(stella_core::restore::READ_PATH_PARAM)
+                .is_some(),
+            "the path parameter must keep the spelling the engine replays"
+        );
+    }
+
     /// A binary file used to come back as "stream did not contain valid
     /// UTF-8", which reads to a model as a transient IO fault worth retrying.
     /// It must be named as binary and point somewhere useful.
