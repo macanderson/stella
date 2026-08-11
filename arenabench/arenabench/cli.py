@@ -16,6 +16,7 @@ import logging
 import random
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -500,7 +501,7 @@ def _cmd_harness(args: argparse.Namespace) -> int:
         # odd one out: a reader comparing two blocks needs both definitions in
         # front of them, and only one of them being stated invites the reading
         # that the unstated one is the default.
-        print(f"                 a step here is {seat.dialect.steps_are}")
+        _print_harness_note(f"a step here is {seat.dialect.steps_are}")
         if calls:
             print("  tool mix       " + ", ".join(
                 f"{tool}x{n}"
@@ -520,11 +521,11 @@ def _cmd_harness(args: argparse.Namespace) -> int:
         # difference goes negative on real trials.
         print("  clock          " + ", ".join(clock))
         if unpublished:
-            print(
-                "  not published  " + ", ".join(sorted(unpublished))
-                + " — this arm's stream never carries them, so they are absent"
-            )
-            print("                 rather than zero")
+            # Named, not omitted. A column this arm's stream never carries is
+            # a gap in the apparatus, and a reader who cannot see the list
+            # reads the arm as having scored zero on every one of them.
+            _print_harness_note(", ".join(sorted(unpublished)), label="not published")
+            _print_harness_note("(absent from this arm's stream — not zeros)")
     print(
         "\nCost is the agent's own figure and is never compared across seats — "
         "each vendor prices from its own table. `arenabench series` recomputes "
@@ -537,6 +538,22 @@ def _cmd_harness(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Where a harness block's values start, in columns. The label column is
+#: 15 wide after a two-space indent, which is what every row here has always
+#: used; a wrapped continuation lines up under the value rather than under the
+#: label, so a long note reads as one field instead of as several.
+_HARNESS_LABEL = 15
+_HARNESS_INDENT = " " * (2 + _HARNESS_LABEL)
+
+
+def _print_harness_note(text: str, label: str = "") -> None:
+    """One field of a harness block, wrapped into the value column."""
+    lines = textwrap.wrap(text, width=96 - len(_HARNESS_INDENT)) or [""]
+    print(("  " + label.ljust(_HARNESS_LABEL) if label else _HARNESS_INDENT) + lines[0])
+    for line in lines[1:]:
+        print(_HARNESS_INDENT + line)
+
+
 def _print_harness_profile(seat: SeatBehaviour) -> None:
     """The boot disclosure half of one arm's block.
 
@@ -545,12 +562,13 @@ def _print_harness_profile(seat: SeatBehaviour) -> None:
     the SUT commit in `provenance.sut_seats` is what identifies it instead.
     """
     if not seat.dialect.boot_disclosure:
-        print(
-            "  boot           not disclosed on this arm's stream — the SUT "
-            "commit identifies it (`arenabench provenance`)"
+        _print_harness_note(
+            "not disclosed on this arm's stream — the SUT commit identifies it "
+            "(`arenabench provenance`)",
+            label="boot",
         )
         models = seat.totals.get("models") or []
-        print(f"  models         {', '.join(models) if models else '?'}")
+        _print_harness_note(", ".join(models) if models else "?", label="models")
         return
     profile = seat.profile
     print(f"  product        {profile.version or '?'}")
@@ -587,18 +605,19 @@ def _print_harness_spend(seat: SeatBehaviour) -> None:
     cost = f"${totals.get('total_cost', 0.0):.4f} self-reported"
     measured = {USAGE_STREAM, USAGE_TRANSCRIPT} & set(seat.usage_sources)
     if not measured:
-        print(
-            "  spend          stream reported no usage (gateway route) and no "
-            "session transcript carried any either"
+        _print_harness_note(
+            "stream reported no usage (gateway route) and no session transcript "
+            "carried any either",
+            label="spend",
         )
-        print("                 " + ", ".join(["unknown, not zero", *reasoning, cost]))
-        print(
-            "                 token counts for this arm arrive with the ATIF "
-            "trajectory at teardown — see `arenabench series`"
+        _print_harness_note(", ".join(["unknown, not zero", *reasoning, cost]))
+        _print_harness_note(
+            "token counts for this arm arrive with the ATIF trajectory at "
+            "teardown — see `arenabench series`"
         )
         return
-    print(
-        "  spend          " + ", ".join(
+    _print_harness_note(
+        ", ".join(
             [
                 f"{totals.get('tokens_out', 0)} out",
                 f"{totals.get('prompt_tokens', 0)} in "
@@ -606,12 +625,13 @@ def _print_harness_spend(seat: SeatBehaviour) -> None:
                 *reasoning,
                 cost,
             ]
-        )
+        ),
+        label="spend",
     )
     if USAGE_TRANSCRIPT in seat.usage_sources:
-        print(
-            "                 read from the session transcript: this seat's "
-            "streamed counters are zeroed by its gateway route"
+        _print_harness_note(
+            "read from the session transcript: this seat's streamed counters "
+            "are zeroed by its gateway route"
         )
 
 

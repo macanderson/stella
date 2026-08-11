@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import adapter, harbor, provenance, reap, reauth, sut
+from . import adapter, harbor, provenance, reap, reauth, reauth_wiring, sut
 from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
@@ -44,7 +44,7 @@ from .agents import (
     routes_directly,
 )
 from .artifacts import mp4_is_finalized
-from .claude_oauth import CLAUDE_OAUTH_ENV, local_claude_token
+from .claude_oauth import CLAUDE_OAUTH_ENV
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
@@ -317,7 +317,7 @@ class Match:
         self.rounds: dict[str, list[ContestantRun]] = {}
         #: Credential-rotation supervision for this match's subscription seats,
         #: or ``None`` when no seat qualifies (see
-        #: :meth:`MatchRunner._supervise_credentials`).
+        #: :func:`.reauth_wiring.supervise_match`).
         self.reauth: reauth.MatchReauth | None = None
         self.recorder: RecorderSupervisor | None = None
         self.snapshots: SnapshotSupervisor | None = None
@@ -850,8 +850,16 @@ class MatchRunner:
 
         # Credential supervision is armed only after every seat has launched:
         # it reads the runs it is about to watch, and a seat that refused to
-        # start has no process to stop and no credential to rotate.
-        match.reauth = self._supervise_credentials(match, resolved)
+        # start has no process to stop and no credential to rotate. A match
+        # whose Harbor never resolved launched nothing, so there is nothing to
+        # supervise.
+        if resolved is not None:
+            match.reauth = reauth_wiring.supervise_match(
+                match,
+                lambda contestant, tasks, token: self._redispatch(
+                    match, contestant, resolved, tasks, token
+                ),
+            )
 
         if match.spec.record_video:
             supervisor = RecorderSupervisor(
@@ -1320,7 +1328,7 @@ class MatchRunner:
             # poll rather than before it so the supervisor reads the same
             # liveness this iteration measured.
             try:
-                pending = self._tick_reauth(match)
+                pending = reauth_wiring.tick(match)
             except Exception:  # supervision must never wedge a match
                 log.exception(
                     "credential supervision failed for %s; the match continues "
@@ -1391,7 +1399,7 @@ class MatchRunner:
             process = run.process
             if process is None or process.poll() is not None:
                 continue
-            _terminate_process_group(process)
+            reauth_wiring.terminate_process_group(process)
         # The process group does not contain the task containers: Harbor starts
         # them through the Docker daemon, so killing the group stops the
         # harness and leaves the containers running, owned by nothing. Ten of
