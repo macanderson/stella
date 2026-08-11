@@ -206,8 +206,35 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Providers ──────────────────────────────────────────────────── */}
+      {/* ── The tour ───────────────────────────────────────────────────── */}
       <section className="lp-section">
+        <div className="mx-auto w-full max-w-3xl px-4 py-16">
+          <h2 className="lp-eyebrow mb-5">Step inside</h2>
+          <p className="max-w-prose text-base">
+            The rest of this page tells you what{" "}
+            <span className="lp-brand-face">stella</span> is.{" "}
+            <Link href="/engine" className="underline underline-offset-4">
+              The engine tour
+            </Link>{" "}
+            shows you the machine: the turn loop, the tool bay,{" "}
+            <span className="lp-brand-face">vera</span>&apos;s deterministic
+            verification chamber, the governance plane, and the deck where{" "}
+            <span className="lp-brand-face">stella</span>{" "}
+            rebuilds itself from your team&apos;s traces.
+          </p>
+          <div className="mt-6">
+            <Link
+              href="/engine"
+              className="lp-cta inline-flex items-center rounded-md px-6 py-3 text-sm"
+            >
+              Take the engine tour
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Providers ──────────────────────────────────────────────────── */}
+      <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Providers</h2>
           <p className="max-w-prose text-base">
@@ -221,8 +248,13 @@ export default function HomePage() {
             ))}
           </p>
           <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
-            <span className="lp-brand-face">stella</span> speaks each
-            vendor&apos;s own wire protocol rather than normalising everything
+            {/* The trailing `{" "}` is load-bearing: JSX trims the leading
+                whitespace of a text node's first line when the node spans
+                more than one line, so `</span> speaks each\n vendor's…`
+                shipped as "stellaspeaks each vendor's". */}
+            <span className="lp-brand-face">stella</span>{" "}
+            speaks each vendor&apos;s own wire protocol rather than normalising
+            everything
             through one OpenAI-shaped adapter, so thinking blocks, cache
             control, and tool-call shapes are native rather than emulated.
             Override any base URL, key, or model in{" "}
@@ -238,7 +270,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Doors into the docs ────────────────────────────────────────── */}
-      <section className="lp-section lp-band">
+      <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Start here</h2>
           <ul className="border-t border-fd-border">

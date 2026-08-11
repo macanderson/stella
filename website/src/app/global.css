@@ -594,9 +594,13 @@ figure.shiki ::selection,
   border-top: 1px solid var(--color-fd-border);
 }
 
-/* Alternating band: sections that carry evidence (the run, the doors) sit on
- * the muted ground so the page reads as panels rather than one long scroll —
- * warm cream on paper, lifted surface on ink. */
+/* Alternating band: every other section sits on the muted ground so the page
+ * reads as panels rather than one long scroll — warm cream on paper, lifted
+ * surface on ink. It is the alternation that does the work, so which sections
+ * carry the class is positional: inserting a section flips the parity of
+ * every one after it, and two banded sections in a row merge into one panel,
+ * which is the failure this is meant to prevent. Today: the run and the
+ * providers are banded; the tour, the doors, and the hero are not. */
 .lp-band {
   background: var(--color-fd-muted);
 }

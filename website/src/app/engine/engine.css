@@ -1,0 +1,613 @@
+/**
+ * The engine tour (`eng-`) — styles for src/app/engine/.
+ *
+ * Imported once from this route's layout, the same pattern (and for the same
+ * reason) as src/app/releases/releases.css: it is used by exactly one route,
+ * and global.css is already sitewide chrome plus the docs card system.
+ *
+ * **This route's ground is always ink, in both site themes.** The product
+ * lives in a dark terminal and this page is a walk *inside* it — the same law
+ * `.term` and the docs' code blocks already follow, applied to a whole route.
+ * That has one consequence worth stating, because it is the trap: the
+ * theme-flipping aliases (`--stella-bg`, `--stella-muted-fg`, every
+ * `--color-fd-*`) resolve against whichever mode the reader has selected, so
+ * using one here would paint light-mode text on this page's ink ground. The
+ * `--eng-*` tokens below are therefore derived from the **raw, non-flipping**
+ * palette in tokens.css only, and the rest of the file uses nothing else.
+ *
+ * No hex literals — the site's standing rule. Tints are `color-mix()` over
+ * palette tokens (releases.css and global.css already rely on it), so the
+ * whole page still moves when the brand kit does.
+ *
+ * Colour discipline, from the kit: **gold is the signal, never the surface.**
+ * It marks the goal entering the engine, the flip that proves the work, the
+ * active station, and the one primary action. The racks, rails, and panels
+ * are all neutral. Hue is never the only cue: every state that carries a
+ * colour also carries its word (`FAIL`, `PASS`, `mutating`, `in design`).
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Tokens and ground
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-tour {
+  /* Ink ground, paper text — pinned, not theme-derived (see the header). */
+  --eng-bg: var(--stella-ink);
+  --eng-fg: var(--stella-paper);
+
+  /* Text ramp on ink. neutral-400 lands ~7.5:1, neutral-500 ~5.8:1 — both
+   * clear AA for body text; neutral-600 (~4:1) is reserved for seams and
+   * large type, never for prose. */
+  --eng-muted: var(--stella-neutral-400);
+  --eng-faint: var(--stella-neutral-500);
+
+  /* Structure. `--eng-rule` is decorative; `--eng-rule-strong` is the one
+   * allowed to carry structure alone. */
+  --eng-rule: color-mix(in srgb, var(--stella-paper) 12%, var(--stella-ink));
+  --eng-rule-strong: var(--stella-neutral-700);
+
+  /* Lifted surfaces, warm rather than grey — ink with paper mixed in. */
+  --eng-surface: color-mix(in srgb, var(--stella-paper) 4%, var(--stella-ink));
+  --eng-surface-high: color-mix(
+    in srgb,
+    var(--stella-paper) 7%,
+    var(--stella-ink)
+  );
+  /* Ink warmed with gold — the hover/attention ground, as in global.css. */
+  --eng-surface-warm: color-mix(
+    in srgb,
+    var(--stella-gold) 8%,
+    var(--stella-ink)
+  );
+
+  --eng-accent: var(--stella-gold);
+  --eng-accent-dim: color-mix(
+    in srgb,
+    var(--stella-gold) 45%,
+    var(--stella-ink)
+  );
+
+  /* Layout constants the stations and the HUD both measure against. */
+  --eng-hud-h: 3.25rem;
+  --eng-rail-h: 3.5rem;
+  --eng-measure: 62ch;
+  --eng-gutter: 1.5rem;
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--eng-bg);
+  color: var(--eng-fg);
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-base);
+  line-height: 1.65;
+
+  /* The ambient field: a slow gold bloom at the top of the scroll. The grid
+   * is NOT painted here — it is the ::before overlay below, and having both
+   * was a real defect: a background layer has no opacity of its own, so the
+   * grid drew at full-strength paper and cut visibly through every line of
+   * body text. Opacity has to ride the element, not the colour. */
+  background-image: radial-gradient(
+    ellipse 80% 50% at 50% 0%,
+    color-mix(in srgb, var(--stella-gold) 6%, transparent),
+    transparent 70%
+  );
+  background-attachment: fixed;
+}
+
+/* The kit's terminal grid, at the kit's 5% — decoration behind every station
+ * (z-index 0, under `.eng-main`) and under `pointer-events: none`. */
+.eng-tour::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(currentColor 1px, transparent 1px),
+    linear-gradient(90deg, currentColor 1px, transparent 1px);
+  background-size: 44px 44px;
+  opacity: var(--stella-grid-opacity);
+  color: var(--eng-fg);
+}
+
+.eng-main {
+  position: relative;
+  z-index: 1;
+}
+.eng-main:focus {
+  outline: none;
+}
+
+.eng-tour a {
+  color: var(--eng-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--eng-accent) 40%,
+    transparent
+  );
+}
+.eng-tour a:hover {
+  text-decoration-color: currentColor;
+}
+.eng-tour :focus-visible {
+  outline: 2px solid var(--eng-accent);
+  outline-offset: 3px;
+  border-radius: 0.125rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Top HUD — who you are inside, and the way back out
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-hud-top {
+  position: fixed;
+  top: 0;
+  inset-inline: 0;
+  z-index: 20;
+  height: var(--eng-hud-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 var(--eng-gutter);
+  border-bottom: 1px solid var(--eng-rule);
+  background: color-mix(in srgb, var(--stella-ink) 82%, transparent);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .eng-hud-top {
+    backdrop-filter: blur(10px);
+  }
+}
+
+.eng-hud-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: var(--eng-fg);
+}
+.eng-hud-lockup:hover {
+  text-decoration: none;
+}
+.eng-hud-mark {
+  height: 1.25rem;
+  width: auto;
+}
+.eng-hud-wordmark {
+  height: 1rem;
+  width: auto;
+  color: var(--eng-fg);
+}
+.eng-hud-qualifier {
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+
+.eng-hud-exit {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: var(--stella-type-xs);
+}
+.eng-hud-exit a {
+  color: var(--eng-muted);
+  text-decoration: none;
+  letter-spacing: 0.08em;
+}
+.eng-hud-exit a:hover {
+  color: var(--eng-fg);
+  text-decoration: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Station rail — where you are in the engine
+ *
+ * The rail is a real <nav> of anchors, so it works as a jump list with no
+ * JavaScript; the shell only adds `aria-current` and moves the progress fill.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-rail {
+  position: fixed;
+  bottom: 0;
+  inset-inline: 0;
+  z-index: 20;
+  min-height: var(--eng-rail-h);
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 var(--eng-gutter);
+  border-top: 1px solid var(--eng-rule);
+  background: color-mix(in srgb, var(--stella-ink) 82%, transparent);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .eng-rail {
+    backdrop-filter: blur(10px);
+  }
+}
+
+/* The travelled distance, as a gold hairline along the top edge. */
+.eng-rail-progress {
+  position: absolute;
+  top: -1px;
+  inset-inline-start: 0;
+  height: 1px;
+  width: var(--eng-progress, 0%);
+  background: var(--eng-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--eng-accent) 60%, transparent);
+  transition: width var(--stella-duration-slow) var(--stella-ease-arrive);
+}
+
+.eng-rail-stops {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.eng-rail-stops::-webkit-scrollbar {
+  display: none;
+}
+
+.eng-rail-stop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  color: var(--eng-faint);
+  white-space: nowrap;
+  transition:
+    color var(--stella-duration-base) var(--stella-ease-arrive),
+    background-color var(--stella-duration-base) var(--stella-ease-arrive);
+}
+.eng-rail-stop:hover {
+  color: var(--eng-fg);
+  background: var(--eng-surface-high);
+  text-decoration: none;
+}
+/* The station you are standing in is the signal — the one gold surface down
+ * here, same law as the docs sidebar's active pill. */
+.eng-rail-stop[aria-current="true"] {
+  background: var(--eng-accent);
+  color: var(--stella-ink);
+}
+.eng-rail-stop[aria-current="true"]:hover {
+  background: var(--stella-gold-400);
+  color: var(--stella-ink);
+}
+
+.eng-rail-code {
+  font-size: var(--stella-type-2xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  opacity: 0.75;
+}
+.eng-rail-name {
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.06em;
+}
+
+.eng-rail-compact {
+  display: none;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  flex: 1;
+  color: var(--eng-accent);
+}
+
+.eng-rail-hint {
+  margin: 0;
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stations — the scroll
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-station {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 100vh;
+  padding: calc(var(--eng-hud-h) + 3.5rem) var(--eng-gutter)
+    calc(var(--eng-rail-h) + 3.5rem);
+  border-bottom: 1px solid var(--eng-rule);
+  scroll-margin-top: var(--eng-hud-h);
+}
+.eng-station:last-child {
+  border-bottom: 0;
+}
+
+/* vera's chamber runs warmer — the one station with its own light, because it
+ * is the one the whole product argument rests on. */
+.eng-station[data-tone="chamber"] {
+  background:
+    radial-gradient(
+      ellipse 70% 60% at 50% 45%,
+      color-mix(in srgb, var(--stella-gold) 7%, transparent),
+      transparent 72%
+    );
+}
+
+.eng-station-inner {
+  width: 100%;
+  max-width: 68rem;
+  margin: 0 auto;
+}
+
+/* ── entrances ──────────────────────────────────────────────────────────────
+ * Gated twice over, so the page never hides content it cannot reveal:
+ * `[data-eng-js]` is set by the shell after mount (no script → nothing is
+ * ever hidden), and `[data-inview]` is set once per station as it approaches
+ * (play once — assemble, don't spin). */
+
+.eng-tour[data-eng-js="true"] .eng-station:not([data-inview]) .eng-station-inner > * {
+  opacity: 0;
+  transform: translateY(1.25rem);
+}
+
+.eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-station-inner > * {
+  animation: eng-arrive 620ms var(--stella-ease-arrive) both;
+  animation-delay: var(--eng-stagger, 0ms);
+}
+
+.eng-station-inner > *:nth-child(2) {
+  --eng-stagger: 90ms;
+}
+.eng-station-inner > *:nth-child(3) {
+  --eng-stagger: 180ms;
+}
+.eng-station-inner > *:nth-child(4) {
+  --eng-stagger: 260ms;
+}
+.eng-station-inner > *:nth-child(5) {
+  --eng-stagger: 330ms;
+}
+.eng-station-inner > *:nth-child(n + 6) {
+  --eng-stagger: 390ms;
+}
+
+@keyframes eng-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(1.25rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── station head ─────────────────────────────────────────────────────────── */
+
+.eng-head {
+  margin-bottom: 1.5rem;
+}
+
+.eng-overline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 0.9rem;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.eng-overline-code {
+  color: var(--eng-accent);
+  font-weight: 700;
+}
+.eng-overline-name {
+  color: var(--eng-faint);
+}
+.eng-overline-badge {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--eng-accent-dim);
+  border-radius: 0.25rem;
+  color: var(--eng-accent);
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.14em;
+}
+
+/* Display type, sized so a station's heading lands in two or three lines
+ * rather than four. The ceiling matters more than the floor here: at the old
+ * 3.25rem/4.5rem every heading ran to four lines on a 1440×900 screen and
+ * pushed each station's actual content — the ring, the ladder, the deck —
+ * below the fold, so the first thing a reader saw at every stop was type. */
+.eng-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 3.6vw, 2.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+  text-wrap: balance;
+  max-width: 26ch;
+}
+.eng-title-display {
+  font-size: clamp(2.1rem, 5.6vw, 3.75rem);
+  max-width: 17ch;
+}
+/* The one word each station is actually about. */
+.eng-title-accent {
+  color: var(--eng-accent);
+}
+
+.eng-lead {
+  margin: 0 0 2rem;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-md);
+  line-height: 1.7;
+  color: var(--eng-muted);
+}
+.eng-lead em {
+  font-style: normal;
+  color: var(--eng-fg);
+}
+
+.eng-brand-face {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+  color: var(--eng-fg);
+}
+
+/* ── fact panels ──────────────────────────────────────────────────────────── */
+
+.eng-fact {
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--eng-rule);
+}
+.eng-fact-title {
+  margin: 0 0 0.4rem;
+  font-size: var(--stella-type-sm);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--eng-fg);
+}
+.eng-fact-body {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+  line-height: 1.65;
+  color: var(--eng-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Telemetry feed — the shape of stella-events.jsonl, typed on
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-feed {
+  margin: 2.5rem 0 0;
+  border: 1px solid var(--eng-rule);
+  border-radius: 0.5rem;
+  background: var(--eng-surface);
+  overflow: hidden;
+}
+
+.eng-feed-body {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  font-size: var(--stella-type-xs);
+  line-height: 1.9;
+  color: var(--eng-muted);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.eng-feed-line {
+  display: block;
+}
+.eng-tour[data-eng-js="true"] .eng-station:not([data-inview]) .eng-feed-line {
+  opacity: 0;
+}
+.eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-feed-line {
+  animation: eng-feed-line 320ms var(--stella-ease-arrive) both;
+  animation-delay: calc(400ms + var(--eng-i) * 110ms);
+}
+@keyframes eng-feed-line {
+  from {
+    opacity: 0;
+    transform: translateX(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.eng-feed-caption {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--eng-rule);
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.08em;
+  color: var(--eng-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Narrow viewports — the shell
+ *
+ * The tour keeps every station and every word. What changes here is the
+ * chrome: the rail's stop list collapses into one live readout, and the
+ * full-viewport minimum becomes a floor rather than a target — a station
+ * whose content is taller than the screen must scroll, not clip. The intake
+ * keeps its full screen, because a hatch you step through should fill the
+ * view. Each station's own narrow-viewport rules live beside that station in
+ * engine-stations.css.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 48rem) {
+  .eng-tour {
+    --eng-gutter: 1.1rem;
+  }
+  .eng-station {
+    min-height: auto;
+    padding: calc(var(--eng-hud-h) + 2.5rem) var(--eng-gutter) 3rem;
+  }
+  .eng-station:first-child {
+    min-height: 100vh;
+  }
+  .eng-station:last-child {
+    padding-bottom: calc(var(--eng-rail-h) + 3rem);
+  }
+  .eng-rail-stops {
+    display: none;
+  }
+  .eng-rail-compact {
+    display: flex;
+  }
+  .eng-hud-qualifier {
+    display: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Reduced motion — the shell stops moving.
+ *
+ * Everything this file animates is an entrance: the station arrival and the
+ * feed's staggered lines. Neither carries information that is not also in the
+ * words, so both are dropped outright — but the *resting* state has to be the
+ * assembled one, which is why each rule below lands on the visible end rather
+ * than merely cancelling the animation. (The ambient loops — the orbiting
+ * comet, the intake pulse — are stopped in engine-stations.css, beside the
+ * rules that start them.)
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .eng-tour {
+    scroll-behavior: auto;
+  }
+  .eng-tour[data-eng-js="true"] .eng-station:not([data-inview]) .eng-station-inner > *,
+  .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-station-inner > * {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .eng-tour[data-eng-js="true"] .eng-station:not([data-inview]) .eng-feed-line,
+  .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-feed-line {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .eng-rail-progress {
+    transition: none;
+  }
+  .eng-rail-stop {
+    transition: none;
+  }
+}

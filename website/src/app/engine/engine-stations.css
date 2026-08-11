@@ -1,0 +1,972 @@
+/**
+ * The engine tour — the stations (`eng-`), styles for src/app/engine/.
+ *
+ * The second half of this route's stylesheet, split from engine.css when the
+ * single file crossed 1500 lines. AGENTS.md § "God files" is explicit that a
+ * file approaching that limit gets split rather than grown over it, and the
+ * split is along the seam the page already has: engine.css owns the **shell**
+ * that is the same at every stop (tokens, the ink ground, the HUD, the
+ * station rail, the station scaffolding and its entrances, and the shared
+ * primitives — head, lead, fact panel, telemetry feed); this file owns what
+ * is different at each stop, in tour order, 00 → 06.
+ *
+ * Worth stating plainly, because `make file-size` would not have caught it:
+ * the guard's ratchet covers `*.rs`, `*.py`, `*.sh` and `.githooks/*` only,
+ * so a 1519-line stylesheet passed the gate green. Its own header records
+ * that same blind spot biting twice before (#1563, when it watched only
+ * `*.rs`). Splitting on the documented rule rather than on what the guard
+ * happens to look at is the point.
+ *
+ * Every convention from engine.css's header applies here unchanged and is
+ * not restated: raw non-flipping palette tokens only, no hex literals, gold
+ * is the signal and never the surface, and hue is never the only cue. Read
+ * that header first — it is the normative one for both files.
+ *
+ * Both files are imported from the route's layout, engine.css first: this
+ * one consumes the `--eng-*` tokens that file defines, and a custom property
+ * is resolved at use, so the order is a readability convention rather than a
+ * correctness requirement. Keep it anyway.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 00 · intake
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-goal {
+  margin: 0 0 2rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--eng-accent-dim);
+  border-radius: 0.5rem;
+  background: var(--eng-surface-warm);
+  box-shadow: var(--stella-glow-gold);
+  max-width: 46rem;
+}
+.eng-goal-line {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+  color: var(--eng-fg);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.eng-goal-prompt {
+  color: var(--eng-accent);
+  font-weight: 700;
+}
+.eng-goal-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0;
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+.eng-goal-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--eng-accent);
+  animation: eng-pulse 2.4s var(--stella-ease-arrive) infinite;
+}
+@keyframes eng-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--stella-gold) 55%, transparent);
+  }
+  50% {
+    opacity: 0.65;
+    box-shadow: 0 0 0 0.35rem
+      color-mix(in srgb, var(--stella-gold) 0%, transparent);
+  }
+}
+
+.eng-intake-facts {
+  margin: 0 0 2rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+  font-size: var(--stella-type-sm);
+  color: var(--eng-muted);
+}
+.eng-intake-facts li {
+  display: flex;
+  gap: 0.7rem;
+}
+.eng-intake-facts li::before {
+  content: "✦";
+  color: var(--eng-accent);
+  flex: none;
+}
+
+.eng-intake-ctas,
+.eng-exit-doors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+}
+
+/* The one gold surface per station: the primary action. */
+.eng-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.65rem 1.4rem;
+  border-radius: 0.375rem;
+  background: var(--eng-accent);
+  color: var(--stella-ink);
+  font-weight: 500;
+  font-size: var(--stella-type-sm);
+  text-decoration: none;
+  transition:
+    background-color var(--stella-duration-base) var(--stella-ease-arrive),
+    box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
+}
+.eng-cta:hover {
+  background: var(--stella-gold-400);
+  color: var(--stella-ink);
+  box-shadow: var(--stella-glow-gold);
+  text-decoration: none;
+}
+
+.eng-cta-quiet {
+  font-size: var(--stella-type-sm);
+  color: var(--eng-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 01 · the turn loop — the ring
+ *
+ * Three nodes on a circular track with the guards on the return edge and the
+ * pure core in the middle; a comet runs the track (left→right, per the kit —
+ * the orbit rotates clockwise, so the comet crosses the top moving right).
+ * The whole figure is `role="img"` with one sentence describing it, because
+ * a ring of absolutely-positioned labels is not a reading order.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-ring-scene {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 2.5rem 3rem;
+  align-items: center;
+  margin: 0 0 2.5rem;
+}
+
+.eng-ring {
+  position: relative;
+  width: min(100%, 21rem);
+  aspect-ratio: 1;
+  margin: 0 auto;
+}
+
+.eng-ring-track {
+  position: absolute;
+  inset: 12%;
+  border: 1px dashed var(--eng-rule-strong);
+  border-radius: 50%;
+}
+
+.eng-ring-orbit {
+  position: absolute;
+  inset: 12%;
+  animation: eng-orbit 9s linear infinite;
+}
+.eng-ring-comet {
+  position: absolute;
+  top: -0.3rem;
+  inset-inline-start: 50%;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-inline-start: -0.3rem;
+  border-radius: 50%;
+  background: var(--eng-accent);
+  box-shadow: var(--stella-glow-gold);
+}
+@keyframes eng-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.eng-ring-node,
+.eng-ring-gate {
+  position: absolute;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--eng-rule-strong);
+  border-radius: 0.375rem;
+  background: var(--eng-surface-high);
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--eng-fg);
+  white-space: nowrap;
+}
+.eng-ring-node[data-pos="top"] {
+  top: 0;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+}
+.eng-ring-node[data-pos="right"] {
+  top: 50%;
+  inset-inline-end: 0;
+  transform: translate(35%, -50%);
+}
+.eng-ring-node[data-pos="bottom"] {
+  bottom: 0;
+  inset-inline-start: 50%;
+  transform: translate(-50%, 50%);
+}
+
+/* The guards sit on the return edge, styled as a gate rather than a node:
+ * dashed, quieter, and labelled — it is a condition, not a step. */
+.eng-ring-gate {
+  top: 50%;
+  inset-inline-start: 0;
+  /* Wraps into a narrow column and straddles the track. It cannot keep the
+   * `nowrap` its sibling nodes have: "compact · budget · loop-detect" sets
+   * ~200px on one line, which reached under the core circle — and the core
+   * comes later in the DOM, so it painted over the guard names. */
+  transform: translate(-55%, -50%);
+  max-width: 8rem;
+  white-space: normal;
+  border-style: dashed;
+  background: var(--eng-bg);
+  color: var(--eng-muted);
+  text-transform: none;
+  letter-spacing: 0.04em;
+  display: grid;
+  gap: 0.15rem;
+  text-align: center;
+}
+.eng-ring-gate-label {
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-accent);
+}
+
+.eng-ring-core {
+  position: absolute;
+  inset: 28%;
+  margin: 0;
+  display: grid;
+  align-content: center;
+  gap: 0.35rem;
+  text-align: center;
+  border: 1px solid var(--eng-accent-dim);
+  border-radius: 50%;
+  background: var(--eng-surface-warm);
+  font-size: var(--stella-type-xs);
+  font-weight: 700;
+  color: var(--eng-fg);
+  padding: 0.5rem;
+}
+.eng-ring-core span {
+  display: block;
+  font-size: var(--stella-type-2xs);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--eng-faint);
+}
+
+.eng-ring-copy {
+  display: grid;
+  gap: 1.5rem;
+}
+
+/* ── the staged pipeline strip ───────────────────────────────────────────── */
+
+.eng-pipeline {
+  margin: 0 0 2.5rem;
+  padding: 1.25rem 0 0;
+  border-top: 1px solid var(--eng-rule);
+}
+.eng-pipeline-label {
+  margin: 0 0 0.9rem;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+
+.eng-pipeline-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: eng-stage;
+}
+.eng-pipeline-stage {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--eng-rule-strong);
+  border-radius: 0.375rem;
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--eng-fg);
+  background: var(--eng-surface);
+}
+/* Dashed = conditional. The note under the strip spells it out in words, so
+ * the border style is never the only cue. */
+.eng-pipeline-stage[data-conditional] {
+  border-style: dashed;
+  color: var(--eng-muted);
+  background: transparent;
+}
+.eng-pipeline-note {
+  margin: 0;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-xs);
+  color: var(--eng-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 02 · the tool bay
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-bay {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 1.75rem 2rem;
+  margin: 0 0 1.75rem;
+}
+
+.eng-bay-rack {
+  border-top: 1px solid var(--eng-rule);
+  padding-top: 0.9rem;
+}
+.eng-bay-rack-name {
+  margin: 0 0 0.7rem;
+  font-size: var(--stella-type-2xs);
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+
+.eng-bay-tools {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+}
+.eng-bay-tool {
+  padding: 0.2rem 0 0.2rem 0.6rem;
+  border-inline-start: 2px solid var(--eng-rule-strong);
+  font-size: var(--stella-type-sm);
+  color: var(--eng-muted);
+  overflow-wrap: anywhere;
+  transition: color var(--stella-duration-fast) var(--stella-ease-arrive);
+}
+.eng-bay-tool:hover {
+  color: var(--eng-fg);
+}
+/* A tool that can change your files carries the functional amber edge — the
+ * same convention the docs' tool cards use. The legend spells both words. */
+.eng-bay-tool[data-access="mutating"] {
+  border-inline-start-color: var(--stella-warning);
+}
+
+.eng-bay-mcp {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+  color: var(--eng-muted);
+}
+
+.eng-bay-legend {
+  margin: 0;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-xs);
+  color: var(--eng-faint);
+}
+.eng-bay-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-inline-end: 1rem;
+  color: var(--eng-muted);
+}
+.eng-bay-key::before {
+  content: "";
+  width: 0.7rem;
+  height: 2px;
+  background: var(--eng-rule-strong);
+}
+.eng-bay-key[data-access="mutating"]::before {
+  background: var(--stella-warning);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 03 · vera — the flip oracle, the ladder, the receipt
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-flip {
+  margin: 0 0 2.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--eng-rule-strong);
+  border-radius: 0.5rem;
+  background: var(--eng-surface);
+}
+.eng-flip-label {
+  margin: 0 0 1.25rem;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--eng-accent);
+}
+
+.eng-flip-track {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.eng-flip-run {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+  padding: 1rem 0.75rem;
+  border: 1px solid var(--eng-rule-strong);
+  border-radius: 0.375rem;
+  text-align: center;
+}
+.eng-flip-state {
+  font-size: var(--stella-type-lg);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.eng-flip-when {
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+/* Functional hues, each carrying its own word — never hue alone. */
+.eng-flip-run[data-state="fail"] {
+  border-color: color-mix(in srgb, var(--stella-danger) 45%, transparent);
+}
+.eng-flip-run[data-state="fail"] .eng-flip-state {
+  color: var(--stella-danger);
+}
+.eng-flip-run[data-state="pass"] {
+  border-color: color-mix(in srgb, var(--stella-success) 45%, transparent);
+}
+.eng-flip-run[data-state="pass"] .eng-flip-state {
+  color: var(--stella-success);
+}
+
+.eng-flip-change {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+}
+.eng-flip-arrow {
+  display: block;
+  width: 3.5rem;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    var(--stella-danger),
+    var(--eng-accent),
+    var(--stella-success)
+  );
+  position: relative;
+}
+.eng-flip-arrow::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: -1px;
+  top: -0.2rem;
+  border-block: 0.25rem solid transparent;
+  border-inline-start: 0.35rem solid var(--stella-success);
+}
+.eng-flip-change-label {
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--eng-accent);
+}
+
+.eng-flip-note {
+  margin: 0;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-sm);
+  color: var(--eng-muted);
+}
+.eng-flip-note em {
+  font-style: normal;
+  color: var(--eng-fg);
+  font-weight: 700;
+}
+
+.eng-vera-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1.5rem 2rem;
+  margin: 0 0 2.5rem;
+}
+
+/* ── the ladder ───────────────────────────────────────────────────────────── */
+
+.eng-ladder {
+  margin: 0 0 2.5rem;
+}
+.eng-ladder-label {
+  margin: 0 0 1rem;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+.eng-ladder-rungs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--eng-rule);
+}
+.eng-ladder-rung {
+  padding: 1rem 1.25rem 1.25rem 0;
+  border-bottom: 1px solid var(--eng-rule);
+  border-inline-start: 2px solid var(--eng-rule-strong);
+  padding-inline-start: 0.9rem;
+}
+.eng-ladder-rung[data-tone="pass"] {
+  border-inline-start-color: var(--stella-success);
+}
+.eng-ladder-rung[data-tone="fail"] {
+  border-inline-start-color: var(--stella-danger);
+}
+.eng-ladder-rung[data-tone="abstain"] {
+  border-inline-start-color: var(--stella-warning);
+}
+.eng-ladder-rung-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.4rem;
+}
+.eng-ladder-num {
+  font-size: var(--stella-type-2xs);
+  font-weight: 700;
+  color: var(--eng-faint);
+}
+.eng-ladder-name {
+  font-size: var(--stella-type-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--eng-fg);
+}
+.eng-ladder-body {
+  margin: 0;
+  font-size: var(--stella-type-xs);
+  line-height: 1.7;
+  color: var(--eng-muted);
+}
+
+/* ── the receipt ──────────────────────────────────────────────────────────── */
+
+.eng-receipt {
+  margin: 0 0 2.5rem;
+  padding: 1.25rem 0 1.25rem 1.25rem;
+  border-inline-start: 2px solid var(--eng-accent);
+  max-width: var(--eng-measure);
+}
+.eng-receipt p {
+  margin: 0 0 0.6rem;
+  font-size: var(--stella-type-sm);
+  line-height: 1.7;
+  color: var(--eng-fg);
+}
+.eng-receipt em {
+  font-style: normal;
+  font-weight: 700;
+}
+.eng-receipt strong {
+  color: var(--eng-accent);
+  font-weight: 800;
+}
+.eng-receipt footer {
+  font-size: var(--stella-type-xs);
+  color: var(--eng-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 04 · the governance plane
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-gov {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1.5rem;
+  margin: 0 0 2.5rem;
+}
+
+.eng-gov-layer {
+  padding: 1.1rem 1.15rem;
+  border: 1px solid var(--eng-rule);
+  border-radius: 0.5rem;
+  background: var(--eng-surface);
+}
+.eng-gov-path {
+  margin: 0 0 0.5rem;
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.04em;
+  color: var(--eng-accent);
+  overflow-wrap: anywhere;
+}
+.eng-gov-name {
+  margin: 0 0 0.5rem;
+  font-size: var(--stella-type-sm);
+  font-weight: 700;
+  color: var(--eng-fg);
+}
+.eng-gov-body {
+  margin: 0;
+  font-size: var(--stella-type-xs);
+  line-height: 1.7;
+  color: var(--eng-muted);
+}
+
+/* ── egress ───────────────────────────────────────────────────────────────── */
+
+.eng-egress {
+  margin: 0 0 1.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--eng-accent-dim);
+  border-radius: 0.5rem;
+  background: var(--eng-surface-warm);
+}
+.eng-egress-title {
+  margin: 0 0 0.9rem;
+  font-size: var(--stella-type-lg);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--eng-fg);
+}
+.eng-egress-body {
+  margin: 0 0 0.9rem;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-sm);
+  line-height: 1.7;
+  color: var(--eng-muted);
+}
+.eng-egress-body strong {
+  color: var(--eng-fg);
+  font-weight: 700;
+}
+.eng-egress-enforced {
+  margin: 0;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--eng-rule);
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-xs);
+  line-height: 1.7;
+  color: var(--eng-muted);
+}
+.eng-egress-enforced-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: var(--stella-type-2xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-accent);
+}
+
+.eng-gov-more {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 05 · the evolution deck
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-evo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1.5rem;
+  margin: 0 0 2rem;
+}
+
+.eng-evo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.25rem;
+  border: 1px solid var(--eng-rule);
+  border-radius: 0.5rem;
+  background: var(--eng-surface);
+  transition:
+    border-color var(--stella-duration-base) var(--stella-ease-arrive),
+    background-color var(--stella-duration-base) var(--stella-ease-arrive);
+}
+.eng-evo-card:hover {
+  border-color: var(--eng-accent-dim);
+  background: var(--eng-surface-high);
+}
+
+.eng-evo-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.eng-evo-name {
+  margin: 0;
+  font-size: var(--stella-type-md);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--eng-fg);
+}
+
+/* The availability chip. Three states, each spelled out in words as well as
+ * coloured — a reader must be able to tell a shipped capability from a
+ * designed one without decoding a hue. */
+.eng-evo-status {
+  flex: none;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  font-size: var(--stella-type-2xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.eng-evo-status[data-status="shipped"] {
+  color: var(--stella-success);
+}
+.eng-evo-status[data-status="partial"] {
+  color: var(--stella-warning);
+}
+.eng-evo-status[data-status="design"] {
+  color: var(--eng-faint);
+}
+
+.eng-evo-claim {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--eng-accent);
+}
+.eng-evo-body {
+  margin: 0;
+  font-size: var(--stella-type-xs);
+  line-height: 1.75;
+  color: var(--eng-muted);
+}
+.eng-evo-issue {
+  margin: auto 0 0;
+  padding-top: 0.5rem;
+  font-size: var(--stella-type-2xs);
+}
+
+.eng-evo-rails {
+  margin: 0 0 1.5rem;
+  padding: 1.25rem 0 0;
+  border-top: 1px solid var(--eng-rule);
+}
+.eng-evo-rails-label {
+  margin: 0 0 0.9rem;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--eng-faint);
+}
+.eng-evo-rails-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 0.9rem 2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 60rem;
+}
+.eng-evo-rails-list li {
+  font-size: var(--stella-type-xs);
+  line-height: 1.7;
+  color: var(--eng-muted);
+  padding-inline-start: 0.9rem;
+  border-inline-start: 2px solid var(--eng-rule-strong);
+}
+.eng-evo-rails-list strong {
+  color: var(--eng-fg);
+  font-weight: 700;
+}
+
+/* The honesty note. Deliberately the last thing on the deck and deliberately
+ * not decorated into a footnote — a page that sells a roadmap owes the reader
+ * this paragraph at full strength. */
+.eng-evo-honest {
+  display: flex;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 1rem 1.15rem;
+  border: 1px dashed var(--eng-accent-dim);
+  border-radius: 0.5rem;
+  max-width: 60rem;
+  font-size: var(--stella-type-xs);
+  line-height: 1.75;
+  color: var(--eng-muted);
+}
+.eng-evo-honest-mark {
+  color: var(--eng-accent);
+  flex: none;
+}
+.eng-evo-honest strong {
+  color: var(--eng-fg);
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 06 · the exit
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.eng-exit-install {
+  max-width: 34rem;
+  margin: 0 0 2rem;
+}
+
+.eng-exit-coda {
+  margin: 2rem 0 0;
+  max-width: var(--eng-measure);
+  font-size: var(--stella-type-sm);
+  color: var(--eng-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Narrow viewports — the stations
+ *
+ * The shell's own narrow-viewport rules (the rail, the station box) live in
+ * engine.css. What follows is only the per-station reflow: the loop's ring
+ * and vera's flip track are the two figures whose *layout* is load-bearing,
+ * and both are drawn horizontally at desk width.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 60rem) {
+  .eng-ring-scene {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 48rem) {
+  /* The flip turns vertical: FAIL above, the diff between, PASS below. The
+   * arrow rotates with it, which means re-pointing its head — a border
+   * triangle has no notion of the direction its parent is running. */
+  .eng-flip-track {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+  .eng-flip-run {
+    width: 100%;
+  }
+  .eng-flip-arrow {
+    width: 1px;
+    height: 2.5rem;
+    background: linear-gradient(
+      180deg,
+      var(--stella-danger),
+      var(--eng-accent),
+      var(--stella-success)
+    );
+  }
+  .eng-flip-arrow::after {
+    inset-inline-end: -0.2rem;
+    top: auto;
+    bottom: -1px;
+    border-block: 0;
+    border-inline: 0.25rem solid transparent;
+    border-top: 0.35rem solid var(--stella-success);
+  }
+
+  /* The ring unstacks.
+   *
+   * Its nodes are absolutely positioned against the circle and then pushed
+   * *outward* past its edge (`translate(±35%)`, `translate(-55%)` for the
+   * gate) so they straddle the track — which means the figure is wider than
+   * the circle by however wide its widest label is. Below this breakpoint
+   * that pushed the "guards" gate 38px off the left of a 390px viewport and
+   * gave the whole page a horizontal scrollbar. Shrinking the type only moves
+   * the breakpoint; the circular layout is what does not fit.
+   *
+   * So the figure becomes a linear one: the same five labels in the same DOM
+   * order, stacked, with the orbit and its track dropped (a comet running a
+   * track that is no longer drawn is just a dot wandering the page). The
+   * `role="img"` sentence on the container describes the mechanism either
+   * way, so nothing is lost by anyone. */
+  .eng-ring {
+    width: 100%;
+    aspect-ratio: auto;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .eng-ring-track,
+  .eng-ring-orbit {
+    display: none;
+  }
+  /* Qualified by `.eng-ring` on purpose. The circular placements above are
+   * written as `.eng-ring-node[data-pos="top"]` — class plus attribute, so
+   * (0,2,0) — and a media query adds no specificity of its own. An
+   * unqualified `.eng-ring-node` reset here is (0,1,0) and loses: the nodes
+   * went `static` but kept their `translate(-50%, -50%)`, which shifted a
+   * now-full-width block half its own width off the screen and made the
+   * overflow worse than the layout it was fixing. */
+  .eng-ring .eng-ring-node[data-pos],
+  .eng-ring .eng-ring-gate[data-pos],
+  .eng-ring .eng-ring-core {
+    position: static;
+    inset: auto;
+    transform: none;
+    max-width: none;
+    white-space: normal;
+    text-align: start;
+  }
+  .eng-ring-core {
+    border-radius: 0.375rem;
+    padding: 0.7rem;
+    text-align: center;
+  }
+  .eng-ring-gate {
+    justify-items: start;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Reduced motion — the stations stop moving.
+ *
+ * Two ambient loops live in this file: the comet orbiting the turn loop and
+ * the pulse on the goal entering the intake. Both are decoration — the ring's
+ * `role="img"` sentence and the intake's own words carry everything they
+ * illustrate — so both stop outright, resting in their visible state. The
+ * shell's entrance animations are stopped in engine.css, beside the rules
+ * that start them.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .eng-ring-orbit,
+  .eng-goal-dot {
+    animation: none;
+  }
+  .eng-cta,
+  .eng-evo-card,
+  .eng-bay-tool {
+    transition: none;
+  }
+}
