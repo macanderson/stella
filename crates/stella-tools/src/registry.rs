@@ -495,6 +495,7 @@ impl ToolRegistry {
                 spawn_queue.clone(),
                 shadow_memo.clone(),
                 options.diagnostics.clone(),
+                options.shell_confinement.clone(),
             ));
             // The web family registers by default, like every other built-in.
             // A fetched page is untrusted input and an egress channel, which is

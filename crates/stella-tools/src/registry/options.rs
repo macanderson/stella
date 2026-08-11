@@ -44,6 +44,17 @@ pub struct RegistryOptions {
     /// the diagnostic plane, not that tool's private channel: a built-in with
     /// a decision worth explaining takes it from here too.
     pub diagnostics: Option<Arc<stella_diag::Dx>>,
+    /// Territory this registry's shell may not name — see
+    /// [`crate::bash::confine`]. Default
+    /// ([`ShellConfinement::unconfined`](crate::bash::ShellConfinement::unconfined))
+    /// is an ordinary session, where the workspace root *is* the tree the work
+    /// is judged on and there is nothing to keep the shell out of; a
+    /// best-of-N candidate arms it against the graded tree it delivers into.
+    ///
+    /// A construction input rather than a policy toggle, for the same reason
+    /// as everything else here: it is a fact about where this registry's tools
+    /// are running, which the operator cannot sensibly override.
+    pub shell_confinement: crate::bash::ShellConfinement,
 }
 
 impl RegistryOptions {

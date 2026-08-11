@@ -10,6 +10,7 @@ pub(super) fn builtins(
     spawn_queue: crate::tasks::SpawnQueue,
     shadow_memo: crate::verify::ShadowMemoHandle,
     diagnostics: Option<Arc<stella_diag::Dx>>,
+    shell_confinement: crate::bash::ShellConfinement,
 ) -> Vec<Arc<dyn Tool>> {
     let processes: crate::process::ProcessTableHandle = Arc::default();
     let repo: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
@@ -25,7 +26,8 @@ pub(super) fn builtins(
         // authority class as `run_script` and the process group beside it —
         // an operator who wants it gone writes `"tools": {"bash": "off"}`,
         // which the policy layer above enforces for MCP and custom tools too.
-        Arc::new(crate::bash::Bash::new(scratch_path.clone())) as Arc<dyn Tool>,
+        Arc::new(crate::bash::Bash::new(scratch_path.clone()).confined_to(shell_confinement))
+            as Arc<dyn Tool>,
         Arc::new(crate::capability::ProbeCapability::new()),
         Arc::new(crate::verify::VerifyDone::new(shadow_memo, diagnostics)),
         Arc::new(crate::project::BuildProject),
