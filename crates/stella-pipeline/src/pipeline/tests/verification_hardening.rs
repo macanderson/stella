@@ -21,12 +21,26 @@ mod flip_halt_arming;
 /// there, beside the only test that scripts it.
 mod witness_repair_bound;
 
+/// The authored witness's baseline-tree observation (#2272) — a child module
+/// for the same two reasons `flip_halt_arming` is: it reaches the shared fakes
+/// through this file's own `use super::*`, and the already-oversized `tests.rs`
+/// does not grow another module declaration.
+mod authored_witness_baseline_tree;
+
 /// The untracked-diff read bound (#2110) — a child module for the same two
 /// reasons `flip_halt_arming` is: it reaches the shared fakes through this
 /// file's own `use super::*`, and the already-oversized `tests.rs` does not
 /// grow another module declaration. The counting diagnostic runner it needs
 /// lives there, beside the only test that scripts it.
 mod untracked_render_bound;
+
+/// The `.stella/` state exclusion from the verifier diff and the warrant
+/// (#2038) — a child module for the same two reasons `flip_halt_arming` is:
+/// it reaches the shared fakes through this file's own `use super::*`, and the
+/// already-oversized `tests.rs` does not grow another module declaration. The
+/// untracked-only diagnostic tree it needs lives there, beside the only test
+/// that scripts it.
+mod stella_state_exclusion;
 
 /// The #1291 diff-coverage scenarios — a child module for the same two
 /// reasons `flip_halt_arming` is: it reaches the shared fakes through this

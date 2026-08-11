@@ -330,11 +330,27 @@ impl<'a> Pipeline<'a> {
         if matches!(diagnostic, DiagnosticInvocation::GitDiff) {
             let after = surface.repo_status.untracked_fingerprints().await;
             // Created (absent before) OR modified (fingerprint changed) this
-            // turn — never an untouched dirty file.
+            // turn — never an untouched dirty file, and never Stella's own
+            // per-workspace state.
+            //
+            // The `.stella/` exclusion (#2038) is by IDENTITY, not by any size
+            // or budget filter: the port behind `untracked_fingerprints` shells
+            // `git ls-files --others --exclude-standard`, so the only thing
+            // keeping the code graph's SQLite WAL/SHM sidecars out of this
+            // stream was a `.stella/.gitignore` that a fresh workspace has no
+            // reason to contain. Where it was missing, a turn whose whole
+            // deliverable was one file reported three changes, two of them the
+            // agent's own bookkeeping rendered as binary escape bytes into a
+            // verifier-facing payload. Filtered here rather than downstream
+            // because this list is the single source of the untracked half of
+            // `text`, `lines`, and `untracked_rendered` at once — and because
+            // `warrant::changed_paths` parses its own path set back out of
+            // that text.
             let mut fresh: Vec<&str> = after
                 .iter()
                 .filter(|(path, fp)| untracked_before.get(*path) != Some(*fp))
                 .map(|(path, _)| path.as_str())
+                .filter(|path| !crate::witness::warrant::is_stella_state_path(path))
                 .collect();
             fresh.sort(); // deterministic order for the appended evidence
             // Only the HEAD of that list is read. Every path read costs two
