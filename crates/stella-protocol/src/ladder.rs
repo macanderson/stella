@@ -337,7 +337,16 @@ pub struct LadderSnapshot {
     pub diff_budget: u32,
     /// Whether the diff probe could read the working tree at all.
     pub diff_available: bool,
-    /// Mutating file touches the recorder observed.
+    /// Mutating file touches the recorder observed — a tally of what the agent
+    /// touched **through tools**, which a shell redirect defeats, and which is
+    /// zero inside a candidate workspace.
+    ///
+    /// **Recorded only: no ladder predicate reads it** (#2873). It is here so a
+    /// corpus of traces can be read after the fact, exactly like
+    /// [`Self::no_test_surface`]. A consumer asking whether the tree changed
+    /// reads [`Self::diff_available`] with [`Self::diff_lines`] — git is the
+    /// authority — and one asking whether anything was attempted reads
+    /// [`Self::mutating_actions`].
     pub file_change_events: u32,
     /// Dispatched tool calls capable of changing the workspace.
     pub mutating_actions: u32,

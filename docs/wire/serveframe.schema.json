@@ -2175,7 +2175,7 @@
           "type": "integer"
         },
         "file_change_events": {
-          "description": "Mutating file touches the recorder observed.",
+          "description": "Mutating file touches the recorder observed — a tally of what the agent\ntouched **through tools**, which a shell redirect defeats, and which is\nzero inside a candidate workspace.\n\n**Recorded only: no ladder predicate reads it** (#2873). It is here so a\ncorpus of traces can be read after the fact, exactly like\n[`Self::no_test_surface`]. A consumer asking whether the tree changed\nreads [`Self::diff_available`] with [`Self::diff_lines`] — git is the\nauthority — and one asking whether anything was attempted reads\n[`Self::mutating_actions`].",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
