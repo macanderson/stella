@@ -71,6 +71,7 @@ pub mod coverage;
 pub mod diff_render;
 pub mod fingerprint;
 pub mod mutation;
+pub mod standing;
 
 use std::collections::BTreeSet;
 
@@ -369,6 +370,18 @@ pub enum LadderDecision {
     /// Clear failure (touched tests are red): feed the evidence back into a
     /// revision turn. No verifier call — the failure is already deterministic.
     Revise,
+    /// The authored witness failed **the same way** before and after the work
+    /// (#2540). It does not discriminate, so its red says nothing about the
+    /// change and no revision can make it say anything.
+    ///
+    /// A claim about the *witness*, not the work — the same `-able` / `-ed`
+    /// split [`Self::Unverifiable`] and [`Self::Unverified`] carry. Terminal
+    /// and outranking [`Self::Revise`], because `Revise` blames the worker for
+    /// the failure it is handed, and the worker cannot repair an instrument.
+    ///
+    /// See [`LadderInputs::witness_unmoved_by_revision`] for why the trigger is
+    /// fingerprint equality and not "it failed twice".
+    WitnessUnsatisfiable,
     /// The turn dispatched nothing that could change the workspace, and no
     /// channel saw anything change — see [`LadderInputs::nothing_was_attempted`].
     /// A determinate finding, not an abstention: revise, and report `passed:
@@ -421,6 +434,48 @@ pub struct LadderInputs {
     /// Whether the touched tests passed after execution. `None` when no test
     /// command was available/run — an *inconclusive* signal, not a pass.
     pub touched_tests_passed: Option<bool>,
+    /// The **authored witness** failed with the same
+    /// [`airlock::FailureFingerprint`] as the baseline that armed it, *after*
+    /// the worker had already been told about that failure and revised (#2540).
+    ///
+    /// # Two conditions, and both are load-bearing
+    ///
+    /// **Fingerprint equality**, first, because "it failed twice" is not a
+    /// substitute. Every armed witness fails on the baseline by construction —
+    /// the witness stage rejects one that does not — so "red on both trees" is
+    /// true of every failing witness and discriminates nothing. A witness whose
+    /// failure *moved* has demonstrably observed the change, even if it is not
+    /// yet green, and that is real feedback the worker can act on. The
+    /// fingerprint normalizes timings, paths, pids and line/column churn
+    /// ([`airlock::normalize_failure`]), so this is "the same failure", not
+    /// "byte-identical bytes".
+    ///
+    /// **A revision already spent**, second, and this is the condition the
+    /// obvious design omits. Equality between the baseline and the *first*
+    /// candidate run is consistent with two different worlds: the witness is
+    /// deaf to the change, or the change simply did not do the thing the
+    /// witness asks about. Both produce the identical observation, so acting on
+    /// it would be reading evidence that cannot distinguish the claim from its
+    /// opposite — and the arm it feeds is terminal, so getting it wrong costs
+    /// the worker the whole repair loop on a turn that just needed a second
+    /// attempt.
+    ///
+    /// Requiring a revision first turns the reading into an actual experiment:
+    /// the worker was handed the failure, changed the work in response, and the
+    /// witness said *exactly the same thing*. That is invariance to the work,
+    /// which is what "the instrument does not discriminate" means. It costs one
+    /// revision — and one revision, not a whole budget, is the entire harm
+    /// #2540 reported.
+    ///
+    /// `false` covers "the failure moved", "no revision has been spent yet",
+    /// "no authored witness was in play" (a configured `--test-command` is the
+    /// operator's instrument, not one the pipeline commissioned) and "nothing
+    /// could be compared". One-way, like every other probe on this struct: it
+    /// can only ever withhold blame, never assign it.
+    ///
+    /// [`airlock::FailureFingerprint`]: crate::witness::airlock::FailureFingerprint
+    /// [`airlock::normalize_failure`]: crate::witness::airlock::normalize_failure
+    pub witness_unmoved_by_revision: bool,
     /// Lines changed by the turn (from the diff command).
     pub diff_lines: u32,
     /// The diff-size budget; a diff at or under this is "small enough" to
@@ -508,11 +563,21 @@ pub struct LadderInputs {
     /// "no flip" is a demand the task structurally cannot meet (#2129: a
     /// one-line `answer.txt` deliverable has no tests to flip).
     ///
-    /// Configuration, not evidence, like [`Self::veto_warnings`]. Phrased as
-    /// the *dispensation* rather than the capability so `Default` denies it:
-    /// this is the one field that can turn a fallback FAIL into an
-    /// abstention, and a caller that forgets to set it must get the
-    /// conservative answer, never the permissive one.
+    /// **Recorded only: [`ladder_decision`] does not read it.** It used to be
+    /// the one field that could turn a fallback FAIL into an abstention, and
+    /// that description outlived the machinery — #2584 deleted
+    /// `verify::heuristic_fallback` along with the model verdict, and nothing
+    /// took over the read. Two `LadderInputs` differing only here return the
+    /// identical decision today.
+    ///
+    /// It is deliberately not deleted with the read. The pipeline still sets
+    /// it, the pipeline's `ladder_snapshot` still puts it on the
+    /// wire, and `replay` still renders it, because "the task had no test
+    /// surface" is the fact that separates an unprovable task from an unproven
+    /// one when a corpus of traces is read after the fact — see
+    /// [`stella_protocol::LadderSnapshot::no_test_surface`]. Whether it should
+    /// regain a decision role or be retired is #2638; what it must not do is
+    /// keep claiming an effect it lost.
     pub no_test_surface: bool,
     /// Command chains this turn that reported an error while exiting 0
     /// ([`command_errors`], #2125) — the shape a cited measurement can
@@ -672,6 +737,11 @@ impl LadderInputs {
 /// The evidence ladder (L-E11). Decides submit/revise/abstain/escalate from
 /// deterministic evidence alone. Ordering of the checks matters:
 ///
+/// 0. **The witness cannot discriminate → `WitnessUnsatisfiable`.** The
+///    authored witness failed identically before and after the work, so its
+///    red is a fact about the instrument. Above `Revise` on purpose: `Revise`
+///    hands the failure back as the thing to fix, and the worker cannot fix
+///    it (#2540).
 /// 1. **Touched tests red → `Revise`.** A red test is a clear, deterministic
 ///    failure; never spend a verifier call to "confirm" it.
 /// 2. **Nothing attempted → `NothingAttempted`.** The turn dispatched no
@@ -691,6 +761,17 @@ impl LadderInputs {
 ///    see. Terminal, and never an escalation: see [`LadderDecision::Unverified`]
 ///    for why a model's opinion is not a rung on an evidence ladder.
 pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
+    // 0. The authored witness failed the same way on both trees (#2540). It
+    //    is red, but its red does not depend on the change, so it is evidence
+    //    about the instrument and nothing else. Ordered above the `Revise`
+    //    below because that arm's whole content is "here is what to fix", and
+    //    a witness the worker cannot dispose of turns a solved task into a
+    //    deadline: on `fix-git` the worker diagnosed the contamination
+    //    correctly and every revision minted another snapshot commit for the
+    //    witness to count.
+    if inputs.touched_tests_passed == Some(false) && inputs.witness_unmoved_by_revision {
+        return LadderDecision::WitnessUnsatisfiable;
+    }
     // 1. A red touched-test is a deterministic failure — revise, no verifier.
     if inputs.touched_tests_passed == Some(false) {
         return LadderDecision::Revise;
@@ -792,6 +873,7 @@ impl From<LadderDecision> for LadderRung {
         match decision {
             LadderDecision::SubmitFast => LadderRung::SubmitFast,
             LadderDecision::Revise => LadderRung::Revise,
+            LadderDecision::WitnessUnsatisfiable => LadderRung::WitnessUnsatisfiable,
             LadderDecision::NothingAttempted => LadderRung::NothingAttempted,
             LadderDecision::Unverifiable => LadderRung::Unverifiable,
             LadderDecision::Unverified => LadderRung::Unverified,
@@ -965,6 +1047,48 @@ pub fn unverified_evidence(inputs: &LadderInputs, tracked_cmd: Option<&str>) -> 
         ),
         deterministic: false,
         evidence_refs: Vec::new(),
+        ladder: None,
+    }
+}
+
+/// Build the `VerdictEvidence` for a [`LadderDecision::WitnessUnsatisfiable`]
+/// turn: the authored witness failed identically before and after the work
+/// (#2540).
+///
+/// `deterministic: false`, and the contrast with
+/// [`deterministic_fail_evidence`] is the whole reason this exists. That one
+/// reports a *test* that went red over the change, which is a determinate
+/// finding about the work. This one reports an *instrument* whose red does not
+/// depend on the change at all — so nothing is claimed about the work, in
+/// either direction, and the summary says so in the same words the abstaining
+/// rungs use.
+///
+/// The summary names the shared fingerprint. It is the only actionable content
+/// here: a reader auditing the run needs to see that the two failures were the
+/// same failure, because that — and not the mere fact of a red witness — is
+/// what makes the demand unmeetable.
+///
+/// Verification-side only, like every fingerprint: the digest identifies a
+/// failure without quoting it, so naming it discloses nothing sealed.
+pub fn witness_unsatisfiable_evidence(
+    tracked_cmd: Option<&str>,
+    fingerprint: &str,
+) -> VerdictEvidence {
+    let command = match tracked_cmd {
+        Some(cmd) => format!("`{cmd}`"),
+        None => "the authored witness".to_string(),
+    };
+    VerdictEvidence {
+        summary: format!(
+            "WITNESS UNSATISFIABLE — {command} failed on the baseline and failed again on the \
+             change with the same failure fingerprint ({fingerprint}), so it does not \
+             discriminate between them and no revision of the work can turn it green. This is \
+             NOT a finding that the work is absent or wrong: the instrument is at fault, not the \
+             change, and the turn is reported unproven rather than failed. Verify the result on \
+             its own merits."
+        ),
+        deterministic: false,
+        evidence_refs: vec![format!("witness_fingerprint:{fingerprint}")],
         ladder: None,
     }
 }

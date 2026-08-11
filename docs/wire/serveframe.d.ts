@@ -1191,7 +1191,7 @@ export interface HunkProposal {
  * vocabulary in this crate: a reader that meets a rung it does not know fails
  * the event rather than laundering it (see the [`crate::event`] docs).
  */
-export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "unverified" | "waived";
+export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "unverified" | "witness_unsatisfiable" | "waived";
 
 /**
  * The deterministic evidence the ladder decided a verdict from, snapshotted
@@ -1278,12 +1278,19 @@ export interface LadderSnapshot {
    * (#2129) — neither a configured `--test-command` nor an authored
    * witness — so "no flip" is a demand the task structurally cannot meet.
    *
-   * On the wire for the same reason as [`Self::verify_done_flip`]: it turns
-   * a fallback FAIL into an upward abstention, and a reader auditing a pass
-   * that rests on nothing deterministic needs to see that the demand was
-   * unmeetable rather than unmet. `false` on snapshots recorded before
-   * this existed, which is the conservative reading — the dispensation is
-   * never assumed.
+   * **Recorded only — this field steers nothing.** It once turned a
+   * fallback FAIL into an upward abstention, but the fallback it fed
+   * (`verify::heuristic_fallback`) was deleted with the model verdict in
+   * #2584, and nothing replaced the read: `ladder_decision` does not
+   * consult it, and two otherwise-identical inputs differing only here
+   * return the same decision. It survives because the question it answers —
+   * how often a run is asked for a flip on a task that has no test surface
+   * to produce one — is one only aggregate traces can answer, and aggregate
+   * traces read this snapshot. Whether to retire it or give it a decision
+   * role is #2638.
+   *
+   * `false` on snapshots recorded before this existed, which is the
+   * conservative reading — the dispensation is never assumed.
    */
   no_test_surface?: boolean;
   /**

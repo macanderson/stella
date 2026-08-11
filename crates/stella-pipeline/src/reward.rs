@@ -279,6 +279,13 @@ pub enum DiscardReason {
     /// No independent review was bought at all, so nothing was determined
     /// either way.
     ReviewWaived,
+    /// The authored witness failed identically before and after the work
+    /// (#2540), so it never discriminated. Discarded rather than scored, and
+    /// kept distinct from [`Self::Unproven`] because the two name different
+    /// repairs: that one wants a proof that was never produced, this one wants
+    /// a different instrument. Training on it either way would teach the
+    /// worker from a test that was deaf to what the worker did.
+    WitnessUnsatisfiable,
     /// The verdict predates the rung field, so which tier it belongs to is
     /// unknown.
     RungUnknown,
@@ -498,6 +505,7 @@ pub fn outcome_term(
         LadderRung::SubmitFast | LadderRung::Revise => weights.deterministic,
         LadderRung::Unverified => return Err(DiscardReason::Unproven),
         LadderRung::Unverifiable => return Err(DiscardReason::Abstained),
+        LadderRung::WitnessUnsatisfiable => return Err(DiscardReason::WitnessUnsatisfiable),
         LadderRung::NothingAttempted => return Err(DiscardReason::NothingAttempted),
         LadderRung::Waived => return Err(DiscardReason::ReviewWaived),
     };

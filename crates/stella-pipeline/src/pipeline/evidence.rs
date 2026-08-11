@@ -31,6 +31,10 @@ impl<'a> Pipeline<'a> {
         LadderInputs {
             flip: state.oracle.outcome(),
             touched_tests_passed,
+            // #2540: observed by `observe_touched_tests`, which is the only
+            // place holding both the authored witness's baseline output and
+            // the post-execution run's.
+            witness_unmoved_by_revision: state.witness_unmoved_by_revision,
             diff_lines: state.diff_lines,
             diff_budget: self.config.diff_budget_lines,
             diff_available: state.diff_available,

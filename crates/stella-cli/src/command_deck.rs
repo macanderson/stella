@@ -4481,7 +4481,7 @@ async fn run_lead_pipeline_turn(
     match result {
         // The shared projection keeps the abort's typed kind (#1862) and the
         // exact messages the string arms carried before.
-        Ok(outcome) => agent::outcome::pipeline_status_result(&outcome.status),
+        Ok(outcome) => agent::outcome::interactive_status_result(&outcome.status),
         Err(e) => Err(crate::failure::CliFailure::error(e.to_string())),
     }
 }

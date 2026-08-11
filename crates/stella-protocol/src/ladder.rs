@@ -104,6 +104,32 @@ pub enum LadderRung {
         alias = "heuristic_fallback"
     )]
     Unverified,
+    /// The authored witness produced the **same failure** before and after the
+    /// work, so it cannot discriminate: nothing it reports is a fact about the
+    /// change, and no revision can make it one (#2540).
+    ///
+    /// Reads as a claim about the **witness**, not about the work — the same
+    /// `-able` / `-ed` distinction [`LadderRung::Unverifiable`] and
+    /// [`LadderRung::Unverified`] already carry. "Unsatisfiable" says the
+    /// instrument's demand cannot be met by doing the task; it says nothing
+    /// about whether the task was done.
+    ///
+    /// Ordered above [`LadderRung::Revise`] in the ladder, which is the whole
+    /// point of having it. A witness that fails post-execute reaches `Revise`
+    /// at the ladder's first step, and `Revise` blames the worker: the failure
+    /// is fed back as the thing to fix. On Terminal-Bench `fix-git` a witness
+    /// enumerated every commit unreachable from `master` and counted the
+    /// pipeline's own snapshot commits among them, so it stayed red however
+    /// correctly the agent merged the real one — and every revise cycle minted
+    /// another snapshot, hence another violation. The worker diagnosed it
+    /// exactly and could do nothing; the run ended on the deadline rather than
+    /// on the logic.
+    ///
+    /// The discriminator is **fingerprint equality**
+    /// (`crate::witness::airlock::FailureFingerprint`), never "it failed
+    /// twice": a witness that fails *differently* after the work is genuine
+    /// feedback about the change and keeps reaching `Revise`.
+    WitnessUnsatisfiable,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass
     /// carrying no evidence either way.
@@ -121,6 +147,7 @@ impl LadderRung {
             LadderRung::NothingAttempted => "nothing_attempted",
             LadderRung::Unverifiable => "unverifiable",
             LadderRung::Unverified => "unverified",
+            LadderRung::WitnessUnsatisfiable => "witness_unsatisfiable",
             LadderRung::Waived => "waived",
         }
     }
@@ -369,12 +396,19 @@ pub struct LadderSnapshot {
     /// (#2129) — neither a configured `--test-command` nor an authored
     /// witness — so "no flip" is a demand the task structurally cannot meet.
     ///
-    /// On the wire for the same reason as [`Self::verify_done_flip`]: it turns
-    /// a fallback FAIL into an upward abstention, and a reader auditing a pass
-    /// that rests on nothing deterministic needs to see that the demand was
-    /// unmeetable rather than unmet. `false` on snapshots recorded before
-    /// this existed, which is the conservative reading — the dispensation is
-    /// never assumed.
+    /// **Recorded only — this field steers nothing.** It once turned a
+    /// fallback FAIL into an upward abstention, but the fallback it fed
+    /// (`verify::heuristic_fallback`) was deleted with the model verdict in
+    /// #2584, and nothing replaced the read: `ladder_decision` does not
+    /// consult it, and two otherwise-identical inputs differing only here
+    /// return the same decision. It survives because the question it answers —
+    /// how often a run is asked for a flip on a task that has no test surface
+    /// to produce one — is one only aggregate traces can answer, and aggregate
+    /// traces read this snapshot. Whether to retire it or give it a decision
+    /// role is #2638.
+    ///
+    /// `false` on snapshots recorded before this existed, which is the
+    /// conservative reading — the dispensation is never assumed.
     #[serde(default)]
     pub no_test_surface: bool,
     /// Command chains this round that reported an error while exiting `0`

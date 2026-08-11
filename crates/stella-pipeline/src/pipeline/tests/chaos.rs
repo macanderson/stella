@@ -366,7 +366,9 @@ fn assert_loop_invariant(
                 // work is genuinely a no-op path; on these scenarios it would
                 // be a lookup that the class routed to zero execution, which
                 // is still a *named* completion, not a death.
-                PipelineStatus::Completed | PipelineStatus::VerificationFailed { .. } => {}
+                PipelineStatus::Completed
+                | PipelineStatus::Unverified { .. }
+                | PipelineStatus::VerificationFailed { .. } => {}
                 PipelineStatus::Aborted { reason, .. } => {
                     let r = reason.to_ascii_lowercase();
                     let legitimate = r.contains("budget")

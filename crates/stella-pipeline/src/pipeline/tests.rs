@@ -996,7 +996,14 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
         .expect("run succeeds");
 
     assert_eq!(outcome.task_class, TaskClass::SimpleLookup);
-    assert_eq!(outcome.status, PipelineStatus::Completed);
+    // #2569: verification RAN and settled nothing, which is `Unverified`, not
+    // `Completed`. This assertion read `Completed` for as long as the two were
+    // the same value.
+    assert!(
+        matches!(outcome.status, PipelineStatus::Unverified { .. }),
+        "{:?}",
+        outcome.status
+    );
     let verdict = outcome
         .verdict
         .expect("zero-diff guard forced verification");
@@ -1655,7 +1662,13 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
     .await;
     let outcome = outcome.expect("run succeeds");
 
-    assert_eq!(outcome.status, PipelineStatus::Completed);
+    // The run reached a terminal verification state rather than aborting; with
+    // no test surface that state is `Unverified` (#2569), not `Completed`.
+    assert!(
+        matches!(outcome.status, PipelineStatus::Unverified { .. }),
+        "{:?}",
+        outcome.status
+    );
     assert_eq!(
         outcome.task_class,
         TaskClass::SingleTask,
@@ -1779,10 +1792,13 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
     .await;
     let outcome = outcome.expect("run succeeds");
 
-    assert_eq!(
-        outcome.status,
-        PipelineStatus::Completed,
-        "a single-model config must still complete the task"
+    // "Completes the task" means it did not abort, not that anything proved
+    // it: with no independent author there is no witness, so the honest
+    // terminal state is `Unverified` (#2569).
+    assert!(
+        matches!(outcome.status, PipelineStatus::Unverified { .. }),
+        "a single-model config must still complete the task: {:?}",
+        outcome.status
     );
     assert!(
         !stages(&events).contains(&StageKind::Witness),

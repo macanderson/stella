@@ -56,6 +56,11 @@ mod diff_coverage;
 /// cannot.
 mod guard_wiring;
 
+/// The two-tree witness check (#2540) — a child module for the same two
+/// reasons `flip_halt_arming` is. Its module doc carries the `fix-git` trial
+/// this rung exists for, and both halves of the boundary it draws.
+mod witness_unsatisfiable;
+
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
 /// must escalate to the model verifier, never credit `DeterministicPass`. Before

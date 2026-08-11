@@ -12,8 +12,9 @@ import { Tip } from "@/components/ui/tooltip";
  * question underneath it — *what says so*. They come apart more often than
  * anyone expects: Stella's pipeline publishes `passed: true` for a real
  * deterministic flip, for an `unverifiable` outcome where every channel was
- * blind, and for a `waived` one where triage skipped review. Read the verdict
- * alone and those three are the same cell.
+ * blind, for a `witness_unsatisfiable` one where the witness never
+ * discriminated, and for a `waived` one where triage skipped review. Read the
+ * verdict alone and all of those are the same cell.
  *
  * Two deliberate choices about colour:
  *
@@ -50,6 +51,14 @@ const GRADE_COPY: Record<
       "The oracle ran and never passed: the agent's claim was caught before " +
       "it shipped. The rail working as designed, not an agent failure to " +
       "read twice.",
+  },
+  unsatisfiable: {
+    label: "unsatisfiable",
+    tone: "text-warn",
+    blurb:
+      "The witness failed the same way before and after the work: it never " +
+      "discriminated between them, so its red says nothing about the change. " +
+      "An instrument fault, not an agent one.",
   },
   unproven: {
     label: "unproven",

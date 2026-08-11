@@ -7,6 +7,7 @@ use proptest::prelude::*;
 
 mod uncollected;
 mod witness_strip;
+mod witness_unsatisfiable;
 
 // FlipOracle transitions
 
