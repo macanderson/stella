@@ -83,10 +83,16 @@ impl<'a> Engine<'a> {
     /// confirmed flip means the remaining work is, by proof, not work. The
     /// halted turn then settles as `Completed` at the very next boundary check
     /// in `drive` without paying for another model call.
+    /// `read_only_tools` is the narrower schema-derived set (never the
+    /// dispatch-safe union, which also holds honestly-mutating
+    /// `parallel_safe_names`): it feeds each call's advertised `read_only`
+    /// bit into the hook payload (#2684), so it must mean what the schema
+    /// said.
     pub(super) async fn execute_tool_calls(
         &self,
         calls: &[ToolCall],
         dispatch_safe_tools: &HashSet<String>,
+        read_only_tools: &HashSet<String>,
         mut speculation: SpeculationPool,
         events: &EventSender,
     ) -> Vec<ToolResult> {
@@ -137,12 +143,15 @@ impl<'a> Engine<'a> {
                             }
                             None => None,
                         };
+                        let read_only = read_only_tools.contains(&call.name);
                         async move {
                             match harvested {
                                 Some(s) => (index, call, s.output, s.duration_ms, true),
                                 None => {
                                     let started = std::time::Instant::now();
-                                    let output = self.execute_with_repair(call, Some(events)).await;
+                                    let output = self
+                                        .execute_with_repair(call, read_only, Some(events))
+                                        .await;
                                     let duration_ms = started.elapsed().as_millis() as u64;
                                     (index, call, output, duration_ms, false)
                                 }

@@ -111,6 +111,14 @@ pub const PULL_REQUEST_CREATED: &str = "pull_request.created";
 pub const DEPLOYMENT_REQUESTED: &str = "deployment.requested";
 pub const DEPLOYMENT_COMPLETED: &str = "deployment.completed";
 pub const DEPLOYMENT_FAILED: &str = "deployment.failed";
+// ---- settings-declared user hooks (#2684) ----
+/// A `Stop` hook held a completing turn open; the payload carries the
+/// hook's reason, which also reaches the model as a marked tail message
+/// (`driver::user_hooks`).
+pub const HOOK_STOP_BLOCKED: &str = "hook.stop.blocked";
+/// A `PreCompact` hook vetoed an overflow-summarization round; the payload
+/// carries the hook's reason.
+pub const HOOK_PRE_COMPACT_VETOED: &str = "hook.pre_compact.vetoed";
 // ---- extensions + telemetry ----
 pub const EXTENSION_LOADED: &str = "extension.loaded";
 pub const EXTENSION_UNLOADED: &str = "extension.unloaded";
@@ -211,6 +219,8 @@ pub const ALL: &[&str] = &[
     DEPLOYMENT_REQUESTED,
     DEPLOYMENT_COMPLETED,
     DEPLOYMENT_FAILED,
+    HOOK_STOP_BLOCKED,
+    HOOK_PRE_COMPACT_VETOED,
     EXTENSION_LOADED,
     EXTENSION_UNLOADED,
     EXTENSION_ERROR,

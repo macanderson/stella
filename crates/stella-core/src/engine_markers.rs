@@ -42,12 +42,15 @@
 ///
 /// Entries reference the owning constants — `SUMMARY_MARKER_PREFIX` and
 /// `LOOP_STEER_PREFIX` (`driver.rs`), `CONTINUATION_MARKER_PREFIX`
-/// (`driver/truncation.rs`), `RECALL_MARKER` (`receipts.rs`) — so the table is
-/// correct by definition for the markers it lists; tests keep it complete.
+/// (`driver/truncation.rs`), `STOP_HOOK_MARKER_PREFIX`
+/// (`driver/user_hooks.rs`, #2684), `RECALL_MARKER` (`receipts.rs`) — so
+/// the table is correct by definition for the markers it lists; tests keep
+/// it complete.
 pub const ENGINE_MARKERS: &[&str] = &[
     crate::driver::SUMMARY_MARKER_PREFIX,
     crate::driver::LOOP_STEER_PREFIX,
     crate::driver::CONTINUATION_MARKER_PREFIX,
+    crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX,
     crate::receipts::RECALL_MARKER,
 ];
 
@@ -62,8 +65,8 @@ mod tests {
     #[test]
     fn the_table_is_nonempty_and_every_marker_is_distinctive() {
         assert!(
-            ENGINE_MARKERS.len() >= 4,
-            "the four known engine markers must all be present; a shorter table \
+            ENGINE_MARKERS.len() >= 5,
+            "the five known engine markers must all be present; a shorter table \
              means one was dropped rather than retired through review"
         );
         for marker in ENGINE_MARKERS {

@@ -55,7 +55,9 @@
 //! - **#2684 (shell-hook bridge)**: [`ApprovalBroker::resolve`] is the
 //!   reusable entry point — build an [`ApprovalRequest`], hand over the
 //!   bus, and the emit → park → TTL contract is honoured for that caller
-//!   too. [`ToolRegistry::approval_broker`] exposes the session's broker.
+//!   too. [`ToolRegistry::approval_broker`] exposes the session's broker,
+//!   and `crate::hook_bridge::BrokerApprovalRoute` is the shipped caller:
+//!   it implements the engine's `HookApprovalRoute` port over this flow.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -133,71 +135,13 @@ pub enum ApprovalOutcome {
     Denied { reason: String },
 }
 
-/// Operator-level posture for one call — the top of the precedence ladder.
-///
-/// Today the registry itself always passes [`OperatorPosture::NoOpinion`]:
-/// operator tool switches (`tools.<name>: "off"`) act upstream by
-/// withholding the tool from the surface entirely (`crate::policy`), so a
-/// denied tool never reaches these gates. The variant exists because the
-/// precedence contract must hold for producers that DO carry an operator
-/// posture — #2684's hook bridge and #2716's `AuthzGate`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OperatorPosture {
-    /// The operator has not spoken; the gate evaluation decides.
-    NoOpinion,
-    /// The operator forbids the call. Nothing downstream can override it.
-    Deny { reason: String },
-}
-
-/// The folded verdict of [`resolve_precedence`] — what the dispatch does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GateVerdict {
-    /// Proceed.
-    Allow,
-    /// Park and ask a human; the answer decides.
-    RequireApproval { reason: String },
-    /// Refuse without asking anyone.
-    Deny { reason: String },
-}
-
-/// Fold an operator posture and a gate/hook evaluation into one verdict.
-///
-/// The precedence is fixed: **operator deny > gate/hook `RequireApproval` >
-/// any allow**. A hook or plugin `Allow` (or `Modify`) can never override
-/// an operator deny, and an approval requirement always beats an allow.
-///
-/// An errored evaluation (`Err`) is an unconditional deny — fail closed.
-/// `_enforcement_softened` is deliberately accepted and ignored: the
-/// parameter exists so a caller carrying a softening switch must hand it
-/// over, and the signature is the proof that no value of it can soften an
-/// evaluation failure (the OXA-2056 shape, spec item 5 of #2676).
-///
-/// Pure and synchronous over its inputs by design — this is the seam
-/// #2716's `AuthzGate` will feed, and the property tests below pin the
-/// ladder independently of any producer.
-pub fn resolve_precedence(
-    operator: &OperatorPosture,
-    evaluation: Result<&HookDecision, &str>,
-    _enforcement_softened: bool,
-) -> GateVerdict {
-    if let OperatorPosture::Deny { reason } = operator {
-        return GateVerdict::Deny {
-            reason: format!("denied by operator policy: {reason}"),
-        };
-    }
-    match evaluation {
-        Err(error) => GateVerdict::Deny {
-            reason: format!("policy evaluation failed ({error}); failing closed"),
-        },
-        Ok(HookDecision::Deny { reason }) => GateVerdict::Deny {
-            reason: reason.clone(),
-        },
-        Ok(HookDecision::RequireApproval { reason }) => GateVerdict::RequireApproval {
-            reason: reason.clone(),
-        },
-        Ok(HookDecision::Allow | HookDecision::Modify { .. }) => GateVerdict::Allow,
-    }
-}
+// The precedence ladder itself — [`OperatorPosture`], [`GateVerdict`],
+// [`resolve_precedence`] — moved DOWN to `stella_core::hooks::decision`
+// when #2684 gave it a second feeder below this crate (the engine's
+// shell-hook surface); re-exported here so the wave-1 #2676 seam — and
+// every caller and property test in this module — is unchanged. One pure
+// function, two feeders, zero copies.
+pub use stella_core::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
 
 /// The session's approval flow: an optional responder plus the TTL that
 /// bounds every park. Headless by default — [`ApprovalBroker::resolve`]
@@ -355,6 +299,13 @@ impl ToolRegistry {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+
+    /// The session's attached hook bus, if any (cheap clone — shared
+    /// inner). For the #2684 bridge, whose approval flow emits its
+    /// `approval.*` audit events on the same bus the registry's gates use.
+    pub(crate) fn hook_bus(&self) -> Option<HookBus> {
+        self.bus.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// The `read_only` bit `name` advertises — `false` when the registry

@@ -3,20 +3,36 @@
 //!
 //! Hooks are shell commands declared in workspace settings that fire on
 //! agent lifecycle events, receiving the event payload as JSON on stdin
-//! (Claude Code parity). Three events are wired, each with distinct,
-//! load-bearing behavior (mirrors `hooks.ts`'s header exactly):
+//! (Claude Code parity). Five events are wired, each with distinct,
+//! load-bearing behavior:
 //!
 //!   - [`HookEvent::SessionStart`] — runs once before the turn. Anything a
 //!     hook prints to stdout is appended to the system prompt as
 //!     additional context.
 //!   - [`HookEvent::PreToolUse`] — runs before a tool executes. A non-zero
 //!     exit BLOCKS the tool — the model receives the hook's message
-//!     instead of running it.
+//!     instead of running it. Since #2684 a hook may also print a
+//!     [`crate::bus::HookDecision`] as JSON on stdout — `allow`, `deny`,
+//!     `require_approval`, or an input-rewriting `modify` — folded by
+//!     [`decision::run_decision_hooks`].
 //!   - [`HookEvent::PostToolUse`] — runs after a tool executes (side
 //!     effects only). Never blocks.
+//!   - [`HookEvent::Stop`] — runs when a turn is about to complete. A
+//!     `deny` decision holds the turn open once per turn, feeding its
+//!     reason back to the model (`driver::user_hooks`).
+//!   - [`HookEvent::PreCompact`] — runs before an overflow-summarization
+//!     round. A `deny` decision vetoes the round; a `modify` decision may
+//!     inject summarization instructions.
 //!
 //! Matchers are globs over the tool name for `PreToolUse`/`PostToolUse`;
-//! `SessionStart` ignores the matcher and runs every action.
+//! the non-tool-scoped events (`SessionStart`, `Stop`, `PreCompact`)
+//! ignore the matcher and run every action.
+//!
+//! `PreToolUse` payloads carry the tool's advertised metadata — today the
+//! [`ToolSchema::read_only`](stella_protocol::ToolSchema) bit, so an
+//! operator can write "deny anything non-read-only" as one hook. When the
+//! fuller `ToolContract` of #2716 lands, its fields join
+//! [`HookToolInfo`] the same way.
 //!
 //! # No I/O in this module
 //!
@@ -41,12 +57,30 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-/// Lifecycle events a hook can fire on (TS: `HookEvent`, `HOOK_EVENTS`).
+pub mod decision;
+
+/// Lifecycle events a hook can fire on (TS: `HookEvent`, `HOOK_EVENTS`,
+/// plus the #2684 additions `Stop` and `PreCompact`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HookEvent {
     SessionStart,
     PreToolUse,
     PostToolUse,
+    /// The turn is about to complete (`driver::user_hooks`). Not
+    /// tool-scoped: the matcher is ignored.
+    Stop,
+    /// An overflow-summarization round is about to run
+    /// (`driver::user_hooks`). Not tool-scoped: the matcher is ignored.
+    PreCompact,
+}
+
+impl HookEvent {
+    /// Whether this event fires for one specific tool call — the events
+    /// whose matchers glob over the tool name. The rest ignore the matcher
+    /// and run every registered action.
+    pub fn tool_scoped(self) -> bool {
+        matches!(self, HookEvent::PreToolUse | HookEvent::PostToolUse)
+    }
 }
 
 /// Default per-hook timeout — 60s (TS: `DEFAULT_HOOK_TIMEOUT_MS`).
@@ -128,6 +162,14 @@ pub struct Hooks {
         skip_serializing_if = "Option::is_none"
     )]
     pub post_tool_use: Option<Vec<HookMatcher>>,
+    #[serde(rename = "Stop", default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PreCompact",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pre_compact: Option<Vec<HookMatcher>>,
 }
 
 impl Hooks {
@@ -138,16 +180,27 @@ impl Hooks {
             HookEvent::SessionStart => &self.session_start,
             HookEvent::PreToolUse => &self.pre_tool_use,
             HookEvent::PostToolUse => &self.post_tool_use,
+            HookEvent::Stop => &self.stop,
+            HookEvent::PreCompact => &self.pre_compact,
         };
         field.as_deref().unwrap_or(&[])
     }
 }
 
-/// The tool a `PreToolUse`/`PostToolUse` hook fires for (TS: `HookPayload["tool"]`).
+/// The tool a `PreToolUse`/`PostToolUse` hook fires for (TS: `HookPayload["tool"]`),
+/// plus the advertised metadata a permission-deciding hook needs (#2684).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookToolInfo {
     pub name: String,
     pub input: serde_json::Value,
+    /// The tool's advertised `read_only` bit, from its
+    /// [`stella_protocol::ToolSchema`] — `false` for a tool the executor
+    /// does not advertise, the cautious direction. The one metadata field
+    /// that exists today; the #2716 `ToolContract` fields join here when
+    /// they land. `default` so a payload written before this field existed
+    /// still deserializes.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// The JSON payload fed to a hook command on stdin (TS: `HookPayload`).
@@ -165,33 +218,46 @@ pub struct HookPayload {
     /// summary must truncate on their own side.
     #[serde(rename = "toolResult", skip_serializing_if = "Option::is_none")]
     pub tool_result: Option<String>,
+    /// Present for `Stop`: the text the turn is about to complete with,
+    /// whole — the same unclipped posture as `tool_result`, and for the
+    /// same reason: what a hook can afford to read is the hook's call.
+    #[serde(rename = "finalText", default, skip_serializing_if = "Option::is_none")]
+    pub final_text: Option<String>,
 }
 
 impl HookPayload {
-    /// A `SessionStart` payload — no tool, no result.
-    pub fn session_start(cwd: impl Into<String>) -> Self {
+    /// A payload carrying only the event and the workspace — the shape
+    /// every non-tool event shares.
+    fn bare(event: HookEvent, cwd: String) -> Self {
         Self {
-            event: HookEvent::SessionStart,
-            cwd: cwd.into(),
+            event,
+            cwd,
             tool: None,
             tool_result: None,
+            final_text: None,
         }
     }
 
-    /// A `PreToolUse` payload for the given tool call.
+    /// A `SessionStart` payload — no tool, no result.
+    pub fn session_start(cwd: impl Into<String>) -> Self {
+        Self::bare(HookEvent::SessionStart, cwd.into())
+    }
+
+    /// A `PreToolUse` payload for the given tool call. `read_only` is the
+    /// tool's advertised bit from its schema (#2684).
     pub fn pre_tool_use(
         cwd: impl Into<String>,
         name: impl Into<String>,
         input: serde_json::Value,
+        read_only: bool,
     ) -> Self {
         Self {
-            event: HookEvent::PreToolUse,
-            cwd: cwd.into(),
             tool: Some(HookToolInfo {
                 name: name.into(),
                 input,
+                read_only,
             }),
-            tool_result: None,
+            ..Self::bare(HookEvent::PreToolUse, cwd.into())
         }
     }
 
@@ -200,17 +266,32 @@ impl HookPayload {
         cwd: impl Into<String>,
         name: impl Into<String>,
         input: serde_json::Value,
+        read_only: bool,
         tool_result: impl Into<String>,
     ) -> Self {
         Self {
-            event: HookEvent::PostToolUse,
-            cwd: cwd.into(),
             tool: Some(HookToolInfo {
                 name: name.into(),
                 input,
+                read_only,
             }),
             tool_result: Some(tool_result.into()),
+            ..Self::bare(HookEvent::PostToolUse, cwd.into())
         }
+    }
+
+    /// A `Stop` payload carrying the text the turn is about to complete
+    /// with.
+    pub fn stop(cwd: impl Into<String>, final_text: impl Into<String>) -> Self {
+        Self {
+            final_text: Some(final_text.into()),
+            ..Self::bare(HookEvent::Stop, cwd.into())
+        }
+    }
+
+    /// A `PreCompact` payload — the event and the workspace, nothing else.
+    pub fn pre_compact(cwd: impl Into<String>) -> Self {
+        Self::bare(HookEvent::PreCompact, cwd.into())
     }
 }
 
@@ -258,10 +339,10 @@ pub trait HookRunner: Send + Sync {
 /// Whether one matcher applies for `event` + the tool under consideration.
 /// The single home of the rule, so [`select_matchers`] ("which run") and
 /// [`any_matcher_matches`] ("does any run") can never disagree.
-/// `SessionStart` ignores the matcher entirely — every registered action
-/// runs.
+/// Non-tool-scoped events ([`HookEvent::tool_scoped`] is `false`) ignore
+/// the matcher entirely — every registered action runs.
 fn matcher_applies(event: HookEvent, matcher: &HookMatcher, tool_name: Option<&str>) -> bool {
-    if event == HookEvent::SessionStart {
+    if !event.tool_scoped() {
         return true;
     }
     let Some(name) = tool_name else {
@@ -605,7 +686,7 @@ mod tests {
             ..Hooks::default()
         };
         let payload =
-            HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({"command": "ls"}));
+            HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({"command": "ls"}), false);
         run_hooks(&runner, Some(&hooks), &payload).await;
         let calls = runner.calls();
         assert_eq!(calls.len(), 1);
@@ -629,7 +710,7 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}));
+        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false);
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
         assert!(out.blocked);
         assert!(out.reason.unwrap().contains("no shell here"));
@@ -647,7 +728,7 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}));
+        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false);
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
         assert!(!out.blocked);
     }
@@ -668,7 +749,7 @@ mod tests {
         let bash = run_hooks(
             &runner,
             Some(&hooks),
-            &HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({})),
+            &HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false),
         )
         .await;
         assert!(!bash.blocked);
@@ -676,7 +757,7 @@ mod tests {
         let write = run_hooks(
             &runner,
             Some(&hooks),
-            &HookPayload::pre_tool_use("/proj", "write_file", serde_json::json!({})),
+            &HookPayload::pre_tool_use("/proj", "write_file", serde_json::json!({}), false),
         )
         .await;
         assert!(write.blocked);
@@ -698,6 +779,7 @@ mod tests {
             "/proj",
             "write_file",
             serde_json::json!({}),
+            false,
             "wrote 3 lines",
         );
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
@@ -769,7 +851,7 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}));
+        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false);
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
         assert_eq!(out, HookRunOutcome::default());
     }
@@ -796,7 +878,7 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}));
+        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false);
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
         assert!(out.blocked);
         assert!(out.reason.unwrap().contains("timed out"));
@@ -832,7 +914,7 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}));
+        let payload = HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({}), false);
 
         let spawn_fail = run_hooks(&runner, Some(&spawn_fail_hooks), &payload).await;
         let nonzero_exit = run_hooks(&runner, Some(&nonzero_exit_hooks), &payload).await;
@@ -862,7 +944,8 @@ mod tests {
             }]),
             ..Hooks::default()
         };
-        let payload = HookPayload::post_tool_use("/proj", "bash", serde_json::json!({}), "result");
+        let payload =
+            HookPayload::post_tool_use("/proj", "bash", serde_json::json!({}), false, "result");
         let out = run_hooks(&runner, Some(&hooks), &payload).await;
         assert!(!out.blocked);
     }
@@ -929,11 +1012,72 @@ mod tests {
     #[test]
     fn hook_payload_serializes_with_the_expected_json_shape() {
         let payload =
-            HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({"command": "ls"}));
+            HookPayload::pre_tool_use("/proj", "bash", serde_json::json!({"command": "ls"}), false);
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"event\":\"PreToolUse\""));
         assert!(json.contains("\"cwd\":\"/proj\""));
         assert!(json.contains("\"name\":\"bash\""));
         assert!(!json.contains("toolResult"));
+    }
+
+    /// The tool-metadata half of #2684: the payload spells the advertised
+    /// `read_only` bit, so a "deny anything non-read-only" hook is one
+    /// `jq` expression instead of a tool-name allowlist.
+    #[test]
+    fn pre_tool_use_payload_carries_the_advertised_read_only_bit() {
+        let payload = HookPayload::pre_tool_use("/proj", "read_file", serde_json::json!({}), true);
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(
+            json.contains("\"read_only\":true"),
+            "the schema's read_only bit must reach the hook's stdin: {json}"
+        );
+        // ...and a payload written before the field existed still parses.
+        let legacy = r#"{"event":"PreToolUse","cwd":"/proj","tool":{"name":"bash","input":{}}}"#;
+        let parsed: HookPayload = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.tool.unwrap().read_only, "absent defaults to false");
+    }
+
+    /// `Stop` and `PreCompact` are session-shaped, not tool-shaped: a
+    /// configured matcher is ignored exactly as `SessionStart`'s is.
+    #[test]
+    fn stop_and_pre_compact_ignore_the_matcher_field() {
+        let matchers = vec![HookMatcher {
+            matcher: Some("write_file".to_string()),
+            hooks: vec![HookAction::new("echo hi")],
+        }];
+        for event in [HookEvent::Stop, HookEvent::PreCompact] {
+            assert_eq!(
+                select_matchers(event, &matchers, None).len(),
+                1,
+                "{event:?} must run every action regardless of the matcher"
+            );
+        }
+    }
+
+    /// The new settings keys deserialize off a real `settings.json` shape
+    /// and the payload constructors carry their event-specific fields.
+    #[test]
+    fn stop_and_pre_compact_deserialize_and_build_payloads() {
+        let json = r#"{
+            "Stop": [ { "hooks": [{ "command": "check-todos" }] } ],
+            "PreCompact": [ { "hooks": [{ "command": "steer-summary" }] } ]
+        }"#;
+        let hooks: Hooks = serde_json::from_str(json).unwrap();
+        assert_eq!(hooks.matchers_for(HookEvent::Stop).len(), 1);
+        assert_eq!(hooks.matchers_for(HookEvent::PreCompact).len(), 1);
+
+        let stop = HookPayload::stop("/proj", "all done");
+        let json = serde_json::to_string(&stop).unwrap();
+        assert!(json.contains("\"event\":\"Stop\""));
+        assert!(json.contains("\"finalText\":\"all done\""));
+        let back: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, stop);
+
+        let pre_compact = HookPayload::pre_compact("/proj");
+        let json = serde_json::to_string(&pre_compact).unwrap();
+        assert!(json.contains("\"event\":\"PreCompact\""));
+        assert!(!json.contains("finalText"));
+        let back: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, pre_compact);
     }
 }

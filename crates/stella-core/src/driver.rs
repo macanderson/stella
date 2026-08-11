@@ -76,7 +76,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
-    MessageRole, Provider, ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput,
+    MessageRole, Provider, ProviderError, ReasoningEffort, ToolCall, ToolOutput,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -92,7 +92,7 @@ pub mod loop_evidence;
 mod truncation;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
-use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
+use crate::hooks::{HookEvent, HookRunner, Hooks, any_matcher_matches};
 use crate::loop_detect::LoopDetectionConfig;
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
@@ -103,7 +103,7 @@ use crate::step::{
     SummarizerHealth, TurnState, bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::{ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL, plan_continuation};
+use truncation::ContinuationBudget;
 // Named only by the tests that pin the nudge's exact body; the production path
 // reaches it through `Continuation::into_parts`.
 #[cfg(test)]
@@ -127,6 +127,7 @@ use loop_evidence::{ResultIdentities, snapshot_result_identities};
 use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
+mod completion;
 mod dispatch;
 mod drive;
 mod model_fallback;
@@ -134,6 +135,7 @@ pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod settlement;
 pub(crate) mod usage_anchor;
+pub(crate) mod user_hooks;
 mod waiting;
 use overflow_recovery::ModelCallFailure;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
@@ -484,6 +486,11 @@ pub struct Engine<'a> {
     /// so `with_sleeper` keeps its existing signature. When `None`,
     /// no hook is ever consulted and the turn path adds zero work.
     pub(crate) hooks: Option<HooksHandle<'a>>,
+    /// Where a `PreToolUse` hook's `require_approval` decision parks
+    /// (#2684), off by default. Attached via
+    /// [`Engine::with_hook_approval_route`] (`driver::user_hooks`); when
+    /// `None` such a decision is refused with a grant-path message.
+    pub(crate) hook_approvals: Option<&'a dyn crate::hooks::decision::HookApprovalRoute>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
     /// the map across turns (seeded from persisted telemetry at session
@@ -611,6 +618,7 @@ impl<'a> Engine<'a> {
             config,
             call_role: stella_protocol::ModelCallRole::Worker,
             hooks: None,
+            hook_approvals: None,
             calibration: None,
             gate: None,
             steering: None,
@@ -662,6 +670,7 @@ impl<'a> Engine<'a> {
             },
             call_role: self.call_role,
             hooks: self.hooks,
+            hook_approvals: self.hook_approvals,
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
@@ -699,6 +708,7 @@ impl<'a> Engine<'a> {
             },
             call_role: self.call_role,
             hooks: self.hooks,
+            hook_approvals: self.hook_approvals,
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
@@ -1161,6 +1171,7 @@ impl<'a> Engine<'a> {
                 state.total_cost_usd,
                 &mut state.messages,
                 &mut state.length_continuations,
+                &mut state.stop_hook_fired,
                 continuation_budget,
                 events,
             )
@@ -1302,6 +1313,22 @@ impl<'a> Engine<'a> {
         // latest tool result) — without this, the next provider call
         // eventually hard-fails on context overflow.
         if self.config.summarize_overflow && after_tokens > compaction_budget {
+            // The PreCompact hooks speak first (#2684): a veto skips this
+            // round, and `modify` instructions steer the summarizer
+            // (`driver::user_hooks`).
+            let ruling = self.pre_compact_ruling(events).await;
+            if let Some(reason) = ruling.veto_reason {
+                let _ = events.send(AgentEvent::Error {
+                    message: format!(
+                        "overflow summarization vetoed by a PreCompact hook: {reason}"
+                    ),
+                    retryable: true,
+                });
+                return CompactionPass {
+                    cost_usd: 0.0,
+                    rewrote,
+                };
+            }
             // The summarizer splices a span down to one message, shifting every
             // position after it. Reported unconditionally when it RUNS rather than
             // only when it splices: over-invalidating costs one turn's memo on a
@@ -1315,6 +1342,7 @@ impl<'a> Engine<'a> {
                     factor,
                     health,
                     step,
+                    ruling.instructions.as_deref(),
                     events,
                 )
                 .await;
@@ -1333,7 +1361,8 @@ impl<'a> Engine<'a> {
     /// leave the conversation untouched. Returns the summarizer call's spend.
     /// `step` is carried only to key this call's receipt against the step it
     /// rides, the same way [`Self::apply_overflow_summary`] carries the budget
-    /// pair it reports.
+    /// pair it reports. `instructions` is a PreCompact hook's `modify`
+    /// steering for the summarizer, appended to its request (#2684).
     #[allow(clippy::too_many_arguments)]
     async fn summarize_overflow_span(
         &self,
@@ -1343,6 +1372,7 @@ impl<'a> Engine<'a> {
         factor: f64,
         health: &mut SummarizerHealth,
         step: usize,
+        instructions: Option<&str>,
         events: &EventSender,
     ) -> f64 {
         // Span start: after the system prompt and the FIRST user message —
@@ -1385,7 +1415,14 @@ impl<'a> Engine<'a> {
         // above without needing this number, and the walk is Θ(transcript)
         // on precisely the steps whose transcript is at its largest.
         let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
-        let rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
+        let mut rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
+        // PreCompact steering rides the user message, after the span: the
+        // system prompt stays the byte-stable SUMMARIZE_SYSTEM, and the
+        // hook's words are visibly operator input, not span content.
+        if let Some(extra) = instructions {
+            rendered.push_str("\n\n[PreCompact hook instructions]\n");
+            rendered.push_str(extra);
+        }
         let request = CompletionRequest {
             messages: vec![
                 CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
@@ -1853,7 +1890,12 @@ impl<'a> Engine<'a> {
         let mut in_flight = announced
             .map(|call| async move {
                 let started = std::time::Instant::now();
-                let output = self.execute_with_repair(&call, None).await;
+                // `read_only: true` is exact, not a guess: only tools whose
+                // schemas declare `read_only` (AND `speculation_safe`) are
+                // ever announced to this pool, and hooked tools are fenced
+                // out entirely (`tool_has_matching_hook`), so no hook reads
+                // this bit off a speculative dispatch anyway.
+                let output = self.execute_with_repair(&call, true, None).await;
                 (call, output, started.elapsed().as_millis() as u64)
             })
             .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
@@ -2026,209 +2068,6 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// Deliver a committed step's result: emit its text, then either
-    /// finish the turn (no tool calls — `Some(Completed)`) or record the
-    /// assistant message, execute its tool calls, record their results,
-    /// and return `None` so the loop takes another step. Consumes the
-    /// step: the result's text moves into the `Completed` outcome.
-    ///
-    /// A tool-less step that ended at the output-token limit is the one
-    /// no-tool shape that does NOT finish the turn (up to
-    /// `driver::truncation::MAX_LENGTH_CONTINUATIONS` times): the model was
-    /// cut off, not done, so the step is recorded and the turn continues with
-    /// [`LENGTH_CONTINUATION_NUDGE`](truncation::LENGTH_CONTINUATION_NUDGE). `length_continuations` is the turn's
-    /// running count ([`TurnState`]'s, threaded rather than owned so the
-    /// bound survives across steps).
-    async fn dispatch_completion(
-        &self,
-        committed: CommittedStep,
-        total_cost_usd: f64,
-        messages: &mut Vec<CompletionMessage>,
-        length_continuations: &mut u32,
-        continuation_budget: Option<ContinuationBudget>,
-        events: &EventSender,
-    ) -> Option<TurnOutcome> {
-        let CommittedStep {
-            result,
-            read_only_tools,
-            speculation,
-            ..
-        } = committed;
-
-        // Trimmed guard, matching the empty-turn check below: a
-        // whitespace-only response must not stream a blank `Text` event and
-        // then abort as "no text" — events and history stay consistent.
-        if !result.text.trim().is_empty() {
-            let _ = events.send(AgentEvent::Text {
-                text: result.text.clone(),
-            });
-        }
-
-        if result.tool_calls.is_empty() {
-            // A committed step that runs no tools can still have speculated
-            // read-only calls off a divergent stream (announced, then dropped
-            // from the commit): none are harvested here, so account for the
-            // discarded I/O rather than dropping the pool silently (#370).
-            self.discard_speculation_pool(
-                speculation,
-                SPECULATION_DISCARD_HARVEST_MISMATCH,
-                events,
-            );
-            // A step that ended at the output-token limit with no tool call is
-            // not a finished turn — it ran out of room. `plan_continuation`
-            // owns what happens next and what history keeps (see
-            // `driver::truncation`); `None` means the turn's allowance is
-            // spent and the terminal handling below applies.
-            let mut out_of_time = false;
-            if result.finish_reason == Some(FinishReason::Length) {
-                match plan_continuation(
-                    &result.text,
-                    result.usage.output_tokens,
-                    *length_continuations,
-                    continuation_budget,
-                ) {
-                    ContinuationPlan::Continue(plan) => {
-                        *length_continuations += 1;
-                        let (note, appended) = plan.into_parts();
-                        let _ = events.send(AgentEvent::Text { text: note });
-                        messages.extend(appended);
-                        return None;
-                    }
-                    // Declined because the turn is nearly out of wall clock,
-                    // not because it ran out of tries. The abort below is the
-                    // wrong ending for that: it exits nonzero, which a harness
-                    // records as the agent dying — the exact outcome the
-                    // deadline exists to avoid. Stopping early is only worth
-                    // anything if stopping produces a result, so this path
-                    // completes the turn with whatever it has.
-                    ContinuationPlan::OutOfTime => out_of_time = true,
-                    ContinuationPlan::AllowanceSpent => {}
-                }
-            }
-            // The tool-less-completion legitimacy gate — empty-response
-            // abort, #1477 confident zero, #2663 prove-it nudge, in order.
-            match confident_zero::check(
-                messages,
-                &read_only_tools,
-                &result,
-                out_of_time,
-                total_cost_usd,
-                self.config.completion_gate,
-                events,
-            ) {
-                confident_zero::CompletionRuling::Abort(outcome) => return Some(outcome),
-                confident_zero::CompletionRuling::Nudged => return None,
-                confident_zero::CompletionRuling::Clean => {}
-            }
-            // A non-empty answer truncated with the continuation allowance
-            // spent: keep the partial answer (already emitted above) but tell
-            // the user it was cut off, so a mid-thought stop is never
-            // mistaken for a full one. The verification ladder's no-op rung
-            // is what stops a turn that still did nothing from reporting
-            // success past this point.
-            if result.finish_reason == Some(FinishReason::Length) {
-                let _ = events.send(AgentEvent::Text {
-                    text: if out_of_time {
-                        // Names the deadline, not the token limit, because the
-                        // token limit is what happened and the deadline is why
-                        // nothing followed it. A reader who sees only "output
-                        // limit" concludes the cap is mispriced and raises it,
-                        // which is the one change that cannot help here.
-                        format!(
-                            "\n\n⚠ Stopped at the output-token limit ({} tokens) with too little \
-                             time left in this turn to finish another continuation — ending here \
-                             with what the turn has already done.",
-                            result.usage.output_tokens
-                        )
-                    } else {
-                        format!(
-                            "\n\n⚠ Response was truncated at the output-token limit ({} tokens); \
-                             ask to continue if it was cut off mid-thought.",
-                            result.usage.output_tokens
-                        )
-                    },
-                });
-            }
-            // Empty only on the out-of-time path — every other empty-text route
-            // aborted above — where the transcript and the turn's final text
-            // still owe an honest account of why nothing came back.
-            let text = if result.text.trim().is_empty() {
-                TIME_EXHAUSTED_PARTIAL.to_string()
-            } else {
-                result.text
-            };
-            // History keeps the elided form of a truncated partial; the
-            // outcome below keeps it whole (`retained_partial`'s contract).
-            let retained = if result.finish_reason == Some(FinishReason::Length) {
-                truncation::retained_partial(&text)
-            } else {
-                text.clone()
-            };
-            messages.push(CompletionMessage {
-                role: MessageRole::Assistant,
-                content: retained,
-                tool_calls: Vec::new(),
-                tool_results: Vec::new(),
-                attachments: Vec::new(),
-            });
-            let _ = events.send(AgentEvent::Stage {
-                name: StageKind::Complete,
-            });
-            let _ = events.send(AgentEvent::Complete {
-                model: result.model.clone(),
-                cost_usd: total_cost_usd,
-            });
-            return Some(TurnOutcome::Completed {
-                text,
-                cost_usd: total_cost_usd,
-            });
-        }
-
-        messages.push(CompletionMessage {
-            role: MessageRole::Assistant,
-            // A length-truncated step that still carried tool calls proceeds
-            // normally — but its narration was cut off mid-stream, and
-            // retained whole it is the same compounding debris as a tool-less
-            // truncation (`retained_partial`). A natural stop keeps its text.
-            content: if result.finish_reason == Some(FinishReason::Length) {
-                truncation::retained_partial(&result.text)
-            } else {
-                result.text.clone()
-            },
-            tool_calls: result.tool_calls.clone(),
-            tool_results: Vec::new(),
-            attachments: Vec::new(),
-        });
-
-        // Dispatch grouping is wider than the read-only set: the executor may
-        // declare tools that run concurrently despite not being read-only
-        // (`ToolExecutor::parallel_safe_names` — the sub-agent spawn tool,
-        // whose children only read and whose dispatcher carves budget per
-        // child). The union is built HERE, at the one dispatch site, so the
-        // evidence-side consumers of `read_only_tools` above (confident_zero)
-        // and the speculation fence keep the narrower read-only semantics.
-        let mut dispatch_safe_tools = read_only_tools;
-        dispatch_safe_tools.extend(self.tools.parallel_safe_names());
-        let tool_results = self
-            .execute_tool_calls(
-                &result.tool_calls,
-                &dispatch_safe_tools,
-                speculation,
-                events,
-            )
-            .await;
-
-        messages.push(CompletionMessage {
-            role: MessageRole::Tool,
-            content: String::new(),
-            tool_calls: Vec::new(),
-            tool_results,
-            attachments: Vec::new(),
-        });
-
-        None
-    }
-
     /// Execute one tool call, first checking for the malformed-input
     /// sentinel every adapter's stream aggregator falls back to (see module
     /// docs) rather than handing a tool `Null` and getting back a confusing
@@ -2259,12 +2098,13 @@ impl<'a> Engine<'a> {
     async fn execute_with_repair(
         &self,
         call: &ToolCall,
+        read_only: bool,
         events: Option<&EventSender>,
     ) -> ToolOutput {
         let Some(limit) = self.config.tool_timeout else {
-            return self.dispatch_tool_call(call, events).await;
+            return self.dispatch_tool_call(call, read_only, events).await;
         };
-        match tokio::time::timeout(limit, self.dispatch_tool_call(call, events)).await {
+        match tokio::time::timeout(limit, self.dispatch_tool_call(call, read_only, events)).await {
             Ok(output) => output,
             Err(_) => ToolOutput::Error {
                 message: format!(
@@ -2278,104 +2118,6 @@ impl<'a> Engine<'a> {
                 ),
             },
         }
-    }
-
-    /// One tool dispatch, unbounded — the body [`Self::execute_with_repair`]
-    /// wraps in the timeout backstop.
-    async fn dispatch_tool_call(
-        &self,
-        call: &ToolCall,
-        events: Option<&EventSender>,
-    ) -> ToolOutput {
-        if call.input.is_null() {
-            return ToolOutput::Error {
-                message: format!(
-                    "malformed tool call: `{}`'s arguments were not valid JSON (the model's \
-                     streamed output didn't parse) — retry this call with well-formed JSON \
-                     arguments",
-                    call.name
-                ),
-            };
-        }
-        match self.hooks {
-            None => self.tools.execute(&call.name, &call.input).await,
-            Some(handle) => self.execute_with_hooks(handle, call, events).await,
-        }
-    }
-
-    /// Wrap a single (well-formed) executor invocation in its `PreToolUse` /
-    /// `PostToolUse` hooks. Only reached when hooks are attached.
-    ///
-    /// `PreToolUse` fires first: if it blocks (a hook exited non-zero, or
-    /// failed to even run — per `crate::hooks`'s contract), the tool is NOT
-    /// executed and the model instead sees a `ToolOutput::Error` naming the
-    /// block, exactly as the engine surfaces every other tool failure as
-    /// model-visible data rather than an engine error. Otherwise the tool
-    /// runs and `PostToolUse` fires as a pure observation — its outcome can
-    /// never block or alter the result, so a failing post-hook cannot abort
-    /// the turn. Non-blocking failures from either phase (spawn failures,
-    /// non-zero exits on events that cannot block) are no longer discarded:
-    /// they surface as one non-fatal `Error { retryable: true }` on the
-    /// turn stream when an event channel is present.
-    async fn execute_with_hooks(
-        &self,
-        handle: HooksHandle<'a>,
-        call: &ToolCall,
-        events: Option<&EventSender>,
-    ) -> ToolOutput {
-        let pre = run_hooks(
-            handle.runner,
-            Some(handle.hooks),
-            &HookPayload::pre_tool_use(self.config.cwd.clone(), &call.name, call.input.clone()),
-        )
-        .await;
-        if pre.blocked {
-            let message = match pre.reason {
-                Some(reason) => format!(
-                    "tool `{}` was blocked by a PreToolUse hook: {reason}",
-                    call.name
-                ),
-                None => format!("tool `{}` was blocked by a PreToolUse hook", call.name),
-            };
-            return ToolOutput::Error { message };
-        }
-        let mut diagnostics = pre.diagnostics;
-
-        let output = self.tools.execute(&call.name, &call.input).await;
-
-        let result_str = match &output {
-            ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
-        };
-        // Observation only — a non-zero PostToolUse exit never blocks or
-        // rewrites the result; its failures ride `diagnostics` instead.
-        let post = run_hooks(
-            handle.runner,
-            Some(handle.hooks),
-            &HookPayload::post_tool_use(
-                self.config.cwd.clone(),
-                &call.name,
-                call.input.clone(),
-                result_str,
-            ),
-        )
-        .await;
-        diagnostics.extend(post.diagnostics);
-
-        if !diagnostics.is_empty()
-            && let Some(events) = events
-        {
-            let _ = events.send(AgentEvent::Error {
-                message: format!(
-                    "hook problem(s) around tool `{}` (non-blocking): {}",
-                    call.name,
-                    diagnostics.join("; ")
-                ),
-                retryable: true,
-            });
-        }
-
-        output
     }
 }
 

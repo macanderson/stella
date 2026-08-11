@@ -710,6 +710,10 @@ impl Engine<'_> {
             // reason the child is built here rather than through
             // `Engine::with_sleeper`, which cannot carry these three.
             hooks: self.hooks,
+            // The child's hooks route approvals the same way the parent's
+            // do: a hook asking for a human is asking about the session's
+            // workspace, whichever agent's call tripped it (#2684).
+            hook_approvals: self.hook_approvals,
             // The drift map is keyed per model, so a cross-family child
             // learns its own model's drift without blending into the
             // parent's — and starts warm instead of cold.
