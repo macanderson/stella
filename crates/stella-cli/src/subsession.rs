@@ -677,8 +677,15 @@ async fn run_worker(
     if let Err(error) = crate::subagent::install_for_session(cfg, &registry) {
         return (None, 0.0, WorkerEnd::Failed(error));
     }
-    let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+    // `false`: a sub-agent lane is headless by design — an approval gate in a
+    // child refuses with the grant-path message rather than contending for the
+    // lead's interactive surface.
+    let active_rules = crate::rules::enforce_workspace_rules(
+        &registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        false,
+    );
 
     let system_prompt = agent::with_session_hook_context(
         agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules),

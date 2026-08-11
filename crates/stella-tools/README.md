@@ -83,7 +83,7 @@ tool's registration line in an already-oversized `registry.rs`), never as a plan
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | Module list plus `resolve_within_root` — the one path-confinement primitive every tool resolves through. |
-| [`src/registry.rs`](src/registry.rs), [`src/registry/process_tools.rs`](src/registry/process_tools.rs) | The `Tool` trait, `ToolRegistry`, construction (which tools register under which conditions), and the single `execute` path all cross-cutting behaviour hangs off. `process_tools.rs` is the closed list of child-process-spawning built-ins. |
+| [`src/registry.rs`](src/registry.rs), [`src/registry/approval.rs`](src/registry/approval.rs), [`src/registry/process_tools.rs`](src/registry/process_tools.rs) | The `Tool` trait, `ToolRegistry`, construction (which tools register under which conditions), and the single `execute` path all cross-cutting behaviour hangs off. `approval.rs` is the blocking policy chains plus the #2676 interactive approval flow (a `RequireApproval` parks on an injected responder with a TTL instead of dead-ending). `process_tools.rs` is the closed list of child-process-spawning built-ins. |
 | [`src/catalog.rs`](src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only". |
 | [`src/verify.rs`](src/verify.rs) | `verify_done` — the shadow-worktree witness gate. See below. |
 | [`src/read.rs`](src/read.rs), [`src/read_symbol.rs`](src/read_symbol.rs), [`src/write.rs`](src/write.rs), [`src/edit.rs`](src/edit.rs), [`src/apply_edits.rs`](src/apply_edits.rs), [`src/delete.rs`](src/delete.rs) | File CRUD. They share one read-state ledger so an `old_string` miss can be attributed to out-of-band drift rather than to the model. |

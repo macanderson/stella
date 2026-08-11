@@ -88,8 +88,15 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         std::sync::Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
     populate_schema_index(&tools_registry, &cfg.workspace_root)?;
     crate::subagent::install_for_session(cfg, &tools_registry)?;
-    let active_rules =
-        crate::rules::enforce_workspace_rules(&tools_registry, &cfg.workspace_root, &cfg.authority);
+    // `interactive_approvals: false` — a daemon-resumed turn answers approvals
+    // through the daemon's own one-shot gate (sidecar or staged stdio), never
+    // a TTY prompt raced against it (#2676).
+    let active_rules = crate::rules::enforce_workspace_rules(
+        &tools_registry,
+        &cfg.workspace_root,
+        &cfg.authority,
+        false,
+    );
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
         tools_registry.clone(),

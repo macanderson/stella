@@ -109,8 +109,12 @@ pub(crate) async fn run_raw_one_shot(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // Interactive text output may ask the human mid-turn — the condition
+    // `default_ask_io` applies for `ask_user`, applied here to the #2676
+    // approval responder too.
+    let ask = format == OutputFormat::Text;
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code graph in the background so a
     // multi-step one-shot turn can reach for `graph_query` once the index is
     // ready. Status goes to stderr — stdout may be machine-readable JSON.
@@ -325,8 +329,10 @@ pub async fn run_goal_cmd(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    // Goal mode renders human-readable output (its ask io is wired with
+    // `default_ask_io(true)` below), so approvals may ask the human too.
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, true);
     // Auto-build + live-refresh the code-graph index in the background so
     // `graph_query` is available for the goal loop without a manual `stella
     // init`. Non-blocking; status to stderr. Kept alive until the goal returns.

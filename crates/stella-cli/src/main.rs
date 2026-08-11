@@ -23,6 +23,8 @@
 mod accounted_call;
 mod agent;
 mod agents_installed;
+// #2676: the interactive approval responder behind `RequireApproval` gates.
+mod approval;
 mod arena;
 mod attachments;
 mod auth_cmd;

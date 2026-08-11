@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
+use stella_core::bus::{self, HookBus, names as hook_names};
 use stella_core::ports::ToolExecutor;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
@@ -17,6 +17,7 @@ use crate::file_touch::{
     normalize_workspace_path,
 };
 
+pub mod approval;
 mod belief;
 mod classify;
 mod options;
@@ -252,6 +253,11 @@ pub struct ToolRegistry {
     /// "this area is already mapped" hints on search-tool results.
     exploration_coverage: std::sync::Mutex<ExplorationCoverage>,
     bus: std::sync::RwLock<Option<HookBus>>,
+    /// The session's approval flow (#2676): how a `RequireApproval` gate
+    /// decision reaches a human. Headless by default (the structured
+    /// grant-path refusal); a host injects its responder at assembly time
+    /// via [`ToolRegistry::attach_approval_responder`].
+    approval: std::sync::RwLock<approval::ApprovalBroker>,
     /// The live policy-plane bridge subscription (receipts spec §6.4), if
     /// [`ToolRegistry::bridge_policy_plane`] wired one. Held so a re-bridge
     /// (a new turn's event channel) replaces — unsubscribes — the previous
@@ -577,6 +583,7 @@ impl ToolRegistry {
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
             bus: std::sync::RwLock::new(None),
+            approval: Default::default(),
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
             announce_mutations: std::sync::atomic::AtomicBool::new(true),
@@ -813,7 +820,7 @@ impl ToolRegistry {
         // original.
         let mut modified_input: Option<Value> = None;
         if let Some(bus) = &bus {
-            match self.gate_tool_call(bus, name, input) {
+            match self.gate_tool_call(bus, name, input).await {
                 Ok(replacement) => modified_input = replacement,
                 Err(denied) => return denied,
             }
@@ -1062,8 +1069,9 @@ impl ToolRegistry {
         // plus the payload-hygiene detectors, then the observable
         // `tool.call.started` (with content-bearing fields sanitized).
         if let Some(bus) = &bus {
-            if let Err(denied) =
-                self.gate_side_effects(bus, name, input, &pending_ops, resolved_command.as_deref())
+            if let Err(denied) = self
+                .gate_side_effects(bus, name, input, &pending_ops, resolved_command.as_deref())
+                .await
             {
                 return denied;
             }
@@ -1285,183 +1293,6 @@ impl ToolRegistry {
             }
         }
         output
-    }
-
-    /// Run the `tool.call.requested` blocking chain. `Ok(None)`: allowed
-    /// unchanged. `Ok(Some(input))`: allowed with a policy-modified input.
-    /// `Err(output)`: denied or pending approval — the error the model sees
-    /// instead of a tool result. The chain receives the RAW input (the
-    /// interception point is privileged by design); observable events carry
-    /// only sanitized inputs.
-    fn gate_tool_call(
-        &self,
-        bus: &HookBus,
-        name: &str,
-        input: &Value,
-    ) -> Result<Option<Value>, ToolOutput> {
-        let outcome = bus.emit_blocking(HookEventDraft::new(
-            hook_names::TOOL_CALL_REQUESTED,
-            serde_json::json!({ "tool": name, "input": input }),
-        ));
-        match outcome.decision {
-            HookDecision::Deny { reason } => Err(ToolOutput::Error {
-                message: format!("`{name}` was denied by an extension policy: {reason}"),
-            }),
-            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error {
-                message: format!("`{name}` requires approval before it can run: {reason}"),
-            }),
-            _ => {
-                if !outcome.modified {
-                    return Ok(None);
-                }
-                match outcome.event.payload.get("input") {
-                    Some(new_input) => Ok(Some(new_input.clone())),
-                    None => {
-                        // A `modify` that dropped the `input` field is a
-                        // broken policy handler — surface it, keep the
-                        // original input rather than executing garbage.
-                        bus.emit_named(
-                            hook_names::EXTENSION_ERROR,
-                            serde_json::json!({
-                                "failed_event": hook_names::TOOL_CALL_REQUESTED,
-                                "error": "modify decision dropped the `input` field; original input kept",
-                            }),
-                        );
-                        Ok(None)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Run the per-side-effect blocking chains and payload-hygiene
-    /// detectors for one already-final input: `sensitive_operation.detected`
-    /// and `secret.detected` observers first (an auditor sees the attempt
-    /// even when a policy then denies it), then the `file.*` chain for a
-    /// classified C/U/D op and the `command.started` chain for every tool
-    /// that runs a command — `bash`, `build_project`, `run_tests`,
-    /// `verify_done`, `run_script`, `start_process`, `send_stdin`, and every
-    /// [`Tool::command_for_gate`] implementor: `run_lint`, `format_code`,
-    /// `diagnostics`, `screenshot`, `ci_status`, `start_work_on_issue`, and
-    /// the `repo_*` family (#804; see [`Self::command_line_for`]).
-    /// These chains gate — `modify` decisions are recorded but not honored
-    /// here, because the input was already final after
-    /// `tool.call.requested`. Reads are observable but never interceptable.
-    fn gate_side_effects(
-        &self,
-        bus: &HookBus,
-        name: &str,
-        input: &Value,
-        pending_ops: &[PendingTouch],
-        resolved_command: Option<&str>,
-    ) -> Result<(), ToolOutput> {
-        for pending in pending_ops {
-            if bus::is_sensitive_path(&pending.path) {
-                bus.emit_named(
-                    hook_names::SENSITIVE_OPERATION_DETECTED,
-                    serde_json::json!({
-                        "path": pending.path,
-                        "tool": name,
-                        "operation": pending.op.letter().to_string(),
-                    }),
-                );
-            }
-            // The content this call proposes to land in THIS file: write's
-            // whole content, edit's replacement, or — for a batch — the
-            // union of the batch's replacements targeting this path.
-            let proposed: Option<String> = match name {
-                "write_file" => input
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                "edit_file" => input
-                    .get("new_string")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                "apply_edits" => input.get("edits").and_then(|v| v.as_array()).map(|edits| {
-                    edits
-                        .iter()
-                        .filter(|e| {
-                            e.get("path")
-                                .and_then(|v| v.as_str())
-                                .and_then(|p| normalize_workspace_path(&self.root, p))
-                                .is_some_and(|p| p == pending.path)
-                        })
-                        .filter_map(|e| e.get("new_string").and_then(|v| v.as_str()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }),
-                _ => None,
-            };
-            if let Some(proposed) = proposed.as_deref() {
-                let kinds = bus::scan_for_secrets(proposed);
-                if !kinds.is_empty() {
-                    bus.emit_named(
-                        hook_names::SECRET_DETECTED,
-                        serde_json::json!({
-                            "path": pending.path,
-                            "kinds": kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
-                        }),
-                    );
-                }
-            }
-            let event_name = match pending.op {
-                FileOp::Create => Some(hook_names::FILE_CREATED),
-                FileOp::Update => Some(hook_names::FILE_UPDATED),
-                FileOp::Delete => Some(hook_names::FILE_DELETED),
-                FileOp::Read => None,
-            };
-            if let Some(event_name) = event_name {
-                let outcome = bus.emit_blocking(HookEventDraft::new(
-                    event_name,
-                    serde_json::json!({
-                        "path": pending.path,
-                        "tool": name,
-                        "operation": pending.op.letter().to_string(),
-                    }),
-                ));
-                match outcome.decision {
-                    HookDecision::Deny { reason } => {
-                        return Err(ToolOutput::Error {
-                            message: format!(
-                                "`{name}` on `{}` was denied by an extension policy: {reason}",
-                                pending.path
-                            ),
-                        });
-                    }
-                    HookDecision::RequireApproval { reason } => {
-                        return Err(ToolOutput::Error {
-                            message: format!(
-                                "`{name}` on `{}` requires approval: {reason}",
-                                pending.path
-                            ),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let command_line = Self::command_line_for(name, input, resolved_command);
-        if let Some(command) = command_line.as_deref() {
-            let outcome = bus.emit_blocking(HookEventDraft::new(
-                hook_names::COMMAND_STARTED,
-                serde_json::json!({ "command": command }),
-            ));
-            match outcome.decision {
-                HookDecision::Deny { reason } => {
-                    return Err(ToolOutput::Error {
-                        message: format!("command was denied by an extension policy: {reason}"),
-                    });
-                }
-                HookDecision::RequireApproval { reason } => {
-                    return Err(ToolOutput::Error {
-                        message: format!("command requires approval: {reason}"),
-                    });
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     /// Merge the session overlay into a freshly loaded persisted storage map.
