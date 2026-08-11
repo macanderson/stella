@@ -300,8 +300,9 @@ export interface TrialProof {
   /** Whether a test was actually run and observed for this verdict. */
   deterministic: boolean;
   /** A passing verdict with nothing deterministic behind it. The honesty
-   *  trap: `unverifiable` and `waived` both publish `passed: true`, and a
-   *  model verdict is an assertion rather than an observation. */
+   *  trap: `unverifiable`, `unverified`, `witness_unsatisfiable` and `waived`
+   *  all publish `passed: true`, and a model verdict is an assertion rather
+   *  than an observation. */
   claimed_without_proof: boolean;
   verdict_passed: boolean | null;
   verdict_summary: string;

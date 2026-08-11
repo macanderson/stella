@@ -529,6 +529,11 @@
           "type": "string"
         },
         {
+          "const": "witness_unsatisfiable",
+          "description": "The authored witness produced the **same failure** before and after the\nwork, so it cannot discriminate: nothing it reports is a fact about the\nchange, and no revision can make it one (#2540).\n\nReads as a claim about the **witness**, not about the work — the same\n`-able` / `-ed` distinction [`LadderRung::Unverifiable`] and\n[`LadderRung::Unverified`] already carry. \"Unsatisfiable\" says the\ninstrument's demand cannot be met by doing the task; it says nothing\nabout whether the task was done.\n\nOrdered above [`LadderRung::Revise`] in the ladder, which is the whole\npoint of having it. A witness that fails post-execute reaches `Revise`\nat the ladder's first step, and `Revise` blames the worker: the failure\nis fed back as the thing to fix. On Terminal-Bench `fix-git` a witness\nenumerated every commit unreachable from `master` and counted the\npipeline's own snapshot commits among them, so it stayed red however\ncorrectly the agent merged the real one — and every revise cycle minted\nanother snapshot, hence another violation. The worker diagnosed it\nexactly and could do nothing; the run ended on the deadline rather than\non the logic.\n\nThe discriminator is **fingerprint equality**\n(`crate::witness::airlock::FailureFingerprint`), never \"it failed\ntwice\": a witness that fails *differently* after the work is genuine\nfeedback about the change and keeps reaching `Revise`.",
+          "type": "string"
+        },
+        {
           "const": "waived",
           "description": "No independent review was bought at all: triage waived it and the\nwarrant agreed, or the change warranted no witness test. A pass\ncarrying no evidence either way.",
           "type": "string"
@@ -601,7 +606,7 @@
         },
         "no_test_surface": {
           "default": false,
-          "description": "Positive claim that this round had NO tracked test command at all\n(#2129) — neither a configured `--test-command` nor an authored\nwitness — so \"no flip\" is a demand the task structurally cannot meet.\n\nOn the wire for the same reason as [`Self::verify_done_flip`]: it turns\na fallback FAIL into an upward abstention, and a reader auditing a pass\nthat rests on nothing deterministic needs to see that the demand was\nunmeetable rather than unmet. `false` on snapshots recorded before\nthis existed, which is the conservative reading — the dispensation is\nnever assumed.",
+          "description": "Positive claim that this round had NO tracked test command at all\n(#2129) — neither a configured `--test-command` nor an authored\nwitness — so \"no flip\" is a demand the task structurally cannot meet.\n\n**Recorded only — this field steers nothing.** It once turned a\nfallback FAIL into an upward abstention, but the fallback it fed\n(`verify::heuristic_fallback`) was deleted with the model verdict in\n#2584, and nothing replaced the read: `ladder_decision` does not\nconsult it, and two otherwise-identical inputs differing only here\nreturn the same decision. It survives because the question it answers —\nhow often a run is asked for a flip on a task that has no test surface\nto produce one — is one only aggregate traces can answer, and aggregate\ntraces read this snapshot. Whether to retire it or give it a decision\nrole is #2638.\n\n`false` on snapshots recorded before this existed, which is the\nconservative reading — the dispensation is never assumed.",
           "type": "boolean"
         },
         "oracle_trace": {

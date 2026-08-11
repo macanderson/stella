@@ -792,8 +792,18 @@ pub const MACHINERY_COMMIT_EMAIL: &str = "pipeline@stella.invalid";
 /// baseline commit into it before the agent starts. That commit is authored by
 /// [`MACHINERY_COMMIT_EMAIL`], is reachable only from a `refs/worktree/` pin,
 /// and is therefore **indistinguishable from a lost commit** to any check that
-/// enumerates history — `git rev-list --all --reflog --not master`,
-/// `git fsck --dangling`, and every variation an author reaches for.
+/// enumerates history — `git rev-list --all --not master`, the same with
+/// `--reflog`, and every variation an author reaches for.
+///
+/// Measured, because the exact enumeration matters to anyone reproducing this
+/// (git 2.43.0, a scratch repo with a detached candidate worktree and both
+/// snapshot commits pinned at `refs/worktree/stella/witness-baseline`):
+/// `git rev-list --all --not master` lists both harness commits from the main
+/// worktree, while `git fsck --unreachable` and `git fsck --dangling` report
+/// **nothing** — a `refs/worktree/` pin and a worktree HEAD are both
+/// reachability roots, so `fsck` never sees them as garbage while the pin
+/// stands. #2540's body cited `fsck` as the reproducer; the conclusion holds
+/// and the mechanism named there does not.
 ///
 /// On Terminal-Bench `fix-git` — whose goal is literally "find my lost changes
 /// and merge them into master" — an author wrote exactly that enumeration. It

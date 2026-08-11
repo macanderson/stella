@@ -8,7 +8,7 @@ Send a one-shot prompt and let the agent work to completion without any interact
 ## Synopsis
 
 ```bash
-stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [global flags]
+stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [--require-verified] [global flags]
 ```
 
 ## What it does
@@ -27,7 +27,7 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 ## Flags
 
-`stella run` adds three command-specific flags on top of the [global flags](/docs/commands):
+`stella run` adds four command-specific flags on top of the [global flags](/docs/commands):
 
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
@@ -46,7 +46,28 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     discarded with it, so an already-satisfied test is never left behind in your test
     tree. Pass this to promote it to a real test you can commit.
   </OptionCard>
+  <OptionCard name="--require-verified">
+    Exit non-zero unless the run was actually verified. A run that finished but that
+    nothing proved reports `status: "unverified"` and, by default, still exits `0` —
+    with no `--test-command` that is the ordinary outcome, so failing on it by default
+    would break every existing script. Pass this in a delivery gate that must not ship
+    unproven work: it turns "completed but unproven" into a failure exactly like a
+    refuted verification.
+  </OptionCard>
 </CardGrid>
+
+### Reading the outcome without changing the exit code
+
+Whatever the exit code, a finished run states its verification standing in its own
+right. `--output-format json` carries it as `status`, which is one of `completed`
+(something proved the work, or the warrant found nothing to prove), `unverified`
+(the run finished and nothing proved it), `verification_failed` (a test refuted it),
+or `aborted`. The same word is what the audit row records, and `reason` carries the
+verdict summary naming which channel fell short.
+
+```bash
+stella run "…" --output-format json | jq -e '.status == "completed"'
+```
 
 The most relevant global flags here:
 

@@ -1028,6 +1028,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             no_pipeline,
             test_command,
             keep_witness,
+            require_verified,
             output_format,
         } => {
             let prompt = prompt_source::resolve(
@@ -1058,6 +1059,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     !no_pipeline,
                     test_command.as_deref(),
                     keep_witness,
+                    require_verified,
                 ),
             )?;
         }

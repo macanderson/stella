@@ -134,6 +134,24 @@ impl<'a> Pipeline<'a> {
                             runs_required: None,
                             seed: None,
                         });
+                        // #2540: the two-tree check. An authored witness that
+                        // fails with the SAME normalized failure it had on the
+                        // baseline is not measuring the change — but that is
+                        // only readable once the worker has been told and has
+                        // revised, because before then "the witness is deaf"
+                        // and "the work is not done yet" are the same
+                        // observation. `state.revisions` is the experiment:
+                        // the work varied in response to the failure and the
+                        // failure did not move.
+                        //
+                        // Recomputed every round rather than latched, so a
+                        // revision that finally moves the failure clears the
+                        // flag and the ordinary ladder resumes.
+                        state.witness_unmoved_by_revision = !passed
+                            && state.revisions > 0
+                            && cmd.authored_baseline.is_some_and(|baseline| {
+                                FailureFingerprint::of(baseline) == FailureFingerprint::of(&output)
+                            });
                         // The same combined output the oracle saw: this tail
                         // becomes `SealedFailure::output`, the sole input to
                         // the failure fingerprint and the symptom class.
@@ -147,14 +165,20 @@ impl<'a> Pipeline<'a> {
                     }
                     // No proof step: an infra run is not an oracle
                     // observation, and recording one either way would put a
-                    // fabricated pass/fail into the proof trace.
+                    // fabricated pass/fail into the proof trace. Nor a
+                    // two-tree finding: an unobservable run produced no
+                    // failure to compare (#2540).
                     None => {
+                        state.witness_unmoved_by_revision = false;
                         let label = post.infra_label();
                         (None, post.stderr_tail, label)
                     }
                 }
             }
-            None => (None, String::new(), None),
+            None => {
+                state.witness_unmoved_by_revision = false;
+                (None, String::new(), None)
+            }
         }
     }
 

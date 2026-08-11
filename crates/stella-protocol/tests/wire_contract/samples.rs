@@ -104,6 +104,7 @@ pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
         NothingAttempted,
         Unverifiable,
         Unverified,
+        WitnessUnsatisfiable,
         Waived,
     ]
 }

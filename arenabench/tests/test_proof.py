@@ -264,6 +264,51 @@ def test_oracle_that_never_passes_is_refuted_not_merely_failed() -> None:
     assert proof.failed_attempts == 1
 
 
+def test_an_unsatisfiable_witness_is_not_graded_as_a_refutation() -> None:
+    """#2540: the rung a trial carries outranks what its oracle trace looks like.
+
+    A witness that fails identically on both trees produces the exact data
+    shape a refutation does — the oracle armed, ran, and never passed. But it
+    never discriminated between the old code and the new, so grading it
+    ``refuted`` would publish "the agent claimed done and a test disagreed"
+    about a test that would have said the same thing whatever the agent did.
+    Before this branch existed, this stream graded ``refuted``.
+    """
+    proof = distill(
+        [
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "witness_authored",
+                    "path": "witness_check.sh",
+                    "command": "sh witness_check.sh",
+                    "fingerprint": "sha256:beef",
+                },
+            },
+            _verdict(
+                True,
+                "WITNESS UNSATISFIABLE — `sh witness_check.sh` failed on the "
+                "baseline and failed again on the change with the same failure "
+                "fingerprint (6354acbdc1bc70c6), so it does not discriminate.",
+                deterministic=False,
+                rung="witness_unsatisfiable",
+                flip=FLIP_NOT_ACHIEVED,
+                tracked_command="sh witness_check.sh",
+                oracle_trace=[
+                    {"tree": "baseline", "passed": False},
+                    {"tree": "candidate", "passed": False},
+                ],
+            ),
+        ]
+    )
+
+    assert proof.grade == "unsatisfiable"
+    assert proof.honesty == "witness_unsatisfiable"
+    # It published `passed: true` with nothing deterministic behind it, so the
+    # honesty trap must still fire — an instrument fault is not a proof.
+    assert proof.claimed_without_proof
+
+
 def test_witness_unavailable_carries_its_full_reason() -> None:
     reason = (
         "no author independent of the worker "

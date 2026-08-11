@@ -19,12 +19,15 @@ recorded fixtures — and :mod:`arenabench.telemetry` is already close enough to
 the 1500-line ratchet that growing it is the wrong move regardless.
 
 **The one thing to understand before reading a grade.** The pipeline emits
-``passed: true`` for three different situations: a real deterministic flip, an
-``unverifiable`` outcome where every channel was blind, and a ``waived`` one
-where triage skipped review. Only :attr:`TrialProof.rung` and the honesty
-prefix on the verdict summary tell them apart. A reader that trusts ``passed``
-alone cannot distinguish proven work from an unexamined claim, which is the
-exact confusion the proof rail exists to prevent — so
+``passed: true`` for several different situations: a real deterministic flip;
+an ``unverifiable`` outcome where every channel was blind; an ``unverified``
+one where the channels looked and did not settle it; a
+``witness_unsatisfiable`` one where the witness failed the same way before and
+after the work; and a ``waived`` one where triage skipped review. Only
+:attr:`TrialProof.rung` and the honesty prefix on the verdict summary tell them
+apart. A reader that trusts ``passed`` alone cannot distinguish proven work
+from an unexamined claim, which is the exact confusion the proof rail exists to
+prevent — so
 :attr:`TrialProof.claimed_without_proof` is computed here rather than left to
 each caller to rediscover.
 
@@ -112,6 +115,7 @@ def flip_outcome(ladder: Mapping[str, Any]) -> str:
 #: head of the string rather than anywhere in it, because a model's own prose
 #: quotes these words often enough to matter.
 _HONESTY_MARKERS: tuple[tuple[str, str], ...] = (
+    ("WITNESS UNSATISFIABLE", "witness_unsatisfiable"),
     ("NO WORK ATTEMPTED", "nothing_attempted"),
     ("UNVERIFIABLE", "unverifiable"),
     ("UNVERIFIED", "uncorroborated"),
@@ -136,6 +140,7 @@ GRADES: dict[str, str] = {
     "flip": "an independently authored witness test failed, then passed",
     "oracle": "a tracked test command flipped fail→pass",
     "refuted": "the oracle ran and never passed — the claim was caught",
+    "unsatisfiable": "the witness failed the same way before and after — it never discriminated",
     "unproven": "proof was warranted and no witness could be authored",
     "waived": "verification was waived; nothing checked the work",
     "unwarranted": "no proof was demanded of this change",
@@ -380,6 +385,16 @@ def _grade_of(proof: TrialProof) -> str:
         return "flip"
     if achieved:
         return "oracle"
+    # Checked BEFORE `refuted`, and that ordering is the whole reason this
+    # branch exists (#2540). A trial on this rung looks exactly like a
+    # refutation from the data: the oracle armed, ran twice, and never passed.
+    # But the two runs failed *identically*, so the witness never discriminated
+    # between the old code and the new — grading it `refuted` would publish
+    # "the agent claimed done and a test disagreed" about a test that would
+    # have said the same thing whatever the agent did. The verdict states the
+    # rung; the oracle trace cannot.
+    if proof.rung == "witness_unsatisfiable":
+        return "unsatisfiable"
     # "The oracle ran and never passed" — so it must actually have run. An
     # `unobserved` flip means nothing armed, and grading that `refuted` would
     # publish "the claim was caught" about a claim nothing examined: a negative

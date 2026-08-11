@@ -333,7 +333,13 @@ async fn an_author_bound_to_the_worker_makes_the_run_ask_for_a_worker_test() {
         .run("Fix the failing test", &mut messages, &mut budget)
         .await
         .expect("losing the author costs the witness, never the task");
-    assert_eq!(outcome.status, PipelineStatus::Completed);
+    // Losing the author costs the *proof*, and #2569 is that the cost is now
+    // stated: the run settles `Unverified` rather than borrowing `Completed`.
+    assert!(
+        matches!(outcome.status, PipelineStatus::Unverified { .. }),
+        "{:?}",
+        outcome.status
+    );
 
     // Not merely "the prompt carrying the goal": the triage classification
     // prompt quotes the goal too, and matching it first is how this assertion

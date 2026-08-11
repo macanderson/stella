@@ -47,7 +47,7 @@
 //!   restoration declines (`PipelineResume::from_progress`), and the
 //!   restored staleness map is what keeps the resumed writes honest.
 
-use super::outcome::{pipeline_status_result, turn_outcome_result};
+use super::outcome::{VerificationRequirement, pipeline_status_result, turn_outcome_result};
 use super::*;
 use crate::failure::CliFailure;
 
@@ -360,6 +360,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     "resumed_complete_verified"
                 }
                 PipelineStatus::Completed => "resumed_complete_unverified",
+                // A verdict was reached and it proved nothing — a different
+                // fact from the arm above, which is "no verdict was warranted".
+                PipelineStatus::Unverified { .. } => "resumed_complete_unproven",
                 PipelineStatus::VerificationFailed { .. } => "resumed_verification_failed",
                 PipelineStatus::Aborted { .. } => "resumed_aborted",
             };
@@ -377,13 +380,23 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                          nothing warranted a verdict"
                     ),
                 )),
+                PipelineStatus::Unverified { verdict } => Some((
+                    false,
+                    format!(
+                        "resumed turn completed (from step {step}) — {}",
+                        verdict.summary
+                    ),
+                )),
                 _ => None,
             };
             Reported {
                 label,
                 cost_usd: outcome.total_cost_usd,
                 banner,
-                result: pipeline_status_result(&outcome.status),
+                // A resume carries no flags of its own — it continues a turn
+                // whose invocation is gone — so the advisory default is the
+                // only honest requirement to apply here.
+                result: pipeline_status_result(&outcome.status, VerificationRequirement::Advisory),
             }
         }
         ResumedEnd::Pipeline(Err(error)) => Reported {

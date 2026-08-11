@@ -88,11 +88,14 @@ file is a candidate to extract into one.
 - [`src/agent.rs`](src/agent.rs)
 - [`src/agent/tests.rs`](src/agent/tests.rs)
 - [`src/command_deck.rs`](src/command_deck.rs)
-- [`src/fleet_cmd.rs`](src/fleet_cmd.rs)
 
 ([`src/candidate_ws.rs`](src/candidate_ws.rs) left this list when adoption
 moved into [`src/candidate_ws/adopt.rs`](src/candidate_ws/adopt.rs) — the
-extraction pattern above, taken all the way back under the limit.)
+extraction pattern above, taken all the way back under the limit.
+[`src/fleet_cmd.rs`](src/fleet_cmd.rs) left it the same way: its reading of a
+finished pipeline run moved to
+[`src/agent/outcome.rs`](src/agent/outcome.rs), where the other three surfaces
+already read one, and the file came back under 1500 lines.)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

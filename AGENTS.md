@@ -553,7 +553,7 @@ a plan needs and the part that rarely changes:
 
 | Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs`, `src/fleet_cmd.rs` |
+| `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |

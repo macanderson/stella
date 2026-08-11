@@ -394,6 +394,12 @@ pub fn recap_panel(
             Some(v) if v.passed => "✓ completed — verified".to_string(),
             _ => "✓ completed".to_string(),
         },
+        // #2569: the recap's own question is "did it complete, was it
+        // verified" — so the one status that answers "yes, and no" gets its
+        // own line rather than borrowing the tick.
+        PipelineStatus::Unverified { verdict } => {
+            format!("? completed — UNVERIFIED: {}", verdict.summary)
+        }
         PipelineStatus::VerificationFailed { verdict } => {
             format!("✗ verification failed — {}", verdict.summary)
         }

@@ -353,12 +353,17 @@ pub(crate) async fn drive_pipeline(
         Ok(outcome) => {
             use stella_pipeline::PipelineStatus;
             match outcome.status {
-                PipelineStatus::Completed | PipelineStatus::VerificationFailed { .. } => {
-                    TurnOutcome::Completed {
-                        text: outcome.final_text,
-                        cost_usd: outcome.total_cost_usd,
-                    }
-                }
+                // A verification outcome — proved, unproved (#2569), or
+                // refuted — is not a reason the *turn* did not complete. The
+                // host reads the verdict off the event stream, which carries
+                // the rung; this projection answers only "did the turn run to
+                // its end?".
+                PipelineStatus::Completed
+                | PipelineStatus::Unverified { .. }
+                | PipelineStatus::VerificationFailed { .. } => TurnOutcome::Completed {
+                    text: outcome.final_text,
+                    cost_usd: outcome.total_cost_usd,
+                },
                 PipelineStatus::Aborted { reason, kind } => TurnOutcome::Aborted {
                     reason,
                     kind,

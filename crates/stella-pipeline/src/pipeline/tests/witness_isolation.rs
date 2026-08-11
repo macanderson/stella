@@ -249,9 +249,10 @@ async fn authored_witness_degrades_when_verifier_is_worker() {
         .run("Fix the failing test", &mut messages, &mut budget)
         .await
         .expect("independence failure is a degradation, not a failure");
-    assert_eq!(
-        outcome.status,
-        PipelineStatus::Completed,
+    // Not aborted — and not `Completed` either: the degradation cost the run
+    // its witness, so nothing proved it and the status says so (#2569).
+    assert!(
+        matches!(outcome.status, PipelineStatus::Unverified { .. }),
         "pinning verifier to the worker must not abort the task: {outcome:?}"
     );
     let events = drain(&mut rx);

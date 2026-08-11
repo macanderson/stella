@@ -1179,8 +1179,9 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         #: deliberately not folded into a failure count.
         "refuted": sum(1 for t in rail if t.proof.grade == "refuted"),
         #: Passing verdicts with nothing deterministic behind them. The
-        #: honesty trap: `unverifiable` and `waived` both publish
-        #: `passed: true`, and a model verdict is an assertion.
+        #: honesty trap: `unverifiable`, `unverified`,
+        #: `witness_unsatisfiable` and `waived` all publish `passed: true`,
+        #: and a model verdict is an assertion.
         "claimed_without_proof": (
             sum(1 for t in rail if t.proof.claimed_without_proof) if rail_trials else None
         ),

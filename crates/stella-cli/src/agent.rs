@@ -71,8 +71,8 @@ pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 use outcome::{
-    pipeline_episode_outcome, pipeline_failure_reason, pipeline_session_status,
-    pipeline_status_label, pipeline_status_result,
+    VerificationRequirement, pipeline_episode_outcome, pipeline_failure_reason,
+    pipeline_session_status, pipeline_status_label, pipeline_status_result,
 };
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
@@ -141,6 +141,7 @@ pub async fn run_one_shot(
     use_pipeline: bool,
     test_command: Option<&str>,
     keep_witness: bool,
+    require_verified: bool,
 ) -> Result<(), CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
@@ -154,6 +155,7 @@ pub async fn run_one_shot(
             format,
             test_command,
             keep_witness,
+            require_verified,
         )
         .await
     } else {
@@ -245,7 +247,13 @@ async fn run_pipeline_one_shot(
     format: OutputFormat,
     test_command: Option<&str>,
     keep_witness: bool,
+    require_verified: bool,
 ) -> Result<(), CliFailure> {
+    let requirement = if require_verified {
+        VerificationRequirement::Required
+    } else {
+        VerificationRequirement::Advisory
+    };
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let registry_options = registry_options(cfg);
@@ -614,7 +622,7 @@ async fn run_pipeline_one_shot(
     // always lands a notification; a successful one only when it ran long
     // enough that the user has plausibly looked away. `Enter` on the
     // notification (or the SESSIONS overlay) replays the journal.
-    let session_status = pipeline_session_status(&result);
+    let session_status = pipeline_session_status(&result, requirement);
     let run_secs = turn_start.elapsed().as_secs();
     let notify = presence.one_shot_notification(session_status, run_secs, prompt);
     presence.finish(session_status, notify);
@@ -658,7 +666,7 @@ async fn run_pipeline_one_shot(
                 println!();
             }
 
-            pipeline_status_result(&outcome.status)
+            pipeline_status_result(&outcome.status, requirement)
         }
         Err(e) => {
             // A hard pipeline error must still produce the JSON summary a
