@@ -1,7 +1,7 @@
 //! The shell-hook → approval-flow bridge (#2684): the production
 //! implementation of the engine's
 //! [`stella_core::hooks::decision::HookApprovalRoute`] port, over the #2676
-//! [`ApprovalBroker`](crate::registry::approval::ApprovalBroker).
+//! [`ApprovalBroker`].
 //!
 //! When a settings-declared `PreToolUse` hook prints
 //! `{"action":"require_approval", …}`, the engine parks the dispatch on its

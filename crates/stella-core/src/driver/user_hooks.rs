@@ -23,7 +23,8 @@
 //!   same headless posture the broker takes;
 //! - an evaluation failure — non-zero exit, spawn failure, malformed
 //!   decision — denies unconditionally through
-//!   [`resolve_precedence`], whatever any enforcement-softening flag says
+//!   [`resolve_precedence`](crate::hooks::decision::resolve_precedence),
+//!   whatever any enforcement-softening flag says
 //!   (OXA-2056). This preserves the legacy contract (non-zero exit
 //!   blocks) while routing it through the one precedence ladder.
 //!
