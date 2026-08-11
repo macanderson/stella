@@ -1,9 +1,0 @@
-{
-  "id": "3",
-  "subject": "Compile POV-Ray 2.2",
-  "description": "Run make -f unix.mak and fix any compilation errors",
-  "activeForm": "Compiling POV-Ray 2.2",
-  "status": "completed",
-  "blocks": [],
-  "blockedBy": []
-}

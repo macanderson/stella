@@ -1,9 +1,0 @@
-{
-  "id": "2",
-  "subject": "Apply build patches for modern Linux/gcc",
-  "description": "Copy unix makefiles to source, rename unixconf.h to config.h, apply RNG patch, fix CFLAGS, set MAX_CONSTANTS",
-  "activeForm": "Applying build patches",
-  "status": "completed",
-  "blocks": [],
-  "blockedBy": []
-}
