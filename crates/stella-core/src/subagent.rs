@@ -963,4 +963,6 @@ fn last_assistant_text(messages: &[CompletionMessage]) -> Option<&str> {
 }
 
 #[cfg(test)]
+mod fork_scope_tests;
+#[cfg(test)]
 mod tests;

@@ -59,11 +59,9 @@ use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::agent;
 use crate::config::Config;
-use crate::plain;
-use crate::rules;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+use crate::{agent, plain, rules};
 
 /// Cap on the per-task summary line so the report table stays a table.
 const SUMMARY_CHARS: usize = 96;
