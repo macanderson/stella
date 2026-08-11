@@ -50,24 +50,44 @@ use stella_protocol::{
     AgentEvent, FlipOutcome, OracleObservation, ProofTree, StageKind, VerdictEvidence,
 };
 
-/// Verifier-calibration tallies folded from recorded event streams (#871).
+/// Calibration tallies folded from recorded event streams (#871).
 ///
 /// The event store already persists every verdict (with its ladder snapshot,
 /// #865) and every PR/CI observation — so calibration is a *reading* of what
 /// exists, not a new write path. A `Verdict` with `deterministic: false,
-/// passed: true` is a model verifier's PASS; the next **terminal** CI verdict in
+/// passed: true` is an **unproven** pass; the next **terminal** CI verdict in
 /// the same stream (`Pr { ci: Some(Passing | Failing) }`) reconciles every
 /// unreconciled pass before it. Deterministic passes are tallied identically,
 /// because a false-positive *rate* means nothing without the cohort it should
 /// be compared against.
+///
+/// # Why the cohort is not called "model verifier" (#2635)
+///
+/// It was, and the name was exact while the only way to emit
+/// `passed: true, deterministic: false` was a model verifier ruling on
+/// inconclusive evidence. #2584 removed that call, and the same flag is now set
+/// by the ladder's own non-determinate outcomes — `unverified_evidence`,
+/// `unverifiable_evidence`, and `waived_completion` for a triage waiver. So on
+/// any session recorded after #2584 the cohort counts **unproven passes, not
+/// judged ones**, and no model was involved in a single one of them.
+///
+/// The rate itself was always a real number — the false-positive rate of passes
+/// nothing proved, which is worth knowing. What was wrong was the label, and a
+/// misnamed measurement is worse than a missing one: a consumer parsing
+/// `--format json` read `verifier_*` and got something else. The fields state
+/// the property they actually select on now.
+///
+/// Sessions spanning #2584 still mix both populations under one heading, and
+/// nothing in the record distinguishes them. That is a fact about the old data,
+/// not something the rename can repair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CalibrationReport {
-    /// Model-verifier PASS verdicts observed.
-    pub verifier_passes: u32,
+    /// Passes observed with no deterministic evidence behind them.
+    pub unproven_passes: u32,
     /// …of which a later terminal CI verdict reconciled.
-    pub verifier_reconciled: u32,
-    /// …reconciled as CI-FAILING: the verifier approved work CI rejected.
-    pub verifier_false_positives: u32,
+    pub unproven_reconciled: u32,
+    /// …reconciled as CI-FAILING: the run reported a pass CI rejected.
+    pub unproven_false_positives: u32,
     /// Deterministic (ladder) passes observed — the comparison cohort.
     pub deterministic_passes: u32,
     pub deterministic_reconciled: u32,
@@ -88,42 +108,48 @@ pub struct CalibrationReport {
     /// verifier passes, because the question is how often the *condition* holds
     /// — which is what decides whether gating on it taxes every turn.
     pub uncorroborated_verdicts: u32,
-    /// Model-verifier PASSes where the condition held — the turns
+    /// Unproven passes where the condition held — the turns
     /// `verifier_evidence_demand` would actually have sent back,
     /// and the ones the pipeline relabels UNVERIFIED while it is off.
-    pub verifier_passes_standing_alone: u32,
-    /// …of the reconciled verifier passes, how many were settled by a **revert**
+    ///
+    /// Kept beside the cohort rather than retired with the verifier (#2635):
+    /// it is now a near-subset of the cohort itself, but the two are folded
+    /// from different sources — this one from the ladder snapshot, the cohort
+    /// from the verdict's own `deterministic` flag — so a divergence between
+    /// them is a real signal that one of the two projections has drifted.
+    pub unproven_passes_standing_alone: u32,
+    /// …of the reconciled unproven passes, how many were settled by a **revert**
     /// rather than by CI (#1293).
     ///
     /// Counted apart because it is a different and stronger claim. CI failing
     /// can mean a flake, a neighbouring change, or an infrastructure day; a
     /// human reverting a commit is a person deciding, later and with more
-    /// information, that the work should not have landed. A verifier whose false
+    /// information, that the work should not have landed. A cohort whose false
     /// positives are mostly reverts is failing differently from one whose
     /// false positives are mostly red CI, and a single number would hide it.
-    pub verifier_reverted: u32,
+    pub unproven_reverted: u32,
     /// The same, for the deterministic cohort.
     pub deterministic_reverted: u32,
-    /// The verifier cohort above, partitioned by who graded it (#1865):
+    /// The unproven cohort above, partitioned by who graded it (#1865):
     /// self-graded / independent / unknown, with unknown never assumed into
     /// either measured cohort. The three partitions sum to the unpartitioned
-    /// verifier tallies.
+    /// cohort tallies.
     pub by_grader: GraderCohorts,
 }
 
 impl CalibrationReport {
     /// Combine per-session reports into a workspace total.
     pub fn merge(mut self, other: Self) -> Self {
-        self.verifier_passes += other.verifier_passes;
-        self.verifier_reconciled += other.verifier_reconciled;
-        self.verifier_false_positives += other.verifier_false_positives;
+        self.unproven_passes += other.unproven_passes;
+        self.unproven_reconciled += other.unproven_reconciled;
+        self.unproven_false_positives += other.unproven_false_positives;
         self.deterministic_passes += other.deterministic_passes;
         self.deterministic_reconciled += other.deterministic_reconciled;
         self.deterministic_false_positives += other.deterministic_false_positives;
         self.snapshotted_verdicts += other.snapshotted_verdicts;
         self.uncorroborated_verdicts += other.uncorroborated_verdicts;
-        self.verifier_passes_standing_alone += other.verifier_passes_standing_alone;
-        self.verifier_reverted += other.verifier_reverted;
+        self.unproven_passes_standing_alone += other.unproven_passes_standing_alone;
+        self.unproven_reverted += other.unproven_reverted;
         self.deterministic_reverted += other.deterministic_reverted;
         self.by_grader = self.by_grader.merge(other.by_grader);
         self
@@ -145,12 +171,12 @@ impl CalibrationReport {
             .then(|| f64::from(self.uncorroborated_verdicts) / f64::from(self.snapshotted_verdicts))
     }
 
-    /// The measured false-positive rate over RECONCILED verifier passes, or
+    /// The measured false-positive rate over RECONCILED unproven passes, or
     /// `None` when nothing was reconciled — an unmeasured rate is reported
     /// as unmeasured, never as zero.
-    pub fn verifier_false_positive_rate(&self) -> Option<f64> {
-        (self.verifier_reconciled > 0)
-            .then(|| f64::from(self.verifier_false_positives) / f64::from(self.verifier_reconciled))
+    pub fn unproven_false_positive_rate(&self) -> Option<f64> {
+        (self.unproven_reconciled > 0)
+            .then(|| f64::from(self.unproven_false_positives) / f64::from(self.unproven_reconciled))
     }
 
     /// Same rate for the deterministic cohort.
@@ -170,17 +196,17 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
     // turn. Rendered beside the calibration cohorts because it is read for
     // the same reason — to replace an argument about the verifier with a number
     // — and stated with its denominator, like every other rate here.
-    let verifier_alone = match report.uncorroborated_rate() {
+    let uncorroborated = match report.uncorroborated_rate() {
         Some(rate) => format!(
-            "  verifier-alone rate: {:.0}% of {} snapshotted verdict(s) had no flip and no green \
-             test ({} of them were model-verifier PASSes)\n  \
+            "  uncorroborated rate: {:.0}% of {} snapshotted verdict(s) had no flip and no green \
+             test ({} of them were reported as passes)\n  \
              → a MINORITY is the condition `verifier_evidence_demand` was built for; \
              a majority reproduces the measurement that switched it off (#1295)",
             100.0 * rate,
             report.snapshotted_verdicts,
-            report.verifier_passes_standing_alone,
+            report.unproven_passes_standing_alone,
         ),
-        None => "  verifier-alone rate: unmeasured (no verdict carried a ladder snapshot yet)"
+        None => "  uncorroborated rate: unmeasured (no verdict carried a ladder snapshot yet)"
             .to_string(),
     };
     // #1293: reverts are counted apart from CI, because they are a different
@@ -188,18 +214,18 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
     // not have landed. Stated only when there are any: a zero here would read
     // as "no work was reverted", when the ordinary case is that the caller
     // gathered no revert evidence at all.
-    let reverts = match (report.verifier_reverted, report.deterministic_reverted) {
+    let reverts = match (report.unproven_reverted, report.deterministic_reverted) {
         (0, 0) => String::new(),
-        (verifier, deterministic) => format!(
+        (unproven, deterministic) => format!(
             "\n  of those, settled by a REVERT (a human said it was wrong, not CI): \
-             {verifier} verifier, {deterministic} deterministic"
+             {unproven} unproven, {deterministic} deterministic"
         ),
     };
-    // #1865: the model-verifier line above, partitioned by who graded it.
-    // Rendered only once there is a verifier pass to partition — the section
-    // answers a question about recorded verifier verdicts, and with none
+    // #1865: the unproven line above, partitioned by who graded it.
+    // Rendered only once there is an unproven pass to partition — the section
+    // answers a question about recorded unproven verdicts, and with none
     // recorded there is no cohort to compare.
-    let grader = if report.verifier_passes > 0 {
+    let grader = if report.unproven_passes > 0 {
         format!(
             "\n{}",
             independence::render_grader_cohorts(&report.by_grader)
@@ -208,18 +234,21 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
         String::new()
     };
     format!(
-        "verifier calibration (#871) — passes reconciled against later CI verdicts and reverts\n\
+        "pass calibration (#871) — passes reconciled against later CI verdicts and reverts\n\
          {}\n{}{reverts}{grader}\n\
          note: a pass is reconciled by a terminal CI verdict or by a revert of\n\
          a commit it covers, from any session or from the git history (#1293).\n\
          A pass no evidence reaches stays UNRECONCILED and out of every\n\
          denominator — absence of a revert is never a confirmation.\n\
-         {verifier_alone}",
+         the `unproven` cohort is every pass the ladder could not settle —\n\
+         unverified, unverifiable, or waived. No model judged any of them\n\
+         (#2584, #2635).\n\
+         {uncorroborated}",
         cohort(
-            "  model verifier  ",
-            report.verifier_passes,
-            report.verifier_reconciled,
-            report.verifier_false_positives
+            "  unproven      ",
+            report.unproven_passes,
+            report.unproven_reconciled,
+            report.unproven_false_positives
         ),
         cohort(
             "  deterministic",
@@ -291,7 +320,7 @@ pub fn calibration_pending(
                     if stands_alone(snapshot) {
                         report.uncorroborated_verdicts += 1;
                         if *passed && !evidence.deterministic {
-                            report.verifier_passes_standing_alone += 1;
+                            report.unproven_passes_standing_alone += 1;
                         }
                     }
                 }
@@ -308,7 +337,7 @@ pub fn calibration_pending(
                 if evidence.deterministic {
                     report.deterministic_passes += 1;
                 } else {
-                    report.verifier_passes += 1;
+                    report.unproven_passes += 1;
                     report.by_grader.tally_mut(grader_independent).passes += 1;
                 }
                 pending.push(PendingPass {
@@ -342,8 +371,8 @@ pub fn calibration_pending(
                 };
                 for pass in pending.drain(..) {
                     if pass.verifier {
-                        report.verifier_reconciled += 1;
-                        report.verifier_false_positives += u32::from(failing);
+                        report.unproven_reconciled += 1;
+                        report.unproven_false_positives += u32::from(failing);
                         let tally = report.by_grader.tally_mut(pass.grader_independent);
                         tally.reconciled += 1;
                         tally.false_positives += u32::from(failing);

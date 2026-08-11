@@ -195,9 +195,9 @@ pub fn reconcile(
         let false_positive = u32::from(verdict.is_false_positive());
         let reverted = u32::from(verdict == Settled::Reverted);
         if pass.verifier {
-            report.verifier_reconciled += 1;
-            report.verifier_false_positives += false_positive;
-            report.verifier_reverted += reverted;
+            report.unproven_reconciled += 1;
+            report.unproven_false_positives += false_positive;
+            report.unproven_reverted += reverted;
             let tally = report.by_grader.tally_mut(pass.grader_independent);
             tally.reconciled += 1;
             tally.false_positives += false_positive;
@@ -307,9 +307,9 @@ commit dddd3333
         ];
         let truth = GroundTruth::default().with_reverts(["aaaa1111aaaa".to_string()]);
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.verifier_reconciled, 1);
-        assert_eq!(report.verifier_false_positives, 1);
-        assert_eq!(report.verifier_reverted, 1);
+        assert_eq!(report.unproven_reconciled, 1);
+        assert_eq!(report.unproven_false_positives, 1);
+        assert_eq!(report.unproven_reverted, 1);
         assert_eq!(
             report.deterministic_reconciled, 0,
             "an un-reverted commit settles nothing: absence of a revert is not a confirmation"
@@ -330,10 +330,10 @@ commit dddd3333
         let pending = vec![pass(true, &[], &["https://example.test/pr/7"])];
         let mut report = CalibrationReport::default();
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.verifier_reconciled, 1);
-        assert_eq!(report.verifier_false_positives, 1);
+        assert_eq!(report.unproven_reconciled, 1);
+        assert_eq!(report.unproven_false_positives, 1);
         assert_eq!(
-            report.verifier_reverted, 0,
+            report.unproven_reverted, 0,
             "CI failing is not a revert — the two are counted apart"
         );
     }
@@ -358,8 +358,8 @@ commit dddd3333
             &["https://example.test/pr/9"],
         )];
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.verifier_false_positives, 1);
-        assert_eq!(report.verifier_reverted, 1);
+        assert_eq!(report.unproven_false_positives, 1);
+        assert_eq!(report.unproven_reverted, 1);
     }
 
     /// Non-terminal CI contributes nothing, and a pass with no artifact at
@@ -378,6 +378,6 @@ commit dddd3333
             pass(true, &[], &[]),
         ];
         assert_eq!(reconcile(&mut report, &pending, &truth), 0);
-        assert_eq!(report.verifier_reconciled, 0);
+        assert_eq!(report.unproven_reconciled, 0);
     }
 }

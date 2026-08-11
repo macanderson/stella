@@ -225,10 +225,10 @@ pub(crate) fn run_calibration(format: QueryFormat) -> Result<(), String> {
     if matches!(format, QueryFormat::Json) {
         return print_json(&Versioned::new(serde_json::json!({
             "sessions": sessions.len(),
-            "verifier_passes": total.verifier_passes,
-            "verifier_reconciled": total.verifier_reconciled,
-            "verifier_false_positives": total.verifier_false_positives,
-            "verifier_false_positive_rate": total.verifier_false_positive_rate(),
+            "unproven_passes": total.unproven_passes,
+            "unproven_reconciled": total.unproven_reconciled,
+            "unproven_false_positives": total.unproven_false_positives,
+            "unproven_false_positive_rate": total.unproven_false_positive_rate(),
             "deterministic_passes": total.deterministic_passes,
             "deterministic_reconciled": total.deterministic_reconciled,
             "deterministic_false_positives": total.deterministic_false_positives,
@@ -239,13 +239,13 @@ pub(crate) fn run_calibration(format: QueryFormat) -> Result<(), String> {
             "snapshotted_verdicts": total.snapshotted_verdicts,
             "uncorroborated_verdicts": total.uncorroborated_verdicts,
             "uncorroborated_rate": total.uncorroborated_rate(),
-            "verifier_passes_standing_alone": total.verifier_passes_standing_alone,
+            "unproven_passes_standing_alone": total.unproven_passes_standing_alone,
             // #1293: the answer key's own reach — how many earlier verdicts
             // evidence arriving after their session settled, and how many of
             // the reconciled ones a human revert (not CI) contradicted.
             "settled_by_late_evidence": settled_late,
             "unreconciled_passes": pending.len() as u32 - settled_late,
-            "verifier_reverted": total.verifier_reverted,
+            "unproven_reverted": total.unproven_reverted,
             "deterministic_reverted": total.deterministic_reverted,
         })));
     }

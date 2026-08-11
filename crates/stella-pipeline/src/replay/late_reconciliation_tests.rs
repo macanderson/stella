@@ -48,9 +48,9 @@ fn a_pass_after_the_last_ci_verdict_survives_its_session_and_a_revert_settles_it
         commit("abc123abc123"),
     ];
     let (report, pending) = calibration_pending("sess-a", &events);
-    assert_eq!(report.verifier_passes, 2);
+    assert_eq!(report.unproven_passes, 2);
     assert_eq!(
-        report.verifier_reconciled, 1,
+        report.unproven_reconciled, 1,
         "only the first pass had an in-stream verdict"
     );
     assert_eq!(pending.len(), 1, "the trailing pass is carried out");
@@ -60,9 +60,9 @@ fn a_pass_after_the_last_ci_verdict_survives_its_session_and_a_revert_settles_it
     let mut report = report;
     let truth = GroundTruth::default().with_reverts(["abc123abc123".to_string()]);
     assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-    assert_eq!(report.verifier_reconciled, 2);
-    assert_eq!(report.verifier_false_positives, 1);
-    assert_eq!(report.verifier_reverted, 1);
+    assert_eq!(report.unproven_reconciled, 2);
+    assert_eq!(report.unproven_false_positives, 1);
+    assert_eq!(report.unproven_reverted, 1);
     assert!(
         render_calibration(&report).contains("settled by a REVERT"),
         "the render must distinguish a human's revert from a red CI run: {}",
@@ -78,16 +78,16 @@ fn a_terminal_verdict_in_a_later_session_settles_an_earlier_ones_pass() {
     let session_b = vec![pr("https://example.test/pr/4", Some(CiStatus::Failing))];
     let (mut report, pending) = calibration_pending("sess-a", &session_a);
     assert_eq!(
-        report.verifier_reconciled, 0,
+        report.unproven_reconciled, 0,
         "a PR with no terminal verdict reconciles nothing in its own stream"
     );
     let truth = GroundTruth::default()
         .with_stream(&session_a)
         .with_stream(&session_b);
     assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-    assert_eq!(report.verifier_false_positives, 1);
+    assert_eq!(report.unproven_false_positives, 1);
     assert_eq!(
-        report.verifier_reverted, 0,
+        report.unproven_reverted, 0,
         "CI is not a revert, and the two must not merge into one number"
     );
 }
@@ -102,8 +102,8 @@ fn the_in_stream_fold_is_unchanged() {
         pr("https://example.test/pr/2", Some(CiStatus::Failing)),
     ];
     let report = calibration(&events);
-    assert_eq!(report.verifier_passes, 1);
-    assert_eq!(report.verifier_reconciled, 1);
-    assert_eq!(report.verifier_false_positives, 1);
-    assert_eq!(report.verifier_reverted, 0);
+    assert_eq!(report.unproven_passes, 1);
+    assert_eq!(report.unproven_reconciled, 1);
+    assert_eq!(report.unproven_false_positives, 1);
+    assert_eq!(report.unproven_reverted, 0);
 }

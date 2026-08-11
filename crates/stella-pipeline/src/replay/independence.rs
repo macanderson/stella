@@ -17,7 +17,7 @@
 /// no model verdict, so independence is not a fact about them (see
 /// `LadderSnapshot::verifier_independent`). Each pass lands in exactly one
 /// cohort, so the three `passes` fields sum to the report's
-/// `verifier_passes` — and the same holds for `reconciled` and
+/// `unproven_passes` — and the same holds for `reconciled` and
 /// `false_positives`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GraderCohorts {
@@ -201,7 +201,7 @@ mod tests {
             ci(CiStatus::Failing),
         ];
         let report = calibration(&events);
-        assert_eq!(report.verifier_passes, 4);
+        assert_eq!(report.unproven_passes, 4);
         assert_eq!(report.by_grader.self_graded.passes, 1);
         assert_eq!(report.by_grader.independent.passes, 1);
         assert_eq!(
@@ -221,7 +221,7 @@ mod tests {
             + report.by_grader.independent.passes
             + report.by_grader.unknown.passes;
         assert_eq!(
-            total, report.verifier_passes,
+            total, report.unproven_passes,
             "the partition is exhaustive: every verifier pass lands in exactly one cohort"
         );
     }
