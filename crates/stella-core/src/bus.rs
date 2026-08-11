@@ -1170,9 +1170,9 @@ mod tests {
 
     #[test]
     fn catalog_has_every_documented_name_without_duplicates() {
-        // 88 + `agent.step.started`/`completed` (#1133) + `agent.turn.parked`/
-        // `woken` (#1857) + `hook.stop.blocked`/`hook.pre_compact.vetoed` (#2684).
-        assert_eq!(names::ALL.len(), 94);
+        // 88 + step started/completed (#1133) + turn parked/woken (#1857)
+        // + stop.blocked/pre_compact.vetoed (#2684) + working_set.restored (#2685).
+        assert_eq!(names::ALL.len(), 95);
         let unique: std::collections::HashSet<&str> = names::ALL.iter().copied().collect();
         assert_eq!(unique.len(), names::ALL.len(), "duplicate catalog name");
         for name in names::ALL {

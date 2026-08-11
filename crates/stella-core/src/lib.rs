@@ -36,6 +36,7 @@ pub mod receipts;
 pub mod records;
 pub mod redact;
 pub mod repair;
+pub mod restore;
 pub mod retry;
 pub mod router;
 pub mod rules;

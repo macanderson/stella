@@ -40,6 +40,13 @@ pub const AGENT_STEP_COMPLETED: &str = "agent.step.completed";
 pub const AGENT_TURN_PARKED: &str = "agent.turn.parked";
 /// The parked turn woke — closes the span `agent.turn.parked` opened.
 pub const AGENT_TURN_WOKEN: &str = "agent.turn.woken";
+/// The overflow summarizer's splice was followed by a working-set
+/// restoration (#2685): recently-read files re-read fresh and/or an active
+/// skill body re-attached as one tail message. Observer-only, counts only —
+/// deliberately NOT in [`BLOCKING`]: the restoration replays only read-only
+/// calls, so there is nothing policy-sensitive to intercept (the same
+/// posture as `agent.turn.parked`).
+pub const AGENT_WORKING_SET_RESTORED: &str = "agent.working_set.restored";
 pub const AGENT_ERROR: &str = "agent.error";
 pub const TRANSCRIPT_ENTRY_CREATED: &str = "transcript.entry.created";
 pub const TRANSCRIPT_ENTRY_UPDATED: &str = "transcript.entry.updated";
@@ -153,6 +160,7 @@ pub const ALL: &[&str] = &[
     AGENT_STEP_COMPLETED,
     AGENT_TURN_PARKED,
     AGENT_TURN_WOKEN,
+    AGENT_WORKING_SET_RESTORED,
     AGENT_TURN_COMPLETED,
     AGENT_ERROR,
     TRANSCRIPT_ENTRY_CREATED,

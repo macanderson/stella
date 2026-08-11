@@ -102,6 +102,7 @@ lib.rs), never as a planning assumption.
 | [`src/driver.rs`](src/driver.rs) | `Engine`, `EngineConfig`, `TurnOutcome`, `run_turn`. The one file that sequences every other module against real I/O. Start here. |
 | [`src/driver/settlement.rs`](src/driver/settlement.rs) | The between-steps budget check and `BudgetTick`/warning emission, split out of the step loop. |
 | [`src/waiting.rs`](src/waiting.rs) + [`src/driver/waiting.rs`](src/driver/waiting.rs) | Parked waits (#1471): the pure change/deadline decision logic and `WaitRequest` types, and the driver's park loop that probes through the existing ports with zero model calls. |
+| [`src/restore.rs`](src/restore.rs) + [`src/driver/restore.rs`](src/driver/restore.rs) | Working-set restoration (#2685): the pure decide-what-to-restore half (span reads, active skill bodies, the budget-proven fit with named drops), and the driver's overflow summarizer plus the restoration loop that re-reads files through `ToolExecutor` with zero model calls. |
 | [`src/ports.rs`](src/ports.rs) | The port boundary: `ToolExecutor`, `ReadOnlyTools`, `GrantedTools`, `Clock`, `TurnGate`, `TurnSteering`. |
 | [`src/budget.rs`](src/budget.rs) | `BudgetGuard` — USD spend against a turn and/or session cap. Returns `BudgetOutcome`; aborts nothing itself. |
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |

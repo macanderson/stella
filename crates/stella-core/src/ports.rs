@@ -99,6 +99,31 @@ pub trait ToolExecutor: Send + Sync {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         std::collections::HashSet::new()
     }
+
+    /// Slugs of skills whose inline invocation is currently live in this
+    /// executor's stack (#2682) — read, never drained: the tool layer owns
+    /// the spans and ends them structurally when their guards drop.
+    ///
+    /// The engine consults this at the overflow-summarization boundary
+    /// (#2685): a live skill's invocation body folded into a summary is
+    /// procedure text the model is mid-way through executing, and the
+    /// working-set restoration re-attaches it verbatim
+    /// (`driver::restore`). The same "written by one object, read by
+    /// another" seam as [`Self::drain_wait_request`], for the same
+    /// structural reason: the invocation tracking lives in the tool stack
+    /// (`stella-cli`'s `invoke_skill` mount), and the engine only ever sees
+    /// the stack through this trait.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns an empty `Vec`, which reads as "this executor
+    /// mounts no skill-invocation plane" — correct for a leaf, and **wrong
+    /// for a wrapper**. A decorator that forgets to forward silently stops
+    /// active procedure text surviving summarization for every surface
+    /// composed through it, and no compiler will say so.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// A read-only view over another executor: advertises only the schemas
@@ -174,6 +199,13 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.drain_wait_request()
     }
 
+    /// Forwarded: the inner stack owns the invocation spans, and a child
+    /// running behind this view still deserves its live procedure text to
+    /// survive summarization (see the port's contract).
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
+
     // `parallel_safe_names` deliberately keeps the empty default rather than
     // forwarding (contrast with the spend drain above): the one shipped
     // parallel-safe tool is the sub-agent spawn, and this view exists to
@@ -234,6 +266,12 @@ impl ToolExecutor for GrantedTools<'_> {
     /// that bounds it.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: the
+    /// grant narrows which tools run, not which invocations are live.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
     }
 }
 

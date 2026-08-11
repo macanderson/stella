@@ -163,11 +163,8 @@ impl InvokeSkillTools {
     }
 
     /// The live-invocation tracking handle — the overflow summarizer's
-    /// protection seam (#2685).
-    // dead_code: the production consumer is #2685's summarizer span hook,
-    // next wave — the seam ships with its tracking so that wave has a handle
-    // to wire, and the tests below exercise it meanwhile.
-    #[allow(dead_code)]
+    /// restoration seam (#2685): `DiscoveryToolSet` surfaces it to the
+    /// engine as `ToolExecutor::active_skill_slugs`.
     #[must_use]
     pub fn active_invocations(&self) -> ActiveSkillInvocations {
         self.active.clone()

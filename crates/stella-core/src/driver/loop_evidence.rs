@@ -52,11 +52,11 @@ use super::{CONTINUATION_MARKER_PREFIX, LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX
 /// Where the current turn's messages start within `messages`: the index
 /// right after the last genuine user turn boundary, skipping the synthetic
 /// User-role markers the driver injects mid-turn (the overflow summary, the
-/// stuck-loop warning, the length-continuation nudge) — none of those are a
-/// real user turn, and treating one as the boundary would truncate the
-/// window right when a consumer needs the fuller history (on every
-/// summarization pass, or on the one path that exists precisely because the
-/// turn is not over).
+/// stuck-loop warning, the length-continuation nudge, the working-set
+/// restoration) — none of those are a real user turn, and treating one as
+/// the boundary would truncate the window right when a consumer needs the
+/// fuller history (on every summarization pass, or on the one path that
+/// exists precisely because the turn is not over).
 ///
 /// Shared by [`recent_call_records`] (loop-detection evidence) and
 /// `driver::confident_zero` (turn-activity evidence for #1477): both need
@@ -70,6 +70,7 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
                 && !m.content.starts_with(SUMMARY_MARKER_PREFIX)
                 && !m.content.starts_with(LOOP_STEER_PREFIX)
                 && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
+                && !m.content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
         })
         .map(|i| i + 1)
         .unwrap_or(0)

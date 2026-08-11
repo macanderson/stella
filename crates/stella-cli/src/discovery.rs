@@ -221,11 +221,9 @@ impl<'a> DiscoveryToolSet<'a> {
         self.invoke.injections()
     }
 
-    /// Live skill invocations — the overflow summarizer's protection seam
-    /// (#2685).
-    // dead_code: the consumer is #2685's summarizer span hook (next wave);
-    // the handle is exposed from the mount now so that wiring is one line.
-    #[allow(dead_code)]
+    /// Live skill invocations — the overflow summarizer's restoration seam:
+    /// surfaced to the engine as [`ToolExecutor::active_skill_slugs`], which
+    /// is how a live skill's body survives a summarization splice (#2685).
     #[must_use]
     pub fn active_skill_invocations(&self) -> stella_core::skills::invoke::ActiveSkillInvocations {
         self.invoke.active_invocations()
@@ -852,6 +850,14 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+
+    /// This mount owns the invocation plane (#2682), so this is where the
+    /// port's answer is real rather than the empty default: the engine reads
+    /// it at the overflow-summarization boundary to restore a live skill's
+    /// body after the splice (#2685).
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.active_skill_invocations().active_slugs()
+    }
 }
 
 /// Split an advertised `mcp__server__tool` name into (server, tool).
@@ -985,6 +991,29 @@ mod tests {
             ToolOutput::Ok { content } => content,
             ToolOutput::Error { message } => panic!("expected Ok, got error: {message}"),
         }
+    }
+
+    /// The mount is where `ToolExecutor::active_skill_slugs` stops being the
+    /// empty default (#2685): a span begun on the shared tracking handle must
+    /// surface to the engine through the port, and end structurally with its
+    /// guard — this is the wiring that lets a live skill body survive an
+    /// overflow-summarization splice.
+    #[test]
+    fn a_live_invocation_span_surfaces_through_the_executor_port() {
+        let inner = FakeInner;
+        let set = full_set(&inner, std::env::temp_dir());
+        assert!(set.active_skill_slugs().is_empty(), "nothing live yet");
+        let span = set.active_skill_invocations().begin("release-notes");
+        assert_eq!(
+            set.active_skill_slugs(),
+            vec!["release-notes".to_string()],
+            "the engine-facing port must see the live invocation"
+        );
+        drop(span);
+        assert!(
+            set.active_skill_slugs().is_empty(),
+            "teardown is structural — the dropped guard ends the span"
+        );
     }
 
     #[tokio::test]

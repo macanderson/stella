@@ -75,8 +75,8 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
-    MessageRole, Provider, ProviderError, ReasoningEffort, ToolCall, ToolOutput,
+    AgentEvent, CompletionMessage, CompletionRequestRef, FinishReason, MessageRole, Provider,
+    ProviderError, ReasoningEffort, ToolCall, ToolOutput,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -119,7 +119,6 @@ use loop_evidence::recent_call_records;
 // the production path reads it through `SummarizerHealth::is_latched`.
 #[cfg(test)]
 use crate::step::SUMMARIZER_FAILURE_LATCH;
-use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 use loop_evidence::{ResultIdentities, snapshot_result_identities};
 // Named only by tests that build literal tool results; the production path
 // constructs `ToolResult` in `driver/dispatch.rs`.
@@ -133,6 +132,7 @@ mod drive;
 mod model_fallback;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
+mod restore;
 mod settlement;
 pub(crate) mod usage_anchor;
 pub(crate) mod user_hooks;
@@ -273,7 +273,7 @@ pub struct EngineConfig {
     /// harness to the last second.
     pub turn_budget: Option<Duration>,
     /// Working directory reported to lifecycle hooks (`crate::hooks`) as the
-    /// `cwd` of every [`HookPayload`]. Kept here — rather than sniffed via
+    /// `cwd` of every [`crate::hooks::HookPayload`]. Kept here — rather than sniffed via
     /// `std::env::current_dir()` inside the engine — so `stella-core`
     /// performs no I/O of its own: the caller
     /// (which already knows the workspace root) supplies the real path, and
@@ -1355,254 +1355,6 @@ impl<'a> Engine<'a> {
             cost_usd: 0.0,
             rewrote,
         }
-    }
-
-    /// Replace the oldest viable span with a model-written summary. Failures
-    /// leave the conversation untouched. Returns the summarizer call's spend.
-    /// `step` is carried only to key this call's receipt against the step it
-    /// rides, the same way [`Self::apply_overflow_summary`] carries the budget
-    /// pair it reports. `instructions` is a PreCompact hook's `modify`
-    /// steering for the summarizer, appended to its request (#2684).
-    #[allow(clippy::too_many_arguments)]
-    async fn summarize_overflow_span(
-        &self,
-        messages: &mut Vec<CompletionMessage>,
-        budget: &mut BudgetGuard,
-        compaction_budget: u64,
-        factor: f64,
-        health: &mut SummarizerHealth,
-        step: usize,
-        instructions: Option<&str>,
-        events: &EventSender,
-    ) -> f64 {
-        // Span start: after the system prompt and the FIRST user message —
-        // the task statement anchors every later step and must survive
-        // verbatim. A Tool message can't open the kept tail either side of
-        // the span (its assistant partner would be summarized away and the
-        // provider rejects orphaned tool results), so both bounds walk off
-        // Tool messages.
-        let first_user = messages
-            .iter()
-            .position(|m| m.role == MessageRole::User)
-            .unwrap_or(0);
-        let mut start = first_user + 1;
-        while start < messages.len() && messages[start].role == MessageRole::Tool {
-            start += 1;
-        }
-        let mut end = messages
-            .len()
-            .saturating_sub(self.config.summarize_keep_recent);
-        // `end == messages.len()` (keep_recent 0) has no kept tail to walk
-        // off — indexing it would be out of bounds, not a Tool message.
-        while end > start && end < messages.len() && messages[end].role == MessageRole::Tool {
-            end -= 1;
-        }
-        // A tiny span isn't worth a model call — and this guard is also the
-        // convergence backstop: once a summary message occupies the span,
-        // the next over-budget step finds nothing left to replace and skips
-        // instead of summarizing its own summary every step.
-        if end <= start || end - start < 4 {
-            return 0.0;
-        }
-        // Give-up latch: once the summarizer has failed this many steps in a
-        // row this turn, stop re-firing it — each attempt is a completion and
-        // its latency. The next model call overflows and surfaces one clear
-        // failure instead of one per remaining step.
-        if health.is_latched() {
-            return 0.0;
-        }
-        // After the guards, not before: a latched or tiny-span step returns
-        // above without needing this number, and the walk is Θ(transcript)
-        // on precisely the steps whose transcript is at its largest.
-        let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
-        let mut rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
-        // PreCompact steering rides the user message, after the span: the
-        // system prompt stays the byte-stable SUMMARIZE_SYSTEM, and the
-        // hook's words are visibly operator input, not span content.
-        if let Some(extra) = instructions {
-            rendered.push_str("\n\n[PreCompact hook instructions]\n");
-            rendered.push_str(extra);
-        }
-        let request = CompletionRequest {
-            messages: vec![
-                CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
-                CompletionMessage::user(&rendered),
-            ],
-            max_output_tokens: Some(1_200),
-            temperature: Some(0.0),
-            effort: Some(ReasoningEffort::Low),
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-        let estimated_input_tokens = estimate_conversation_tokens(&request.messages);
-        let result = match run_accounted_call(
-            AccountedCall {
-                provider: self.active_provider(),
-                role: stella_protocol::ModelCallRole::Summarization,
-                model_hint: "unknown".into(),
-                request,
-                // The last line of defense before a terminal context
-                // overflow — a transient blip here must be retried, not
-                // fast-failed into an oversized, doomed next call.
-                retry_policy: RetryPolicy::standard(),
-                // The same generation deadline every worker call runs under.
-                // `None` left a wedged summarizer provider parking the whole
-                // turn indefinitely — the one un-bounded await on the step
-                // path — and a trip lands in the Timeout arm below, which
-                // counts toward the give-up latch like any other failure.
-                timeout: self.config.model_timeout,
-                estimated_input_tokens,
-                // The summarizer rewrites the conversation it is called on, so
-                // its own input is the only record of what it was given to
-                // compress — and the span it replaces is gone from the history
-                // afterwards. Reserved seat 1 at this step; compaction runs at
-                // most once per step, so it collides with nothing.
-                receipt: Some(crate::ReceiptContext {
-                    turn_instance: self.config.turn_instance,
-                    step,
-                    call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
-                    lifecycle_enabled: self.config.lifecycle_enabled,
-                }),
-            },
-            budget,
-            events,
-            self.sleeper,
-        )
-        .await
-        {
-            Ok(result) => result,
-            // The summary was generated and paid for before the budget
-            // tripped. Splicing it in only shrinks the context the resumed
-            // session reloads, so apply it rather than discard the spend.
-            Err(AccountedCallError::Budget { result, .. }) => {
-                let text = result.text.trim();
-                if !text.is_empty() {
-                    self.apply_overflow_summary(
-                        messages,
-                        start,
-                        end,
-                        before_tokens,
-                        text,
-                        compaction_budget,
-                        factor,
-                        events,
-                    );
-                }
-                return result.cost_usd;
-            }
-            // A silent 0.0 hid a failing summarizer that re-fired every step
-            // until the provider hard-failed. Surface it and count it toward
-            // the give-up latch.
-            Err(AccountedCallError::Provider(e)) => {
-                health.record_failure();
-                let _ = events.send(AgentEvent::Error {
-                    message: format!("overflow summarizer failed ({e}); context left intact"),
-                    retryable: true,
-                });
-                return 0.0;
-            }
-            Err(AccountedCallError::Timeout) => {
-                health.record_failure();
-                let _ = events.send(AgentEvent::Error {
-                    message: "overflow summarizer timed out; context left intact".to_string(),
-                    retryable: true,
-                });
-                return 0.0;
-            }
-            // Refused before dispatch (#2238): nothing spent, nothing misbehaved.
-            Err(AccountedCallError::Deadline { .. }) => {
-                let _ = events.send(AgentEvent::Error {
-                    message: "overflow summarizer skipped: the task deadline passed".into(),
-                    retryable: false,
-                });
-                return 0.0;
-            }
-        };
-        let cost_usd = result.cost_usd;
-        let text = result.text.trim();
-        if text.is_empty() {
-            // An empty summary shrinks nothing, so the next step re-fires on
-            // the same span — the same non-progress the error paths latch
-            // against, and just as invisible if left unannounced.
-            health.record_failure();
-            let _ = events.send(AgentEvent::Error {
-                message: "overflow summarizer returned an empty summary; context left intact"
-                    .to_string(),
-                retryable: true,
-            });
-            return cost_usd;
-        }
-        health.reset();
-        self.apply_overflow_summary(
-            messages,
-            start,
-            end,
-            before_tokens,
-            text,
-            compaction_budget,
-            factor,
-            events,
-        );
-        cost_usd
-    }
-
-    /// Splice `text` (trimmed, non-empty) over `messages[start..end]` as the
-    /// overflow summary and announce the resulting shrink. Shared by the
-    /// normal path and the budget-abort path: a paid summary is applied even
-    /// when the turn is about to abort, since it only shrinks the context the
-    /// resumed session reloads.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_overflow_summary(
-        &self,
-        messages: &mut Vec<CompletionMessage>,
-        start: usize,
-        end: usize,
-        before_tokens: u64,
-        text: &str,
-        compaction_budget: u64,
-        factor: f64,
-        events: &EventSender,
-    ) {
-        let replaced = end - start;
-        // Name which blocks left context (spec §6.2): the identity-bearing
-        // tool-result blocks in the span the summary folds away, keyed the same
-        // way the pure passes key theirs (`receipts::tool_result_block_id`), so
-        // a receipt consumer can reconcile the summary splice against the
-        // manifest. Captured before the splice mutates `messages`. Text
-        // messages in the span carry no block identity, so this is a subset of
-        // the `summarized` count, not a one-for-one list.
-        let summarized_blocks: Vec<String> = messages[start..end]
-            .iter()
-            .flat_map(|m| m.tool_results.iter())
-            .map(|r| crate::receipts::tool_result_block_id(&r.output))
-            .collect();
-        let summary = CompletionMessage::user(format!(
-            "{SUMMARY_MARKER_PREFIX} to fit context — full detail was compacted away; \
-             re-read files or re-run tools for specifics]\n\n{text}"
-        ));
-        messages.splice(start..end, std::iter::once(summary));
-        let _ = events.send(AgentEvent::Compaction {
-            before_tokens,
-            after_tokens: crate::estimator::estimate_conversation_tokens(messages),
-            evicted: 0,
-            deduped: 0,
-            superseded: 0,
-            aged: 0,
-            summarized: replaced,
-            // The summary path runs none of the pure passes, so their block
-            // vectors stay empty; the folded blocks are named in
-            // `summarized_blocks`. It targets the same effective budget.
-            evicted_blocks: Vec::new(),
-            deduped_blocks: Vec::new(),
-            superseded_blocks: Vec::new(),
-            aged_blocks: Vec::new(),
-            summarized_blocks,
-            // A splice replaces whole messages; nothing is rewritten in place.
-            rewrites: Vec::new(),
-            effective_budget_tokens: compaction_budget,
-            calibration_factor: factor,
-        });
     }
 
     /// Whether any configured `PreToolUse`/`PostToolUse` hook matches
