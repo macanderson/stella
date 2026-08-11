@@ -19,7 +19,10 @@
 //!   `:/` is git's spelling of "the whole repository".
 //! - `repo_push` **refuses the repository's default branch** (resolved
 //!   from the remote HEAD). No override exists, and force-push does not
-//!   exist in this surface at all.
+//!   exist in this surface at all. It may run without the repository's
+//!   pre-push hooks, but only for a push carrying no source file — the tool
+//!   reads the push's own diff to decide, never the caller's word for it
+//!   (see [`push`]).
 //! - `repo_pull` is **fast-forward only** — divergence is a typed error,
 //!   not a merge.
 //! - History rewriting (`reset --hard`, rebase, amend) is deliberately
@@ -30,6 +33,9 @@
 //!   for a complete one.
 
 pub mod history;
+pub mod push;
+
+pub use push::{PushPlan, RepoPush};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -219,7 +225,28 @@ pub trait RepoBackend: Send + Sync {
         paths: &[String],
     ) -> Result<String, RepoError>;
     /// Push `branch` to the primary remote (upstream set; never forced).
-    async fn push_branch(&self, root: &Path, branch: &str) -> Result<String, RepoError>;
+    ///
+    /// `skip_hooks` runs the push without the repository's own pre-push
+    /// hooks. The *authority* to ask for that is decided above this port, in
+    /// [`push::RepoPush`], from what the push actually carries — an adapter
+    /// only has to honour the answer.
+    async fn push_branch(
+        &self,
+        root: &Path,
+        branch: &str,
+        skip_hooks: bool,
+    ) -> Result<String, RepoError>;
+    /// What pushing `branch` would publish: its commits, its files and their
+    /// line counts, and whether the remote already has the branch.
+    ///
+    /// Read before the push, and used twice — for the summary the caller reads
+    /// and for the hook decision — so the two can never describe different
+    /// pushes (see [`push`]).
+    ///
+    /// `Err` is a readable failure, not a fatal one: a caller degrades to the
+    /// empty plan, which reports nothing and is refused a hook skip precisely
+    /// because it saw nothing.
+    async fn push_plan(&self, root: &Path, branch: &str) -> Result<PushPlan, RepoError>;
     /// Fast-forward-only pull; divergence is [`RepoError::Diverged`].
     async fn pull_ff_only(&self, root: &Path) -> Result<String, RepoError>;
     /// Restore exactly `paths` to the last committed state.
@@ -717,17 +744,108 @@ impl RepoBackend for GitCli {
         Ok(format!("committed: {}", summary.trim()))
     }
 
-    async fn push_branch(&self, root: &Path, branch: &str) -> Result<String, RepoError> {
+    async fn push_branch(
+        &self,
+        root: &Path,
+        branch: &str,
+        skip_hooks: bool,
+    ) -> Result<String, RepoError> {
         // Fully-qualified refspec: what gets pushed can only ever be a
         // branch head, and never with force.
         let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-        let out = Self::git_ok(
+        let mut args = vec!["push", "--set-upstream"];
+        if skip_hooks {
+            args.push("--no-verify");
+        }
+        args.extend(["origin", refspec.as_str()]);
+        let out = Self::git_ok(root, "repo_push", &args).await?;
+        Ok(out.trim().to_string())
+    }
+
+    async fn push_plan(&self, root: &Path, branch: &str) -> Result<PushPlan, RepoError> {
+        // The range this push would publish. `origin/<branch>..<branch>` is
+        // the answer once the remote has the branch; before that there is no
+        // right-hand side, so fall back to the default branch — a first push
+        // of a feature branch publishes exactly what it added on top of it.
+        let remote_ref = format!("refs/remotes/origin/{branch}");
+        let new_branch = Self::git_stdout(
             root,
             "repo_push",
-            &["push", "--set-upstream", "origin", &refspec],
+            &["rev-parse", "--verify", "--quiet", &remote_ref],
         )
-        .await?;
-        Ok(format!("pushed `{branch}`\n{}", out.trim()))
+        .await
+        .map(|(code, _)| code != 0)
+        .unwrap_or(true);
+        let base = if new_branch {
+            match self.default_branch(root).await? {
+                Some(default) => format!("origin/{default}"),
+                None => return Ok(PushPlan::default()),
+            }
+        } else {
+            format!("origin/{branch}")
+        };
+        let range = format!("{base}..{branch}");
+
+        let log = Self::git_ok_stdout(
+            root,
+            "repo_push",
+            &["log", "--no-color", "--format=%h %s", &range],
+        )
+        .await
+        .unwrap_or_default();
+        let mut commits: Vec<CommitRef> = Vec::new();
+        let mut commit_count = 0usize;
+        for line in log.lines().filter(|l| !l.trim().is_empty()) {
+            commit_count += 1;
+            if commits.len() < push::MAX_PUSH_COMMITS {
+                let (sha, subject) = line.split_once(' ').unwrap_or((line, ""));
+                commits.push(CommitRef {
+                    commit: sha.to_string(),
+                    subject: subject.to_string(),
+                });
+            }
+        }
+
+        let numstat = Self::git_ok_stdout(
+            root,
+            "repo_push",
+            &["diff", "--numstat", "--no-color", &range],
+        )
+        .await
+        .unwrap_or_default();
+        let mut files: Vec<DiffFileStat> = Vec::new();
+        let mut file_count = 0usize;
+        for line in numstat.lines().filter(|l| !l.trim().is_empty()) {
+            let mut cols = line.split('\t');
+            let (Some(added), Some(removed), Some(path)) = (cols.next(), cols.next(), cols.next())
+            else {
+                continue;
+            };
+            file_count += 1;
+            if files.len() < push::MAX_PUSH_FILES {
+                files.push(DiffFileStat {
+                    path: path.to_string(),
+                    added: added.parse().ok(),
+                    removed: removed.parse().ok(),
+                });
+            }
+        }
+
+        let remote = Self::git_stdout(root, "repo_push", &["remote", "get-url", "origin"])
+            .await
+            .ok()
+            .filter(|(code, _)| *code == 0)
+            .map(|(_, url)| url.trim().to_string())
+            .filter(|url| !url.is_empty());
+
+        Ok(PushPlan {
+            commits,
+            commit_count,
+            files,
+            file_count,
+            new_branch,
+            remote,
+        })
     }
 
     async fn pull_ff_only(&self, root: &Path) -> Result<String, RepoError> {
@@ -1047,107 +1165,6 @@ impl Tool for RepoCommit {
         Some(format!(
             "git add -- {joined} && git commit -m {message} -- {joined}"
         ))
-    }
-}
-
-/// `repo_push` — never the default branch, never forced; see the module doc.
-pub struct RepoPush(pub Arc<dyn RepoBackend>);
-
-#[async_trait]
-impl Tool for RepoPush {
-    fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "repo_push".into(),
-            description: "Push the current (or named) branch to the primary remote. \
-                          STRUCTURALLY refuses the repository's default branch — publish \
-                          work on a feature branch. Force-push does not exist here."
-                .into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "branch": { "type": "string", "description": "Branch to push (default: the current branch)" }
-                }
-            }),
-            read_only: false,
-            speculation_safe: false,
-        }
-    }
-
-    async fn execute(&self, input: &Value, root: &Path) -> ToolOutput {
-        let named = input.get("branch").and_then(|v| v.as_str());
-        if let Some(branch) = named
-            && !valid_branch_name(branch)
-        {
-            return ToolOutput::Error {
-                message: format!(
-                    "`{branch}` is not a valid branch name (must not start with `-` or \
-                     contain whitespace)"
-                ),
-            };
-        }
-        let branch = match named {
-            Some(b) => b.to_string(),
-            None => match self.0.current_branch(root).await {
-                Ok(Some(b)) => b,
-                Ok(None) => {
-                    return ToolOutput::Error {
-                        message: "the checkout is detached (no current branch) — pass \
-                                  `branch` explicitly"
-                            .into(),
-                    };
-                }
-                Err(e) => {
-                    return ToolOutput::Error {
-                        message: e.to_string(),
-                    };
-                }
-            },
-        };
-        // The structural rule: resolve the default branch and refuse it.
-        // An UNRESOLVABLE default fails closed — pushing blind could be
-        // pushing the default.
-        match self.0.default_branch(root).await {
-            Ok(Some(default)) if default == branch => {
-                return ToolOutput::Error {
-                    message: format!(
-                        "repo_push refuses to push `{branch}`: it is the repository's \
-                         default branch. Publish work on a feature branch instead — this \
-                         rule is structural and has no override"
-                    ),
-                };
-            }
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return ToolOutput::Error {
-                    message: "cannot determine the repository's default branch (remote \
-                              HEAD) — refusing to push rather than risk pushing it"
-                        .into(),
-                };
-            }
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: e.to_string(),
-                };
-            }
-        }
-        match self.0.push_branch(root, &branch).await {
-            Ok(out) => ToolOutput::Ok { content: out },
-            Err(e) => ToolOutput::Error {
-                message: e.to_string(),
-            },
-        }
-    }
-
-    // See [`RepoStatusTool::command_for_gate`]. Without a named branch the
-    // refspec resolves from the checkout mid-execute; the gate then sees the
-    // line minus the refspec — still enough for a policy denying pushes.
-    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
-        Some(match input.get("branch").and_then(|v| v.as_str()) {
-            Some(branch) => {
-                format!("git push --set-upstream origin refs/heads/{branch}:refs/heads/{branch}")
-            }
-            None => "git push --set-upstream origin".to_string(),
-        })
     }
 }
 
