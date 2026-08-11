@@ -87,7 +87,7 @@ use lifecycle::step_outcome_label;
 
 mod confident_zero;
 pub mod lifecycle;
-mod loop_escalation;
+pub(crate) mod loop_escalation;
 pub mod loop_evidence;
 mod truncation;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
@@ -1064,7 +1064,7 @@ impl<'a> Engine<'a> {
             self.tools,
             &mut state.messages,
             &state.memos.identities,
-            &mut state.loop_steered,
+            &mut state.loop_steer,
             state.total_cost_usd,
             events,
         ) {

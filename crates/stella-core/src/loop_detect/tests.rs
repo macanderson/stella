@@ -1198,3 +1198,127 @@ fn a_repeating_spacer_beside_a_streaming_poll_is_not_a_loop() {
          answering differently every round — the turn is making progress"
     );
 }
+
+// ---- loop identity: what counts as "the same loop" ----------------------
+
+/// A cycle identity over `pairs`, rotated left by `shift` — the same loop
+/// reported from a detection window that has moved on by `shift` calls.
+fn cycle_identity(pairs: &[(&str, &str)], shift: usize) -> LoopIdentity {
+    let at = |i: usize| pairs[(i + shift) % pairs.len()];
+    LoopIdentity {
+        tools: (0..pairs.len()).map(|i| at(i).0.to_string()).collect(),
+        inputs: Some((0..pairs.len()).map(|i| at(i).1.to_string()).collect()),
+    }
+}
+
+/// A cycle has no first element. `detect_short_cycle` reports the trailing
+/// period as it stands when the check runs, so one read → edit → test grind
+/// is `read, edit, test` on one step and `edit, test, read` on the next.
+/// Positional equality called those two different loops, which was invisible
+/// while every re-detection aborted anyway and became load-bearing when a
+/// different loop started buying another steering warning (#1743).
+#[test]
+fn a_rotated_cycle_is_the_same_loop() {
+    let grind = [
+        ("read_file", r#"{"path":"a.rs"}"#),
+        ("edit_file", r#"{"path":"a.rs","new":"y"}"#),
+        ("bash", r#"{"command":"cargo test"}"#),
+    ];
+    for shift in 0..grind.len() {
+        assert_eq!(
+            cycle_identity(&grind, 0).same_loop_as(&cycle_identity(&grind, shift)),
+            Some(true),
+            "rotation by {shift} is the same grind one call later"
+        );
+    }
+}
+
+/// Rotation invariance must not degrade into "the same tools in any order".
+/// Tools and arguments rotate together by ONE shift, so a cycle that pairs
+/// the same calls differently is a different loop — which is the whole point
+/// of comparing arguments at all (#1524).
+#[test]
+fn a_cycle_that_pairs_the_same_tools_with_swapped_arguments_is_a_different_loop() {
+    let ordered = LoopIdentity {
+        tools: vec!["read_file".into(), "edit_file".into()],
+        inputs: Some(vec![
+            r#"{"path":"a.rs"}"#.into(),
+            r#"{"path":"b.rs"}"#.into(),
+        ]),
+    };
+    let swapped = LoopIdentity {
+        tools: vec!["read_file".into(), "edit_file".into()],
+        inputs: Some(vec![
+            r#"{"path":"b.rs"}"#.into(),
+            r#"{"path":"a.rs"}"#.into(),
+        ]),
+    };
+    assert_eq!(ordered.same_loop_as(&swapped), Some(false));
+}
+
+/// A loop identity of arbitrary shape, including the `inputs: None` of a
+/// turn resumed from a checkpoint written before identities carried
+/// arguments.
+fn arb_identity() -> impl Strategy<Value = LoopIdentity> {
+    proptest::collection::vec(
+        (
+            proptest::sample::select(vec!["bash", "read_file", "edit_file"]),
+            proptest::sample::select(vec!["a", "b", "c"]),
+        ),
+        0..5usize,
+    )
+    .prop_flat_map(|pairs| {
+        let tools: Vec<String> = pairs.iter().map(|(t, _)| (*t).to_string()).collect();
+        let inputs: Vec<String> = pairs.iter().map(|(_, i)| (*i).to_string()).collect();
+        prop_oneof![
+            Just(LoopIdentity {
+                tools: tools.clone(),
+                inputs: Some(inputs),
+            }),
+            Just(LoopIdentity {
+                tools,
+                inputs: None,
+            }),
+        ]
+    })
+}
+
+proptest! {
+    /// Property: a loop is always itself. Trivial to state and the one thing
+    /// the escalation ladder cannot survive being wrong about — a loop that
+    /// does not match itself is re-detected as "different" and buys a
+    /// steering warning every single time.
+    #[test]
+    fn a_loop_is_always_the_same_loop_as_itself(identity in arb_identity()) {
+        prop_assert_ne!(identity.same_loop_as(&identity), Some(false));
+    }
+
+    /// Property: sameness does not depend on which end you ask from. The
+    /// ladder compares the warned loop against the detected one, and nothing
+    /// fixes that order — a rotation check that only worked one way would
+    /// answer differently depending on which loop formed first.
+    #[test]
+    fn the_same_loop_question_is_symmetric(a in arb_identity(), b in arb_identity()) {
+        prop_assert_eq!(a.same_loop_as(&b), b.same_loop_as(&a));
+    }
+
+    /// Property: every rotation of a cycle is the same loop, at every
+    /// length — the class-level version of the read → edit → test witness.
+    #[test]
+    fn every_rotation_of_a_cycle_is_the_same_loop(
+        pairs in proptest::collection::vec(
+            (
+                proptest::sample::select(vec!["bash", "read_file", "edit_file"]),
+                proptest::sample::select(vec!["a", "b", "c"]),
+            ),
+            1..5usize,
+        ),
+        shift in 0usize..8,
+    ) {
+        let pairs: Vec<(&str, &str)> = pairs.into_iter().collect();
+        prop_assert_eq!(
+            cycle_identity(&pairs, 0).same_loop_as(&cycle_identity(&pairs, shift)),
+            Some(true)
+        );
+    }
+}

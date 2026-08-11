@@ -1849,7 +1849,7 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
         .iter()
         .filter(|e| matches!(e, AgentEvent::Steered { .. }))
         .collect();
-    assert_eq!(steers.len(), 1, "exactly one steering warning per turn");
+    assert_eq!(steers.len(), 1, "one warning per loop; one loop here");
     assert!(matches!(
         steers[0],
         AgentEvent::Steered { text } if text.contains("looping")
