@@ -686,3 +686,121 @@ async fn a_started_child_outlives_the_process_tables_drop() {
         libc::kill(-pid, libc::SIGKILL);
     }
 }
+
+/// **The #2764 witness, tool side.** A `start_process` child that nothing
+/// stopped is reported through the `Tool::live_services` seam the engine's
+/// end-of-turn assertion reads, naming the handle and the label the model
+/// gave it; the same query after `stop_process` reports nothing. Before
+/// #2764 there was no query at all — the process table's liveness was
+/// visible only to the process tools themselves, so the driver could not
+/// tell a turn that left a service up from one that did not.
+#[tokio::test]
+async fn a_started_process_is_reported_live_until_it_is_stopped() {
+    let (table, root) = tools();
+    let start_tool = StartProcess {
+        handle: table.clone(),
+        scratch: None,
+    };
+    let out = start_tool
+        .execute(
+            &serde_json::json!({
+                "argv": ["sh", "-c", "i=0; while [ $i -lt 30 ]; do echo tick; sleep 1; i=$((i+1)); done"],
+                "name": "ticker",
+            }),
+            &root,
+        )
+        .await;
+    let ToolOutput::Ok { content } = &out else {
+        panic!("start failed: {out:?}");
+    };
+    let handle = content
+        .split_whitespace()
+        .find(|w| w.starts_with("proc-"))
+        .expect("handle in start output")
+        .to_string();
+
+    let live = start_tool.live_services();
+    assert_eq!(
+        live.len(),
+        1,
+        "the running child must be reported to the engine: {live:?}"
+    );
+    assert_eq!(live[0].handle, handle);
+    assert_eq!(
+        live[0].name.as_deref(),
+        Some("ticker"),
+        "the model's own label rides along so the nudge can name it"
+    );
+    assert!(
+        live[0].display.contains("sh"),
+        "the command line has to be there too: {:?}",
+        live[0].display
+    );
+
+    let stopped = StopProcess(table.clone())
+        .execute(&serde_json::json!({"handle": handle}), &root)
+        .await;
+    assert!(!stopped.is_error(), "{stopped:?}");
+    assert!(
+        start_tool.live_services().is_empty(),
+        "a stopped process must not be reported: {:?}",
+        start_tool.live_services()
+    );
+}
+
+/// A process that exited on its own is not a service anyone left running —
+/// the same liveness test `live_count` applies. Without this, every
+/// completing turn after a short-lived child would be nudged about a handle
+/// whose process is already gone, and the assertion would be noise within
+/// one session of shipping.
+#[tokio::test]
+async fn an_exited_process_is_not_reported_live() {
+    let (table, root) = tools();
+    let start_tool = StartProcess {
+        handle: table.clone(),
+        scratch: None,
+    };
+    let handle = start(&table, &root, &["sh", "-c", "echo bye"]).await;
+    wait_for_output(&table, &root, &handle, "bye").await;
+    // `wait_for_output` polls until the line lands; the shell may still be
+    // reaping, so give `poll_exit` a bounded window to observe the exit.
+    for _ in 0..250 {
+        if start_tool.live_services().is_empty() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "an exited process was still reported live: {:?}",
+        start_tool.live_services()
+    );
+}
+
+/// Handles are reported oldest first, not in `HashMap` order. The list
+/// reaches the model's context, where an unstable ordering is both a
+/// confusing message and a prompt-cache miss (invariant 7) — and `proc-10`
+/// must not sort ahead of `proc-2`.
+#[tokio::test]
+async fn live_services_are_ordered_oldest_handle_first() {
+    let (table, root) = tools();
+    let start_tool = StartProcess {
+        handle: table.clone(),
+        scratch: None,
+    };
+    let mut expected = Vec::new();
+    for _ in 0..12 {
+        expected.push(start(&table, &root, &["sh", "-c", "sleep 30"]).await);
+    }
+    let live: Vec<String> = start_tool
+        .live_services()
+        .into_iter()
+        .map(|service| service.handle)
+        .collect();
+    assert_eq!(live, expected, "start order, every time");
+
+    for handle in expected {
+        let _ = StopProcess(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+    }
+}

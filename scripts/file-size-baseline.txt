@@ -8,8 +8,8 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 1839 bench/harbor_adapter/stella_harbor/__init__.py
-4364 bench/harbor_adapter/stella_harbor/secure_launcher.py
-2351 bench/harbor_adapter/tests/test_adapter.py
+4365 bench/harbor_adapter/stella_harbor/secure_launcher.py
+2352 bench/harbor_adapter/tests/test_adapter.py
 3368 bench/harbor_adapter/tests/test_secure_launcher.py
 8298 bench/terminal_bench_analysis/tb21_analysis.py
 1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
@@ -21,7 +21,7 @@
 1508 crates/stella-cli/src/fleet_cmd.rs
 1891 crates/stella-core/src/bus.rs
 2489 crates/stella-core/src/driver.rs
-3393 crates/stella-core/src/driver/tests.rs
+3394 crates/stella-core/src/driver/tests.rs
 1781 crates/stella-model/src/anthropic/tests.rs
 2094 crates/stella-model/src/openai.rs
 1895 crates/stella-model/src/zai/tests.rs
@@ -30,7 +30,7 @@
 1996 crates/stella-store/src/lib.rs
 2266 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs
-2181 crates/stella-tools/src/registry.rs
+2135 crates/stella-tools/src/registry.rs
 1529 crates/stella-tui/src/deck_render.rs
 4006 crates/stella-tui/src/deck_ui.rs
 1665 crates/stella-tui/src/views/engine.rs

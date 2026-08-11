@@ -80,6 +80,16 @@
 //!   declared long-running service survives the turn that started it. A
 //!   process not reachable through this table at all (nothing spawned it
 //!   via `start_process`) is unaffected either way.
+//! - **Surviving is visible, not silent (#2764).** The bullet above is why
+//!   a service can outlive its turn; this is what stops that being a
+//!   surprise. `start_process` answers `Tool::live_services`, which the
+//!   registry aggregates into `ToolExecutor::live_services` and the engine
+//!   reads at the boundary where a turn is about to declare itself
+//!   finished: still-running handles are named back to the model, once,
+//!   before the declaration stands. It is a read — it stops nothing, takes
+//!   nothing, and two callers get the same answer — because #2666's finding
+//!   is precisely that a surviving declared service can be the correct final
+//!   state. Only the model knows whether this turn's is.
 //!
 //! All errors are typed and named: unknown handle, exited process, closed
 //! stdin, empty argv.
@@ -286,6 +296,50 @@ impl ProcessTable {
         live
     }
 
+    /// Every entry whose process has not been observed to exit, oldest
+    /// handle first — what the engine's end-of-turn assertion names before a
+    /// turn's declaration stands (#2764).
+    ///
+    /// The same liveness test [`Self::live_count`] applies, and for the same
+    /// reason: an exited-but-unreaped entry holds nothing and is not a
+    /// service anyone left running. Deliberately NOT the group-liveness test
+    /// [`ProcessEntry::is_reapable`] uses — a shell that exited after
+    /// backgrounding its grandchild is a case the model cannot act on
+    /// (`stop_process` targets the group, but the handle reports the shell),
+    /// and naming a handle whose own process is gone would ask the model to
+    /// reason about a distinction the tool surface does not expose.
+    ///
+    /// `&mut self` because `poll_exit` caches, exactly as `live_count` does;
+    /// this is still a read in the sense the port cares about — it stops
+    /// nothing and takes nothing.
+    fn live_services(&mut self) -> Vec<stella_core::LiveService> {
+        let mut services: Vec<stella_core::LiveService> = self
+            .entries
+            .iter_mut()
+            .filter_map(|(handle, entry)| {
+                entry
+                    .poll_exit()
+                    .is_none()
+                    .then(|| stella_core::LiveService {
+                        handle: handle.clone(),
+                        name: entry.name.clone(),
+                        display: entry.display.clone(),
+                    })
+            })
+            .collect();
+        // `proc-N` is monotonic, so the smallest N started first — the order
+        // a reader expects, and a stable one, which `HashMap` iteration is
+        // not (invariant 7: what reaches the prompt must be deterministic).
+        services.sort_by_key(|service| {
+            service
+                .handle
+                .strip_prefix("proc-")
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(u64::MAX)
+        });
+        services
+    }
+
     /// Drop `handle`'s entry, leaving a tombstone so `read_output` /
     /// `clear_output` / `stop_process` can still explain it. Callers must have established
     /// [`ProcessEntry::is_reapable`] — except [`Self::enforce_exited_cap`],
@@ -393,6 +447,18 @@ impl Tool for StartProcess {
             read_only: false,
             speculation_safe: false,
         }
+    }
+
+    /// The one tool that owns state outliving its turn, so the one that
+    /// answers the engine's end-of-turn assertion (#2764). Reported from
+    /// `start_process` rather than from all five process tools because the
+    /// table is one thing seen five ways — the registry aggregates across
+    /// tools, so answering from each would name every service five times.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.handle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .live_services()
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {

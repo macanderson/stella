@@ -135,6 +135,14 @@ impl ToolExecutor for CandidateTaskTap {
         self.inner.drain_wait_request()
     }
 
+    /// Forwarded: a decorator that let the empty default stand would silently
+    /// turn the end-of-turn service assertion (#2764) off for every surface
+    /// composed through it — the agent goes back to declaring a service done
+    /// without ever being asked whether it is still listening.
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        self.inner.live_services()
+    }
+
     /// Forwarded: the empty default would silently serialize the inner
     /// executor's sibling spawns (see the port's contract).
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {

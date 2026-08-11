@@ -502,6 +502,12 @@ fn main() -> ExitCode {
         config::forbid_interactive_credentials();
     }
 
+    // The gateway pin, recorded once beside the other facts about this
+    // invocation. Every later provider resolution reads it, including the
+    // ones with no settings entry to merge — which is every trial of a run
+    // under settings isolation.
+    config::set_upstream_pin(cli.globals.upstream_pin.clone());
+
     // The diagnostic plane, before anything that can fail interestingly. From
     // here on a record explains a decision instead of being discarded, and the
     // panic hook is armed — so a crash after this line leaves an artifact a

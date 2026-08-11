@@ -256,7 +256,7 @@ impl<'a> Pipeline<'a> {
         // and was quietly missing the calibration (and now breaker-feedback)
         // attachments every other pipeline engine gets — exactly the drift
         // `attach`'s doc says it exists to prevent.
-        engine = self.attach(engine);
+        engine = self.attach(engine, FallbackPosture::ReResolve(worker.role));
         // No steering view: a resume is headless by construction (the
         // interactive session it might have belonged to died with the
         // process), matching the goal and fleet pipelines.

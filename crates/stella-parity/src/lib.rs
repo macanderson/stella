@@ -581,14 +581,19 @@ pub static CAPABILITIES: &[Capability] = &[
                       the replacement, transcript repaired, at most one swap per engine (#2679)",
         engine_entries: &["with_fallback_resolver"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "the bare loops attach a router-backed `SessionFallback` \
-                        (agent/engine.rs) beside the session router at both `run_turn` engine \
-                        sites — the seam itself is witnessed in stella-core by \
-                        `exhausted_retries_swap_to_the_resolved_fallback_and_the_turn_completes`, \
-                        which this sweep cannot see",
+            mechanism: "the pipeline's execute/revise engines attach a router-backed \
+                        `StageFallback` that re-resolves the engine's own role (attach() wires \
+                        every worker-role engine) — witnessed in stella-pipeline by \
+                        `an_exhausted_execute_turn_re_resolves_the_worker_and_finishes_on_the_fallback`, \
+                        which this sweep cannot see — and the bare loops attach a \
+                        `SessionFallback` (agent/engine.rs) beside the session router at both \
+                        `run_turn` engine sites, whose seam is witnessed in stella-core by \
+                        `exhausted_retries_swap_to_the_resolved_fallback_and_the_turn_completes`",
             missing: "a CLI-side test pinning that `run_turn`'s engines actually attach the \
-                      resolver (#2733 tracks the same gap for the router attachment), and the \
-                      pipeline execute-stage engines do not attach the port at all yet (#2765)",
+                      resolver (#2733 tracks the same gap for the router attachment). The \
+                      pipeline's witness-author and research engines withhold the swap by \
+                      declared posture rather than by omission (#2806), which is a design \
+                      choice this row does not claim as coverage",
         },
         api: SurfacePosture::NotApplicable {
             reason: "a served run remotes every model call to the host, which owns keys and \
