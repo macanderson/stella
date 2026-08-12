@@ -226,7 +226,7 @@ symlink *inside* the workspace pointing out of it is still followed — a narrow
 guarantee than the producer's canonicalising one, and the reason to keep the
 manifest a list of paths rather than anything more expressive.
 
-### The palette is a mirror, and one token in it is deliberately unused
+### The palette is a mirror, and one data-mark step is deliberately unused
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
 (v1.0) — Bronze Gold `#C58A32` on Ink `#0B0B0C` over warm neutrals, set in
@@ -236,22 +236,24 @@ source (`css/tokens.css` holds the values); the same tokens live in
 carries the whole core set even where this page uses only part of it. Do not
 prune it to the tokens currently referenced.
 
-One token is applied nowhere on purpose. `#E3B341`, the first categorical data
-mark, may not share a chart with the gold `#C58A32`: the two are hue 42° and
-hue 36° and measure 1.53:1 against each other — nothing but size tells them
-apart. Gold is the signal — the accent, the focus ring, the comet in the
-masthead — and never a data series, so `--c1` stands down: every chart on this
-page pairs `--c4` (hue 175) with `--c2` (hue 256), 81° apart at 1.99:1, and
-both clear the gold accent. Two further collisions the pairing avoids, both
-measured on `--surface`: `--c3` against `--bad` is Δhue 18 at 1.30:1, so
-magenta never appears in the tool-error chart, and `--c2` against the neutral
-mark is Δhue 148 at 1.08:1, so violet never appears in the stacked runs chart.
+The categorical data marks (`--c1`…`--c4`, plus the `--neutral-mark` tail) are
+a value ramp, not a hue wheel: `#EDEDED`, `#A1A1A1`, `#6E6E6E`, `#4A4A4A`,
+ordered light → dark so `--c1` reads as the most prominent series. Series are
+separated by lightness alone — the one channel that survives greyscale
+printing, colour-vision deficiency, and a projector — so there is no hue for
+any pairing of them to collide on, with each other or with `--identity`
+gold. Most charts pair `--c1` with `--c2` (input/output, resolved/calls); the
+code graph is capped at three crate colours (`--c1`…`--c3`) plus the neutral
+tail, skipping `--c4` because a fourth step reads as noise at a glance. Gold
+never enters this ramp at all — `--identity` is applied to exactly the
+wordmark, the favicon mark, and the footer's brand initial (`footer b`), never
+to a data series — so the old worry about a data mark reading as identity by
+hue doesn't apply here; there is nothing left for it to be confused with.
 
-The same constraint caps the code graph at three crate colours plus a neutral
-tail. That is fewer than the eight it wants; the previous eight were invented
-rather than drawn from the kit, and two of them read as "active" while
-`#008300` measured 2.4:1 on this surface. Widening the ramp needs new
-validated values in the brand kit, not new hexes here.
+Three crate colours is fewer than the eight the code graph wants; the
+previous eight were invented rather than drawn from the kit, and two of them
+read as "active" while `#008300` measured 2.4:1 on this surface. Widening the
+ramp needs new validated values in the brand kit, not new hexes here.
 
 Gold carries no status anywhere. Status is `--ok` / `--warn` / `--bad`, always
 paired with a glyph (`✓`, `◌`, `✕`), so hue is never the only carrier — which
