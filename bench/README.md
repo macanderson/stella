@@ -5,7 +5,7 @@ with other agents, and standalone. Everything here is **BYOK** (bring your own
 key), makes **no phone-home**, and never hard-codes a secret. Claim runs use a
 secure launcher that consumes the selected credential before Harbor starts.
 
-Five entry points:
+Six entry points — five that produce a run, and one that reads one:
 
 | Path | What it does | Needs |
 |---|---|---|
@@ -14,6 +14,7 @@ Five entry points:
 | [`run_swebench.py`](run_swebench.py) | A standalone SWE-bench *prediction* harness — clone each instance, run Stella, emit the official predictions JSONL. No Harbor. | `git`, a provider key (Docker only for the official scoring step) |
 | [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
 | [`smoke/smoke_test.py`](smoke/smoke_test.py) | An **offline, zero-cost** self-test of the adapter wiring for CI. | just the built `stella` binary |
+| [`trace_triage/`](trace_triage/) | `make triage-bench-traces` — reads a finished run's `stella-events.jsonl` and turns the defects in it into **GitHub issue activity**: a new issue for a new defect, a comment carrying fresh citable evidence onto one that already exists. Dry run by default; de-duplicates on a defect fingerprint, never on prose. | `aws` (to mirror a run), `gh` |
 
 For development and the offline smoke test, build the native binary:
 

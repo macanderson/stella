@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "updated_at": "2026-08-11T00:00:00Z",
+  "_comment": [
+    "fingerprint -> issue. Written by bench/trace_triage, and safe to edit by hand.",
+    "A binding whose `source` is anything other than `auto` is treated as a human",
+    "decision and is never overwritten by a later run, so correcting a wrong issue",
+    "number here is permanent. Deleting an entry makes the tool re-derive it from a",
+    "GitHub search on the next run, which is the right move when the mapping was",
+    "wrong rather than merely stale.",
+    "`runs`, `tasks` and `peak_*` are the incidence already on the record. They are",
+    "what lets a comment say what an occurrence ADDS instead of restating the issue,",
+    "so the seeds below transcribe what each issue already cites \u2014 an entry with an",
+    "empty task list would make the first triage run report every task as news.",
+    "`tasks` holds DATASET task names, never the per-trial `task__SUFFIX` id: the suffix is minted fresh every run, so an id keyed here reports all twenty tasks of a rerun as new."
+  ],
+  "fingerprints": {
+    "fp_0259c5928a38": {
+      "issue": 2956,
+      "detector": "void-model-call",
+      "site": "crates/stella-model/src/provider_parity.rs",
+      "variant": "reasoning deltas present with zero completed model calls",
+      "first_seen_run": "h89b",
+      "note": "Seeded from #2956, which established this signature on h89b (85/88 trials) and named the healthy control f89b2. Same predicate: reasoning deltas with zero step_usage means no model call ever completed.",
+      "source": "seed",
+      "runs": [
+        "h89b"
+      ],
+      "tasks": [],
+      "peak_count": 85,
+      "peak_denominator": 88
+    },
+    "fp_ebb5bd1815bd": {
+      "issue": 2956,
+      "detector": "agent-timeout",
+      "site": "",
+      "variant": "harbor recorded agenttimeouterror for the trial",
+      "first_seen_run": "h89b",
+      "note": "Seeded from #2956. The timeout census and the void-call census are two views of one operational abort there, so both fingerprints point at it; split them if a run ever shows timeouts without voids.",
+      "source": "seed",
+      "runs": [
+        "h89b"
+      ],
+      "tasks": [],
+      "peak_count": 85,
+      "peak_denominator": 88
+    },
+    "fp_91b19f844096": {
+      "issue": 2941,
+      "detector": "no-post-verdict-file-change",
+      "site": "crates/stella-cli/src/candidate_ws/adopt.rs",
+      "variant": "trial recorded no verdict event at all",
+      "first_seen_run": "w10p",
+      "note": "Seeded from #2941 (open), the residual half of #2927: a run killed at the wall-clock cap never reaches the single adoption point. Deliberately NOT bound to #2927 \u2014 that issue is the winner-only adoption defect and is closed; binding both variants to it would suppress exactly the follow-up the split exists for.",
+      "source": "seed",
+      "runs": [
+        "w10p"
+      ],
+      "tasks": [
+        "build-cython-ext",
+        "code-from-image",
+        "query-optimize",
+        "video-processing"
+      ],
+      "peak_count": 6,
+      "peak_denominator": 20
+    },
+    "fp_48fdf676b048": {
+      "issue": 2927,
+      "detector": "no-post-verdict-file-change",
+      "site": "crates/stella-cli/src/candidate_ws/adopt.rs",
+      "variant": "verdict recorded and no mutating file_change followed it",
+      "first_seen_run": "w10p",
+      "note": "Seeded from #2927 (CLOSED) \u2014 candidate adoption is winner-only, so a revise verdict discards the candidate. A recurrence on a SUT that already contains the fix is a regression; the tool comments and says so without asserting which, because the trace cannot tell a post-fix run from a pre-fix one.",
+      "source": "seed",
+      "runs": [
+        "w10p"
+      ],
+      "tasks": [
+        "configure-git-webserver",
+        "sqlite-with-gcov",
+        "video-processing"
+      ],
+      "peak_count": 4,
+      "peak_denominator": 20
+    },
+    "fp_06b55889e526": {
+      "issue": 2908,
+      "detector": "witness-unavailable",
+      "site": "crates/stella-pipeline/src/verify.rs",
+      "variant": "witness author emitted a test command but created no file",
+      "first_seen_run": "w10p",
+      "note": "Seeded from #2908 (CLOSED), which quotes this reason string verbatim.",
+      "source": "seed",
+      "runs": [
+        "w10p"
+      ],
+      "tasks": [
+        "code-from-image",
+        "openssl-selfsigned-cert",
+        "pypi-server"
+      ],
+      "peak_count": 4,
+      "peak_denominator": 20
+    },
+    "fp_0e3494035b33": {
+      "issue": 2908,
+      "detector": "witness-unavailable",
+      "site": "crates/stella-pipeline/src/verify.rs",
+      "variant": "witness author produced no test_command line",
+      "first_seen_run": "w10p",
+      "note": "Seeded from #2908 (CLOSED), which quotes this reason string verbatim. A separate fingerprint from the sibling above on purpose: one is a parse-contract failure and one is an authoring failure, and #2908 may be fixed for one and not the other.",
+      "source": "seed",
+      "runs": [
+        "w10p"
+      ],
+      "tasks": [
+        "log-summary-date-ranges"
+      ],
+      "peak_count": 1,
+      "peak_denominator": 20
+    }
+  }
+}

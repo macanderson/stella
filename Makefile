@@ -145,9 +145,22 @@ record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; d
 	./scripts/record-demo.sh --limit $(LIMIT) --target $(TARGET) $(if $(CMD),-- bash -c '$(CMD)',)
 
 .PHONY: bench-test
-bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
+bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer + trace triage)
 	cd bench/harbor_adapter && uv sync --locked --extra dev && uv run --no-sync pytest -q
 	cd bench/terminal_bench_analysis && uv sync --locked --extra dev && uv run --no-sync pytest -q
+	python3 -m pytest -q bench/trace_triage/tests
+
+# Deliberately NOT a `make gate` step: it reads S3 and talks to GitHub, and the
+# gate must stay runnable offline and side-effect-free. `gate-parity` would fail
+# the moment this joined GATE_STEPS, which is the guard working.
+#
+# The default is a dry run — it prints the exact issue bodies and comments it
+# would post and writes nothing. `ARGS=--apply` is the only thing that writes.
+.PHONY: triage-bench-traces
+triage-bench-traces: ## Triage a bench run's traces into issue activity (RUN=w10p MIRROR=path|FETCH=1; dry run unless ARGS=--apply)
+	@[ -n "$(RUN)" ] || { echo "usage: make triage-bench-traces RUN=<run-id> [MIRROR=path | FETCH=1] [ARGS=--apply]"; exit 2; }
+	python3 bench/trace_triage/triage_bench_traces.py --run $(RUN) \
+		$(if $(MIRROR),--mirror $(MIRROR),) $(if $(FETCH),--fetch,) $(ARGS)
 
 .PHONY: no-scratch
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
