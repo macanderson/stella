@@ -816,11 +816,16 @@ class TestForwardedEnv:
         for key in list(os.environ):
             if key.startswith("STELLA_"):
                 monkeypatch.delenv(key, raising=False)
-        monkeypatch.setenv("STELLA_LEAN_TOOLS", "1")
+        # Deliberately a name nothing registers. This test used to use
+        # `STELLA_LEAN_TOOLS`, which #3032 registered as a container knob — an
+        # example that stops being an example the moment the feature it names
+        # ships. `STELLA_NOT_A_KNOB` cannot be adopted by anything, which is
+        # what the assertion actually needs.
+        monkeypatch.setenv("STELLA_NOT_A_KNOB", "1")
         with pytest.raises(RuntimeError, match=r"unregistered STELLA_\* knobs"):
             _bare_agent()._forwarded_env()
 
-        monkeypatch.delenv("STELLA_LEAN_TOOLS")
+        monkeypatch.delenv("STELLA_NOT_A_KNOB")
         agent = _bare_agent()
         agent._extra_env = {"HOST_METADATA": "must-not-cross"}
         with pytest.raises(RuntimeError, match="unregistered Harbor agent extras"):

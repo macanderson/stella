@@ -88,6 +88,12 @@ export interface EngineDraft {
   /** Run the agent's raw step loop instead of its staged pipeline
    *  (Stella's `--no-pipeline`). Settles triage, witness and verify together. */
   bare_loop: boolean;
+  /** The exact tools this seat's agent is offered, or `[]` for the shipping
+   *  catalog (Stella's `STELLA_LEAN_TOOLS`). A list of names and never a
+   *  preset word: the set is the independent variable of a tool-effectiveness
+   *  run, so the arm's provenance records the tools rather than a word that
+   *  resolves to some. */
+  tool_set: string[];
   roles: Record<string, RoleDraft>;
   responsibilities: Record<string, ResponsibilityDraft>;
 }
@@ -536,6 +542,7 @@ export interface ParsedMatch {
       effort: string;
       base_url?: string;
       bare_loop?: boolean;
+      tool_set?: string[];
       roles?: Record<
         string,
         {
