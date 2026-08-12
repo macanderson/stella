@@ -300,12 +300,20 @@ async fn a_late_plan_is_abandoned_and_falls_back_to_the_single_step_plan() {
     );
 }
 
+/// One request's `(max_output_tokens, effort, temperature)`, as observed by
+/// [`BoundsProvider`].
+type ObservedBounds = (
+    Option<u32>,
+    Option<stella_protocol::ReasoningEffort>,
+    Option<f32>,
+);
+
 /// Serves one scripted result per call while recording the request-shaping
 /// fields that reached it, so a test can assert the *allowance* a management
 /// call was dispatched with — `ScriptedProvider` records prompts, not bounds.
 struct BoundsProvider {
     script: TokioMutex<VecDeque<CompletionResult>>,
-    bounds: std::sync::Mutex<Vec<(Option<u32>, Option<stella_protocol::ReasoningEffort>)>>,
+    bounds: std::sync::Mutex<Vec<ObservedBounds>>,
 }
 
 impl BoundsProvider {
@@ -316,8 +324,8 @@ impl BoundsProvider {
         }
     }
 
-    /// Each request's `(max_output_tokens, effort)`, in call order.
-    fn bounds(&self) -> Vec<(Option<u32>, Option<stella_protocol::ReasoningEffort>)> {
+    /// Each request's observed bounds, in call order.
+    fn bounds(&self) -> Vec<ObservedBounds> {
         self.bounds.lock().unwrap().clone()
     }
 }
@@ -335,7 +343,7 @@ impl Provider for BoundsProvider {
         self.bounds
             .lock()
             .unwrap()
-            .push((req.max_output_tokens, req.effort));
+            .push((req.max_output_tokens, req.effort, req.temperature));
         let mut q = self.script.lock().await;
         q.pop_front()
             .ok_or_else(|| ProviderError::Terminal("bounds provider exhausted".into()))
@@ -401,10 +409,162 @@ async fn triage_dispatches_with_pinned_management_bounds() {
 
     assert_eq!(
         provider.bounds(),
-        vec![(Some(4608), Some(stella_protocol::ReasoningEffort::Low))],
+        vec![(
+            Some(4608),
+            Some(stella_protocol::ReasoningEffort::Low),
+            Some(0.0)
+        )],
         "the triage dispatch must carry the pinned management bounds — its \
-         512-token output contract plus reasoning headroom — and neither fall \
-         through to the worker-tier allowance nor starve a reasoning model"
+         512-token output contract plus reasoning headroom, and a pinned zero \
+         temperature — and neither fall through to the worker-tier allowance \
+         nor starve a reasoning model"
+    );
+}
+
+/// #2932 evidence 3: triage's `CLASS` line gates whether `plan` runs at all,
+/// so classifying the SAME goal text differently across trials reshapes the
+/// whole stage graph on nothing but sampling entropy. Nothing upstream of
+/// this call pinned the *sampling* temperature for it — `RetryPolicy::
+/// deterministic()` only names the fast-fail retry posture, and an unset
+/// `engine.temperature` left the provider's own (non-zero) default in force.
+/// This is the witness: it fails on the pre-fix chokepoint, where triage's
+/// request carries no temperature at all and silently inherits whatever the
+/// worker-tier engine config happens to be set to.
+#[tokio::test]
+async fn triage_dispatches_with_a_pinned_zero_temperature() {
+    let provider = BoundsProvider::new(vec![text_result("single")]);
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    // A worker-tier temperature the pin must NOT inherit — proves the pin is
+    // a role decision, not an artifact of the engine base happening to be
+    // unset in the test fixture.
+    let engine = stella_core::EngineConfig {
+        temperature: Some(0.7),
+        ..stella_core::EngineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            engine,
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None);
+    let mut total = 0.0;
+
+    pipeline
+        .triage("fix the failing parser test", &mut budget, &mut total)
+        .await
+        .expect("a served triage call must classify");
+
+    let bounds = provider.bounds();
+    assert_eq!(
+        bounds.len(),
+        1,
+        "exactly one triage call must have been dispatched"
+    );
+    assert_eq!(
+        bounds[0].2,
+        Some(0.0),
+        "triage must pin temperature to zero regardless of the worker-tier \
+         engine default, so the same goal text classifies the same way every \
+         trial instead of the CLASS line disagreeing with itself on sampling \
+         entropy alone"
+    );
+}
+
+/// An explicit `agents.triage.temperature` override must still win over the
+/// role's zero pin — the pin is a default between the caller's explicit
+/// intent and the engine base, never a ceiling on operator configuration
+/// (the same contract [`explicit_triage_overrides_win_over_the_role_bounds`]
+/// already holds for the output-token and effort bounds).
+#[tokio::test]
+async fn explicit_triage_temperature_override_wins_over_the_pin() {
+    let provider = BoundsProvider::new(vec![text_result("single")]);
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            role_overrides: PipelineRoleOverrides {
+                triage: RoleCallOverrides {
+                    temperature: Some(0.6),
+                    ..RoleCallOverrides::default()
+                },
+                ..PipelineRoleOverrides::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None);
+    let mut total = 0.0;
+
+    pipeline
+        .triage("fix the failing parser test", &mut budget, &mut total)
+        .await
+        .expect("a served triage call must classify");
+
+    assert_eq!(
+        provider.bounds()[0].2,
+        Some(0.6),
+        "an explicit triage temperature override must not be shadowed by the \
+         role's zero pin"
     );
 }
 
@@ -468,7 +628,12 @@ async fn explicit_triage_overrides_win_over_the_role_bounds() {
 
     assert_eq!(
         provider.bounds(),
-        vec![(Some(9000), Some(stella_protocol::ReasoningEffort::High))],
-        "explicit role overrides must not be shadowed by the role bounds"
+        vec![(
+            Some(9000),
+            Some(stella_protocol::ReasoningEffort::High),
+            Some(0.0)
+        )],
+        "explicit role overrides must not be shadowed by the role bounds; the \
+         temperature pin still applies since this override left it unset"
     );
 }
