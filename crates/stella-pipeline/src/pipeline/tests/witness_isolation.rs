@@ -572,15 +572,23 @@ fn assert_refused_but_adopted(
     );
 }
 
-#[tokio::test]
-async fn tracked_production_edit_by_witness_author_refuses_the_witness_and_still_adopts() {
-    let provider = ScriptedProvider::new(vec![
+/// The provider script shared by the three refusal scenarios below: worker
+/// turn, authored `TEST_COMMAND`, then the #2908 continue round a refused
+/// witness now buys (`effective_cmd` is `None`) before the run settles.
+fn refused_witness_provider() -> ScriptedProvider {
+    ScriptedProvider::new(vec![
         text_result("single"),
         text_result("worker done"),
         text_result(
             "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
         ),
-    ]);
+        text_result("nothing more to do"),
+    ])
+}
+
+#[tokio::test]
+async fn tracked_production_edit_by_witness_author_refuses_the_witness_and_still_adopts() {
+    let provider = refused_witness_provider();
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let status = SeqRepoStatus::new(vec![
         vec![],
@@ -624,13 +632,7 @@ async fn tracked_production_edit_by_witness_author_refuses_the_witness_and_still
 /// rather than assumed.
 #[tokio::test]
 async fn witness_language_mismatch_refuses_the_witness_and_still_adopts() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("worker done"),
-        text_result(
-            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
-        ),
-    ]);
+    let provider = refused_witness_provider();
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
     let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
@@ -670,13 +672,7 @@ async fn witness_language_mismatch_refuses_the_witness_and_still_adopts() {
 
 #[tokio::test]
 async fn symlink_witness_artifact_refuses_the_witness_and_still_adopts() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("worker done"),
-        text_result(
-            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
-        ),
-    ]);
+    let provider = refused_witness_provider();
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let status = SeqRepoStatus::new(vec![
         vec![],

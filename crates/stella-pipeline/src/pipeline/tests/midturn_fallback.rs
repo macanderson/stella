@@ -284,15 +284,24 @@ async fn an_exhausted_execute_turn_re_resolves_the_worker_and_finishes_on_the_fa
     let (outcome, events) = run(&router, &providers).await;
 
     let outcome = outcome.expect("the run must not fail: a healthy fallback was configured");
+    // #2908: no test command is configured here, so the run now buys one
+    // continue round before settling `Unverified` — a second, independent
+    // engine turn that re-resolves the worker role and hits the same open
+    // breaker on `sick`. L-M7 is "never silent," not "never twice": the
+    // second swap is exactly as real as the first, and not announcing it
+    // would be the violation.
     assert_eq!(
         fallbacks(&events),
-        vec![("sick".to_string(), "healthy".to_string())],
-        "exactly one announced swap, sick -> healthy (L-M7: never silent): {events:?}"
+        vec![
+            ("sick".to_string(), "healthy".to_string()),
+            ("sick".to_string(), "healthy".to_string())
+        ],
+        "one announced swap per engine turn, sick -> healthy (L-M7: never silent): {events:?}"
     );
     assert_eq!(
         sick.engine_calls(),
-        1,
-        "Terminal bails the retry ladder on attempt 1"
+        2,
+        "Terminal bails the retry ladder on attempt 1, once per engine turn"
     );
     assert!(
         healthy.engine_calls() >= 1,

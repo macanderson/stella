@@ -1684,14 +1684,17 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         !s.contains(&StageKind::Verdict),
         "a behavioral diff is graded by the ladder, whatever triage guessed: {s:?}"
     );
-    // Two paid calls: triage and the worker. The plan and witness-author
-    // ceremony triage declined is never bought, and neither is a verdict.
+    // Triage, the worker, and #2908's continue round: with no test command
+    // and no witness, `effective_cmd` is `None`, so the run buys one more
+    // turn before settling `Unverified` rather than ending here. The plan and
+    // witness-author ceremony triage declined is still never bought, and
+    // neither is a verdict.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
     assert_eq!(
-        calls, 2,
+        calls, 3,
         "no plan, witness-author or verdict call is bought: {s:?}"
     );
 }
@@ -2206,6 +2209,7 @@ mod verifier_evidence_demand;
 /// scripted ports above via `super::*`.
 mod warrant;
 mod witness_isolation;
+mod witness_no_test_command;
 
 /// A recall port whose plane reports what the fan-out spent — the shape
 /// `stella-cli`'s `SessionMemory` produces from a real CGP host.
