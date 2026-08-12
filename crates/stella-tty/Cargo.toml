@@ -1,0 +1,18 @@
+[package]
+name = "stella-tty"
+description = "Whether a human is present to see and answer a prompt this process might print, mid-run — one pure derivation shared by stella-cli's ask_user/approval prompts and stella-model's credential prompt, neither of which may depend on the other."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Deliberately empty: the stella-home shape (#1139). stella-model needs this
+# predicate but must never depend on stella-cli (invariant 1 — the CLI is the
+# binary, the model crate is a library below it), and stella-home's own
+# README draws its boundary at "what path is the stella home" and names
+# exactly this dependency-direction shape as when a new leaf is warranted
+# rather than folded in (#3036). A crate that pulls in nothing costs neither
+# side any isolation.
+[dependencies]

@@ -286,6 +286,26 @@ impl ApprovalGate for OneShotApprovalGate {
     }
 }
 
+/// Whether this attached/following terminal can answer a parked scope
+/// review. Pure over already-observed booleans (rather than calling
+/// `IsTerminal` itself) so the exact condition is directly unit-testable —
+/// the same shape as `crate::agent::engine::approval_capability_for`
+/// (private to that module, so not linkable from here).
+///
+/// Reads [`stella_tty::human_can_answer`] with the **stderr** handle in the
+/// "where does the prompt render" slot, not stdout: this module's doc above
+/// is explicit that the scope-review prompt is stderr-only by design (stdout
+/// is the run's own byte-verbatim relay, and a prompt folded into it would
+/// corrupt a machine-format caller reading that stream), so a stdout check
+/// would both miss the real hazard here — a redirected stderr with a
+/// terminal stdin, `stella daemon attach 2>out.log` — and gate on a stream
+/// this prompt never touches (#3036). There is no machine `--output-format`
+/// for `attach`/`follow` themselves — they always render text — so
+/// `interactive_output` is unconditionally `true`.
+pub(crate) fn console_is_interactive(stdin_is_terminal: bool, stderr_is_terminal: bool) -> bool {
+    stella_tty::human_can_answer(true, stdin_is_terminal, stderr_is_terminal)
+}
+
 /// The attached-terminal side: answer a parked scope review, if one is
 /// pending and this terminal can.
 ///
@@ -619,6 +639,30 @@ mod tests {
             settings.approval_wait(),
             Some(std::time::Duration::from_secs(90))
         );
+    }
+
+    /// The #3036 witness: a redirected stderr must decline to answer even
+    /// with a live keyboard on stdin — the disagreeing configuration
+    /// `stdin().is_terminal()` alone could not see, because the daemon
+    /// console's prompt renders on stderr, not stdin. On `main` before this
+    /// fix, `console_is_interactive` did not exist and both call sites
+    /// derived `interactive` from stdin alone, so a `stella daemon attach
+    /// 2>out.log` from a real terminal would print its scope-review prompt
+    /// into a file nobody reads and then block reading stdin for an answer
+    /// nobody knows to give.
+    #[test]
+    fn a_redirected_stderr_cannot_answer_even_with_a_live_stdin() {
+        assert!(
+            !console_is_interactive(true, false),
+            "a human at the keyboard is not enough if the prompt itself is invisible"
+        );
+    }
+
+    /// The happy path, named explicitly so the witness above is read as a
+    /// missing condition rather than an always-false predicate.
+    #[test]
+    fn a_full_terminal_can_answer() {
+        assert!(console_is_interactive(true, true));
     }
 
     /// A piped attach notes the parked run once and answers nothing.

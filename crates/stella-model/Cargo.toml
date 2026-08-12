@@ -14,6 +14,11 @@ stella-protocol = { path = "../stella-protocol" }
 # moves with `STELLA_HOME` like every other user-tier file (#2178). A leaf with
 # an empty `[dependencies]` block, which is what makes it depend-able here.
 stella-home = { path = "../stella-home" }
+# The single "is a human present to answer?" derivation (#3036) — the
+# credential prompt's interactive gate reads it rather than re-deriving the
+# fact from only stdin, which `stella-cli`'s ask_user tool and approvals
+# already learned is not enough on its own.
+stella-tty = { path = "../stella-tty" }
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
