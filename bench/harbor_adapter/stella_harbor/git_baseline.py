@@ -94,10 +94,14 @@ def git_baseline_script(workdir: str | None) -> str:
       have advanced (#2067). ``state=preexisting`` deliberately writes no
       ref: a task-owned repository is left alone.
 
-    The committer identity rides per-invocation ``-c`` flags, so no config
-    file the task or the agent could observe is written, and the commit is
-    made unsigned and without hooks: a task-supplied hook or a signing config
-    must not be able to decide whether the baseline exists.
+    The identity is written with a repo-local (never ``--global``)
+    ``git config`` before the baseline commit, not just carried on that one
+    commit's ``-c`` flags: the agent's own commits later in the trial invoke
+    plain ``git commit`` with no ``-c``, and a workspace with no persisted
+    identity fails those with "unable to auto-detect email address" — the
+    agent discovering, mid-task, that the repository it was handed cannot
+    commit (#2865). ``git config`` writes no signing or hook settings, so a
+    task-supplied hook still cannot decide whether the baseline exists.
     """
     prologue = ""
     if workdir:
@@ -106,10 +110,6 @@ def git_baseline_script(workdir: str | None) -> str:
             f"echo '{GIT_BASELINE_MARKER} state=error detail=workdir-unavailable'; "
             "exit 0; }; "
         )
-    ident = (
-        f"-c user.name={shlex.quote(GIT_BASELINE_IDENT)} "
-        f"-c user.email={shlex.quote(GIT_BASELINE_EMAIL)}"
-    )
     return (
         f"{prologue}"
         "if ! command -v git >/dev/null 2>&1; then "
@@ -124,8 +124,10 @@ def git_baseline_script(workdir: str | None) -> str:
         "elif git init -q >/dev/null 2>&1 "
         "&& mkdir -p .git/info "
         "&& printf '%s\\n' '.stella/' >> .git/info/exclude "
+        f"&& git config user.name {shlex.quote(GIT_BASELINE_IDENT)} "
+        f"&& git config user.email {shlex.quote(GIT_BASELINE_EMAIL)} "
         "&& git add -A >/dev/null 2>&1 "
-        f"&& git {ident} commit -q --allow-empty --no-verify --no-gpg-sign "
+        "&& git commit -q --allow-empty --no-verify --no-gpg-sign "
         f"-m {shlex.quote(GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1 "
         f"&& git update-ref {GIT_BASELINE_REF} HEAD >/dev/null 2>&1; then "
         f'echo "{GIT_BASELINE_MARKER} state=created '

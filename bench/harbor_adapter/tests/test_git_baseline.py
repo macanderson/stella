@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,8 +92,12 @@ class TestScriptText:
         assert "--allow-empty" in script
         assert "--no-verify" in script
         assert "--no-gpg-sign" in script
-        assert "-c user.email=stella-harbor@bench.invalid" in script
-        assert "git config" not in script
+        # Persisted repo-local (never --global) so the agent's own later
+        # `git commit` — invoked with no `-c` flags — has an identity to
+        # find (#2865), not just the one baseline commit made here.
+        assert "git config user.name stella-harbor" in script
+        assert "git config user.email stella-harbor@bench.invalid" in script
+        assert "--global" not in script
         # Stella's own state stays out of the baseline and every later diff.
         assert ".git/info/exclude" in script
         assert ".stella/" in script
@@ -156,6 +161,33 @@ class TestScriptBehavior:
         (stella_dir / "store.db").write_bytes(b"db")
         assert _git(tmp_path, "status", "--short").stdout == ""
         assert not (tmp_path / ".gitignore").exists()
+
+        # #2865: the identity must be discoverable by a plain `git commit`
+        # with no `-c` flags — the shape of every commit the agent itself
+        # runs later in the trial — and with no ambient identity to fall
+        # back on (no ~/.gitconfig, no GIT_*_EMAIL). Isolate HOME so this
+        # assertion can only pass via the repo-local config the fix writes.
+        assert _git(tmp_path, "config", "--local", "user.name").stdout.strip() == (
+            "stella-harbor"
+        )
+        assert _git(tmp_path, "config", "--local", "user.email").stdout.strip() == (
+            "stella-harbor@bench.invalid"
+        )
+        isolated_home = tmp_path.parent / f"{tmp_path.name}-empty-home"
+        isolated_home.mkdir()
+        (tmp_path / "agent-file.txt").write_text("agent wrote this\n")
+        _git(tmp_path, "add", "agent-file.txt")
+        agent_commit = subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-q", "-m", "agent commit"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(isolated_home),
+            },
+        )
+        assert agent_commit.returncode == 0, agent_commit.stderr
 
     def test_an_existing_repository_is_left_untouched(self, tmp_path: Path) -> None:
         _git(tmp_path, "init", "-q")
