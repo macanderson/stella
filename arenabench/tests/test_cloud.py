@@ -33,6 +33,8 @@ from arenabench.cloud import (
     MEASURE_QUEUE,
     CloudError,
     CloudExecutor,
+    _cmd_cloud_fetch,
+    _cmd_cloud_merge,
     _cmd_cloud_run,
     is_moving_ref,
     job_name,
@@ -923,6 +925,123 @@ class TestFetchResults:
         assert any("001-cc-task-a" in note for note in notes), (
             "a missing results.json must be said out loud, not skipped silently"
         )
+
+
+def _single_task_result(task: str, contestant_id: str, reward: float) -> bytes:
+    body = {
+        "match": {
+            "id": f"{contestant_id}-{task}",
+            "name": "smoke",
+            "dataset": "terminal-bench-2.1",
+            "tasks": [task],
+            "contestants": [{"id": contestant_id, "name": contestant_id}],
+        },
+        "dataset": {"key": "terminal-bench-2.1"},
+        "rows": [
+            {
+                "task": task,
+                "cells": {
+                    contestant_id: {
+                        "task": task,
+                        "status": "done",
+                        "reward": reward,
+                        "resolved": reward >= 1.0,
+                        "infrastructure": False,
+                        "tokens_in": 10,
+                        "tokens_out": 10,
+                        "clock_time": 1.0,
+                        "total_cost": 0.01,
+                        "priced_cost": 0.01,
+                        "cache_read": 0,
+                        "cache_write": 0,
+                    }
+                },
+            }
+        ],
+    }
+    return json.dumps(body).encode()
+
+
+class TestFetchMergesIntoOneTrial:
+    """The offline half of the importer bug: a fetch that used to leave N
+    disconnected single-task files now also writes one trial.json spanning
+    every task both arms ran — proven by driving the real CLI verb, not just
+    the pure merge function underneath it.
+    """
+
+    def test_cloud_fetch_writes_a_merged_trial_alongside_the_flat_files(
+        self, tmp_path
+    ) -> None:
+        s3 = FakeS3(
+            {
+                "runs/r1/job-stella/results.json": _single_task_result(
+                    "task-a", "stella", 1.0
+                ),
+                "runs/r1/job-cc/results.json": _single_task_result(
+                    "task-a", "claude-code", 0.0
+                ),
+            }
+        )
+        dynamo = FakeDynamo([{"Items": []}])
+        jobs = [
+            {"id": "job-stella", "label": "000-stella-task-a"},
+            {"id": "job-cc", "label": "001-cc-task-a"},
+        ]
+        executor = _executor(s3=s3, dynamodb=dynamo)
+        executor.load_jobs = lambda run_id: {"jobs": jobs}  # type: ignore[method-assign]
+
+        args = argparse.Namespace(
+            run_id="r1", artifacts=False, out=str(tmp_path), region=None, bucket=None
+        )
+        rc = _cmd_cloud_fetch(args, executor=executor)
+
+        assert rc == 0
+        trial = json.loads((tmp_path / "trial.json").read_text())
+        assert trial["match"]["tasks"] == ["task-a"]
+        assert {c["id"] for c in trial["match"]["contestants"]} == {
+            "stella",
+            "claude-code",
+        }
+        # The bug this fixes: previously only the two flat per-job files
+        # existed, with no view spanning both arms of task-a.
+        assert (tmp_path / "000-stella-task-a" / "results.json").exists()
+        assert (tmp_path / "001-cc-task-a" / "results.json").exists()
+
+
+class TestCloudMerge:
+    """`arenabench cloud merge` — pairing arms that were fetched separately."""
+
+    def test_merges_two_already_fetched_destinations(self, tmp_path) -> None:
+        arm_a = tmp_path / "run-a"
+        arm_b = tmp_path / "run-b"
+        out = tmp_path / "merged"
+        (arm_a / "000-stella-task-a").mkdir(parents=True)
+        (arm_a / "000-stella-task-a" / "results.json").write_bytes(
+            _single_task_result("task-a", "stella", 1.0)
+        )
+        (arm_b / "000-cc-task-a").mkdir(parents=True)
+        (arm_b / "000-cc-task-a" / "results.json").write_bytes(
+            _single_task_result("task-a", "claude-code", 0.0)
+        )
+
+        args = argparse.Namespace(dest=[str(arm_a), str(arm_b)], out=str(out))
+        rc = _cmd_cloud_merge(args)
+
+        assert rc == 0
+        trial = json.loads((out / "trial.json").read_text())
+        assert trial["match"]["tasks"] == ["task-a"]
+        assert {c["id"] for c in trial["match"]["contestants"]} == {
+            "stella",
+            "claude-code",
+        }
+
+    def test_no_results_anywhere_is_reported_not_a_silent_no_op(
+        self, tmp_path, capsys
+    ) -> None:
+        args = argparse.Namespace(dest=[str(tmp_path)], out=str(tmp_path / "out"))
+        rc = _cmd_cloud_merge(args)
+        assert rc == 1
+        assert "no results.json found" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

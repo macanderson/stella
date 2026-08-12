@@ -80,7 +80,7 @@ pub use lang::Language;
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};
 pub use store::IndexStats;
 pub use symbol::{CallSite, Symbol, SymbolKind};
-pub use vectors::{FileVector, MAX_FILES_PER_PASS, PendingEmbed, render_file_text};
+pub use vectors::{FileVector, MAX_FILES_PER_PASS, PendingEmbed, PendingScan, render_file_text};
 #[doc(hidden)]
 pub use watch::WatchInjector;
 
