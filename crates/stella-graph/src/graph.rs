@@ -374,9 +374,9 @@ impl CodeGraph {
     /// rendered and ready to embed, plus how many unreadable files the scan
     /// stepped over to find them.
     ///
-    /// An empty [`PendingScan::files`] means the pending set is exhausted, not
-    /// merely that this window happened to land on unreadable rows — which is
-    /// what lets a caller loop on it until it comes back empty.
+    /// An empty [`files`] means the pending set is exhausted, not merely that
+    /// this window happened to land on unreadable rows — which is what lets a
+    /// caller loop on it until it comes back empty.
     ///
     /// The embedding itself is deliberately **not** here: producing a vector
     /// is I/O against a model, and this crate holds no transport and no key.
@@ -385,6 +385,7 @@ impl CodeGraph {
     /// out of the indexer (invariant 1).
     ///
     /// [`store_file_vectors`]: CodeGraph::store_file_vectors
+    /// [`files`]: vectors::PendingScan::files
     pub fn files_pending_embedding(
         &self,
         fingerprint: &str,
