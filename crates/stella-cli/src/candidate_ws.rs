@@ -22,8 +22,11 @@
 //! and only back to the value recorded before that candidate existed.
 //! Final verification first seals
 //! the shadow in a private commit. Adoption requires the shadow to remain
-//! byte-identical to that seal, diffs the immutable baseline against that
-//! exact verified commit, and applies the result in one `git apply`. The
+//! byte-identical to that seal *except* where the verification run itself is
+//! the observed author of the difference ([`oracle_writes`], #2877), diffs the
+//! immutable baseline against that exact verified commit, applies the result
+//! in one `git apply`, and then replays the permission bits that patch could
+//! not encode ([`modes`], #2935). The
 //! worker cannot race verification with adoption, and a real tree that no
 //! longer matches what the candidate started from fails the whole adoption
 //! loudly instead of half-applying — naming which of the two divergences it
@@ -125,10 +128,13 @@ use crate::agent::{
 
 mod adopt;
 mod escape;
+mod modes;
+mod oracle_writes;
 mod ref_escape;
 mod snapshot_gaps;
 mod task_events;
 mod witness_tools;
+use oracle_writes::{ObservedTestRunner, OracleWrites};
 use witness_tools::WitnessToolExecutor;
 
 /// The commit identity for snapshot plumbing commits (which exist only
@@ -488,6 +494,10 @@ impl GitCandidateWorkspaces {
                 // (#1719) — see `task_events`'s module doc.
                 let (tools, task_board) = task_events::tap(tools, board, self.events.clone());
                 let omitted = snapshot_gaps::omitted_ignored_paths(&toplevel, &root_rel).await;
+                // Shared between the workspace's drift check and the test
+                // runner that fills it — the runner is the only thing that
+                // knows *when* the verification run happened (#2877).
+                let oracle_writes = Arc::new(OracleWrites::default());
                 Ok(GitCandidateWorkspace {
                     toplevel,
                     dir: dir.clone(),
@@ -499,9 +509,14 @@ impl GitCandidateWorkspaces {
                     tools,
                     witness_tools,
                     diagnostics: GitDiagnosticRunner::new(ws_root.clone()),
-                    tests: TypedTestRunner {
-                        root: ws_root.clone(),
-                    },
+                    tests: ObservedTestRunner::new(
+                        TypedTestRunner {
+                            root: ws_root.clone(),
+                        },
+                        dir.clone(),
+                        oracle_writes.clone(),
+                    ),
+                    oracle_writes,
                     repo_status: SnapshotRepoStatus {
                         inner: GitRepoStatus {
                             root: ws_root.clone(),
@@ -778,7 +793,13 @@ pub(crate) struct GitCandidateWorkspace {
     /// Constructed before dispatch and incapable of general mutation or egress.
     witness_tools: WitnessToolExecutor,
     diagnostics: GitDiagnosticRunner,
-    tests: TypedTestRunner,
+    /// The candidate's test runner, bracketed so the paths a verification run
+    /// writes are attributed to that run rather than read as the worker
+    /// tampering with a verified tree (#2877) — see [`oracle_writes`].
+    tests: ObservedTestRunner,
+    /// What those brackets recorded, shared with [`Self::tests`]. Consulted
+    /// by [`Self::sealed_unchanged_inner`]; cleared by every seal.
+    oracle_writes: Arc<OracleWrites>,
     repo_status: SnapshotRepoStatus,
     /// This candidate's private task board plus its announce latch — the
     /// pipeline drives it through [`CandidateWorkspace::seed_task_board`]
@@ -857,6 +878,11 @@ impl GitCandidateWorkspace {
         // `WorkspaceError` into a second panic. Same convention as
         // `main::test_env::lock` and the deck's session-id mutex.
         *self.sealed.lock().unwrap_or_else(|p| p.into_inner()) = Some(sealed);
+        // The `add -A` above swept every previously-attributed path into this
+        // commit, so those attributions can no longer excuse anything except a
+        // mutation made *after* this seal — which is exactly what the drift
+        // check exists to catch (#2877).
+        self.oracle_writes.forget();
         Ok(())
     }
 
@@ -878,6 +904,13 @@ impl GitCandidateWorkspace {
         // adoption already excludes by pathspec cannot make the sealed tree
         // disagree with the tree that was verified, and the oracle runs in
         // this worktree immediately before this check.
+        //
+        // The second subtraction, of paths the verification run was *observed*
+        // writing, is argued in [`oracle_writes`]: a fixed scratch list can
+        // only ever name the artifact types someone already lost work to, and
+        // `.gcda` was the next one (#2877). Everything not attributed to an
+        // observed run remains fatal, so the check still refuses a worker that
+        // moved a verified tree.
         let status = git(
             &self.dir,
             &[
@@ -890,7 +923,11 @@ impl GitCandidateWorkspace {
         )
         .await
         .map_err(fail)?;
-        Ok(head.trim() == sealed && adopt::drifted_paths(&status).is_empty())
+        let unattributed = adopt::drifted_paths(&status)
+            .into_iter()
+            .filter(|path| !self.oracle_writes.wrote(path))
+            .count();
+        Ok(head.trim() == sealed && unattributed == 0)
     }
 
     /// The commit [`Self::adopt_inner`] and [`Self::escaped_paths_inner`]

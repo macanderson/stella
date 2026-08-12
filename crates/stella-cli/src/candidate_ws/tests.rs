@@ -977,3 +977,141 @@ async fn a_candidates_shell_cannot_move_stellas_witness_baseline_ref() {
         "Stella's own ref was writable from a candidate: {output:?}"
     );
 }
+
+/// #2935 — the delivery is a git patch, and a git patch encodes exactly two
+/// file modes and no directory modes at all. A task whose deliverable is a
+/// `chmod 600` private key inside a `chmod 700` directory (the
+/// `openssl-selfsigned-cert` shape) therefore had that half of its work
+/// dropped between the worktree where it was verified and the tree that is
+/// graded.
+///
+/// Two-sided on purpose: the unrepresentable modes must arrive, and the
+/// representable one must still be the patch's business — the replay adds only
+/// what git could not say (see [`super::modes`]).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_mode_no_patch_can_encode_survives_adoption() {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    let root = scaffold("modes");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+
+    // Exactly what the observed trial did: `mkdir -p ssl && chmod 700 ssl`,
+    // then `openssl genrsa -out server.key && chmod 600 server.key`.
+    let ssl = ws.dir().join("ssl");
+    std::fs::create_dir_all(&ssl).unwrap();
+    std::fs::write(ssl.join("server.key"), "PRIVATE KEY\n").unwrap();
+    std::fs::set_permissions(ssl.join("server.key"), PermissionsExt::from_mode(0o600)).unwrap();
+    std::fs::write(ssl.join("server.crt"), "CERTIFICATE\n").unwrap();
+    std::fs::set_permissions(ssl.join("server.crt"), PermissionsExt::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(&ssl, PermissionsExt::from_mode(0o700)).unwrap();
+
+    ws.seal().await.expect("the candidate seals");
+    let adopted = ws.adopt(&[]).await.expect("the work is delivered");
+    let paths: Vec<&str> = adopted.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(paths, vec!["ssl/server.crt", "ssl/server.key"]);
+
+    assert_eq!(
+        mode_of(&root.join("ssl/server.key")),
+        0o600,
+        "a private key delivered world-readable fails its grader however correct it is"
+    );
+    assert_eq!(
+        mode_of(&root.join("ssl")),
+        0o700,
+        "git tracks no directory modes at all, so nothing but a replay can carry this"
+    );
+    assert_eq!(
+        mode_of(&root.join("ssl/server.crt")),
+        0o644,
+        "a mode the patch CAN encode stays the patch's business"
+    );
+
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// #2877 — the third case the scratch subtraction (#2876) deliberately did not
+/// cover: a build artifact the verification run itself rewrote. A
+/// gcov-instrumented binary rewrites `*.gcda` on every run, and the drift
+/// check read the oracle's own side effect as the worker tampering with a
+/// verified tree, discarding a change a grader scored 2 of 3 passing.
+///
+/// The discriminator is who wrote the file, observed rather than guessed from
+/// its extension — so both halves are asserted here on one tree and one seal:
+/// a path the verification run was seen writing does not discard the work, and
+/// a path nothing was seen writing still does.
+#[tokio::test]
+async fn a_build_artifact_the_verification_run_wrote_does_not_discard_the_work() {
+    let root = scaffold("sealed-gcda");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+    std::fs::write(ws.dir().join("verified.txt"), "verified bytes\n").unwrap();
+
+    ws.seal()
+        .await
+        .expect("candidate state seals before verification");
+
+    // The flip oracle, running the test command in this very worktree. The
+    // instrumented binary rewrites its coverage data as a side effect — no
+    // extension list names this; the bracketing does.
+    let outcome = ws
+        .tests()
+        .run_test(&stella_pipeline::ports::TestInvocation {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "mkdir -p build && printf 'coverage' > build/sqlite3-shell.gcda".to_string(),
+            ],
+        })
+        .await;
+    assert!(outcome.passed(), "the fixture oracle run must succeed");
+    assert!(ws.dir().join("build/sqlite3-shell.gcda").exists());
+
+    assert!(
+        ws.sealed_is_unchanged().await.unwrap(),
+        "the oracle's own coverage data is not a tampering signal"
+    );
+    let adopted = ws.adopt(&[]).await.expect("the work is delivered");
+    assert_eq!(
+        adopted.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+        vec!["verified.txt"],
+        "the sealed bytes are delivered; the post-seal artifact is not in the seal"
+    );
+    assert_eq!(read(&root.join("verified.txt")), "verified bytes\n");
+
+    // The other half, on the same tree: a mutation nothing was observed making
+    // is still fatal. A fix that let all drift through would have removed the
+    // protection rather than repaired it.
+    std::fs::write(
+        ws.dir().join("verified.txt"),
+        "mutated after verification\n",
+    )
+    .unwrap();
+    assert!(
+        !ws.sealed_is_unchanged().await.unwrap(),
+        "an unattributed post-seal mutation must still refuse the adoption"
+    );
+
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+}

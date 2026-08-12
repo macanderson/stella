@@ -24,7 +24,7 @@ use stella_pipeline::ports::{AdoptedChange, WorkspaceError};
 use stella_pipeline::scratch::{TOOL_SCRATCH_DIRS, is_tool_scratch};
 use stella_protocol::FileChangeKind;
 
-use super::{GitCandidateWorkspace, SHADOW_SEQ, git, git_stdout_to_file};
+use super::{GitCandidateWorkspace, SHADOW_SEQ, git, git_stdout_to_file, modes};
 
 impl GitCandidateWorkspace {
     /// Winner-only adoption: diff the immutable baseline→verified seal and
@@ -168,12 +168,32 @@ impl GitCandidateWorkspace {
                 ));
             }
         };
+        // Asked BEFORE the apply, because afterwards every one of them exists
+        // and the question is unanswerable — see [`super::modes`] for why only
+        // directories adoption itself creates are the candidate's to set.
+        let created_dirs = modes::directories_adoption_will_create(&self.toplevel, &changes);
         let apply = SystemGitCli
             .run(&self.toplevel, &["apply", "--whitespace=nowarn", patch_str])
             .await;
         let _ = tokio::fs::remove_file(&patch_file).await;
         match apply {
             Ok(out) if out.success => {
+                // The half of the delivery the patch could not carry (#2935):
+                // a `chmod 600` private key, a `chmod 700` directory holding
+                // it. Read from the candidate worktree the drift check has
+                // just certified byte-identical to `sealed`, applied here and
+                // recorded nowhere — see [`super::modes`].
+                //
+                // The returned residue — paths whose mode could not be read
+                // or set — is named and dropped rather than silently
+                // discarded: adoption has no event to carry it on yet (#2927
+                // adds one), and wiring it there is #2990.
+                let _unreplayable_modes = modes::replay_unrepresentable_modes(
+                    &self.dir,
+                    &self.toplevel,
+                    &changes,
+                    &created_dirs,
+                );
                 *self.delivered.lock().unwrap_or_else(|p| p.into_inner()) = Some(sealed);
                 Ok(changes)
             }
@@ -278,10 +298,15 @@ pub(super) fn blob_id(probe: Result<String, String>) -> Option<String> {
 /// is `git diff baseline sealed`, computed from two immutable commit objects
 /// and *already* excluding these paths by pathspec. A mutation confined to
 /// them therefore cannot change one byte of what adoption delivers, so it
-/// cannot make the sealed tree disagree with the tree that was verified. A
-/// build artifact outside the list (a `.gcda`, an object file) still trips the
-/// check — that residue is #2877, and it needs a decision about what adoption
-/// carries, not a longer list here.
+/// cannot make the sealed tree disagree with the tree that was verified.
+///
+/// A build artifact outside that list — a `.gcda`, an object file — is still
+/// drift *here*, deliberately: this is a parser over a status listing and it
+/// knows nothing about who wrote a path. The second subtraction, of paths the
+/// verification run was observed writing, belongs to the caller that holds
+/// that observation ([`super::GitCandidateWorkspace::sealed_unchanged_inner`],
+/// via [`super::oracle_writes`]) — which is how #2877's `.gcda` case is
+/// answered without this list ever growing a suffix.
 ///
 /// Records are `XY <space> path\0`. `--no-renames` is what makes that shape
 /// total: a rename record would carry two NUL-separated paths and shift every
@@ -880,8 +905,8 @@ deleted file mode 100644
 
     /// The check still has to fire on a real one. A source file rewritten
     /// after verification is drift, and so — deliberately — is a build
-    /// artifact outside the scratch list: whether adoption should carry a
-    /// `.gcda` is a decision this parser must not make silently (#2877).
+    /// artifact outside the scratch list: *this parser* cannot know who wrote
+    /// a `.gcda`, and the caller that can is the one that excuses it (#2877).
     #[test]
     fn a_real_mutation_after_the_seal_is_still_drift() {
         assert_eq!(
