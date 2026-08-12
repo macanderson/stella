@@ -1143,3 +1143,91 @@ def _grep_ere_false_negative(run: Run) -> list[Finding]:
             ],
         )
     ]
+
+
+# --------------------------------------------------------------------------
+# 12. A trial that measured nothing, and was graded anyway
+# --------------------------------------------------------------------------
+
+
+@detector(
+    code="graded-void-trial",
+    title="a trial completed zero model calls and its zero was still scored",
+    site="",
+    search_terms=("no step_usage graded zero", "credential failure scored as a task loss"),
+)
+def _graded_void_trial(run: Run) -> list[Finding]:
+    """Zero `step_usage` in the whole trial, with a reward recorded.
+
+    The general form of `void-model-call`, and the one that catches the case
+    that detector cannot see. `void-model-call` requires `reasoning` deltas —
+    it is the trial that *thought* and never got a call back. A credential that
+    has expired produces no reasoning at all: the request is rejected before
+    anything streams, so the trial emits nothing and the older detector stays
+    silent on it. That is the shape that produced twenty dead trials in one run
+    and scored every one of them as a task loss.
+
+    Keyed on the absence of completed model calls rather than on an
+    authentication string, deliberately. Scanning tool output for `401` is a
+    false-positive machine: across the three runs mirrored here, every single
+    `401` occurrence is task content — a `bottle` test fixture, an `objdump`
+    listing — and not one is a credential failure. The absence of a completed
+    call is the thing that makes the trial unmeasurable, whatever caused it.
+
+    Requires a recorded reward, because that is what makes it a *measurement*
+    defect rather than an infrastructure note: a void trial nobody graded costs
+    nothing, and a void trial graded 0 is a zero in a solve rate that measures
+    the harness.
+    """
+    occurrences = []
+    for trial in run.trials:
+        if trial.reward is None or trial.of_type("step_usage"):
+            continue
+        occurrences.append(
+            Occurrence(
+                trial_uuid=trial.trial_uuid,
+                task_id=trial.task_id,
+                s3_key=trial.s3_key(),
+                location=f"0 completed model calls, graded {trial.reward}",
+                excerpt=(
+                    f"step_usage       : 0   <- no model call ever completed\n"
+                    f"reasoning deltas : {len(trial.of_type('reasoning'))}\n"
+                    f"tool_start       : {len(trial.of_type('tool_start'))}\n"
+                    f"events in trial  : {len(trial.events)}\n"
+                    f"reward recorded  : {trial.reward}\n"
+                    f"harbor exception : {', '.join(trial.exception_types) or 'none recorded'}"
+                ),
+            )
+        )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="graded-void-trial",
+            site="",
+            variant_source="zero completed model calls on a trial that carries a reward",
+            title="a trial completed zero model calls and its zero was still scored",
+            summary=(
+                "These trials never completed a single model call and were graded "
+                "anyway. `step_usage` is emitted only when a step completes, so the "
+                "agent was never measured — the reward is a fact about the harness, "
+                "the credentials or the gateway, and averaging it into a solve rate "
+                "reports an infrastructure failure as the agent failing."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=(
+                "no step_usage graded zero",
+                "credential failure scored as a task loss",
+            ),
+            caveats=[
+                "States that no call *completed*, never why. An expired credential, a "
+                "gateway refusing the request and a trial killed before its first "
+                "response are indistinguishable here; all three are voids, and the "
+                "cause is not decided by this signal alone.",
+                "Overlaps `void-model-call` on a trial that streamed reasoning and was "
+                "graded. That is two true observations of one trial, not double "
+                "counting: this one is about the grade, the other about the thinking.",
+            ],
+        )
+    ]
