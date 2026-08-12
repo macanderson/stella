@@ -126,6 +126,35 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
     }
 }
 
+/// The pinned sampling temperature for one management role, applied between
+/// the caller's explicit override (which always wins) and the engine's
+/// worker-tier base — the same precedence [`role_output_cap`] and
+/// [`management_bounds`]'s effort arm already give their fields.
+///
+/// Triage is the only role pinned today, and to zero specifically (#2932
+/// evidence 3): its `CLASS` line gates whether `plan`/`scope`/the verifier run
+/// at all, so the same goal text disagreeing with itself across trials on
+/// sampling entropy alone reshapes the whole stage graph nondeterministically
+/// — measured as `CLASS: multi` on one trial of a task and `CLASS: single` on
+/// another, identical goal. Unlike [`RetryPolicy::deterministic`], which only
+/// names the fast-fail retry posture, nothing upstream of this call pinned the
+/// *sampling* — `engine.temperature` is the worker's creative-writing default,
+/// wrong for a role whose entire output is a three-line classification token.
+/// `research`'s child turns already pin the same value for the identical
+/// reason (`research_stage`'s `SubAgentSpec.temperature`); this closes the one
+/// raw-call role that evidence showed drifting.
+///
+/// Every other role is left `None` (falls through to the override/engine
+/// chain unchanged): plan, verdict and guidance are judgment calls where some
+/// sampling variance is an accepted cost, not a structural defect, and
+/// widening this pin is a separate decision per role.
+fn management_temperature(role: ModelCallRole) -> Option<f32> {
+    match role {
+        ModelCallRole::Triage => Some(0.0),
+        _ => None,
+    }
+}
+
 /// The wire cap for one management call: the caller's explicit override
 /// (which always wins, unchanged), else the role's visible-output contract
 /// plus [`with_reasoning_headroom`]'s thinking room, else the engine base.
@@ -209,7 +238,10 @@ impl<'a> Pipeline<'a> {
         let request = |messages, max_output_tokens| CompletionRequest {
             messages,
             max_output_tokens,
-            temperature: overrides.temperature.or(engine.temperature),
+            temperature: overrides
+                .temperature
+                .or_else(|| management_temperature(role))
+                .or(engine.temperature),
             effort: overrides
                 .effort
                 .or(management_bounds(role).1)
