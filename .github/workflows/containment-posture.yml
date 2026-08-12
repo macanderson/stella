@@ -1,0 +1,68 @@
+name: containment-posture
+
+# Asserts, on a real GitHub Actions Linux runner, that the #2931 graded-tree
+# write ban is actually Enforced -- not merely present in source (#2998).
+#
+# `crates/stella-tools/tests/graded_tree_containment.rs` calls
+# `contain::posture()` and, by default, *skips* its two enforcement assertions
+# on a host that is not `Enforced` -- correctly, since a developer's laptop or
+# a restricted container has a real, permanent reason to be `Advisory` and
+# must not fail an ordinary `cargo test`. That default also means the Linux
+# mount-namespace recipe in `contain.rs::mount_script` was, until this
+# workflow, proved by no test anywhere: CI's own required job runs on exactly
+# such a host and stayed green whether or not the recipe held.
+#
+# `STELLA_REQUIRE_CONTAINMENT=1` flips those two assertions from "skip
+# quietly" to "panic with the reason" -- see `enforced_or_skip` in that file.
+# This job is where that flag gets set on the one kind of host it is honest to
+# set it on: a Linux CI runner declaring it expects the mechanism to work.
+#
+# Deliberately its own workflow, not a job folded into ci.yml's required
+# checks. A local (non-Docker-nested) test against rust:1.90 confirmed the
+# current recipe -- `unshare --mount --propagation private -- ...`, no
+# `--user` -- does NOT hold for a non-root process even with `util-linux`
+# installed, which raises the possibility the recipe needs CAP_SYS_ADMIN
+# plumbing (`--user --map-root-user`) it does not currently have; see #2931's
+# follow-up issue for that specific question. Making this job a required
+# branch-protection context before a maintainer has seen it go green on an
+# actual GitHub Actions VM (not a nested container, which the local
+# reproduction could not fully stand in for) risks turning `main` red on
+# every PR for a fact about the runner, not a regression in this PR's diff --
+# exactly the trap #1863 and #1892 already paid down for the Rust gate. Once
+# this job has run green here a few times, promoting it to required is a
+# one-line branch-protection change plus a required-checks list update in
+# ci.yml's own header comment.
+on:
+  pull_request:
+    paths:
+      - "crates/stella-tools/src/bash/contain.rs"
+      - "crates/stella-tools/src/bash.rs"
+      - "crates/stella-tools/tests/graded_tree_containment.rs"
+      - ".github/workflows/containment-posture.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/stella-tools/src/bash/contain.rs"
+      - "crates/stella-tools/src/bash.rs"
+      - "crates/stella-tools/tests/graded_tree_containment.rs"
+      - ".github/workflows/containment-posture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assert-enforced:
+    name: graded-tree write ban is Enforced on this runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: install rust
+        run: rustup show
+
+      - name: cargo test graded_tree_containment (posture required)
+        env:
+          STELLA_REQUIRE_CONTAINMENT: "1"
+        run: cargo test -p stella-tools --test graded_tree_containment -- --nocapture

@@ -97,18 +97,45 @@ async fn run(bash: &Bash, command: &str, root: &Path) -> String {
     }
 }
 
-/// Skip loudly rather than pass quietly on a host with no boundary.
+/// Skip loudly rather than pass quietly on a host with no boundary — unless
+/// `STELLA_REQUIRE_CONTAINMENT=1` says this host is known to support one, in
+/// which case an unenforced posture is a hard failure instead of a skip
+/// (#2998).
 ///
-/// The module reports [`contain::Posture::Advisory`] on such a host instead of
-/// pretending, and this test refuses to claim a containment it did not
-/// observe. Making a Linux CI runner assert `Enforced` rather than skip is
-/// tracked in #2998 — until then the Linux recipe is proved by no test.
+/// The env gate exists because the two hosts that call this need opposite
+/// answers to the same non-enforcement: a developer's laptop or a restricted
+/// container has a real, permanent reason to be [`contain::Posture::Advisory`]
+/// and must not fail a local `cargo test`, while a CI runner that is *known*
+/// to support the mechanism (declares the flag) going [`Advisory`] is a
+/// regression in the recipe that must turn the job red, not print a line
+/// nobody reads. Without the gate this test always chose "pass quietly" —
+/// which is exactly the failure mode `contain.rs`'s own header argues against
+/// for the string audit it replaces: a guard that reports success when it did
+/// nothing.
+///
+/// The panic message keeps the three outcomes distinguishable: `Enforced`
+/// (returns `true`, nothing printed), a required host reporting
+/// `UnsupportedPlatform` (the flag was set on the wrong kind of runner — a
+/// config mistake, not a recipe regression), and a required host reporting
+/// `ProbeFailed` (the mechanism exists here and the functional probe watched
+/// it fail to hold — a real regression in `contain.rs`'s recipe).
 fn enforced_or_skip() -> bool {
     let posture = contain::posture();
-    if !posture.is_enforced() {
-        eprintln!("SKIPPED: no OS write boundary on this host ({posture})");
+    if posture.is_enforced() {
+        return true;
     }
-    posture.is_enforced()
+    let required = std::env::var("STELLA_REQUIRE_CONTAINMENT").as_deref() == Ok("1");
+    if required {
+        panic!(
+            "STELLA_REQUIRE_CONTAINMENT=1 but this host is not Enforced ({posture}). \
+             UnsupportedPlatform means the flag is set on a runner this module has no \
+             recipe for — fix the workflow, not the recipe. ProbeFailed means the \
+             mechanism is present but the functional probe watched it fail to hold — \
+             a regression in contain.rs, not a config mistake."
+        );
+    }
+    eprintln!("SKIPPED: no OS write boundary on this host ({posture})");
+    false
 }
 
 /// The witness. Fails on `main`: the audit permits the obfuscated command
