@@ -888,6 +888,9 @@ async fn aggregate_openai_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The port itself, since the impl moved to `openai/provider.rs` and this
+    // file no longer imports the trait these tests dispatch through.
+    use crate::provider::Provider;
     use stella_protocol::CompletionRequest;
     use stella_protocol::tool::ToolSchema;
     use wiremock::matchers::{body_string_contains, header, method, path};
