@@ -34,7 +34,48 @@
 //! (#2104). Most of Terminal-Bench is that shape, so the screen is the
 //! backstop.
 
-use crate::plan::PlanStep;
+use super::*;
+use crate::plan::{names_an_absolute_path, parse_plan, plan_path_repair_prompt};
+
+impl<'a> Pipeline<'a> {
+    /// One bounded repair retry (L-V2) for a plan that parsed cleanly but
+    /// named an absolute filesystem path — a blind planner cannot know a
+    /// path it never saw is real, and #2932 measured 32% of plan steps in
+    /// one benchmark run naming `/app`, most refused outright by the
+    /// candidate sandbox. Degrades to the original plan on any repair
+    /// failure: a plan naming a path the worker has to correct is still
+    /// better than no plan.
+    pub(super) async fn resolve_plan_paths(
+        &self,
+        steps: Vec<PlanStep>,
+        resolved: &ResolvedRole<'a>,
+        overrides: &RoleCallOverrides,
+        spend: &mut Spend<'_>,
+    ) -> Result<Vec<PlanStep>, PipelineStageAbort> {
+        if !steps.iter().any(|s| names_an_absolute_path(&s.description)) {
+            return Ok(steps);
+        }
+        match self
+            .metered_raw_call(
+                RawCall {
+                    role: ModelCallRole::PlanRepair,
+                    resolved,
+                    messages: plan_path_repair_prompt(&steps).into_messages(),
+                    policy: RetryPolicy::deterministic(),
+                    overrides,
+                    timeout: self.config.engine.model_timeout,
+                },
+                spend.budget,
+                spend.total,
+            )
+            .await
+        {
+            Ok(repair) => Ok(parse_plan(&repair.text).unwrap_or(steps)),
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => Err(abort),
+            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(steps),
+        }
+    }
+}
 
 /// The line a worker opens with to declare the whole goal finished and end
 /// the step loop. Matched at line start (after leading whitespace) so prose
