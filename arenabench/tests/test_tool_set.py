@@ -157,9 +157,12 @@ class TestSeatEnvironment:
     def test_an_undeclared_match_exports_nothing(self, tmp_path) -> None:
         assert "STELLA_LEAN_TOOLS" not in self._env(_spec({}), tmp_path)
 
-    def test_a_declared_set_reaches_the_seat_comma_separated(self, tmp_path) -> None:
+    def test_a_declared_set_reaches_the_seat_as_a_closed_set(self, tmp_path) -> None:
+        # `only:` and not the bare list — the bare form adds the discovery
+        # tools on top, and a four-tool arm that advertises seven is not the
+        # arm the template declared or provenance records.
         env = self._env(_spec({"tool_set": _BASELINE}), tmp_path)
-        assert env["STELLA_LEAN_TOOLS"] == ",".join(_BASELINE)
+        assert env["STELLA_LEAN_TOOLS"] == "only:" + ",".join(_BASELINE)
 
 
 def _toml(engine_line: str, *, agent: str = "stella") -> dict:

@@ -89,14 +89,22 @@ class TestForwarding:
         assert tool_set_env(_reader(None)) == {}
         assert ENV not in _agent_with(None)._forwarded_env()
 
-    def test_a_declared_set_reaches_the_container_verbatim(self) -> None:
-        assert _agent_with(_BASELINE)._forwarded_env()[ENV] == _BASELINE
+    def test_a_declared_set_reaches_the_container_as_a_closed_set(self) -> None:
+        # `only:` and not the bare list: the bare form adds the three
+        # discovery tools on top, so an arm specified as four tools would
+        # advertise seven and stop being the arm anyone reasoned about.
+        assert _agent_with(_BASELINE)._forwarded_env()[ENV] == f"only:{_BASELINE}"
+
+    def test_an_operator_written_prefix_yields_the_same_set(self) -> None:
+        assert _agent_with(f"only:{_BASELINE}")._forwarded_env()[ENV] == (
+            f"only:{_BASELINE}"
+        )
 
     def test_the_forwarded_value_is_the_normalised_one(self) -> None:
         # Not the raw string: the container must receive the same set the
         # manifest discloses, or the record describes a run that did not happen.
         agent = _agent_with(" bash , read_file ,bash")
-        assert agent._forwarded_env()[ENV] == "bash,read_file"
+        assert agent._forwarded_env()[ENV] == "only:bash,read_file"
         assert list(declared(agent._configured_value)) == ["bash", "read_file"]
 
     def test_a_malformed_set_refuses_the_run_rather_than_dropping_the_arm(

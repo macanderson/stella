@@ -61,6 +61,19 @@ _TOOL_NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 #: here; see the module docstring.
 _PRESET_WORDS = frozenset({"1", "true", "0", "false"})
 
+#: The ``LEAN_TOOLS_ENV`` prefix selecting a **closed** set — exactly these
+#: tools, with no discovery layer on top (``ONLY_PREFIX`` in
+#: ``crates/stella-cli/src/discovery.rs``).
+#:
+#: Always emitted, never optional. The bare comma list adds `tool_search`,
+#: `skill_search` and `mcp_search` on top of the named core, which is right
+#: for a session and wrong for a measured arm: an arm specified as five tools
+#: that ships eight is not the arm anyone reasoned about, and `tool_search`
+#: sitting beside the tools under test competes with them for the model's
+#: attention. Accepted on input too, so an operator who writes the prefix by
+#: hand gets the same set as one who does not.
+ONLY_PREFIX = "only:"
+
 
 def validated_tool_set(value: str | None) -> tuple[str, ...]:
     """Parse the declared tool set — empty when the arm declares none.
@@ -71,7 +84,10 @@ def validated_tool_set(value: str | None) -> tuple[str, ...]:
     """
     if value is None:
         return ()
-    raw_entries = [entry.strip() for entry in value.split(",")]
+    body = value.strip()
+    if body.lower().startswith(ONLY_PREFIX):
+        body = body[len(ONLY_PREFIX) :]
+    raw_entries = [entry.strip() for entry in body.split(",")]
     names: list[str] = []
     for entry in raw_entries:
         if not entry:
@@ -112,4 +128,4 @@ def tool_set_env(configured: Configured) -> dict[str, str]:
     weaker claim is not worth making when the stronger one is free.
     """
     names = declared(configured)
-    return {ENV: ",".join(names)} if names else {}
+    return {ENV: ONLY_PREFIX + ",".join(names)} if names else {}

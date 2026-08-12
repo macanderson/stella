@@ -1241,7 +1241,10 @@ class MatchRunner:
             # undeclared, which is the whole guarantee that an arm naming no
             # tool set runs exactly as it did before this field existed — the
             # adapter's forwarder returns empty on an absent value.
-            env["STELLA_LEAN_TOOLS"] = ",".join(engine.tool_set)
+            # `only:` — a CLOSED set. The bare comma list would add the three
+            # discovery tools on top, and an arm specified as five tools that
+            # ships eight is not the arm anyone reasoned about.
+            env["STELLA_LEAN_TOOLS"] = "only:" + ",".join(engine.tool_set)
         env.setdefault("STELLA_DISABLE_REFLECTION", "1")
 
         # Both packages must be importable by the Harbor subprocess: the
