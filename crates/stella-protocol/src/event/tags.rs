@@ -249,6 +249,20 @@ agent_event_tags! {
     SubAgent => "sub_agent",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // The delivery decision (#2942). `Surfaced` rather than `RecordedOnly`
+    // because the observatory's journal query was widened to select it in the
+    // same change — a reader asking "did this candidate's work land?" gets the
+    // answer in the transcript instead of joining `verdict` timestamps against
+    // a `file_change` burst by hand.
+    //
+    // Deliberately NOT `Behavioral`. Nothing branches on it, and claiming
+    // otherwise would put a false statement in the ledger: the pipeline's own
+    // decision is the typed `pipeline::delivery::Delivery` value this event is
+    // a projection of, so severing the event changes what a reader sees and
+    // nothing about what the engine does.
+    CandidateDelivery => "candidate_delivery",
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
     Error => "error",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];

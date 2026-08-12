@@ -315,6 +315,62 @@ export interface ContextUsage {
 }
 
 /**
+ * Why a candidate's work did not reach the real tree.
+ *
+ * Exhaustive over the pipeline's decision: the three arms are the two
+ * `Withhold` paths of `pipeline::delivery::decide` plus the one way a
+ * sanctioned delivery can still fail at the git layer.
+ */
+export type DeliveryDecline = "nothing_created" | "integrity_refusal" | "adopt_failed";
+
+/**
+ * What the pipeline did with the winning candidate's workspace.
+ *
+ * Internally tagged on `outcome`, so a `jq` reader selects an arm by field
+ * rather than by the presence or absence of a sibling key.
+ */
+export type DeliveryOutcome = {
+  /**
+   * Files that did not exist in the real tree before this delivery.
+   */
+  created: number;
+  /**
+   * Files the delivery removed.
+   */
+  deleted: number;
+  /**
+   * Lines added across every delivered file.
+   */
+  lines_added: number;
+  /**
+   * Lines removed across every delivered file.
+   */
+  lines_removed: number;
+  /**
+   * Files whose contents changed.
+   */
+  modified: number;
+  outcome: "delivered";
+  /**
+   * Whether a **passing verdict** stood behind the work.
+   *
+   * `false` is the ordinary case for a run that ran out of clock or came
+   * to rest on the revise rung, and it is deliberately not a reason to
+   * withhold: a verdict is a claim about the work, not what decides
+   * whether the work exists (#2927/#2943). Delivery never implies proof,
+   * and this field is what keeps the write from reading as a pass.
+   */
+  proven: boolean;
+} | {
+  outcome: "declined";
+  /**
+   * Why. Typed, because a caller that has to branch on prose is
+   * parsing prose.
+   */
+  reason: DeliveryDecline;
+};
+
+/**
  * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
  * by the tool that touched it, which is why [`Self::is_mutation`] answers
  * "was this call a write" and never "did the tree change". See the variant's
@@ -1957,6 +2013,23 @@ export type AgentEvent = {
   ts?: number;
   type: "sub_agent";
 } | {
+  /**
+   * Deliberately **not** `serde(flatten)`: `AgentEvent` is internally
+   * tagged through a `remote = "Self"` codec and carries a `schemars`
+   * derive, and flattening a second internally-tagged enum into that is
+   * where both the wire schema and the forward-compat fallback stop
+   * agreeing with the Rust type. One nested object costs a `jq` reader
+   * `.delivery.outcome` instead of `.outcome`, which is cheaper than a
+   * generated schema that lies.
+   */
+  delivery: DeliveryOutcome;
+  root?: string | null;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "candidate_delivery";
+} | {
   message: string;
   retryable: boolean;
   /**
@@ -2016,5 +2089,6 @@ export type KnownTypeTag =
   | "pr"
   | "task_update"
   | "sub_agent"
+  | "candidate_delivery"
   | "error"
   | "complete";

@@ -75,7 +75,8 @@ pub(crate) fn entries(
            AND seq > ?2
            AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                               'tool_result', 'speculation_discarded',
-                              'turn_parked', 'turn_woken')
+                              'turn_parked', 'turn_woken',
+                              'candidate_delivery')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -218,6 +219,26 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
         "turn_woken" => {
             out["reason"] = payload["reason"].clone();
             out["polls_used"] = payload["polls_used"].clone();
+        }
+        // The delivery decision (#2942). `DeliveryOutcome` is nested under
+        // `delivery` (not flattened — see `AgentEvent::CandidateDelivery`) and
+        // internally tagged on `outcome`. Lift the tag plus whichever arm's
+        // fields it selects so the transcript can say "delivered N files" or
+        // "declined: <reason>" instead of drawing a blank row where the run
+        // most needs to answer "did this candidate's work land?".
+        "candidate_delivery" => {
+            let delivery = &payload["delivery"];
+            out["outcome"] = delivery["outcome"].clone();
+            // `Delivered` counts — absent (null) on a decline, which the
+            // renderer distinguishes by `outcome` rather than by presence.
+            out["created"] = delivery["created"].clone();
+            out["modified"] = delivery["modified"].clone();
+            out["deleted"] = delivery["deleted"].clone();
+            out["lines_added"] = delivery["lines_added"].clone();
+            out["lines_removed"] = delivery["lines_removed"].clone();
+            out["proven"] = delivery["proven"].clone();
+            // `Declined` reason — absent on a delivery.
+            out["reason"] = delivery["reason"].clone();
         }
         _ => {}
     }

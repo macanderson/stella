@@ -615,6 +615,13 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         // A discarded speculation is internal accounting for read-only work
         // that never reached the transcript — observability, not narration.
         | AgentEvent::SpeculationDiscarded { .. }
+        // The delivery decision (#2942) is the parseable record of something
+        // the pipeline ALREADY narrates in prose: an unproven delivery warns on
+        // the rail, a withheld one names where the work was kept, and the files
+        // themselves arrive as `FileChange` lines. A line here would be the
+        // third telling of one fact — which is why the event is declared
+        // `Surfaced` on the observatory's journal, not on this surface.
+        | AgentEvent::CandidateDelivery { .. }
         // Proof steps are the rail's data ([`crate::proof`]), not narration.
         // They are a state machine whose CURRENT value is the whole point, so
         // a surface renders the folded rail; replaying each transition as a

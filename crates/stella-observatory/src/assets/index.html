@@ -1701,6 +1701,22 @@ function journalEntryHtml(e) {
     return `<div class="jrnl"><div class="kick">⏳ parked · ${esc(e.description ?? "")} · every ${esc(String(e.poll_interval_secs ?? "?"))}s, up to ${esc(String(e.deadline_secs ?? "?"))}s</div></div>`;
   if (e.type === "turn_woken")
     return `<div class="jrnl"><div class="kick">▶ woke · ${e.reason === "changed" ? "the watched state changed" : e.reason === "deadline_expired" ? "the deadline expired with no change" : esc(e.reason ?? "")} · ${esc(String(e.polls_used ?? 0))} probe(s)</div></div>`;
+  /* The delivery decision (#2942) — the same fall-through-to-"answer" trap as
+     the parked/woken rows above: without its own arm a reader asking "did this
+     candidate's work land?" gets a blank row instead of the answer. */
+  if (e.type === "candidate_delivery") {
+    if (e.outcome === "delivered") {
+      const files = num(e.created) + num(e.modified) + num(e.deleted);
+      const proof = e.proven ? "proven" : "unproven";
+      return `<div class="jrnl"><div class="kick">📦 delivered · ${fmtInt(files)} file(s) +${fmtInt(e.lines_added ?? 0)}/-${fmtInt(e.lines_removed ?? 0)} · ${proof}</div></div>`;
+    }
+    const reason =
+      e.reason === "nothing_created" ? "no workspace was ever created" :
+      e.reason === "integrity_refusal" ? "an integrity refusal" :
+      e.reason === "adopt_failed" ? "adoption failed (git apply refused)" :
+      esc(e.reason ?? "");
+    return `<div class="jrnl err"><div class="kick">⊘ delivery declined · ${reason}</div></div>`;
+  }
   /* The Command Deck's rails (`crates/stella-tui/src/render/row.rs::Rail`):
      `●` opens a call, `⎿` its result, `✗` a failed one — a distinct glyph for
      the failure so it is findable by margin-scan alone. `stella observe` and
