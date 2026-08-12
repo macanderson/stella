@@ -483,6 +483,20 @@ class Engine:
     #: arm ran belongs in the match's published identity either way. Agents
     #: with no pipeline ignore it, like the role overrides below.
     bare_loop: bool = False
+    #: The exact tools this seat's agent is offered, or ``()`` for the shipping
+    #: catalog. For Stella that is ``STELLA_LEAN_TOOLS``, which advertises this
+    #: set plus the discovery tools and leaves everything else reachable by
+    #: ``tool_search`` — a prompt-budget measure, never a capability gate.
+    #:
+    #: A list of names and never a preset alias (#3032/#3033). The set is the
+    #: independent variable of a tool-effectiveness experiment, so an arm that
+    #: declared ``"lean"`` or ``1`` would record a word whose meaning is
+    #: whichever binary it happened to launch; naming the tools makes the arm
+    #: legible in :mod:`arenabench.provenance` years later. Declared on the
+    #: engine rather than exported at launch for the same reason
+    #: :attr:`bare_loop` is: the runner scrubs every ambient ``STELLA_*``, so a
+    #: host export can never quietly stand in for a seat's declaration.
+    tool_set: tuple[str, ...] = ()
     #: Per-role overrides, keyed by a member of :data:`ROLES`.
     roles: dict[str, RoleConfig] = field(default_factory=dict)
     #: Per-responsibility ablation/reassignment, keyed by a member of
@@ -549,6 +563,7 @@ class Engine:
             "effort": self.effort,
             "base_url": self.base_url,
             "bare_loop": self.bare_loop,
+            "tool_set": list(self.tool_set),
             "roles": {name: role.to_json() for name, role in self.roles.items()},
             "responsibilities": {
                 name: row.to_json() for name, row in self.responsibilities.items()
@@ -584,6 +599,12 @@ class Engine:
             # fed by round-tripped machine output, so a value neither `true`
             # nor `false` is corruption, and corruption must not select an arm.
             bare_loop=declared_flag(raw.get("bare_loop")) is True,
+            # Round-tripped machine output, so anything that is not a list of
+            # strings is corruption — and corruption must not silently select
+            # the full catalog and read as a control arm. Dropped to ``()``
+            # here and refused at the authoring surfaces, the same split
+            # `bare_loop`'s cap keys take two lines above.
+            tool_set=_tool_set_from_json(raw.get("tool_set")),
             roles=roles,
             responsibilities=_responsibilities_from_json(raw.get("responsibilities")),
         )
@@ -597,8 +618,12 @@ class Engine:
         # label reading "+2 roles" with no mention of the loop would advertise
         # management stages that never ran.
         loop = " · bare loop" if self.bare_loop else ""
+        # Named for the same reason the loop is: an arm offered four tools and
+        # one offered seventy-two are different apparatus, and a label that
+        # showed only the model would present them as the same experiment.
+        tools = f" · {len(self.tool_set)} tools" if self.tool_set else ""
         extra = f" · +{len(self.roles)} roles" if self.roles else ""
-        return f"{short} · {think}{loop}{extra}"
+        return f"{short} · {think}{loop}{tools}{extra}"
 
 
 @dataclass(frozen=True)
@@ -905,6 +930,15 @@ class MatchSpec:
                     f"{contestant.name}: sut_ref applies only to a stella "
                     f"seat — {contestant.agent!r} runs no Stella binary"
                 )
+            if contestant.engine.tool_set and contestant.agent != "stella":
+                # Refused rather than ignored, exactly like `sut_ref` above and
+                # `bare_loop` at parse: only the Stella adapter forwards a
+                # declared tool set, so on any other seat this is a template
+                # claiming to measure a restriction the arm never ran (#3032).
+                problems.append(
+                    f"{contestant.name}: tool_set applies only to a stella "
+                    f"seat — {contestant.agent!r} advertises its own tools"
+                )
             if contestant.agent_version and contestant.agent == "stella":
                 # The mirror of the rule above, refused for the same reason: a
                 # Stella seat is pinned by commit through `sut_ref`, and a
@@ -977,6 +1011,33 @@ def is_credential_name(name: str) -> bool:
     """
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)) and name.upper().endswith(
         _ENV_ALLOWED_SUFFIXES
+    )
+
+
+def is_tool_name(name: str) -> bool:
+    """Whether ``name`` is shaped like a tool an agent can be offered.
+
+    The shape ``crates/stella-tools/src/catalog.rs`` gives every built-in, and
+    deliberately narrow for the reason :func:`is_credential_name` is: a
+    declared tool set is joined on commas into one environment value that the
+    agent re-splits, so an entry carrying a separator, whitespace, or shell
+    punctuation would advertise a different set than the template declared —
+    the failure a declared tool set exists to prevent, arriving through the
+    declaration itself. Shape, not membership: ArenaBench does not link the
+    tool catalog, and a hand-copied roster of names here would be wrong the
+    first time a tool is added.
+    """
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*", name))
+
+
+def _tool_set_from_json(raw: Any) -> tuple[str, ...]:
+    """Restore a declared tool set from round-tripped machine output."""
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            item for item in raw if isinstance(item, str) and is_tool_name(item)
+        )
     )
 
 

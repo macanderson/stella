@@ -130,6 +130,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/stream_release.py",
     "bench/harbor_adapter/stella_harbor/telemetry_export.py",
     "bench/harbor_adapter/stella_harbor/timeout_reap.py",
+    "bench/harbor_adapter/stella_harbor/tool_set.py",
     "bench/harbor_adapter/stella_harbor/turn_budget.py",
     "bench/harbor_adapter/stella_harbor/upstream_pin.py",
 )
@@ -3652,6 +3653,23 @@ def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
             "witness-off arm, and this launcher's disclosed posture hashes are "
             "computed for that arm. Run the witness arm through the "
             "development-baseline path (bench/evidence/run) instead."
+        )
+
+    # The same refusal, for the same reason, on the knob that arrived after it
+    # (#3032). A restricted tool set is an experiment arm: it changes what the
+    # agent was offered, which is exactly the variable a tool-effectiveness run
+    # varies and the last thing a published claim may vary silently. The claim
+    # path measures the shipping configuration, so the honest answer is not to
+    # disclose the arm here but to refuse to run it. Name resolved from the
+    # module that owns it, like `_verifier_env_name` above and for its reason.
+    from .tool_set import ENV as tool_set_env
+
+    if environ.get(tool_set_env):
+        raise RuntimeError(
+            f"secure launcher refuses an ambient {tool_set_env}: a claim run "
+            "advertises the shipping tool catalog. Run a restricted tool set "
+            "through ArenaBench or the development-baseline path "
+            "(bench/evidence/run) instead."
         )
 
     source_commit = environ.get("STELLA_SOURCE_COMMIT", "")
