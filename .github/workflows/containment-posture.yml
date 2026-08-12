@@ -85,11 +85,22 @@ jobs:
       - name: permit unprivileged user namespaces (see comment)
         run: |
           set -eu
-          before=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<absent>')
-          if [ "$before" != '<absent>' ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          before=$(cat "$knob" 2>/dev/null || echo '<absent>')
+          if [ "$before" = '<absent>' ]; then
+            echo "apparmor_restrict_unprivileged_userns: <absent> (nothing to lift)"
+            exit 0
           fi
-          echo "apparmor_restrict_unprivileged_userns: $before -> $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<absent>')"
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          after=$(cat "$knob")
+          echo "apparmor_restrict_unprivileged_userns: $before -> $after"
+          # Assert rather than report. A silent no-op here would surface one
+          # step later as an unexplained ProbeFailed, which is the shape of
+          # confusion this job's `why` step exists to end.
+          if [ "$after" != 0 ]; then
+            echo "::error::sysctl did not take effect; the unprivileged recipe cannot be proved on this host"
+            exit 1
+          fi
 
       # A ProbeFailed posture means "the kernel refused the recipe" and says
       # nothing about which link refused it, because `probe_mechanism` collapses
@@ -125,7 +136,14 @@ jobs:
           mount --bind '$dir/graded/.git' '$dir/graded/.git' || exit 125
           mount -o remount,bind,rw '$dir/graded/.git' || exit 124
           exec \"\$@\""
-            inner="printf pwned > '$dir/graded/sentinel' 2>/dev/null
+            # `--map-root-user` makes the wrapped command see itself as uid 0
+            # for as long as it runs, and this wrapper is armed exactly during
+            # graded bench and adoption runs -- where tooling that branches on
+            # "am I root?" (npm, pip, apt) would take a different branch than
+            # it does unwrapped. #3037 asks for that to be measured rather than
+            # asserted, so the contained shell reports its own uid here.
+            inner="printf 'inner uid=%s ' \"\$(id -u)\"
+          printf pwned > '$dir/graded/sentinel' 2>/dev/null
           printf ok > '$dir/graded/.git/exempt' 2>/dev/null
           exit 0"
             echo "--- $label"
