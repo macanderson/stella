@@ -776,6 +776,11 @@ pub enum WorkspaceInput {
     /// next step boundary (completed steps kept); worker lanes cancel
     /// immediately, and the next queued prompt dispatches automatically.
     StopAndHold { agent: AgentId },
+    /// Esc with something queued: inject **every** waiting prompt into
+    /// `agent`'s running turn at its next step boundary, in order, and keep
+    /// the turn going. See [`steering`] for why this is not a cancel, and why
+    /// the whole queue travels in one message.
+    Steer { agent: AgentId, texts: Vec<String> },
     /// Re-root the Graph tab on `file`: the deck's file picker sends this when
     /// the user selects a file, and the driver answers with a fresh
     /// [`Inbound::GraphSnapshot`] centered on it (the same out-of-band refresh
@@ -1349,8 +1354,10 @@ pub enum SkillOp {
     },
 }
 
-/// The MCP tab's read models (rows, search results, inspector detail).
 mod mcp;
+/// The MCP tab's read models (rows, search results, inspector detail).
+/// Why Esc steers rather than cancels — doc-only.
+pub mod steering;
 pub use mcp::{
     McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
     McpServerInfo, McpToolRow,

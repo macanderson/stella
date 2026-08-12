@@ -894,30 +894,89 @@ fn esc_with_no_turn_running_stays_inert() {
     assert!(ui.esc_armed_at.is_none());
 }
 
+/// **The steering witness.** Esc with something typed *delivers* it into the
+/// running turn and lets the turn continue.
+///
+/// Esc used to cancel unconditionally, which on the staged pipeline is not an
+/// interrupt but a restart: the driver truncates the partial turn and
+/// re-dispatches the backlog as a new one, re-entering at triage and context
+/// recall. So a user who typed one correcting sentence and pressed Esc paid
+/// for the whole turn again to deliver it — and the sentence itself stayed
+/// stranded in the composer while the turn it was written for died.
 #[test]
-fn a_typed_draft_survives_both_esc_forms() {
+fn esc_with_a_typed_draft_steers_the_running_turn_instead_of_cancelling_it() {
     let model = running_model();
     let mut ui = ready_ui();
-    for c in "keep me".chars() {
+    for c in "use the existing helper".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
-    // The cursor lives in the global composer, so the stop fires even
-    // mid-draft — and must leave the draft untouched.
     assert_eq!(
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
-        stop_lead()
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "lead".into(),
+            texts: vec!["use the existing helper".into()],
+        }),
+        "the draft is delivered to the turn in flight, not thrown away with it"
     );
-    assert_eq!(ui.composer.buffer(), "keep me");
+    assert_eq!(
+        ui.composer.buffer(),
+        "",
+        "the draft was DELIVERED, so it must not also survive as a next-turn \
+         prompt — the same words dispatched twice is its own defect"
+    );
+    // The double-Esc escalation is untouched: a full stop is still one more
+    // press away, which is what keeps "I want it to stop" reachable.
     assert_eq!(
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::StopAndHold {
             agent: "lead".into()
         })
     );
+}
+
+/// The queue half: every waiting prompt goes in, in order, in one message —
+/// which is the behaviour the request described ("whatever is in my prompt
+/// queue, even if there is more than one, gets sent in and the agent keeps
+/// working").
+///
+/// One message rather than N, deliberately: draining the queue as separate
+/// inputs would let a second Esc land between two of them and cancel the turn
+/// holding the rest.
+#[test]
+fn esc_delivers_the_whole_prompt_queue_in_order() {
+    let mut model = running_model();
+    model.queue.enqueue("first correction".into(), 0);
+    model.queue.enqueue("> second correction".into(), 1);
+    let mut ui = ready_ui();
+    for c in "and the draft".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
     assert_eq!(
-        ui.composer.buffer(),
-        "keep me",
-        "neither cancel form clears what the user typed"
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "lead".into(),
+            texts: vec![
+                "first correction".into(),
+                // The `>` marker is stripped: it already means "steer", and
+                // this whole path is steering.
+                "second correction".into(),
+                // The draft is newest, so it is read last.
+                "and the draft".into(),
+            ],
+        })
+    );
+}
+
+/// And the case where Esc still means stop: nothing typed, nothing queued.
+/// With no guidance to deliver, an interrupt is the only thing the keystroke
+/// can mean — so the escape hatch never moved.
+#[test]
+fn esc_with_nothing_to_say_is_still_a_plain_interrupt() {
+    let model = running_model();
+    let mut ui = ready_ui();
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        stop_lead()
     );
 }
 
@@ -980,8 +1039,12 @@ fn an_intervening_key_breaks_the_double_esc_pair() {
     assert!(ui.esc_armed_at.is_none(), "any other key disarms");
     assert_eq!(
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
-        stop_lead(),
-        "the next Esc is a fresh single stop, not an escalation"
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "lead".into(),
+            texts: vec!["x".into()],
+        }),
+        "the next Esc is a fresh single press, not an escalation — and with a \
+         draft in the composer a single press steers"
     );
 }
 

@@ -31,7 +31,7 @@
 │                                             │  ctrl-t        open the queue editor                             │                                             │
 │                                             │  ctrl-s        STATE — the approved scope's steps, the task board│                                             │
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
-│                                             │  esc           soft-stop at the next step boundary — completed wo│                                             │
+│                                             │  esc           steer: your draft + queue go INTO the running turn│                                             │
 │                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
 │                                             │  ctrl-c        quit stella                                       │                                             │
 └─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘

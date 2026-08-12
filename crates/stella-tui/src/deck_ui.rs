@@ -1526,6 +1526,8 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
+/// Esc-with-something-to-say — see [`steer`].
+mod steer;
 pub use gates::{HunkMarks, ScopeInput};
 mod nav;
 mod queue_editor;
@@ -1939,14 +1941,9 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         } else if let Some(entry) = model.agents.get(ui.focused)
             && entry.status == AgentStatus::Running
         {
-            // First Esc: cancel the in-flight turn. The driver truncates the
-            // partial turn out of the conversation and auto-dispatches the
-            // next queued prompt — "interrupt current, run next".
             ui.esc_armed_at = Some(std::time::Instant::now());
-            return DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: AgentControl::Stop,
-            });
+            let agent = entry.meta.id.clone();
+            return steer::first_esc(ui, model, agent);
         }
     }
 
