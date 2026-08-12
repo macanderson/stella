@@ -1,6 +1,6 @@
 //! The creation-task exception to the import/loader refusal (#2668).
 //!
-//! [`super::import_failure_signature`] states the general rule: a
+//! [`super::instrument::import_failure_signature`] states the general rule: a
 //! previous-code run that dies while *loading* the test — an import, not an
 //! assertion — is not evidence of a flip, because a build artifact present in
 //! the working tree and absent from the fresh shadow checkout produces the
@@ -241,7 +241,7 @@ async fn added_since_baseline(root: &Path, baseline_sha: &str) -> Vec<String> {
 /// A struct rather than six positional parameters because four of them are
 /// strings, which is the shape that silently swaps at a call site.
 pub(super) struct ImportFlip<'a> {
-    /// What [`super::import_failure_signature`] recognised, for the prose.
+    /// What [`super::instrument::import_failure_signature`] recognised, for the prose.
     pub label: &'a str,
     pub test_cmd: &'a str,
     pub baseline: &'a super::WitnessBaseline,

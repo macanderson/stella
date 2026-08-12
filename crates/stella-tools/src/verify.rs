@@ -94,8 +94,10 @@
 //! why the measurement was needed (#2486) and why it cannot ride the tool's
 //! own output.
 
+mod cap;
 mod creation;
 mod defeater;
+mod instrument;
 mod memo;
 mod phases;
 
@@ -315,48 +317,6 @@ async fn resolve_witness_baseline(
     }
 }
 
-/// Output signatures proving the previous-code run died while *loading* the
-/// test or its imports — no behavioural assertion ever executed, so the
-/// failure is not evidence of a flip (#2067). The live false positive: a
-/// compiled `.so` present in the working tree but absent from a fresh shadow
-/// checkout fails `import` on the old side and fakes a confirmation.
-///
-/// Deliberately narrow, and deliberately NOT the compile-error family:
-/// a witness that fails to *build* on the old code (rustc `error[E…]`) is
-/// the canonical missing-API witness shape and stays credited with the
-/// existing weaker-evidence warning (#1790). The import/loader family is
-/// different: the author can always convert module absence into an
-/// assertion (`try: import x … except ImportError: ok = False`), so refusal
-/// is actionable, while crediting it lets a stale artifact decide the
-/// verdict. `SyntaxError` and "No such file or directory" are also absent —
-/// both can BE the witnessed behaviour (a fix-the-parse-error task; a shell
-/// witness asserting a file the change creates).
-///
-/// A match here is a *candidate* refusal, not the verdict: on a creation
-/// task the module that would not load can be the deliverable itself, absent
-/// at the baseline by construction. [`creation::confirm`] decides that from
-/// git — never from the text this function reads, which cannot tell the two
-/// apart (#2668).
-fn import_failure_signature(output: &str) -> Option<&'static str> {
-    const SIGNATURES: &[(&str, &str)] = &[
-        ("modulenotfounderror", "a Python `ModuleNotFoundError`"),
-        ("no module named", "a missing Python module"),
-        ("importerror", "a Python `ImportError`"),
-        (
-            "error while loading shared libraries",
-            "a missing shared library",
-        ),
-        ("cannot find module", "a missing Node module"),
-        ("error collecting", "a pytest collection error"),
-        ("errors during collection", "a pytest collection error"),
-    ];
-    let lower = output.to_ascii_lowercase();
-    SIGNATURES
-        .iter()
-        .find(|(needle, _)| lower.contains(needle))
-        .map(|(_, label)| *label)
-}
-
 /// Best-effort removal of the shadow worktree — both the registration and
 /// the directory.
 async fn cleanup_shadow(root: &std::path::Path, shadow: &std::path::Path) {
@@ -552,6 +512,9 @@ impl Tool for VerifyDone {
             Err(message) => (ToolOutput::Error { message }, Verdict::Error),
         };
         phases.verdict = verdict;
+        // The turn's rejection run (#2863), folded in at the one exit every
+        // verdict passes through — so no future arm can forget to count.
+        self.memo.record_verdict(verdict);
         // Last, so it spans everything above it including the teardown.
         phases.total = call.stop();
         if let Some(dx) = &self.diagnostics {
@@ -577,6 +540,12 @@ impl VerifyDone {
         root: &std::path::Path,
         phases: &mut Phases,
     ) -> Result<(ToolOutput, Verdict), String> {
+        // Before the argument is even read: this turn may already have bought
+        // this answer twice, and the saving is only real if the refused call
+        // resolves no baseline and checks out no shadow (#2863).
+        if let Some(class) = self.memo.gate_closed() {
+            return Err(cap::refusal(class));
+        }
         let setup = Phase::start();
         let test_cmd = crate::input::required_str(input, "test_cmd").map_err(|e| e.to_string())?;
         // Before anything expensive, and refused rather than rewritten (#2871).
@@ -724,6 +693,17 @@ impl VerifyDone {
         phases.working_tree_run = half_one.stop();
         let (new_exit, new_output) = new_run?;
         if new_exit != 0 {
+            // Did it run and fail, or never run? Only the first is evidence
+            // about the code; answering both with `NOT DONE` sent an agent
+            // after its own harness for fifteen consecutive calls (#2872).
+            if let Some(broken) = instrument::working_tree_failure(new_exit, &new_output) {
+                return Ok((
+                    ToolOutput::Error {
+                        message: instrument::refusal(broken, test_cmd, new_exit, tail(&new_output)),
+                    },
+                    Verdict::InstrumentBroken,
+                ));
+            }
             return Ok((
                 ToolOutput::Error {
                     message: format!(
@@ -813,7 +793,7 @@ impl VerifyDone {
         // deliverable, absent at baseline by construction — mechanically
         // distinguished from a stale artifact by asking git whether the named
         // file is new relative to the baseline, never by trusting a claim.
-        if let Some(label) = import_failure_signature(&old_output) {
+        if let Some(label) = instrument::import_failure_signature(&old_output) {
             let flip = creation::ImportFlip {
                 label,
                 test_cmd,
@@ -1214,28 +1194,6 @@ mod tests {
             other => panic!("an import failure must not confirm a witness, got {other:?}"),
         }
         std::fs::remove_dir_all(&root).ok();
-    }
-
-    /// The import/loader vocabulary is deliberately narrow: behavioural
-    /// failures — assertions, files a shell witness checks for, and the Rust
-    /// missing-API compile shape (#1790) — stay credited.
-    #[test]
-    fn import_failure_signatures_are_narrow() {
-        assert!(import_failure_signature("ModuleNotFoundError: No module named 'x'").is_some());
-        assert!(import_failure_signature("ImportError: undefined symbol: foo").is_some());
-        assert!(
-            import_failure_signature("./app: error while loading shared libraries: libz.so.1")
-                .is_some()
-        );
-        assert!(import_failure_signature("Error: Cannot find module 'left-pad'").is_some());
-        assert!(import_failure_signature("assertion failed: `(left == right)`").is_none());
-        assert!(
-            import_failure_signature("cat: /etc/nginx/ssl/cert.pem: No such file or directory")
-                .is_none()
-        );
-        assert!(
-            import_failure_signature("error[E0425]: cannot find function `retry_delays`").is_none()
-        );
     }
 
     #[tokio::test]
