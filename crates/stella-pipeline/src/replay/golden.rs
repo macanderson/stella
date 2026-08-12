@@ -246,6 +246,36 @@ impl GoldenTrajectory {
     /// Structurally diff a candidate run against this golden — the golden is
     /// the left-hand side, so a diff's `left` is what was expected and `right`
     /// is what the run produced.
+    ///
+    /// # The comparison is structural on purpose, and a fixture field is not
+    /// what it guards
+    ///
+    /// This compares [`super::event_signature`] sequences, so most of each
+    /// event's *payload* is invisible to it — and that is deliberate, not an
+    /// oversight. A golden is compared against a freshly recorded run, and a
+    /// fresh run legitimately differs in every magnitude it carries: a
+    /// `duration_ms` of 1 against 0, a cost that rounds differently, a
+    /// streaming answer chunked into a different number of deltas. A
+    /// byte-exact comparison would fail on all of those and prove nothing
+    /// about behaviour, so it would be turned off within a week — which is a
+    /// worse guarantee than a narrower one that stays on.
+    ///
+    /// **So a stale payload field in a committed fixture is worth nothing to
+    /// this comparison, and #2917 is the proof:** the flip oracle's snapshot
+    /// field was renamed `flip_achieved` → `flip` by #2556 and the fixture
+    /// kept the old spelling for months, passing every run. The field was
+    /// never *read* here, so nothing could have noticed.
+    ///
+    /// The hole that closes is a different one, and it is closed elsewhere:
+    /// a committed fixture must be in **canonical serialized form** — the
+    /// exact bytes [`GoldenTrajectory::render`] produces for the events it
+    /// parses to. That is a property of the fixture alone, so it is stable
+    /// against every volatile field above, and it fails on any wire rename,
+    /// addition or removal in the recorded payload. It is enforced by
+    /// `pipeline::tests::golden::every_committed_golden_is_in_canonical_form`.
+    /// Between the two: this method answers "did the run's shape change", and
+    /// that test answers "does the fixture still spell the protocol the way
+    /// this build writes it".
     pub fn diff(&self, run: &[AgentEvent]) -> Vec<StreamDiff> {
         structural_diff(&self.events, run)
     }

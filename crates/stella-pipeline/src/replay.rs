@@ -796,10 +796,31 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::ContextWrite { .. } => "context_write".to_string(),
         AgentEvent::MediaProgress { kind, .. } => format!("media_progress:{kind:?}"),
         AgentEvent::MediaComplete { .. } => "media_complete".to_string(),
+        // The verdict's own answer, plus the two fields of the ladder snapshot
+        // that are *decisions* rather than measurements: which rung the ladder
+        // came to rest on, and which way the flip oracle went. Everything else
+        // in the snapshot — line counts, budgets, diagnostic tallies, the
+        // summary prose — is magnitude or wording, and is dropped for exactly
+        // the reason a cost is.
+        //
+        // The rung and the flip are here because without them the signature
+        // could not fail on the thing a verdict *is* (#2917): the whole ladder
+        // payload was invisible to the comparison, so a run that came to rest
+        // on a different rung, or an oracle that stopped observing a flip,
+        // matched a golden recorded before either changed. `none` is a
+        // distinct token from every rung and every flip state, so an absent
+        // snapshot stays distinguishable from a present one — a pre-#865
+        // golden carries no ladder and must not read as one that does.
         AgentEvent::Verdict { passed, evidence } => {
+            let ladder = evidence.ladder.as_ref();
             format!(
-                "verdict:passed={},deterministic={}",
-                passed, evidence.deterministic
+                "verdict:passed={},deterministic={},rung={},flip={}",
+                passed,
+                evidence.deterministic,
+                ladder
+                    .and_then(|ladder| ladder.rung)
+                    .map_or("none", stella_protocol::LadderRung::as_str),
+                ladder.map_or("none", |ladder| ladder.flip.as_str()),
             )
         }
         AgentEvent::ScopeReview { .. } => "scope_review".to_string(),
