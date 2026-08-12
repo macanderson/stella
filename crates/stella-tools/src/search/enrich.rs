@@ -239,7 +239,7 @@ fn body_block(
     if quoted.is_empty() {
         return None;
     }
-    let elided = u32::try_from(end).map_or(false, |end| end < span.end_line);
+    let elided = u32::try_from(end).is_ok_and(|end| end < span.end_line);
     let mut block = format!("    body of `{}` ({path}:{start}-{end}):", symbol.name);
     for line in quoted {
         block.push('\n');
