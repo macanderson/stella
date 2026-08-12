@@ -91,7 +91,10 @@ use private_state::resolve_context_db_path;
 use projection::{is_suppressed_local_frame, project_recalled_frame};
 pub use recall::inject_recall_block;
 #[cfg(test)]
-use recall::{ab_control_turn, goal_path_anchors, render_context_section, turn_path_tokens};
+use recall::{
+    ab_control_turn, goal_path_anchors, render_context_section, render_today_section,
+    turn_path_tokens,
+};
 #[cfg(test)]
 pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{

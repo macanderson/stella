@@ -433,7 +433,11 @@ pub(crate) fn assemble_system_prompt(
 /// dialect (#2692). Every value is session-constant (a process cannot change
 /// its OS, and the workspace root is fixed at session open), so the block is
 /// compatible with the byte-stable prefix discipline (L-E8); the one
-/// genuinely volatile candidate, today's date, is deliberately absent.
+/// genuinely volatile candidate, today's date, is deliberately absent — it
+/// rides the volatile recall block instead
+/// (`crate::memory::recall::render_today_section`, #2901), which is the only
+/// place the knowledge-cutoff staleness clause below gets a second operand
+/// to measure against.
 ///
 /// That is the admission boundary, stated once so the next candidate line is
 /// judged against it rather than by taste (#2692, #2722): the block carries

@@ -245,6 +245,71 @@ fn recall_section_without_memories_never_asks_for_citations() {
     assert!(render_context_section(&[]).is_none());
 }
 
+/// Witness for #2901: the model is handed a knowledge cutoff
+/// (`crate::agent::prompt::append_session_environment`) but never a "now" to
+/// measure it against. `render_today_section` is that second operand, and it
+/// must actually vary with the clock it is given — a constant string would
+/// satisfy every other assertion in this file while leaving the gap open.
+///
+/// The clock is injected as a plain `i64`, never read via `SystemTime::now()`
+/// inside the renderer, which is what makes this provable without racing
+/// real time or waiting for a UTC midnight in CI.
+#[test]
+fn todays_date_section_tracks_the_injected_clock_not_the_wall_clock() {
+    // 2026-08-11T00:00:00Z and the same instant one day later.
+    let day_one = 1_786_406_400;
+    let day_two = day_one + 86_400;
+
+    let first = render_today_section(day_one);
+    let second = render_today_section(day_two);
+
+    assert!(
+        first.contains("2026-08-11") && !first.contains("2026-08-12"),
+        "the section must name the day the injected clock reads: {first}"
+    );
+    assert!(
+        second.contains("2026-08-12") && !second.contains("2026-08-11"),
+        "a clock one day later must render a different day: {second}"
+    );
+    assert_ne!(
+        first, second,
+        "two instants a day apart must not render identical text"
+    );
+}
+
+/// Wiring witness for #2901: on a workspace with nothing else to recall (no
+/// memories, skills, drafts, or records), both doors a driver can take to
+/// inject the volatile block still carry today's date — the date is
+/// unconditional, unlike every other section in this block, because a model
+/// needs "now" on every turn to judge staleness, not only the turns that
+/// also recalled something.
+#[tokio::test]
+async fn an_otherwise_empty_recall_block_still_names_the_date() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+    let memory = SessionMemory::open(dir.path(), false).expect("session memory");
+
+    let full = memory
+        .recall_block("hello")
+        .await
+        .expect("the date section alone makes the block non-empty");
+    assert!(
+        full.contains("Today's date:"),
+        "the worker's block must name the date even with nothing else to \
+         recall: {full}"
+    );
+
+    let pipeline = memory
+        .pipeline_recall_block("hello")
+        .await
+        .expect("the pipeline door carries the same unconditional section");
+    assert!(
+        pipeline.contains("Today's date:"),
+        "the pipeline-driven turn's frames-free block must also name the \
+         date: {pipeline}"
+    );
+}
+
 #[test]
 fn graph_frame_projection_preserves_provider_and_origin_provenance() {
     let mut graph = contextgraph_frame(
