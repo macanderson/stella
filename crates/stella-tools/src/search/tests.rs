@@ -26,9 +26,34 @@ use crate::registry::Tool;
 /// answer's path and body before the search runs — see the witness itself.
 const QUESTION: &str = "removing sensitive credentials before they reach the log";
 
-/// The fixture: three files, one of which is the answer, and whose name and
+/// The file the question is about. Its name and body share no word with
+/// [`QUESTION`] — asserted by the witness before it searches.
+const ANSWER: &str = "src/hkey.rs";
+
+/// The file a *lexical* method answers with instead.
+///
+/// It is stuffed with the question's own surface words (`removing`, `before`,
+/// `they reach`, `the`) while being about queue arithmetic, so any strategy
+/// that matches text rather than meaning ranks it first. Without this decoy
+/// the fixture is only three files wide and a surface embedder can land on
+/// the right one by luck — which it did, in a run of this suite, while the
+/// witness reported success. A witness that passes for the wrong reason is
+/// worse than no witness, and this file is what makes the assertion
+/// load-bearing. `a_surface_embedder_cannot_answer_the_same_question` pins it.
+const DECOY: &str = "src/reaching.rs";
+
+/// The fixture: four files, one of which is the answer, and whose name and
 /// body share no word with [`QUESTION`].
 const FIXTURE: &[(&str, &str)] = &[
+    (
+        DECOY,
+        "//! Removing an element before they reach the end of the queue.\n\
+         pub struct Queue;\n\
+         pub fn removing_before_they_reach_the_end(queue: &mut Queue) {\n\
+         queue.reach_the_end();\n\
+         queue.removing_before();\n\
+         }\n",
+    ),
     (
         "src/hkey.rs",
         "//! Keeps confidential material out of emitted diagnostics.\n\
@@ -186,7 +211,7 @@ async fn one_search_call_answers_what_today_takes_several_tools() {
     // The premise that makes this test worth anything: no lexical route
     // exists from the question to the answer. If either assertion fires, the
     // fixture has become solvable by grep and the test below proves nothing.
-    let answer_path = "src/hkey.rs";
+    let answer_path = ANSWER;
     let body = fs::read_to_string(root.join(answer_path))
         .expect("read")
         .to_lowercase();
@@ -249,6 +274,40 @@ async fn one_search_call_answers_what_today_takes_several_tools() {
     // invariant 7 needs from output that reaches the prompt.
     let again = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
     assert_eq!(answer.hits, again.hits);
+
+    graph.shutdown();
+}
+
+/// The control that makes the witness above mean something.
+///
+/// A *surface* backend — one that compares text shape rather than meaning —
+/// must NOT reach the answer, or the witness is measuring a coincidence. This
+/// test exists because an earlier version of the fixture was small enough
+/// that `HashEmbedder` landed on the right file by luck and the witness went
+/// green anyway. It is the same control `stella-graph`'s
+/// `semantic_recall.rs::the_lexical_embedder_cannot_answer_the_same_question`
+/// runs, pointed at this tool's dispatch, and it fails the moment the fixture
+/// drifts back into being surface-solvable.
+#[tokio::test]
+async fn a_surface_embedder_cannot_answer_the_same_question() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let surface = stella_embed::HashEmbedder::default();
+    assert_eq!(
+        surface.similarity_posture(),
+        SimilarityPosture::Surface,
+        "this control is only meaningful against a backend that declares itself surface-only"
+    );
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&surface)).await;
+    assert_eq!(answer.strategies, vec![Strategy::Semantic]);
+    assert_ne!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some(ANSWER),
+        "a surface embedder reached the answer, so the witness proves nothing about MEANING — \
+         the fixture has become surface-solvable and needs a stronger decoy than {DECOY}"
+    );
 
     graph.shutdown();
 }
@@ -338,8 +397,12 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
     let (root, graph) = indexed_fixture(workspace.path());
     let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
 
+    // The hit blocks only. The two header lines are deliberately excluded:
+    // they *report* the depth ("… at depth 3"), so they are expected to
+    // differ between rungs, and asserting over them would test the report
+    // rather than the ladder.
     let block_at = |level: u8| {
-        content_of(&render(
+        let content = content_of(&render(
             Some(&graph),
             &root,
             QUESTION,
@@ -348,13 +411,20 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
                 depth: Depth::new(level),
                 budget: 200_000,
             },
-        ))
+        ));
+        content
+            .lines()
+            .skip_while(|line| !line.starts_with("via: "))
+            .skip(1)
+            .map(str::to_string)
+            .collect::<Vec<_>>()
     };
 
     for level in 1..Depth::MAX.level() {
         let shallow = block_at(level);
         let deep = block_at(level + 1);
-        for line in shallow.lines() {
+        assert!(!shallow.is_empty(), "depth {level} rendered no hit block");
+        for line in &shallow {
             assert!(
                 deep.contains(line),
                 "depth {} lost the line `{line}` that depth {level} rendered",
@@ -363,7 +433,7 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
         }
         assert!(
             deep.len() >= shallow.len(),
-            "depth {} rendered less than depth {level}",
+            "depth {} rendered fewer lines than depth {level}",
             level + 1
         );
     }
