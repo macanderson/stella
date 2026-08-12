@@ -64,6 +64,24 @@ def _totals(cells: list[dict[str, Any]]) -> dict[str, Any]:
     def total(key: str) -> float:
         return sum((c.get(key) or 0) for c in cells)
 
+    # `priced_cost` follows the #2132 null-poisoning rule, not a plain sum: a
+    # cell whose model could not be priced carries `priced_cost: None` (with
+    # `usage_measured: True`), and summing that as `0` would silently drop its
+    # spend, reporting a merged seat cheaper than reality with nothing marking
+    # it a subset. Report `None` — "unknown, never smaller" — whenever a
+    # measured cell was left unpriced, matching `telemetry.aggregate` and
+    # `series._seat_outcomes`. A cell that measured no usage at all does not
+    # poison (it has no tokens to be short by); `None` too when no cell had a
+    # priced model, so the column reads empty rather than as a free run.
+    if any(c.get("priced_cost") is None and c.get("usage_measured") for c in cells):
+        priced_cost: float | None = None
+    elif any(c.get("priced_cost") is not None for c in cells):
+        priced_cost = sum(
+            c["priced_cost"] for c in cells if c.get("priced_cost") is not None
+        )
+    else:
+        priced_cost = None
+
     return {
         "trials": len(cells),
         "infrastructure": sum(1 for c in cells if c.get("infrastructure")),
@@ -78,7 +96,7 @@ def _totals(cells: list[dict[str, Any]]) -> dict[str, Any]:
         "cache_read": total("cache_read"),
         "cache_write": total("cache_write"),
         "total_cost": total("total_cost"),
-        "priced_cost": total("priced_cost"),
+        "priced_cost": priced_cost,
     }
 
 
