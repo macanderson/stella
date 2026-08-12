@@ -1,5 +1,7 @@
 //! `grep` — search file contents with a regex. Shells to `rg` when present
-//! for speed; falls back to the system `grep -rn` otherwise.
+//! for speed; falls back to the system `grep -E` otherwise (see
+//! the `fallback` module, which owns that backend because its regex dialect differs
+//! from ripgrep's and the difference has to be handled, not inherited).
 //!
 //! Three independent caps bound what reaches the model, because
 //! `MAX_RESULTS` alone does not: ripgrep's `--max-count` is per FILE, so a
@@ -17,6 +19,8 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::process::Command;
 
 use crate::registry::Tool;
+
+mod fallback;
 
 const MAX_RESULTS: usize = 200;
 
@@ -360,7 +364,7 @@ impl Tool for Grep {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "pattern": { "type": "string", "description": "Regular expression to search for" },
+                    "pattern": { "type": "string", "description": "Regular expression to search for. Alternation `|`, groups, `+`, `?`, `{n,m}` and POSIX classes work on both backends. Rust-regex-only syntax (`\\d`, `\\w`, `\\s`, `\\b`, lazy `+?`, `(?i)`) needs ripgrep; without it the search is refused with an error naming the construct rather than answered wrongly." },
                     "path": { "type": "string", "description": "Subdirectory to search (default: workspace root)" },
                     "glob": { "type": "string", "description": "Restrict to files matching this glob (e.g. *.rs)" },
                     "type": { "type": "string", "description": "Restrict to a ripgrep file type (e.g. rust, py, ts). Ignored by the grep fallback when ripgrep is unavailable." },
@@ -551,110 +555,20 @@ impl Tool for Grep {
                 }
                 no_matches(self.footer, show_tip, root)
             }
+            // rg not installed — fall back to POSIX `grep`, which speaks a
+            // different regex dialect and therefore owns its own module.
             crate::exec::Captured::Unavailable => {
-                // rg not installed — fall back to grep
-                let mut grep = Command::new("grep");
-                grep.arg("-rn").arg("--color=never");
-                // Parity with the rg arm's `--glob !.git/`.
-                grep.arg("--exclude-dir=.git");
-                if let Some(g) = glob_filter {
-                    grep.arg("--include").arg(g);
+                fallback::Fallback {
+                    pattern,
+                    glob_filter,
+                    opts,
+                    search_dir: &search_dir,
+                    root,
+                    footer: self.footer,
+                    show_tip,
                 }
-                // `--type` has no `grep` equivalent — there is no file-type
-                // database to consult — so it is the one field this backend
-                // cannot honour. The schema says so rather than letting the
-                // two backends disagree silently, which is the trap the
-                // hidden-file divergence already sprang once.
-                if opts.case_insensitive {
-                    grep.arg("-i");
-                }
-                match opts.mode {
-                    OutputMode::Content => {
-                        // POSIX-portable spellings: BSD grep (macOS) has the
-                        // short forms but not the GNU long ones.
-                        if opts.before > 0 {
-                            grep.arg("-B").arg(opts.before.to_string());
-                        }
-                        if opts.after > 0 {
-                            grep.arg("-A").arg(opts.after.to_string());
-                        }
-                    }
-                    OutputMode::FilesWithMatches => {
-                        grep.arg("-l");
-                    }
-                    // `grep -c` counts matching LINES, not matches — it has no
-                    // `--count-matches`. Documented here rather than papered
-                    // over: the fallback's count can undercount a line with
-                    // two hits, and inventing a second counting pass in Rust
-                    // would make the two backends disagree in a different way.
-                    OutputMode::Count => {
-                        grep.arg("-c");
-                    }
-                }
-                // `-e <pattern>` for the same leading-`-` safety as rg above.
-                grep.arg("-e").arg(pattern).arg(&search_dir);
-                crate::subprocess_env::scrub_sensitive_env(&mut grep);
-                grep.stdout(std::process::Stdio::piped());
-                grep.stderr(std::process::Stdio::piped());
-                // Same cancellation backstop as the rg arm above.
-
-                match crate::exec::run_captured(grep, FALLBACK_SEARCH_TIMEOUT_SECS).await {
-                    crate::exec::Captured::TimedOut => ToolOutput::Error {
-                        message: format!(
-                            "grep timed out after {FALLBACK_SEARCH_TIMEOUT_SECS}s — narrow the \
-                             search with a `path` or `glob` filter"
-                        ),
-                    },
-                    crate::exec::Captured::Done(output) => {
-                        // `grep` has no `--max-columns`, so the column cap is
-                        // applied here; then the same byte-then-line order as
-                        // the rg arm.
-                        let text = crate::exec::truncate_middle(cap_columns(
-                            &String::from_utf8_lossy(&output.stdout),
-                        ));
-                        // Recursive `grep -c` emits a row per file WALKED,
-                        // including `path:0` for every file that did not
-                        // match; rg's `--count-matches` emits only files that
-                        // did. Dropping the zeros is what makes the two
-                        // backends answer the same question — without it a
-                        // count search in a large tree is mostly noise, and
-                        // the `MAX_RESULTS` cap would be spent on zeros.
-                        let text = if opts.mode == OutputMode::Count {
-                            drop_zero_counts(&text)
-                        } else {
-                            text
-                        };
-                        if !text.is_empty() {
-                            let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
-                            let mut result = lines.join("\n");
-                            // Say so when the cap bit, exactly as the rg arm
-                            // does: a silently truncated match list reads to
-                            // the agent as "there are no other call sites".
-                            if lines.len() == MAX_RESULTS {
-                                let unit = opts.mode.unit(opts.has_context());
-                                result.push_str(&format!(
-                                    "\n... (showing first {MAX_RESULTS} {unit})"
-                                ));
-                            }
-                            if let Some(map) =
-                                code_map_for(self.footer, show_tip, &search_dir, root, &lines)
-                            {
-                                result.push_str(&map);
-                            }
-                            return ToolOutput::Ok { content: result };
-                        }
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        if output.status.code() == Some(2) && is_pattern_error(&stderr) {
-                            return ToolOutput::Error {
-                                message: format!("grep error: {}", first_error_line(&stderr)),
-                            };
-                        }
-                        no_matches(self.footer, show_tip, root)
-                    }
-                    crate::exec::Captured::Unavailable => ToolOutput::Error {
-                        message: "grep failed: neither `rg` nor `grep` is available".into(),
-                    },
-                }
+                .run()
+                .await
             }
         }
     }
