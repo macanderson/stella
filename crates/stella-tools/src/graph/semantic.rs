@@ -300,13 +300,18 @@ pub const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
 /// a caller branches on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WarmOutcome {
-    /// The pass ran. `remaining` is what the cap (or an unreadable file) left
-    /// for the lazy path to pick up on the first semantic query.
+    /// The pass ran. `remaining` is what the cap left for the lazy path to
+    /// pick up on the first semantic query.
     Warmed {
         /// Files embedded by this pass.
         embedded: usize,
         /// Indexed files still carrying no vector under this fingerprint.
         remaining: usize,
+        /// How many of those the pass could not read from disk. Separated from
+        /// `remaining` because the two want different sentences: the cap's
+        /// leftovers embed themselves on the next query, and an unreadable
+        /// file never will (#3016).
+        unreadable: usize,
     },
     /// The pass stopped early. `reason` is prose meant to be shown verbatim;
     /// whatever was embedded before the failure is committed and counted.
@@ -363,10 +368,11 @@ async fn warm_opened(
 ) -> WarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut embedded = 0usize;
+    let mut unreadable = 0usize;
     while embedded < limit {
         let want = BATCH.min(limit - embedded);
-        let pending = match graph.files_pending_embedding(&fingerprint, want) {
-            Ok(pending) => pending,
+        let scan = match graph.files_pending_embedding(&fingerprint, want) {
+            Ok(scan) => scan,
             Err(error) => {
                 return WarmOutcome::Failed {
                     embedded,
@@ -374,17 +380,21 @@ async fn warm_opened(
                 };
             }
         };
-        // Empty means done — or that every remaining candidate vanished from
-        // disk between the index pass and now, which `pending` skips. Either
-        // way there is nothing this pass can embed, and `remaining` below
-        // reports the gap rather than spinning on it.
-        if pending.is_empty() {
+        // Overwritten, never summed: each round rescans the pending set from
+        // the start, so an unreadable file is stepped over again every round
+        // and adding the counts would multiply it by the round count. The last
+        // round's figure is the one that walked furthest.
+        unreadable = unreadable.max(scan.unreadable);
+        // No files means the pending set is exhausted — a window landing on
+        // unreadable rows keeps filling past them, so this is genuinely done
+        // rather than a scan that gave up early (#3016).
+        if scan.files.is_empty() {
             break;
         }
-        if let Err(reason) = embed_batch(graph, embedder, &fingerprint, &pending).await {
+        if let Err(reason) = embed_batch(graph, embedder, &fingerprint, &scan.files).await {
             return WarmOutcome::Failed { embedded, reason };
         }
-        embedded += pending.len();
+        embedded += scan.files.len();
     }
 
     let total = graph.file_count().unwrap_or(0);
@@ -392,6 +402,7 @@ async fn warm_opened(
     WarmOutcome::Warmed {
         embedded,
         remaining: total.saturating_sub(stored),
+        unreadable,
     }
 }
 
@@ -401,14 +412,14 @@ async fn catch_up_embeddings(
     embedder: &dyn Embedder,
     fingerprint: &str,
 ) -> Result<(), String> {
-    let pending = graph
+    let scan = graph
         .files_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_PASS)
         .map_err(|error| format!("cannot read the code graph: {error}"))?;
-    if pending.is_empty() {
+    if scan.files.is_empty() {
         return Ok(());
     }
 
-    for chunk in pending.chunks(BATCH) {
+    for chunk in scan.files.chunks(BATCH) {
         embed_batch(graph, embedder, fingerprint, chunk).await?;
     }
     Ok(())

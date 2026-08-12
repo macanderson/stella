@@ -64,7 +64,7 @@ fn every_indexed_file_is_pending_until_it_is_embedded() {
         indexed_workspace(&[("a.rs", "fn alpha() {}\n"), ("b.rs", "fn beta() {}\n")]);
     let root = ws.path().canonicalize().expect("canonicalize");
 
-    let first = pending(&conn, &root, FP, 10).expect("pending");
+    let first = pending(&conn, &root, FP, 10).expect("pending").files;
     assert_eq!(
         first.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["a.rs", "b.rs"],
@@ -85,7 +85,10 @@ fn every_indexed_file_is_pending_until_it_is_embedded() {
         .collect();
     assert_eq!(store_vectors(&mut conn, FP, &rows).expect("store"), 2);
     assert!(
-        pending(&conn, &root, FP, 10).expect("pending").is_empty(),
+        pending(&conn, &root, FP, 10)
+            .expect("pending")
+            .files
+            .is_empty(),
         "an embedded file is not embedded twice"
     );
     assert_eq!(count(&conn, FP).expect("count"), 2);
@@ -98,6 +101,7 @@ fn changing_a_file_makes_it_pending_again_without_touching_the_other() {
     let root = ws.path().canonicalize().expect("canonicalize");
     let rows: Vec<FileVector> = pending(&conn, &root, FP, 10)
         .expect("pending")
+        .files
         .iter()
         .map(|p| FileVector {
             path: p.path.clone(),
@@ -110,7 +114,7 @@ fn changing_a_file_makes_it_pending_again_without_touching_the_other() {
     fs::write(ws.path().join("a.rs"), "fn alpha_renamed() {}\n").expect("write");
     store::index_tree(&mut conn, &root, &Grammars::load().expect("grammars")).expect("reindex");
 
-    let stale = pending(&conn, &root, FP, 10).expect("pending");
+    let stale = pending(&conn, &root, FP, 10).expect("pending").files;
     assert_eq!(
         stale.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["a.rs"],
@@ -127,7 +131,7 @@ fn a_different_fingerprint_re_embeds_rather_than_mixing_vector_spaces() {
     let root = ws.path().canonicalize().expect("canonicalize");
     let rows = vec![FileVector {
         path: "a.rs".into(),
-        content_sha256: pending(&conn, &root, FP, 10).expect("pending")[0]
+        content_sha256: pending(&conn, &root, FP, 10).expect("pending").files[0]
             .content_sha256
             .clone(),
         vector: vec![1.0, 0.0, 0.0, 0.0],
@@ -148,13 +152,114 @@ fn a_different_fingerprint_re_embeds_rather_than_mixing_vector_spaces() {
         "the other embedder's ranking must not see this vector"
     );
     assert_eq!(
-        pending(&conn, &root, OTHER_FP, 10).expect("pending").len(),
+        pending(&conn, &root, OTHER_FP, 10)
+            .expect("pending")
+            .files
+            .len(),
         1,
         "the file is pending again under the new fingerprint"
     );
     // ...and the original fingerprint still answers, so the re-embed is
     // incremental rather than a wipe.
     assert_eq!(count(&conn, FP).expect("count"), 1);
+}
+
+/// #3016: the window is `limit` *embeddable* files, not `limit` rows that are
+/// then filtered. Truncating in SQL and skipping afterwards meant a run of
+/// unreadable files at the head of the path order returned nothing at all —
+/// which the eager `stella init` loop reads as "no work left" and stops on,
+/// leaving every readable file behind it unembedded.
+#[test]
+fn a_run_of_unreadable_files_does_not_consume_the_window() {
+    let (ws, conn) = indexed_workspace(&[
+        ("a.rs", "fn a() {}\n"),
+        ("b.rs", "fn b() {}\n"),
+        ("c.rs", "fn c() {}\n"),
+        ("d.rs", "fn d() {}\n"),
+    ]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    // Deleted from disk but still indexed — exactly what the graph holds
+    // between a file being removed and the next `index_all` pruning its row.
+    // They sort ahead of every readable file, so they are what the old SQL
+    // `LIMIT` spent itself on.
+    fs::remove_file(ws.path().join("a.rs")).expect("remove");
+    fs::remove_file(ws.path().join("b.rs")).expect("remove");
+
+    let scan = pending(&conn, &root, FP, 2).expect("pending");
+    assert_eq!(
+        scan.files
+            .iter()
+            .map(|p| p.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c.rs", "d.rs"],
+        "the scan fills past the unreadable rows instead of truncating on them"
+    );
+    assert_eq!(
+        scan.unreadable, 2,
+        "and says how many it stepped over, so a caller reporting leftovers \
+         can name the reason instead of blaming the cap"
+    );
+}
+
+/// The step-over keeps the path ordering, so the resume contract below still
+/// holds when unreadable files are interleaved with readable ones.
+#[test]
+fn stepping_over_an_unreadable_file_keeps_the_pass_ordered_by_path() {
+    let (ws, mut conn) = indexed_workspace(&[
+        ("a.rs", "fn a() {}\n"),
+        ("b.rs", "fn b() {}\n"),
+        ("c.rs", "fn c() {}\n"),
+        ("d.rs", "fn d() {}\n"),
+    ]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    fs::remove_file(ws.path().join("b.rs")).expect("remove");
+
+    let first = pending(&conn, &root, FP, 2).expect("pending");
+    assert_eq!(
+        first
+            .files
+            .iter()
+            .map(|p| p.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a.rs", "c.rs"]
+    );
+    let rows: Vec<FileVector> = first
+        .files
+        .iter()
+        .map(|p| FileVector {
+            path: p.path.clone(),
+            content_sha256: p.content_sha256.clone(),
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+        })
+        .collect();
+    store_vectors(&mut conn, FP, &rows).expect("store");
+
+    let second = pending(&conn, &root, FP, 2).expect("pending");
+    assert_eq!(
+        second
+            .files
+            .iter()
+            .map(|p| p.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["d.rs"],
+        "the second pass resumes rather than re-offering what it already saw"
+    );
+    assert_eq!(second.unreadable, 1, "and still steps over the deleted row");
+}
+
+/// A pending set that is *entirely* unreadable comes back with no files —
+/// which is the signal the eager loop stops on, and now the honest one: the
+/// scan reached the end of the set rather than giving up inside it.
+#[test]
+fn an_entirely_unreadable_pending_set_reports_no_files_and_the_count() {
+    let (ws, conn) = indexed_workspace(&[("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")]);
+    let root = ws.path().canonicalize().expect("canonicalize");
+    fs::remove_file(ws.path().join("a.rs")).expect("remove");
+    fs::remove_file(ws.path().join("b.rs")).expect("remove");
+
+    let scan = pending(&conn, &root, FP, 200).expect("pending");
+    assert!(scan.files.is_empty());
+    assert_eq!(scan.unreadable, 2);
 }
 
 #[test]
@@ -166,7 +271,7 @@ fn a_capped_pass_resumes_where_it_stopped() {
     ]);
     let root = ws.path().canonicalize().expect("canonicalize");
 
-    let first = pending(&conn, &root, FP, 2).expect("pending");
+    let first = pending(&conn, &root, FP, 2).expect("pending").files;
     assert_eq!(
         first.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["a.rs", "b.rs"]
@@ -181,7 +286,7 @@ fn a_capped_pass_resumes_where_it_stopped() {
         .collect();
     store_vectors(&mut conn, FP, &rows).expect("store");
 
-    let second = pending(&conn, &root, FP, 2).expect("pending");
+    let second = pending(&conn, &root, FP, 2).expect("pending").files;
     assert_eq!(
         second.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["c.rs"]
@@ -206,6 +311,7 @@ fn ranking_is_ordered_by_similarity_and_bounded_by_the_floor() {
     let root = ws.path().canonicalize().expect("canonicalize");
     let hashes: Vec<(String, String)> = pending(&conn, &root, FP, 10)
         .expect("pending")
+        .files
         .into_iter()
         .map(|p| (p.path, p.content_sha256))
         .collect();
@@ -243,6 +349,7 @@ fn pruning_a_file_takes_its_vector_with_it() {
     let root = ws.path().canonicalize().expect("canonicalize");
     let rows: Vec<FileVector> = pending(&conn, &root, FP, 10)
         .expect("pending")
+        .files
         .iter()
         .map(|p| FileVector {
             path: p.path.clone(),
