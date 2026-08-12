@@ -1113,7 +1113,36 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
             run_id, jobs, dest, artifacts=args.artifacts
         )
         print(f"results   : {fetched} file(s) -> {dest}")
+        _assemble_fetched(dest)
     return 0 if final.failed == 0 else 1
+
+
+def _assemble_fetched(dest: Path) -> None:
+    """Fold what was just fetched into one match, and say where it landed.
+
+    A cloud run is submitted as one match and comes back as one Batch job per
+    trial; leaving it that way puts 178 contests in the operator's arena for a
+    single 89-task two-arm experiment. The fold itself lives in
+    :mod:`.assemble` because it is a pure local operation over the downloaded
+    files — this call is only the convenience of not having to type a second
+    command. A failure here never fails the fetch: the artifacts are on disk,
+    which is the part that cost money, and `arenabench assemble <dir>` retries
+    the free part.
+    """
+    from .assemble import AssembleError, assemble_run
+
+    try:
+        assembly = assemble_run(dest)
+    except AssembleError as exc:
+        print(f"assembled : not yet — {exc}")
+        return
+    print(
+        f"assembled : {assembly.trials} trial(s) into one match "
+        f"({assembly.match_id})"
+    )
+    for warning in assembly.warnings:
+        print(f"  !! {warning}")
+    print(f"open with : arenabench serve --workspace {dest}")
 
 
 def _cmd_cloud_status(args: Any, executor: CloudExecutor | None = None) -> int:
@@ -1142,6 +1171,7 @@ def _cmd_cloud_fetch(args: Any, executor: CloudExecutor | None = None) -> int:
         args.run_id, record["jobs"], dest, artifacts=args.artifacts
     )
     print(f"results   : {fetched} file(s) -> {dest}")
+    _assemble_fetched(dest)
     return 0
 
 

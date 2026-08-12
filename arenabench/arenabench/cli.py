@@ -1369,9 +1369,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # The AWS Batch executor registers its own verb tree; everything cloud
     # lives in .cloud (boto3 stays a lazy, optional import there).
+    from .assemble import register_cli as _register_assemble_cli
     from .cloud import register_cli as _register_cloud_cli
 
     _register_cloud_cli(subparsers)
+    # Assembly is a local fold over a fetched directory and knows nothing about
+    # AWS, so it is its own verb rather than a `cloud` one: it must stay
+    # runnable on a run fetched months ago, and on a machine with no
+    # credentials at all.
+    _register_assemble_cli(subparsers)
 
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
