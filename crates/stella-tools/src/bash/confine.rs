@@ -479,6 +479,20 @@ const READ_ONLY_LEADERS: &[&str] = &[
 /// shell parser, so a leader that is itself the *value* of a flag
 /// (`find . -exec cp {} /app \;`) is judged by whatever word starts its own
 /// segment, which is the conservative direction: it still refuses.
+/// Whether `word` is an output redirection operator — standalone (`>`, `>>`)
+/// or attached to its target, since [`shell_words`](super::shell_words) does
+/// not split `>`/`<` and so leaves `>/app/f`, `>>/app/f`, `2>/app/f`,
+/// `&>/app/f` as a single word. Any of these writes to whatever follows, so a
+/// read-only leader (`echo`, `cat`, `printf`, …) cannot launder them: an
+/// attached redirect into the graded tree must still refuse, exactly as the
+/// spaced form does (#2928).
+fn is_output_redirect(word: &str) -> bool {
+    // Strip a leading fd/`&` prefix (`2>`, `1>>`, `&>`, `>&`) so the attached
+    // and spaced forms collapse to a `>`-led remainder.
+    let rest = word.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&');
+    rest.starts_with('>')
+}
+
 fn only_reads_graded_tree(command: &str, graded_root: &Path) -> bool {
     let Some(needle) = graded_root.to_str() else {
         return false;
@@ -492,7 +506,7 @@ fn only_reads_graded_tree(command: &str, graded_root: &Path) -> bool {
         }
         *mentioned = true;
         let leader = segment.iter().find(|w| !w.starts_with('-'));
-        let redirects = segment.iter().any(|w| w == ">" || w == ">>");
+        let redirects = segment.iter().any(|w| is_output_redirect(w));
         if redirects || !leader.is_some_and(|l| READ_ONLY_LEADERS.contains(&l.as_str())) {
             *all_safe = false;
         }
@@ -673,6 +687,12 @@ mod tests {
         let (confined, root) = candidate();
         for command in [
             "cat /app/config.txt > /app/backup.txt",
+            // Attached redirects (no space before the target) must refuse too:
+            // `shell_words` leaves `>/app/f` as one word, so a read-only leader
+            // cannot launder the write.
+            "echo pwned >/app/graded_file",
+            "cat /app/a >>/app/b",
+            "printf x >/app/out",
             "ls /app && rm -rf /app/pyknotid",
             "cat /app/x; cp y /app/y",
         ] {
