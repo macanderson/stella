@@ -695,7 +695,7 @@ async fn run_goal_pipeline_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,
     custom_tools: &[CustomTool],
-    registry: &ToolRegistry,
+    registry: &std::sync::Arc<ToolRegistry>,
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
     calibration: &CalibrationMap,
@@ -820,7 +820,10 @@ async fn run_goal_pipeline_turn(
             registry_options,
             active_rules.clone(),
             mcp,
-            Some(stella_core::EventSender::new(tx.clone())),
+            SessionPlane::new(
+                stella_core::EventSender::new(tx.clone()),
+                std::sync::Arc::clone(registry),
+            ),
         )?;
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the recall port (as on the one-shot

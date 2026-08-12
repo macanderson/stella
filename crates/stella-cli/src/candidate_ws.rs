@@ -309,6 +309,16 @@ pub(crate) struct GitCandidateWorkspaces {
     /// rule denials evaluating and blocking exactly as before — they simply
     /// never land as typed `PolicyDecision` events.
     events: Option<stella_core::EventSender>,
+    /// The **session** registry, whose file ledger is the one persisted as
+    /// `files_touched` and read for `execution_reflection.wrote_files`.
+    ///
+    /// Handed to every candidate this port creates so an adoption can
+    /// attribute what it delivered back into it (#2907). Without it the
+    /// session's ledger records only what happened *outside* the candidate —
+    /// the research stage's reads — and the durable record of an isolated run
+    /// says it changed nothing. `None` is a host that keeps no such ledger,
+    /// and makes `attribute_adopted` a no-op.
+    session_registry: Option<Arc<stella_tools::ToolRegistry>>,
 }
 
 impl GitCandidateWorkspaces {
@@ -327,7 +337,20 @@ impl GitCandidateWorkspaces {
             active_rules,
             candidate_mcp: None,
             events: None,
+            session_registry: None,
         }
+    }
+
+    /// Attribute every candidate's adopted changes back into the session's
+    /// file ledger (#2907) — see [`Self::session_registry`]. Without this the
+    /// port still works exactly as before and the durable record stays blind
+    /// to whatever the candidates changed.
+    pub(crate) fn with_session_registry(
+        mut self,
+        registry: Arc<stella_tools::ToolRegistry>,
+    ) -> Self {
+        self.session_registry = Some(registry);
+        self
     }
 
     /// Journal the policy decisions made inside every candidate this port
@@ -530,6 +553,7 @@ impl GitCandidateWorkspaces {
                         events: self.events.clone(),
                         announced: AtomicBool::new(false),
                     },
+                    session_registry: self.session_registry.clone(),
                     omitted,
                 })
             }
@@ -715,6 +739,15 @@ impl RepoStatusPort for SnapshotRepoStatus {
     }
 }
 
+/// The audit-log reason recorded against every file an adoption attributes
+/// back into the session ledger (#2907). Fixed text, like every other
+/// deterministic reason in this crate: the model authored the edit inside the
+/// candidate and its own stated reason went into the candidate's ledger, which
+/// is discarded — so inventing one here would be prose nobody wrote. What this
+/// row honestly knows is *how* the change reached the session's tree.
+const ADOPTED_TOUCH_REASON: &str =
+    "adopted into the working tree from an isolated candidate workspace";
+
 /// Whether this candidate's mutations ride the turn's event channel live.
 ///
 /// The registry carries the latch (`attach_events` announces everything,
@@ -807,6 +840,10 @@ pub(crate) struct GitCandidateWorkspace {
     task_board: task_events::CandidateTaskBoard,
     /// This candidate's change-announce latch — see [`ChangeAnnounce`].
     changes: ChangeAnnounce,
+    /// The session registry this candidate's adopted changes are attributed
+    /// back into — see [`GitCandidateWorkspaces::session_registry`] and
+    /// [`CandidateWorkspace::attribute_adopted`].
+    session_registry: Option<Arc<stella_tools::ToolRegistry>>,
     /// Ignored paths present in the real tree and elided from this snapshot —
     /// see [`snapshot_gaps`]. A display list for the candidate's context, not
     /// a set anything branches on.
@@ -1065,6 +1102,46 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         self.adopt_inner(withhold).await
+    }
+
+    fn attribute_adopted(&self, adopted: &[AdoptedChange]) {
+        let Some(registry) = &self.session_registry else {
+            return;
+        };
+        for change in adopted {
+            let op = match change.kind {
+                stella_protocol::FileChangeKind::Created => {
+                    stella_tools::file_touch::FileOp::Create
+                }
+                stella_protocol::FileChangeKind::Modified => {
+                    stella_tools::file_touch::FileOp::Update
+                }
+                stella_protocol::FileChangeKind::Deleted => {
+                    stella_tools::file_touch::FileOp::Delete
+                }
+                // Adoption reports what a patch DID, and a patch cannot read.
+                // Skipped rather than mapped onto a mutating op, for the same
+                // reason `delivery::delivered` counts it nowhere: an
+                // impossible row must stay visibly absent, never inflate a
+                // real number.
+                stella_protocol::FileChangeKind::Read => continue,
+            };
+            // Adoption's paths are relative to the repository TOPLEVEL (the
+            // tree `git apply` ran against), while the session registry is
+            // rooted at the session workspace, which may be a subdirectory of
+            // it. Rejoining against the toplevel and letting the registry
+            // re-normalize is what makes the two agree — and makes a change
+            // outside the session root drop out rather than be recorded under
+            // a path that escapes it.
+            let absolute = self.toplevel.join(&change.path);
+            let _ = registry.attribute_external_change(
+                &absolute,
+                op,
+                ADOPTED_TOUCH_REASON,
+                u64::from(change.added),
+                u64::from(change.removed),
+            );
+        }
     }
 
     async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {

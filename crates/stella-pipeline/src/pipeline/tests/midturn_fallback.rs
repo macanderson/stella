@@ -284,28 +284,40 @@ async fn an_exhausted_execute_turn_re_resolves_the_worker_and_finishes_on_the_fa
     let (outcome, events) = run(&router, &providers).await;
 
     let outcome = outcome.expect("the run must not fail: a healthy fallback was configured");
-    // #2908: no test command is configured here, so the run now buys one
-    // continue round before settling `Unverified` — a second, independent
-    // engine turn that re-resolves the worker role and hits the same open
-    // breaker on `sick`. L-M7 is "never silent," not "never twice": the
-    // second swap is exactly as real as the first, and not announcing it
-    // would be the violation.
+    // **The #2918 witness.** No test command is configured here, so since
+    // #2915 the run buys a continue round before settling `Unverified` — a
+    // second, independent engine turn off the same candidate engine. The
+    // latch is scoped to that engine (`driver::model_fallback`), so the
+    // second turn starts on the replacement the first turn already settled
+    // on: it never touches `sick`, and there is no second swap to announce.
+    //
+    // On `main` the latch lived in a `OnceLock` that `with_turn_halt`
+    // COPIED per turn, so the swap died with the turn that made it and this
+    // reads `[(sick, healthy), (sick, healthy)]` with `sick.engine_calls()
+    // == 2` — one wasted round trip against a provider already known dead,
+    // plus a duplicate user-visible `Error`.
     assert_eq!(
         fallbacks(&events),
-        vec![
-            ("sick".to_string(), "healthy".to_string()),
-            ("sick".to_string(), "healthy".to_string())
-        ],
-        "one announced swap per engine turn, sick -> healthy (L-M7: never silent): {events:?}"
+        vec![("sick".to_string(), "healthy".to_string())],
+        "exactly one announced swap for the whole run, sick -> healthy: a settled route is \
+         settled for the candidate, and re-announcing it every turn is noise, not L-M7 \
+         honesty: {events:?}"
     );
     assert_eq!(
         sick.engine_calls(),
-        2,
-        "Terminal bails the retry ladder on attempt 1, once per engine turn"
+        1,
+        "the dead provider is paid ONCE: the first turn's ladder establishes it is down, and \
+         no later turn on this engine may re-discover that at the cost of another round trip"
     );
+    // The guard that stops the assertions above from being satisfied by the
+    // run simply getting shorter. `sick` being called once is only evidence
+    // of a surviving latch if a second engine turn actually happened — and
+    // if it did, `healthy` is the provider that served it.
     assert!(
-        healthy.engine_calls() >= 1,
-        "the replacement has to actually serve the turn, not just be resolved"
+        healthy.engine_calls() >= 2,
+        "this witness needs a MULTI-turn run to say anything; the replacement served only \
+         {} engine turn(s)",
+        healthy.engine_calls()
     );
     assert!(
         healthy

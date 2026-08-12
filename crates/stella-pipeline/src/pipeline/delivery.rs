@@ -283,6 +283,15 @@ impl Pipeline<'_> {
                             root: Some(ws.root().to_string()),
                             delivery: delivered(&adopted, proven),
                         });
+                        // The same rows, into the host's durable record of what
+                        // this session changed (#2907). Before the loop below
+                        // consumes them, and beside it on purpose: the stream
+                        // and the durable record are two projections of one
+                        // adoption, and they were disagreeing — `files_touched`
+                        // knew only the reads that happened outside the
+                        // candidate, so a session that rewrote files persisted
+                        // as a session that wrote none.
+                        ws.attribute_adopted(&adopted);
                         // Surface the adopted changes on the event stream: the
                         // winner's edits happened inside the snapshot, so no
                         // FileChange was emitted for the real tree yet. The

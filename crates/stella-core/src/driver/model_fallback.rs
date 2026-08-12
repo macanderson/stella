@@ -26,7 +26,7 @@
 //! resolution that lands back on the failed provider is treated as "no
 //! fallback" and the turn aborts exactly as it did before this module.
 //!
-//! # The latch
+//! # The latch, and why its scope is the engine rather than the turn
 //!
 //! `Engine::provider_override` is a set-once cell, and the set IS the
 //! bound: at most one swap per engine, ever, so two sick providers can
@@ -37,6 +37,33 @@
 //! primary. Like the overflow ladder, the latch is deliberately not
 //! checkpointed: a resumed turn starts the allowance over, which only
 //! re-permits a bounded amount of work.
+//!
+//! "Persists across the engine's remaining turns" was the stated intent from
+//! #2679 and was **not** what the code did until #2918. The cell was a plain
+//! `OnceLock` that [`Engine::with_turn_halt`] and
+//! [`Engine::with_turn_instance`] *copied*, and the pipeline's execute stage
+//! builds one such copy per turn off a single `&Engine`. A swap latched
+//! inside turn one therefore died with turn one: turn two started on the
+//! roster's original choice, paid the dead provider's full retry ladder over
+//! again, and announced a second swap of its own. That is one wasted round
+//! trip and one extra user-visible `Error` per turn on a run that had
+//! already established the provider is down — and #2915, which buys the
+//! worker extra turns on an unproven result, made it the ordinary case
+//! rather than a rarity. The cell is now an `Arc<OnceLock<_>>`, so every
+//! copy is the same cell.
+//!
+//! **The scope is the engine, which is the candidate — never the session and
+//! never the process.** That is the deliberate answer to "a transient outage
+//! should not permanently re-route a long run": an engine is constructed per
+//! candidate (`Pipeline::run_shared_candidates`, `fanout_stage`) and per CLI
+//! session loop, so a latch expires with the unit of work that observed the
+//! failure. Nothing carries a swap into the next candidate, the next `stella
+//! run`, or a resumed turn. What routes a *fresh* engine is the router's
+//! breaker, which is where recovery belongs, because unlike this latch it
+//! actually re-probes the provider (cooldown, then a half-open trial)
+//! instead of remembering one bad minute forever. Widening the latch to the
+//! session would remove that re-probe; narrowing it back to the turn is the
+//! behaviour #2918 removed.
 //!
 //! # Transcript repair
 //!

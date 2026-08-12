@@ -82,6 +82,13 @@ pub(super) struct FakeWorkspace {
     steps_marked: StepProbe,
     /// What `announce_changes` was last handed, or `None` if never called.
     announced: Arc<std::sync::Mutex<Option<bool>>>,
+    /// Every batch of rows `attribute_adopted` received, in call order
+    /// (#2907). Its own slot rather than a `log` entry, for the same reason
+    /// `seeded` has one: the tests asserting exact lifecycle sequences must
+    /// stay untouched. Batches rather than a flat list, so a test can tell one
+    /// call carrying two rows from two calls carrying one each — which is
+    /// precisely the double-attribution this probe exists to rule out.
+    attributed: Arc<std::sync::Mutex<Vec<Vec<AdoptedChange>>>>,
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -105,6 +112,7 @@ impl FakeWorkspace {
             seeded: Arc::default(),
             steps_marked: Arc::default(),
             announced: Arc::default(),
+            attributed: Arc::default(),
             log,
         }
     }
@@ -113,6 +121,11 @@ impl FakeWorkspace {
     /// port — the boxed workspace itself is unreachable once the run owns it.
     pub(super) fn seeded_probe(&self) -> SeedProbe {
         self.seeded.clone()
+    }
+
+    /// What `attribute_adopted` received, cloned out for the same reason.
+    pub(super) fn attributed_probe(&self) -> Arc<std::sync::Mutex<Vec<Vec<AdoptedChange>>>> {
+        self.attributed.clone()
     }
 
     /// The plan-step transition probe, cloned out for the same reason.
@@ -258,6 +271,9 @@ impl CandidateWorkspace for FakeWorkspace {
             format!("adopt:{}:withhold={}", self.id, withhold.join(","))
         });
         self.adopt_result.clone()
+    }
+    fn attribute_adopted(&self, adopted: &[AdoptedChange]) {
+        self.attributed.lock().unwrap().push(adopted.to_vec());
     }
     async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {
         // Logged with the source so a test can prove the artifact came from a

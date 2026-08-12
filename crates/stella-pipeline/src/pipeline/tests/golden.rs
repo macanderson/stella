@@ -226,6 +226,55 @@ fn the_recorded_flows_are_structurally_distinct() {
     );
 }
 
+/// **The #2917 witness.** A committed fixture must be in canonical form: the
+/// exact bytes this build's serializer produces for the events the fixture
+/// parses to. Without this, a payload field can be renamed on the wire and the
+/// fixture keeps the old spelling forever — which is what happened when #2556
+/// renamed the ladder snapshot's `flip_achieved` to `flip` and this fixture
+/// went on claiming the pre-#2556 shape for months.
+///
+/// Nothing else could have caught it. `GoldenTrajectory::diff` compares
+/// structurally and never reads the payload (see its doc for why that is
+/// correct), and the fixture still *loaded* clean, because `flip` carries a
+/// `serde(alias = "flip_achieved")` for historical snapshots — so the stale
+/// spelling parsed to the right value and the file looked fine from every
+/// angle except the one that matters: the next person to read it would believe
+/// a shape the pipeline had not emitted since #2556.
+///
+/// This is a property of the committed bytes alone — parse, re-render, compare
+/// — so it is immune to the run-to-run volatility (`duration_ms`, cost
+/// rounding, delta chunking) that makes a byte-exact comparison against a
+/// *fresh recording* useless. Failure is repaired by `make record-golden`, and
+/// the resulting diff is the wire change, stated.
+#[test]
+fn every_committed_golden_is_in_canonical_form() {
+    let dir = golden_dir();
+    for task_id in [
+        "single_task_deterministic_flip",
+        "unproven_without_a_test_command",
+    ] {
+        let committed = GoldenTrajectory::load(&dir, task_id).expect("golden is committed");
+        let (rendered_manifest, rendered_recording) = committed.render();
+        let on_disk = |path: PathBuf| {
+            std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+        };
+        assert_eq!(
+            on_disk(crate::replay::golden::recording_path(&dir, task_id)),
+            rendered_recording,
+            "the committed recording for `{task_id}` is not what this build serializes the \
+             events it parses to — a field has been renamed, added or dropped on the wire and \
+             the fixture still spells it the old way. Re-record with `make record-golden` and \
+             review the diff as the event-contract change it is."
+        );
+        assert_eq!(
+            on_disk(crate::replay::golden::manifest_path(&dir, task_id)),
+            rendered_manifest,
+            "the committed manifest for `{task_id}` is not in canonical form"
+        );
+    }
+}
+
 /// Every committed golden is a drift baseline, never independent evidence.
 /// The day a reference recording lands it will be a `Reference` source, and
 /// this test is where that distinction stops being a comment.

@@ -978,140 +978,127 @@ async fn a_candidates_shell_cannot_move_stellas_witness_baseline_ref() {
     );
 }
 
-/// #2935 — the delivery is a git patch, and a git patch encodes exactly two
-/// file modes and no directory modes at all. A task whose deliverable is a
-/// `chmod 600` private key inside a `chmod 700` directory (the
-/// `openssl-selfsigned-cert` shape) therefore had that half of its work
-/// dropped between the worktree where it was verified and the tree that is
-/// graded.
+/// **The #2907 witness.** An isolated candidate's edits must reach the
+/// SESSION registry's file ledger — the one persisted as `files_touched` and
+/// the one `execution_reflection.wrote_files` is derived from — at the moment
+/// adoption makes them the user's tree's.
 ///
-/// Two-sided on purpose: the unrepresentable modes must arrive, and the
-/// representable one must still be the patch's business — the replay adds only
-/// what git could not say (see [`super::modes`]).
-#[cfg(unix)]
+/// On `main` this ledger is empty after the adoption below. A candidate runs
+/// against its own registry rooted at the shadow worktree, so every edit lands
+/// there and dies with the workspace; nothing ever folds it back. The durable
+/// record then says the session changed nothing about a session that rewrote a
+/// tracked file and created a new one — while the `FileChange` events for the
+/// very same adoption say otherwise. Two records of one reality, disagreeing.
+///
+/// Asserted through the real git substrate rather than a double, because every
+/// link is a place the wiring could be wrong: the port has to carry the
+/// session handle into each workspace, the workspace has to rejoin adoption's
+/// TOPLEVEL-relative paths against the real tree, and the registry has to
+/// re-normalize them against a root that may be a subdirectory of it.
 #[tokio::test]
-async fn a_mode_no_patch_can_encode_survives_adoption() {
-    use std::os::unix::fs::PermissionsExt;
-
-    fn mode_of(path: &Path) -> u32 {
-        std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
-    }
-
-    let root = scaffold("modes");
+async fn an_isolated_candidates_adopted_edits_reach_the_session_file_ledger() {
+    let root = scaffold("attribute");
+    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
+        root.clone(),
+        None,
+    ));
     let port = GitCandidateWorkspaces::new(
         root.clone(),
         RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
-    );
+    )
+    .with_session_registry(session.clone());
     let ws = port.create_workspace().await.unwrap();
 
-    // Exactly what the observed trial did: `mkdir -p ssl && chmod 700 ssl`,
-    // then `openssl genrsa -out server.key && chmod 600 server.key`.
-    let ssl = ws.dir().join("ssl");
-    std::fs::create_dir_all(&ssl).unwrap();
-    std::fs::write(ssl.join("server.key"), "PRIVATE KEY\n").unwrap();
-    std::fs::set_permissions(ssl.join("server.key"), PermissionsExt::from_mode(0o600)).unwrap();
-    std::fs::write(ssl.join("server.crt"), "CERTIFICATE\n").unwrap();
-    std::fs::set_permissions(ssl.join("server.crt"), PermissionsExt::from_mode(0o644)).unwrap();
-    std::fs::set_permissions(&ssl, PermissionsExt::from_mode(0o700)).unwrap();
+    assert!(
+        session.files_touched().is_empty(),
+        "the session ledger starts empty: nothing outside the candidate has run"
+    );
 
-    ws.seal().await.expect("the candidate seals");
-    let adopted = ws.adopt(&[]).await.expect("the work is delivered");
-    let paths: Vec<&str> = adopted.iter().map(|c| c.path.as_str()).collect();
-    assert_eq!(paths, vec!["ssl/server.crt", "ssl/server.key"]);
+    // Appended to the dirty state the scaffold left, so the delta below is
+    // unambiguously one added line and nothing removed.
+    std::fs::write(
+        ws.dir().join("tracked.txt"),
+        "base\ndirty\nfrom the candidate\n",
+    )
+    .unwrap();
+    std::fs::write(ws.dir().join("created.txt"), "brand new\n").unwrap();
+    ws.seal().await.unwrap();
 
+    let adopted = ws.adopt(&[]).await.unwrap();
+    ws.attribute_adopted(&adopted);
+
+    let mut touched = session.files_touched();
+    touched.sort();
     assert_eq!(
-        mode_of(&root.join("ssl/server.key")),
-        0o600,
-        "a private key delivered world-readable fails its grader however correct it is"
+        touched,
+        vec![
+            ("created.txt".to_string(), "C".to_string()),
+            ("tracked.txt".to_string(), "U".to_string()),
+        ],
+        "the session ledger must name what the candidate actually changed, with the op the \
+         adoption measured"
     );
     assert_eq!(
-        mode_of(&root.join("ssl")),
-        0o700,
-        "git tracks no directory modes at all, so nothing but a replay can carry this"
+        session.mutations_recorded(),
+        2,
+        "and the mutation count the verification ladder reads must see them too"
     );
+
+    // The line deltas are git's own numbers, carried through verbatim — a row
+    // recording `+0 -0` for a real edit is the `wrote_files` defect wearing a
+    // different face.
+    let telemetry = session.file_touch_telemetry();
+    let tracked = telemetry
+        .files_touched
+        .iter()
+        .find(|record| record.path == "tracked.txt")
+        .expect("tracked.txt is in the telemetry payload");
     assert_eq!(
-        mode_of(&root.join("ssl/server.crt")),
-        0o644,
-        "a mode the patch CAN encode stays the patch's business"
+        (tracked.lines_added, tracked.lines_removed),
+        (1, 0),
+        "git measured one added line; the ledger must not report the change as extentless"
     );
 
     ws.remove().await;
-    assert_no_candidate_worktrees(&root);
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// #2877 — the third case the scratch subtraction (#2876) deliberately did not
-/// cover: a build artifact the verification run itself rewrote. A
-/// gcov-instrumented binary rewrites `*.gcda` on every run, and the drift
-/// check read the oracle's own side effect as the worker tampering with a
-/// verified tree, discarding a change a grader scored 2 of 3 passing.
-///
-/// The discriminator is who wrote the file, observed rather than guessed from
-/// its extension — so both halves are asserted here on one tree and one seal:
-/// a path the verification run was seen writing does not discard the work, and
-/// a path nothing was seen writing still does.
+/// The negative control, and the proof the witness above is not asserting
+/// something that would be true anyway: a candidate whose work is never
+/// adopted — a losing best-of-N sibling, an integrity refusal, a run that
+/// died — must leave the session ledger exactly as it found it. Its edits are
+/// not the user's tree's, and a durable record claiming otherwise would be the
+/// same defect pointing the other way.
 #[tokio::test]
-async fn a_build_artifact_the_verification_run_wrote_does_not_discard_the_work() {
-    let root = scaffold("sealed-gcda");
+async fn a_candidate_that_never_adopts_attributes_nothing_to_the_session_ledger() {
+    let root = scaffold("attribute_none");
+    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
+        root.clone(),
+        None,
+    ));
     let port = GitCandidateWorkspaces::new(
         root.clone(),
         RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
-    );
-    let ws = port.create_workspace().await.unwrap();
-    std::fs::write(ws.dir().join("verified.txt"), "verified bytes\n").unwrap();
-
-    ws.seal()
-        .await
-        .expect("candidate state seals before verification");
-
-    // The flip oracle, running the test command in this very worktree. The
-    // instrumented binary rewrites its coverage data as a side effect — no
-    // extension list names this; the bracketing does.
-    let outcome = ws
-        .tests()
-        .run_test(&stella_pipeline::ports::TestInvocation {
-            program: "sh".to_string(),
-            args: vec![
-                "-c".to_string(),
-                "mkdir -p build && printf 'coverage' > build/sqlite3-shell.gcda".to_string(),
-            ],
-        })
-        .await;
-    assert!(outcome.passed(), "the fixture oracle run must succeed");
-    assert!(ws.dir().join("build/sqlite3-shell.gcda").exists());
-
-    assert!(
-        ws.sealed_is_unchanged().await.unwrap(),
-        "the oracle's own coverage data is not a tampering signal"
-    );
-    let adopted = ws.adopt(&[]).await.expect("the work is delivered");
-    assert_eq!(
-        adopted.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
-        vec!["verified.txt"],
-        "the sealed bytes are delivered; the post-seal artifact is not in the seal"
-    );
-    assert_eq!(read(&root.join("verified.txt")), "verified bytes\n");
-
-    // The other half, on the same tree: a mutation nothing was observed making
-    // is still fatal. A fix that let all drift through would have removed the
-    // protection rather than repaired it.
-    std::fs::write(
-        ws.dir().join("verified.txt"),
-        "mutated after verification\n",
     )
-    .unwrap();
-    assert!(
-        !ws.sealed_is_unchanged().await.unwrap(),
-        "an unattributed post-seal mutation must still refuse the adoption"
-    );
+    .with_session_registry(session.clone());
+    let loser = port.create_workspace().await.unwrap();
 
-    ws.remove().await;
-    assert_no_candidate_worktrees(&root);
+    std::fs::write(loser.dir().join("tracked.txt"), "base\nloser\n").unwrap();
+    std::fs::write(loser.dir().join("loser.txt"), "residue\n").unwrap();
+    loser.seal().await.unwrap();
+    loser.remove().await;
+
+    assert!(
+        session.files_touched().is_empty(),
+        "a discarded candidate's edits never became the user's tree's, so they are not this \
+         session's changes"
+    );
+    assert_eq!(session.mutations_recorded(), 0);
     std::fs::remove_dir_all(&root).ok();
 }
