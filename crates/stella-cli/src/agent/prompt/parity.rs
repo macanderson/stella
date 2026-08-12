@@ -523,6 +523,78 @@ fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
     );
 }
 
+/// The localization discriminator (#3015), pinned in both personas and clause
+/// by clause so a trim cannot drop the half that keeps it from firing
+/// everywhere.
+///
+/// `semantic_code_search` (#3014) exists to remove a measured spiral: on TB2.1
+/// `fix-code-vulnerability`, 13 of 58 tool calls went to grepping ONE file for
+/// spelling variants of one concept (`_hkey|_hval|HeaderDict|CRLF`) — a
+/// semantic question asked of a substring index. The model decides whether to
+/// call a tool from context, and until this rule landed the localization bullet
+/// named `graph_query` alone and routed "free-text search" to grep by name,
+/// which is the wrong answer once a semantic index exists.
+///
+/// The rule is a **discriminator, not a preference**: the split is a property
+/// of the question the model is already holding — can you NAME the symbol, or
+/// can you only DESCRIBE what it does — so it is decidable before a call is
+/// spent. `graph_query` keeps the named case; grep keeps the genuinely lexical
+/// case. "Always try semantic search first" is the version deliberately NOT
+/// written: a repository with no index, or a question like "find every TODO",
+/// pays a call for nothing.
+///
+/// Unlike the delta-orientation rule above, this one is pinned in **both**
+/// prompts. It steers tool choice inside localization rather than a first move,
+/// so the pipeline persona's ORIENT/REPRODUCE/LOCALIZE methodology has a slot
+/// for it (step 3) rather than a competing rule — and `PIPELINE_SYSTEM_PROMPT`
+/// is what `stella run` and every bench measurement send (see prompt.rs's
+/// header note, #2231), so a localization fix reaching `SYSTEM_PROMPT` alone
+/// would be invisible to #2995, the measurement that settles whether the model
+/// reaches for the tool at all.
+///
+/// It is not a `macro_rules!` shared contract because the two sites are
+/// genuinely different shapes — a Rules bullet and a numbered methodology step
+/// — so the wording that survives is asserted here instead of the bytes.
+///
+/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
+/// the reason its two predecessors do: that file sits within a few lines of the
+/// 1500-line ratchet (#2985), and #2237 makes this module the home for
+/// prompt-content pins.
+#[test]
+fn both_personas_route_a_described_behaviour_to_semantic_search_and_a_named_one_to_the_graph() {
+    for (label, prompt) in STATIC_PROMPTS {
+        for claim in [
+            // The named half keeps the tool it always had.
+            "When you can NAME the",
+            "graph_query FIRST",
+            // The described half — the whole point, and stated as "before any
+            // grep" because the measured failure is grep spent first.
+            "semantic_code_search BEFORE any grep",
+            // The tell that makes the discriminator decidable in advance: an
+            // alternation of spellings of ONE idea is the case.
+            "`redact|scrub|sanitize|mask`",
+            // The negative half. Without it the rule degrades into "always try
+            // semantic search first", which spends a call on every lexical
+            // question and on every repository with no index.
+            "Grep and glob stay the right answer for a genuinely lexical question",
+            "the repository has no index yet",
+        ] {
+            assert!(
+                prompt.contains(claim),
+                "{label} must keep the localization claim {claim:?} — without it the rule \
+                 either stops naming semantic_code_search at all (the #3015 defect) or \
+                 fires on questions grep answers for free (#3015)"
+            );
+        }
+        assert!(
+            !prompt.contains("free-text search"),
+            "{label} still routes \"free-text search\" to grep by name. That was the wrong \
+             answer the moment semantic_code_search shipped (#3014) — a free-text question \
+             is precisely the described-behaviour case (#3015)"
+        );
+    }
+}
+
 /// Every way this check could come up empty, driven on hand-built sources.
 ///
 /// The tests above all iterate sets the scan produced; if the scan silently

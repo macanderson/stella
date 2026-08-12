@@ -130,6 +130,10 @@ async fn warm_semantic_index(
 /// that silently ranks a subset of the repository is worse than one that says
 /// which subset it ranked. The leftovers are not lost — the lazy per-query
 /// pass picks them up.
+///
+/// Unless they cannot be read, which is a different sentence and gets one: no
+/// later pass will pick those up, so "they embed on demand" would be a promise
+/// this code cannot keep (#3016).
 fn format_warm_outcome(
     outcome: &stella_tools::graph::semantic::WarmOutcome,
     model: &str,
@@ -139,10 +143,21 @@ fn format_warm_outcome(
         WarmOutcome::Warmed {
             embedded,
             remaining: 0,
+            ..
         } => format!("✓ semantic index: {embedded} files embedded by {model}"),
         WarmOutcome::Warmed {
             embedded,
             remaining,
+            unreadable,
+        } if *unreadable > 0 => format!(
+            "! semantic index: {embedded} files embedded by {model} — {remaining} left \
+             unembedded, {unreadable} of them because their content could not be read (the \
+             next `stella init` drops files that have moved or vanished)"
+        ),
+        WarmOutcome::Warmed {
+            embedded,
+            remaining,
+            ..
         } => format!(
             "✓ semantic index: {embedded} files embedded by {model} — {remaining} left \
              unembedded (they embed on demand as semantic searches reach them)"

@@ -223,9 +223,37 @@ fn a_capped_pass_names_what_it_left_unembedded() {
         &stella_tools::graph::semantic::WarmOutcome::Warmed {
             embedded: 2_000,
             remaining: 3_231,
+            unreadable: 0,
         },
         "voyage-code-3",
     );
     assert!(rendered.contains("2000 files embedded"), "{rendered}");
     assert!(rendered.contains("3231 left unembedded"), "{rendered}");
+    assert!(
+        rendered.contains("embed on demand"),
+        "the cap's leftovers are picked up by the lazy pass: {rendered}"
+    );
+}
+
+/// #3016: a file the pass could not read is a different leftover from one the
+/// cap deferred — no later pass picks it up — so it may not be reported in the
+/// sentence that promises it will be.
+#[test]
+fn an_unreadable_file_is_named_as_a_problem_not_as_the_cap() {
+    let rendered = format_warm_outcome(
+        &stella_tools::graph::semantic::WarmOutcome::Warmed {
+            embedded: 68,
+            remaining: 32,
+            unreadable: 32,
+        },
+        "voyage-code-3",
+    );
+    assert!(rendered.starts_with('!'), "{rendered}");
+    assert!(rendered.contains("68 files embedded"), "{rendered}");
+    assert!(rendered.contains("32 left unembedded"), "{rendered}");
+    assert!(rendered.contains("could not be read"), "{rendered}");
+    assert!(
+        !rendered.contains("embed on demand"),
+        "an unreadable file will not embed on demand — do not promise it: {rendered}"
+    );
 }
