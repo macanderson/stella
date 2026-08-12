@@ -46,6 +46,38 @@ impl Pipeline<'_> {
         paths
     }
 
+    /// Everything the verification side knows about one round's failure.
+    ///
+    /// `unmoved_since_baseline` is computed here, not gated on
+    /// `state.revisions > 0` the way [`crate::verify::LadderInputs::witness_unmoved_by_revision`]
+    /// deliberately is (#2929): that gate protects a *terminal* rung
+    /// (`WitnessUnsatisfiable`) from firing on a red that only means the
+    /// worker hasn't finished — but this value feeds nothing but the
+    /// worker's own brief, so there is nothing to protect it from. Telling
+    /// the worker its first red already matches the untouched baseline can
+    /// only help it judge whether the check is the problem, one round before
+    /// a revision spent chasing that check gets the chance to delete a
+    /// correct deliverable to satisfy it — the `video-processing` shape this
+    /// issue was found on.
+    pub(super) fn seal_failure<'a>(
+        effective_cmd: Option<EffectiveTestCommand<'a>>,
+        test_tail: &'a str,
+        witness_paths: &'a [String],
+    ) -> SealedFailure<'a> {
+        let unmoved_since_baseline = effective_cmd
+            .and_then(|cmd| cmd.authored_baseline)
+            .is_some_and(|baseline| {
+                FailureFingerprint::of(baseline) == FailureFingerprint::of(test_tail)
+            });
+        SealedFailure {
+            command: effective_cmd.map_or("", |cmd| cmd.command),
+            invocation: effective_cmd.map(|cmd| cmd.invocation),
+            output: test_tail,
+            witness_paths,
+            unmoved_since_baseline,
+        }
+    }
+
     /// Turn one deterministic failure into the pair the revise loop needs: the
     /// operator-facing evidence, and the worker-facing brief.
     ///

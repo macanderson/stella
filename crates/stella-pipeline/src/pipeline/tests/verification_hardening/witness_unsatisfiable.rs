@@ -163,3 +163,39 @@ async fn the_first_red_still_sends_the_worker_a_revision() {
         "the rung must not fire before the experiment has been run: {first:?}"
     );
 }
+
+/// …and the revision prompt that first red buys carries a caution the worker
+/// can act on itself (#2929), even though the terminal rung above correctly
+/// waits for a second round before it will call the witness unsatisfiable.
+///
+/// Same fixture as both tests above — `both_trees_fail()`'s candidate and
+/// baseline runs share one output, so the very first candidate observation
+/// already matches the witness's authored baseline. On `main` this fails:
+/// the revision prompt names only the ordinary deterministic-failure
+/// disclosure, with nothing telling the worker its check may be the broken
+/// half — which is exactly the gap that let a revision on `video-processing`
+/// delete a correct deliverable to chase a witness checking the wrong path.
+#[tokio::test]
+async fn the_first_revision_prompt_names_the_untouched_baseline_match() {
+    let provider = provider_with_one_revision();
+    let (outcome, _, _) = run_isolated_with_router(
+        &provider,
+        &both_trees_fail(),
+        PipelineConfig::default(),
+        "find my lost changes and merge them into master",
+        router(),
+    )
+    .await;
+    outcome.expect("run settles");
+
+    let prompts = provider.prompts();
+    let revision_prompt = prompts
+        .last()
+        .expect("the revision turn sent at least one request");
+    assert!(
+        revision_prompt.contains("Caution:")
+            && revision_prompt.contains("identical to what the check produced"),
+        "the revision prompt must warn that this failure matches the untouched \
+         baseline, before the worker acts on it: {revision_prompt}"
+    );
+}

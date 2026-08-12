@@ -27,6 +27,7 @@ fn sealed<'a>(
         invocation,
         output,
         witness_paths,
+        unmoved_since_baseline: false,
     }
 }
 
@@ -432,4 +433,69 @@ fn evidence_refs_name_the_grain_and_the_failure() {
     let refs = brief.evidence_refs(&failure.fingerprint());
     assert!(refs.iter().any(|r| r.starts_with("disclosure:L")));
     assert!(refs.iter().any(|r| r.starts_with("failure:")));
+}
+
+/// #2929: a witness whose first red already matches the untouched baseline is
+/// evidence about the check, not the work — and the worker should read that
+/// caution before it revises anything. This is deliberately a plain field
+/// flip on [`SealedFailure`], not a `sealed()` helper change, so every other
+/// call in this file stays `unmoved_since_baseline: false` unless a test asks
+/// for the opposite.
+fn sealed_unmoved<'a>(
+    command: &'a str,
+    output: &'a str,
+    witness_paths: &'a [String],
+) -> SealedFailure<'a> {
+    SealedFailure {
+        command,
+        invocation: None,
+        output,
+        witness_paths,
+        unmoved_since_baseline: true,
+    }
+}
+
+#[test]
+fn a_failure_unmoved_since_baseline_carries_the_caution() {
+    let paths: Vec<String> = Vec::new();
+    let failure = sealed_unmoved("cargo test", ASSERTION_TAIL, &paths);
+    let brief = redact(&failure, DisclosureGrain::Reproduction);
+    assert!(brief.unmoved_since_baseline);
+    assert!(
+        brief.message().starts_with("Caution:"),
+        "the caution must lead the message, ahead of the symptom: {}",
+        brief.message()
+    );
+}
+
+/// The caution is not sealed material — it survives every tightening,
+/// including the terminal `Outcome` grain a thrashing worker earns. On
+/// `main` this fails: nothing about the flag reaches the message at all, at
+/// any grain.
+#[test]
+fn the_caution_survives_every_disclosure_grain() {
+    let paths: Vec<String> = Vec::new();
+    let failure = sealed_unmoved("cargo test", ASSERTION_TAIL, &paths);
+    for grain in [
+        DisclosureGrain::Reproduction,
+        DisclosureGrain::Symptom,
+        DisclosureGrain::Command,
+        DisclosureGrain::Outcome,
+    ] {
+        let brief = redact(&failure, grain);
+        assert!(
+            brief.message().starts_with("Caution:"),
+            "grain {grain:?} dropped the caution: {}",
+            brief.message()
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_failure_carries_no_caution() {
+    let paths: Vec<String> = Vec::new();
+    let failure = sealed("cargo test", ASSERTION_TAIL, None, &paths);
+    let brief = redact(&failure, DisclosureGrain::Reproduction);
+    assert!(!brief.unmoved_since_baseline);
+    assert!(!brief.message().starts_with("Caution:"));
 }
