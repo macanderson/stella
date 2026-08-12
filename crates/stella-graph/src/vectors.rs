@@ -80,6 +80,24 @@ pub struct PendingEmbed {
     pub text: String,
 }
 
+/// What one [`pending`] scan found: the files it can offer, and how many it
+/// had to step over to fill the window.
+///
+/// The count is not decoration. It is the only place anything knows that a
+/// file the index holds could not be turned into text, and a caller that
+/// reports "N files left unembedded" without it states the cap as the reason
+/// when the reason was a file it could not read (#3016).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingScan {
+    /// Files ready to embed, ordered by path, at most `limit` of them.
+    pub files: Vec<PendingEmbed>,
+    /// Indexed files stepped over because their content could not be read —
+    /// deleted since the index pass, unreadable by this process, or not UTF-8.
+    /// Counted over the rows this scan actually walked, so a scan that stopped
+    /// at `limit` reports what it saw on the way, not a repository total.
+    pub unreadable: usize,
+}
+
 /// A vector ready to be written back, as produced by an [`stella_embed::Embedder`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileVector {
@@ -129,8 +147,8 @@ pub fn render_file_text(rel_path: &str, symbol_names: &[String], content: &str) 
     out
 }
 
-/// Files with no usable vector under `fingerprint`, rendered and ready to
-/// embed, capped at `limit`.
+/// Up to `limit` files with no usable vector under `fingerprint`, rendered and
+/// ready to embed.
 ///
 /// "No usable vector" is either no row at all or a row whose `content_sha256`
 /// no longer matches the file's — the same `(content, fingerprint)` skip the
@@ -138,44 +156,68 @@ pub fn render_file_text(rel_path: &str, symbol_names: &[String], content: &str) 
 /// deterministic and a second pass resumes rather than re-rolling the dice.
 ///
 /// A file the index knows about but that has since vanished from disk is
-/// skipped, not an error: the next `index_all` prunes its row.
+/// skipped, not an error: the next `index_all` prunes its row. The window
+/// **fills past those skips** rather than spending itself on them, walking a
+/// path cursor until it has `limit` embeddable files or the pending set runs
+/// out. Truncating in SQL and filtering afterwards is what it used to do, and
+/// a run of unreadable files ahead of the readable ones then returned nothing
+/// while thousands still pended — which the eager `stella init` pass read as
+/// "done" and stopped on (#3016). The cursor keeps that fix inside the one
+/// function both passes share; the path ordering, and so the resume, is
+/// unchanged.
 pub fn pending(
     conn: &Connection,
     root: &Path,
     fingerprint: &str,
     limit: usize,
-) -> Result<Vec<PendingEmbed>, GraphError> {
+) -> Result<PendingScan, GraphError> {
     let mut stmt = conn.prepare(
         "SELECT f.path, f.content_sha256 \
          FROM code_graph_files f \
          LEFT JOIN code_graph_vectors v \
            ON v.file_id = f.id AND v.fingerprint = ?1 \
-         WHERE v.file_id IS NULL OR v.content_sha256 <> f.content_sha256 \
+         WHERE (v.file_id IS NULL OR v.content_sha256 <> f.content_sha256) \
+           AND f.path > ?2 \
          ORDER BY f.path \
-         LIMIT ?2",
+         LIMIT ?3",
     )?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map(params![fingerprint, limit as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<Result<_, _>>()?;
 
-    let mut pending = Vec::with_capacity(rows.len());
-    for (path, content_sha256) in rows {
-        let Ok(content) = std::fs::read_to_string(root.join(&path)) else {
-            continue;
+    let mut scan = PendingScan::default();
+    // The empty string sorts before every non-empty path under SQLite's BINARY
+    // collation — the same ordering `ORDER BY f.path` uses — so the first round
+    // starts at the beginning of the pending set.
+    let mut cursor = String::new();
+    while scan.files.len() < limit {
+        let want = limit - scan.files.len();
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![fingerprint, cursor, want as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        // No rows past the cursor: the pending set is exhausted, and whatever
+        // is still unembedded is what this scan stepped over.
+        let Some((last, _)) = rows.last() else {
+            break;
         };
-        let names: Vec<String> = store::symbols_in_file(conn, &path)?
-            .into_iter()
-            .map(|def| def.name)
-            .collect();
-        pending.push(PendingEmbed {
-            path: path.clone(),
-            content_sha256,
-            text: render_file_text(&path, &names, &content),
-        });
+        cursor = last.clone();
+
+        for (path, content_sha256) in rows {
+            let Ok(content) = std::fs::read_to_string(root.join(&path)) else {
+                scan.unreadable += 1;
+                continue;
+            };
+            let names: Vec<String> = store::symbols_in_file(conn, &path)?
+                .into_iter()
+                .map(|def| def.name)
+                .collect();
+            scan.files.push(PendingEmbed {
+                path: path.clone(),
+                content_sha256,
+                text: render_file_text(&path, &names, &content),
+            });
+        }
     }
-    Ok(pending)
+    Ok(scan)
 }
 
 /// Write vectors back under `fingerprint`, replacing whatever was there.

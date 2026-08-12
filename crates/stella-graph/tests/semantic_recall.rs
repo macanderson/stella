@@ -163,7 +163,8 @@ async fn embed_all(graph: &CodeGraph, embedder: &dyn Embedder) -> String {
     let fingerprint = embedder.fingerprint().id();
     let pending = graph
         .files_pending_embedding(&fingerprint, MAX_FILES_PER_PASS)
-        .expect("pending");
+        .expect("pending")
+        .files;
     assert!(!pending.is_empty(), "the fixture must have indexed");
 
     let texts: Vec<String> = pending.iter().map(|p| p.text.clone()).collect();
