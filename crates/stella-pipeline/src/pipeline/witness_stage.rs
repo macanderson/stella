@@ -66,6 +66,30 @@ async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
 /// empty authoring reply.
 const WITNESS_MAX_OUTPUT_TOKENS: u32 = 16_384;
 
+/// Per-turn step ceiling for the witness author/repair engine (#2559, the
+/// wall-clock half of #2149's token bound above).
+///
+/// The author's own system prompt asks for "read the exemplar, write the
+/// file, reply" — a handful of tool calls, not a work session, the same
+/// characterization the research stage's own step ceiling documents for the
+/// goal verifier. Left uncapped, the author inherits the WORKER's
+/// `max_steps` (200 by default) via [`Pipeline::engine_config_for`], which is
+/// how one observed run spent 10 model calls and 20 tool calls (`glob`,
+/// `read_file` only — the closed vocabulary has no `grep`) rediscovering this
+/// repository's own test conventions, then authored nothing. On breach the
+/// turn aborts with a step-cap reason, which the existing match arm below
+/// already treats as `WitnessAbort::unauthorable` — the executed change
+/// stands unproven and the run still reaches a verdict; nothing new to wire.
+const WITNESS_AUTHOR_MAX_STEPS: usize = 8;
+
+/// Lower `config.max_steps` to at most [`WITNESS_AUTHOR_MAX_STEPS`], leaving
+/// a stricter operator value untouched — the step-count sibling of
+/// [`bound_witness_output_tokens`], same min-not-raise contract.
+fn bound_witness_steps(mut config: EngineConfig) -> EngineConfig {
+    config.max_steps = config.max_steps.min(WITNESS_AUTHOR_MAX_STEPS);
+    config
+}
+
 /// Lower `config.max_output_tokens` to at most [`WITNESS_MAX_OUTPUT_TOKENS`],
 /// leaving a stricter operator value untouched. Pure so the min-not-raise
 /// contract is testable without a pipeline.
@@ -328,10 +352,10 @@ impl<'a> Pipeline<'a> {
         // The output ceiling (#2141) is applied *after* role shaping so it
         // caps whatever the verifier overrides resolved to — an override can
         // lower the bound but never raise it back above the witness ceiling.
-        bound_witness_output_tokens(apply_role_shaping(
+        bound_witness_steps(bound_witness_output_tokens(apply_role_shaping(
             self.engine_config_for(surface),
             &self.config.role_overrides.verifier,
-        ))
+        )))
     }
 
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
@@ -1090,5 +1114,30 @@ mod tests {
             ..EngineConfig::default()
         });
         assert_eq!(from_stricter.max_output_tokens, Some(2_048));
+    }
+
+    /// #2559 witness: the author/repair engine's step ceiling lowers the
+    /// worker's `max_steps` (200 by default) to [`WITNESS_AUTHOR_MAX_STEPS`],
+    /// and never raises a stricter operator value. Fails on `main`, where
+    /// `witness_engine_config` never touches `max_steps` at all, so the
+    /// author inherits the worker's 200-step ceiling and can spend it
+    /// rediscovering the repository's own test conventions before authoring
+    /// anything.
+    #[test]
+    fn the_witness_step_ceiling_only_ever_lowers() {
+        let from_worker = bound_witness_steps(EngineConfig {
+            max_steps: 200,
+            ..EngineConfig::default()
+        });
+        assert_eq!(from_worker.max_steps, WITNESS_AUTHOR_MAX_STEPS);
+
+        let from_stricter = bound_witness_steps(EngineConfig {
+            max_steps: 3,
+            ..EngineConfig::default()
+        });
+        assert_eq!(
+            from_stricter.max_steps, 3,
+            "a stricter operator value must stand — the bound is a ceiling, not a floor"
+        );
     }
 }
