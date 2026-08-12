@@ -456,6 +456,73 @@ fn both_prompts_bind_the_model_to_skills() {
     }
 }
 
+/// The delta-orientation rule (#2984), pinned clause by clause so a trim
+/// cannot leave the half that makes it safe behind.
+///
+/// Measured on TB2.1 `fix-code-vulnerability`, where the bug is planted as an
+/// *uncommitted* working-tree change: Claude Code opened with `git diff
+/// bottle.py` at call 1 in both trials and finished in 7 calls; Stella reached
+/// the same diff at call 18, 34, 40 and 41 across four trials and took 23-63.
+/// Its one early git probe was `git diff HEAD~5` — committed history, which
+/// structurally cannot see an uncommitted change — and it then spent dozens of
+/// calls grepping for the bug by name.
+///
+/// The rule is written as a **discriminator, not a recipe**, because the
+/// advantage being copied is selectivity rather than a first move: Claude Code
+/// probes git in only 6 of 20 trials (0.3 git operations per trial on non-git
+/// tasks, against Stella's 3.8). An unconditional "check the diff first" would
+/// add a wasted call to the 14 tasks where git is irrelevant, which is why the
+/// trigger is a property of the task text alone — a past-tense claim that
+/// something was done to this repository — evaluable before any call is spent.
+///
+/// This is deliberately **not** a shared contract: it steers a first move, and
+/// the pipeline persona already prescribes its own first move (the ORIENT →
+/// REPRODUCE → LOCALIZE methodology), so embedding it there would put two
+/// rules in the same slot. `SHARED_CONTRACTS` therefore does not list it and
+/// `every_shared_contract_is_invoked_by_every_static_prompt` does not cover it
+/// — hence this pin.
+///
+/// The two clauses are load-bearing in opposite directions and each fails on
+/// its own. Without the working-tree-first clause the rule reproduces the exact
+/// measured defect: Stella's one early git probe was `git diff HEAD~5`, which
+/// reads committed history and cannot see an uncommitted change. Without the
+/// negative clause it becomes "always check the diff first", which would add a
+/// wasted call to the 14 of 20 trials where Claude Code — the arm being copied
+/// — touches git not at all.
+///
+/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
+/// the same reason `both_prompts_bind_the_model_to_skills` does: that file sits
+/// within a few lines of the 1500-line ratchet, and #2237 makes this module the
+/// home for prompt-content pins.
+#[test]
+fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
+    for claim in [
+        // The trigger, stated as a property of the task text alone — the only
+        // kind of rule the model can evaluate before spending a call.
+        "claims something was DONE to this repository",
+        // Working tree before history: the measured failure was a
+        // history-first probe against an uncommitted change.
+        "read the WORKING TREE first",
+        "need never have been committed",
+        // The negative half — what stops a discriminator becoming a recipe.
+        "a task to BUILD, ADD or IMPLEMENT something",
+        "the probe is a call spent on nothing",
+    ] {
+        assert!(
+            SYSTEM_PROMPT.contains(claim),
+            "the default persona must keep the delta-orientation claim {claim:?} — \
+             without it the rule is either blind to uncommitted changes or fires on \
+             every task (#2984)"
+        );
+    }
+    assert!(
+        !PIPELINE_SYSTEM_PROMPT.contains("read the WORKING TREE first"),
+        "the delta-orientation rule is scoped to the default persona: the pipeline \
+         persona prescribes its own first move (ORIENT/REPRODUCE/LOCALIZE), and two \
+         rules competing for the same slot is the drift this scoping avoids (#2984)"
+    );
+}
+
 /// Every way this check could come up empty, driven on hand-built sources.
 ///
 /// The tests above all iterate sets the scan produced; if the scan silently
