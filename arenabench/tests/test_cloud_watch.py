@@ -4,7 +4,18 @@
 
 from __future__ import annotations
 
-from arenabench.cloud_watch import Cell, assemble, cell_for, render_html, reward_of
+import io
+import json
+from typing import Any
+
+from arenabench.cloud_watch import (
+    Cell,
+    CloudScoreboard,
+    assemble,
+    cell_for,
+    render_html,
+    reward_of,
+)
 
 
 def _results(reward: float | None, *, finished: bool = True) -> dict:
@@ -118,3 +129,77 @@ def test_render_is_self_contained_and_escapes_its_inputs() -> None:
 def test_a_cell_with_no_reward_never_prints_a_number() -> None:
     assert Cell(state="queued").text == "QUEUED"
     assert Cell(state="won", reward=1.0).text == "✓ 1.0"
+
+
+class _FakeS3:
+    """An S3 holding exactly the keys the runner writes, and nothing else.
+
+    ``get_object`` raising on an unknown key is the fidelity that matters: the
+    scoreboard treats any exception as "not written yet", so a fake that
+    returned an empty body for a missing key would hide the bug this proves.
+    """
+
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+        self.asked: list[str] = []
+
+    def get_object(self, Bucket: str, Key: str) -> dict:  # noqa: N803 - boto3 spelling
+        self.asked.append(Key)
+        if Key not in self.objects:
+            raise KeyError(Key)
+        return {"Body": io.BytesIO(self.objects[Key])}
+
+
+class _FakeExecutor:
+    def __init__(self, s3: _FakeS3, jobs: list[dict], states: dict[str, str]) -> None:
+        self.s3 = s3
+        self.jobs = jobs
+        self.states = states
+
+    def load_jobs(self, run_id: str) -> dict:
+        return {"jobs": self.jobs}
+
+    def job_states(self, ids: Any) -> dict[str, str]:
+        return self.states
+
+    def run_rows(self, run_id: str) -> list[dict]:
+        return []
+
+    def bucket(self) -> str:
+        return "arenabench-artifacts-test"
+
+    def _client(self, name: str) -> _FakeS3:
+        return self.s3
+
+
+def test_the_scoreboard_finds_a_result_written_under_the_job_id() -> None:
+    """The live watch path must address S3 by job id, not by trial label.
+
+    ``entrypoint.sh`` writes ``runs/<run>/$JOB_ID/results.json`` where
+    ``JOB_ID`` is the Batch job's UUID; the label only ever names the trial's
+    directory on disk after a fetch. Reading by label asks for a key nothing
+    writes, and the miss is swallowed as "still running" — so a whole run
+    renders empty and never says why.
+
+    The fixture's ids and labels are deliberately different strings. Make them
+    equal and this test passes against the bug.
+    """
+    jobs = _jobs()
+    s3 = _FakeS3(
+        {
+            "runs/contest-1/j0/results.json": json.dumps(_results(1.0)).encode(),
+            "runs/contest-1/j1/results.json": json.dumps(_results(0.0)).encode(),
+        }
+    )
+    board = CloudScoreboard(
+        _FakeExecutor(s3, jobs, {j["id"]: "SUCCEEDED" for j in jobs}),
+        "contest-1",
+    ).fetch()
+
+    assert board.cells[("fix-git", "claude-code")].reward == 1.0
+    assert board.cells[("fix-git", "stella")].reward == 0.0
+    assert board.settled() == 2
+
+    # And it asked for the keys that exist, rather than finding them by luck.
+    assert "runs/contest-1/j0/results.json" in s3.asked
+    assert not [k for k in s3.asked if "cc-fix-git" in k]
