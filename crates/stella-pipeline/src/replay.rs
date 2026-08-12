@@ -483,7 +483,7 @@ pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
         }
     ));
     out.push_str(&format!(
-        "; diff={}/{} lines ({}); file_changes={}; mutating_actions={}",
+        "; diff={}/{} lines ({}); mutating_actions={}",
         snapshot.diff_lines,
         snapshot.diff_budget,
         if snapshot.diff_available {
@@ -491,7 +491,6 @@ pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
         } else {
             "unreadable tree"
         },
-        snapshot.file_change_events,
         snapshot.mutating_actions,
     ));
     if snapshot.new_diag_errors > 0 || snapshot.new_diag_warnings > 0 {

@@ -120,7 +120,6 @@ fn ladder(rung: LadderRung) -> Option<Box<LadderSnapshot>> {
         diff_lines: 2,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 1,
         mutating_actions: 1,
         new_diag_errors: 0,
         new_diag_warnings: 0,

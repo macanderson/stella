@@ -35,7 +35,6 @@ fn a_flaky_flip_is_caught_by_the_confirmation_run() {
         diff_lines: 5,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 1,
         mutating_actions: 1,
         ..Default::default()
     };

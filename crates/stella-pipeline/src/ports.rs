@@ -321,8 +321,12 @@ pub trait RepoStatusPort: Send + Sync {
 /// It never saw one: `ToolRegistry::record_touch` sends to the channel the
 /// *host* attached, and the engine's sender is a different wire. So a turn that
 /// created and edited a file, and put six `file_change` events on the stream,
-/// told its verifier `file_change_events=0` — which the verifier reported as "the
+/// told its verifier the tally was zero — which the verifier reported as "the
 /// file likely does not exist" while the file sat in the container (#973).
+/// That tally was, for a time, also exposed on the wire as
+/// `LadderInputs::file_change_events`; it was removed there in #2934 because
+/// it read as zero in the one place a reader most needed a real answer (any
+/// isolated candidate/witness workspace, #2873).
 ///
 /// Reading a counter on the recorder is immune to which channel the events
 /// took, and to there being no channel at all — a candidate registry is

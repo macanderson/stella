@@ -212,7 +212,6 @@ impl<'a> Pipeline<'a> {
             diff_lines: inputs.diff_lines,
             diff_budget: inputs.diff_budget,
             diff_available: inputs.diff_available,
-            file_change_events: inputs.file_change_events,
             mutating_actions: inputs.mutating_actions,
             new_diag_errors: inputs.new_diag_errors,
             new_diag_warnings: inputs.new_diag_warnings,

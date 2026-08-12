@@ -14,11 +14,13 @@
 //! the agent's activity left no trace in the ledger or in the Files tab.
 //!
 //! It once left no trace in the verification ladder either, and that framing is
-//! now wrong in a way worth stating: `LadderInputs::file_change_events` was
-//! read by three ladder predicates until #2873 and is read by none of them
-//! today. A tally of tool-declared touches cannot be an authority on whether
-//! the tree changed — this module exists because it is not one — so the ladder
-//! takes that answer from git and nowhere else. What this module buys is
+//! now wrong in a way worth stating: a wire-carried tally of tool-declared
+//! touches (`LadderInputs::file_change_events`) was read by three ladder
+//! predicates until #2873, read by none of them after, and removed from the
+//! wire entirely in #2934. A tally of tool-declared touches cannot be an
+//! authority on whether the tree changed — this module exists because it is
+//! not one — so the ladder takes that answer from git and nowhere else. What
+//! this module buys is
 //! **observability**: the ledger, the Files tab, and the authored-diff channel
 //! see the tool that does nearly all of the changing.
 //!

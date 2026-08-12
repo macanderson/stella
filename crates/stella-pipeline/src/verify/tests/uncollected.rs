@@ -20,7 +20,6 @@ fn escaped() -> LadderInputs {
         // The half that matters. The probe ran, succeeded, and reported an
         // unchanged tree — this is not the blind case wearing a disguise.
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 10,
         ..Default::default()
     }
@@ -70,8 +69,8 @@ fn effects_that_escaped_collection_abstain_rather_than_claim_a_clean_tree() {
 /// wrong way (#2873). The premise of this rung is that git read the collected
 /// tree and found it unchanged; a tool tally saying "I wrote files" against
 /// that reading is evidence *for* the effects having landed elsewhere, not
-/// corroboration that they landed here. `tool_tally.rs` now pins the opposite
-/// assertion.
+/// corroboration that they landed here. That tool tally was removed from the
+/// wire entirely in #2934.
 #[test]
 fn one_corroborating_observation_lifts_the_turn_off_the_abstain_rung() {
     for (label, inputs) in [

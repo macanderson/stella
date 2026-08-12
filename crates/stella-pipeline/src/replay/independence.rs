@@ -154,7 +154,6 @@ mod tests {
                 diff_lines: 4,
                 diff_budget: 400,
                 diff_available: true,
-                file_change_events: 1,
                 mutating_actions: 2,
                 new_diag_errors: 0,
                 new_diag_warnings: 0,

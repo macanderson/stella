@@ -600,7 +600,6 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
                 diff_lines: 12,
                 diff_budget: 400,
                 diff_available: true,
-                file_change_events: 2,
                 mutating_actions: 3,
                 new_diag_errors: 0,
                 new_diag_warnings: 0,

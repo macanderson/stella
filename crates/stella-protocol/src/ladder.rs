@@ -337,17 +337,6 @@ pub struct LadderSnapshot {
     pub diff_budget: u32,
     /// Whether the diff probe could read the working tree at all.
     pub diff_available: bool,
-    /// Mutating file touches the recorder observed — a tally of what the agent
-    /// touched **through tools**, which a shell redirect defeats, and which is
-    /// zero inside a candidate workspace.
-    ///
-    /// **Recorded only: no ladder predicate reads it** (#2873). It is here so a
-    /// corpus of traces can be read after the fact, exactly like
-    /// [`Self::no_test_surface`]. A consumer asking whether the tree changed
-    /// reads [`Self::diff_available`] with [`Self::diff_lines`] — git is the
-    /// authority — and one asking whether anything was attempted reads
-    /// [`Self::mutating_actions`].
-    pub file_change_events: u32,
     /// Dispatched tool calls capable of changing the workspace.
     pub mutating_actions: u32,
     /// New lint/typecheck errors/warnings over the pre-execution baseline
@@ -516,7 +505,6 @@ mod tests {
             diff_lines: 12,
             diff_budget: 400,
             diff_available: true,
-            file_change_events: 2,
             mutating_actions: 3,
             new_diag_errors: 0,
             new_diag_warnings: 0,
@@ -580,7 +568,7 @@ mod tests {
     #[test]
     fn the_late_channels_default_conservatively() {
         let legacy = r#"{"flip_achieved":false,"unstable_flip":false,"diff_lines":0,
-            "diff_budget":0,"diff_available":false,"file_change_events":0,
+            "diff_budget":0,"diff_available":false,
             "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
         let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
         assert!(!parsed.verify_done_flip);
@@ -637,7 +625,7 @@ mod tests {
     #[test]
     fn a_legacy_flip_bool_still_parses() {
         let legacy = r#"{"flip_achieved":true,"unstable_flip":false,"diff_lines":0,
-            "diff_budget":0,"diff_available":false,"file_change_events":0,
+            "diff_budget":0,"diff_available":false,
             "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
         let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
         assert_eq!(parsed.flip, FlipOutcome::Achieved);
@@ -654,7 +642,7 @@ mod tests {
         let json = serde_json::to_string(&snapshot()).unwrap();
         assert!(!json.contains("rung"), "an unset rung emits no key: {json}");
         let legacy = r#"{"flip_achieved":false,"unstable_flip":false,"diff_lines":0,
-            "diff_budget":0,"diff_available":false,"file_change_events":0,
+            "diff_budget":0,"diff_available":false,
             "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
         let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
         assert_eq!(parsed.rung, None);
