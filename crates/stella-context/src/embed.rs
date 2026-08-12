@@ -6,7 +6,7 @@
 //!
 //! The trait, the fingerprint, the posture and the offline [`HashEmbedder`]
 //! were defined here until `stella-graph` needed the same seam to give
-//! `graph_query` semantic file lookup. Neither plane may depend on the other,
+//! `semantic_code_search` file lookup. Neither plane may depend on the other,
 //! so the seam moved down to a leaf rather than being copied — the
 //! `stella-diff` precedent (#1511). This module stays as the re-export so
 //! every call site inside this crate, and every doc link that names

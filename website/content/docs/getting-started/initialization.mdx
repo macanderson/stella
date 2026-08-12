@@ -1,6 +1,6 @@
 ---
 title: Repo initialization
-description: Prime a workspace with stella init — the domain taxonomy, the tree-sitter code graph, extension adoption, and everything that lands under .stella/.
+description: Prime a workspace with stella init — the domain taxonomy, the tree-sitter code graph, the semantic embedding pass, extension adoption, and everything that lands under .stella/.
 ---
 
 stella works in any directory with zero setup — but one command primes it
@@ -22,7 +22,15 @@ stella init
 2. **Builds the code-graph index** → `.stella/private/codegraph.db`. A tree-sitter
    symbol/import index the agent queries through `graph_query` (and you query
    through [`stella graph`](/docs/commands/graph)) instead of grepping blind.
-3. **Adopts existing agent extensions.** Commands, skills, and agents already
+3. **Embeds the indexed files for semantic search**, when an embedding
+   backend is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
+   `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`). That is what lets
+   `semantic_code_search` answer *"which file strips secrets before logging"*
+   on the agent's first tool call instead of after it has started grepping.
+   With no backend configured init says so in one line and does nothing else;
+   with one, it prints how many files it embedded and how many a large
+   repository left for later (they embed on demand as searches reach them).
+4. **Adopts existing agent extensions.** Commands, skills, and agents already
    defined for other tools (`.claude/` and `.agents/` directories, workspace
    and user scope) are adopted as symlinks under `.stella/` — your existing
    setup carries over instead of starting from scratch.
@@ -162,7 +170,8 @@ stella config
 
 Re-run `stella init` after a large refactor to rebuild the index and re-infer
 the taxonomy. It is idempotent and works offline — the code graph is built with
-no provider at all, and only the taxonomy degrades to a directory heuristic.
+no provider at all, only the taxonomy degrades to a directory heuristic, and the
+semantic embedding pass simply says it was skipped.
 
 Next: [configure your provider keys](/docs/getting-started/providers), then
 run your first task from the [quickstart](/docs/getting-started).

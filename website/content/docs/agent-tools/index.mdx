@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 57 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 58 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -67,6 +67,9 @@ These 57 tools register in every session — no configuration, no prerequisites.
   </ToolCard>
   <ToolCard name="graph_query" access="read">
     Query the indexed code graph instead of grepping: definitions, references, callees, callers (best-effort by name), imports, importers, or a file's full graph neighborhood. Registers every session and builds its own code-graph index on first use.
+  </ToolCard>
+  <ToolCard name="semantic_code_search" access="read">
+    Find the files a plain-English description is about — "which file strips secrets before logging" — when you know what the code does but cannot guess what it is called. Ranks indexed files by meaning; needs an embedding backend (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) and says so in its answer when there is none. `stella init` embeds the tree up front so the first call can answer.
   </ToolCard>
 </CardGrid>
 
@@ -270,7 +273,7 @@ These 57 tools register in every session — no configuration, no prerequisites.
 <Callout type="info">
 `verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `recall_context`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
+The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `semantic_code_search`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `recall_context`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered
@@ -478,7 +481,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 57 always-on tools, up to 69 native tools with the code graph, media keys, a search key, and an issue backend, plus the eight session tools — before any custom script tools or MCP servers merge in.
+All told: 58 always-on tools, up to 70 native tools with the code graph, media keys, a search key, and an issue backend, plus the eight session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 
