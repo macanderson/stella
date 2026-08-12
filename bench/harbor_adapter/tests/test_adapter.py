@@ -1561,6 +1561,7 @@ class TestRun:
             "base_url_authority": "validated-cli-argument",
             "engine_config_authority": "trusted-launcher-json",
             "upstream_pin_authority": "validated-cli-argument",
+            "tool_set_authority": "validated-container-env",
         }
 
         assert context.cost_usd == 0.31
