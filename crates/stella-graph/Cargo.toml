@@ -14,6 +14,11 @@ contextgraph-types.workspace = true
 # (`stella_store::durable`, #617) — one implementation of temp + fsync +
 # rename, not one per crate.
 stella-store = { path = "../stella-store" }
+# The embedding seam and the pure ranker, so semantic file lookup shares one
+# `Embedder` and one fingerprint discipline with `stella-context` without
+# either plane depending on the other. A leaf by construction — no transport,
+# no model, no I/O reaches this crate from it (the `http` feature stays off).
+stella-embed = { path = "../stella-embed" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -66,6 +71,9 @@ lang-php = ["dep:tree-sitter-php"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# The semantic-recall witness implements `stella_embed::Embedder` with a tiny
+# offline concept model, and the trait is `#[async_trait]`.
+async-trait.workspace = true
 # `test-util` enables tokio's paused clock (`start_paused`), which makes the
 # live-index pipeline tests deterministic: the debounce window auto-advances
 # only while every task is idle, so a burst can never be split by scheduling.

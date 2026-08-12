@@ -39,6 +39,7 @@ use crate::frames;
 use crate::import;
 use crate::parse::Grammars;
 use crate::store::{self, IndexStats};
+use crate::vectors;
 use crate::watch;
 
 /// Shared interior of a [`CodeGraph`], reference-counted so the background
@@ -367,6 +368,64 @@ impl CodeGraph {
     /// [`busiest_file`]: CodeGraph::busiest_file
     pub fn all_files(&self) -> Result<Vec<String>, GraphError> {
         store::all_files(&self.inner.read_guard())
+    }
+
+    /// Indexed files with no current vector under `fingerprint`, rendered and
+    /// ready to embed, capped at `limit`.
+    ///
+    /// The embedding itself is deliberately **not** here: producing a vector
+    /// is I/O against a model, and this crate holds no transport and no key.
+    /// A caller pairs this with [`store_file_vectors`] around whatever
+    /// [`stella_embed::Embedder`] it resolved, which is what keeps the network
+    /// out of the indexer (invariant 1).
+    ///
+    /// [`store_file_vectors`]: CodeGraph::store_file_vectors
+    pub fn files_pending_embedding(
+        &self,
+        fingerprint: &str,
+        limit: usize,
+    ) -> Result<Vec<vectors::PendingEmbed>, GraphError> {
+        vectors::pending(
+            &self.inner.read_guard(),
+            &self.inner.root,
+            fingerprint,
+            limit,
+        )
+    }
+
+    /// Persist vectors under `fingerprint`. Returns how many rows were
+    /// written — a path the index has since dropped is skipped, not an error.
+    pub fn store_file_vectors(
+        &self,
+        fingerprint: &str,
+        rows: &[vectors::FileVector],
+    ) -> Result<usize, GraphError> {
+        vectors::store_vectors(&mut self.inner.write_guard(), fingerprint, rows)
+    }
+
+    /// Rank indexed files against a query vector, best first.
+    ///
+    /// `floor` drops candidates scoring below it; pass
+    /// [`f32::NEG_INFINITY`] to keep every one. Only vectors stamped with
+    /// `fingerprint` are considered, so a stored vector from a different
+    /// embedder is invisible rather than silently comparable.
+    pub fn rank_files_by_vector(
+        &self,
+        fingerprint: &str,
+        query: &[f32],
+        floor: f32,
+        limit: usize,
+    ) -> Result<Vec<stella_embed::rank::Scored>, GraphError> {
+        vectors::rank(&self.inner.read_guard(), fingerprint, query, floor, limit)
+    }
+
+    /// How many files carry a vector under `fingerprint`. With
+    /// [`file_count`] this is the honest "how much of this workspace can a
+    /// semantic query see" answer a caller shows when a pass was capped.
+    ///
+    /// [`file_count`]: CodeGraph::file_count
+    pub fn embedded_file_count(&self, fingerprint: &str) -> Result<usize, GraphError> {
+        vectors::count(&self.inner.read_guard(), fingerprint)
     }
 
     /// The structured neighborhood of `file` — its symbols and import edges

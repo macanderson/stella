@@ -19,12 +19,46 @@ a malformed built-in query.
 
 ## Where it sits
 
-No workspace crate is a dependency of this one; its only non-third-party
-dependency is `contextgraph-types`, pinned by git rev. It builds no binary.
+Its only workspace dependencies are two leaves — [`stella-store`](../stella-store)
+for the shared durable-write contract and [`stella-embed`](../stella-embed) for
+the embedding seam — plus `contextgraph-types` for the wire shape. It builds
+no binary.
 `stella-cli` and `stella-tools` both depend on it: the CLI mounts the graph
 for a session (`crates/stella-cli/src/agent/graph.rs`) and `stella-tools` uses it for
 `read_symbol`, `code_map`, `impact`, `overview`, and the pre-write schema gate
 (`crates/stella-tools/src/schema_gate.rs`).
+
+## Semantic file vectors
+
+Beside the symbol and import tables sits `code_graph_vectors`: one vector per
+`(file, embedder fingerprint)`, so `graph_query op=semantic` can answer a
+question phrased in English rather than in identifiers. They live **here**,
+next to the nodes they describe, rather than in `stella-context`'s
+`context.db`, for two reasons that are the same reason: a semantic query then
+reads one database, and the foreign key cascade means a vector cannot outlive
+the file it describes — a stale answer naming a deleted file is structurally
+impossible rather than a pruning job somebody has to remember.
+
+What this crate does **not** do is produce a vector. Making one is I/O against
+a model, and this crate holds no transport and no key (invariant 1). It
+reports what needs embedding (`files_pending_embedding`), accepts the result
+(`store_file_vectors`), and ranks (`rank_files_by_vector`, which delegates the
+arithmetic to `stella_embed::rank` — pure and property-tested there).
+`stella-tools` is where the network lives.
+
+Three properties worth knowing before changing anything here:
+
+- **Lazy and capped.** Nothing is embedded until a semantic query asks, and
+  then at most `MAX_FILES_PER_PASS` files. There is no upfront whole-repository
+  build to stall a first query; a capped pass resumes on the next one, and a
+  caller that finds work pending says so in its answer.
+- **One render.** `render_file_text` is the only way a file becomes embeddable
+  text. A mismatch between what was indexed and what a later pass would index
+  degrades ranking with no error to catch it, so there is exactly one function.
+- **The fingerprint is the invalidation.** A vector carries the content hash it
+  was computed from and the fingerprint of the embedder that made it, so a
+  changed file or a changed model makes the old vector invisible and re-embeds
+  incrementally — never a mixed vector space.
 
 ## Boundary — does this change belong here?
 

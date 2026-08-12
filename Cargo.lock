@@ -3103,6 +3103,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-embed",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -3142,6 +3143,20 @@ name = "stella-diff"
 version = "0.9.11"
 
 [[package]]
+name = "stella-embed"
+version = "0.9.11"
+dependencies = [
+ "async-trait",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "stella-engine"
 version = "0.9.11"
 dependencies = [
@@ -3177,12 +3192,14 @@ dependencies = [
 name = "stella-graph"
 version = "0.9.11"
 dependencies = [
+ "async-trait",
  "contextgraph-types",
  "notify",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-embed",
  "stella-store",
  "tempfile",
  "thiserror 2.0.19",
@@ -3402,6 +3419,7 @@ dependencies = [
  "sha2 0.11.0",
  "stella-core",
  "stella-diag",
+ "stella-embed",
  "stella-graph",
  "stella-home",
  "stella-media",
