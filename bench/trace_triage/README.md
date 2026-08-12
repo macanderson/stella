@@ -101,6 +101,7 @@ next comparison is against the truth.
 | `no-post-verdict-file-change` | no `verdict` at all, or a verdict with no `file_change` after it |
 | `cache-collapse` | pooled prompt cache hit below the floor measured across nine arms |
 | `repeated-file-read` | one path named by five or more read-shaped calls in one trial |
+| `grep-ere-false-negative` | a `grep` zero-match on an ERE pattern with none of the POSIX-fallback disclosure #2989 attaches |
 
 `--list-detectors` prints the live registry.
 
@@ -133,7 +134,90 @@ A healthy run gets one clean paragraph. That is the load-bearing behaviour, not
 a nicety: a detector that always fires is noise, and noise is how a real
 finding gets ignored.
 
-### Adding one
+## The banned-behavior gate
+
+[`banned.py`](banned.py) is the third consumer of the same registry, and the
+only one that spends nothing and saves money: it decides whether a run is
+allowed to **keep going**. `triage_bench_traces.py` files issues after the fact,
+`postmortem.py` renders a report after the fact, and this stops the run while it
+is still running.
+
+```sh
+export ARENABENCH_GATE="python3 $PWD/bench/trace_triage/banned.py"
+arenabench cloud run matches/whatever.toml --ref HEAD
+```
+
+`arenabench cloud run` **refuses to start** with no gate armed. That is the
+whole mechanism: the alternative — defaulting to unguarded — means the one run
+that needed the gate is the run that did not have it. `--no-gate` waives it
+deliberately and is printed in the run header.
+
+As each Batch job settles, its artifacts are fetched and handed to the command
+above; exit `0` is clear, exit `9` aborts the run and cancels every job of
+**that run** (never a queue sweep — see `arenabench/arenabench/cancel.py`).
+`python3 bench/trace_triage/banned.py --list` prints the ledger.
+
+### What makes a behavior banned
+
+**A bug we can measure, that we previously fixed, and should not see again.**
+Every row cites what puts it there, and a `fixed-regression` row with no PR or
+issue number is rejected by the constructor. A second warrant kind,
+`measurement-invariant`, covers the rows with no single fix behind them — a
+trial that completed no model call measured nothing, so the run cannot produce a
+number that means anything while it holds. Both stop a run for the same reason;
+they are never confused, because the audit question "what fix is behind this
+row?" always has an answer.
+
+### Why not "any finding aborts"
+
+Because a healthy run fires detectors. On `post1` — 16 of 20 solved, the run
+everything says is fine — `tool-error-envelope` fires on 40% of trials and
+`agent-timeout` on one. A gate that aborted on any finding would have killed it,
+and a gate that kills healthy runs is switched off by the second operator it
+inconveniences.
+
+So each detector carries a **disposition**, and the set is **total over
+`DETECTORS`**: `tests/test_banned.py::test_ledger_is_total_over_the_detector_registry`
+fails if a detector exists with no row. That is the forcing function, in the
+shape AGENTS.md invariant #10 uses for event consumers — you cannot add a
+detector without answering "does this stop a run?", because the test asks. Its
+honest limit: it forces the decision when a *detector* is added, not when a
+*bug* is fixed.
+
+### The trigger, and why it is per-behavior
+
+Not "how bad is it" — **whether the signature is a property of the run or of the
+trial**. A signature that is a fact about the configuration (an absent fix, a
+misrouted model, a credential that does not work) cannot be unlucky: the next
+trial runs the same binary against the same gateway, so one trial is proof and
+`FIRST_TRIAL` is right. A signature that is a *distribution* can be unlucky —
+`agent-timeout` fires on 1 of 20 trials of a healthy run, so a first-trial trip
+would abort healthy runs. It gets `Rate(3, 5)`, and a rate row **cannot trip
+before its denominator exists**: one timeout in one settled trial is not a 100%
+timeout rate, and the first job to finish is very often the one that failed
+fastest.
+
+### Adding an entry
+
+Add the detector (below), then add its row. A `Banned` row needs a `Warrant`
+naming the fix, a `Trip`, and an `evidence` string recording what you measured
+it against — real runs by name where they exist, and say so plainly when the
+firing half is fixture-only. A `ReportOnly` row needs a reason a reviewer can
+check. Then cover it from **both** sides in `tests/test_banned.py`: firing on a
+fixture that exhibits it, and silent on one that does not. The silence half
+matters more.
+
+### When it aborts a healthy run
+
+Waive the single behavior — `--gate-allow CODE`, forwarded to this tool as
+`--allow CODE` — which clears the run and records the waiver in the verdict, so
+a run that muted a check can never later be read as clean. Then **fix the
+entry**; do not switch the gate off. The abort left `abort.json` beside the
+fetched results carrying the run, the codes, the trial, the gate's full report
+and exactly which job ids were cancelled — that record is the thing you argue
+with.
+
+### Adding a detector
 
 One decorated function in [`detectors.py`](detectors.py), and nothing else:
 

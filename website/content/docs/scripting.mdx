@@ -204,6 +204,17 @@ editing the command line:
     Equivalent to `--budget`. Hard USD cap for the whole run. Unset means
     spend is metered but never blocked.
   </OptionCard>
+  <OptionCard name="STELLA_UPSTREAM_PIN">
+    Equivalent to `--upstream-pin`. Pins a gateway to named upstreams and
+    refuses fallback — set it when two runs have to be comparable. See
+    [Diagnostics and comparability](/docs/api-providers#pinning-the-upstream).
+  </OptionCard>
+  <OptionCard name="STELLA_LOG" defaultValue="warn">
+    Equivalent to `--log-level`. Per-crate diagnostic filter, e.g.
+    `warn,stella_model=trace`. Resolution is most-specific-first: `--log-level`,
+    then `-v`/`-vv`/`-vvv`, then this, then `warn` — so a typed `-vv` is never
+    silently overridden by an exported value. See [Diagnostics](/docs/diagnostics).
+  </OptionCard>
   <OptionCard name="STELLA_PLAIN">
     Set to `1` for the plain line-based REPL instead of the Command Deck. Rarely
     needed in CI — the deck already steps aside when stdout is not a terminal.

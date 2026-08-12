@@ -10,6 +10,7 @@ Answer "is my local state sound?" before you go looking for a bug that isn't you
 ```bash
 stella doctor                                    # diagnose, change nothing
 stella doctor --repair                           # also quarantine a corrupt store
+stella doctor --last-failure                     # print the newest crash dump
 ```
 
 ## What it does
@@ -69,6 +70,11 @@ Diagnosis never writes. The check opens the database immutably — no locks, no 
     Act on a store SQLite judged corrupt: move it aside to a timestamped name — renamed,
     **never** deleted — and copy out whatever is still readable. A healthy store and an
     inconclusive check are both left untouched.
+  </OptionCard>
+  <OptionCard name="--last-failure">
+    Print the newest [crash dump](/docs/diagnostics#the-crash-file) —
+    `.stella/private/crash-*.jsonl` — and nothing else; no checks run. Content-free by
+    construction, so it's safe to attach to a bug report as printed. Errors if none exists.
   </OptionCard>
 </CardGrid>
 
