@@ -229,7 +229,7 @@ pub struct ChangeSignals {
     /// about the workspace at all. It answers one question the other counts
     /// cannot: *was the model still asking for tools*, which is the bare
     /// agent loop's own stopping condition — a turn ends exactly when a step
-    /// requests none. [`crate::pipeline::unproven`] reads the delta across a
+    /// requests none. The `pipeline::unproven` module reads the delta across a
     /// continuation turn to decide whether a worker handed an unproven
     /// result back has more to do or is finished (#2908). A read-only call
     /// counts here precisely because it does not count above: a worker
