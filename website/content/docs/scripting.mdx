@@ -204,6 +204,32 @@ editing the command line:
     Equivalent to `--budget`. Hard USD cap for the whole run. Unset means
     spend is metered but never blocked.
   </OptionCard>
+  <OptionCard name="STELLA_TURN_BUDGET">
+    Equivalent to `--turn-budget`. Wall-clock seconds one turn may spend — the
+    one to set when the *runner* will kill the job on elapsed time. Set it
+    slightly below that deadline and the run stops at a safe boundary, so the
+    work on disk is reported instead of destroyed with the process.
+  </OptionCard>
+  <OptionCard name="STELLA_MAX_OUTPUT_TOKENS">
+    Equivalent to `--max-output-tokens`. Caps output per step below the model's
+    own ceiling, to bound cost or latency on a long unattended run.
+  </OptionCard>
+  <OptionCard name="STELLA_UPSTREAM_PIN">
+    Equivalent to `--upstream-pin`. Pins a gateway to named upstreams and
+    refuses fallback — set it when two CI runs have to be comparable.
+  </OptionCard>
+  <OptionCard name="STELLA_DETACH">
+    Equivalent to `--detach`. Launch the run and return immediately; the exit
+    code is the launch's, and the run's own answer comes from
+    [`stella daemon list`](/docs/commands/daemon). Needs no terminal, so it
+    works from a pipe or a container.
+  </OptionCard>
+  <OptionCard name="STELLA_LOG" defaultValue="warn">
+    Equivalent to `--log-level`. Per-crate diagnostic filter, e.g.
+    `warn,stella_model=trace`. Resolution is most-specific-first: `--log-level`,
+    then `-v`/`-vv`/`-vvv`, then this, then `warn` — so a typed `-vv` is never
+    silently overridden by an exported value.
+  </OptionCard>
   <OptionCard name="STELLA_PLAIN">
     Set to `1` for the plain line-based REPL instead of the Command Deck. Rarely
     needed in CI — the deck already steps aside when stdout is not a terminal.
@@ -394,8 +420,12 @@ stella run --output-format json --no-pipeline "tidy up the error types in stella
 
 ```bash
 # Watch the stages go by, live, without parsing anything else. Stage names are
-# snake_case: triage, context_recall, plan, scope_review, witness, execute,
-# verify, verifier.
+# snake_case, and arrive in this order: triage, context_recall, research, plan,
+# scope_review, execute, witness, verify, verdict, reflect, context_write,
+# complete. Several are conditional — research only when triage named questions,
+# witness only when a warrant found something to prove — so a turn emits a
+# subsequence, never the whole list. The revise loop is the one backward move:
+# it re-enters execute, and never re-runs witness.
 stella run --output-format stream-json "$TASK" \
   | jq -r --unbuffered 'select(.type == "stage") | "→ \(.name)"'
 ```
