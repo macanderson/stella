@@ -4212,9 +4212,8 @@ async fn run_lead_turn(
     let outcome = {
         let customs =
             CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
-        // The AskUser event channel is a stub: the deck io presents its own
-        // card (it must — `install_skill` confirms through the io without any
-        // event), so the tool set's own emission would double the card.
+        // Stub AskUser channel: the deck paints its own card, so the set's own
+        // emission would double it. A TTY REPL always has its human.
         let (stub_tx, _) = mpsc::unbounded_channel();
         let interactive = InteractiveToolSet::new(&customs, stub_tx)
             .with_ask_user(Some(Box::new(ask_io.clone())))
