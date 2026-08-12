@@ -229,7 +229,7 @@ manifest a list of paths rather than anything more expressive.
 ### The palette is a mirror, and one token in it is deliberately unused
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
-(v1.0) — Phosphor Gold `#FFB000` on Ink `#0B0B0C` over warm neutrals, set in
+(v1.0) — Bronze Gold `#C58A32` on Ink `#0B0B0C` over warm neutrals, set in
 JetBrains Mono. [`../../docs/brand/`](../../docs/brand/README.md) is the normative
 source (`css/tokens.css` holds the values); the same tokens live in
 `website/src/app/tokens.css`, and the surfaces move together. The block
@@ -237,8 +237,8 @@ carries the whole core set even where this page uses only part of it. Do not
 prune it to the tokens currently referenced.
 
 One token is applied nowhere on purpose. `#E3B341`, the first categorical data
-mark, may not share a chart with the gold `#FFB000`: the two are hue 42° and
-hue 41° and measure 1.06:1 against each other — nothing but size tells them
+mark, may not share a chart with the gold `#C58A32`: the two are hue 42° and
+hue 36° and measure 1.53:1 against each other — nothing but size tells them
 apart. Gold is the signal — the accent, the focus ring, the comet in the
 masthead — and never a data series, so `--c1` stands down: every chart on this
 page pairs `--c4` (hue 175) with `--c2` (hue 256), 81° apart at 1.99:1, and

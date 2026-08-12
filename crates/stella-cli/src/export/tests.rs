@@ -672,7 +672,7 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "--text-2: #A1A1A1;",
         "--text-3: #6E6E6E;",
         "--accent: #EDEDED;",
-        "--identity: #FFB000;",
+        "--identity: #C58A32;",
         "--ok: #4CC38A;",
         "--warn: #C9A227;",
         "--bad: #E5715F;",

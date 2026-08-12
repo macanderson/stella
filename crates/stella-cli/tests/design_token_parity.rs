@@ -658,7 +658,9 @@ fn identity_gold_comes_from_the_brand_ramp() {
         light.get("--identity"),
         Some(deep),
         "light identity must be --stella-gold-800. NOT --stella-gold-deep \
-         (#a37200): that token is documented for small gold text on light \
-         surfaces and measures 4.05:1 there, under WCAG AA (#2591)."
+         (#8b5e1a): that token is documented for small gold text on light \
+         surfaces, and gold-800 outmeasures it on --surface (8.33:1 against \
+         5.42:1) and as the identity fill pair (8.70:1 against 5.65:1) \
+         (#2591)."
     );
 }

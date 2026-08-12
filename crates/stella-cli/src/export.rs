@@ -499,8 +499,8 @@ fn render_dashboard(
                                hue, so a series survives greyscale printing,
                                colour-vision deficiency and a projector.
        --identity              the wordmark and at most one primary action.
-                               Never a state: --identity #FFB000 against
-                               --warn #C9A227 is 1.32:1, so a reader cannot
+                               Never a state: --identity #C58A32 against
+                               --warn #C9A227 is 1.23:1, so a reader cannot
                                tell them apart by hue.
        --accent                what is selected. It IS the text colour, so
                                "active" is an ink/paper inversion rather than
@@ -512,7 +512,7 @@ fn render_dashboard(
   :root {{
     --void: #060606; --ground: #0A0A0A; --surface: #0F0F0F; --raised: #111111;
     --hairline: #1F1F1F; --hairline-strong: #2E2E2E;
-    --identity: #FFB000; --identity-ink: #0B0B0C;
+    --identity: #C58A32; --identity-ink: #0B0B0C;
     --text: #EDEDED; --text-2: #A1A1A1; --text-3: #6E6E6E;
     --ok: #4CC38A; --warn: #C9A227; --bad: #E5715F;
     --c1: #EDEDED; --c2: #A1A1A1; --c3: #6E6E6E; --c4: #4A4A4A;
@@ -565,12 +565,12 @@ fn render_dashboard(
      --surface (#FAFAFA):
 
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
-       --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 6.46:1
+       --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
 
      and dark against --raised (#111111):
 
        --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
-       --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 10.31:1
+       --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 6.34:1
 
      --text and --text-2 clear AAA on both; the semantic three and --identity
      clear AA on both. --text-3 clears neither and is not meant to: it carries
@@ -586,7 +586,7 @@ fn render_dashboard(
       color-scheme: light;
       --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
       --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
-      --identity: #795500; --identity-ink: #FFFFFF;
+      --identity: #674415; --identity-ink: #FFFFFF;
       --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
       --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
       --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
@@ -603,7 +603,7 @@ fn render_dashboard(
     color-scheme: light;
     --void: #F0F0F0; --ground: #FFFFFF; --surface: #FAFAFA; --raised: #FFFFFF;
     --hairline: #EAEAEA; --hairline-strong: #D4D4D4;
-    --identity: #795500; --identity-ink: #FFFFFF;
+    --identity: #674415; --identity-ink: #FFFFFF;
     --text: #0A0A0A; --text-2: #525252; --text-3: #8F8F8F;
     --ok: #11703A; --warn: #7A5C00; --bad: #A32F1F;
     --c1: #0A0A0A; --c2: #525252; --c3: #8F8F8F; --c4: #C4C4C4;
@@ -759,7 +759,7 @@ fn render_dashboard(
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
       --hairline: #D4D4D4; --hairline-strong: #8F8F8F;
       --text: #0A0A0A; --text-2: #333333; --text-3: #555555;
-      --accent: #0A0A0A; --ink: #FFFFFF; --identity: #795500;
+      --accent: #0A0A0A; --ink: #FFFFFF; --identity: #674415;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}
