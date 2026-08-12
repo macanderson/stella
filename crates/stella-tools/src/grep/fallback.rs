@@ -331,6 +331,7 @@ impl Fallback<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::Tool;
 
     /// Run a search through the POSIX backend **specifically**, whatever is on
     /// the PATH. Every test below goes through here rather than
@@ -405,6 +406,48 @@ mod tests {
             content.contains("xxxy"),
             "a `+` repetition must match: {content}"
         );
+    }
+
+    /// The invariant that actually matters, and the one nothing pinned: which
+    /// backend answered must not change the ANSWER. `Grep::execute` takes the
+    /// rg arm wherever ripgrep is installed (CI, most developer machines) and
+    /// this backend where it is not, so on either host one side of this
+    /// comparison is the real ripgrep answer and the other is this module's —
+    /// and on a host without rg it degenerates to a self-check rather than to
+    /// a false pass, because both sides then run the same code.
+    #[tokio::test]
+    async fn both_backends_return_the_same_lines_for_an_alternation() {
+        let dir = fixture();
+        let pattern = "_hkey|class HeaderDict";
+
+        let ToolOutput::Ok { content: mine } = search(dir.path(), pattern).await else {
+            panic!("the POSIX backend must answer");
+        };
+        let ToolOutput::Ok { content: theirs } = super::super::Grep::bare()
+            .execute(&serde_json::json!({ "pattern": pattern }), dir.path())
+            .await
+        else {
+            panic!("the default backend must answer");
+        };
+
+        // Compare the match text, not the byte stream: the two backends print
+        // the same `path:LINE:text` rows, and only this module appends the
+        // which-backend-answered note to an EMPTY result.
+        let rows = |s: &str| {
+            let mut v: Vec<String> = s
+                .lines()
+                .filter(|l| l.contains(':'))
+                .map(|l| l.rsplit('/').next().unwrap_or(l).to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            rows(&mine),
+            rows(&theirs),
+            "the backends disagree — mine:\n{mine}\ntheirs:\n{theirs}"
+        );
+        assert_eq!(rows(&mine).len(), 2, "both alternatives matched: {mine}");
     }
 
     /// `-E` closes the ERE gap but not the Rust-regex one: portable `grep -E`
