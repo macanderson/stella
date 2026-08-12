@@ -533,10 +533,10 @@ pub struct Engine<'a> {
     /// it always was.
     pub(crate) fallback: Option<&'a dyn crate::ports::FallbackResolver>,
     /// The replacement provider once a fallback latched. Set-once by
-    /// construction — the cell IS the one-swap bound (`driver::model_fallback`);
-    /// every dispatch/attribution site reads it through
-    /// [`Engine::active_provider`], never `provider` directly.
-    pub(crate) provider_override: std::sync::OnceLock<&'a dyn Provider>,
+    /// construction and SHARED across this engine's per-turn copies — the cell
+    /// IS the one-swap bound, and its scope is the engine (`model_fallback`,
+    /// #2918); read it through [`Engine::active_provider`], never `provider`.
+    pub(crate) provider_override: Arc<std::sync::OnceLock<&'a dyn Provider>>,
 }
 
 /// Why a turn that never produced a terminal step ends. A function rather
@@ -626,7 +626,7 @@ impl<'a> Engine<'a> {
             bus: None,
             outcomes: None,
             fallback: None,
-            provider_override: std::sync::OnceLock::new(),
+            provider_override: Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -678,10 +678,10 @@ impl<'a> Engine<'a> {
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
-            // Carries the latched replacement (and its spent latch) into the
-            // copy: a later turn on this execution must not re-attempt a
-            // primary the session already swapped away from (#2679).
-            provider_override: self.provider_override.clone(),
+            // SHARES the latch cell — `Arc::clone`, not a copy of the value
+            // (#2679, #2918): a swap latched by one per-turn copy must be
+            // visible to the next, or it dies with the turn that made it.
+            provider_override: Arc::clone(&self.provider_override),
         }
     }
 
@@ -716,10 +716,10 @@ impl<'a> Engine<'a> {
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
-            // Carries the latched replacement (and its spent latch) into the
-            // copy: a later turn on this execution must not re-attempt a
-            // primary the session already swapped away from (#2679).
-            provider_override: self.provider_override.clone(),
+            // SHARES the latch cell — `Arc::clone`, not a copy of the value
+            // (#2679, #2918): a swap latched by one per-turn copy must be
+            // visible to the next, or it dies with the turn that made it.
+            provider_override: Arc::clone(&self.provider_override),
         }
     }
 

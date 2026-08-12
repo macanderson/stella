@@ -737,7 +737,11 @@ impl Engine<'_> {
             // child that exhausts its ladder surfaces the failure into the
             // parent's tool result instead (#2679).
             fallback: None,
-            provider_override: std::sync::OnceLock::new(),
+            // A FRESH cell, deliberately not shared with the parent: the
+            // child's provider is the spec's explicit choice (see `fallback`
+            // above), so the parent's latched replacement is not the child's
+            // to inherit any more than the parent's resolver is.
+            provider_override: std::sync::Arc::new(std::sync::OnceLock::new()),
         };
 
         // The child's private transcript. It is a local: nothing outside
