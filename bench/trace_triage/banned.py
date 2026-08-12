@@ -269,7 +269,7 @@ LEDGER: dict[str, Disposition] = {
             "a reason-split diagnostic over a closed set the engine authors, not a "
             "fixed regression. The banned shape #2915 describes — a run ending within "
             "seconds of `witness_unavailable` — is a different predicate that does not "
-            "exist yet and could not be verified against a trace here; see #3045."
+            "exist yet and could not be verified against a trace here; see #3053."
         )
     ),
     "oracle-flip-ungraded": ReportOnly(
@@ -278,7 +278,7 @@ LEDGER: dict[str, Disposition] = {
             "mirrored in this repository carries one — the three runs holding agent "
             "artifacts are bare-loop arms that emit no `proof` or `verdict` at all. "
             "Shipping an abort rule unverified is the false abort this gate must not "
-            "have; see #3045."
+            "have; see #3053."
         )
     ),
     "no-post-verdict-file-change": ReportOnly(
@@ -286,7 +286,7 @@ LEDGER: dict[str, Disposition] = {
             "this is close to the #2943 shape, but the detector's own caveat governs: "
             "`file_change` is observability, never evidence, because `bash` names no "
             "path and a heredoc mutates the tree silently. An abort keyed on an absent "
-            "event would fire on work that happened; see #3045."
+            "event would fire on work that happened; see #3053."
         )
     ),
 }

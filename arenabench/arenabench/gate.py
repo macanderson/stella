@@ -66,6 +66,7 @@ __all__ = [
     "GateSpec",
     "arm_gate",
     "gate_argv",
+    "register_arguments",
     "resolve_gate",
     "run_gate",
 ]
@@ -253,6 +254,38 @@ def resolve_gate(
         command=tuple(shlex.split(raw)),
         allowed=frozenset(allowed),
         enabled=True,
+    )
+
+
+def register_arguments(parser: Any) -> None:
+    """Attach ``--gate`` / ``--no-gate`` / ``--gate-allow`` to a parser.
+
+    Defined once and called from both places that need the trio: ``cloud
+    run``'s parser and ``contest``'s, since ``contest --submit`` hands off by
+    building ``cloud run``'s namespace **by hand** and an attribute added to
+    one parser and not the other is an ``AttributeError`` raised after the
+    contest TOML has already been written. One definition is the only version
+    of this that cannot drift.
+    """
+    parser.add_argument(
+        "--gate",
+        help="banned-behavior gate command, run on each trial as it settles: "
+             "`CMD <trial-dir> [--allow CODE]...`, exit 0 clear / "
+             f"{BANNED_EXIT} banned / anything else the gate itself failed. A "
+             f"ban cancels the rest of the run. Defaults to ${GATE_ENV_VAR}",
+    )
+    parser.add_argument(
+        "--no-gate",
+        action="store_true",
+        help="run with no banned-behavior gate — a deliberate waiver, printed "
+             "in the run header",
+    )
+    parser.add_argument(
+        "--gate-allow",
+        action="append",
+        metavar="CODE",
+        help="waive one behavior code for this run (repeatable); forwarded to "
+             "the gate command as --allow CODE",
     )
 
 

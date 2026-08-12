@@ -1128,10 +1128,11 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
     )
     print(f"trials    : {len(plans)}  [{grid}]")
     # Printed, not persisted. The submitted record (`jobs.json`) is written by
-    # `submit_run`, whose signature is the substrate contract every other verb
-    # reads back; threading a gate field through it to record the waiver is a
-    # wider change than this one, so the waiver lives in the run's console
-    # transcript today and #3024's follow-up is where it gets a home on disk.
+    # `submit_run`, whose shape is the substrate contract every other cloud verb
+    # reads back; threading a gate field through it is a wider change than this
+    # one, so the waiver lives in the run's console transcript today. That is
+    # the wrong direction — an ungated run reads as clean on disk — and #3059
+    # is where it gets a home in the record.
     print(gate_line)
 
     jobs = executor.submit_run(
@@ -1352,7 +1353,7 @@ def _common_aws_arguments(parser: Any) -> None:
 
 def register_cli(subparsers: Any) -> None:
     """Attach the ``cloud`` verb tree to the main CLI's subparsers."""
-    from .gate import GATE_ENV_VAR
+    from .gate import register_arguments as gate_arguments
 
     cloud = subparsers.add_parser(
         "cloud", help="run matches on the AWS Batch substrate (needs boto3)"
@@ -1392,26 +1393,7 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument("--artifacts", action="store_true",
                      help="also download the full artifact tree (can be large)")
     run.add_argument("--out", help="local directory for downloaded results")
-    run.add_argument(
-        "--gate",
-        help="banned-behavior gate command, run on each trial as it settles: "
-             "`CMD <trial-dir> [--allow CODE]...`, exit 0 clear / 9 banned / "
-             "anything else the gate itself failed. A ban cancels the rest of "
-             f"the run. Defaults to ${GATE_ENV_VAR}",
-    )
-    run.add_argument(
-        "--no-gate",
-        action="store_true",
-        help="run with no banned-behavior gate — a deliberate waiver, printed "
-             "in the run header",
-    )
-    run.add_argument(
-        "--gate-allow",
-        action="append",
-        metavar="CODE",
-        help="waive one behavior code for this run (repeatable); forwarded to "
-             "the gate command as --allow CODE",
-    )
+    gate_arguments(run)
     _common_aws_arguments(run)
     run.set_defaults(func=_cmd_cloud_run)
 

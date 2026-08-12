@@ -546,6 +546,50 @@ def _run_args(template: Path, **overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+class TestContestHandsTheGateOff:
+    """``contest --submit`` builds ``cloud run``'s namespace **by hand**, so a
+    flag that exists on one parser and not the other is an ``AttributeError``
+    raised after the contest TOML has already been written. One definition
+    (:func:`arenabench.gate.register_arguments`) feeds both; this is the test
+    that the handoff carries all three across."""
+
+    def test_the_three_flags_reach_cloud_runs_namespace(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from arenabench import cli
+
+        captured: list[argparse.Namespace] = []
+
+        def fake_cloud_run(args: argparse.Namespace) -> int:
+            captured.append(args)
+            return 0
+
+        monkeypatch.setattr("arenabench.cloud._cmd_cloud_run", fake_cloud_run)
+        monkeypatch.chdir(tmp_path)
+
+        rc = cli.main(
+            [
+                "contest",
+                "--versus-model",
+                "anthropic/claude-sonnet-5",
+                "--num-tasks",
+                "1",
+                "--submit",
+                "--no-wait",
+                "--gate",
+                "triage --json",
+                "--gate-allow",
+                "B-001",
+            ]
+        )
+
+        assert rc == 0
+        (args,) = captured
+        assert args.gate == "triage --json"
+        assert args.no_gate is False
+        assert args.gate_allow == ["B-001"]
+
+
 class TestCloudRunRefusesToStartUnguarded:
     def test_no_gate_and_no_explicit_waiver_is_exit_two(
         self, tmp_path: Path, capsys, monkeypatch
