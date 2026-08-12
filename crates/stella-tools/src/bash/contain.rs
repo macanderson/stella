@@ -19,9 +19,16 @@
 //!   graded subpath. The profile is inherited by every descendant of the
 //!   shell, which is what makes it a boundary rather than a check on the first
 //!   process.
-//! * **Linux** — a private mount namespace (`unshare --mount`) in which each
-//!   graded tree is bind-mounted back over itself read-only. `MS_RDONLY` is
-//!   enforced against root, which the container case needs.
+//! * **Linux** — a private mount namespace (`unshare --user --map-root-user
+//!   --mount`) in which each graded tree is bind-mounted back over itself
+//!   read-only. `MS_RDONLY` is enforced against root, which the container
+//!   case needs. The user-namespace pair is load-bearing, not decoration:
+//!   changing a pre-existing mount's propagation type requires `CAP_SYS_ADMIN`
+//!   in the user namespace that *owns* that mount, and an unprivileged CI
+//!   runner process has no such capability in the initial namespace it was
+//!   born into — `--user --map-root-user` gives it root, and therefore
+//!   `CAP_SYS_ADMIN`, inside a namespace of its own before `--mount` runs
+//!   (#3010).
 //!
 //! Neither is available everywhere, and a facility that is *present* is not
 //! the same as one that *works* — an unprivileged container, a missing
@@ -207,6 +214,8 @@ fn wrap_argv(
         Mechanism::MountNamespace => {
             let script = mount_script(protected, exempt)?;
             let argv = vec![
+                "--user".to_string(),
+                "--map-root-user".to_string(),
                 "--mount".to_string(),
                 "--propagation".to_string(),
                 "private".to_string(),
@@ -214,7 +223,9 @@ fn wrap_argv(
                 "/bin/sh".to_string(),
                 "-c".to_string(),
                 script,
-                // $0 for the inner shell; the exec'd argv starts after it.
+                // $0 for the inner shell. `sh -c` binds this operand to $0 and
+                // starts the real argv at $1, which is why the script's tail
+                // is a bare `exec "$@"` — see `mount_script`.
                 "stella-contain".to_string(),
                 program.to_string(),
             ]
@@ -265,14 +276,39 @@ fn sbpl_escape(path: &str) -> String {
 
 /// The shell program run inside the fresh mount namespace: bind each graded
 /// tree over itself, remount that bind read-only, then bind each `.git` back
-/// rw before exec'ing the real command.
+/// and remount *that* read-write before exec'ing the real command.
 ///
-/// The order is the whole recipe. A bind mount does not inherit `MS_RDONLY`
-/// from the mount it is taken through — only from the superblock — which is
-/// why the read-only-ness needs its own `remount` step and why the `.git`
-/// bind, taken *after* that remount, comes back writable. Any link failing
-/// aborts with a distinctive status rather than exec'ing uncontained: a
-/// namespace that half-applied must not look like one that applied.
+/// The order is the whole recipe, and both remounts are load-bearing:
+///
+/// * `MS_RDONLY` is a property of the mount, not of the bind operation, so a
+///   fresh `mount --bind` of a writable tree is writable — the read-only-ness
+///   needs its own `remount` step.
+/// * A bind taken *through* a read-only mount does **not** come back writable.
+///   `mount --bind` clones the source mount's flags, `MS_RDONLY` included, so
+///   the `.git` bind inherits the ban it exists to escape and needs a
+///   `remount,bind,rw` of its own. This was the recipe's claim in the opposite
+///   direction until a runner contradicted it: on
+///   `Linux 6.17.0-1022-azure`, under `sudo unshare --mount`, all three mounts
+///   returned success and `printf ok > <graded>/.git/exempt` still failed with
+///   `Read-only file system` (#3011). A candidate is a `git worktree` sharing
+///   this object store, so that is every `git commit` the model runs inside
+///   its own workspace failing — the exemption is not a nicety.
+///
+/// Any link failing aborts with a distinctive status rather than exec'ing
+/// uncontained: a namespace that half-applied must not look like one that
+/// applied. That includes the `rw` restore, which fails *closed* — a shell
+/// that cannot commit is a bad turn, a shell silently outside the boundary is
+/// a bad run.
+///
+/// The tail is `exec "$@"` with **no `shift`**, and the missing `shift` is the
+/// point. `sh -c <script> <name> <argv…>` assigns `<name>` to `$0`, so the
+/// wrapped command already begins at `$1`; a `shift` drops the program and
+/// leaves `exec` holding its first argument. It was there until #3011, which
+/// is why no Linux host had ever reached the wrapped command: the mounts
+/// applied, then `exec -c '<command>'` failed 127. The functional probe read
+/// that as [`Advisory::ProbeFailed`] and degraded — correctly, and loudly
+/// enough to be found, but only once a runner was configured to let the
+/// namespace open at all.
 fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
     let mut script = String::new();
     for root in protected {
@@ -283,9 +319,11 @@ fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
     }
     for git in exempt {
         let q = sh_quote(git.to_str()?);
-        script.push_str(&format!("mount --bind {q} {q} || exit 127\n"));
+        script.push_str(&format!(
+            "mount --bind {q} {q} || exit 127\nmount -o remount,bind,rw {q} || exit 127\n"
+        ));
     }
-    script.push_str("shift\nexec \"$@\"\n");
+    script.push_str("exec \"$@\"\n");
     Some(script)
 }
 
@@ -419,9 +457,73 @@ mod tests {
         let ro = script.find("remount,bind,ro '/app'").expect(&script);
         let git = script.find("mount --bind '/app/.git'").expect(&script);
         assert!(ro < git, "{script}");
-        assert!(script.ends_with("shift\nexec \"$@\"\n"), "{script}");
+        assert!(script.ends_with("exec \"$@\"\n"), "{script}");
         // A half-applied namespace must not exec the command uncontained.
         assert!(script.contains("|| exit 127"), "{script}");
+    }
+
+    /// The handoff, executed rather than asserted about.
+    ///
+    /// The mounts are dropped from the script here so the check runs on any
+    /// host — what is under test is the `$0`/`exec "$@"` contract between
+    /// [`wrap_argv`]'s trailing operands and [`mount_script`]'s tail, which is
+    /// pure shell and platform-independent. A `shift` in that tail ate the
+    /// program and every Linux wrap died at `exec` (#3011); a string assertion
+    /// could not see it, because the string was exactly what its author meant
+    /// to write.
+    #[test]
+    fn the_inner_shell_execs_the_wrapped_command_itself() {
+        let (_program, argv) = wrap_argv(
+            Mechanism::MountNamespace,
+            &roots(&["/app"]),
+            &[],
+            "/bin/echo",
+            &["contained".to_string()],
+        )
+        .expect("wrap");
+
+        // Everything from `/bin/sh` onward is what `unshare` would exec.
+        let sh = argv.iter().position(|a| a == "/bin/sh").expect("inner sh");
+        let mut inner = argv[sh..].to_vec();
+        // Replace the generated script with its tail alone: no mount can run
+        // in a plain test process, and the tail is the part under test.
+        let script = inner.get_mut(2).expect("script slot");
+        *script = script
+            .rsplit_once("exit 127\n")
+            .map_or_else(|| script.clone(), |(_, tail)| tail.to_string());
+
+        let out = std::process::Command::new(&inner[0])
+            .args(&inner[1..])
+            .output()
+            .expect("run inner shell");
+        assert!(
+            out.status.success(),
+            "inner shell failed: {:?} stderr={}",
+            inner,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "contained");
+    }
+
+    /// The `.git` bind is taken *through* the read-only mount and clones its
+    /// `MS_RDONLY`, so binding alone restores nothing — a runner proved the
+    /// exemption dead exactly that way (#3011). The `rw` remount is the whole
+    /// exemption, and it has to come after the bind that needs it.
+    #[test]
+    fn the_git_exemption_is_remounted_writable_after_its_bind() {
+        let script = mount_script(&roots(&["/app"]), &roots(&["/app/.git"])).expect("script");
+        let bind = script.find("mount --bind '/app/.git'").expect(&script);
+        let rw = script
+            .find("mount -o remount,bind,rw '/app/.git'")
+            .expect(&script);
+        assert!(bind < rw, "{script}");
+        // The graded tree itself is never restored — only its `.git`.
+        assert!(!script.contains("remount,bind,rw '/app'"), "{script}");
+        // Failing to restore `rw` aborts rather than exec'ing uncontained.
+        assert!(
+            script.contains("mount -o remount,bind,rw '/app/.git' || exit 127"),
+            "{script}"
+        );
     }
 
     /// Quoting is the difference between a protected path and an injection:
