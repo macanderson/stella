@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>AGENTIC CODING FOR SERIOUS ENGINEERS</strong></p>
+<p align="center"><strong>Reference Grade Agent Loop</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
