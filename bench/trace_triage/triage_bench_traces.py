@@ -134,12 +134,18 @@ def _summarise(actions: list[Action], apply: bool) -> None:
         print("  no findings — nothing to file or comment on")
     suppressed = [a for a in actions if a.decision is Decision.SUPPRESSED]
     if suppressed:
-        print("\nSuppressed by the new-issue cap (raise --max-new-issues to file them):")
+        # Two reasons land here and they mean different things: the cap is a
+        # budget a human can raise, a failed search is a de-duplication the tool
+        # could not perform. Printing both under one heading would invite
+        # "just raise the cap" at exactly the moment that is the wrong move.
+        print("\nSuppressed — not filed, and listed here rather than silently dropped:")
         for action in suppressed:
+            reason = action.matched_by or "the new-issue cap (raise --max-new-issues to file it)"
             print(
                 f"  {action.fingerprint.digest}  {action.finding.detector}  "
                 f"{action.finding.count} occurrence(s)  — {action.finding.title}"
             )
+            print(f"      reason: {reason}")
     if not apply:
         print(
             "\nDRY RUN — nothing was written to GitHub and the fingerprint ledger was "
