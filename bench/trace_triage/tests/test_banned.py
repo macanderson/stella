@@ -351,6 +351,77 @@ def test_a_trial_that_completed_no_model_call_stops_the_run(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# graded-void-trial — the credential shape void-model-call cannot see
+# --------------------------------------------------------------------------
+
+
+def _void_trials(count, events=()):
+    return [
+        {"task": f"alpha{i}__AAA", "reward": 0, "events": list(events)}
+        for i in range(count)
+    ]
+
+
+def test_a_graded_trial_with_no_events_at_all_stops_the_run(tmp_path):
+    """The expired-credential shape: the request is refused before anything streams.
+
+    This is the case the whole gate was asked for — twenty dead trials, every
+    one scored as a task loss — and it is the case `void-model-call` misses,
+    because that detector requires `reasoning` deltas and there are none.
+    """
+    write_run(
+        tmp_path,
+        _void_trials(3),
+        declared_worker="anthropic/claude-sonnet-5",
+        declared_roles={},
+    )
+    verdict = _verdict(tmp_path)
+    assert "graded-void-trial" in verdict.codes
+    tripped = next(t for t in verdict.tripped if t.code == "graded-void-trial")
+    assert tripped.trip == FIRST_TRIAL
+    assert "0 completed model calls" in tripped.excerpt or "step_usage       : 0" in tripped.excerpt
+
+
+def test_void_model_call_alone_would_have_missed_it(tmp_path):
+    """Pins *why* the second row exists, so nobody merges the two detectors.
+
+    If this ever starts firing, `void-model-call` has been widened and the
+    `graded-void-trial` row's rationale needs rewriting rather than quietly
+    becoming redundant.
+    """
+    write_run(
+        tmp_path,
+        _void_trials(1),
+        declared_worker="anthropic/claude-sonnet-5",
+        declared_roles={},
+    )
+    fired = {f.detector for f in detectors.run_all(load_run(tmp_path, "testrun"))}
+    assert "void-model-call" not in fired
+    assert "graded-void-trial" in fired
+
+
+def test_a_void_trial_nobody_graded_is_not_a_measurement_defect(tmp_path):
+    """No reward means no number was reported, so nothing was mismeasured."""
+    write_run(
+        tmp_path,
+        [{"task": "alpha__AAA", "reward": None, "events": []}],
+        declared_worker="anthropic/claude-sonnet-5",
+        declared_roles={},
+    )
+    assert "graded-void-trial" not in _verdict(tmp_path).codes
+
+
+def test_a_trial_that_completed_a_call_is_clear(tmp_path):
+    write_run(
+        tmp_path,
+        [_healthy_trial("alpha__AAA")],
+        declared_worker="anthropic/claude-sonnet-5",
+        declared_roles={},
+    )
+    assert "graded-void-trial" not in _verdict(tmp_path).codes
+
+
+# --------------------------------------------------------------------------
 # agent-timeout — the row that proves the rate rule is needed
 # --------------------------------------------------------------------------
 

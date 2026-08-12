@@ -206,15 +206,39 @@ LEDGER: dict[str, Disposition] = {
                 "`step_usage` fires only on a completed step, so a trial with "
                 "reasoning deltas and none of them never got one model call back. "
                 "The trial measured the harness, and scoring its zero as a task loss "
-                "is the flattering-artifact error inverted. This is the shape an "
-                "expired credential takes: it is decidable on trial one, because the "
-                "next trial uses the same credential."
+                "is the flattering-artifact error inverted. Note this row is the "
+                "narrower of the pair: it requires reasoning, so the credential case "
+                "belongs to `graded-void-trial` and not here."
             ),
         ),
         trip=FIRST_TRIAL,
         evidence=(
             "silent on both real runs mirrored with agent artifacts — 20 of 20 trials "
             "completed at least one model call in each of s5b2 and post1."
+        ),
+    ),
+    "graded-void-trial": Banned(
+        warrant=Warrant(
+            kind=MEASUREMENT_INVARIANT,
+            citation="",
+            note=(
+                "a trial that completed zero model calls measured nothing, and its "
+                "reward is a fact about the credentials, the gateway or the harness "
+                "rather than about the agent. This is the shape an expired credential "
+                "takes — twenty dead trials, every one scored as a task loss — and it "
+                "is decidable on trial one, because the next trial uses the same "
+                "credential against the same gateway."
+            ),
+        ),
+        trip=FIRST_TRIAL,
+        evidence=(
+            "silent on all three real runs mirrored with agent artifacts (s5b2, "
+            "post1, dec1) — 60 of 60 trials completed at least one model call. The "
+            "firing half is fixture-only: no mirrored run here captured a credential "
+            "failure. Added after checking that `void-model-call` does NOT cover this "
+            "case — that detector requires `reasoning` deltas, and a request rejected "
+            "on authentication streams nothing, so a zero-event trial left the gate "
+            "silent until this row existed."
         ),
     ),
     "agent-timeout": Banned(
