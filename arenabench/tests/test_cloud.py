@@ -1133,6 +1133,13 @@ def _run_args(template, **overrides) -> argparse.Namespace:
         out=None,
         region=None,
         bucket=None,
+        # These tests are about submission, not about the banned-behavior
+        # gate, so they take the explicit waiver — `_cmd_cloud_run` refuses to
+        # start a run that is neither gated nor deliberately ungated, and that
+        # refusal has its own witness in tests/test_gate.py.
+        gate=None,
+        no_gate=True,
+        gate_allow=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

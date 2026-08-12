@@ -132,6 +132,10 @@ _LS_REMOTE_TIMEOUT = 30.0
 #: 144-trial run from looking like a hang.
 _QUEUED_STATES = frozenset({"SUBMITTED", "PENDING", "RUNNABLE"})
 _RUNNING_STATES = frozenset({"STARTING", "RUNNING"})
+#: ...and the states that mean it will produce nothing further. Named here so
+#: :mod:`.cancel` and :meth:`CloudExecutor.watch`'s settlement hook share one
+#: definition with the two above rather than each carrying a copy.
+_SETTLED_STATES = frozenset({"SUCCEEDED", "FAILED"})
 
 
 class CloudError(RuntimeError):
@@ -890,6 +894,7 @@ class CloudExecutor:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] = print,
+        on_settled: Callable[[str, str], bool] | None = None,
     ) -> dict[str, str]:
         """Poll until every job settles, printing transitions and counts.
 
@@ -897,10 +902,21 @@ class CloudExecutor:
         time trials sit queued, one explanatory line says why — a
         quota-limited account is *supposed* to park the overflow in
         ``RUNNABLE`` and drain it as capacity frees.
+
+        ``on_settled`` is called once per job the moment this loop first sees
+        it reach ``SUCCEEDED``/``FAILED`` — once per *settlement*, never once
+        per poll — and returning ``True`` from it returns this method
+        immediately, leaving the rest of the run in flight for the caller to
+        cancel. It hangs off the submitter's loop rather than off the runner
+        container because one Batch job is one trial: a container that
+        inspects itself can save nothing, and the cost worth saving is the
+        other N-1 trials, which only the process holding ``jobs.json`` can
+        stop. :func:`.gate_watch.settled_gate` is the intended argument.
         """
         labels = {job["id"]: job["label"] for job in jobs}
         started = clock()
         previous: dict[str, str] = {}
+        reported: set[str] = set()
         quota_note_shown = False
         while True:
             states = self.job_states(labels.keys())
@@ -909,6 +925,12 @@ class CloudExecutor:
                 if before is not None and before != state:
                     out(f"  {labels[job_id]}: {before} -> {state}")
             previous = states
+            if on_settled is not None:
+                for job_id, state in states.items():
+                    if state in _SETTLED_STATES and job_id not in reported:
+                        reported.add(job_id)
+                        if on_settled(job_id, state):
+                            return states
             progress = progress_from_states(states.values())
             out(progress.to_line(clock() - started))
             if progress.queued and not quota_note_shown:
@@ -1031,6 +1053,22 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
             print(f"error: {problem}", file=sys.stderr)
         return 2
 
+    # Before anything is resolved, uploaded or submitted: an unguarded run is
+    # refused, because the gate's whole purpose is to stop paying for a defect
+    # that is already fixed and the run it is missing from is the one that
+    # needed it. `--no-gate` waives it deliberately and is recorded as such.
+    from .gate import BANNED_EXIT, GateNotArmedError, arm_gate
+
+    try:
+        gate_spec, gate_line = arm_gate(
+            command=args.gate,
+            disabled=args.no_gate,
+            allowed=tuple(args.gate_allow or ()),
+        )
+    except GateNotArmedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
     executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
 
     # Refusal before any upload or submission: a seat whose declared
@@ -1089,6 +1127,13 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
         f"{len(spec.contestants)} seat(s)"
     )
     print(f"trials    : {len(plans)}  [{grid}]")
+    # Printed, not persisted. The submitted record (`jobs.json`) is written by
+    # `submit_run`, whose shape is the substrate contract every other cloud verb
+    # reads back; threading a gate field through it is a wider change than this
+    # one, so the waiver lives in the run's console transcript today. That is
+    # the wrong direction — an ungated run reads as clean on disk — and #3059
+    # is where it gets a home in the record.
+    print(gate_line)
 
     jobs = executor.submit_run(
         spec, plans, run_id=run_id, queue=queue, sut=sut,
@@ -1101,14 +1146,26 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
         print(f"not waiting; follow with: arenabench cloud status {run_id}")
         return 0
 
-    states = executor.watch(jobs, poll_interval=args.poll)
+    dest = Path(args.out or f"arenabench-cloud/{run_id}").expanduser()
+    watcher = None
+    if gate_spec is not None:
+        from .gate_watch import settled_gate
+
+        watcher = settled_gate(
+            executor, run_id=run_id, spec=gate_spec, jobs=jobs, dest=dest
+        )
+    states = executor.watch(jobs, poll_interval=args.poll, on_settled=watcher)
+    if watcher is not None and watcher.aborted is not None:
+        # Exit 9 is the gate command's own "banned" code, reused here so a
+        # wrapper script can tell an aborted run from a run whose trials
+        # merely failed (1) without parsing the transcript.
+        return BANNED_EXIT
     final = progress_from_states(states.values())
     print(f"\nfinished: {final.succeeded} succeeded, {final.failed} failed")
     for row in executor.run_rows(run_id):
         print(f"  ddb {row['job']}: {row['status']}  {row['detail']}")
 
     if not args.no_fetch:
-        dest = Path(args.out or f"arenabench-cloud/{run_id}").expanduser()
         fetched = executor.fetch_results(
             run_id, jobs, dest, artifacts=args.artifacts
         )
@@ -1306,6 +1363,8 @@ def _common_aws_arguments(parser: Any) -> None:
 
 def register_cli(subparsers: Any) -> None:
     """Attach the ``cloud`` verb tree to the main CLI's subparsers."""
+    from .gate import register_arguments as gate_arguments
+
     cloud = subparsers.add_parser(
         "cloud", help="run matches on the AWS Batch substrate (needs boto3)"
     )
@@ -1344,6 +1403,7 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument("--artifacts", action="store_true",
                      help="also download the full artifact tree (can be large)")
     run.add_argument("--out", help="local directory for downloaded results")
+    gate_arguments(run)
     _common_aws_arguments(run)
     run.set_defaults(func=_cmd_cloud_run)
 
