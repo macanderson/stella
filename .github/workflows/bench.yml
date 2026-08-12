@@ -127,6 +127,15 @@ jobs:
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/evidence/tests
 
+      # The bench-trace triage tool. Same `--no-project` reasoning as its
+      # neighbours — it is standard-library only so that the piece deciding what
+      # a run says about the product needs no harness to be testable. It is not
+      # a `make gate` step (it reads S3 and writes to GitHub), so this workflow
+      # is the only thing standing between it and silent rot.
+      - name: trace triage — pytest
+        if: steps.scope.outputs.changed == 'true'
+        run: uv run --with pytest --no-project pytest -q bench/trace_triage/tests
+
       # The Frontier-Bench run planner. No project to sync and no Harbor to
       # install: plan.py imports nothing outside the standard library, which is
       # deliberate — the piece that decides which tasks are allowed to run
