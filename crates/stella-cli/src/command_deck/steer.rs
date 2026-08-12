@@ -39,7 +39,7 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
 ///
 /// A worker has a steering tap of its own, but the driver holds no handle to
 /// it — `SubSessions` tracks stop and pause channels and nothing else — so
-/// there is no way to inject at that lane's boundary today (#2896).
+/// there is no way to inject at that lane's boundary today (#2899).
 ///
 /// The words are not dropped for it: they go to the backlog, which is where a
 /// prompt typed at a busy lane already goes. That is a weaker answer than the
