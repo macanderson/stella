@@ -138,6 +138,12 @@ catalog! {
     "apply_edits"         => (false, false, Always, "file"),
     "delete_file"         => (false, false, Always, "file"),
     // Search
+    // The fused entry point (#3076), registered beside the four it subsumes
+    // rather than instead of them. Not speculation-safe, and for the union of
+    // its parts' reasons: a query can reach the graph and the embedding pass,
+    // so it inherits the "read that writes" posture from the strictest branch
+    // it can take, never the cheapest.
+    "search"              => (true, false, Always, "search"),
     "grep"                => (true, true, Always, "search"),
     "glob"                => (true, true, Always, "search"),
     // The read that writes: graph queries bootstrap/catch up codegraph.db.
