@@ -1,0 +1,128 @@
+# cite_memory — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "cite_memory"
+category = "context"
+availability = "always"
+read_only = false
+available_for_speculation = false
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Cite a piece of injected context that actually informed your work this turn — a recalled memory (a `[nod_…]`-tagged line from the relevant-context block) or a workspace rule/record (a `^handle` as shown beside its statement): score how useful it was and say whether its content still holds. Cite only context you genuinely used.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "memory_id": {
+      "description": "The memory's [nod_…] id or the record's ^handle, exactly as shown in the injected context",
+      "type": "string"
+    },
+    "remark": {
+      "description": "One short sentence: how the memory helped, or what no longer holds",
+      "type": "string"
+    },
+    "truthful": {
+      "description": "Does the memory's content still hold true, as verified against the workspace this turn?",
+      "type": "boolean"
+    },
+    "useful_score": {
+      "description": "How useful the memory was for the actual work (1 = misleading/wasted effort, 5 = decisive)",
+      "maximum": 5,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "memory_id",
+    "useful_score",
+    "truthful",
+    "remark"
+  ],
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE: none.
+# `cite_memory` has no call to record: it was advertised and never called. No
+# payload is shown, because an invented one would teach the reader what the
+# author imagined this tool is for.
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Never called. Across 408 trials and 15304 model calls (census of
+# 2026-08-11), `cite_memory` was advertised and chosen zero times. That is a
+# fact about the tool menu, not a defect in the tool — see #3032, which this
+# page is input to.

@@ -112,6 +112,13 @@ mod term_policy;
 mod timefmt;
 mod tool_foundry;
 mod tool_policy;
+// The generated per-tool reference (`docs/tools/`) and the guard that fails
+// when it drifts. Test-only: it is a build-time artifact generator, not
+// runtime behaviour, and this is the only scope from which all seventy-two
+// schemas — the registry's sixty-four plus this crate's eight session-layer
+// declarations — are reachable at once.
+#[cfg(test)]
+mod tool_docs;
 mod tool_switches;
 mod trace;
 mod tune_cmd;

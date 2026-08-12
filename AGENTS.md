@@ -72,6 +72,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
+                         #   + tool-docs (docs/tools/ vs the declarations)
                          #   + self-driving-test (the shell harness)
 ```
 

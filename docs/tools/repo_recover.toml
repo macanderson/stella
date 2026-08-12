@@ -1,0 +1,109 @@
+# repo_recover — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "repo_recover"
+category = "repo"
+availability = "always"
+read_only = true
+available_for_speculation = true
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Find committed work that no branch points at, judged against a reference you name (`target`, default HEAD). Searches the whole object store (git fsck) UNIONed with the position log, so it is the only tool that reaches commits the reflog has already expired, and the only one that answers "unreferenced relative to THIS ref". Returns each commit's sha, subject, author, date, parents, and `sits_on_target` (true when it sits directly on the target and can be integrated by fast-forward rather than a merge that could conflict); commits already contained in the target are omitted as found, not lost. This is the slow last resort — scanning every object is why `repo_status` does not do it on every call — so reach for it only once `repo_status` has shown no shelved change, no detached position and nothing under `unreachable`. Stella's own candidate-workspace snapshot commits are excluded and counted separately — they are unreachable by construction and are never the user's lost work.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "target": {
+      "description": "Reference the search is judged against — a commit is reported only when it is NOT already contained in this (default: HEAD).",
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE: none.
+# `repo_recover` has 9 calls in the wider census, but none in the 2829-row
+# capture the examples are drawn from. No payload is shown, because an
+# invented one would teach the reader what the author imagined this tool is
+# for.
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 9 · trials that used it 9/408 · calls per model call 0.0006 · mean
+# position of first use 15.1 · failures 0 (0.0%).
+# A measurement, not a contract: it ages, the schema above does not.

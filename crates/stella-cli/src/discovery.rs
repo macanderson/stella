@@ -301,37 +301,8 @@ impl<'a> DiscoveryToolSet<'a> {
     // ── Schemas ─────────────────────────────────────────────────────────────
 
     fn discovery_schemas(&self) -> Vec<ToolSchema> {
-        let lean_note = if self.lean.is_some() {
-            " This session advertises a lean core toolset: tools this search returns are \
-             activated and become callable — search BEFORE assuming a capability is missing."
-        } else {
-            ""
-        };
-        let mut schemas = vec![ToolSchema {
-            name: TOOL_SEARCH.into(),
-            description: format!(
-                "Search every tool available in this session — built-ins, MCP server tools \
-                     (mcp__<server>__<tool>), custom workspace tools — ranked by fit. Query \
-                     forms: keywords ('issue tracking'), +required terms ('+github pr'), or \
-                     select:name1,name2 for exact lookup. Use it when you need a capability you \
-                     don't see advertised, before concluding it doesn't exist.{lean_note}"
-            ),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Keywords, '+required terms', or 'select:name1,name2'."
-                    },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": TOOL_SEARCH_MAX_LIMIT }
-                },
-                "required": ["query"]
-            }),
-            read_only: true,
-            // A search over the session's own tool stack — local, safe to
-            // run twice under speculation (#923).
-            speculation_safe: true,
-        }];
+        let lean_note = if self.lean.is_some() { LEAN_NOTE } else { "" };
+        let mut schemas = vec![tool_search_schema(lean_note)];
         // Skills and MCP are extension-discovery surfaces backed by workspace,
         // user, or registry state outside the benchmark's frozen engine
         // posture. Keep native tool_search, but do not advertise either source
@@ -341,56 +312,7 @@ impl<'a> DiscoveryToolSet<'a> {
         }
         // Skills are searchable AND invocable from the same layer (#2682).
         schemas.push(self.invoke.schema());
-        schemas.extend([
-            ToolSchema {
-                name: SKILL_SEARCH.into(),
-                description: "Search user-global skills plus authority-permitted workspace \
-                              skills and rank them by fit for a \
-                              task. Set include_body: true to also get the top match's full \
-                              instructions when you intend to apply it. Use this FIRST; \
-                              search_skills queries the public internet registry for skills you \
-                              would still have to install."
-                    .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string" },
-                        "limit": { "type": "integer", "minimum": 1, "maximum": SKILL_SEARCH_MAX_LIMIT },
-                        "include_body": {
-                            "type": "boolean",
-                            "description": "Also return the best match's full SKILL.md instructions."
-                        }
-                    },
-                    "required": ["query"]
-                }),
-                read_only: true,
-                // Reads local skill indexes only — the registry-querying
-                // sibling is `search_skills`, which stays unspeculated.
-                speculation_safe: true,
-            },
-            ToolSchema {
-                name: MCP_SEARCH.into(),
-                description: "Find MCP servers and their tools, ranked by fit. scope \
-                              'workspace' (default): servers configured in .stella/mcp.toml and \
-                              their connected mcp__<server>__<tool> tools. scope 'registry': the \
-                              public MCP server registry — servers you could install with \
-                              `stella mcp install <name>`. scope 'all': both."
-                    .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string" },
-                        "scope": { "type": "string", "enum": ["workspace", "registry", "all"] },
-                        "limit": { "type": "integer", "minimum": 1, "maximum": MCP_SEARCH_MAX_LIMIT }
-                    },
-                    "required": ["query"]
-                }),
-                read_only: true,
-                // scope "registry"/"all" hits the public MCP registry — a
-                // duplicate run is real traffic, so never speculated (#923).
-                speculation_safe: false,
-            },
-        ]);
+        schemas.extend([skill_search_schema(), mcp_search_schema()]);
         schemas
     }
 
@@ -952,6 +874,113 @@ fn clip_chars(text: &str, max_chars: usize) -> String {
     let mut clipped: String = text.chars().take(max_chars).collect();
     clipped.push('…');
     clipped
+}
+
+/// The sentence `tool_search` grows when the session advertises a lean core
+/// toolset — session state, which is why it is a parameter rather than a
+/// lookup: the generated reference documents the tool as declared, not as one
+/// session happened to advertise it.
+const LEAN_NOTE: &str = " This session advertises a lean core toolset: tools this search returns \
+     are activated and become callable — search BEFORE assuming a capability is missing.";
+
+/// The `tool_search` declaration. Free rather than a method so the reference
+/// generator can ask for it without a session (`crate::tool_docs`).
+pub(crate) fn tool_search_schema(lean_note: &str) -> ToolSchema {
+    ToolSchema {
+        name: TOOL_SEARCH.into(),
+        description: format!(
+            "Search every tool available in this session — built-ins, MCP server tools \
+             (mcp__<server>__<tool>), custom workspace tools — ranked by fit. Query \
+             forms: keywords ('issue tracking'), +required terms ('+github pr'), or \
+             select:name1,name2 for exact lookup. Use it when you need a capability you \
+             don't see advertised, before concluding it doesn't exist.{lean_note}"
+        ),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keywords, '+required terms', or 'select:name1,name2'."
+                },
+                "limit": { "type": "integer", "minimum": 1, "maximum": TOOL_SEARCH_MAX_LIMIT }
+            },
+            "required": ["query"]
+        }),
+        read_only: true,
+        // A search over the session's own tool stack — local, safe to
+        // run twice under speculation (#923).
+        speculation_safe: true,
+    }
+}
+
+/// The `skill_search` declaration.
+pub(crate) fn skill_search_schema() -> ToolSchema {
+    ToolSchema {
+        name: SKILL_SEARCH.into(),
+        description: "Search user-global skills plus authority-permitted workspace \
+                      skills and rank them by fit for a \
+                      task. Set include_body: true to also get the top match's full \
+                      instructions when you intend to apply it. Use this FIRST; \
+                      search_skills queries the public internet registry for skills you \
+                      would still have to install."
+            .into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "limit": { "type": "integer", "minimum": 1, "maximum": SKILL_SEARCH_MAX_LIMIT },
+                "include_body": {
+                    "type": "boolean",
+                    "description": "Also return the best match's full SKILL.md instructions."
+                }
+            },
+            "required": ["query"]
+        }),
+        read_only: true,
+        // Reads local skill indexes only — the registry-querying
+        // sibling is `search_skills`, which stays unspeculated.
+        speculation_safe: true,
+    }
+}
+
+/// The `mcp_search` declaration.
+pub(crate) fn mcp_search_schema() -> ToolSchema {
+    ToolSchema {
+        name: MCP_SEARCH.into(),
+        description: "Find MCP servers and their tools, ranked by fit. scope \
+                      'workspace' (default): servers configured in .stella/mcp.toml and \
+                      their connected mcp__<server>__<tool> tools. scope 'registry': the \
+                      public MCP server registry — servers you could install with \
+                      `stella mcp install <name>`. scope 'all': both."
+            .into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "scope": { "type": "string", "enum": ["workspace", "registry", "all"] },
+                "limit": { "type": "integer", "minimum": 1, "maximum": MCP_SEARCH_MAX_LIMIT }
+            },
+            "required": ["query"]
+        }),
+        read_only: true,
+        // scope "registry"/"all" hits the public MCP registry — a
+        // duplicate run is real traffic, so never speculated (#923).
+        speculation_safe: false,
+    }
+}
+
+/// Every tool this layer declares, unconditioned by session state — what
+/// `crate::tool_docs` documents. Deliberately not `schemas()`: that answer is
+/// filtered by lean mode, by a live skill's allowed-tools grant, and by the
+/// filesystem-isolation posture, none of which are properties of the tools.
+#[cfg(test)]
+pub(crate) fn declared_discovery_schemas() -> Vec<ToolSchema> {
+    vec![
+        tool_search_schema(""),
+        crate::invoke_skill::InvokeSkillTools::new(std::path::PathBuf::from(".")).schema(),
+        skill_search_schema(),
+        mcp_search_schema(),
+    ]
 }
 
 #[cfg(test)]
