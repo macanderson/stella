@@ -252,20 +252,27 @@ class CloudScoreboard:
             pass
         results: dict[str, Any] = {}
         for job in jobs:
-            body = self._results(job["label"])
+            body = self._results(job["id"])
             if body is not None:
                 results[job["label"]] = body
         return assemble(self.run_id, jobs, states, results, details)
 
-    def _results(self, label: str) -> Any:
+    def _results(self, job_id: str) -> Any:
         """One trial's ``results.json``, or ``None`` while it does not exist.
 
         Absence is the normal state for most of a run and must not raise: a
         watcher that dies on the first unwritten result would only ever work
         on a finished run, which is the one case it is not needed for.
+
+        Addressed by **job id**, because that is what the runner writes under
+        (``entrypoint.sh``'s ``JOB_ID``, the Batch job's UUID). The label names
+        the trial's directory on *disk* once fetched, never its object in S3 —
+        the split :meth:`CloudExecutor.fetch_results` already makes. Asking for
+        the label here returns a key nothing writes, and the ``except`` below
+        reports that as "not finished yet" for the life of the run.
         """
         s3 = self.executor._client("s3")  # noqa: SLF001 - same package
-        key = f"runs/{self.run_id}/{label}/results.json"
+        key = f"runs/{self.run_id}/{job_id}/results.json"
         try:
             body = s3.get_object(Bucket=self.executor.bucket(), Key=key)
             return json.loads(body["Body"].read())
