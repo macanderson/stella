@@ -2661,7 +2661,7 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
         });
-        match self
+        let (outcome, _) = self
             .run_engine_turn(
                 engine,
                 &mut state.messages,
@@ -2669,8 +2669,8 @@ impl<'a> Pipeline<'a> {
                 &mut state.signals,
                 crate::flip_halt::for_revision(&state.flip_halt, state.oracle.state()),
             )
-            .await
-        {
+            .await;
+        match outcome {
             TurnOutcome::Completed { text, cost_usd } => {
                 state.final_text = text;
                 *spend.total += cost_usd;

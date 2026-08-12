@@ -96,9 +96,14 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         // ceiling: pinned-low effort is not only cheaper, it keeps the call
         // inside the ceiling so the fast route actually gets taken.
         ModelCallRole::Triage => (Some(512), Some(ReasoningEffort::Low)),
-        // A small ordered-JSON plan. Output is bounded; effort is inherited —
-        // plan quality rides the session's own reasoning posture.
-        ModelCallRole::Plan | ModelCallRole::PlanRepair => (Some(4096), None),
+        // A small ordered-JSON plan. Effort is pinned low, not inherited
+        // (#2869): a high-effort session let a reasoning model spend its
+        // entire 8k-token headroom thinking and answer with nothing, twice —
+        // the starvation retry re-sends through this same closure, so an
+        // inherited high effort loses the identical bet at a 3.4x larger
+        // cap. Plan's output contract is three to eight short strings; that
+        // does not need session-level deliberation to produce.
+        ModelCallRole::Plan | ModelCallRole::PlanRepair => (Some(4096), Some(ReasoningEffort::Low)),
         // "PASS or FAIL, then one line" / "at most 6 lines" by their own
         // prompts. Effort inherited: both are judgment calls on evidence.
         ModelCallRole::Verdict | ModelCallRole::DistressGuidance => (Some(1024), None),
@@ -466,6 +471,23 @@ mod tests {
             role_output_cap(ModelCallRole::Triage, &pinned, Some(64_000)),
             Some(512)
         );
+    }
+
+    /// #2869 witness: Plan and PlanRepair pin low effort instead of
+    /// inheriting the session's, so a high-effort session cannot drive a
+    /// reasoning model to spend the entire cap thinking and answer with
+    /// nothing. Fails on the old code, where both roles inherited (`None`)
+    /// and a `high`-effort session reached the wire unbounded.
+    #[test]
+    fn plan_roles_pin_low_effort_rather_than_inherit() {
+        for role in [ModelCallRole::Plan, ModelCallRole::PlanRepair] {
+            assert_eq!(
+                management_bounds(role).1,
+                Some(ReasoningEffort::Low),
+                "{role:?} must pin low effort so an inherited high-effort session \
+                 cannot spend the whole output cap on reasoning"
+            );
+        }
     }
 
     /// An uncapped role inherits the engine base, exactly as before.

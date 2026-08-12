@@ -195,9 +195,10 @@ impl std::fmt::Display for Refusal {
                 }
                 write!(
                     f,
-                    " Naming the graded tree at all — even inside a script body, an `echo`, or \
-                     a comment — trips this, so rewrite the path rather than quoting it \
-                     differently. Nothing else outside this workspace is restricted: system \
+                    " This is about where the write lands, not about naming the path — a plain \
+                     read (`cat`, `ls`, `grep`, …) of the graded tree is fine; rewrite the \
+                     command so the write itself lands here instead. Nothing else outside this \
+                     workspace is restricted: system \
                      paths such as /etc, /usr and /var are still writable."
                 )
             }
@@ -330,6 +331,15 @@ impl ShellConfinement {
         let reported = self.graded_root().unwrap_or(Path::new("/"));
         for graded in &self.graded_roots {
             if let Some(literal) = graded_literal(command, graded, session_root) {
+                // A mention that is provably a read — `cat /app/x`, `ls
+                // /app/documents` — cannot corrupt the tree the run is
+                // judged against; only a write can (#2928). Naming it in a
+                // segment this scan cannot classify (a general-purpose
+                // interpreter, an unlisted command) still refuses, same as
+                // today.
+                if only_reads_graded_tree(command, graded) {
+                    continue;
+                }
                 let substitute = Path::new(&literal)
                     .strip_prefix(graded)
                     .ok()
@@ -409,6 +419,94 @@ fn graded_literal(command: &str, graded_root: &Path, session_root: &Path) -> Opt
         from = end;
     }
     None
+}
+
+/// Bash leaders whose text shape is provably read-only: the command inspects
+/// a path and produces output, it does not accept a target to write. An
+/// allowlist rather than a denylist of write commands on purpose — a
+/// general-purpose interpreter (`python3`, `bash`, `eval`, …) or any leader
+/// not named here defaults to the existing refusal, because the text audit
+/// cannot see what an interpreter does with the path once it has it (#2928).
+const READ_ONLY_LEADERS: &[&str] = &[
+    "ls",
+    "cat",
+    "find",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ripgrep",
+    "ag",
+    "stat",
+    "file",
+    "head",
+    "tail",
+    "wc",
+    "diff",
+    "du",
+    "tree",
+    "readlink",
+    "realpath",
+    "test",
+    "pwd",
+    "basename",
+    "dirname",
+    "less",
+    "more",
+    "nl",
+    "od",
+    "xxd",
+    "hexdump",
+    "sha1sum",
+    "sha256sum",
+    "sha512sum",
+    "md5sum",
+    "echo",
+    "printf",
+    "type",
+    "which",
+    "env",
+];
+
+/// Whether every mention of `graded_root` in `command` sits inside a segment
+/// this scan can prove is read-only — a pipeline stage led by a
+/// [`READ_ONLY_LEADERS`] command with no output redirection (#2928: `ls
+/// /app/documents` cannot corrupt the graded tree; refusing it taught the
+/// worker nothing and cost a wasted retry).
+///
+/// Segmented on the same operators [`ShellConfinement::audit`]'s relative-climb
+/// scan bounds a word list on (`;`, `&`, `&&`, `|`, `||`) — a text audit, not a
+/// shell parser, so a leader that is itself the *value* of a flag
+/// (`find . -exec cp {} /app \;`) is judged by whatever word starts its own
+/// segment, which is the conservative direction: it still refuses.
+fn only_reads_graded_tree(command: &str, graded_root: &Path) -> bool {
+    let Some(needle) = graded_root.to_str() else {
+        return false;
+    };
+    let mut mentioned = false;
+    let mut all_safe = true;
+    let mut segment: Vec<String> = Vec::new();
+    let classify = |segment: &[String], mentioned: &mut bool, all_safe: &mut bool| {
+        if !segment.iter().any(|w| w.contains(needle)) {
+            return;
+        }
+        *mentioned = true;
+        let leader = segment.iter().find(|w| !w.starts_with('-'));
+        let redirects = segment.iter().any(|w| w == ">" || w == ">>");
+        if redirects || !leader.is_some_and(|l| READ_ONLY_LEADERS.contains(&l.as_str())) {
+            *all_safe = false;
+        }
+    };
+    for word in super::shell_words(command) {
+        if matches!(word.as_str(), ";" | "&" | "&&" | "|" | "||") {
+            classify(&segment, &mut mentioned, &mut all_safe);
+            segment.clear();
+            continue;
+        }
+        segment.push(word);
+    }
+    classify(&segment, &mut mentioned, &mut all_safe);
+    mentioned && all_safe
 }
 
 /// The object-destroying git subcommand the command runs, if any.
@@ -546,6 +644,54 @@ mod tests {
                 "{command}: {refusal:?}"
             );
         }
+    }
+
+    /// #2928 witness: a plain read of the graded tree cannot corrupt it, so
+    /// it must not be refused. Fails on the old code, which refused any
+    /// mention of the graded tree regardless of what the command did with it.
+    #[test]
+    fn a_read_only_command_naming_the_graded_tree_is_permitted() {
+        let (confined, root) = candidate();
+        for command in [
+            "ls -la /app/documents/",
+            "cat /app/check_cert.py",
+            "grep -rn TODO /app",
+            "find /app -name '*.py'",
+            "stat /app/ssl/server.crt",
+            "echo /app/ssl/server.crt",
+        ] {
+            assert!(confined.audit(command, &root).is_ok(), "{command}");
+        }
+    }
+
+    /// The read/write split is per mention, not per command: a command that
+    /// both reads and writes the graded tree in the same breath still
+    /// refuses, and a read that shares a pipeline with an unrelated write
+    /// elsewhere in the graded tree is not laundered by the read half.
+    #[test]
+    fn a_write_alongside_a_read_of_the_graded_tree_still_refuses() {
+        let (confined, root) = candidate();
+        for command in [
+            "cat /app/config.txt > /app/backup.txt",
+            "ls /app && rm -rf /app/pyknotid",
+            "cat /app/x; cp y /app/y",
+        ] {
+            let refusal = confined.audit(command, &root).expect_err(command);
+            assert!(matches!(refusal, Refusal::GradedTree { .. }), "{command}");
+        }
+    }
+
+    /// A general-purpose interpreter is not on the read-only allowlist, so a
+    /// mention inside its command line still refuses even though `python3`
+    /// itself is not one of the known write commands — the text audit cannot
+    /// see what the interpreter does with the path.
+    #[test]
+    fn an_unclassifiable_leader_still_refuses() {
+        let (confined, root) = candidate();
+        let refusal = confined
+            .audit("python3 -c \"print(open('/app/x').read())\"", &root)
+            .expect_err("unclassifiable leader");
+        assert!(matches!(refusal, Refusal::GradedTree { .. }));
     }
 
     /// The legitimate case the posture is built around: a task that installs

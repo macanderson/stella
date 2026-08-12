@@ -232,7 +232,18 @@ async fn the_research_row_reaches_the_childrens_requests_and_not_the_workers() {
         "every research child must carry the pinned effort, got {research:?}"
     );
 
-    let worker = provider.efforts_for("## Plan (JSON array of step strings)");
+    // "## Plan (JSON array of step strings)" is the planner's OWN prompt
+    // heading (`build_planner_prompt`), not anything a worker turn's request
+    // carries — matching on it selected the plan call, not the worker, which
+    // this test's old assertion could not tell apart because both used to
+    // inherit the same engine effort. #2869 pins Plan's own effort low
+    // unconditionally, so the needle has to name the worker's actual step
+    // prompt to keep testing what this test is titled for.
+    let worker = provider.efforts_for("Step 1/1: update retry.rs");
+    assert!(
+        !worker.is_empty(),
+        "the worker's step turn must have been called"
+    );
     assert!(
         worker
             .iter()

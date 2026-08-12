@@ -823,10 +823,18 @@ async fn workspace_creation_seeds_the_plan_and_only_a_lone_candidate_may_report(
 /// model round trip per step would be both slower and less reliable.
 #[tokio::test]
 async fn a_plan_walk_moves_the_candidates_board_step_by_step() {
+    // Step 1 dispatches a real tool call (then a plain-text reply closing
+    // that turn's own inner tool loop) so it does not trip #2933's
+    // zero-tool-call consolidation — this test is about the ordinary
+    // per-step InProgress/Completed pairing, which #2933's collapsed path
+    // deliberately does not use (see `a_no_tool_call_step_ends_the_walk_
+    // with_one_consolidated_check` in `plan_walk.rs` for that path). Step 2
+    // is the last step, so it has nothing left to consolidate either way.
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: multi"),
         text_result(r#"["read the layout","fold the rail"]"#),
-        text_result("step 1 done"),
+        writing_tool_result("step 1 done"),
+        text_result("step 1 confirmed"),
         text_result("step 2 done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));

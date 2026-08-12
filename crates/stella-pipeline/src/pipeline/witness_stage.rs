@@ -490,6 +490,7 @@ impl<'a> Pipeline<'a> {
                 None,
             )
             .await
+            .0
         {
             TurnOutcome::Completed { text, cost_usd } => {
                 *spend.total += cost_usd;
@@ -626,13 +627,16 @@ impl<'a> Pipeline<'a> {
                          the executed change stands unproven"
                     )));
                 }
-                Ok(TurnOutcome::Completed { text, cost_usd }) => {
+                Ok((TurnOutcome::Completed { text, cost_usd }, _)) => {
                     *spend.total += cost_usd;
                     text
                 }
-                Ok(TurnOutcome::Aborted {
-                    reason, cost_usd, ..
-                }) => {
+                Ok((
+                    TurnOutcome::Aborted {
+                        reason, cost_usd, ..
+                    },
+                    _,
+                )) => {
                     *spend.total += cost_usd;
                     // Degradable for the same #1789 reason as the author
                     // turn's budget arm above.
