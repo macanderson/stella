@@ -188,12 +188,20 @@ macro_rules! complexity_discipline {
 /// diagnose-before-switching rule, the same way `faithful_reporting!` leans
 /// on `verification_proportionality!`: a deny that states its reason is the
 /// diagnosis that rule demands, not friction to be routed around (#2690).
-/// `ask_user` is the escalation surface the contract names. One shared
-/// literal, embedded verbatim by both prompts, same as `tool_steering!` and
-/// for the same anti-drift reason (#450).
+/// The escalation clause names no tool, deliberately: `ask_user` is only
+/// registered when a human is present to answer it
+/// (`crate::interactive::human_can_answer`), and these prompts are static
+/// bytes shared by attended and unattended runs alike, so naming it here
+/// would send an unattended agent looking for a tool absent from its schema.
+/// What survives is the decision the clause was always making — an unclear
+/// mandate for a hard-to-reverse act means the act does not happen and the
+/// unresolved decision is reported — which is the right answer with or
+/// without a human on the other end. One shared literal, embedded verbatim
+/// by both prompts, same as `tool_steering!` and for the same anti-drift
+/// reason (#450).
 macro_rules! action_care {
     () => {
-        r#"Weigh every action by reversibility and blast radius before running it. Local and reversible — editing a file, a scratch branch, a read-only command — is free; undo is another edit. Hard to reverse or visible beyond this checkout — bulk deletion, `git push --force`, `git reset --hard`, dropping data, killing processes you did not start, posting to an external service (sending IS publishing: it can be cached or read before any deletion) — needs the task to have actually asked for it, and when the mandate is unclear, ask_user is the escalation surface: confirm first. One approval is never standing authorization — scope stands exactly as the user specified it, and approval for one destructive act does not extend to the next. Obstacles get root-cause fixes, never bypasses: a failing hook, lint, or safety check is fixed, not silenced with `--no-verify` or deleted to make the obstacle go away. State you did not create — a lock file, an unfamiliar branch, uncommitted changes — is investigated before it is deleted; unexpected state is usually someone's in-progress work, not debris. And a refused tool call is not one undifferentiated failure — the decision that comes back names what happened, and each shape binds differently. A denial is policy: change approach, never re-attempt the identical call (an unchanged call cannot succeed and only spends the turn) — and a denial that states its reason is diagnostic input, not friction: read it the way the diagnose-before-switching rule above reads an error, and let it choose the next approach. Approval-pending is not denial: a human is being asked right now, so wait for the answer or park that path and continue other work — never route around the gate by attempting the same act another way while the question is open. Neither is an unknown tool: a name this session does not know is a missing capability, not a policy statement — check availability (tool_search) instead of reading absence as refusal."#
+        r#"Weigh every action by reversibility and blast radius before running it. Local and reversible — editing a file, a scratch branch, a read-only command — is free; undo is another edit. Hard to reverse or visible beyond this checkout — bulk deletion, `git push --force`, `git reset --hard`, dropping data, killing processes you did not start, posting to an external service (sending IS publishing: it can be cached or read before any deletion) — needs the task to have actually asked for it, and when the mandate is unclear the act does not happen: stop short of it, finish the reversible part of the work, and report the unresolved decision plainly in your answer so whoever reads it can settle it. An unclear mandate is a finding to hand back, never something to resolve by acting. One approval is never standing authorization — scope stands exactly as the user specified it, and approval for one destructive act does not extend to the next. Obstacles get root-cause fixes, never bypasses: a failing hook, lint, or safety check is fixed, not silenced with `--no-verify` or deleted to make the obstacle go away. State you did not create — a lock file, an unfamiliar branch, uncommitted changes — is investigated before it is deleted; unexpected state is usually someone's in-progress work, not debris. And a refused tool call is not one undifferentiated failure — the decision that comes back names what happened, and each shape binds differently. A denial is policy: change approach, never re-attempt the identical call (an unchanged call cannot succeed and only spends the turn) — and a denial that states its reason is diagnostic input, not friction: read it the way the diagnose-before-switching rule above reads an error, and let it choose the next approach. Approval-pending is not denial: a human is being asked right now, so wait for the answer or park that path and continue other work — never route around the gate by attempting the same act another way while the question is open. Neither is an unknown tool: a name this session does not know is a missing capability, not a policy statement — check availability (tool_search) instead of reading absence as refusal."#
     };
 }
 
@@ -277,7 +285,7 @@ Rules:
 - After changing behavior, use run_tests to check the suite, and verify_done to prove the change with a witness test rather than trusting a green suite.
 - Be concise in your responses. Show the user what you changed and why.
 - If a task requires multiple steps, work through them systematically.
-- When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment."#
+- When a choice is ambiguous AND getting it wrong would be costly, take the reversible option and name the ambiguity in your answer rather than burying the guess; otherwise proceed with your best judgment."#
 );
 
 /// The pipeline-mode system prompt: encodes a reproduce, localize, minimal
@@ -336,7 +344,7 @@ Rules:
 - Always read a file before editing it — never edit blind.
 - If you are editing more than 3 files for a single-task fix, you are overcomplicating it.
 - Be concise in your responses. Show the user what you changed and why.
-- When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment."#
+- When a choice is ambiguous AND getting it wrong would be costly, take the reversible option and name the ambiguity in your answer rather than burying the guess; otherwise proceed with your best judgment."#
 );
 
 /// Cap on memory characters appended to the system prompt — memories ride
@@ -1111,8 +1119,11 @@ mod tests {
             "reversibility and blast radius",
             // Publishing is irreversible the moment it leaves the machine.
             "sending IS publishing",
-            // Escalation surface, named.
-            "ask_user is the escalation surface",
+            // Escalation, as a decision rather than a tool: an unclear
+            // mandate stops the act and gets reported, which is true whether
+            // or not a human is present to be asked.
+            "the act does not happen",
+            "report the unresolved decision",
             // Approval scope does not compound.
             "One approval is never standing authorization",
             // No safety-bypass shortcuts.

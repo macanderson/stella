@@ -734,7 +734,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
         registry_options(&cfg),
     );
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let interactive = InteractiveToolSet::new(&registry, event_tx, default_ask_io(false));
+    let interactive = InteractiveToolSet::new(&registry, event_tx);
     let interactive = match engine::skill_registry_for_run(root.to_path_buf()) {
         Some(registry) => interactive.with_skill_registry(registry),
         None => interactive,
@@ -1571,7 +1571,7 @@ async fn stack_names_and_execute(
         ToolRegistry::with_backends_and_options(root.to_path_buf(), None, None, Default::default());
     let customs = CustomToolSet::new(&registry, custom_tools, root.to_path_buf());
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let interactive = InteractiveToolSet::new(&customs, event_tx, default_ask_io(false));
+    let interactive = InteractiveToolSet::new(&customs, event_tx);
     let permitted = PolicyToolSet::new(&interactive, policy);
     let tools = crate::discovery::DiscoveryToolSet::new(&permitted, root.to_path_buf());
     let names = tools

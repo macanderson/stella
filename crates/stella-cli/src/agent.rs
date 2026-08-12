@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
-use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
+use crate::interactive::{InteractiveToolSet, SkillRegistry, human_is_present, tty_ask_io};
 use crate::memory::{
     ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
     reflect_routed, should_reflect_on, turn_warrants_reflection,
@@ -255,8 +255,8 @@ async fn run_pipeline_one_shot(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
-    // Whether this surface may ask the human mid-turn (ask_user, approvals).
-    let ask = format == OutputFormat::Text;
+    // The one derivation of "a human is here to answer" (ask_user, approvals).
+    let ask = human_is_present(format == OutputFormat::Text);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code graph in the background so the
@@ -374,7 +374,8 @@ async fn run_pipeline_one_shot(
 
     let result = {
         let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
-        let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(ask));
+        let interactive =
+            InteractiveToolSet::new(&customs, tx.clone()).with_ask_user(tty_ask_io(ask));
         let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,
@@ -740,8 +741,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
+    let ask = human_is_present(true);
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, true);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
     // `graph_query` becomes available this session without a manual `stella
@@ -1980,11 +1982,8 @@ async fn run_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(
-            &customs,
-            tx.clone(),
-            default_ask_io(format == OutputFormat::Text),
-        );
+        let interactive = InteractiveToolSet::new(&customs, tx.clone())
+            .with_ask_user(tty_ask_io(human_is_present(format == OutputFormat::Text)));
         let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,

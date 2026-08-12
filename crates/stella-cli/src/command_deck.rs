@@ -4216,7 +4216,8 @@ async fn run_lead_turn(
         // card (it must — `install_skill` confirms through the io without any
         // event), so the tool set's own emission would double the card.
         let (stub_tx, _) = mpsc::unbounded_channel();
-        let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
+        let interactive = InteractiveToolSet::new(&customs, stub_tx)
+            .with_ask_user(Some(Box::new(ask_io.clone())))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
         // Per-hunk approval sits ABOVE the policy filter (#1265) so a call the

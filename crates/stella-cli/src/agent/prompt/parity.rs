@@ -670,3 +670,27 @@ fn an_omission_from_one_prompt_only_is_caught_and_named() {
          reported with both names"
     );
 }
+
+/// **Witness: neither static prompt names a tool the session may not have.**
+///
+/// `ask_user` is registered only when a human is present to answer it
+/// ([`crate::interactive::human_can_answer`]), while both prompts are static
+/// bytes shared by attended and unattended runs alike — one `concat!` each,
+/// riding the cache prefix, with no per-mode text. A prompt that recommends a
+/// tool missing from the schema is worse than one that never mentioned it: it
+/// sends the agent looking for something that is not there, which is the
+/// state withholding the tool exists to leave.
+///
+/// Both prompts are checked, and by the same rule, because
+/// `PIPELINE_SYSTEM_PROMPT` is what `stella run` sends and what the bench
+/// harness measures — the copy an omission goes missing from quietly (see
+/// this module's header).
+#[test]
+fn no_static_prompt_names_a_tool_the_session_may_not_offer() {
+    for (name, prompt) in STATIC_PROMPTS {
+        assert!(
+            !prompt.contains("ask_user"),
+            "{name} names `ask_user`, which an unattended session does not register"
+        );
+    }
+}
