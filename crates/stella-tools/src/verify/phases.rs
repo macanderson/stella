@@ -81,6 +81,10 @@ pub(crate) enum Verdict {
     NotDone,
     /// The baseline run died loading the test rather than asserting (#2067).
     InconclusiveBuildError,
+    /// The witness command never ran — a malformed argv, a missing
+    /// interpreter, a shell that could not parse it. A fact about the
+    /// instrument, not about the code (#2872).
+    InstrumentBroken,
     /// A named refusal — bad input, no repo, no resolvable baseline, a
     /// worktree that would not create.
     Error,
@@ -95,6 +99,7 @@ impl Verdict {
             Self::Vacuous => "vacuous",
             Self::NotDone => "not_done",
             Self::InconclusiveBuildError => "inconclusive_build_error",
+            Self::InstrumentBroken => "instrument_broken",
             Self::Error => "error",
         }
     }
