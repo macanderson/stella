@@ -1094,6 +1094,67 @@ where
     }
 }
 
+/// Bound one provider dispatch by what remains of the TASK's own wall-clock
+/// deadline ([`BudgetGuard::task_deadline`]), composed around
+/// [`bounded_generation`]'s idle bound rather than replacing it.
+///
+/// This is **not** the flat, unconditional wall-clock ceiling #1467 removed
+/// from [`crate::accounted_call::run_accounted_call`]: that one fired the
+/// instant a *fixed* duration elapsed, even while the provider was actively
+/// streaming, which cut a live generation off for a ceiling sized to catch
+/// silence and lost OpenRouter's trailing usage/cost frame in the process.
+/// This bound fires only when the *task* is out of time. `task_deadline` is
+/// `None` whenever no task deadline is armed (interactive CLI, no bench
+/// harness), so nothing changes for that shape — and a call that is actively
+/// answering well within the task's remaining budget is never touched by it.
+///
+/// What it closes (#2021): the between-step deadline check
+/// (`driver::settlement::check_budget`) is anticipatory but reactive — it
+/// looks at the *last* step's pace before opening a *new* one, and has no way
+/// to see a call that is itself about to outrun the clock once dispatched. A
+/// TB2.1 `fix-git` trial recorded exactly that on 2026-08-09: a call
+/// dispatched with 120.19s of task deadline left ran 120.43s, produced
+/// nothing, and the run died 15.9s past the deadline with otherwise-complete
+/// work sitting uncommitted. The idle bound cannot see this either — the
+/// provider was never silent, it was a connection that never completed.
+///
+/// Deliberately derived from [`BudgetGuard::task_deadline`] rather than a
+/// standalone `EngineConfig` field: a static ceiling set independently of the
+/// task's own deadline is exactly the kind of number that can drift from it,
+/// which is the failure mode #2021's own "what to do" list warns against.
+/// Reading the same `Instant` the between-step check already reads makes the
+/// two structurally unable to disagree. Takes the absolute `Instant` — not a
+/// pre-subtracted `Duration` — and reads the clock itself, so a caller may
+/// capture it once outside a per-attempt retry closure and still have each
+/// attempt bounded by what actually remains at ITS OWN dispatch.
+///
+/// The trip is [`ProviderError::Terminal`], for the same reason
+/// [`bounded_generation`]'s is: the task is out of time, so retrying only
+/// spends more of a deadline that has already run out.
+pub(crate) async fn deadline_bounded_generation<F>(
+    idle_limit: Option<Duration>,
+    task_deadline: Option<std::time::Instant>,
+    progress: &StreamProgress,
+    call: F,
+) -> Result<CompletionResult, ProviderError>
+where
+    F: Future<Output = Result<CompletionResult, ProviderError>>,
+{
+    let generation = bounded_generation(idle_limit, progress, call);
+    let Some(deadline) = task_deadline else {
+        return generation.await;
+    };
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    match tokio::time::timeout(remaining, generation).await {
+        Ok(result) => result,
+        Err(_) => Err(ProviderError::Terminal(format!(
+            "generation exceeded the task's remaining wall clock ({}ms): \
+             the task deadline ran out mid-call",
+            remaining.as_millis()
+        ))),
+    }
+}
+
 /// Drop guard for the paid-call window ([`Engine`](crate::driver::Engine)'s `run_model_call`): armed
 /// before the retried provider dispatch, disarmed on both normal exits. It
 /// fires only when the turn future is dropped mid-await — the caller-side

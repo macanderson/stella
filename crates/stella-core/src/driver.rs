@@ -101,7 +101,7 @@ use crate::retry::{RetryOutcome, RetryPolicy, Sleeper};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 use crate::step::{
     AbortKind, BorrowedTurn, CompactionPass, SpeculationDropGuard, StepOutcome, StreamProgress,
-    SummarizerHealth, TurnState, bounded_generation,
+    SummarizerHealth, TurnState, deadline_bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
 use truncation::ContinuationBudget;
@@ -1490,6 +1490,7 @@ impl<'a> Engine<'a> {
         // from "the ladder is asleep between attempts".
         let attempt_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let attempt_in_flight_latch = attempt_in_flight.clone();
+        let task_deadline = budget.task_deadline(); // #2021: bounds each attempt below.
         let attempt: RetryAttemptFn = Box::new(move || {
             let read_only = speculation_read_only.clone();
             let safe = speculation_safe.clone();
@@ -1524,7 +1525,7 @@ impl<'a> Engine<'a> {
                     // path, where invariant 5 (no panics on runtime data)
                     // outranks asserting a structural claim (#618 item 17).
                     biased;
-                    result = bounded_generation(self.config.model_timeout, &progress, &mut complete) => result,
+                    result = deadline_bounded_generation(self.config.model_timeout, task_deadline, &progress, &mut complete) => result,
                     _ = &mut pump => Err(ProviderError::Terminal(
                         "speculation pump ended before the model call that feeds it; \
                          the speculation gate holds the channel open for the whole call, \

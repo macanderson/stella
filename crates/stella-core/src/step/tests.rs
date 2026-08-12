@@ -357,3 +357,106 @@ fn the_usage_anchor_survives_appends_and_dies_with_a_rewrite() {
         "a rewrite invalidates the report's prefix — back to the estimator"
     );
 }
+
+fn stub_completion_result() -> CompletionResult {
+    CompletionResult {
+        text: "ok".into(),
+        tool_calls: Vec::new(),
+        usage: CompletionUsage::reported_zero(),
+        model: "test".into(),
+        cost_usd: 0.0,
+        finish_reason: None,
+        upstream_provider: None,
+    }
+}
+
+/// #2021's witness: a call with no idle timeout at all — the shape a
+/// well-behaved streaming provider has, since it is always producing — is
+/// still cut off once the task's own remaining wall clock runs out. Before
+/// `deadline_bounded_generation` nothing in this module could express that:
+/// `bounded_generation`'s idle bound never fires on a call with `idle_limit:
+/// None`, no matter how long it runs.
+#[tokio::test]
+async fn a_call_with_no_idle_bound_is_still_cut_by_the_task_deadline() {
+    let progress = StreamProgress::default();
+    let result = deadline_bounded_generation(
+        None,
+        Some(std::time::Instant::now() + Duration::from_millis(30)),
+        &progress,
+        std::future::pending(),
+    )
+    .await;
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("deadline") || message.contains("wall clock"),
+                "the trip should name the task deadline, got {message:?}"
+            );
+        }
+        other => panic!("a call must not outlive the task deadline, got {other:?}"),
+    }
+}
+
+/// The fix-git shape itself: a call that keeps streaming fragments fast
+/// enough to reset a generous idle bound on every check — so the idle bound
+/// alone would wait the full 10s — is still cut at the task's much shorter
+/// remaining deadline. This is the failure #2021 measured: a provider
+/// trickling output, not a silent one, outrunning the deadline while the
+/// idle clock never once saw a gap worth tripping on.
+#[tokio::test]
+async fn a_trickling_generation_under_a_generous_idle_bound_is_still_cut_by_the_task_deadline() {
+    let progress = StreamProgress::default();
+    let trickle = async {
+        loop {
+            progress.record();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        #[allow(unreachable_code)]
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(
+        Some(Duration::from_secs(10)),
+        Some(std::time::Instant::now() + Duration::from_millis(30)),
+        &progress,
+        trickle,
+    )
+    .await;
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("deadline") || message.contains("wall clock"),
+                "the trip should name the task deadline, not the idle bound, got {message:?}"
+            );
+        }
+        other => panic!("a trickling call must still be cut by the task deadline, got {other:?}"),
+    }
+}
+
+/// The other side: with no task deadline armed (`deadline_remaining: None`)
+/// — an interactive CLI session with no bench harness — behavior is
+/// unchanged from `bounded_generation` alone. This pins the claim in
+/// `deadline_bounded_generation`'s doc comment that a call with no deadline
+/// armed is never touched by this bound.
+#[tokio::test]
+async fn no_armed_deadline_leaves_the_idle_bound_as_the_only_cut() {
+    let progress = StreamProgress::default();
+    let result = deadline_bounded_generation(
+        Some(Duration::from_millis(20)),
+        None,
+        &progress,
+        std::future::pending(),
+    )
+    .await;
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("stalled") || message.contains("idle"),
+                "with no deadline armed the trip must be the idle bound's own message, \
+                 got {message:?}"
+            );
+        }
+        other => {
+            panic!("an unarmed deadline must still leave the idle bound active, got {other:?}")
+        }
+    }
+}
