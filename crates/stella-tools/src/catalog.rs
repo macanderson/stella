@@ -137,11 +137,12 @@ catalog! {
     "edit_file"           => (false, false, Always, "file"),
     "apply_edits"         => (false, false, Always, "file"),
     "delete_file"         => (false, false, Always, "file"),
-    // Search. `search` is the fused retrieval tool (#3032) and shares the
-    // "read that writes" posture of everything below it: it opens the code
-    // graph, and its semantic rung stores the vectors it embeds on the way to
-    // answering. The five tools it subsumes stay registered — the experiment
-    // is about what the schema menu SENDS, not about what exists.
+    // Search
+    // The fused entry point (#3076), registered beside the four it subsumes
+    // rather than instead of them. Not speculation-safe, and for the union of
+    // its parts' reasons: a query can reach the graph and the embedding pass,
+    // so it inherits the "read that writes" posture from the strictest branch
+    // it can take, never the cheapest.
     "search"              => (true, false, Always, "search"),
     "grep"                => (true, true, Always, "search"),
     "glob"                => (true, true, Always, "search"),
