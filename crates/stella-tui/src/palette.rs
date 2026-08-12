@@ -67,7 +67,14 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x33, 0x33, 0x38);
 // 1.83:1 and illegible.
 
 /// Phosphor Gold `#FFB81A` -- CRT amber, the gold star. 11.36:1 on ground.
-/// The kit's `#FFB000` lifted 10% in lightness; it may not drift.
+/// Held at this value across the 2026-08-11 bronze rebrand (`10781aa`), which
+/// moved `docs/brand/css/tokens.css`'s `--stella-gold` to `#C58A32` -- this
+/// constant does **not** track that hex. The TUI palette is deliberately not
+/// the web instrument palette (see the module doc): it needs a brighter,
+/// more saturated stop than paper or a browser does to read as CRT amber on
+/// ink at 11.36:1, so it is held apart rather than re-derived from the kit's
+/// current gold ramp. Whether the two golds should mean the same thing is
+/// #2592, still open; this value does not wait on it.
 pub const BRAND: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
 
 /// The bright stop of the brand sweep (kit `gold-400`, the observatory's
@@ -87,14 +94,17 @@ pub const BRAND_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
 // clears AA on [`PAPER`]. Applied by the per-frame theme remap in
 // [`crate::theme`], truecolor only.
 
-/// The light-theme brand hue (kit `gold-800` lifted 10% with the brand) --
-/// 5.22:1 on [`PAPER`].
+/// The light-theme brand hue -- 5.22:1 on [`PAPER`], held apart from the
+/// current web kit's gold ramp for the same reason as [`BRAND`] (see its
+/// doc): the two golds are not required to track hex-for-hex until #2592
+/// settles what they should mean to each other.
 ///
-/// Deliberately one step *below* the kit's `gold-deep` `#A37200`: that tone
-/// is the web kit's light-ground gold for UI-sized text and measures 3.79:1
-/// on the painted paper ground -- fine for chrome, under the 4.5:1 floor for
-/// terminal-cell text. `gold-deep` stays in the family as [`GOLD_INK`], the
-/// light theme's *chrome* gold.
+/// Deliberately one step *below* [`GOLD_INK`], a value this crate held onto
+/// from before the 2026-08-11 bronze rebrand -- it no longer matches
+/// `docs/brand/css/tokens.css`'s current `gold-deep`, `#8B5E1A`. [`GOLD_INK`]
+/// measures 3.79:1 on the painted paper ground -- fine for chrome, under the
+/// 4.5:1 floor for terminal-cell text. It stays in the family as
+/// [`GOLD_INK`], the light theme's *chrome* gold.
 pub const BRAND_INK: Color = Color::Rgb(0x85, 0x5E, 0x00);
 
 /// Pressed stop / leading progress stop on paper (kit `gold-900` lifted 10%,
