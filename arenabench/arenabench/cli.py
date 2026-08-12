@@ -1180,6 +1180,21 @@ def main(argv: list[str] | None = None) -> int:
     contest_parser.add_argument("--vcpus", type=int, default=4)
     contest_parser.add_argument("--memory-mb", type=int, default=15360)
     contest_parser.add_argument("--no-wait", action="store_true")
+    # The gate trio `cloud run` declares, repeated here because --submit hands
+    # off to it through a hand-built namespace rather than through argparse.
+    contest_parser.add_argument(
+        "--gate",
+        help="banned-behavior gate command run on each settled trial (--submit); "
+             "a ban cancels the rest of the run. Defaults to $ARENABENCH_GATE",
+    )
+    contest_parser.add_argument(
+        "--no-gate", action="store_true",
+        help="submit with no banned-behavior gate — a deliberate waiver",
+    )
+    contest_parser.add_argument(
+        "--gate-allow", action="append", metavar="CODE",
+        help="waive one behavior code for this run (repeatable)",
+    )
     contest_parser.add_argument("--region")
     contest_parser.add_argument("--bucket")
     contest_parser.set_defaults(func=_cmd_contest)
