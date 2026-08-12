@@ -648,6 +648,11 @@
       "status": "living",
       "title": "Stella Threat Model"
     },
+    "tool-reference": {
+      "path": "docs/tools/README.md",
+      "status": "living",
+      "title": "docs/tools/ \u2014 the generated per-tool reference"
+    },
     "trace-replay-learning-harness": {
       "path": "docs/spec/trace-replay-learning-harness.md",
       "sections": [

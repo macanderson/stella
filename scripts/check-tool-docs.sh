@@ -23,7 +23,7 @@
 # rather than an exporter binary, because that is the only scope from which
 # all the schemas are reachable at once — sixty-four come from stella-tools'
 # registry and the rest from CLI-internal layers, and stella-cli has no
-# `src/lib.rs` for a binary to link (#3037 tracks the seam that would let this
+# `src/lib.rs` for a binary to link (#3061 tracks the seam that would let this
 # become an ordinary exporter). `make record-golden` is the same shape.
 #
 # It needs no network, no API key and no model: every input is either source or

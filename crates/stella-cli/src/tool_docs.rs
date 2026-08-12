@@ -1,7 +1,7 @@
 //! `docs/tools/` — one TOML page per dispatchable tool, generated from the
 //! declarations, and the guard that fails when the committed pages drift.
 //!
-//! Seventy-two tools is past the size where a hand-written reference survives
+//! Seventy-eight tools is past the size where a hand-written reference survives
 //! contact with a merge queue. This repository has watched that happen twice:
 //! #1435 stranded three prose copies of the god-file list behind a generated
 //! baseline, and #3029 found `docs/prompts/worker.md` five contracts behind
@@ -28,7 +28,7 @@
 //!
 //! # Why this lives in a `#[cfg(test)]` module of a binary crate
 //!
-//! Because that is the only place all seventy-two schemas exist at once.
+//! Because that is the only place all seventy-eight schemas exist at once.
 //! Sixty-four are declared by `stella-tools`' registry; the other eight —
 //! `ask_user`, the two skills-registry tools, the discovery trio,
 //! `invoke_skill` and `recall_context` — are declared by layers inside
@@ -39,7 +39,7 @@
 //! env-var-blessed test that rewrites a committed fixture, with the plain test
 //! run as the drift guard.
 //!
-//! The residue is filed: #3037 asks for the session layer's schema
+//! The residue is filed: #3061 asks for the session layer's schema
 //! declarations to sit behind a linkable seam, which would let this become an
 //! ordinary exporter binary.
 
@@ -82,7 +82,7 @@ const DOCS_DIR: &str = "docs/tools";
 /// booleans the page already prints: it would put `save_state` — which writes
 /// into a self-deleting `TempDir` — at the same rung as `bash`, and it would
 /// read to every future maintainer as a reviewed judgement rather than as a
-/// relabelling. Writing seventy-two judgement calls by hand is worse: it
+/// relabelling. Writing seventy-eight judgement calls by hand is worse: it
 /// manufactures a source of truth nobody reviewed, in the one artifact whose
 /// entire value proposition is that it is derived.
 ///
@@ -97,7 +97,7 @@ const RISK_NOTE: &str = "\
 # above are the only machine-checked safety claims a tool makes. Relabelling
 # them \"low/medium/high\" would add no information while reading as a reviewed
 # judgement, and hand-writing 72 judgements would manufacture a source of truth
-# nobody reviewed. Tracked in #3035: put a `risk` column on `ToolEntry`, where
+# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
 # it is declared once and reviewed like every other column.";
 
 // ── the committed example fixture ───────────────────────────────────────────
@@ -147,8 +147,8 @@ struct Usage {
 
 fn load_fixture() -> Fixture {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tool_doc_examples.json");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
@@ -254,7 +254,7 @@ fn native_schemas(scratch: &Path) -> BTreeMap<String, ToolSchema> {
 
     let journal: Arc<dyn MediaOperationJournal> = Arc::new(
         SqliteMediaOperationJournal::open(
-            &scratch.join("media/operations.db"),
+            scratch.join("media/operations.db"),
             MediaOperationRetention::default(),
         )
         .expect("open an empty operations journal under a scratch dir"),
@@ -314,7 +314,9 @@ fn session_schemas() -> BTreeMap<String, ToolSchema> {
 /// specified.
 fn output_schema() -> Value {
     fn arm(value: &Value) -> (String, String) {
-        let object = value.as_object().expect("ToolOutput serializes to an object");
+        let object = value
+            .as_object()
+            .expect("ToolOutput serializes to an object");
         let (tag, payload) = object
             .iter()
             .next()
@@ -497,10 +499,9 @@ fn example_comment(name: &str, fixture: &Fixture) -> String {
             // registration needs a backend the measured runs had none of, so
             // they were never advertised and never had the chance to be
             // called. That is a different fact from "offered and refused".
-            None => format!(
-                "no call to record: it was not advertised in the runs the capture \
-                 comes from, so it never had the chance to be called"
-            ),
+            None => "no call to record: it was not advertised in the runs the capture \
+                     comes from, so it never had the chance to be called"
+                .to_string(),
             Some(0) => "no call to record: it was advertised and never called".to_string(),
             Some(called) => format!(
                 "{called} calls in the wider census, but none in the \
@@ -634,7 +635,7 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
         "---\n\
          id: tool-reference\n\
          title: \"docs/tools/ — the generated per-tool reference\"\n\
-         status: generated\n\
+         status: living\n\
          ---\n\
          \n\
          <!-- GENERATED FILE, DO NOT EDIT. Regenerate: make tool-docs-update -->\n\
@@ -657,7 +658,7 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
          Two fields are stated absences rather than values, because inventing them \
          would manufacture a source of truth nobody reviewed:\n\n\
          - **`risk_level` is `\"undeclared\"`.** Nothing in the repository carries a \
-           per-tool risk level. Tracked in #3035.\n\
+           per-tool risk level. Tracked in #3060.\n\
          - **`output_schema` is the envelope only.** Every tool answers in \
            `ToolOutput { ok | error }`, which is declared and is what the field \
            holds; the shape of the text inside `ok.content` is a per-tool \
@@ -681,7 +682,9 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
         trials = p.census_trials_scanned,
         model_calls = p.census_model_calls,
     ));
-    out.push_str("| Tool | Category | Availability | Read-only | Speculation-safe | Observed example |\n");
+    out.push_str(
+        "| Tool | Category | Availability | Read-only | Speculation-safe | Observed example |\n",
+    );
     out.push_str("|---|---|---|---|---|---|\n");
     for entry in entries {
         out.push_str(&format!(
@@ -736,7 +739,7 @@ fn generate() -> BTreeMap<String, String> {
 /// is set and it does now.
 ///
 /// This is the whole point of the directory. Sixty-four registry rows, eight
-/// CLI-layer declarations and seventy-two catalog rows have to agree, and the
+/// CLI-layer declarations and seventy-eight catalog rows have to agree, and the
 /// only way to keep them agreeing through a merge queue is to derive one from
 /// the others and fail when the derivation drifts.
 #[test]
@@ -770,7 +773,9 @@ fn tool_docs_match_the_declarations() {
     for (name, body) in &expected {
         match std::fs::read_to_string(root.join(name)) {
             Ok(found) if &found == body => {}
-            Ok(_) => stale.push(format!("  {DOCS_DIR}/{name} — differs from the declarations")),
+            Ok(_) => stale.push(format!(
+                "  {DOCS_DIR}/{name} — differs from the declarations"
+            )),
             Err(_) => stale.push(format!("  {DOCS_DIR}/{name} — missing")),
         }
     }
@@ -808,8 +813,8 @@ fn generated_pages_parse_and_carry_every_promised_field() {
         if name.ends_with(".md") {
             continue;
         }
-        let parsed: toml::Value = toml::from_str(&body)
-            .unwrap_or_else(|e| panic!("{name} is not valid TOML: {e}"));
+        let parsed: toml::Value =
+            toml::from_str(&body).unwrap_or_else(|e| panic!("{name} is not valid TOML: {e}"));
         let table = parsed.as_table().expect("a tool page is a TOML table");
         for field in [
             "name",
@@ -833,7 +838,9 @@ fn generated_pages_parse_and_carry_every_promised_field() {
         // real data, this assertion is the reminder to change the prose that
         // explains why it is not.
         assert_eq!(table["risk_level"].as_str(), Some("undeclared"));
-        let schema = table["input_schema"].as_str().expect("input_schema is a string");
+        let schema = table["input_schema"]
+            .as_str()
+            .expect("input_schema is a string");
         serde_json::from_str::<Value>(schema)
             .unwrap_or_else(|e| panic!("{name}'s input_schema is not JSON: {e}"));
     }

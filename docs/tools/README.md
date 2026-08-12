@@ -1,7 +1,7 @@
 ---
 id: tool-reference
 title: "docs/tools/ — the generated per-tool reference"
-status: generated
+status: living
 ---
 
 <!-- GENERATED FILE, DO NOT EDIT. Regenerate: make tool-docs-update -->
@@ -14,7 +14,7 @@ Each page carries the tool's name, description, input schema, output schema, `re
 
 Two fields are stated absences rather than values, because inventing them would manufacture a source of truth nobody reviewed:
 
-- **`risk_level` is `"undeclared"`.** Nothing in the repository carries a per-tool risk level. Tracked in #3035.
+- **`risk_level` is `"undeclared"`.** Nothing in the repository carries a per-tool risk level. Tracked in #3060.
 - **`output_schema` is the envelope only.** Every tool answers in `ToolOutput { ok | error }`, which is declared and is what the field holds; the shape of the text inside `ok.content` is a per-tool convention with nothing behind it, so the observed example is its only evidence.
 
 **Examples are observed, not written.** They come from Terminal-Bench trial traces (stella-events.jsonl), distilled by scripts/build-tool-doc-examples.py, captured 2026-08-11 over 2829 call/result pairs across 10 tasks. 21 of 78 tools carry a real example; the rest say so. 33 tools were never called once across 408 trials and 15304 model calls — the most interesting fact on those pages, and input to #3032.
