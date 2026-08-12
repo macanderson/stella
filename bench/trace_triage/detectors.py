@@ -643,6 +643,38 @@ def _repeated_identical_tool_call(run: Run) -> list[Finding]:
 # --------------------------------------------------------------------------
 
 
+def same_model(observed: str, declared: str) -> bool:
+    """Whether two model spellings name the same model.
+
+    One name matches the other when its `/`-separated segments are a **suffix**
+    of the other's. That is the precise reading of "a provider prefix is a
+    spelling difference": the declaration writes
+    `openrouter/deepseek/deepseek-chat` and `step_usage.model` writes
+    `deepseek/deepseek-chat`, and the telemetry frequently writes the bare
+    `claude-sonnet-5` against a declared `anthropic/claude-sonnet-5` — the
+    provider is carried in its own `step_usage.provider` field, not in `model`.
+
+    Comparing on a fixed two-segment tail, as this did until the banned-behavior
+    gate was pointed at it, gets the three-segment case right and the
+    two-segment case exactly wrong: `anthropic/claude-sonnet-5` keeps its prefix
+    (it has only two parts) while the observed `claude-sonnet-5` has none, so
+    they compare unequal and the detector reports a spelling difference as a
+    routing defect. It fired on 20 of 20 trials of run `s5b2` that way, against
+    a `results.json` and a telemetry stream that both said Sonnet 5.
+
+    A *different* prefix on both sides is still a mismatch, and deliberately so:
+    `anthropic/claude-sonnet-5` against `bedrock/claude-sonnet-5` is neither
+    name being a suffix of the other, and which provider served a model is a
+    fact worth reporting rather than normalising away.
+    """
+    if observed == declared:
+        return True
+    left = observed.split("/")
+    right = declared.split("/")
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    return longer[-len(shorter) :] == shorter
+
+
 @detector(
     code="role-model-census-mismatch",
     title="the (role, model) census disagrees with the run's declared seat configuration",
@@ -663,19 +695,15 @@ def _role_model_mismatch(run: Run) -> list[Finding]:
     if not run.declared_roles and not run.declared_worker_model:
         return []
 
-    def tail(model: str) -> str:
-        parts = model.split("/")
-        return "/".join(parts[-2:]) if len(parts) > 2 else model
-
-    declared = {role: tail(model) for role, model in run.declared_roles.items()}
+    declared = dict(run.declared_roles)
     if run.declared_worker_model:
-        declared["worker"] = tail(run.declared_worker_model)
+        declared["worker"] = run.declared_worker_model
 
     occurrences = []
     for trial in run.trials:
         for (role, model), count in sorted(trial.role_census().items()):
             want = declared.get(role)
-            if want is None or tail(model) == want:
+            if want is None or same_model(model, want):
                 continue
             occurrences.append(
                 Occurrence(
@@ -685,7 +713,7 @@ def _role_model_mismatch(run: Run) -> list[Finding]:
                     location=f"role `{role}` ran {count} completed step(s)",
                     excerpt=(
                         f"declared (results.json match.contestants[].engine): {want}\n"
-                        f"observed (step_usage.model)                      : {tail(model)}\n"
+                        f"observed (step_usage.model)                      : {model}\n"
                         f"completed steps at the observed model            : {count}"
                     ),
                 )
