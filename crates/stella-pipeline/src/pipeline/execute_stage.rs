@@ -203,16 +203,27 @@ impl<'a> Pipeline<'a> {
                     // every candidate but the sole one in its fan-out (see
                     // its doc), so this costs nothing on the common
                     // multi-candidate path.
-                    if let Some(ws) = board
-                        && let Err(error) = ws.deliver_checkpoint().await
-                    {
-                        return Err(TurnAbort {
-                            reason: format!(
-                                "candidate could not deliver step {}'s work early: {error}",
-                                offset + i + 1
-                            ),
-                            kind: AbortKind::Failure,
-                        });
+                    if let Some(ws) = board {
+                        match ws.deliver_checkpoint().await {
+                            // A checkpoint's rows are attributed here and not
+                            // at the final adoption, because adoption only
+                            // ever sends its own remainder — whatever a
+                            // checkpoint already delivered is absent from the
+                            // list it returns. Attributing only there would
+                            // lose exactly the work of a run that delivered
+                            // early and then died (#2907/#2941).
+                            Ok(delivered) => ws.attribute_adopted(&delivered),
+                            Err(error) => {
+                                return Err(TurnAbort {
+                                    reason: format!(
+                                        "candidate could not deliver step {}'s work early: \
+                                         {error}",
+                                        offset + i + 1
+                                    ),
+                                    kind: AbortKind::Failure,
+                                });
+                            }
+                        }
                     }
                     // #1702: a worker that declares the whole goal done ends
                     // the walk — the remaining steps could only re-confirm
@@ -299,8 +310,14 @@ impl<'a> Pipeline<'a> {
                     // (#2941). The abort already has its own reason; a
                     // delivery failure on top of it would only obscure why
                     // the turn actually stopped.
-                    if let Some(ws) = board {
-                        let _ = ws.deliver_checkpoint().await;
+                    if let Some(ws) = board
+                        && let Ok(delivered) = ws.deliver_checkpoint().await
+                    {
+                        // Attributed on this path too: an aborted turn's
+                        // already-written files are real work, and the record
+                        // of what the session changed must not depend on how
+                        // the turn ended (#2907).
+                        ws.attribute_adopted(&delivered);
                     }
                     return Err(TurnAbort { reason, kind });
                 }

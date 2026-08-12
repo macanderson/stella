@@ -977,3 +977,128 @@ async fn a_candidates_shell_cannot_move_stellas_witness_baseline_ref() {
         "Stella's own ref was writable from a candidate: {output:?}"
     );
 }
+
+/// **The #2907 witness.** An isolated candidate's edits must reach the
+/// SESSION registry's file ledger — the one persisted as `files_touched` and
+/// the one `execution_reflection.wrote_files` is derived from — at the moment
+/// adoption makes them the user's tree's.
+///
+/// On `main` this ledger is empty after the adoption below. A candidate runs
+/// against its own registry rooted at the shadow worktree, so every edit lands
+/// there and dies with the workspace; nothing ever folds it back. The durable
+/// record then says the session changed nothing about a session that rewrote a
+/// tracked file and created a new one — while the `FileChange` events for the
+/// very same adoption say otherwise. Two records of one reality, disagreeing.
+///
+/// Asserted through the real git substrate rather than a double, because every
+/// link is a place the wiring could be wrong: the port has to carry the
+/// session handle into each workspace, the workspace has to rejoin adoption's
+/// TOPLEVEL-relative paths against the real tree, and the registry has to
+/// re-normalize them against a root that may be a subdirectory of it.
+#[tokio::test]
+async fn an_isolated_candidates_adopted_edits_reach_the_session_file_ledger() {
+    let root = scaffold("attribute");
+    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
+        root.clone(),
+        None,
+    ));
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    )
+    .with_session_registry(session.clone());
+    let ws = port.create_workspace().await.unwrap();
+
+    assert!(
+        session.files_touched().is_empty(),
+        "the session ledger starts empty: nothing outside the candidate has run"
+    );
+
+    // Appended to the dirty state the scaffold left, so the delta below is
+    // unambiguously one added line and nothing removed.
+    std::fs::write(
+        ws.dir().join("tracked.txt"),
+        "base\ndirty\nfrom the candidate\n",
+    )
+    .unwrap();
+    std::fs::write(ws.dir().join("created.txt"), "brand new\n").unwrap();
+    ws.seal().await.unwrap();
+
+    let adopted = ws.adopt(&[]).await.unwrap();
+    ws.attribute_adopted(&adopted);
+
+    let mut touched = session.files_touched();
+    touched.sort();
+    assert_eq!(
+        touched,
+        vec![
+            ("created.txt".to_string(), "C".to_string()),
+            ("tracked.txt".to_string(), "U".to_string()),
+        ],
+        "the session ledger must name what the candidate actually changed, with the op the \
+         adoption measured"
+    );
+    assert_eq!(
+        session.mutations_recorded(),
+        2,
+        "and the mutation count the verification ladder reads must see them too"
+    );
+
+    // The line deltas are git's own numbers, carried through verbatim — a row
+    // recording `+0 -0` for a real edit is the `wrote_files` defect wearing a
+    // different face.
+    let telemetry = session.file_touch_telemetry();
+    let tracked = telemetry
+        .files_touched
+        .iter()
+        .find(|record| record.path == "tracked.txt")
+        .expect("tracked.txt is in the telemetry payload");
+    assert_eq!(
+        (tracked.lines_added, tracked.lines_removed),
+        (1, 0),
+        "git measured one added line; the ledger must not report the change as extentless"
+    );
+
+    ws.remove().await;
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The negative control, and the proof the witness above is not asserting
+/// something that would be true anyway: a candidate whose work is never
+/// adopted — a losing best-of-N sibling, an integrity refusal, a run that
+/// died — must leave the session ledger exactly as it found it. Its edits are
+/// not the user's tree's, and a durable record claiming otherwise would be the
+/// same defect pointing the other way.
+#[tokio::test]
+async fn a_candidate_that_never_adopts_attributes_nothing_to_the_session_ledger() {
+    let root = scaffold("attribute_none");
+    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
+        root.clone(),
+        None,
+    ));
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    )
+    .with_session_registry(session.clone());
+    let loser = port.create_workspace().await.unwrap();
+
+    std::fs::write(loser.dir().join("tracked.txt"), "base\nloser\n").unwrap();
+    std::fs::write(loser.dir().join("loser.txt"), "residue\n").unwrap();
+    loser.seal().await.unwrap();
+    loser.remove().await;
+
+    assert!(
+        session.files_touched().is_empty(),
+        "a discarded candidate's edits never became the user's tree's, so they are not this \
+         session's changes"
+    );
+    assert_eq!(session.mutations_recorded(), 0);
+    std::fs::remove_dir_all(&root).ok();
+}

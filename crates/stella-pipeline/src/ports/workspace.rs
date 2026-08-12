@@ -248,6 +248,36 @@ pub trait CandidateWorkspace: Send + Sync {
     /// user asked for, so by default it dies with the workspace instead of
     /// being copied into the real tree. Empty means adopt everything.
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError>;
+    /// Attribute changes this workspace just delivered into the real tree to
+    /// whatever durable "what did this session change" record the host keeps
+    /// (#2907).
+    ///
+    /// Called by the pipeline immediately after every successful delivery —
+    /// [`Self::adopt`] and [`Self::deliver_checkpoint`] alike — with exactly
+    /// the rows that delivery returned, beside the `FileChange` events those
+    /// same rows produce. Both surfaces then describe one reality, which is
+    /// the whole point: before this, an isolated run's durable record said the
+    /// session touched nothing while the event stream said it had rewritten
+    /// four files.
+    ///
+    /// # Why here and nowhere else
+    ///
+    /// A candidate's edits land on the *candidate's* recorder, which is rooted
+    /// at a shadow worktree and discarded with it; the session's recorder
+    /// never sees them. Adoption is the first and only moment those edits
+    /// become the user's tree's, and it is also the only seam where the
+    /// isolated case is distinguishable from the shared-tree one — a
+    /// shared-tree run's mutations are recorded by the session recorder as
+    /// they happen and never reach this method, so nothing is counted twice.
+    /// Folding at the event forwarder instead would double exactly those.
+    ///
+    /// This is **observability, not evidence** (#2882). What it records
+    /// changes no decision — not the verdict, not the ladder, not delivery. It
+    /// is a report of what git already did.
+    ///
+    /// Default: no-op — a substrate whose edits are already the session's has
+    /// nothing to attribute, and neither has one that keeps no such record.
+    fn attribute_adopted(&self, _adopted: &[AdoptedChange]) {}
     /// Copy one accepted witness artifact from another workspace's root into
     /// this one at the same relative `path`, and fail if anything is already
     /// there.

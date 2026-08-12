@@ -36,7 +36,7 @@ pub(super) async fn run_lead_pipeline_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,
     custom_tools: &[CustomTool],
-    registry: &ToolRegistry,
+    registry: &std::sync::Arc<ToolRegistry>,
     memory: Option<&SessionMemory>,
     prompt: &str,
     messages: &mut Vec<CompletionMessage>,
@@ -136,7 +136,10 @@ pub(super) async fn run_lead_pipeline_turn(
             registry_options.clone(),
             active_rules.clone(),
             mcp,
-            Some(stella_core::EventSender::new(tx.clone())),
+            agent::SessionPlane::new(
+                stella_core::EventSender::new(tx.clone()),
+                std::sync::Arc::clone(registry),
+            ),
         )?;
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = match memory {

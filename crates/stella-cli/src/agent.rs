@@ -394,7 +394,7 @@ async fn run_pipeline_one_shot(
             registry_options,
             active_rules.clone(),
             mcp.clone(),
-            Some(tx.clone()),
+            SessionPlane::new(tx.clone(), registry.clone()),
         )?;
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));

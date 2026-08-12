@@ -1022,7 +1022,7 @@ async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
         stella_tools::RegistryOptions::default(),
         parent_rules.clone(),
         None,
-        None,
+        crate::agent::SessionPlane::none(),
     )
     .unwrap();
     let candidate = ws_ports.candidate_workspaces.create().await.unwrap();
@@ -1096,7 +1096,7 @@ async fn a_candidate_rule_denial_reaches_the_journal_as_a_policy_decision() {
         stella_tools::RegistryOptions::default(),
         parent_rules.clone(),
         None,
-        Some(stella_core::EventSender::new(tx)),
+        crate::agent::SessionPlane::events_only(stella_core::EventSender::new(tx)),
     )
     .unwrap();
 

@@ -404,6 +404,66 @@ impl stella_pipeline::FileTouchPort for RegistryTouches<'_> {
     }
 }
 
+/// The caller's live session plane, as handed to every candidate the
+/// [`workspace_ports`] bundle creates: where a candidate announces what it
+/// does, and where the record of what it changed comes to rest.
+///
+/// One argument rather than two because they are one fact — "the session this
+/// fan-out belongs to" — and because they fail together: a caller that wires
+/// neither gets candidates whose work is invisible on both surfaces at once.
+/// Passing this positionally (rather than as `with_*` builders) is deliberate:
+/// both halves are forgettable, and a caller that wants neither has to say so
+/// with a named constructor — a visible choice a reviewer can question instead
+/// of a line nobody wrote.
+pub(crate) struct SessionPlane {
+    /// The turn's event sink, used to bridge each candidate registry's policy
+    /// plane into the journal (#441).
+    events: Option<stella_core::EventSender>,
+    /// The SESSION registry, so an isolated candidate's adopted changes are
+    /// attributed back into the ledger persisted as `files_touched` and read
+    /// for `execution_reflection.wrote_files` (#2907). Without it the durable
+    /// record stays blind to everything the candidates change.
+    registry: Option<Arc<stella_tools::ToolRegistry>>,
+}
+
+impl SessionPlane {
+    /// The complete plane: a caller that has both a live event sink and a
+    /// session ledger. Every production call site.
+    pub(crate) fn new(
+        events: stella_core::EventSender,
+        registry: Arc<stella_tools::ToolRegistry>,
+    ) -> Self {
+        Self {
+            events: Some(events),
+            registry: Some(registry),
+        }
+    }
+
+    /// Neither half. **Test-only**, and `cfg`-gated to keep it that way: every
+    /// production caller has both, so a shipped path reaching for this would
+    /// be a candidate fan-out whose policy decisions never reach the journal
+    /// and whose adopted changes never reach a durable record. The gate is
+    /// what makes that unavailable rather than merely discouraged.
+    #[cfg(test)]
+    pub(crate) fn none() -> Self {
+        Self {
+            events: None,
+            registry: None,
+        }
+    }
+
+    /// Events but no ledger — a test observing candidate events with no
+    /// session file record to attribute their work to. **Test-only** for the
+    /// same reason as `none` above.
+    #[cfg(test)]
+    pub(crate) fn events_only(events: stella_core::EventSender) -> Self {
+        Self {
+            events: Some(events),
+            registry: None,
+        }
+    }
+}
+
 /// Build the [`WorkspacePorts`] bundle rooted at `root` (the session
 /// workspace, or a fleet worker's own worktree). `mcp`, when the caller has
 /// one connected, is shared into both the candidate tool surface
@@ -415,8 +475,12 @@ pub(crate) fn workspace_ports(
     registry_options: stella_tools::RegistryOptions,
     active_rules: crate::rules::ResolvedRules,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
-    events: Option<stella_core::EventSender>,
+    session: SessionPlane,
 ) -> Result<WorkspacePorts, String> {
+    let SessionPlane {
+        events,
+        registry: session_registry,
+    } = session;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::WorkspacePorts,
     )?;
@@ -451,6 +515,9 @@ pub(crate) fn workspace_ports(
     }
     if let Some(events) = events {
         candidate_workspaces = candidate_workspaces.with_events(events);
+    }
+    if let Some(registry) = session_registry {
+        candidate_workspaces = candidate_workspaces.with_session_registry(registry);
     }
     Ok(WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },

@@ -426,3 +426,164 @@ async fn an_adoption_the_tree_refuses_is_declared_not_silent() {
         "nothing was applied, so nothing may be reported as delivered: {events:?}"
     );
 }
+
+/// **The #2907 witness at the port.** The rows an adoption returns must reach
+/// the workspace's own durable-record seam, exactly once, and be the same rows
+/// the `FileChange` burst beside them carries.
+///
+/// This is the pipeline's half of the fix: the CLI proves the session ledger
+/// really gains the files (`candidate_ws::tests`), and this proves the
+/// pipeline actually calls the seam that gets it there — and calls it with the
+/// adoption's own measurements rather than a re-derivation. On `main` there is
+/// no such call, so the durable record of an isolated run stays blind to every
+/// edit it made.
+///
+/// The batching matters: one call carrying three rows, never three calls, and
+/// never a second call carrying the same rows again. Double attribution would
+/// report one edit as two changed files, which is the same defect as reporting
+/// it as none — a `files_touched` nobody can trust either way.
+#[tokio::test]
+async fn an_adoption_attributes_its_own_rows_to_the_durable_record_exactly_once() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("candidate zero"),
+        text_result("candidate one"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let adopted = vec![
+        delivered_change(),
+        AdoptedChange {
+            path: "src/added.rs".into(),
+            kind: FileChangeKind::Created,
+            added: 30,
+            removed: 0,
+            diff: None,
+        },
+    ];
+    let winner = FakeWorkspace::new(0, vec![false, false], Ok(adopted.clone()), log.clone());
+    let attributed = winner.attributed_probe();
+    let loser = FakeWorkspace::new(1, vec![false, false], Ok(vec![]), log.clone());
+    let loser_attributed = loser.attributed_probe();
+    let port = FakeWorkspacePort::new(vec![Ok(winner), Ok(loser)], log.clone());
+
+    let (_, events, _) =
+        run_isolated(&provider, &port, isolated_config(2), "Fix the failing test").await;
+
+    assert!(
+        loser_attributed.lock().unwrap().is_empty(),
+        "a losing candidate's edits never became the user's tree's, so nothing about them is          this session's change"
+    );
+
+    let batches = attributed.lock().unwrap().clone();
+    assert_eq!(
+        batches,
+        vec![adopted.clone()],
+        "the adoption's own rows must reach the durable-record seam in ONE call, carrying \
+         git's measurements verbatim: {batches:?}"
+    );
+
+    // And the two projections of that one adoption must agree — the whole
+    // point of attributing beside the emission rather than somewhere else.
+    let emitted: Vec<(String, FileChangeKind, u32, u32)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::FileChange {
+                path,
+                kind,
+                added,
+                removed,
+                ..
+            } => Some((path.clone(), *kind, *added, *removed)),
+            _ => None,
+        })
+        .collect();
+    let attributed_rows: Vec<(String, FileChangeKind, u32, u32)> = adopted
+        .iter()
+        .map(|change| {
+            (
+                change.path.clone(),
+                change.kind,
+                change.added,
+                change.removed,
+            )
+        })
+        .collect();
+    assert_eq!(
+        emitted, attributed_rows,
+        "the event stream and the durable record are two projections of one adoption; they \
+         were disagreeing, and that is the whole of #2907"
+    );
+}
+
+/// The shared-tree half, and the reason the fold lives at the adoption site
+/// rather than at the event forwarder: a run with no isolation port has no
+/// `CandidateWorkspace` at all, so there is nothing that *could* attribute —
+/// and its mutations were already recorded by the session's own recorder as
+/// they happened.
+///
+/// Folding at the forwarder instead would have counted those a second time.
+/// This asserts the structural property that makes the double impossible:
+/// the shared-tree path never reaches the workspace port.
+#[tokio::test]
+async fn a_shared_tree_run_never_reaches_the_attribution_seam() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let log: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let resolver = OneProvider(&provider);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            // The whole point: no isolation port, so the run executes against
+            // the session's own ports and its recorder sees every mutation
+            // first-hand.
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            headless: true,
+            headless_bypass_scope_review: true,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the retry bug", &mut messages, &mut budget)
+        .await
+        .expect("the shared-tree run succeeds");
+    let _ = drain(&mut rx);
+
+    assert!(
+        log.lock().unwrap().is_empty(),
+        "a shared-tree run must never create or adopt a candidate workspace — if it could, \
+         its mutations would be counted once by the session recorder and again by the \
+         attribution: {:?}",
+        log.lock().unwrap()
+    );
+}
