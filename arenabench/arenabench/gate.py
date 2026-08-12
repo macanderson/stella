@@ -61,7 +61,7 @@ from typing import Any
 __all__ = [
     "BANNED_EXIT",
     "GATE_ENV_VAR",
-    "GateNotArmed",
+    "GateNotArmedError",
     "GateOutcome",
     "GateSpec",
     "arm_gate",
@@ -86,7 +86,7 @@ GATE_ENV_VAR = "ARENABENCH_GATE"
 DEFAULT_TIMEOUT = 120.0
 
 
-class GateNotArmed(Exception):
+class GateNotArmedError(Exception):
     """No gate resolved and the operator did not explicitly waive one.
 
     Raised by :func:`arm_gate` so the caller can refuse to start rather than
@@ -303,7 +303,7 @@ def arm_gate(
     armed — or that it was waived, and by whom, which is the part a later
     dispute needs.
 
-    Raises :class:`GateNotArmed` when nothing resolved and no waiver was
+    Raises :class:`GateNotArmedError` when nothing resolved and no waiver was
     passed. Defaulting to "unguarded" would be the expedient here: it makes
     every existing invocation keep working, and it means the one run that
     needed the gate is the run that did not have it.
@@ -320,7 +320,7 @@ def arm_gate(
         return spec, f"gate      : {spec.described()}{waived}"
     if disabled:
         return None, "gate      : DISABLED (--no-gate)"
-    raise GateNotArmed(
+    raise GateNotArmedError(
         "no banned-behavior gate is armed — a run costs real money and an "
         "unguarded one can spend all of it reproducing a defect that is "
         "already fixed. Arm one with `--gate CMD`, export "

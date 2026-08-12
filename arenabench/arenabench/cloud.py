@@ -1057,7 +1057,7 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
     # refused, because the gate's whole purpose is to stop paying for a defect
     # that is already fixed and the run it is missing from is the one that
     # needed it. `--no-gate` waives it deliberately and is recorded as such.
-    from .gate import BANNED_EXIT, GateNotArmed, arm_gate
+    from .gate import BANNED_EXIT, GateNotArmedError, arm_gate
 
     try:
         gate_spec, gate_line = arm_gate(
@@ -1065,7 +1065,7 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
             disabled=args.no_gate,
             allowed=tuple(args.gate_allow or ()),
         )
-    except GateNotArmed as exc:
+    except GateNotArmedError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

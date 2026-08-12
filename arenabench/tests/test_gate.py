@@ -28,7 +28,7 @@ import pytest
 
 from arenabench.gate import (
     BANNED_EXIT,
-    GateNotArmed,
+    GateNotArmedError,
     GateOutcome,
     GateSpec,
     arm_gate,
@@ -239,7 +239,7 @@ class TestResolveGate:
 
 class TestArmGate:
     def test_an_unarmed_run_is_refused_rather_than_started_unguarded(self) -> None:
-        with pytest.raises(GateNotArmed) as caught:
+        with pytest.raises(GateNotArmedError) as caught:
             arm_gate(command=None, disabled=False, allowed=(), env={})
         message = str(caught.value)
         assert "--gate" in message
@@ -290,13 +290,15 @@ def _watch_executor(batch: _HookBatch):
     return CloudExecutor(clients={"batch": batch})
 
 
-class TestWatchHook:
-    JOBS = [
-        {"id": "job-001", "label": "000-stella-task-a"},
-        {"id": "job-002", "label": "001-cc-task-a"},
-        {"id": "job-003", "label": "002-stella-task-b"},
-    ]
+#: Three trials of one run, in submission order.
+WATCH_JOBS = [
+    {"id": "job-001", "label": "000-stella-task-a"},
+    {"id": "job-002", "label": "001-cc-task-a"},
+    {"id": "job-003", "label": "002-stella-task-b"},
+]
 
+
+class TestWatchHook:
     def _script(self) -> list[dict[str, str]]:
         return [
             {"job-001": "RUNNABLE", "job-002": "RUNNABLE", "job-003": "RUNNABLE"},
@@ -315,7 +317,7 @@ class TestWatchHook:
 
         ticks = iter(range(0, 10_000, 10))
         states = _watch_executor(batch).watch(
-            self.JOBS,
+            WATCH_JOBS,
             poll_interval=1.0,
             sleep=sleep,
             clock=lambda: float(next(ticks)),
@@ -421,7 +423,7 @@ class TestSettledGate:
         from arenabench.gate_watch import settled_gate
 
         executor = _FetchingExecutor(
-            self.RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
+            GATE_RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
         )
         spec = _gate_script(
             tmp_path,
@@ -431,7 +433,7 @@ class TestSettledGate:
         )
         dest = tmp_path / "out"
         hook = settled_gate(
-            executor, run_id="r-test", spec=spec, jobs=self.RECORD["jobs"], dest=dest
+            executor, run_id="r-test", spec=spec, jobs=GATE_RECORD["jobs"], dest=dest
         )
 
         assert hook("job-001", "SUCCEEDED") is True
@@ -450,14 +452,14 @@ class TestSettledGate:
         from arenabench.gate_watch import settled_gate
 
         executor = _FetchingExecutor(
-            self.RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
+            GATE_RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
         )
         spec = _gate_script(tmp_path, "import sys\nsys.exit(0)\n")
         hook = settled_gate(
             executor,
             run_id="r-test",
             spec=spec,
-            jobs=self.RECORD["jobs"],
+            jobs=GATE_RECORD["jobs"],
             dest=tmp_path / "out",
         )
         assert hook("job-001", "SUCCEEDED") is False
@@ -472,14 +474,14 @@ class TestSettledGate:
         from arenabench.gate_watch import settled_gate
 
         executor = _FetchingExecutor(
-            self.RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
+            GATE_RECORD, {"job-001": "SUCCEEDED", "job-002": "RUNNING"}
         )
         spec = _gate_script(tmp_path, "import sys\nsys.exit(3)\n")
         hook = settled_gate(
             executor,
             run_id="r-test",
             spec=spec,
-            jobs=self.RECORD["jobs"],
+            jobs=GATE_RECORD["jobs"],
             dest=tmp_path / "out",
         )
         assert hook("job-001", "SUCCEEDED") is False
@@ -491,13 +493,13 @@ class TestSettledGate:
     ) -> None:
         from arenabench.gate_watch import settled_gate
 
-        executor = _FetchingExecutor(self.RECORD, {})
+        executor = _FetchingExecutor(GATE_RECORD, {})
         spec = _gate_script(tmp_path, "import sys\nsys.exit(9)\n")
         hook = settled_gate(
             executor,
             run_id="r-test",
             spec=spec,
-            jobs=self.RECORD["jobs"],
+            jobs=GATE_RECORD["jobs"],
             dest=tmp_path / "out",
         )
         assert hook("job-999", "SUCCEEDED") is False

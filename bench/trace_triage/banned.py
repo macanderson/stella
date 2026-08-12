@@ -462,7 +462,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "not abort anything."
         ),
     )
-    parser.add_argument("run_dir", type=Path, help="a mirrored run or trial directory")
+    parser.add_argument(
+        "run_dir",
+        type=Path,
+        nargs="?",
+        help="a mirrored run or trial directory (omit only with --list)",
+    )
     parser.add_argument(
         "--allow",
         action="append",
@@ -483,6 +488,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.list:
         print(render_ledger())
         return 0
+    if args.run_dir is None:
+        parser.error("a run directory is required unless --list is given")
 
     try:
         run = load_run(args.run_dir)

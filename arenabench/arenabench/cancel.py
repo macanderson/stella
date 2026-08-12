@@ -143,7 +143,7 @@ def cancel_run(
 
     states = executor.job_states(job_ids)
     plan = plan_cancellation(job_ids, states)
-    batch = executor._client("batch")  # noqa: SLF001 - same package, one adapter
+    batch = executor._client("batch")  # same package, one adapter
 
     out(
         f"cancel    : {run_id} — {len(plan.terminate)} running, "
@@ -176,7 +176,7 @@ def _signal(
     """
     try:
         call(jobId=job_id, reason=reason)
-    except Exception as exc:  # noqa: BLE001 - see the docstring
+    except Exception as exc:  # see the docstring
         out(f"  !! {verb} {job_id} failed: {exc}")
         return
     out(f"  {verb}d {job_id}")

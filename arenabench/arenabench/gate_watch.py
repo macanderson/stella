@@ -84,10 +84,10 @@ class GateWatch:
 
         trial_dir = self.dest / label
         try:
-            self.executor._fetch_prefix(  # noqa: SLF001 - same package
+            self.executor._fetch_prefix(  # same package, one adapter
                 f"runs/{self.run_id}/{job_id}/", trial_dir, out=self.out
             )
-        except Exception as exc:  # noqa: BLE001 - botocore's errors, unimportable
+        except Exception as exc:  # botocore's errors are unimportable here
             # Same rule as a crashed gate: no artifacts means no claim about
             # the trial, and a transient S3 error must not abort a paid run.
             self.out(f"  !! gate failed to fetch {label} ({state}): {exc}")
@@ -114,7 +114,7 @@ class GateWatch:
         reason = f"arenabench gate: banned behavior in {label} ({named})"[:1024]
         try:
             plan = cancel_run(self.executor, self.run_id, reason=reason, out=self.out)
-        except Exception as exc:  # noqa: BLE001 - botocore's errors, unimportable
+        except Exception as exc:  # botocore's errors are unimportable here
             # The record is written either way: an abort that cancelled
             # nothing is still an abort somebody has to be able to audit.
             self.out(f"  !! cancel failed entirely: {exc}")
