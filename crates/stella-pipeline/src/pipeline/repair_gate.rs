@@ -76,6 +76,56 @@ impl Pipeline<'_> {
         spent_usd: f64,
         budget: &BudgetGuard,
     ) -> bool {
+        match self.plan_next_round(state, meter, spent_usd, budget) {
+            RepairPlan::Attempt { .. } => true,
+            RepairPlan::Stop(refusal) => {
+                self.warn(format!(
+                    "verification refuted this result and no repair round was started: {}.",
+                    refusal.sentence()
+                ));
+                false
+            }
+        }
+    }
+
+    /// Whether an **unproven** result earns another worker turn (#2908).
+    ///
+    /// The same measuring tape as [`Pipeline::affords_repair`] — one gate for
+    /// "is there room for another round", so a continuation cannot outlive the
+    /// money, the wall clock, or the configured allowance that bounds a repair.
+    /// Only the sentence differs, and that difference is load-bearing: nothing
+    /// was refuted here, and saying so would put a defect on the record that no
+    /// measurement found.
+    pub(super) fn affords_continuation(
+        &self,
+        state: &CandidateState,
+        meter: &RepairMeter,
+        spent_usd: f64,
+        budget: &BudgetGuard,
+    ) -> bool {
+        match self.plan_next_round(state, meter, spent_usd, budget) {
+            RepairPlan::Attempt { .. } => true,
+            RepairPlan::Stop(refusal) => {
+                self.warn(format!(
+                    "nothing could verify this result and no further worker turn was \
+                     started: {}.",
+                    refusal.sentence()
+                ));
+                false
+            }
+        }
+    }
+
+    /// The shared decision both gates above render: what
+    /// [`stella_core::repair::plan_repair`] makes of this candidate's spent
+    /// rounds, remaining headroom, and mean round cost.
+    fn plan_next_round(
+        &self,
+        state: &CandidateState,
+        meter: &RepairMeter,
+        spent_usd: f64,
+        budget: &BudgetGuard,
+    ) -> RepairPlan {
         // Rounds run = revisions spent + the one that just produced this
         // refutation. All of them price the mean round, demands included —
         // a demand round runs the same worker-turn-plus-verification shape.
@@ -88,21 +138,12 @@ impl Pipeline<'_> {
         // One clock read for the whole decision, taken here at the boundary
         // rather than inside the headroom derivation (invariant 2).
         let now = Instant::now();
-        match plan_repair(
+        plan_repair(
             repairs,
             self.config.max_revisions,
             self.repair_headroom(budget, now),
             meter.mean_round(spent_usd, rounds),
-        ) {
-            RepairPlan::Attempt { .. } => true,
-            RepairPlan::Stop(refusal) => {
-                self.warn(format!(
-                    "verification refuted this result and no repair round was started: {}.",
-                    refusal.sentence()
-                ));
-                false
-            }
-        }
+        )
     }
 
     /// What this run can still measure about its own remaining room.

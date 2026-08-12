@@ -167,7 +167,12 @@ async fn gate_clean_flip_fast_submits_with_two_calls_and_three_runs() {
 }
 
 /// A timed-out baseline (#860) arms nothing: no flip exists, so no
-/// confirmation run is ever bought — two suite runs, one verifier call.
+/// confirmation run is ever bought.
+///
+/// The spend is a second WORKER turn, never a verifier: nothing proved this
+/// turn, and an unproven claim hands the work back rather than ending the run
+/// (#2908). That turn asks for no tools, which settles it, and its
+/// re-observation is the third suite run.
 #[tokio::test]
 async fn gate_timed_out_baseline_never_buys_a_confirmation() {
     run_scenario(Scenario {
@@ -176,9 +181,9 @@ async fn gate_timed_out_baseline_never_buys_a_confirmation() {
         provider: vec![
             text_result("single"),
             text_result("done"),
-            text_result("PASS — change is consistent with the goal"),
+            text_result("nothing further is needed"),
         ],
-        tests: vec![TestScript::TimeOut, TestScript::Pass],
+        tests: vec![TestScript::TimeOut, TestScript::Pass, TestScript::Pass],
         diff: "@@ -1 +1 @@\n-old\n+new",
         lint: None,
         test_command: Some("cargo test -p x"),
@@ -187,16 +192,21 @@ async fn gate_timed_out_baseline_never_buys_a_confirmation() {
             passed: true,
             deterministic: false,
             verifier_stage: false,
-            roles: &[Triage, Worker],
-            test_runs: 2,
+            roles: &[Triage, Worker, Worker],
+            test_runs: 3,
         },
     })
     .await;
 }
 
 /// The regression veto (#861) fires BEFORE the confirmation run: a fresh
-/// lint error escalates after only two suite runs — the confirmation's
-/// suite run is never spent on a submit the veto already blocked.
+/// lint error blocks the submit, and the confirmation's suite run is never
+/// spent on it.
+///
+/// What the vetoed turn buys instead is a second WORKER turn, not a verifier
+/// call: the veto leaves the turn unproven, and an unproven claim returns the
+/// worker to work rather than ending the run (#2908). The third suite run is
+/// that turn's re-observation.
 #[tokio::test]
 async fn gate_lint_veto_skips_the_confirmation_run() {
     run_scenario(Scenario {
@@ -205,12 +215,16 @@ async fn gate_lint_veto_skips_the_confirmation_run() {
         provider: vec![
             text_result("single"),
             text_result("done"),
-            text_result("PASS — the new error is pre-existing debt"),
+            text_result("nothing further is needed"),
         ],
-        tests: vec![TestScript::Fail, TestScript::Pass],
+        tests: vec![TestScript::Fail, TestScript::Pass, TestScript::Pass],
         diff: "@@ -1 +1 @@\n-old\n+new",
         lint: Some(vec![
             Some(Vec::new()),
+            Some(vec![lint_error("src/lib.rs", "mismatched types")]),
+            // The handed-back turn changed nothing, so the same error is still
+            // there — an exhausted script would report a clean tree and hand
+            // the veto's own submit back to it.
             Some(vec![lint_error("src/lib.rs", "mismatched types")]),
         ]),
         test_command: Some("cargo test -p x"),
@@ -219,8 +233,8 @@ async fn gate_lint_veto_skips_the_confirmation_run() {
             passed: true,
             deterministic: false,
             verifier_stage: false,
-            roles: &[Triage, Worker],
-            test_runs: 2,
+            roles: &[Triage, Worker, Worker],
+            test_runs: 3,
         },
     })
     .await;

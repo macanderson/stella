@@ -329,6 +329,10 @@ impl<'a> Pipeline<'a> {
             diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
             evidence_demands: 0,
+            // A resumed candidate has taken no continuation in this process,
+            // and the dead one's count is not recoverable — so the worker gets
+            // the same standing a fresh candidate has (#2908).
+            continuations: Continuations::default(),
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
             witness_unmoved_by_revision: false,

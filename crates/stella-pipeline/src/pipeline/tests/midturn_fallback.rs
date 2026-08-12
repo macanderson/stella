@@ -286,13 +286,20 @@ async fn an_exhausted_execute_turn_re_resolves_the_worker_and_finishes_on_the_fa
     let outcome = outcome.expect("the run must not fail: a healthy fallback was configured");
     assert_eq!(
         fallbacks(&events),
-        vec![("sick".to_string(), "healthy".to_string())],
-        "exactly one announced swap, sick -> healthy (L-M7: never silent): {events:?}"
+        vec![
+            ("sick".to_string(), "healthy".to_string()),
+            ("sick".to_string(), "healthy".to_string()),
+        ],
+        "one announced swap per engine turn, sick -> healthy, and never a silent \
+         one (L-M7). There are two turns because nothing could prove the first, \
+         and an unproven result hands the work back rather than ending the run \
+         (#2908) — the settling latch is per turn, so the second turn starts on \
+         the roster's choice and announces its own swap: {events:?}"
     );
     assert_eq!(
         sick.engine_calls(),
-        1,
-        "Terminal bails the retry ladder on attempt 1"
+        2,
+        "Terminal bails the retry ladder on attempt 1, once per engine turn"
     );
     assert!(
         healthy.engine_calls() >= 1,

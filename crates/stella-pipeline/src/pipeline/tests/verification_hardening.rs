@@ -151,9 +151,13 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
         text_result("PASS — the timeout is pre-existing infra noise, the diff is sound"),
     ]);
     let resolver = OneProvider(&provider);
-    // Baseline genuinely fails (oracle arms), candidate run times out.
+    // Baseline genuinely fails (oracle arms), candidate run times out — and
+    // times out again for the turn the unproven result is handed back on
+    // (#2908), because an unchanged tree observed twice observes the same
+    // thing. An exhausted queue would report a clean pass and quietly change
+    // which rung this scenario is about.
     let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::TimeOut],
+        vec![TestScript::Fail, TestScript::TimeOut, TestScript::TimeOut],
         "@@ -1 +1 @@\n-old\n+new",
     );
     let tools = EmptyTools;
@@ -240,9 +244,19 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
         text_result("PASS — the change is right; the test itself is flaky"),
     ]);
     let resolver = OneProvider(&provider);
-    // Baseline fail → candidate pass (flip) → confirmation FAIL (flake).
+    // Baseline fail → candidate pass (flip) → confirmation FAIL (flake), and
+    // the same flake again on the round the unproven result is handed back on
+    // (#2908): a flaky test is still flaky on the second look, and an
+    // exhausted queue would hand this scenario the clean confirmation it is
+    // written to be denied.
     let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::Pass, TestScript::Fail],
+        vec![
+            TestScript::Fail,
+            TestScript::Pass,
+            TestScript::Fail,
+            TestScript::Pass,
+            TestScript::Fail,
+        ],
         "@@ -1 +1 @@\n-old\n+new",
     );
     let tools = EmptyTools;
@@ -361,9 +375,12 @@ async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
     let resolver = OneProvider(&provider);
     // Baseline fail → candidate pass: a genuine flip, green tests.
     let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
-    // Eager baseline snapshot: clean. Audit snapshot: one new error.
+    // Eager baseline snapshot: clean. Audit snapshot: one new error — and the
+    // same error on the audit of the round the unproven result is handed back
+    // on (#2908), since nothing repaired it in between.
     let lint = ScriptedLint::new(vec![
         Some(Vec::new()),
+        Some(vec![lint_error("src/lib.rs", "mismatched types")]),
         Some(vec![lint_error("src/lib.rs", "mismatched types")]),
     ]);
     let tools = EmptyTools;
@@ -669,8 +686,10 @@ async fn a_tautological_witness_is_downgraded_to_the_verifier() {
     );
     assert_eq!(
         probe.calls(),
-        2,
-        "both proposed mutants ran (none was killed, so no early exit)"
+        4,
+        "both proposed mutants ran (none was killed, so no early exit) — twice, \
+         because a downgrade to unproven hands the work back for one more turn \
+         and the audit is re-run over the re-observed tree (#2908)"
     );
     assert!(
         !stages(&events).contains(&StageKind::Verdict),
@@ -848,6 +867,11 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
             TestScript::Fail,
             TestScript::OutOfMemory,
             TestScript::OutOfMemory,
+            // The round the unproven result is handed back on (#2908) is
+            // killed the same way — the machine is still out of memory, and an
+            // exhausted queue would report a clean pass instead.
+            TestScript::OutOfMemory,
+            TestScript::OutOfMemory,
         ],
         "@@ -1 +1 @@\n-old\n+new",
     );
@@ -934,7 +958,9 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
     );
     assert_eq!(
         runner.test_runs(),
-        3,
-        "baseline + the killed run + its one bounded retry — retries never run away"
+        5,
+        "baseline + the killed run + its one bounded retry, then the same pair \
+         again for the turn the unproven result is handed back on (#2908) — two \
+         runs per round, so retries still never run away"
     );
 }

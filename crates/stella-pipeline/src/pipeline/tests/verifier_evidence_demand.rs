@@ -62,7 +62,7 @@ macro_rules! run_scenario {
             .run("Make the thing work", &mut messages, &mut budget)
             .await
             .expect("run succeeds");
-        (outcome, drain(&mut rx), provider.prompts().len())
+        (outcome, drain(&mut rx), provider.prompts())
     }};
 }
 
@@ -97,7 +97,7 @@ async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer(
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, prompts) = run_scenario!(provider, runner, config);
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
@@ -112,7 +112,8 @@ async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer(
         "exactly one revision — the ask — should have been spent"
     );
     assert_eq!(
-        calls, 3,
+        prompts.len(),
+        3,
         "triage, worker, and the one demanded revision — the ask is the only thing \
          the verification side spends, and it spends no model of its own"
     );
@@ -128,7 +129,7 @@ async fn no_tracked_command_means_no_ask_at_all() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
-        text_result("PASS — the change reads correct"),
+        text_result("nothing further is needed"),
     ]);
     let runner = ScriptedRunner::scripted(Vec::new(), "@@ -1 +1 @@\n-old\n+new");
     let config = PipelineConfig {
@@ -140,21 +141,35 @@ async fn no_tracked_command_means_no_ask_at_all() {
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, prompts) = run_scenario!(provider, runner, config);
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         !verdict.deterministic,
         "nothing deterministic could have been observed here"
     );
-    assert_eq!(
-        outcome.revisions, 0,
-        "an unanswerable ask must not be bought — this is the whole reason \
-         the feature was switched off the first time"
+    // The one revision this run spends is the unproven handback (#2908), and
+    // the distinction is the subject of this test: an ask names a command and
+    // demands its output, and no such command exists here. Asserted by
+    // identity rather than by count, because the count can no longer tell the
+    // two apart.
+    let asked = prompts
+        .iter()
+        .any(|prompt| prompt.contains("NOTHING deterministic backs up this change"));
+    assert!(
+        !asked,
+        "an unanswerable ask must not be bought — this is the whole reason the \
+         feature was switched off the first time: {:?}",
+        prompts
     );
     assert_eq!(
-        calls, 2,
-        "triage and worker — and nothing else: an unanswerable ask buys no turn"
+        outcome.revisions, 1,
+        "and the turn that WAS spent is the handback, not the ask"
+    );
+    assert_eq!(
+        prompts.len(),
+        3,
+        "triage, worker, and the handback the worker declines"
     );
 }
 
@@ -166,13 +181,20 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
-        text_result("PASS — the change reads correct"),
         text_result("there is no test surface for this"),
+        text_result("nothing further is needed"),
     ]);
     // Never observable: every run is inconclusive, so the evidence the ask
-    // wants cannot appear however many times it is asked for.
+    // wants cannot appear however many times it is asked for — including on
+    // the handback round (#2908), where an exhausted queue would hand this
+    // scenario the green suite it is written to be denied.
     let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::TimeOut, TestScript::TimeOut],
+        vec![
+            TestScript::Fail,
+            TestScript::TimeOut,
+            TestScript::TimeOut,
+            TestScript::TimeOut,
+        ],
         "@@ -1 +1 @@\n-old\n+new",
     );
     let config = PipelineConfig {
@@ -184,18 +206,24 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, prompts) = run_scenario!(provider, runner, config);
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         verdict.passed && !verdict.deterministic,
         "an unanswered ask still ends as unverified — never as a failure"
     );
-    assert_eq!(outcome.revisions, 1, "one ask, not one per round");
     assert_eq!(
-        calls, 3,
-        "triage, worker, and the single ask. The re-observed tree lands back on the \
-         same abstention with the ask already spent, and nothing re-reads it"
+        outcome.revisions, 2,
+        "one ask, not one per round — the second revision is the unproven \
+         handback (#2908), which is a different thing and spends its turn once"
+    );
+    assert_eq!(
+        prompts.len(),
+        4,
+        "triage, worker, the single ask, and the handback. The re-observed tree \
+         lands back on the same abstention with the ask already spent, and \
+         nothing re-reads it"
     );
     assert!(
         verdict.summary.starts_with("UNVERIFIED"),
@@ -213,10 +241,12 @@ async fn the_demand_can_be_switched_off() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
-        text_result("PASS — the change reads correct"),
+        text_result("nothing further is needed"),
     ]);
+    // Inconclusive on both rounds: an exhausted queue would pass the second
+    // one and turn this scenario into a deterministic flip.
     let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::TimeOut],
+        vec![TestScript::Fail, TestScript::TimeOut, TestScript::TimeOut],
         "@@ -1 +1 @@\n-old\n+new",
     );
     let config = PipelineConfig {
@@ -226,12 +256,24 @@ async fn the_demand_can_be_switched_off() {
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, prompts) = run_scenario!(provider, runner, config);
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && !verdict.deterministic);
-    assert_eq!(outcome.revisions, 0, "off means no ask");
-    assert_eq!(calls, 2, "triage and worker");
+    let asked = prompts
+        .iter()
+        .any(|prompt| prompt.contains("NOTHING deterministic backs up this change"));
+    assert!(!asked, "off means no ask: {prompts:?}");
+    assert_eq!(
+        outcome.revisions, 1,
+        "the flag switches off the ask, not the unproven handback (#2908) — \
+         those are different turns with different texts"
+    );
+    assert_eq!(
+        prompts.len(),
+        3,
+        "triage, worker, and the declined handback"
+    );
 }
 
 /// #1509's witness: the demand and a repair are not substitutes, so buying
@@ -281,7 +323,7 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, prompts) = run_scenario!(provider, runner, config);
 
     assert_eq!(
         outcome.status,
@@ -300,7 +342,8 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
          main the demand eats a repair and this reads 2 with the run refused"
     );
     assert_eq!(
-        calls, 5,
+        prompts.len(),
+        5,
         "triage, worker, the demand, and two repair rounds"
     );
 }
@@ -336,7 +379,7 @@ async fn a_missing_runner_is_unproven_rather_than_passed_or_failed() {
         ..PipelineConfig::default()
     };
 
-    let (outcome, _events, _calls) = run_scenario!(provider, runner, config);
+    let (outcome, _events, _prompts) = run_scenario!(provider, runner, config);
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(

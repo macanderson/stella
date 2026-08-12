@@ -1684,14 +1684,25 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         !s.contains(&StageKind::Verdict),
         "a behavioral diff is graded by the ladder, whatever triage guessed: {s:?}"
     );
-    // Two paid calls: triage and the worker. The plan and witness-author
-    // ceremony triage declined is never bought, and neither is a verdict.
-    let calls = events
+    // Three paid calls, and every one of them is triage or the worker: the
+    // plan and witness-author ceremony triage declined is never bought, and
+    // neither is a verdict. The third is the worker's own — nothing proved
+    // this turn, and an unproven result hands the work back rather than
+    // ending the run (#2908).
+    let roles: Vec<ModelCallRole> = events
         .iter()
-        .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
-        .count();
+        .filter_map(|e| match e {
+            AgentEvent::StepUsage { role, .. } => Some(*role),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        calls, 2,
+        roles,
+        vec![
+            ModelCallRole::Triage,
+            ModelCallRole::Worker,
+            ModelCallRole::Worker
+        ],
         "no plan, witness-author or verdict call is bought: {s:?}"
     );
 }
@@ -2189,6 +2200,9 @@ mod scope_gate_interactive;
 mod shared_worktree;
 mod terminal_outcomes;
 mod triage_context;
+/// An unprovable claim must not end the run (#2908). A child module, so it
+/// reaches the scripted ports above via `super::*`.
+mod unproven_continuation;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
 mod verdict_repair;

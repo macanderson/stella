@@ -135,6 +135,8 @@ mod scope_stage;
 mod stage_budget;
 mod task_frame;
 mod triage_stage;
+mod unproven;
+use unproven::Continuations;
 /// The worker's opening user message (recall, research findings, goal,
 /// verification contract) — pure text assembly, in its own module because
 /// `pipeline.rs` is closed to growth.
@@ -809,6 +811,9 @@ struct CandidateState {
     /// answered "there is no test surface here", and paying for that answer
     /// twice is the cost this feature was switched off for the first time.
     evidence_demands: u32,
+    /// What the worker did with the unprovable results handed back to it
+    /// (#2908) — see [`unproven`] for the invariant and the bound.
+    continuations: Continuations,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
     /// when the change had nothing to prove.
@@ -1986,6 +1991,7 @@ impl<'a> Pipeline<'a> {
             diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
             evidence_demands: 0,
+            continuations: Continuations::default(),
             witness_paths: Vec::new(),
             witness_baseline_symptom: None,
             witness_unmoved_by_revision: false,
@@ -2369,42 +2375,20 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // The turn went unobserved — every channel blind, or every
-                    // channel clear-eyed and empty over dispatched mutating
-                    // calls (#1701). The verifier is not asked, because the
-                    // only thing it could do is guess from an empty record —
-                    // which in the wild it did, returning `FAIL … the file
-                    // likely does not exist` about a file that was in the
-                    // container (#973).
-                    //
-                    // `passed: true` because a run is not failed by the absence
-                    // of a way to check it, and this shape already exists for
-                    // the review-waived path. What keeps it from reading as a
-                    // pass is the pair beside it: the summary says UNVERIFIABLE
-                    // in its first word, and the score is `Unverified`, so this
-                    // candidate can never tie a genuinely verified sibling in
-                    // best-of-N and then win the smaller-diff tiebreak.
-                    //
-                    // The arm above is what makes this defensible. Reaching
-                    // here means the turn *did* dispatch mutating calls and no
-                    // channel saw their effect — a real state: a Terminal-Bench
-                    // trial that wrote its answer through shell redirects
-                    // recorded no touch, could not be diffed, landed here, and
-                    // scored 1.0 against its verifier. Failing that closed
-                    // would report a correct run as broken, and no revision can
-                    // clear it — that workspace never becomes observable.
-                    let mut evidence = unverifiable_evidence(&inputs);
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.unverifiable(&evidence.summary);
-                    self.emit(AgentEvent::Verdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    return state.into_verified(
-                        true,
-                        &evidence,
-                        score_from_verification(false, None),
-                    );
+                    // Nothing could see this turn, so nothing can say whether
+                    // the worker was finished — hand it back before settling
+                    // (#2908, `unproven`). The rung's own reasoning, and why
+                    // the verifier is still not asked, live on
+                    // `settle_unverifiable`.
+                    let affords =
+                        self.affords_continuation(&state, &meter, *spend.total, spend.budget);
+                    if self
+                        .return_worker_to_work(engine, surface, spend, &mut state, affords)
+                        .await
+                    {
+                        continue;
+                    }
+                    return self.settle_unverifiable(&inputs, &snapshot, state);
                 }
                 LadderDecision::WitnessUnsatisfiable => {
                     // #2540: the authored witness failed identically on both
@@ -2563,35 +2547,22 @@ impl<'a> Pipeline<'a> {
                         // with the ask spent, and ends below.
                         continue;
                     }
-                    // Terminal. Nothing deterministic settled this turn, and
-                    // nothing else is going to: no model is asked, because the
-                    // evidence that reaches this arm is by construction the
-                    // evidence no oracle could settle, and a model handed it
-                    // would be guessing at it too — only with a verdict's
-                    // authority attached. Measured, that guess agreed with
-                    // Terminal-Bench's grader 46% of the time, and 17 of its
-                    // false passes cost 5 tasks outright.
-                    //
-                    // `passed: true` for exactly the reason the abstention arm
-                    // above uses it — a run is not failed by the absence of a
-                    // way to check it — and, exactly as there, what keeps it
-                    // from reading as a pass is the pair beside it: the
-                    // summary says UNVERIFIED in its first word and the score
-                    // is `Unverified`, so this candidate can never tie a
-                    // genuinely verified sibling in best-of-N and then win the
-                    // smaller-diff tiebreak.
-                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.unproven_verdict(&evidence.summary);
-                    self.emit(AgentEvent::Verdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    return state.into_verified(
-                        true,
-                        &evidence,
-                        score_from_verification(false, None),
-                    );
+                    // The claim is unprovable; the run is not necessarily over.
+                    // Nothing here can tell "correct but unprovable" from "the
+                    // worker is not finished", so the worker is asked — and
+                    // the answer it gives with its tool calls is what ends the
+                    // run (#2908, `unproven`). Only when it declines does the
+                    // candidate settle, on `settle_unverified`, which carries
+                    // this rung's reasoning and why no model is asked.
+                    let affords =
+                        self.affords_continuation(&state, &meter, *spend.total, spend.budget);
+                    if self
+                        .return_worker_to_work(engine, surface, spend, &mut state, affords)
+                        .await
+                    {
+                        continue;
+                    }
+                    return self.settle_unverified(&inputs, &snapshot, state);
                 }
             }
         }

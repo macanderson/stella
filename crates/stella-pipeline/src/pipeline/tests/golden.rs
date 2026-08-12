@@ -136,11 +136,18 @@ async fn golden_single_task_deterministic_flip() {
 }
 
 /// The abstention path: no test command, so the deterministic ladder cannot
-/// conclude — and that is where the run ends, with no model consulted. A
-/// materially different stage sequence from the flip path above, and the one
-/// this recording exists to pin: the *absence* of a verdict stage is now part
-/// of the observable event contract, so re-introducing an escalation shows up
-/// here as a fixture diff rather than as a quiet extra call.
+/// conclude — and no model is consulted about it. A materially different stage
+/// sequence from the flip path above, and the one this recording exists to
+/// pin: the *absence* of a verdict stage is part of the observable event
+/// contract, so re-introducing an escalation shows up here as a fixture diff
+/// rather than as a quiet extra call.
+///
+/// The run does not end at the abstention, though — it ends where the WORKER
+/// ends it (#2908). The unprovable claim is handed back, the fourth scripted
+/// completion is that turn, it asks for no tools, and the run settles
+/// UNVERIFIED. So the recording carries a second execute/verify pass, and the
+/// thing to check in this fixture is that the extra pass is the worker's own:
+/// a verdict stage appearing here would still be the regression.
 #[tokio::test]
 async fn golden_unproven_without_a_test_command() {
     let provider = ScriptedProvider::new(vec![

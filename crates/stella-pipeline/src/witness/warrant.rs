@@ -222,6 +222,20 @@ pub struct ChangeSignals {
     /// ladder reads it, because a broken probe behind a cited number makes
     /// that number unsubstantiated, never the change wrong.
     pub errored_commands: u32,
+    /// **Every** tool call the turn dispatched, read-only ones included —
+    /// the superset [`Self::mutating_actions`] is filtered out of.
+    ///
+    /// Neither [`warrant`] nor the ladder reads it, and it is not evidence
+    /// about the workspace at all. It answers one question the other counts
+    /// cannot: *was the model still asking for tools*, which is the bare
+    /// agent loop's own stopping condition — a turn ends exactly when a step
+    /// requests none. [`crate::pipeline::unproven`] reads the delta across a
+    /// continuation turn to decide whether a worker handed an unproven
+    /// result back has more to do or is finished (#2908). A read-only call
+    /// counts here precisely because it does not count above: a worker
+    /// re-reading the tree before its next edit is working, and only a turn
+    /// that asks for nothing at all is done.
+    pub dispatched_actions: u32,
 }
 
 /// Whether a *mutating* tool call's effects are fully accountable to the

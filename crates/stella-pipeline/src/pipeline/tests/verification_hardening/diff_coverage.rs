@@ -84,7 +84,13 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
     let probe = ScriptedCoverage::measuring(&[("src/lib.rs", &[40, 41, 42])]);
     let (outcome, events) = run_with_coverage(&probe, false, &provider).await;
 
-    assert_eq!(probe.calls(), 1, "the probe runs once, in the audit");
+    assert_eq!(
+        probe.calls(),
+        2,
+        "the probe runs once per audit, and the withheld credit leaves the turn \
+         unproven — which hands the work back for one more turn and audits the \
+         re-observed tree (#2908)"
+    );
     assert!(
         !stages(&events).contains(&StageKind::Verdict),
         "a coincidental pass is withheld, not fast-submitted — and withheld is the end of it"

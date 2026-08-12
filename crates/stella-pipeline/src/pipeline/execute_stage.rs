@@ -18,6 +18,7 @@ use super::*;
 /// writes them from inside the event stream while the driver awaits the turn.
 pub(super) struct TurnTallies {
     file_changes: Arc<AtomicU32>,
+    dispatched: Arc<AtomicU32>,
     mutating: Arc<AtomicU32>,
     opaque: Arc<AtomicU32>,
     verify_confirmations: Arc<AtomicU32>,
@@ -28,6 +29,7 @@ impl TurnTallies {
     /// Fold this turn's counts into the candidate's running signals.
     fn fold_into(&self, signals: &mut ChangeSignals) {
         signals.file_changes += self.file_changes.load(Ordering::Relaxed);
+        signals.dispatched_actions += self.dispatched.load(Ordering::Relaxed);
         signals.mutating_actions += self.mutating.load(Ordering::Relaxed);
         signals.opaque_actions += self.opaque.load(Ordering::Relaxed);
         signals.verify_done_confirmations += self.verify_confirmations.load(Ordering::Relaxed);
@@ -236,6 +238,11 @@ impl<'a> Pipeline<'a> {
         // another paid call before the previous one's metering row is durable.
         let seen_file_changes = Arc::new(AtomicU32::new(0));
         let count = seen_file_changes.clone();
+        // Every dispatch, unfiltered (#2908): the continuation gate's question
+        // is whether the model is still asking for tools, and a read-only call
+        // answers it exactly as loudly as a write.
+        let seen_dispatched = Arc::new(AtomicU32::new(0));
+        let dispatched = seen_dispatched.clone();
         let seen_mutating = Arc::new(AtomicU32::new(0));
         let mutating = seen_mutating.clone();
         let seen_opaque = Arc::new(AtomicU32::new(0));
@@ -294,6 +301,7 @@ impl<'a> Pipeline<'a> {
                     consumer.send(event)
                 }
                 AgentEvent::ToolStart { call } => {
+                    dispatched.fetch_add(1, Ordering::Relaxed);
                     // Counted at dispatch, not at result: a call that errored
                     // or timed out still means the turn *tried* to act, and
                     // the no-op rung is about the attempt. Only a name the
@@ -397,6 +405,7 @@ impl<'a> Pipeline<'a> {
             filtered,
             TurnTallies {
                 file_changes: seen_file_changes,
+                dispatched: seen_dispatched,
                 mutating: seen_mutating,
                 opaque: seen_opaque,
                 verify_confirmations: seen_verify,

@@ -35,6 +35,17 @@ pub(super) enum RevisionCause<'a> {
     /// Not a failure. The ladder could not corroborate a pass and is asking for
     /// the one piece of evidence that would settle it (#1295).
     EvidenceRequest(&'a str),
+    /// Nothing available could observe this turn either way, and there is no
+    /// evidence to ask for — the handback that keeps an unprovable *claim*
+    /// from ending the *run* (#2908, [`crate::pipeline::unproven`]).
+    ///
+    /// It reports no defect, because none was measured, and it must not:
+    /// this text is dispatched precisely where the pipeline knows least, and
+    /// a fabricated failure here is the `fix-git` shape the enum above
+    /// exists to prevent. It states the absence, and invites the worker to
+    /// stop — the worker's own answer, acted on or declined, is what the
+    /// continuation gate then reads.
+    Unproven(&'a str),
 }
 
 /// The instruction appended to a revision turn.
@@ -50,6 +61,13 @@ pub(super) fn revision_prompt(cause: RevisionCause<'_>) -> String {
              corroborates it. This is a request for evidence, not a report of a \
              defect — your change may well be correct as it stands.\n\n{}",
             ask.trim()
+        ),
+        RevisionCause::Unproven(notice) => format!(
+            "Verification could not observe this work: nothing available proved it \
+             either way, and there is no test to run that would settle it. This is \
+             not a report of a defect — no check failed, and your work may well be \
+             correct.\n\n{}",
+            notice.trim()
         ),
     }
 }
@@ -112,6 +130,7 @@ mod tests {
         for cause in [
             RevisionCause::Deterministic("PAYLOAD"),
             RevisionCause::EvidenceRequest("PAYLOAD"),
+            RevisionCause::Unproven("PAYLOAD"),
         ] {
             let measured_or_asked = match cause {
                 // Something really ran and really failed.
@@ -119,6 +138,10 @@ mod tests {
                 // A fixed template over the tracked command; asserts nothing
                 // about the change.
                 RevisionCause::EvidenceRequest(_) => true,
+                // A fixed template over an absence; asserts nothing about the
+                // change either, and could not — reaching it means nothing
+                // observed the change at all (#2908).
+                RevisionCause::Unproven(_) => true,
             };
             assert!(measured_or_asked);
             let prompt = revision_prompt(cause);

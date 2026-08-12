@@ -502,9 +502,21 @@ async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass
     let events = drain(&mut rx);
     assert_eq!(
         provider.prompts().len(),
-        3,
-        "triage and two worker turns — a fourth call would mean a verifier was \
-         asked to guess about a workspace nothing collected"
+        4,
+        "triage and three worker turns, the last of them the handback an \
+         unobservable turn earns (#2908) — no call here is a verifier being \
+         asked to guess about a workspace nothing collected, which is the thing \
+         this count exists to forbid"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            AgentEvent::StepUsage {
+                role: ModelCallRole::Verdict,
+                ..
+            }
+        )),
+        "and it is forbidden by identity too, not only by counting: {events:?}"
     );
     assert!(
         events.iter().any(|event| matches!(
