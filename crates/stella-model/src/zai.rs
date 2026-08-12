@@ -1060,6 +1060,15 @@ impl Provider for ZaiProvider {
         &self.id
     }
 
+    /// The slug this adapter was configured with, so a failed call can name
+    /// it (#2831). For a gateway id (OpenRouter) this is the slug Stella
+    /// ASKED for, which is the honest pre-dispatch answer — what the gateway
+    /// actually routed to is only knowable from a result, and is not pinned
+    /// or recorded here at all.
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
     async fn complete_ref(
         &self,
         req: CompletionRequestRef<'_>,

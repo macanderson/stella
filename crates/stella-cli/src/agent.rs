@@ -1196,7 +1196,13 @@ pub(crate) async fn init_workspace(
             infer_domains(
                 p,
                 workspace_root,
-                model_hint.unwrap_or("unknown"),
+                // The configured slug, else the one the adapter is bound to —
+                // the placeholder is the last resort, not the fallback
+                // (#2831). This hint is what a failed inference call's
+                // `UsageIncomplete` names.
+                model_hint
+                    .or_else(|| p.model())
+                    .unwrap_or(stella_protocol::UNKNOWN_MODEL),
                 budget_limit,
             )
             .await
