@@ -137,7 +137,12 @@ catalog! {
     "edit_file"           => (false, false, Always, "file"),
     "apply_edits"         => (false, false, Always, "file"),
     "delete_file"         => (false, false, Always, "file"),
-    // Search
+    // Search. `search` is the fused retrieval tool (#3032) and shares the
+    // "read that writes" posture of everything below it: it opens the code
+    // graph, and its semantic rung stores the vectors it embeds on the way to
+    // answering. The five tools it subsumes stay registered — the experiment
+    // is about what the schema menu SENDS, not about what exists.
+    "search"              => (true, false, Always, "search"),
     "grep"                => (true, true, Always, "search"),
     "glob"                => (true, true, Always, "search"),
     // The read that writes: graph queries bootstrap/catch up codegraph.db.
