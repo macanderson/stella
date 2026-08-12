@@ -85,11 +85,7 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
     let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(
-        &customs,
-        stub_tx,
-        crate::interactive::default_ask_io(false),
-    );
+    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
     let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
     let discovery =
         crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
@@ -146,11 +142,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
     let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(
-        &customs,
-        stub_tx,
-        crate::interactive::default_ask_io(false),
-    );
+    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
     let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
     let discovery =
         crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
@@ -184,11 +176,7 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
     let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(
-        &customs,
-        stub_tx,
-        crate::interactive::default_ask_io(false),
-    );
+    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
     let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
     let discovery =
         crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
@@ -237,11 +225,7 @@ async fn the_production_tool_stack_forwards_live_services() {
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
     let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(
-        &customs,
-        stub_tx,
-        crate::interactive::default_ask_io(false),
-    );
+    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
     let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
     let discovery =
         crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));

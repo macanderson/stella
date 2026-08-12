@@ -136,6 +136,32 @@ impl ApiKey {
         }
     }
 
+    /// Whether this invocation can host the interactive credential prompt.
+    /// Pure over already-observed booleans (rather than calling `IsTerminal`
+    /// itself) so the exact condition is directly unit-testable — the same
+    /// shape `stella-cli`'s `agent::engine::approval_capability_for` and
+    /// `daemon::approval::console_is_interactive` use.
+    ///
+    /// The single "is a human present?" derivation (#3036), shared with
+    /// `stella-cli`'s `ask_user` tool and approvals without this crate
+    /// depending on that one (invariant 1). `interactive` here already plays
+    /// [`stella_tty::human_can_answer`]'s `interactive_output` role — the
+    /// caller's "would I even attempt a prompt" decision (`stella-cli` clears
+    /// it for a machine `--output-format`) — so this only adds the check that
+    /// was missing: a redirected stdout must decline exactly as a redirected
+    /// stdin does, not just print a prompt nobody reads before blocking on an
+    /// answer nobody can give. `stdout_is_terminal` is a proxy for whether
+    /// `rpassword`'s prompt is actually visible rather than an exact match —
+    /// it writes to `/dev/tty` directly on Unix, not stdout — tracked
+    /// separately as #3052 rather than folded into this fix.
+    fn can_prompt_interactively(
+        interactive: bool,
+        stdin_is_terminal: bool,
+        stdout_is_terminal: bool,
+    ) -> bool {
+        stella_tty::human_can_answer(interactive, stdin_is_terminal, stdout_is_terminal)
+    }
+
     /// The full resolution chain: CLI flag -> env
     /// var -> `credentials_file` -> interactive prompt. `provider_id` keys
     /// both the credentials-file lookup and, on a successful interactive
@@ -172,7 +198,11 @@ impl ApiKey {
             return Ok((Self(value.to_string()), CredentialSource::ConfigFile));
         }
 
-        if interactive && std::io::stdin().is_terminal() {
+        if Self::can_prompt_interactively(
+            interactive,
+            std::io::stdin().is_terminal(),
+            std::io::stdout().is_terminal(),
+        ) {
             // A successful prompt returns immediately. A failure — most
             // commonly because stdin reports as a terminal (`is_terminal()`
             // == true) yet is not genuinely readable (the libtest pty,
@@ -810,6 +840,28 @@ mod tests {
         let debug = format!("{key:?}");
         assert!(!debug.contains("sk-super-secret-value"));
         assert!(debug.contains("redacted"));
+    }
+
+    /// The #3036 witness: a redirected stdout must decline the prompt even
+    /// with a live keyboard on stdin — the disagreeing configuration a
+    /// stdin-only check could not see. On `main` before this fix,
+    /// `ApiKey::resolve`'s interactive gate was `interactive &&
+    /// stdin_is_terminal` alone, so a `stella config > out.txt` from a real
+    /// terminal would have `rpassword` write its "enter it now" prompt where
+    /// nobody could read it and then block on an answer nobody knew to give.
+    #[test]
+    fn a_redirected_stdout_declines_the_prompt_even_with_a_live_stdin() {
+        assert!(
+            !ApiKey::can_prompt_interactively(true, true, false),
+            "a human at the keyboard is not enough if the prompt itself is invisible"
+        );
+    }
+
+    /// The happy path, named explicitly so the witness above reads as a
+    /// missing condition rather than an always-false predicate.
+    #[test]
+    fn a_full_terminal_can_host_the_prompt() {
+        assert!(ApiKey::can_prompt_interactively(true, true, true));
     }
 
     #[test]

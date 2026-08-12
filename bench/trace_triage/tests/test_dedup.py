@@ -63,12 +63,31 @@ class FakeGitHub:
 def _witness_failure_events(reason: str = REASON) -> list:
     """One witness failure, and nothing else a detector would also fire on.
 
-    The trailing verdict and post-verdict `file_change` are load-bearing: a
-    trial with neither would additionally trip `no-post-verdict-file-change`,
-    and these tests are about the de-duplication decision, not about how many
-    shapes one trial can carry.
+    Three of these four events are load-bearing for that "nothing else", and
+    each was added after a detector fired on the fixture rather than on the
+    defect it describes:
+
+    * the trailing `verdict` and post-verdict `file_change` — without them the
+      trial also trips `no-post-verdict-file-change`;
+    * the leading `step_usage` — without it the trial has completed zero model
+      calls, and a graded trial that never reached the model trips
+      `graded-void-trial`. It also makes the fixture agree with the wire, which
+      is the standing rule in `fixtures.py`: a trial cannot emit a `proof` and a
+      `verdict` without a model call having completed first, so a fixture with a
+      proof and no `step_usage` was describing a trace that cannot exist.
+
+    Its model is the unqualified tail of `write_run`'s default declared worker,
+    which is how the telemetry spells it, so the census detector stays quiet.
     """
     return [
+        {
+            "ts": 1,
+            "type": "step_usage",
+            "step": 0,
+            "role": "worker",
+            "model": "z-ai/glm-5.2",
+            "complete": True,
+        },
         proof("witness_unavailable", reason=reason),
         {"ts": 8, "type": "verdict", "passed": False, "evidence": {}},
         {"ts": 9, "type": "file_change", "path": "out", "kind": "created"},

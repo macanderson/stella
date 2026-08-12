@@ -108,6 +108,21 @@ would launch a browser on nearly every PR — the same disjoint-paths reasoning
 that gave `wire-schema.yml` its own file. It is deliberately not a required
 check yet (#2425).
 
+A fifth, `containment-posture.yml`, is the same shape for the same reasons: it
+asserts on a real Actions Linux runner that the graded-tree write ban is
+actually `Enforced` rather than merely present in source (#2998). The test
+(`crates/stella-tools/tests/graded_tree_containment.rs`) *skips* its two
+enforcement assertions on a non-`Enforced` host — correctly, since a laptop or
+a restricted container has a permanent reason to be `Advisory` and must not
+fail an ordinary `cargo test` — so `contain.rs::mount_script`'s Linux
+mount-namespace recipe was proved by no test anywhere, CI's own required job
+running on exactly such a host. `STELLA_REQUIRE_CONTAINMENT=1` turns that skip
+into a panic, and this workflow is where that flag is set on the one host it is
+honest to set it on. Also deliberately not required yet (#3011): the recipe
+took two rounds to hold and each round failed for a fact about the runner
+rather than a regression in the diff, which is the precise trap #1863 and #1892
+already paid down for the Rust gate.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -295,7 +310,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
-   in sneaky ways, and this is guarded on **three axes** today in
+   in sneaky ways, and this is guarded on **four axes** today in
    `crates/stella-model/src/provider_parity.rs`:
    - **`CachePosture`** — how the prompt cache is engaged/observed
      (Anthropic's cache is explicit opt-in; DeepSeek spells its cache-hit
@@ -314,11 +329,21 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      bounded per-session latch and re-issues the retried attempt as a unary
      request (#2686); the other streaming dialects declare the gap; Bedrock
      is already unary.
+   - **`OverflowPosture`** — whether this provider's context-overflow
+     rejection is recognised as one, so the engine's reactive recovery
+     fires instead of aborting the turn (#2680). `Detected` names the wire
+     signature *and* the test proving that exact body shape classifies as
+     `ContextOverflow` (Anthropic's `prompt is too long: N tokens > M
+     maximum`, OpenAI's `context_length_exceeded`, …). `BestEffort` is a
+     declared gap, not a silence: errors still funnel through the shared
+     classifier, so an overflow phrased in a detected dialect is caught
+     opportunistically and anything else degrades to a safe unrecovered
+     abort. Verifying the real wire shape upgrades the row.
 
    Each provider id declares a posture on **every** axis and, for a
    controllable/opt-in/implicit/fallback posture, names the **witness test**
    proving it on the wire. Tests enforce each matrix from both sides: `stella-cli`'s
-   config tests fail if a seeded provider lacks a row on either axis, and
+   config tests fail if a seeded provider lacks a row on any axis, and
    `stella-model`'s parity tests fail if a row's witness test no longer
    exists. Adding a provider — or a new divergent feature axis — means
    updating the matrix in the same PR. Born from a real defect: OpenRouter
@@ -473,7 +498,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-two crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-three crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -491,6 +516,7 @@ the files you must plan around (see below).
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
+| Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s `ask_user`/approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
@@ -563,7 +589,7 @@ a plan needs and the part that rarely changes:
 | `stella-tools` | `src/registry.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other fifteen crates carry no god files — keep it that way. Each crate's
+The other sixteen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

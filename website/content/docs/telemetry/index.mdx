@@ -185,6 +185,32 @@ sqlite3 -json .stella/private/store.db \
   | jq -r '.[] | "step \(.step).\(.call_seq)\t\(.call_role)\t\(.estimated_input_tokens)/\(.effective_budget_tokens)"'
 ```
 
+### Who actually served a gateway-routed call
+
+`step_receipt.provider` (and the `telemetry` table's own provider column) name the provider
+you **configured** — for an OpenRouter run, that is always the string `openrouter`, the
+gateway, never the vendor it routed to. [Pinning the upstream](/docs/api-providers#pinning-the-upstream)
+stops the gateway from routing inconsistently between calls, but *auditing* which vendor
+served a past call is a different question, and the two receipt tables above cannot answer
+it — they were not extended with a column for it.
+
+The answer is recorded, just not in a queryable column yet. The `events` table stores every
+execution's raw event stream verbatim, and a `step_usage` event carries `upstream_provider`
+whenever a pinned gateway call named one:
+
+```bash
+sqlite3 -json .stella/private/store.db \
+  "SELECT payload FROM events WHERE execution_id = 42 AND event_type = 'step_usage'" \
+  | jq -r '.[].payload | fromjson | select(.upstream_provider) | "\(.provider) → \(.upstream_provider)"'
+```
+
+`upstream_provider` is `null` on a direct endpoint (where `provider` is already the honest
+answer) and on any call that predates the field. Neither [`stella inspect`](/docs/commands/inspect)
+nor [`stella stats`](/docs/commands/stats) surfaces it today — reading it means querying
+`events` directly, as above. [#3054](https://github.com/macanderson/stella/issues/3054)
+tracks giving `step_receipt` its own column so a future `stella inspect` can show it
+without the raw query.
+
 ## Oxagen Enterprise managed export
 
 Managed mode exists for cross-seat operational visibility, capacity planning, and

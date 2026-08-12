@@ -3,7 +3,7 @@ title: stella config
 description: Show the fully resolved configuration for the current session.
 ---
 
-Show the fully resolved configuration for the current session — the provider, model, a redacted key preview, base URL, workspace, and wire dialect.
+Show the fully resolved configuration for the current session — the provider, model, a redacted key preview and *where it came from*, base URL, workspace, wire dialect, and the model each engine role will actually run on.
 
 ## Synopsis
 
@@ -13,12 +13,12 @@ stella config [global flags]
 
 ## What it does
 
-`stella config` resolves every configuration source — global flags, environment variables, `settings.json` across all three scopes, and `credentials.toml` — and prints the **effective** result. It is the fastest way to confirm exactly which provider, model, and base URL a run will use, and that your key resolved without exposing it (the key is shown only as a redacted preview).
+`stella config` resolves every configuration source — global flags, environment variables, the config file across all three scopes, and `credentials.toml` — and prints the **effective** result. It is the fastest way to confirm exactly which provider, model, and base URL a run will use, and that your key resolved without exposing it (the key is shown only as a redacted preview, followed by the source that won).
 
 The same output is available from the plain line REPL (`stella chat --plain`) via the `/config` slash command. The default Command Deck TUI does not have a `/config` command — run `stella config` in a separate shell instead.
 
 <Callout type="info">
-`settings.json` is merged field-by-field across three scopes — project (`<workspace>/.stella/settings.json`), org-managed, and user (`~/.stella/settings.json`) — highest precedence first. `stella config` shows the merged, effective values.
+The config file is merged field-by-field across three scopes — project, org-managed, and user — highest precedence first. `stella config` shows the merged, effective values. The modern file is [`stella.toml`](/docs/configuration/stella-toml) (`<workspace>/stella.toml`, `~/.stella/stella.toml`); the older [`settings.json`](/docs/configuration/settings) (`<workspace>/.stella/settings.json`, `~/.stella/settings.json`) is still read. **Where both exist, the TOML wins and stella says so on startup** — the JSON is shadowed, not merged. [`stella migrate config`](/docs/commands/migrate) writes the TOML from what stella actually read and keeps the JSON for you to delete once you have reviewed it.
 </Callout>
 
 ## Flags
@@ -34,17 +34,44 @@ stella config
 Representative output (illustrative):
 
 ```text
-Provider:   Z.ai (GLM 5.2)
-Model:      zai/glm-5.2
-API Key:    sk-abc…a1b2
-Base URL:   https://api.z.ai/api/paas/v4
-Workspace:  /Users/you/projects/acme
-Dialect:    OpenAI-compatible
+Stella — Current Configuration
+
+  Provider:   Z.ai
+  Model:      zai/glm-5.2
+  API Key:    sk-abc…a1b2 (env:ZAI_API_KEY)
+  Base URL:   https://api.z.ai/api/paas/v4
+  Workspace:  /Users/you/projects/acme
+  Dialect:    OpenAI-compatible
+
+  Engine roles
+    default   zai/glm-5.2                  xhigh             thinking on   default_model
+    worker    zai/glm-5.2                  xhigh             thinking on   pipeline_worker_model
+    verifier  anthropic/claude-opus-5      xhigh             thinking on   pipeline_verifier_model
+    triage    anthropic/claude-haiku-4-5   provider default  thinking off  pipeline_triage_model
+    research  zai/glm-5.2                  xhigh             thinking on   rides the worker
+    plan      zai/glm-5.2                  xhigh             thinking on   rides the worker
 ```
 
 The `Provider` line shows the provider's display name; `Model` is printed as
 `<provider-id>/<model-id>`; and the key is a redacted preview (first six characters, an
-ellipsis, and the last four).
+ellipsis, and the last four) followed by **which source won** — `env:VAR`, the
+credentials file, or the config literal. That last part is the answer to "I set the key,
+why is it still using the other one?", so it is worth reading even when the preview looks
+right.
+
+### Engine roles
+
+The second block is the one a run's cost and behavior actually turn on: **each role, the
+model it resolves to, its reasoning effort, whether thinking is on, and the setting that
+decided it**. `rides the worker` in the last column means no role-specific model is
+configured, so the role inherits the worker's — which is the default for `research` and
+`plan` ([configurable independently](/docs/agent-tools/custom-agents) since they cost
+differently: research is a fan-out of short read-only calls, planning is one call that
+writes the work order).
+
+`verifier` is the tier that authors the **witness test**, and that is now its only model
+call — the pipeline issues no verdict call and no distress-guidance call. See
+[the inference pipeline](/docs/inference-pipeline).
 
 Preview how an explicit override resolves without starting a run (global flags first):
 

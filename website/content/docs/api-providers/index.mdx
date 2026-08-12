@@ -347,6 +347,39 @@ have an Anthropic session, with no part of this routed through the gateway.
   still works if you pin it — it is simply no longer the default.
 </Callout>
 
+#### Pinning the upstream
+
+A gateway is a router, not a vendor: OpenRouter picks the upstream that actually serves a
+request per **app identity**, and it is free to choose a different one between two calls to
+the same slug — a probe carrying stella's own attribution once asked for
+`anthropic/claude-sonnet-5` and was served by `provider: Amazon Bedrock`. That is invisible
+in the ordinary case — you asked for a model family, and you got it — but it means the
+model *provider* behind an OpenRouter-routed run is not something a bare `--model` pins.
+
+`--upstream-pin <vendor>` (env `STELLA_UPSTREAM_PIN`, repeatable or comma-separated) fixes
+it: the request carries `provider: {order: [...], allow_fallbacks: false}`, so OpenRouter
+either serves it from the named vendor, in the order given, or the call fails rather than
+silently routing elsewhere.
+
+```bash
+stella run "…" --model openrouter/anthropic/claude-fable-5 \
+  --upstream-pin z-ai --upstream-pin anthropic
+```
+
+Reach for it whenever two runs need to be the *same experiment* — a before/after
+comparison, a head-to-head against another agent, anything where "which vendor actually
+answered" is part of what you are claiming stayed fixed. See the
+[terminal-bench head-to-head guide](/docs/guides/terminal-bench-head-to-head#pin-the-upstream-when-either-arm-goes-through-a-gateway)
+for the case that motivated it. Inert on every provider that is not a gateway — a direct
+`anthropic/…` or `openai/…` session has no routing step to pin.
+
+<Callout type="info">
+`--upstream-pin` is a flag, not a `settings.json` field, on purpose: a benchmark harness
+runs with settings isolation (`STELLA_NO_SETTINGS`), so a settings-defined pin would never
+reach a measured trial. An argument is the only authority that survives that isolation —
+the same reason `--base-url` is one.
+</Callout>
+
 #### Selecting models
 
 ```bash

@@ -88,7 +88,8 @@ pub(super) async fn run_lead_pipeline_turn(
         let customs =
             CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
         let (stub_tx, _) = mpsc::unbounded_channel();
-        let mut interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
+        let mut interactive = InteractiveToolSet::new(&customs, stub_tx)
+            .with_ask_user(Some(Box::new(ask_io.clone())))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         // Mid-turn `recall_context`, over the SAME port the pipeline's recall
         // stage uses below — one plane, so a step-12 lookup and the step-0

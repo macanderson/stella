@@ -531,6 +531,64 @@ fn both_prompts_route_file_work_to_the_dedicated_tool() {
     }
 }
 
+/// Witness for the scratch gap (#2912): the only rule either persona carried on
+/// the subject was `PIPELINE_SYSTEM_PROMPT`'s "Never create backup files,
+/// scratch files, or debug artifacts", and the sanctioned scratch space that
+/// rule appears to ban was named nowhere — `rg -ic save_state` over `prompt.rs`
+/// returned 0, and so did `STELLA_SCRATCH`. `crates/stella-tools/src/scratch.rs`
+/// has provided that space all along: a per-tool-set `TempDir` exported to every
+/// shell spawn as `STELLA_SCRATCH`, with `save_state`/`get_state` over it.
+///
+/// The cost was measured, not theorised: in three bench trials the worker wrote
+/// a rigorous witness test and issued `delete_file` on it ~16s later, reason
+/// "Witness test served its purpose; removing scratch file per no-scratch-files
+/// rule" — the most valuable artifact of the run, discarded to satisfy a rule
+/// written about something else.
+///
+/// Both halves are pinned because either alone is a defect. Drop the permission
+/// and the agent is back to deleting its own evidence; drop the prohibition and
+/// the rule #448 exists for — session scratch must never reach the repository,
+/// which `make gate`'s `no-scratch` step enforces — survives only in the gate,
+/// where the model cannot read it. The environment clause is pinned separately:
+/// `TempDir::with_prefix("stella-scratch-")` is the only source of truth for
+/// that path, so an agent that constructs one writes to a directory that does
+/// not exist.
+#[test]
+fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace_one() {
+    let shared = tool_steering!();
+    for claim in [
+        // The destination, and that it is read rather than derived.
+        "$STELLA_SCRATCH",
+        "exported into every shell you run",
+        "Read that path from the environment — never construct one",
+        // The two jobs, kept distinct: bytes by size, state by key.
+        "too large to sit in the transcript",
+        "page it back with get_state",
+        "save_state and get_state hold it under a key",
+        // The negative half — #448's rule, intact and legible.
+        "What remains forbidden is scratch in the workspace or the repository",
+        "no backup copies",
+        "no debug artifacts left behind",
+        // The clause the deletions above turned on: a witness is not scratch.
+        "neither is a test you wrote to prove your change",
+        "deleting it destroys the evidence",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the scratch claim {claim:?} — dropping \
+             the permission leaves the agent deleting its own witness tests \
+             (#2912), and dropping the prohibition leaves session scratch free to \
+             reach the repository (#448)"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
 /// Witness for the skill-use gap (#2724): neither persona said the word
 /// "skill", so the only skill text the model ever saw was the volatile recall
 /// block's section header — a label with no contract. Each clause pinned
@@ -787,4 +845,28 @@ fn an_omission_from_one_prompt_only_is_caught_and_named() {
         "the exact #2231 shape — a contract in one prompt only — must be reported, and \
          reported with both names"
     );
+}
+
+/// **Witness: neither static prompt names a tool the session may not have.**
+///
+/// `ask_user` is registered only when a human is present to answer it
+/// ([`crate::interactive::human_can_answer`]), while both prompts are static
+/// bytes shared by attended and unattended runs alike — one `concat!` each,
+/// riding the cache prefix, with no per-mode text. A prompt that recommends a
+/// tool missing from the schema is worse than one that never mentioned it: it
+/// sends the agent looking for something that is not there, which is the
+/// state withholding the tool exists to leave.
+///
+/// Both prompts are checked, and by the same rule, because
+/// `PIPELINE_SYSTEM_PROMPT` is what `stella run` sends and what the bench
+/// harness measures — the copy an omission goes missing from quietly (see
+/// this module's header).
+#[test]
+fn no_static_prompt_names_a_tool_the_session_may_not_offer() {
+    for (name, prompt) in STATIC_PROMPTS {
+        assert!(
+            !prompt.contains("ask_user"),
+            "{name} names `ask_user`, which an unattended session does not register"
+        );
+    }
 }

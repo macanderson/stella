@@ -115,11 +115,17 @@ the new root cause. That is what the round loop is for.
 
 ### The same failure comes back
 
-A revision that has already deterministically failed triggers **distress
-guidance**: stella spends one verifier call producing a course-correction note that
-rides along with the next revision prompt, rather than letting the worker keep
-digging in the same direction. You will see the same-failure case resolve or
-change shape rather than repeat identically.
+A revision whose candidate has already deterministically failed a **second** time —
+cumulatively, so the two failures need not be consecutive — re-enters the revise loop
+carrying the sealed, redacted account of the test that went red, and nothing else. The
+worker is told what failed rather than what to do about it.
+
+This used to buy a model **distress-guidance** call: a verifier reading the diff and
+appending a course-correction note to the evidence. It is gone, for the same reason the
+[model verdict is](/docs/inference-pipeline) — a model's reading of a bounded diff is a
+claim, a claim appended to a measurement inherits that measurement's authority, and a
+worker cannot tell the two apart. The failing test is already conclusive; there was
+nothing a reviewer could add to it except a way to be wrong about it.
 
 ### It hits the round cap
 
