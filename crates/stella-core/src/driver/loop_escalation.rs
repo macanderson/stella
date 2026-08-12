@@ -112,11 +112,7 @@ impl LoopSteerBudget {
     /// identity beside it would charge a turn for a warning no abort could
     /// ever name.
     pub(crate) fn resumed(warned: Option<LoopIdentity>, recorded: u32) -> Self {
-        let spent = if warned.is_some() {
-            recorded.max(1)
-        } else {
-            0
-        };
+        let spent = if warned.is_some() { recorded.max(1) } else { 0 };
         Self { warned, spent }
     }
 
@@ -838,7 +834,11 @@ mod tests {
     fn a_legacy_checkpoint_still_restores_one_spent_steer() {
         let warned = bash("cargo test");
         let mut resumed = LoopSteerBudget::resumed(Some(warned.clone()), 0);
-        assert_eq!(resumed.spent(), 1, "never a refund, whatever the count says");
+        assert_eq!(
+            resumed.spent(),
+            1,
+            "never a refund, whatever the count says"
+        );
         assert!(
             aborted(&resumed.escalate(&warned)),
             "the warning is not refunded by the round trip"

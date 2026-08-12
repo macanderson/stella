@@ -101,8 +101,6 @@ impl Provider for VertexProvider {
         "vertex"
     }
 
-    /// Bound to one model at construction, so a failed call can name it
-    /// (#2831).
     fn model(&self) -> Option<&str> {
         Some(&self.model)
     }

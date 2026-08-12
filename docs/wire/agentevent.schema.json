@@ -2661,6 +2661,7 @@
           "type": "integer"
         },
         "model": {
+          "description": "The model the failed call was dispatched to.\n\nPer-call attribution, on the same contract as\n[`AgentEvent::StepUsage`]'s `provider`: this names what was\nactually being called, never the session's configured default.\nSourced from [`crate::Provider::model`] (or the caller's own model\nhint) rather than hardcoded — until #2831 every one of these rows\nsaid [`UNKNOWN_MODEL`], which made a per-model failure census\nuncomputable and left mid-turn fallback unable to say which model\nhad been failing.\n\n[`UNKNOWN_MODEL`] survives as the one documented spelling of \"no\nmodel could be named here\", and is expected to be rare.",
           "type": "string"
         },
         "partial": {

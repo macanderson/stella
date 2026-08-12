@@ -583,8 +583,6 @@ impl Provider for GeminiProvider {
         "gemini"
     }
 
-    /// Bound to one model at construction, so a failed call can name it
-    /// (#2831).
     fn model(&self) -> Option<&str> {
         Some(&self.model)
     }

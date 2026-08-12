@@ -26,7 +26,7 @@ use stella_pipeline::{
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
     RepoStructurePort,
 };
-use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
+use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
@@ -1196,13 +1196,7 @@ pub(crate) async fn init_workspace(
             infer_domains(
                 p,
                 workspace_root,
-                // The configured slug, else the one the adapter is bound to —
-                // the placeholder is the last resort, not the fallback
-                // (#2831). This hint is what a failed inference call's
-                // `UsageIncomplete` names.
-                model_hint
-                    .or_else(|| p.model())
-                    .unwrap_or(stella_protocol::UNKNOWN_MODEL),
+                model_hint.or_else(|| p.model()).unwrap_or(UNKNOWN_MODEL),
                 budget_limit,
             )
             .await

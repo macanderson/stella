@@ -558,33 +558,9 @@ fn to_openai_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Vec<OpenAiToo
         .collect()
 }
 
-#[async_trait]
-impl Provider for OpenAiProvider {
-    fn id(&self) -> &str {
-        "openai"
-    }
-
-    /// Bound to one model at construction, so a failed call can name it
-    /// (#2831).
-    fn model(&self) -> Option<&str> {
-        Some(&self.model)
-    }
-
-    async fn complete_ref(
-        &self,
-        req: CompletionRequestRef<'_>,
-    ) -> Result<CompletionResult, ProviderError> {
-        self.complete_inner(req, None).await
-    }
-
-    async fn complete_observed_ref(
-        &self,
-        req: CompletionRequestRef<'_>,
-        observer: &dyn ToolCallObserver,
-    ) -> Result<CompletionResult, ProviderError> {
-        self.complete_inner(req, Some(observer)).await
-    }
-}
+/// The `Provider` impl itself — see the module's own docs for why it is not
+/// in this file.
+mod provider;
 
 impl OpenAiProvider {
     /// Shared body of [`Provider::complete_ref`] and
