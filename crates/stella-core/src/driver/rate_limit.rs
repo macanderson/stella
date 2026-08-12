@@ -162,6 +162,11 @@ impl<'a> Engine<'a> {
             events: events.clone(),
             role: self.call_role,
             provider: self.active_provider().id().to_string(),
+            model: self
+                .active_provider()
+                .model()
+                .unwrap_or(stella_protocol::UNKNOWN_MODEL)
+                .to_string(),
             started: call_started,
             armed: true,
             attempt_in_flight,
@@ -194,7 +199,15 @@ impl<'a> Engine<'a> {
                 let _ = incomplete_events.send(AgentEvent::UsageIncomplete {
                     role: self.call_role,
                     provider: self.active_provider().id().to_string(),
-                    model: "unknown".into(),
+                    // The ACTIVE provider's model, re-read per attempt: a
+                    // fallback swap (`driver::model_fallback`) can land
+                    // between attempts, and the row must name what this
+                    // attempt actually called (#2831).
+                    model: self
+                        .active_provider()
+                        .model()
+                        .unwrap_or(stella_protocol::UNKNOWN_MODEL)
+                        .to_string(),
                     reason: stella_protocol::UsageIncompleteReason::ProviderError,
                     duration_ms: attempt_duration.as_millis() as u64,
                     retries: Some(attempt.saturating_sub(1)),

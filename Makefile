@@ -162,6 +162,15 @@ triage-bench-traces: ## Triage a bench run's traces into issue activity (RUN=w10
 	python3 bench/trace_triage/triage_bench_traces.py --run $(RUN) \
 		$(if $(MIRROR),--mirror $(MIRROR),) $(if $(FETCH),--fetch,) $(ARGS)
 
+# Reads a fetched run directory and writes a report beside the match assembled
+# from it. Offline and read-only apart from those two files, but deliberately
+# not a `make gate` step either: it needs a run to read, and the gate must be
+# runnable on a fresh checkout.
+.PHONY: postmortem
+postmortem: ## Probe a fetched run's traces into a report on its match (RUN=path/to/run-dir)
+	@[ -n "$(RUN)" ] || { echo "usage: make postmortem RUN=arenabench-cloud/<run-id>"; exit 2; }
+	python3 bench/trace_triage/postmortem.py $(RUN) $(ARGS)
+
 .PHONY: no-scratch
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 	@./scripts/check-no-scratch.sh

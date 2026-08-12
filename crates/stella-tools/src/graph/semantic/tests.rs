@@ -152,7 +152,8 @@ async fn an_eager_pass_embeds_the_corpus_and_no_query() {
         outcome,
         WarmOutcome::Warmed {
             embedded: FIXTURE.len(),
-            remaining: 0
+            remaining: 0,
+            unreadable: 0
         }
     );
 
@@ -173,7 +174,8 @@ async fn an_eager_pass_embeds_the_corpus_and_no_query() {
         again,
         WarmOutcome::Warmed {
             embedded: 0,
-            remaining: 0
+            remaining: 0,
+            unreadable: 0
         }
     );
 }
@@ -192,8 +194,35 @@ async fn a_pass_that_hits_its_cap_reports_what_it_left() {
         outcome,
         WarmOutcome::Warmed {
             embedded: 1,
-            remaining: FIXTURE.len() - 1
+            remaining: FIXTURE.len() - 1,
+            unreadable: 0
         }
+    );
+}
+
+/// #3016: an unreadable file at the head of the path order must not end the
+/// pass. The window is sized in embeddable files, so the readable ones behind
+/// it are still offered — and the leftover is reported as what it is rather
+/// than as the cap's doing.
+#[tokio::test]
+async fn an_unreadable_file_does_not_stop_the_eager_pass_at_the_readable_ones() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    index_as_init_does(&root);
+    // Indexed, then gone — `src/scrub.rs` sorts ahead of `src/wire.rs`, so it
+    // is what a window of one lands on first.
+    std::fs::remove_file(root.join("src/scrub.rs")).expect("remove");
+    let server = concept_server().await;
+
+    let outcome = warm_file_vectors(&root, &embedder(&server), 1).await;
+    assert_eq!(
+        outcome,
+        WarmOutcome::Warmed {
+            embedded: 1,
+            remaining: 1,
+            unreadable: 1
+        },
+        "the readable file behind the deleted one must still be embedded"
     );
 }
 

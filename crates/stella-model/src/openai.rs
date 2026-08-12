@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
@@ -22,7 +21,6 @@ use stella_protocol::{
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
-use crate::provider::Provider;
 use crate::sse::SseDecoder;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -558,31 +556,14 @@ fn to_openai_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Vec<OpenAiToo
         .collect()
 }
 
-#[async_trait]
-impl Provider for OpenAiProvider {
-    fn id(&self) -> &str {
-        "openai"
-    }
-
-    async fn complete_ref(
-        &self,
-        req: CompletionRequestRef<'_>,
-    ) -> Result<CompletionResult, ProviderError> {
-        self.complete_inner(req, None).await
-    }
-
-    async fn complete_observed_ref(
-        &self,
-        req: CompletionRequestRef<'_>,
-        observer: &dyn ToolCallObserver,
-    ) -> Result<CompletionResult, ProviderError> {
-        self.complete_inner(req, Some(observer)).await
-    }
-}
+/// The `Provider` impl itself — see the module's own docs for why it is not
+/// in this file.
+mod provider;
 
 impl OpenAiProvider {
-    /// Shared body of [`Provider::complete_ref`] and
-    /// [`Provider::complete_observed_ref`]. The request has always set
+    /// Shared body of [`crate::provider::Provider::complete_ref`] and
+    /// [`crate::provider::Provider::complete_observed_ref`] — both of which
+    /// live in `openai/provider.rs`. The request has always set
     /// `stream: true` and the response has always been consumed as SSE; the
     /// only difference is whether anything is told about the parts as they
     /// land.
@@ -907,6 +888,9 @@ async fn aggregate_openai_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The port itself, since the impl moved to `openai/provider.rs` and this
+    // file no longer imports the trait these tests dispatch through.
+    use crate::provider::Provider;
     use stella_protocol::CompletionRequest;
     use stella_protocol::tool::ToolSchema;
     use wiremock::matchers::{body_string_contains, header, method, path};

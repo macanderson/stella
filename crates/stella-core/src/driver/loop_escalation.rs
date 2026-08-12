@@ -97,18 +97,22 @@ pub(crate) struct LoopSteerBudget {
 impl LoopSteerBudget {
     /// The budget of a turn resumed from a [`crate::step::Checkpoint`].
     ///
-    /// The count itself is not on the wire — `Checkpoint` records the warned
-    /// loop and a `loop_steered: bool`, and adding a field to that struct is
-    /// a cross-crate change (#2809). Reconciled the only safe direction: any
-    /// recorded warning restores one spent steer, so a resume can never
-    /// *refund* the warning a turn already had. It can re-open the second
-    /// one, which costs a resumed turn at most one extra warning and one
-    /// extra step — the same bounded-allowance-starts-over trade
-    /// `TurnState::length_continuations` and `OverflowRecovery` already make
-    /// across a checkpoint, and strictly less permissive than either since
-    /// the warned loop itself survives and still aborts on sight.
-    pub(crate) fn resumed(warned: Option<LoopIdentity>) -> Self {
-        let spent = u32::from(warned.is_some());
+    /// `recorded` is `Checkpoint::loop_steers_spent`, which is on the wire as
+    /// of #2809. It is reconciled against the legacy `loop_steered: bool`
+    /// rather than trusted outright, because a checkpoint written before that
+    /// field decodes it as `0` (`#[serde(default)]`) while still recording the
+    /// warning through `warned` — and a resume must never *refund* a warning
+    /// the turn already paid for. So any recorded warning restores at least
+    /// one spent steer, and a checkpoint that carries the real count restores
+    /// exactly it.
+    ///
+    /// `warned == None` restores a whole budget whatever `recorded` says: the
+    /// struct's invariant is that `spent == 0` exactly when nothing is warned,
+    /// and `to_checkpoint` cannot produce that pair. Honouring a count with no
+    /// identity beside it would charge a turn for a warning no abort could
+    /// ever name.
+    pub(crate) fn resumed(warned: Option<LoopIdentity>, recorded: u32) -> Self {
+        let spent = if warned.is_some() { recorded.max(1) } else { 0 };
         Self { warned, spent }
     }
 
@@ -116,6 +120,23 @@ impl LoopSteerBudget {
     /// records, and `None` while no warning has been spent.
     pub(crate) fn warned(&self) -> Option<&LoopIdentity> {
         self.warned.as_ref()
+    }
+
+    /// Warnings spent so far — the other half of what a checkpoint records
+    /// (#2809), and the value [`Self::resumed`] reads back.
+    pub(crate) fn spent(&self) -> u32 {
+        self.spent
+    }
+
+    /// Warnings still buyable after everything charged so far. `0` means the
+    /// next detection of any loop ends the turn, which is what
+    /// [`steer_text`] must be able to say out loud (#2810).
+    ///
+    /// Saturating rather than wrapping: a checkpoint is runtime data, so a
+    /// `spent` above the cap is representable on the wire even though
+    /// [`Self::escalate`] can never produce one.
+    pub(crate) fn remaining(&self) -> u32 {
+        MAX_LOOP_STEERS.saturating_sub(self.spent)
     }
 
     /// Charge `detected` against the budget and answer what happens to the
@@ -231,8 +252,15 @@ pub(super) fn check_loop_detection(
     let LoopEscalation::Abort { warned } = escalation else {
         // Duration priors (#1472) are not wired yet: `None` states the
         // blocking wait without a number, and the composer cites one the
-        // moment a caller can supply it.
-        let text = steer_text(&evidence, polling_tool(&verdict, tools).as_deref(), None);
+        // moment a caller can supply it. The remaining count is read AFTER
+        // the charge above, so it is what this warning leaves behind — zero
+        // means this is the last one and the text says so (#2810).
+        let text = steer_text(
+            &evidence,
+            polling_tool(&verdict, tools).as_deref(),
+            None,
+            loop_steer.remaining(),
+        );
         let _ = events.send(AgentEvent::Steered { text: text.clone() });
         messages.push(CompletionMessage::user(text));
         return None;
@@ -281,13 +309,36 @@ fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<Strin
 /// (#1472's data, once a caller carries it) and is stated without a number
 /// otherwise. Volatile mid-turn context either way — invariant #7 safe by
 /// construction.
-fn steer_text(evidence: &str, polling_tool: Option<&str>, prior_secs: Option<u64>) -> String {
+///
+/// `remaining` is the warnings still buyable AFTER this one
+/// ([`LoopSteerBudget::remaining`], read once the detection has been charged),
+/// and it decides the closing sentence. Since #1743 a turn holds
+/// [`MAX_LOOP_STEERS`] warnings, and one closing clause meant two different
+/// things depending on which warning carried it: on a non-final warning only
+/// re-detecting *this* loop aborts, while on the last one the next detection
+/// of ANY loop ends the turn. The model was told the same thing either way and
+/// so could not tell that its last warning was its last (#2810). #1473 is the
+/// precedent that this exact wording moves model behaviour, which is why the
+/// two clauses are separate strings with a witness each rather than one
+/// string with a hedge in it.
+fn steer_text(
+    evidence: &str,
+    polling_tool: Option<&str>,
+    prior_secs: Option<u64>,
+    remaining: u32,
+) -> String {
+    let consequence = if remaining == 0 {
+        "This is your LAST warning: the next loop detected — this one or any \
+         other — ends the turn."
+    } else {
+        "If you keep looping, the turn will be aborted."
+    };
     let Some(tool) = polling_tool else {
         return format!(
             "{LOOP_STEER_PREFIX}] you appear to be looping: {evidence}. Repeating the \
              same call cannot produce new information — change strategy: vary the \
-             arguments, try a different tool, or report what is blocking you. If you \
-             keep looping, the turn will be aborted."
+             arguments, try a different tool, or report what is blocking you. \
+             {consequence}"
         );
     };
     let sizing = match prior_secs {
@@ -304,8 +355,8 @@ fn steer_text(evidence: &str, polling_tool: Option<&str>, prior_secs: Option<u64
          its result has not changed between your calls. Do NOT vary the arguments or \
          switch tools: the state you are waiting on genuinely has not changed, and \
          checking it differently cannot change it. Instead, {sizing}; then check once. \
-         If nothing lets you wait, report what you are blocked on and stop. If you \
-         keep polling, the turn will be aborted."
+         If nothing lets you wait, report what you are blocked on and stop. \
+         {consequence}"
     )
 }
 
@@ -394,7 +445,7 @@ mod tests {
         let tool = polling_tool(&verdict, &StatusAndBash);
         assert_eq!(tool.as_deref(), Some("ci_status"));
 
-        let text = steer_text("ci_status repeated 3×", tool.as_deref(), None);
+        let text = steer_text("ci_status repeated 3×", tool.as_deref(), None, 1);
         assert!(text.contains("ONE blocking wait"), "{text}");
         assert!(
             !text.contains("vary the arguments, try a different tool"),
@@ -410,7 +461,7 @@ mod tests {
     /// data, once a caller carries it).
     #[test]
     fn a_duration_prior_sizes_the_wait_concretely() {
-        let text = steer_text("ci_status repeated 3×", Some("ci_status"), Some(720));
+        let text = steer_text("ci_status repeated 3×", Some("ci_status"), Some(720), 1);
         assert!(text.contains("~720s"), "{text}");
     }
 
@@ -420,8 +471,50 @@ mod tests {
     fn a_mutating_repeat_keeps_the_generic_steer() {
         let verdict = exact_repeat("bash");
         assert_eq!(polling_tool(&verdict, &StatusAndBash), None);
-        let text = steer_text("bash repeated 3×", None, None);
+        let text = steer_text("bash repeated 3×", None, None, 1);
         assert!(text.contains("vary the arguments"), "{text}");
+    }
+
+    /// #2810's witness, non-final half: a warning with budget left behind it
+    /// keeps the legacy conditional consequence and must NOT claim finality.
+    #[test]
+    fn a_non_final_steer_keeps_the_conditional_consequence() {
+        for tool in [None, Some("ci_status")] {
+            let text = steer_text("ci_status repeated 3×", tool, None, 1);
+            assert!(
+                text.contains("If you keep"),
+                "a warning with budget behind it states the conditional: {text}"
+            );
+            assert!(
+                !text.to_lowercase().contains("last warning"),
+                "and must not claim to be the last one: {text}"
+            );
+        }
+    }
+
+    /// #2810's witness, final half: the warning that spends the last of
+    /// [`MAX_LOOP_STEERS`] says so, and says the next loop of ANY kind ends
+    /// the turn — which is what `escalate` actually does once the budget is
+    /// gone, and what the shared conditional clause could not express.
+    #[test]
+    fn the_last_steer_says_it_is_the_last_one() {
+        for tool in [None, Some("ci_status")] {
+            let text = steer_text("ci_status repeated 3×", tool, None, 0);
+            assert!(
+                text.contains("LAST warning"),
+                "the final warning must announce itself: {text}"
+            );
+            assert!(
+                text.contains("any other"),
+                "and must say a DIFFERENT loop also ends the turn, which is \
+                 the half the non-final wording gets right and this one \
+                 previously did not: {text}"
+            );
+            assert!(
+                !text.contains("If you keep"),
+                "the conditional it replaces must be gone, not appended to: {text}"
+            );
+        }
     }
 
     /// A cycle involves several tools; no single wait replaces it.
@@ -705,39 +798,82 @@ mod tests {
             tools: tools(&["bash"]),
             inputs: None,
         };
-        let mut budget = LoopSteerBudget::resumed(Some(unrecorded.clone()));
+        let mut budget = LoopSteerBudget::resumed(Some(unrecorded.clone()), 1);
         assert_eq!(
             budget.escalate(&bash("cargo test")),
             LoopEscalation::Abort { warned: unrecorded },
         );
     }
 
-    /// The checkpoint reconciliation, both directions: a recorded warning
-    /// restores as one spent steer (never zero — a resume cannot refund the
-    /// warning), and no recorded warning restores a fresh budget.
+    /// The checkpoint reconciliation on a checkpoint that CARRIES the count
+    /// (#2809): a turn that spent its whole budget resumes with it spent, so
+    /// the next detection ends the turn whichever loop it is.
     ///
-    /// This pins the LOSSY half deliberately: the count is not on the wire,
-    /// so a turn resumed after spending both warnings re-opens the second
-    /// one. #2809 carries the durable field, and closing it means rewriting
-    /// this test rather than loosening it.
+    /// This is the half that was lossy until the count reached the wire — the
+    /// resumed turn used to restore `spent = 1` from the legacy bool and buy
+    /// one more warning for a different loop, which is exactly what the
+    /// second assertion here now refuses.
     #[test]
-    fn a_resumed_turn_restores_exactly_one_spent_steer() {
+    fn a_resumed_turn_restores_the_recorded_steer_count() {
         let warned = bash("cargo test");
-        let mut resumed = LoopSteerBudget::resumed(Some(warned.clone()));
+        let mut resumed = LoopSteerBudget::resumed(Some(warned.clone()), MAX_LOOP_STEERS);
+        assert_eq!(resumed.remaining(), 0, "a spent budget resumes spent");
+        assert!(
+            aborted(&resumed.escalate(&bash("cargo build"))),
+            "a turn that had already spent every warning must not re-open one \
+             for a different loop merely by being resumed"
+        );
+    }
+
+    /// The same reconciliation on a checkpoint written BEFORE the count field
+    /// existed: `#[serde(default)]` decodes it as `0`, which read alone would
+    /// refund the warning the turn already paid for. The legacy `loop_steered`
+    /// flag is what stops that, and this pins it — the compatibility half of
+    /// #2809, and the reason `CHECKPOINT_VERSION` did not need a bump.
+    #[test]
+    fn a_legacy_checkpoint_still_restores_one_spent_steer() {
+        let warned = bash("cargo test");
+        let mut resumed = LoopSteerBudget::resumed(Some(warned.clone()), 0);
+        assert_eq!(
+            resumed.spent(),
+            1,
+            "never a refund, whatever the count says"
+        );
         assert!(
             aborted(&resumed.escalate(&warned)),
             "the warning is not refunded by the round trip"
         );
-        let mut fresh = LoopSteerBudget::resumed(Some(warned));
+        let mut fresh = LoopSteerBudget::resumed(Some(warned), 0);
         assert!(
             !aborted(&fresh.escalate(&bash("cargo build"))),
-            "and one steer remains for a provably different loop"
+            "and one steer remains for a provably different loop, exactly as \
+             a pre-#2809 checkpoint always behaved"
         );
         assert_eq!(
-            LoopSteerBudget::resumed(None),
+            LoopSteerBudget::resumed(None, 0),
             LoopSteerBudget::default(),
             "a turn that never steered resumes with its whole budget"
         );
+        assert_eq!(
+            LoopSteerBudget::resumed(None, MAX_LOOP_STEERS),
+            LoopSteerBudget::default(),
+            "and a count with no warned loop beside it charges nothing: no \
+             abort could name the loop it claims to have warned about"
+        );
+    }
+
+    /// The round trip the two tests above bracket: whatever `escalate` spends,
+    /// `spent()` reports it and `resumed()` reads it back unchanged, so a
+    /// checkpoint taken at any point in a turn restores the same budget.
+    #[test]
+    fn the_spent_count_survives_a_checkpoint_round_trip() {
+        let mut live = LoopSteerBudget::default();
+        for detected in [bash("cargo test"), bash("cargo build")] {
+            live.escalate(&detected);
+            let restored = LoopSteerBudget::resumed(live.warned().cloned(), live.spent());
+            assert_eq!(restored, live, "the budget must survive its own snapshot");
+        }
+        assert_eq!(live.spent(), MAX_LOOP_STEERS);
     }
 
     /// A loop identity over a deliberately tiny alphabet, so an arbitrary

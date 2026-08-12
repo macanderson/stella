@@ -135,7 +135,15 @@ impl<'a> Engine<'a> {
             AccountedCall {
                 provider: self.active_provider(),
                 role: stella_protocol::ModelCallRole::Summarization,
-                model_hint: "unknown".into(),
+                // The same placeholder #2831 removed from the two engine emit
+                // sites, and reachable the same way: this hint is what a
+                // failed summarizer call's `UsageIncomplete` names, and the
+                // provider dispatching it is right here.
+                model_hint: self
+                    .active_provider()
+                    .model()
+                    .unwrap_or(stella_protocol::UNKNOWN_MODEL)
+                    .to_string(),
                 request,
                 // The last line of defense before a terminal context
                 // overflow — a transient blip here must be retried, not

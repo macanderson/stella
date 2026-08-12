@@ -622,6 +622,7 @@ mod tests {
             loop_steered_pattern: Vec::new(),
             loop_steered_inputs: None,
             transcript_rewrites: 0,
+            loop_steers_spent: 0,
         }
     }
 

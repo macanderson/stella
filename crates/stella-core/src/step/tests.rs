@@ -36,10 +36,16 @@ fn checkpoint_fixture() -> Checkpoint {
     let mut state = state;
     state.total_cost_usd = 0.375;
     state.calibration_model = Some("glm-5.2".into());
-    state.loop_steer = LoopSteerBudget::resumed(Some(LoopIdentity {
-        tools: vec!["bash".into()],
-        inputs: Some(vec![r#"{"command":"cargo test"}"#.into()]),
-    }));
+    // Two spent steers, not one: the count is a wire field as of #2809, and a
+    // fixture carrying its serde default could not tell "round-tripped" from
+    // "silently defaulted".
+    state.loop_steer = LoopSteerBudget::resumed(
+        Some(LoopIdentity {
+            tools: vec!["bash".into()],
+            inputs: Some(vec![r#"{"command":"cargo test"}"#.into()]),
+        }),
+        2,
+    );
     state.step = 3;
     state.mark_transcript_rewritten();
     state.mark_transcript_rewritten();
@@ -86,6 +92,47 @@ fn a_restored_turn_state_carries_the_whole_checkpoint() {
     // And re-snapshotting the restored turn reproduces the checkpoint, so
     // resume → checkpoint → resume is a fixed point.
     assert_eq!(state.to_checkpoint(), checkpoint);
+}
+
+/// #2809's witness, end to end through the wire shape a host actually stores:
+/// a checkpoint that recorded a fully spent steering budget resumes with it
+/// spent, so the next detection of ANY loop ends the turn.
+///
+/// Fails before #2809, where the count was not on the wire at all: the
+/// resumed turn reconciled the legacy `loop_steered` bool as one spent steer
+/// and could buy a second warning it had already paid for.
+#[test]
+fn a_resumed_turn_cannot_re_open_a_steer_the_checkpoint_says_it_spent() {
+    let json = checkpoint_fixture().to_json().expect("encode");
+    let decoded = Checkpoint::from_json(&json).expect("decode");
+    assert_eq!(
+        decoded.loop_steers_spent, 2,
+        "the count must survive the JSON, not just the struct"
+    );
+
+    let state = TurnState::from_checkpoint(decoded, &EngineConfig::default());
+    assert_eq!(
+        state.loop_steer.remaining(),
+        0,
+        "a spent budget must resume spent — this is the whole of #2809"
+    );
+
+    // And a checkpoint written before the field decodes it as 0, which must
+    // still restore one spent steer rather than refunding the warning.
+    let mut legacy: serde_json::Value = serde_json::from_str(&json).expect("parse");
+    legacy
+        .as_object_mut()
+        .expect("object")
+        .remove("loop_steers_spent");
+    let legacy = Checkpoint::from_json(&legacy.to_string()).expect("a v1 checkpoint still decodes");
+    assert_eq!(legacy.loop_steers_spent, 0);
+    let restored = TurnState::from_checkpoint(legacy, &EngineConfig::default());
+    assert_eq!(
+        restored.loop_steer.spent(),
+        1,
+        "the legacy flag is what keeps the serde default from reading as a \
+         refund"
+    );
 }
 
 #[test]

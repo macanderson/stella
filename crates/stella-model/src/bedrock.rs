@@ -638,6 +638,10 @@ impl Provider for BedrockProvider {
         "bedrock"
     }
 
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
     async fn complete_ref(
         &self,
         req: CompletionRequestRef<'_>,
