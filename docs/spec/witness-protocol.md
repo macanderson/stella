@@ -139,10 +139,22 @@ timings, temporary paths, memory addresses, and line-number noise removed. Two
 runs that failed the same way share a fingerprint; two runs that failed
 differently do not.
 
-What it is used for today: the disclosure grain. Repetition of the *same*
-fingerprint is what tightens the ladder, so a worker thrashing against one
-failure stops being handed more surface to fit, while a worker making genuine
-progress — new failure each round — keeps full disclosure.
+What it is used for today: the disclosure grain, and — since #2929 — one
+grain-independent caveat. Repetition of the *same* fingerprint is what
+tightens the ladder, so a worker thrashing against one failure stops being
+handed more surface to fit, while a worker making genuine progress — new
+failure each round — keeps full disclosure. Separately, when a round's
+fingerprint already matches the witness's *authored* baseline observation —
+the run against the pristine, untouched tree the witness was proven to fail on
+when it was created — the brief leads with a fixed-vocabulary caution that the
+check may not be observing the change at all, whatever grain the ladder has
+settled on. This is deliberately not gated on the `revisions > 0` guard that
+`LadderInputs::witness_unmoved_by_revision` (§4.1's terminal rung) uses: that
+guard protects `WitnessUnsatisfiable` from a false positive on a worker that
+simply hasn't finished, but the caveat feeds only the worker's own brief, so
+nothing needs protecting from a true positive arriving one round earlier — the
+round a worker on `video-processing` instead deleted a correct deliverable to
+chase a witness checking the wrong path.
 
 What it is deliberately **not** used for yet: tightening the flip oracle to
 require that the failure it credits is the failure it first saw (ROADMAP §2,

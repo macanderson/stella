@@ -2326,12 +2326,7 @@ impl<'a> Pipeline<'a> {
             // failure. Both failing arms disclose from it, and nothing reaches
             // the worker except through `Pipeline::airlock_forward` or a
             // `redact` of this value.
-            let sealed = SealedFailure {
-                command: effective_cmd.map_or("", |cmd| cmd.command),
-                invocation: effective_cmd.map(|cmd| cmd.invocation),
-                output: &test_tail,
-                witness_paths: &witness_paths,
-            };
+            let sealed = Self::seal_failure(effective_cmd, &test_tail, &witness_paths);
 
             match ladder_decision(&inputs) {
                 LadderDecision::SubmitFast => {

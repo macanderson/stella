@@ -311,6 +311,18 @@ pub struct SealedFailure<'a> {
     /// Paths of the witness artifacts backing this run, withheld from every
     /// grain.
     pub witness_paths: &'a [String],
+    /// Whether this failure's normalized fingerprint already matches the
+    /// witness's *authored* baseline observation — the run against the
+    /// pristine, untouched tree the witness was proven to fail on when it was
+    /// created (#2929). Independent of revision count: `redact` always
+    /// carries it through, unlike [`crate::verify::LadderInputs::witness_unmoved_by_revision`],
+    /// which is deliberately gated on a prior revision so it can decide
+    /// [`crate::verify::LadderDecision::WitnessUnsatisfiable`] outright. This
+    /// field feeds a softer channel — a caveat in the worker's own brief — so
+    /// the same signal reaches the worker one round earlier, before a
+    /// revision spent chasing a check that cannot move has a chance to delete
+    /// correct work to satisfy it.
+    pub unmoved_since_baseline: bool,
 }
 
 impl SealedFailure<'_> {
@@ -339,6 +351,12 @@ pub struct FailureBrief {
     pub symptom: Option<SymptomClass>,
     /// How to reproduce it, at [`DisclosureGrain::Reproduction`].
     pub reproduction: Option<String>,
+    /// [`SealedFailure::unmoved_since_baseline`], carried through unredacted:
+    /// it is a boolean fact about the check's own behavior, not sealed
+    /// output, so it never needs scrubbing and is disclosed at every grain —
+    /// it matters most exactly when repetition has tightened the grain to
+    /// [`DisclosureGrain::Outcome`], the thrashing case #2929 was found in.
+    pub unmoved_since_baseline: bool,
 }
 
 impl FailureBrief {
@@ -350,6 +368,24 @@ impl FailureBrief {
     /// whole disclosure.
     pub fn message(&self) -> String {
         let mut lines = Vec::new();
+        // #2929: on `video-processing`, this warning is the one thing that
+        // was missing between "the check fails" and "the worker deleted its
+        // own correct deliverable to satisfy it" — the plan named an absolute
+        // path, the witness asserted a relative one, and the two never
+        // resolved to the same file. Said first, ahead of the symptom, so the
+        // worker reads it before deciding what to change.
+        if self.unmoved_since_baseline {
+            lines.push(
+                "Caution: this failure is identical to what the check produced before any of \
+                 your work existed — the same result an untouched tree would give. That can \
+                 mean the check is not observing your change at all (for example, asserting a \
+                 path relative to a working directory the check does not actually run from) \
+                 rather than your work being incomplete. Before changing your own code again, \
+                 read exactly what the check asserts and where, and confirm it would actually \
+                 see a correct change."
+                    .to_string(),
+            );
+        }
         if let Some(symptom) = self.symptom {
             lines.push(format!("Symptom: {}.", symptom.sentence()));
         }
@@ -640,6 +676,7 @@ pub fn redact(sealed: &SealedFailure<'_>, requested: DisclosureGrain) -> Failure
         command: admit(grain, DisclosureGrain::Command, command),
         symptom: admit(grain, DisclosureGrain::Symptom, symptom),
         reproduction: admit(grain, DisclosureGrain::Reproduction, reproduction),
+        unmoved_since_baseline: sealed.unmoved_since_baseline,
     }
 }
 
