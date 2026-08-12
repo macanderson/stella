@@ -188,6 +188,12 @@ impl SessionMemory {
             sections.push(section);
         }
 
+        // The second operand of the knowledge-cutoff staleness clause
+        // (#2901): unconditional, unlike the sections above, because the
+        // model needs "now" to judge staleness on every turn, not only the
+        // ones that also recalled a memory or a record.
+        sections.push(render_today_section(now_unix_secs()));
+
         RecalledBlock {
             // Skills and draft claims can produce a block with no frames behind
             // it; frames can be recalled and then filtered out of the render by
@@ -243,6 +249,7 @@ impl SessionMemory {
         if let Some(section) = self.turn_record_section(prompt) {
             sections.push(section);
         }
+        sections.push(render_today_section(now_unix_secs()));
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
 
@@ -588,6 +595,45 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
         section.push_str(stella_pipeline::CITE_MEMORY_REQUEST);
     }
     Some(section)
+}
+
+/// The wall clock's current instant, in Unix seconds. The one `SystemTime`
+/// read in this module — everything downstream of it (`render_today_section`)
+/// takes the value as a parameter instead of reading the clock itself, so a
+/// test can inject two different instants without racing real time.
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Render today's date for the VOLATILE recall block: the second operand of
+/// the knowledge-cutoff staleness clause in
+/// `crate::agent::prompt::append_session_environment`, which names a cutoff
+/// but never a "now" to measure it against (#2901) — a model handed one
+/// endpoint of an interval cannot reason about its width.
+///
+/// This is why it lives here and not beside the cutoff it completes: the
+/// cutoff is session-constant (a model card fact, fixed at catalog load) and
+/// rides the byte-stable system prefix, but the date changes once a day —
+/// possibly mid-session — so putting it in the prefix would be a guaranteed
+/// prompt-cache miss at every UTC midnight for every session alive across it
+/// (invariant #7 / L-E8), and `the_assembled_prompt_names_the_session_environment`
+/// (`crates/stella-cli/src/agent/prompt.rs`) would start failing the moment a
+/// test ran across one. It belongs with the other genuinely volatile facts —
+/// draft claims, selected skills — that ride this per-turn block instead.
+///
+/// Takes Unix seconds rather than reading the clock itself so it stays a pure
+/// function of its input: two calls a day apart must render different text,
+/// and neither call may touch `SystemTime::now()` for that difference to be
+/// provable without racing real time.
+pub(super) fn render_today_section(unix_secs: i64) -> String {
+    let today = &stella_context::format_rfc3339(unix_secs)[..10];
+    format!(
+        "Today's date: {today} UTC — measure the knowledge-cutoff staleness clause in the \
+         session environment above against this."
+    )
 }
 
 /// Land the recalled-context message for this turn at the conversation

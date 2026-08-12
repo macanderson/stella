@@ -34,9 +34,15 @@ async fn assert_no_prompt_or_pipeline_frames(memory: &SessionMemory, lesson: &st
         pipeline_frames.is_empty(),
         "pipeline recall must fail closed when suppression state is unknown: {pipeline_frames:?}"
     );
+    // #2901 gave the recall block an unconditional section (today's date),
+    // so it is no longer `None` on every content-free turn — only when
+    // nothing recall-derived rides it. The fail-closed property under test is
+    // that the lesson itself never reaches the block, not that the block is
+    // empty.
+    let block = memory.recall_block(lesson).await;
     assert!(
-        memory.recall_block(lesson).await.is_none(),
-        "prompt recall must fail closed when suppression state is unknown"
+        !block.as_deref().unwrap_or_default().contains(lesson),
+        "prompt recall must fail closed on the lesson when suppression state is unknown: {block:?}"
     );
 }
 

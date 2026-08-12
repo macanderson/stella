@@ -96,7 +96,10 @@ pub use recall::inject_recall_block;
 /// the `[nod_…]` handles `cite_memory` ties feedback to.
 pub use recall::render_context_section as render_recalled_frames;
 #[cfg(test)]
-use recall::{ab_control_turn, goal_path_anchors, render_context_section, turn_path_tokens};
+use recall::{
+    ab_control_turn, goal_path_anchors, render_context_section, render_today_section,
+    turn_path_tokens,
+};
 #[cfg(test)]
 pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{
