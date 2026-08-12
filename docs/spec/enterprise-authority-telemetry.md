@@ -102,7 +102,12 @@ replacement for ambient bearer credentials.
 Witness preparation uses the existing candidate-workspace abstraction. When
 authored witnesses are enabled, even a single candidate runs in a disposable
 snapshot. The witness author, baseline test, worker, revision, and final test
-all observe that snapshot. Only a passing candidate can be adopted.
+all observe that snapshot. A candidate the pipeline refuses on integrity — one
+that wrote through its isolation, whose witness artifact was mutated after its
+baseline was pinned, or whose tree moved after verification — is never adopted.
+A candidate that merely failed to prove itself is adopted and reported as
+unproven: the verdict is a claim about the work, not what decides the work
+exists (#2927).
 
 Test execution uses a typed invocation containing a program and argument
 vector. Shell operators, redirection, interpolation, and pipelines are not a
