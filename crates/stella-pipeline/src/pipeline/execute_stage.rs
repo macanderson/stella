@@ -46,6 +46,28 @@ impl TurnTallies {
 const VERIFY_DONE_TOOL: &str = "verify_done";
 const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
 
+/// Which slice of which plan [`Pipeline::run_plan_steps`] is walking, and the
+/// board it reports onto.
+///
+/// The three positional fields travel together because they are one fact —
+/// where in the plan this walk sits — and separating them is how a resumed
+/// run's prompts came to be able to say "step 1 of 2" about the fourth step of
+/// five. `board` joins them because every one of its ids is derived from
+/// `offset`: the ordinals the scope gate numbered, not the index in `steps`.
+pub(super) struct PlanWalk<'p> {
+    /// The steps this walk runs — a *tail* of the plan on a resume.
+    pub(super) steps: &'p [PlanStep],
+    /// Where `steps[0]` sits in the whole plan (0 for a fresh run).
+    pub(super) offset: usize,
+    /// How many steps the whole plan has.
+    pub(super) total: usize,
+    /// The candidate whose private board this walk moves, when the run is
+    /// isolated. `None` on the shared-tree and resumed paths, where there is
+    /// no private board — the session's own tap still mirrors whatever the
+    /// worker's `task_*` calls do.
+    pub(super) board: Option<&'p dyn CandidateWorkspace>,
+}
+
 impl<'a> Pipeline<'a> {
     /// Execute stage: one turn for simple/single-task; one turn per plan step
     /// for multi-step (each step guides a fresh engine turn). The last turn's
@@ -91,26 +113,41 @@ impl<'a> Pipeline<'a> {
             }
             Ok(())
         } else {
-            self.run_plan_steps(steps, 0, steps.len(), engine, board, spend, state)
-                .await
+            self.run_plan_steps(
+                PlanWalk {
+                    steps,
+                    offset: 0,
+                    total: steps.len(),
+                    board,
+                },
+                engine,
+                spend,
+                state,
+            )
+            .await
         }
     }
 
-    /// Walk `steps` — a plan's tail beginning at `offset` within a plan of
-    /// `total` steps — one engine turn per step. Split from
-    /// [`Pipeline::execute_plan`] so a resumed run (#1671) can finish the
-    /// steps its crashed predecessor never reached while each prompt still
-    /// names its true position ("step 4 of 5", not "step 1 of 2").
+    /// Walk a plan's steps — one engine turn each — reporting each one on the
+    /// candidate's board as it goes.
+    ///
+    /// Split from [`Pipeline::execute_plan`] so a resumed run (#1671) can
+    /// finish the steps its crashed predecessor never reached; [`PlanWalk`]
+    /// is what lets those prompts still name their true position ("step 4 of
+    /// 5", not "step 1 of 2").
     pub(super) async fn run_plan_steps(
         &self,
-        steps: &[PlanStep],
-        offset: usize,
-        total: usize,
+        walk: PlanWalk<'_>,
         engine: &Engine<'_>,
-        board: Option<&dyn CandidateWorkspace>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
+        let PlanWalk {
+            steps,
+            offset,
+            total,
+            board,
+        } = walk;
         // The board ids the scope gate numbered. `offset + i` is the position
         // in the WHOLE plan, so a resumed run's tail still moves the rows a
         // reader is looking at rather than restarting the checklist at 1.

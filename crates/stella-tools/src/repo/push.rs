@@ -68,12 +68,12 @@ pub(super) const MAX_PUSH_FILES: usize = 40;
 #[derive(Debug, Clone, Default)]
 pub struct PushPlan {
     /// Commits this push would publish, newest first, capped at
-    /// [`MAX_PUSH_COMMITS`].
+    /// `MAX_PUSH_COMMITS`.
     pub commits: Vec<CommitRef>,
     /// How many commits there are in total (`commits` may be capped).
     pub commit_count: usize,
     /// Per-file line stats across the whole push, capped at
-    /// [`MAX_PUSH_FILES`].
+    /// `MAX_PUSH_FILES`.
     pub files: Vec<DiffFileStat>,
     /// How many files there are in total (`files` may be capped).
     pub file_count: usize,
@@ -95,7 +95,7 @@ impl PushPlan {
     }
 
     /// Whether any path in this push is a **source file** — the thing a
-    /// push-time hook exists to gate. See [`path_is_source`] for the rules and
+    /// push-time hook exists to gate. See `path_is_source` for the rules and
     /// why they are inclusive by default.
     pub fn changes_source(&self) -> bool {
         self.files.iter().any(|f| path_is_source(&f.path))

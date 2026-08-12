@@ -244,6 +244,14 @@ catalog! {
     // arms a tool grant; a forked one spends money (#2682).
     "invoke_skill"        => (false, false, Session, "session"),
     "mcp_search"          => (true, false, Session, "session"),
+    // Mid-turn context lookup, registered by `stella-cli`'s
+    // `InteractiveToolSet` when a context plane is configured. Filed under
+    // `context`, not `session`: an operator switching `tools.context` off
+    // means "no context plane", and the turn-start recall and this tool are
+    // the same plane reached two ways. Read-only, never speculated — the port
+    // behind it can be a network CGP host, so a duplicate speculative call is
+    // real traffic against someone's server.
+    "recall_context"      => (true, false, Session, "context"),
 }
 
 /// Look up a tool's canonical row by dispatch name.

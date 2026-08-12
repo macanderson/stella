@@ -548,7 +548,7 @@ impl ContextRecallPort for SessionMemory {
 /// episodes) keep the plain label form: they are grounding, not memories,
 /// and never enter the citation → promotion loop. `None` when no frame has
 /// a citation label (L-C4 filters the rest).
-pub(super) fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
+pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut citable = false;
     for f in frames {

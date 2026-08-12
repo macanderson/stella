@@ -90,6 +90,11 @@ use private_state::resolve_context_db_path;
 #[cfg(test)]
 use projection::{is_suppressed_local_frame, project_recalled_frame};
 pub use recall::inject_recall_block;
+/// The same renderer the turn-start recall block uses, for the mid-turn
+/// `recall_context` tool (`crate::interactive`). One renderer, so a frame
+/// recalled at step 12 reads exactly as one recalled at step 0 — including
+/// the `[nod_…]` handles `cite_memory` ties feedback to.
+pub use recall::render_context_section as render_recalled_frames;
 #[cfg(test)]
 use recall::{ab_control_turn, goal_path_anchors, render_context_section, turn_path_tokens};
 #[cfg(test)]

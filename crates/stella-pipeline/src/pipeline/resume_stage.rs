@@ -369,16 +369,17 @@ impl<'a> Pipeline<'a> {
                 };
                 if let Err(abort) = self
                     .run_plan_steps(
-                        remaining,
-                        next + 1,
-                        plan.len(),
+                        super::execute_stage::PlanWalk {
+                            steps: remaining,
+                            offset: next + 1,
+                            total: plan.len(),
+                            // A resume is headless by construction (see the
+                            // steering note above) and runs against the real
+                            // tree with no candidate workspace, so there is no
+                            // private board to move.
+                            board: None,
+                        },
                         &engine,
-                        // A resume is headless by construction (see the
-                        // steering note above) and runs against the real tree
-                        // with no candidate workspace, so there is no private
-                        // board to move — the session's own tap still mirrors
-                        // whatever the worker's `task_*` calls do.
-                        None,
                         &mut spend,
                         &mut state,
                     )
