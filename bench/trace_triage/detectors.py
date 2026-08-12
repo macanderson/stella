@@ -64,6 +64,19 @@ class Occurrence:
     excerpt: str
     location: str = ""
 
+    @property
+    def task_name(self) -> str:
+        """The dataset task, with the per-trial suffix stripped.
+
+        `code-from-image__UTUWFRc` is one *attempt*; the suffix is minted fresh
+        every run. A citation names the attempt (that is what a reader fetches),
+        but anything compared across runs — the ledger's `tasks` list, and so
+        every "a new affected task" claim — must use this. Keyed on the raw id,
+        the novelty check reports all twenty tasks of a rerun as new, which is
+        the loudest possible way to say nothing.
+        """
+        return self.task_id.split("__", 1)[0]
+
     def render(self) -> str:
         head = f"- **{self.task_id}** (trial `{self.trial_uuid}`)"
         if self.location:

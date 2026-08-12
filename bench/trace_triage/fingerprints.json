@@ -10,8 +10,9 @@
     "wrong rather than merely stale.",
     "`runs`, `tasks` and `peak_*` are the incidence already on the record. They are",
     "what lets a comment say what an occurrence ADDS instead of restating the issue,",
-    "so the seeds below transcribe what each issue already cites — an entry with an",
-    "empty task list would make the first triage run report every task as news."
+    "so the seeds below transcribe what each issue already cites \u2014 an entry with an",
+    "empty task list would make the first triage run report every task as news.",
+    "`tasks` holds DATASET task names, never the per-trial `task__SUFFIX` id: the suffix is minted fresh every run, so an id keyed here reports all twenty tasks of a rerun as new."
   ],
   "fingerprints": {
     "fp_0259c5928a38": {
@@ -22,7 +23,9 @@
       "first_seen_run": "h89b",
       "note": "Seeded from #2956, which established this signature on h89b (85/88 trials) and named the healthy control f89b2. Same predicate: reasoning deltas with zero step_usage means no model call ever completed.",
       "source": "seed",
-      "runs": ["h89b"],
+      "runs": [
+        "h89b"
+      ],
       "tasks": [],
       "peak_count": 85,
       "peak_denominator": 88
@@ -35,7 +38,9 @@
       "first_seen_run": "h89b",
       "note": "Seeded from #2956. The timeout census and the void-call census are two views of one operational abort there, so both fingerprints point at it; split them if a run ever shows timeouts without voids.",
       "source": "seed",
-      "runs": ["h89b"],
+      "runs": [
+        "h89b"
+      ],
       "tasks": [],
       "peak_count": 85,
       "peak_denominator": 88
@@ -46,16 +51,16 @@
       "site": "crates/stella-cli/src/candidate_ws/adopt.rs",
       "variant": "trial recorded no verdict event at all",
       "first_seen_run": "w10p",
-      "note": "Seeded from #2941 (open), the residual half of #2927: a run killed at the wall-clock cap never reaches the single adoption point. Deliberately NOT bound to #2927 — that issue is the winner-only adoption defect and is closed; binding both variants to it would suppress exactly the follow-up the split exists for.",
+      "note": "Seeded from #2941 (open), the residual half of #2927: a run killed at the wall-clock cap never reaches the single adoption point. Deliberately NOT bound to #2927 \u2014 that issue is the winner-only adoption defect and is closed; binding both variants to it would suppress exactly the follow-up the split exists for.",
       "source": "seed",
-      "runs": ["w10p"],
+      "runs": [
+        "w10p"
+      ],
       "tasks": [
-        "build-cython-ext__4xjNAy9",
-        "build-cython-ext__DKWhU7q",
-        "code-from-image__UTUWFRc",
-        "query-optimize__87X4w9r",
-        "query-optimize__c2RngiP",
-        "video-processing__zjYR6QM"
+        "build-cython-ext",
+        "code-from-image",
+        "query-optimize",
+        "video-processing"
       ],
       "peak_count": 6,
       "peak_denominator": 20
@@ -66,14 +71,15 @@
       "site": "crates/stella-cli/src/candidate_ws/adopt.rs",
       "variant": "verdict recorded and no mutating file_change followed it",
       "first_seen_run": "w10p",
-      "note": "Seeded from #2927 (CLOSED) — candidate adoption is winner-only, so a revise verdict discards the candidate. A recurrence on a SUT that already contains the fix is a regression; the tool comments and says so without asserting which, because the trace cannot tell a post-fix run from a pre-fix one.",
+      "note": "Seeded from #2927 (CLOSED) \u2014 candidate adoption is winner-only, so a revise verdict discards the candidate. A recurrence on a SUT that already contains the fix is a regression; the tool comments and says so without asserting which, because the trace cannot tell a post-fix run from a pre-fix one.",
       "source": "seed",
-      "runs": ["w10p"],
+      "runs": [
+        "w10p"
+      ],
       "tasks": [
-        "configure-git-webserver__9rDJ8td",
-        "configure-git-webserver__Fw9itty",
-        "sqlite-with-gcov__uvp6jz4",
-        "video-processing__pBadsUh"
+        "configure-git-webserver",
+        "sqlite-with-gcov",
+        "video-processing"
       ],
       "peak_count": 4,
       "peak_denominator": 20
@@ -86,12 +92,13 @@
       "first_seen_run": "w10p",
       "note": "Seeded from #2908 (CLOSED), which quotes this reason string verbatim.",
       "source": "seed",
-      "runs": ["w10p"],
+      "runs": [
+        "w10p"
+      ],
       "tasks": [
-        "code-from-image__rmypedL",
-        "openssl-selfsigned-cert__VD5dP62",
-        "openssl-selfsigned-cert__n8kmHgk",
-        "pypi-server__CoGn9Sy"
+        "code-from-image",
+        "openssl-selfsigned-cert",
+        "pypi-server"
       ],
       "peak_count": 4,
       "peak_denominator": 20
@@ -104,8 +111,12 @@
       "first_seen_run": "w10p",
       "note": "Seeded from #2908 (CLOSED), which quotes this reason string verbatim. A separate fingerprint from the sibling above on purpose: one is a parse-contract failure and one is an authoring failure, and #2908 may be fixed for one and not the other.",
       "source": "seed",
-      "runs": ["w10p"],
-      "tasks": ["log-summary-date-ranges__xx28aho"],
+      "runs": [
+        "w10p"
+      ],
+      "tasks": [
+        "log-summary-date-ranges"
+      ],
       "peak_count": 1,
       "peak_denominator": 20
     }

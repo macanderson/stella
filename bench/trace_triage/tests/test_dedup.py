@@ -185,6 +185,25 @@ def test_a_repeat_that_adds_nothing_posts_nothing(tmp_path):
     assert forced[0].decision is Decision.COMMENT
 
 
+def test_the_same_task_under_a_fresh_trial_suffix_is_not_news(tmp_path):
+    """`code-from-image__AAA` and `code-from-image__ZZZ` are one task, two attempts.
+
+    Harbor mints the suffix per trial, so keying novelty on the raw id makes
+    every task of a rerun read as newly affected — the loudest possible way to
+    report nothing, on someone else's issue.
+    """
+    client = FakeGitHub()
+    ledger = _ledger(tmp_path)
+    first = _run_with_witness_failure(tmp_path, "r1", ["code-from-image__AAA"], "run-one")
+    apply_actions(first, plan_actions(first, run_all(first), ledger, client, 5), ledger, client)
+
+    second = _run_with_witness_failure(tmp_path, "r2", ["code-from-image__ZZZ"], "run-two")
+    (action,) = plan_actions(second, run_all(second), ledger, client, 5)
+    assert not any("code-from-image" in item for item in action.novelty)
+    # The run itself is still news — that part is real.
+    assert any("run-two" in item for item in action.novelty)
+
+
 def test_a_new_task_is_news_and_says_which(tmp_path):
     client = FakeGitHub()
     ledger = _ledger(tmp_path)
@@ -194,7 +213,7 @@ def test_a_new_task_is_news_and_says_which(tmp_path):
     second = _run_with_witness_failure(tmp_path, "r2", ["gamma__GGG"], "run-two")
     (action,) = plan_actions(second, run_all(second), ledger, client, 5)
     assert action.decision is Decision.COMMENT
-    assert any("gamma__GGG" in item for item in action.novelty)
+    assert any("`gamma`" in item for item in action.novelty)
     assert any("run-two" in item for item in action.novelty)
 
 

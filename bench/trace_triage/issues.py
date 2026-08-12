@@ -230,7 +230,7 @@ def _evidence_block(run: Run, finding: Finding, limit: int) -> str:
 
 def render_new_issue(run: Run, finding: Finding, limit: int = 6) -> str:
     """A handoff a fresh agent could execute with none of this session's context."""
-    tasks = sorted({o.task_id.split("__", 1)[0] for o in finding.occurrences})
+    tasks = sorted({o.task_name for o in finding.occurrences})
     parts = [
         "## Problem",
         "",
@@ -296,7 +296,7 @@ def render_comment(
     limit: int = 6,
 ) -> str:
     """A comment that says what is NEW, not what the issue already says."""
-    tasks = [o.task_id for o in finding.occurrences]
+    tasks = [o.task_name for o in finding.occurrences]
     news = (
         entry.novelty(run.run_id, tasks, finding.count, finding.denominator)
         if entry
@@ -427,7 +427,7 @@ def plan_actions(
             novelty = (
                 entry.novelty(
                     run.run_id,
-                    [o.task_id for o in finding.occurrences],
+                    [o.task_name for o in finding.occurrences],
                     finding.count,
                     finding.denominator,
                 )
@@ -493,7 +493,7 @@ def apply_actions(
     log: list[str] = []
     for action in actions:
         finding = action.finding
-        tasks = [o.task_id for o in finding.occurrences]
+        tasks = [o.task_name for o in finding.occurrences]
         if action.decision is Decision.SUPPRESSED:
             log.append(
                 f"suppressed (cap): {finding.detector} {action.fingerprint.digest} "
