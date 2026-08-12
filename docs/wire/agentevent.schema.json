@@ -404,6 +404,102 @@
       ],
       "type": "object"
     },
+    "DeliveryDecline": {
+      "description": "Why a candidate's work did not reach the real tree.\n\nExhaustive over the pipeline's decision: the three arms are the two\n`Withhold` paths of `pipeline::delivery::decide` plus the one way a\nsanctioned delivery can still fail at the git layer.",
+      "oneOf": [
+        {
+          "const": "nothing_created",
+          "description": "No candidate workspace was ever created — a degradable infrastructure\nfailure, so no model call was made and there are no bytes anywhere to\ndeliver. Distinct from an empty delivery, which had a workspace and\nfound nothing in it.",
+          "type": "string"
+        },
+        {
+          "const": "integrity_refusal",
+          "description": "The pipeline refused this candidate on an **integrity** finding: it\nwrote through its isolation, its witness artifact was mutated after its\nbaseline was pinned, its worktree moved after verification, its seal\ncould not be taken, or a mutation audit could not restore the tree.\n\nThe one case where \"deliver anyway\" is wrong, and for a reason unrelated\nto quality: the bytes in the workspace are not the bytes any stage\nexamined, so delivering them ships something nothing ever looked at.",
+          "type": "string"
+        },
+        {
+          "const": "adopt_failed",
+          "description": "The delivery was sanctioned and `git apply` refused it — typically the\nuser edited the same files mid-run. Adoption is all-or-nothing, so\n**nothing** was applied and the workspace is preserved at `root` for the\nwork to be recovered by hand.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliveryOutcome": {
+      "description": "What the pipeline did with the winning candidate's workspace.\n\nInternally tagged on `outcome`, so a `jq` reader selects an arm by field\nrather than by the presence or absence of a sibling key.",
+      "oneOf": [
+        {
+          "description": "The candidate's work was adopted into the real tree. The counts are\nwhat adoption itself measured (git's `numstat` plus the applied patch),\nnot a re-derivation — so a zero-file delivery is a real, reportable\nanswer and is distinguishable from a decline.",
+          "properties": {
+            "created": {
+              "description": "Files that did not exist in the real tree before this delivery.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "deleted": {
+              "description": "Files the delivery removed.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "lines_added": {
+              "description": "Lines added across every delivered file.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "lines_removed": {
+              "description": "Lines removed across every delivered file.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modified": {
+              "description": "Files whose contents changed.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "outcome": {
+              "const": "delivered",
+              "type": "string"
+            },
+            "proven": {
+              "description": "Whether a **passing verdict** stood behind the work.\n\n`false` is the ordinary case for a run that ran out of clock or came\nto rest on the revise rung, and it is deliberately not a reason to\nwithhold: a verdict is a claim about the work, not what decides\nwhether the work exists (#2927/#2943). Delivery never implies proof,\nand this field is what keeps the write from reading as a pass.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "outcome",
+            "created",
+            "modified",
+            "deleted",
+            "lines_added",
+            "lines_removed",
+            "proven"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The work was not adopted, with the reason.",
+          "properties": {
+            "outcome": {
+              "const": "declined",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DeliveryDecline",
+              "description": "Why. Typed, because a caller that has to branch on prose is\nparsing prose."
+            }
+          },
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "FileChangeKind": {
       "description": "What happened to a file in a [`AgentEvent::FileChange`] event — as declared\nby the tool that touched it, which is why [`Self::is_mutation`] answers\n\"was this call a write\" and never \"did the tree change\". See the variant's\ndoc for the difference and why only git can answer the second.",
       "oneOf": [
@@ -3291,6 +3387,36 @@
       "required": [
         "type",
         "phase"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "What the pipeline did with the winning candidate's workspace, and why\n(#2942). Emitted exactly once per isolated run, at the single point the\ndecision is taken — so \"was this candidate delivered?\" is answered on\nthe wire rather than inferred from whether a [`AgentEvent::FileChange`]\nburst happened to follow the verdict.\n\n`root` is the candidate workspace path, absent only when no workspace\nwas ever created. It is a per-run temporary directory, so it is a\nrun-to-run artifact and no golden comparison may key on its value.\n\nSee [`crate::delivery_event`] for why the outcome is a sum type and what\nthe counts are measured from.",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/DeliveryOutcome",
+          "description": "Deliberately **not** `serde(flatten)`: `AgentEvent` is internally\ntagged through a `remote = \"Self\"` codec and carries a `schemars`\nderive, and flattening a second internally-tagged enum into that is\nwhere both the wire schema and the forward-compat fallback stop\nagreeing with the Rust type. One nested object costs a `jq` reader\n`.delivery.outcome` instead of `.outcome`, which is cheaper than a\ngenerated schema that lies."
+        },
+        "root": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "candidate_delivery",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "delivery"
       ],
       "type": "object"
     },

@@ -54,6 +54,7 @@ pub mod cache;
 pub mod compaction_rewrite;
 pub mod completion;
 pub mod context_event;
+pub mod delivery_event;
 pub mod error;
 pub mod event;
 pub mod journal;
@@ -80,6 +81,7 @@ pub use completion::{
     Verbosity,
 };
 pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
+pub use delivery_event::{DeliveryDecline, DeliveryOutcome};
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,

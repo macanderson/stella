@@ -9,7 +9,7 @@
 //! they replaced apart from the `pub(super)` a child module needs, and
 //! [`super`] re-imports them so every call site is unchanged.
 
-use stella_protocol::AgentEvent;
+use stella_protocol::{AgentEvent, DeliveryOutcome};
 
 use super::TraceKind;
 use crate::envelope::AgentStatus;
@@ -24,6 +24,13 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
         AgentEvent::Text { .. } | AgentEvent::TextDelta { .. } => 130,
         AgentEvent::Reasoning { .. } => 90,
         AgentEvent::Commit { .. } | AgentEvent::Pr { .. } => 230,
+        // Delivery is the moment the run's work leaves isolation and becomes
+        // the user's tree — pitched with `Commit`/`Pr`, the other outward-facing
+        // durable acts, rather than with the `FileChange` burst it summarizes.
+        // Explicit rather than falling through the wildcard so a *declined*
+        // delivery, which emits no `FileChange` rows at all, still registers as
+        // the consequential thing it is instead of reading as an idle lane.
+        AgentEvent::CandidateDelivery { .. } => 230,
         AgentEvent::BudgetTick { .. } | AgentEvent::StepUsage { .. } => 60,
         AgentEvent::Error { .. } => 255,
         // A proof step is a decision the run reached, not work it did. It is
@@ -195,6 +202,34 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         // established": the steps and the verdict are one story, and the trace
         // log is where a reader reconstructs how the rail got where it is.
         AgentEvent::Proof { step } => (TraceKind::Verdict, crate::proof::proof_trace(step)),
+        // `TraceKind::File`, not `Verdict`: this says where the bytes went, and
+        // saying it under the verdict's kind would invite a reader to take a
+        // delivery for a pass — the one reading #2927 exists to prevent.
+        //
+        // `status_from_event` deliberately leaves this alone: delivery runs
+        // after the last stage, and the `Complete` that follows it is what
+        // settles the lane's status. Claiming `Running` here would keep an agent
+        // alive for one event past the end of its work.
+        AgentEvent::CandidateDelivery { delivery, .. } => (
+            TraceKind::File,
+            match delivery {
+                DeliveryOutcome::Delivered {
+                    created,
+                    modified,
+                    deleted,
+                    lines_added,
+                    lines_removed,
+                    proven,
+                } => format!(
+                    "delivered {} files +{lines_added}/-{lines_removed}{}",
+                    created + modified + deleted,
+                    if *proven { "" } else { " (unproven)" }
+                ),
+                DeliveryOutcome::Declined { reason } => {
+                    format!("delivery declined: {reason:?}").to_lowercase()
+                }
+            },
+        ),
         AgentEvent::Verdict { passed, .. } => (
             TraceKind::Verdict,
             if *passed {

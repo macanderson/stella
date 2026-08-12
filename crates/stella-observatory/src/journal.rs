@@ -75,7 +75,8 @@ pub(crate) fn entries(
            AND seq > ?2
            AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                               'tool_result', 'speculation_discarded',
-                              'turn_parked', 'turn_woken')
+                              'turn_parked', 'turn_woken',
+                              'candidate_delivery')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,

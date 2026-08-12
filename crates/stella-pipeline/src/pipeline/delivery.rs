@@ -75,8 +75,11 @@
 //! say on the rail that what it just wrote is unproven.
 
 use stella_core::AbortKind;
+use stella_protocol::{AgentEvent, DeliveryDecline, DeliveryOutcome, FileChangeKind};
 
+use super::Pipeline;
 use super::candidate_result::CandidateResult;
+use crate::ports::{AdoptedChange, CandidateWorkspace, WorkspaceError};
 
 /// What the pipeline knows about the winning candidate at the moment it
 /// decides delivery. Owned plain data, so [`decide`] is a pure function of it.
@@ -118,7 +121,17 @@ pub(super) enum Delivery {
     },
     /// Withhold the work: the candidate's own integrity is what failed, or it
     /// never produced any.
-    Withhold,
+    Withhold {
+        /// Which of the two it was. Typed rather than a bare `Withhold`,
+        /// because the decision is now reported on the wire (#2942) and a
+        /// reader that has to tell an integrity refusal from "there was never
+        /// a workspace" cannot get there from a unit variant.
+        ///
+        /// [`DeliveryDecline`] is the protocol's own type, reused rather than
+        /// mirrored: one definition cannot drift from its projection, and a
+        /// private twin plus a mapping function is two places to change.
+        reason: DeliveryDecline,
+    },
 }
 
 /// The rail line that keeps an unproven delivery honest. Fixed text over no
@@ -132,11 +145,15 @@ pub(super) fn decide(facts: WinnerFacts) -> Delivery {
     match facts.abort {
         // Nothing was ever dispatched: the isolation port was missing or the
         // tree could not be snapshotted. There is no candidate to adopt.
-        Some(abort) if abort.degradable => Delivery::Withhold,
+        Some(abort) if abort.degradable => Delivery::Withhold {
+            reason: DeliveryDecline::NothingCreated,
+        },
         // The pipeline refused this candidate on an integrity finding. The
         // workspace no longer agrees with anything that was examined, so its
         // bytes are not a deliverable — see the module doc.
-        Some(abort) if !abort.from_turn && abort.kind == AbortKind::Failure => Delivery::Withhold,
+        Some(abort) if !abort.from_turn && abort.kind == AbortKind::Failure => Delivery::Withhold {
+            reason: DeliveryDecline::IntegrityRefusal,
+        },
         // Every other abort — the engine stopping the worker's turn, and a
         // pipeline-side *deliberate* stop — is a decision about spending, not
         // a finding about the tree. The work stands; the claim does not.
@@ -158,6 +175,178 @@ impl WinnerFacts {
                 kind: abort.kind,
             }),
         }
+    }
+}
+
+/// The wire projection of a completed adoption. Pure over the rows adoption
+/// itself measured, so the counts on the stream and the `FileChange` rows
+/// beside them can never disagree — they are the same list, read twice.
+fn delivered(adopted: &[AdoptedChange], proven: bool) -> DeliveryOutcome {
+    let mut created = 0;
+    let mut modified = 0;
+    let mut deleted = 0;
+    let mut lines_added = 0u64;
+    let mut lines_removed = 0u64;
+    for change in adopted {
+        match change.kind {
+            FileChangeKind::Created => created += 1,
+            FileChangeKind::Modified => modified += 1,
+            FileChangeKind::Deleted => deleted += 1,
+            // Adoption reports what a patch DID, and a patch cannot read.
+            // Counted nowhere rather than folded into `modified`, so an
+            // impossible row stays visibly absent instead of inflating a real
+            // number.
+            FileChangeKind::Read => {}
+        }
+        lines_added += u64::from(change.added);
+        lines_removed += u64::from(change.removed);
+    }
+    DeliveryOutcome::Delivered {
+        created,
+        modified,
+        deleted,
+        lines_added,
+        lines_removed,
+        proven,
+    }
+}
+
+impl Pipeline<'_> {
+    /// Deliver the winning candidate's work, clean up every workspace, and say
+    /// on the stream what was decided and why (#2942).
+    ///
+    /// Lives here rather than inline in `pipeline.rs` for two reasons that
+    /// point the same way: the decision this executes is defined in this
+    /// module, and `pipeline.rs` is a god file closed to growth — new logic
+    /// lands in a sibling submodule (AGENTS.md § God files).
+    ///
+    /// Returns the adoption failure, if any, for the caller to fold into the
+    /// winner's abort. Deliberately returned rather than applied here: the
+    /// caller owns the `CandidateResult` and this method owns the workspaces,
+    /// and keeping that split is what lets this be tested through the port
+    /// alone.
+    pub(super) async fn deliver_winner(
+        &self,
+        workspaces: Vec<Result<Box<dyn CandidateWorkspace>, String>>,
+        best_idx: usize,
+        delivery: Delivery,
+        witness_paths: &[String],
+        single_shot_isolation: bool,
+    ) -> Option<WorkspaceError> {
+        let mut adopt_failure: Option<WorkspaceError> = None;
+        // The winner's root, before the loop consumes the slots. `None` is a
+        // real answer — a candidate whose workspace was never created has no
+        // path to name — and is why the event's `root` is optional.
+        let winner_root = workspaces
+            .get(best_idx)
+            .and_then(|slot| slot.as_ref().ok())
+            .map(|ws| ws.root().to_string());
+        // Said once, up front, for the arms that never reach an adoption: a
+        // withheld candidate emits nothing else, so without this the stream
+        // would carry the same silence as an empty delivery — the exact
+        // ambiguity this event exists to remove.
+        if let Delivery::Withhold { reason } = delivery {
+            self.emit(AgentEvent::CandidateDelivery {
+                root: winner_root.clone(),
+                delivery: DeliveryOutcome::Declined { reason },
+            });
+        }
+        for (i, slot) in workspaces.into_iter().enumerate() {
+            let Ok(ws) = slot else {
+                continue;
+            };
+            if i == best_idx
+                && let Delivery::Deliver { proven } = delivery
+            {
+                // Delivery is never proof. The verdict, the status and the
+                // score are untouched by this module; this line is what stops
+                // the write itself from reading as a pass.
+                if !proven {
+                    self.warn(UNPROVEN_DELIVERY_NOTICE.to_string());
+                }
+                // The witness has already done its whole job by now — it armed
+                // the flip oracle and the flip was observed — so withholding it
+                // cannot change the verdict, only what lands in the tree.
+                let withhold: &[String] = if self.config.keep_witness {
+                    &[]
+                } else {
+                    witness_paths
+                };
+                match ws.adopt(withhold).await {
+                    Ok(adopted) => {
+                        // The declared signal first, then the per-file rows it
+                        // summarizes. Order is contract: a reader that sees the
+                        // counts before the rows can tell a truncated stream
+                        // (killed mid-burst) from a genuinely small delivery,
+                        // which reading the rows alone cannot.
+                        self.emit(AgentEvent::CandidateDelivery {
+                            root: Some(ws.root().to_string()),
+                            delivery: delivered(&adopted, proven),
+                        });
+                        // Surface the adopted changes on the event stream: the
+                        // winner's edits happened inside the snapshot, so no
+                        // FileChange was emitted for the real tree yet. The
+                        // adoption measured them (git's numstat + patch), so
+                        // these rows carry a real delta — they used to arrive
+                        // with `diff: None` and no counts, which the Files tab
+                        // rendered as `+0 -0` for every adopted file.
+                        for change in adopted {
+                            self.emit(AgentEvent::FileChange {
+                                path: change.path,
+                                kind: change.kind,
+                                added: change.added,
+                                removed: change.removed,
+                                diff: change.diff,
+                            });
+                        }
+                        ws.remove().await;
+                    }
+                    // Keep the workspace: the error names its path and the
+                    // conflicting files; the winning work stays recoverable.
+                    // A sanctioned delivery that git refused is its own decline
+                    // reason, distinct from the two the decision can return —
+                    // the pipeline meant to deliver and the tree said no.
+                    Err(e) => {
+                        self.emit(AgentEvent::CandidateDelivery {
+                            root: Some(ws.root().to_string()),
+                            delivery: DeliveryOutcome::Declined {
+                                reason: DeliveryDecline::AdoptFailed,
+                            },
+                        });
+                        adopt_failure = Some(e);
+                    }
+                }
+            } else if single_shot_isolation {
+                // The `create_worktrees` run whose work was withheld — since
+                // #2927 that means an integrity refusal (the candidate wrote
+                // through its isolation, its witness was tampered with, its
+                // tree moved after verification) or an allowance it never
+                // got, never merely "it did not verify". Discarding is right
+                // for best-of-N — the operator asked for the best of several
+                // and none was good, and the losers were never meant to
+                // survive — and `witness_isolation`'s tests pin removal for a
+                // poisoned authored-witness candidate.
+                //
+                // It is wrong for this third caller. That operator asked where
+                // the work should *happen*, not that it be thrown away — and
+                // without this they end up strictly worse off than with
+                // isolation off, where a failed run at least leaves its
+                // changes in the tree to look at. So keep the snapshot and
+                // name it: the same posture as the adopt-failure arm just
+                // above, and for the same reason — undelivered is not
+                // worthless. The typed reason is on the stream above; the prose
+                // here stays unspecific because this arm has several causes and
+                // each was already stated by the stage that raised it.
+                self.warn(format!(
+                    "this run's changes were not adopted into your working tree — they are \
+                     kept at {} for you to inspect or salvage",
+                    ws.root()
+                ));
+            } else {
+                ws.remove().await;
+            }
+        }
+        adopt_failure
     }
 }
 
@@ -222,7 +411,9 @@ mod tests {
     fn a_pipeline_integrity_refusal_withholds_the_work() {
         assert_eq!(
             decide(aborted(false, false, AbortKind::Failure)),
-            Delivery::Withhold,
+            Delivery::Withhold {
+                reason: DeliveryDecline::IntegrityRefusal,
+            },
             "an escaped, tampered or drifted workspace is not the tree anything examined"
         );
     }
@@ -239,7 +430,64 @@ mod tests {
     fn a_setup_failure_has_nothing_to_deliver() {
         assert_eq!(
             decide(aborted(false, true, AbortKind::Failure)),
-            Delivery::Withhold
+            Delivery::Withhold {
+                reason: DeliveryDecline::NothingCreated,
+            },
+            "a setup failure never created a workspace, which is a different \
+             answer from refusing the one it created"
+        );
+    }
+
+    /// The two withhold paths must not collapse into one reason. Without this,
+    /// a future edit could hand both the same label and the wire would stop
+    /// distinguishing "nothing was ever built" from "we refused what was" —
+    /// the exact ambiguity #2942 exists to remove.
+    #[test]
+    fn the_two_withhold_paths_report_different_reasons() {
+        let setup = decide(aborted(false, true, AbortKind::Failure));
+        let integrity = decide(aborted(false, false, AbortKind::Failure));
+        assert_ne!(setup, integrity);
+    }
+
+    /// The projection counts by kind and sums the line deltas — and reports an
+    /// empty adoption as a delivery of nothing, never as a decline.
+    #[test]
+    fn the_projection_counts_what_adoption_measured() {
+        let rows = [
+            ("a", FileChangeKind::Created, 10, 0),
+            ("b", FileChangeKind::Modified, 4, 7),
+            ("c", FileChangeKind::Deleted, 0, 9),
+            ("d", FileChangeKind::Modified, 1, 1),
+        ]
+        .map(|(path, kind, added, removed)| AdoptedChange {
+            path: path.into(),
+            kind,
+            added,
+            removed,
+            diff: None,
+        });
+        assert_eq!(
+            delivered(&rows, true),
+            DeliveryOutcome::Delivered {
+                created: 1,
+                modified: 2,
+                deleted: 1,
+                lines_added: 15,
+                lines_removed: 17,
+                proven: true,
+            }
+        );
+        assert_eq!(
+            delivered(&[], false),
+            DeliveryOutcome::Delivered {
+                created: 0,
+                modified: 0,
+                deleted: 0,
+                lines_added: 0,
+                lines_removed: 0,
+                proven: false,
+            },
+            "an empty patch is a delivery that moved nothing, not a refusal to deliver"
         );
     }
 }

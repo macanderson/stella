@@ -52,8 +52,8 @@ use stella_diag::{
     Cx, Dx, Fields, Level, PathClass, PathContext, Record, Redacted, ShortId, log_enum, note,
 };
 use stella_protocol::{
-    AgentEvent, BudgetScope, FileChangeKind, ModelCallRole, PolicyKind, StageKind, ToolOutput,
-    UsageIncompleteReason,
+    AgentEvent, BudgetScope, DeliveryDecline, DeliveryOutcome, FileChangeKind, ModelCallRole,
+    PolicyKind, StageKind, ToolOutput, UsageIncompleteReason,
 };
 
 /// This module's `module_path!()`, so every record it emits filters under the
@@ -500,6 +500,51 @@ impl DomainBridge {
                     self.at_seq().with("passed", *passed),
                 );
             }
+            // Whether the run's work reached the tree, and why not when it did
+            // not (#2942). `Info`, with the verdict: these are the two records
+            // a reader joins to tell "we judged it red" from "we threw it away".
+            //
+            // The candidate `root` is deliberately absent. It is a filesystem
+            // path, which §7 forbids as a field value outright — and unlike
+            // `FileChange`'s path there is nothing to classify: a per-run
+            // temporary directory tells a reader nothing the outcome does not.
+            AgentEvent::CandidateDelivery {
+                delivery:
+                    DeliveryOutcome::Delivered {
+                        created,
+                        modified,
+                        deleted,
+                        lines_added,
+                        lines_removed,
+                        proven,
+                    },
+                ..
+            } => {
+                self.emit(
+                    Level::Info,
+                    "agent.candidate.delivery",
+                    self.at_seq()
+                        .with("outcome", "delivered")
+                        .with("created", u64::from(*created))
+                        .with("modified", u64::from(*modified))
+                        .with("deleted", u64::from(*deleted))
+                        .with("lines_added", *lines_added)
+                        .with("lines_removed", *lines_removed)
+                        .with("proven", *proven),
+                );
+            }
+            AgentEvent::CandidateDelivery {
+                delivery: DeliveryOutcome::Declined { reason },
+                ..
+            } => {
+                self.emit(
+                    Level::Info,
+                    "agent.candidate.delivery",
+                    self.at_seq()
+                        .with("outcome", "declined")
+                        .with("reason", delivery_decline(*reason)),
+                );
+            }
             AgentEvent::Error { retryable, .. } => {
                 self.emit(
                     Level::Error,
@@ -741,6 +786,17 @@ fn policy_kind(kind: PolicyKind) -> &'static str {
         PolicyKind::Blocked => "blocked",
         PolicyKind::ApprovalRequested => "approval_requested",
         PolicyKind::SecretDetected => "secret_detected",
+    }
+}
+
+/// A decline reason as a closed-vocabulary label. A `&'static str` drawn from
+/// the enum, never the `Debug` rendering: a field value has to be stable under
+/// a Rust rename, and `{:?}` is not.
+fn delivery_decline(reason: DeliveryDecline) -> &'static str {
+    match reason {
+        DeliveryDecline::NothingCreated => "nothing_created",
+        DeliveryDecline::IntegrityRefusal => "integrity_refusal",
+        DeliveryDecline::AdoptFailed => "adopt_failed",
     }
 }
 

@@ -47,7 +47,8 @@ use crate::verify::LadderInputs;
 use ground_truth::PendingPass;
 use independence::GraderCohorts;
 use stella_protocol::{
-    AgentEvent, FlipOutcome, OracleObservation, ProofTree, StageKind, VerdictEvidence,
+    AgentEvent, DeliveryOutcome, FlipOutcome, OracleObservation, ProofTree, StageKind,
+    VerdictEvidence,
 };
 
 /// Calibration tallies folded from recorded event streams (#871).
@@ -830,6 +831,19 @@ pub fn event_signature(event: &AgentEvent) -> String {
         // A goal verdict's structural identity is whether the goal was met
         // (mirrors `verdict`); the reasoning text and cost are volatile.
         AgentEvent::GoalVerdict { met, .. } => format!("goal_verdict:met={met}"),
+        // Which way delivery went is structural; how much it moved is not.
+        // `root` is a per-run temporary directory and the counts are
+        // magnitudes, so both are dropped for the same reason `file_change`
+        // keeps only its `kind`. `proven` is kept: like a verdict's `passed`,
+        // it is a claim the stream makes rather than a quantity.
+        AgentEvent::CandidateDelivery { delivery, .. } => match delivery {
+            DeliveryOutcome::Delivered { proven, .. } => {
+                format!("candidate_delivery:delivered,proven={proven}")
+            }
+            DeliveryOutcome::Declined { reason } => {
+                format!("candidate_delivery:declined,reason={reason:?}")
+            }
+        },
         AgentEvent::Error { retryable, .. } => format!("error:retryable={retryable}"),
         AgentEvent::Complete { .. } => "complete".to_string(),
         // Task subjects/descriptions are volatile content; the board's shape
@@ -945,10 +959,17 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // external state and wall-clock timing (`SpeculationDiscarded`'s reason),
     // and the pair is additive observability absent from goldens recorded
     // before parked waits existed (the context receipts' reason).
+    // `CandidateDelivery` (#2942) joins them on the context receipts' ground:
+    // it is additive observability — the delivery it reports already happened,
+    // and already showed up positionally as the `file_change` burst that
+    // follows it — so a golden recorded before the signal existed carries no
+    // such row and keeping it would shift every later position. What delivery
+    // DID is still compared: the `file_change` signatures stay in the walk.
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,
-            AgentEvent::TextDelta { .. }
+            AgentEvent::CandidateDelivery { .. }
+                | AgentEvent::TextDelta { .. }
                 | AgentEvent::BlockRegistered { .. }
                 | AgentEvent::StepManifest { .. }
                 | AgentEvent::SpeculationDiscarded { .. }

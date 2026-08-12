@@ -1790,84 +1790,19 @@ impl<'a> Pipeline<'a> {
         // Winner delivery + cleanup. The verdict is a claim ABOUT the work; it
         // does not decide whether the work exists (#2927). `delivery` states
         // the whole rule and the argument for it, rung by rung; the one thing
-        // still withheld is a candidate the pipeline refused on integrity.
-        let mut adopt_failure: Option<WorkspaceError> = None;
-        let delivery = delivery::decide(delivery::WinnerFacts::of(&candidates[best_idx]));
-        for (i, slot) in workspaces.into_iter().enumerate() {
-            let Ok(ws) = slot else {
-                continue;
-            };
-            if i == best_idx
-                && let delivery::Delivery::Deliver { proven } = delivery
-            {
-                // Delivery is never proof. The verdict, the status and the
-                // score are untouched above; this line is what stops the write
-                // itself from reading as a pass.
-                if !proven {
-                    self.warn(delivery::UNPROVEN_DELIVERY_NOTICE.to_string());
-                }
-                // The witness has already done its whole job by now — it armed
-                // the flip oracle and the flip was observed — so withholding it
-                // cannot change the verdict, only what lands in the tree.
-                let withhold: &[String] = if self.config.keep_witness {
-                    &[]
-                } else {
-                    &candidates[best_idx].witness_paths
-                };
-                match ws.adopt(withhold).await {
-                    Ok(adopted) => {
-                        // Surface the adopted changes on the event stream: the
-                        // winner's edits happened inside the snapshot, so no
-                        // FileChange was emitted for the real tree yet. The
-                        // adoption measured them (git's numstat + patch), so
-                        // these rows carry a real delta — they used to arrive
-                        // with `diff: None` and no counts, which the Files tab
-                        // rendered as `+0 -0` for every adopted file.
-                        for change in adopted {
-                            self.emit(AgentEvent::FileChange {
-                                path: change.path,
-                                kind: change.kind,
-                                added: change.added,
-                                removed: change.removed,
-                                diff: change.diff,
-                            });
-                        }
-                        ws.remove().await;
-                    }
-                    // Keep the workspace: the error names its path and the
-                    // conflicting files; the winning work stays recoverable.
-                    Err(e) => adopt_failure = Some(e),
-                }
-            } else if single_shot_isolation {
-                // The `create_worktrees` run whose work was withheld — since
-                // #2927 that means an integrity refusal (the candidate wrote
-                // through its isolation, its witness was tampered with, its
-                // tree moved after verification) or an allowance it never
-                // got, never merely "it did not verify". Discarding is right
-                // for best-of-N — the operator asked for the best of several
-                // and none was good, and the losers were never meant to
-                // survive — and `witness_isolation`'s tests pin removal for a
-                // poisoned authored-witness candidate.
-                //
-                // It is wrong for this third caller. That operator asked where
-                // the work should *happen*, not that it be thrown away — and
-                // without this they end up strictly worse off than with
-                // isolation off, where a failed run at least leaves its
-                // changes in the tree to look at. So keep the snapshot and
-                // name it: the same posture as the adopt-failure arm just
-                // above, and for the same reason — undelivered is not
-                // worthless. The reason is deliberately unnamed here because
-                // this arm has several, and each has already been stated on
-                // the stream by the stage that raised it.
-                self.warn(format!(
-                    "this run's changes were not adopted into your working tree — they are \
-                     kept at {} for you to inspect or salvage",
-                    ws.root()
-                ));
-            } else {
-                ws.remove().await;
-            }
-        }
+        // still withheld is a candidate the pipeline refused on integrity — and
+        // it carries out the decision, emitting the `CandidateDelivery` signal
+        // that says which way it went (#2942), because this file is closed to
+        // growth and the decision's own module is where that logic belongs.
+        let adopt_failure = self
+            .deliver_winner(
+                workspaces,
+                best_idx,
+                delivery::decide(delivery::WinnerFacts::of(&candidates[best_idx])),
+                &candidates[best_idx].witness_paths,
+                single_shot_isolation,
+            )
+            .await;
         let mut best = candidates
             .into_iter()
             .nth(best_idx)

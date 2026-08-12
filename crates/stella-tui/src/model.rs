@@ -1012,6 +1012,8 @@ impl SessionModel {
             // not folded into TUI panel state — the model stays a pure function
             // of the user-visible event sequence.
             | AgentEvent::BlockRegistered { .. }
+            // `CandidateDelivery` too: its files arrive as `FileChange`.
+            | AgentEvent::CandidateDelivery { .. }
             | AgentEvent::StepManifest { .. } => {}
             AgentEvent::Error { message, retryable } => {
                 // A terminal error ends the turn without a `Complete`, so the

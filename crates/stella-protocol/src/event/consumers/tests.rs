@@ -85,8 +85,8 @@ fn the_observatory_view_of_the_ledger_is_a_strict_subset() {
     assert!(
         !surfaced.is_empty(),
         "no row claims the observatory renders it, yet its journal query \
-         selects eight event types — the ledger has drifted from the surface \
-         it describes"
+         names an explicit list of event types — the ledger has drifted from \
+         the surface it describes"
     );
     for tag in &surfaced {
         assert!(

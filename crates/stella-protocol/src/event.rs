@@ -80,6 +80,7 @@ use serde_json::Value;
 
 use crate::compaction_rewrite::CompactionRewrite;
 use crate::context_event::CompiledContextFrameBuilt;
+use crate::delivery_event::DeliveryOutcome;
 // The ladder's own wire vocabulary lives in `crate::ladder`; a verdict event
 // carries it, and `ProofStep::Oracle` names the tree an observation ran
 // against. Re-exported rather than imported so `event::LadderSnapshot` — the
@@ -981,6 +982,30 @@ pub enum AgentEvent {
     /// See [`crate::subagent_event`] for what the child forwards and what it
     /// deliberately drops at that boundary.
     SubAgent { phase: SubAgentPhase },
+    /// What the pipeline did with the winning candidate's workspace, and why
+    /// (#2942). Emitted exactly once per isolated run, at the single point the
+    /// decision is taken — so "was this candidate delivered?" is answered on
+    /// the wire rather than inferred from whether a [`AgentEvent::FileChange`]
+    /// burst happened to follow the verdict.
+    ///
+    /// `root` is the candidate workspace path, absent only when no workspace
+    /// was ever created. It is a per-run temporary directory, so it is a
+    /// run-to-run artifact and no golden comparison may key on its value.
+    ///
+    /// See [`crate::delivery_event`] for why the outcome is a sum type and what
+    /// the counts are measured from.
+    CandidateDelivery {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<String>,
+        /// Deliberately **not** `serde(flatten)`: `AgentEvent` is internally
+        /// tagged through a `remote = "Self"` codec and carries a `schemars`
+        /// derive, and flattening a second internally-tagged enum into that is
+        /// where both the wire schema and the forward-compat fallback stop
+        /// agreeing with the Rust type. One nested object costs a `jq` reader
+        /// `.delivery.outcome` instead of `.outcome`, which is cheaper than a
+        /// generated schema that lies.
+        delivery: DeliveryOutcome,
+    },
     /// The turn failed. `retryable` is the source's own classification (see
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
