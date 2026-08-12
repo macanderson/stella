@@ -256,7 +256,10 @@ async fn one_search_call_answers_what_today_takes_several_tools() {
         },
     );
     let content = content_of(&output);
-    assert!(content.contains(answer_path), "no answer path in: {content}");
+    assert!(
+        content.contains(answer_path),
+        "no answer path in: {content}"
+    );
     assert!(
         content.contains("scrub_record"),
         "the hit did not carry its symbols — a second tool call would still be needed: {content}"

@@ -73,57 +73,63 @@ pub(crate) fn render_hit(
     let source = std::fs::read_to_string(root.join(&hit.path)).ok();
 
     for facet in facets {
-        let line = match facet {
-            // Written above: it is the block's header, not a labelled line.
-            Facet::Path => None,
-            Facet::SymbolNames => list_line(
-                "symbols",
-                neighborhood
-                    .symbols
-                    .iter()
-                    .take(MAX_SYMBOLS)
-                    .map(|symbol| symbol.name.clone()),
-            ),
-            Facet::SymbolKinds => list_line(
-                "kinds",
-                neighborhood.symbols.iter().take(MAX_SYMBOLS).map(|symbol| {
-                    format!("{} {}:{}", symbol.kind, symbol.name, symbol.start_line)
-                }),
-            ),
-            Facet::Imports => list_line(
-                "imports",
-                neighborhood.imports.iter().take(MAX_EDGES).cloned(),
-            ),
-            Facet::Importers => list_line(
-                "imported by",
-                neighborhood.importers.iter().take(MAX_EDGES).cloned(),
-            ),
-            Facet::Signature => list_line(
-                "signature",
-                leading
-                    .iter()
-                    .filter_map(|symbol| declaration_line(source.as_deref(), symbol)),
-            ),
-            Facet::DocComment => list_line(
-                "doc",
-                leading
-                    .iter()
-                    .filter_map(|symbol| doc_comment(source.as_deref(), symbol)),
-            ),
-            Facet::Callers => list_line(
-                "callers",
-                leading.iter().flat_map(|symbol| {
-                    frame_titles(graph.callers(&symbol.name).unwrap_or_default())
-                }),
-            ),
-            Facet::Callees => list_line(
-                "callees",
-                leading.iter().flat_map(|symbol| {
-                    frame_titles(graph.callees(&symbol.name).unwrap_or_default())
-                }),
-            ),
-            Facet::Body => body_block(graph, source.as_deref(), &hit.path, leading.first().copied()),
-        };
+        let line =
+            match facet {
+                // Written above: it is the block's header, not a labelled line.
+                Facet::Path => None,
+                Facet::SymbolNames => list_line(
+                    "symbols",
+                    neighborhood
+                        .symbols
+                        .iter()
+                        .take(MAX_SYMBOLS)
+                        .map(|symbol| symbol.name.clone()),
+                ),
+                Facet::SymbolKinds => list_line(
+                    "kinds",
+                    neighborhood.symbols.iter().take(MAX_SYMBOLS).map(|symbol| {
+                        format!("{} {}:{}", symbol.kind, symbol.name, symbol.start_line)
+                    }),
+                ),
+                Facet::Imports => list_line(
+                    "imports",
+                    neighborhood.imports.iter().take(MAX_EDGES).cloned(),
+                ),
+                Facet::Importers => list_line(
+                    "imported by",
+                    neighborhood.importers.iter().take(MAX_EDGES).cloned(),
+                ),
+                Facet::Signature => list_line(
+                    "signature",
+                    leading
+                        .iter()
+                        .filter_map(|symbol| declaration_line(source.as_deref(), symbol)),
+                ),
+                Facet::DocComment => list_line(
+                    "doc",
+                    leading
+                        .iter()
+                        .filter_map(|symbol| doc_comment(source.as_deref(), symbol)),
+                ),
+                Facet::Callers => list_line(
+                    "callers",
+                    leading.iter().flat_map(|symbol| {
+                        frame_titles(graph.callers(&symbol.name).unwrap_or_default())
+                    }),
+                ),
+                Facet::Callees => list_line(
+                    "callees",
+                    leading.iter().flat_map(|symbol| {
+                        frame_titles(graph.callees(&symbol.name).unwrap_or_default())
+                    }),
+                ),
+                Facet::Body => body_block(
+                    graph,
+                    source.as_deref(),
+                    &hit.path,
+                    leading.first().copied(),
+                ),
+            };
         if let Some(line) = line {
             block.push('\n');
             block.push_str(&line);
@@ -221,11 +227,9 @@ fn body_block(
         .into_iter()
         .find(|span| span.path == path)?;
     let start = usize::try_from(span.start_line).ok()?.max(1);
-    let end = usize::try_from(span.end_line).ok()?.min(
-        start
-            .saturating_add(MAX_BODY_LINES)
-            .saturating_sub(1),
-    );
+    let end = usize::try_from(span.end_line)
+        .ok()?
+        .min(start.saturating_add(MAX_BODY_LINES).saturating_sub(1));
     let quoted: Vec<String> = (start..=end)
         .filter_map(|number| {
             line_at(source, u32::try_from(number).ok()?)

@@ -352,7 +352,8 @@ impl Tool for Search {
 /// unchanged (`crate::graph::semantic`).
 pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
     let owned_root = root.to_path_buf();
-    let opened = tokio::task::spawn_blocking(move || crate::graph::open_or_build(&owned_root)).await;
+    let opened =
+        tokio::task::spawn_blocking(move || crate::graph::open_or_build(&owned_root)).await;
     let (graph, index_warning) = match opened {
         Ok(Ok(opened)) => (Some(opened.graph), opened.index_warning),
         // A graph that will not open is a degradation, not a turn ending: the
@@ -488,7 +489,10 @@ async fn semantic_hits(
                 .into_iter()
                 .map(|scored| Hit {
                     path: scored.key,
-                    why: format!("ranked by MEANING against your query (cosine {:.3})", scored.score),
+                    why: format!(
+                        "ranked by MEANING against your query (cosine {:.3})",
+                        scored.score
+                    ),
                 })
                 .collect()
         })
@@ -579,9 +583,7 @@ pub(crate) fn render(
         content.push_str(&format!(
             "\nTRUNCATED: {} further result(s) were dropped to stay inside the context budget \
              ({} of {} characters spent). They exist — narrow the query to see them.",
-            allocation.omitted,
-            allocation.spent,
-            config.budget
+            allocation.omitted, allocation.spent, config.budget
         ));
     }
 
