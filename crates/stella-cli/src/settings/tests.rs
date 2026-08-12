@@ -564,7 +564,7 @@ fn a_group_key_switches_off_the_whole_family() {
     let policy = merged.tool_policy();
 
     let family = stella_tools::catalog::names_in_group("process");
-    assert_eq!(family.len(), 5, "the process group is the five of them");
+    assert_eq!(family.len(), 6, "the process group is the six of them");
     for name in family {
         assert!(!policy.allows(name), "`{name}` must be off");
     }

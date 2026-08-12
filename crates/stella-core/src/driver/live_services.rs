@@ -29,7 +29,7 @@
 //!
 //! # What it deliberately does not do
 //!
-//! **It never stops anything.** `stop_process` stays the only path that kills
+//! **It never stops anything.** `restart_process` stays the only path that kills
 //! a started child on Stella's own initiative (`stella-tools`'s `process`
 //! module doc), because #2666's finding is precisely that a surviving service
 //! can be the correct final state. A gate that tidied up would re-introduce
@@ -67,7 +67,7 @@ use crate::ports::LiveService;
 pub(super) const SERVICES_PREFIX: &str = "Before ending this turn:";
 
 /// One line per still-running service, in the order the executor reported
-/// them. Named by handle first because that is the argument `stop_process`
+/// them. Named by handle first because that is the argument `restart_process`
 /// takes, so a model that decides to stop one has the call already written.
 fn roster(services: &[LiveService]) -> String {
     services
@@ -91,7 +91,9 @@ fn nudge(services: &[LiveService]) -> String {
          necessarily wrong — a service you were asked to bring up should stay up, and it will \
          survive this turn. Decide which case this is. If it should keep running, confirm you \
          have checked it is actually reachable (connect to it, request from it, read its log) \
-         and say so. If it was a leftover, stop it with `stop_process`. Then declare completion.",
+         and say so. If it was a leftover, say so and leave it running — a live service \
+          cannot be stopped (#2864); `restart_process` replaces one but never leaves it \
+          down. Then declare completion.",
         if count == 1 { "is" } else { "are" },
         roster(services)
     )
@@ -190,7 +192,7 @@ mod tests {
             asked.content
         );
         assert!(
-            asked.content.contains("stop_process"),
+            asked.content.contains("restart_process"),
             "the way to stop one has to be in the message: {}",
             asked.content
         );

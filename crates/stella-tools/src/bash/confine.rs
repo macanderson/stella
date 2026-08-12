@@ -191,7 +191,17 @@ impl std::fmt::Display for Refusal {
                     graded_root.display()
                 )?;
                 if let Some(substitute) = substitute {
-                    write!(f, " Use `{}` instead.", substitute.display())?;
+                    // The mapping, not just the substitute. A worker told only
+                    // "use X instead" has to guess whether X ever reaches the
+                    // grader; #2931's worker guessed the message was about
+                    // *naming* the path and obfuscated the spelling instead of
+                    // relocating the write.
+                    write!(
+                        f,
+                        " Use `{}` instead — what you write there is delivered to `{literal}` \
+                         when the run finishes.",
+                        substitute.display()
+                    )?;
                 }
                 write!(
                     f,
@@ -302,6 +312,26 @@ impl ShellConfinement {
     /// registered spelling, which is what a refusal reports.
     pub fn graded_root(&self) -> Option<&Path> {
         self.graded_roots.first().map(PathBuf::as_path)
+    }
+
+    /// The graded trees an OS write boundary ([`super::contain`]) should cover
+    /// for a shell rooted at `session_root`.
+    ///
+    /// Empty in exactly the cases [`Self::audit`] is already inert in: no
+    /// graded tree declared, or one that *is* this shell's own root. The two
+    /// answers are derived from the same field on purpose — a boundary that
+    /// covered a tree the audit had decided to leave alone would refuse a
+    /// shell its own files, with no message to explain it.
+    pub fn os_boundary_roots(&self, session_root: &Path) -> &[PathBuf] {
+        if self
+            .graded_roots
+            .iter()
+            .any(|graded| graded == session_root)
+        {
+            &[]
+        } else {
+            &self.graded_roots
+        }
     }
 
     /// Refuse `command` if its text names protected territory, given the

@@ -85,7 +85,7 @@ pub trait Tool: Send + Sync {
     ///
     /// Answering this must never change anything, least of all stop a
     /// process — a service left running can be the correct final state
-    /// (#2666), and `stop_process` remains the only path that ends one.
+    /// (#2666), and `restart_process` remains the only path that ends one.
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         Vec::new()
     }
@@ -1433,18 +1433,8 @@ impl ToolRegistry {
                 .get("test_cmd")
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
-            "start_process" => Some(
-                input
-                    .get("argv")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    })
-                    .unwrap_or_default(),
-            ),
+            "start_process" => Some(process_tools::gated_argv(input).unwrap_or_default()),
+            "restart_process" => process_tools::gated_argv(input),
             // The text is what the live interpreter will execute, so it is
             // what the policy chain and the `command.*` audit trail see. A
             // missing/non-string `text` is `None` — ungated, and the tool
