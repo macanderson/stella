@@ -234,6 +234,19 @@ impl CandidateWorkspace for FakeWorkspace {
     async fn escaped_paths(&self) -> Vec<String> {
         self.escaped.clone()
     }
+    async fn deliver_checkpoint(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        // Mirrors the real workspace's own gate: a no-op, unlogged, for any
+        // candidate `announce_changes` never told it was the sole one in its
+        // fan-out — see `GitCandidateWorkspace::deliver_checkpoint_inner`.
+        if *self.announced.lock().unwrap() != Some(true) {
+            return Ok(Vec::new());
+        }
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("deliver:{}", self.id));
+        self.adopt_result.clone()
+    }
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         // The withheld set is logged so tests can assert that an authored
         // witness never reaches the real tree, without reaching for real git.

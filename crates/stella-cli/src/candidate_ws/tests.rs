@@ -650,6 +650,79 @@ async fn winner_adoption_lands_only_the_winners_changes() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// #2941: a mid-run checkpoint delivers real bytes to the real tree, a
+/// second checkpoint after further edits sends only its own remainder
+/// (never re-offering the first round's bytes to `git apply`, which would
+/// conflict against a real tree that has already moved past them), the
+/// escape check never misreads either round's legitimately-delivered bytes
+/// as the candidate having written through its isolation, and the run's
+/// FINAL adoption — reached after both checkpoints — has nothing left to
+/// send.
+#[tokio::test]
+async fn incremental_delivery_is_idempotent_and_never_flags_itself_as_an_escape() {
+    let root = scaffold("checkpoint");
+    let port = GitCandidateWorkspaces::new(
+        root.clone(),
+        RegistryOptions::default(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = port.create_workspace().await.unwrap();
+    // Not announced: the first checkpoint call, before the pipeline marks
+    // this candidate as the sole one in its fan-out, must be a true no-op —
+    // the same gate `deliver_checkpoint`'s own doc states.
+    assert_eq!(
+        ws.deliver_checkpoint().await.unwrap(),
+        Vec::new(),
+        "an unannounced candidate's checkpoint must not touch the real tree"
+    );
+    assert!(
+        !root.join("step_one.txt").exists(),
+        "nothing was written before announce_changes"
+    );
+    ws.announce_changes(true);
+
+    // Step one's work.
+    std::fs::write(ws.dir().join("step_one.txt"), "first step\n").unwrap();
+    let first = ws.deliver_checkpoint().await.unwrap();
+    assert_eq!(
+        first.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+        vec!["step_one.txt"]
+    );
+    assert_eq!(read(&root.join("step_one.txt")), "first step\n");
+    // No escape: the real tree holds exactly what was just legitimately
+    // delivered, at a path the escape check's own delta window (baseline vs
+    // the workspace's LAST seal) no longer even considers.
+    assert_eq!(ws.escaped_paths().await, Vec::<String>::new());
+
+    // A second, empty checkpoint must not re-send step one's already-
+    // delivered bytes as a fresh patch — that patch's preimage (the
+    // original baseline) no longer matches the real tree, which is a
+    // guaranteed `git apply` conflict if the anchor did not advance.
+    assert_eq!(ws.deliver_checkpoint().await.unwrap(), Vec::new());
+
+    // Step two's work.
+    std::fs::write(ws.dir().join("step_two.txt"), "second step\n").unwrap();
+    let second = ws.deliver_checkpoint().await.unwrap();
+    assert_eq!(
+        second.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+        vec!["step_two.txt"],
+        "the second checkpoint must send only its own remainder"
+    );
+    assert_eq!(read(&root.join("step_one.txt")), "first step\n");
+    assert_eq!(read(&root.join("step_two.txt")), "second step\n");
+    assert_eq!(ws.escaped_paths().await, Vec::<String>::new());
+
+    // The run's final adoption reaches an unchanged tree: both checkpoints
+    // already delivered everything sealed so far.
+    assert_eq!(ws.adopt(&[]).await.unwrap(), Vec::new());
+
+    ws.remove().await;
+    assert_no_candidate_worktrees(&root);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[tokio::test]
 async fn post_verification_worktree_drift_is_rejected_and_never_adopted() {
     let root = scaffold("sealed-drift");

@@ -60,16 +60,15 @@ impl GitCandidateWorkspace {
             // Never sealed: there are no candidate bytes to sign a match with.
             return Vec::new();
         };
+        // From the last commit already delivered to the real tree, not the
+        // workspace's original snapshot — bytes a checkpoint delivery
+        // already sent are legitimately in the real tree and must never be
+        // reported as this candidate having written through its isolation
+        // (#2941).
+        let from = self.delivery_anchor();
         let Ok(delta) = git(
             &self.dir,
-            &[
-                "diff",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                &self.baseline,
-                &sealed,
-            ],
+            &["diff", "--name-only", "--no-renames", "-z", &from, &sealed],
         )
         .await
         else {
@@ -107,13 +106,7 @@ impl GitCandidateWorkspace {
             // and what it sealed. `--path` keeps clean filters in play.
             let real =
                 blob_id(git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await);
-            let baseline = blob_id(
-                git(
-                    &self.dir,
-                    &["rev-parse", &format!("{}:{path}", self.baseline)],
-                )
-                .await,
-            );
+            let baseline = blob_id(git(&self.dir, &["rev-parse", &format!("{from}:{path}")]).await);
             let sealed_blob =
                 blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);
             if PathDivergence::classify(

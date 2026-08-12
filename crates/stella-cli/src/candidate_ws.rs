@@ -106,7 +106,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -495,6 +495,7 @@ impl GitCandidateWorkspaces {
                     baseline,
                     refs_at_create,
                     sealed: Mutex::new(None),
+                    delivered: Mutex::new(None),
                     tools,
                     witness_tools,
                     diagnostics: GitDiagnosticRunner::new(ws_root.clone()),
@@ -512,6 +513,7 @@ impl GitCandidateWorkspaces {
                     changes: ChangeAnnounce {
                         registry: announce_target,
                         events: self.events.clone(),
+                        announced: AtomicBool::new(false),
                     },
                     omitted,
                 })
@@ -713,10 +715,17 @@ impl RepoStatusPort for SnapshotRepoStatus {
 struct ChangeAnnounce {
     registry: Arc<stella_tools::ToolRegistry>,
     events: Option<stella_core::EventSender>,
+    /// Mirrors the latest `set` call — a plain read of the same fact,
+    /// independent of whether an event sink was ever wired. Lets
+    /// [`GitCandidateWorkspace::deliver_checkpoint_inner`] ask "is this the
+    /// sole candidate in its fan-out" without adding a second flag the
+    /// pipeline would have to keep in sync with this one (#2941).
+    announced: AtomicBool,
 }
 
 impl ChangeAnnounce {
     fn set(&self, announce: bool) {
+        self.announced.store(announce, Ordering::Relaxed);
         let Some(events) = self.events.clone() else {
             return;
         };
@@ -725,6 +734,10 @@ impl ChangeAnnounce {
         } else {
             self.registry.attach_read_events(events);
         }
+    }
+
+    fn is_set(&self) -> bool {
+        self.announced.load(Ordering::Relaxed)
     }
 }
 
@@ -746,6 +759,15 @@ pub(crate) struct GitCandidateWorkspace {
     refs_at_create: BTreeMap<String, String>,
     /// Latest candidate commit whose exact bytes were verified.
     sealed: Mutex<Option<String>>,
+    /// Latest candidate commit whose bytes have already been applied to the
+    /// real tree — by [`CandidateWorkspace::deliver_checkpoint`] mid-run or
+    /// by [`CandidateWorkspace::adopt`] at the end — or `None` if nothing
+    /// has been delivered yet. The anchor [`GitCandidateWorkspace::escaped_paths_inner`]
+    /// and [`GitCandidateWorkspace::adopt_inner`] diff *from*, in place of
+    /// the workspace's original `baseline`, so a second delivery only ever
+    /// sends its own remainder and the escape check only ever looks at bytes
+    /// nothing has legitimately sent yet (#2941).
+    delivered: Mutex<Option<String>>,
     /// The candidate's tool surface: snapshot-rooted registry + custom tools,
     /// optionally layered under the session's `candidate_safe`-filtered MCP
     /// view (issue #248 Phase 1, see [`GitCandidateWorkspaces::with_candidate_mcp`]).
@@ -871,6 +893,46 @@ impl GitCandidateWorkspace {
         Ok(head.trim() == sealed && adopt::drifted_paths(&status).is_empty())
     }
 
+    /// The commit [`Self::adopt_inner`] and [`Self::escaped_paths_inner`]
+    /// diff *from*: the last commit this workspace actually delivered to the
+    /// real tree, or the original snapshot `baseline` if nothing has been
+    /// delivered yet. Reading `self.baseline` directly in either of those
+    /// would re-offer already-delivered bytes to `git apply` (a guaranteed
+    /// conflict) and would misread the real tree legitimately holding them
+    /// as an escape (#2941) — this is the one place either question is
+    /// answered, so the two callers cannot drift.
+    pub(super) fn delivery_anchor(&self) -> String {
+        self.delivered
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| self.baseline.clone())
+    }
+
+    /// [`CandidateWorkspace::deliver_checkpoint`]: seal the current state,
+    /// fail closed on an escape exactly as the verify-stage seal does, then
+    /// adopt the remainder since [`Self::delivery_anchor`]. A no-op for any
+    /// candidate that is not the sole one in its fan-out — see the trait
+    /// doc for why that is decided here rather than by the caller.
+    async fn deliver_checkpoint_inner(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        if !self.changes.is_set() {
+            return Ok(Vec::new());
+        }
+        self.seal_inner().await?;
+        let escaped = self.escaped_paths_inner().await;
+        if !escaped.is_empty() {
+            return Err(WorkspaceError::Adopt {
+                reason: format!(
+                    "candidate wrote through its isolation into the real tree at: {}",
+                    escaped.join(", ")
+                ),
+                paths: escaped,
+                workspace: self.dir.display().to_string(),
+            });
+        }
+        self.adopt_inner(&[]).await
+    }
+
     /// The teardown half of the ref repair (#2641): audit and restore the
     /// shared ref namespace one last time, before `cleanup` removes the
     /// candidate.
@@ -958,6 +1020,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     async fn escaped_paths(&self) -> Vec<String> {
         self.escaped_paths_inner().await
+    }
+
+    async fn deliver_checkpoint(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        self.deliver_checkpoint_inner().await
     }
 
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {

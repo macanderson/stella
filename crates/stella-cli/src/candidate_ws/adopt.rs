@@ -82,19 +82,25 @@ impl GitCandidateWorkspace {
                 .iter()
                 .map(|dir| format!(":(exclude,glob)**/{dir}/**")),
         );
+        // The last commit already delivered to the real tree, not the
+        // workspace's original snapshot — a second delivery (mid-run
+        // checkpoint, then the final winner adoption) must only ever send
+        // its own remainder; re-offering already-applied bytes as this
+        // patch's preimage is a guaranteed `git apply` conflict (#2941).
+        let from = self.delivery_anchor();
         let mut name_args = vec![
             "diff",
             "--name-status",
             "--no-renames",
             "-z",
-            self.baseline.as_str(),
+            from.as_str(),
             sealed.as_str(),
         ];
         let mut patch_args = vec![
             "diff",
             "--binary",
             "--no-renames",
-            self.baseline.as_str(),
+            from.as_str(),
             sealed.as_str(),
         ];
         let mut numstat_args = vec![
@@ -102,19 +108,14 @@ impl GitCandidateWorkspace {
             "--numstat",
             "--no-renames",
             "-z",
-            self.baseline.as_str(),
+            from.as_str(),
             sealed.as_str(),
         ];
         // The patch that is APPLIED is `--binary`, streamed to a file so a huge
         // one never lands in memory. This one is text and in-memory: it exists
         // only to slice per-file diffs for display, so it is deliberately a
         // separate, smaller read.
-        let mut text_args = vec![
-            "diff",
-            "--no-renames",
-            self.baseline.as_str(),
-            sealed.as_str(),
-        ];
+        let mut text_args = vec!["diff", "--no-renames", from.as_str(), sealed.as_str()];
         if !exclusions.is_empty() {
             for args in [
                 &mut name_args,
@@ -132,6 +133,11 @@ impl GitCandidateWorkspace {
             .map_err(|e| fail(e, Vec::new()))?;
         let mut changes = parse_name_status(&names);
         if changes.is_empty() {
+            // Nothing to send, but `sealed` is still the newest state this
+            // workspace has certified — advance the anchor so a later,
+            // truly-empty re-seal (`--allow-empty` between two identical
+            // trees) never re-walks this same empty diff.
+            *self.delivered.lock().unwrap_or_else(|p| p.into_inner()) = Some(sealed);
             return Ok(Vec::new());
         }
         // How much each file moved, and what moved in it. Both best-effort: a
@@ -167,7 +173,10 @@ impl GitCandidateWorkspace {
             .await;
         let _ = tokio::fs::remove_file(&patch_file).await;
         match apply {
-            Ok(out) if out.success => Ok(changes),
+            Ok(out) if out.success => {
+                *self.delivered.lock().unwrap_or_else(|p| p.into_inner()) = Some(sealed);
+                Ok(changes)
+            }
             // `git apply` verifies every hunk's preimage before writing
             // anything, so a rejection means the real tree is not the tree this
             // patch was built against — and NOTHING was applied.
@@ -201,9 +210,10 @@ impl GitCandidateWorkspace {
 
     /// Name what actually broke the adoption precondition, by comparing the
     /// real tree's current bytes at each conflicting path against the two
-    /// states this candidate knows: the baseline it snapshotted and the commit
-    /// it sealed. See [`PathDivergence`] for why those two answer the question
-    /// git's stderr cannot.
+    /// states this candidate knows: [`Self::delivery_anchor`] (what should
+    /// already be in the real tree) and the commit it sealed. See
+    /// [`PathDivergence`] for why those two answer the question git's
+    /// stderr cannot.
     ///
     /// Best-effort throughout: every probe that fails leaves its side `None`,
     /// which classifies as "not the problem". A path this cannot read is one it
@@ -216,6 +226,7 @@ impl GitCandidateWorkspace {
         // failing. Bounded so a patch conflicting on hundreds of files cannot
         // fork hundreds of processes while reporting an error.
         const MAX_EXAMINED: usize = 24;
+        let from = self.delivery_anchor();
         let examined = paths.len().min(MAX_EXAMINED);
         let mut classified = Vec::with_capacity(examined);
         for path in paths.iter().take(examined) {
@@ -224,13 +235,7 @@ impl GitCandidateWorkspace {
             // filters would hash raw bytes and every path would look diverged.
             let real =
                 blob_id(git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await);
-            let baseline = blob_id(
-                git(
-                    &self.dir,
-                    &["rev-parse", &format!("{}:{path}", self.baseline)],
-                )
-                .await,
-            );
+            let baseline = blob_id(git(&self.dir, &["rev-parse", &format!("{from}:{path}")]).await);
             let sealed_blob =
                 blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);
             classified.push((
