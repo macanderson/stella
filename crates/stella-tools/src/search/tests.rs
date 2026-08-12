@@ -1,0 +1,523 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! Tests for `search`, in the crate so they exercise the shipped internals
+//! rather than a re-implementation — the discipline `crate::graph::semantic`
+//! already follows.
+//!
+//! The witness is [`one_search_call_answers_what_today_takes_several_tools`].
+//! Everything else covers a way the tool can be wrong quietly: a fallback
+//! that does not say it fell back, a depth rung that takes something away,
+//! and a truncation nobody is told about.
+
+use std::fs;
+use std::path::Path;
+
+use async_trait::async_trait;
+use stella_core::search::{Depth, allocate, facets_at};
+use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, SimilarityPosture};
+use stella_graph::CodeGraph;
+use stella_protocol::tool::ToolOutput;
+
+use super::{Hit, Search, SearchConfig, Strategy, dispatch, render};
+use crate::registry::Tool;
+
+/// The question the witness asks. Every word of it is checked against the
+/// answer's path and body before the search runs — see the witness itself.
+const QUESTION: &str = "removing sensitive credentials before they reach the log";
+
+/// The fixture: three files, one of which is the answer, and whose name and
+/// body share no word with [`QUESTION`].
+const FIXTURE: &[(&str, &str)] = &[
+    (
+        "src/hkey.rs",
+        "//! Keeps confidential material out of emitted diagnostics.\n\
+         pub struct Scrubber;\n\
+         pub fn scrub_record(record: &mut Record) {\n\
+         record.password.clear();\n\
+         record.secret_token.clear();\n\
+         }\n",
+    ),
+    (
+        "src/wire.rs",
+        "//! HTTP request plumbing.\n\
+         pub struct Socket;\n\
+         pub fn send_request(socket: &Socket) -> Response {\n\
+         socket.write_header();\n\
+         socket.flush()\n\
+         }\n",
+    ),
+    (
+        "src/tally.rs",
+        "//! Matrix arithmetic.\n\
+         pub struct Matrix;\n\
+         pub fn multiply(a: &Matrix, b: &Matrix) -> Matrix {\n\
+         a.rows().sum(b)\n\
+         }\n",
+    ),
+];
+
+/// The four concepts the fixture separates on.
+const LEXICON: &[(&str, usize)] = &[
+    ("secret", 0),
+    ("password", 0),
+    ("credential", 0),
+    ("confidential", 0),
+    ("sensitive", 0),
+    ("scrub", 0),
+    ("redact", 0),
+    ("log", 1),
+    ("diagnostic", 1),
+    ("emit", 1),
+    ("http", 2),
+    ("request", 2),
+    ("socket", 2),
+    ("header", 2),
+    ("wire", 2),
+    ("matrix", 3),
+    ("multiply", 3),
+    ("arithmetic", 3),
+    ("sum", 3),
+    ("row", 3),
+];
+
+const DIMS: usize = 4;
+
+/// A deterministic, offline embedder that is genuinely *semantic*: different
+/// surface words map to the same dimension, which is the whole property under
+/// test. Deliberately not `HashEmbedder` — a hashing projection would make
+/// the fixture surface-solvable and the witness would prove nothing.
+///
+/// Same shape as `stella-graph`'s `semantic_recall.rs::ConceptEmbedder`, so
+/// the two suites agree on what "semantic" means here.
+#[derive(Debug)]
+struct ConceptEmbedder;
+
+impl ConceptEmbedder {
+    fn project(text: &str) -> Vec<f32> {
+        let mut accumulator = vec![0.0f32; DIMS];
+        for word in text
+            .to_lowercase()
+            .split(|c: char| !c.is_alphabetic())
+            .filter(|word| !word.is_empty())
+        {
+            for (term, dimension) in LEXICON {
+                if word.contains(term) {
+                    accumulator[*dimension] += 1.0;
+                }
+            }
+        }
+        stella_embed::l2_normalize(&mut accumulator);
+        accumulator
+    }
+}
+
+#[async_trait]
+impl Embedder for ConceptEmbedder {
+    fn fingerprint(&self) -> EmbedderFingerprint {
+        EmbedderFingerprint {
+            model_id: "concept-lexicon".into(),
+            revision: "1".into(),
+            dims: DIMS,
+            normalization: "l2".into(),
+        }
+    }
+
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+        if texts.is_empty() {
+            return Err(EmbedError::EmptyInput);
+        }
+        let fingerprint = self.fingerprint().id();
+        Ok(texts
+            .iter()
+            .map(|text| Embedding {
+                fingerprint: fingerprint.clone(),
+                vector: Self::project(text),
+            })
+            .collect())
+    }
+
+    fn similarity_posture(&self) -> SimilarityPosture {
+        SimilarityPosture::Semantic {
+            admission_floor: 0.2,
+        }
+    }
+}
+
+/// Write the fixture and index it. Returns the canonical root and an open
+/// graph; the caller shuts the graph down.
+fn indexed_fixture(workspace: &Path) -> (std::path::PathBuf, CodeGraph) {
+    for (path, body) in FIXTURE {
+        let file = workspace.join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+    (root, graph)
+}
+
+fn content_of(output: &ToolOutput) -> String {
+    match output {
+        ToolOutput::Ok { content } => content.clone(),
+        ToolOutput::Error { message } => panic!("expected an answer, got an error: {message}"),
+    }
+}
+
+/// **The witness.**
+///
+/// It proves the claim the whole change rests on, in the only way that
+/// distinguishes it from its opposite: one `search` call returns the file
+/// that answers a plain-English question *whose words appear nowhere in that
+/// file's name or body* — and returns it already carrying the structure that
+/// today costs a `graph_query` and a `read_symbol` on top of the grep that
+/// would have failed anyway.
+///
+/// The fixture's own premise is asserted first. A fixture that drifts into
+/// being grep-solvable would let this test pass while proving nothing, so
+/// every word of the question is checked against both the answer's path and
+/// its body, and the test fails loudly rather than vacuously.
+#[tokio::test]
+async fn one_search_call_answers_what_today_takes_several_tools() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    // The premise that makes this test worth anything: no lexical route
+    // exists from the question to the answer. If either assertion fires, the
+    // fixture has become solvable by grep and the test below proves nothing.
+    let answer_path = "src/hkey.rs";
+    let body = fs::read_to_string(root.join(answer_path))
+        .expect("read")
+        .to_lowercase();
+    for word in QUESTION.split_whitespace() {
+        assert!(
+            !answer_path.contains(word),
+            "the question word `{word}` appears in the answer's path — the fixture would be \
+             solvable by a filename match and proves nothing"
+        );
+        assert!(
+            !body.contains(word),
+            "the question word `{word}` appears in the answer's body — grep would find it and \
+             this test proves nothing"
+        );
+    }
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::Semantic],
+        "the semantic strategy must be the one that answered; note={:?}",
+        answer.note
+    );
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some(answer_path),
+        "expected the redaction file first; got {:?}",
+        answer.hits
+    );
+
+    // Depth 8 buys symbols, kinds, imports, importers, signature, doc and
+    // callers — the graph structure that a grep cannot express and that the
+    // model would otherwise pay separate calls for.
+    let output = render(
+        Some(&graph),
+        &root,
+        QUESTION,
+        &answer,
+        SearchConfig {
+            depth: Depth::new(8),
+            budget: 200_000,
+        },
+    );
+    let content = content_of(&output);
+    assert!(content.contains(answer_path), "no answer path in: {content}");
+    assert!(
+        content.contains("scrub_record"),
+        "the hit did not carry its symbols — a second tool call would still be needed: {content}"
+    );
+    assert!(
+        content.contains("signature:"),
+        "the hit did not carry a signature: {content}"
+    );
+    assert!(
+        content.contains("ranked by MEANING"),
+        "the answer did not say why the file ranked: {content}"
+    );
+
+    // Deterministic: the identical query renders identically, which is what
+    // invariant 7 needs from output that reaches the prompt.
+    let again = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    assert_eq!(answer.hits, again.hits);
+
+    graph.shutdown();
+}
+
+/// With no embedder the answer must still be useful, and must say which
+/// strategy produced it — a name match wearing a meaning match's clothes is
+/// worse than no answer.
+#[tokio::test]
+async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    assert_eq!(answer.strategies, vec![Strategy::GraphNames]);
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/hkey.rs"),
+        "the name strategy must still find a symbol by name: {:?}",
+        answer.hits
+    );
+
+    let content = content_of(&render(
+        Some(&graph),
+        &root,
+        "scrub_record",
+        &answer,
+        SearchConfig::default(),
+    ));
+    assert!(
+        content.contains("symbol NAMES (not by meaning)"),
+        "the answer did not label itself a name match: {content}"
+    );
+    assert!(
+        content.contains("via: names"),
+        "the answer did not name the strategy that ran: {content}"
+    );
+
+    graph.shutdown();
+}
+
+/// A workspace the indexer cannot serve — no tree-sitter grammar, so an empty
+/// graph — is the normal case on Terminal-Bench. It must still answer, and
+/// still say what it did.
+#[tokio::test]
+async fn with_no_index_at_all_the_file_scan_answers_and_labels_itself() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        workspace.path().join("deploy.conf"),
+        "# rotate the credential bundle nightly\nrotation = nightly\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+
+    let answer = dispatch(None, &root, "credential rotation", None).await;
+    assert_eq!(answer.strategies, vec![Strategy::FileScan]);
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("deploy.conf"),
+        "the scan found nothing in an unindexable workspace: {:?}",
+        answer.hits
+    );
+
+    let content = content_of(&render(
+        None,
+        &root,
+        "credential rotation",
+        &answer,
+        SearchConfig::default(),
+    ));
+    assert!(
+        content.contains("no index was available"),
+        "the scan answer did not label itself: {content}"
+    );
+    assert!(
+        content.contains("via: scan"),
+        "the scan answer did not name its strategy: {content}"
+    );
+}
+
+/// Depth monotonicity, on the rendered text rather than only on the facet
+/// set: every line the shallower block emitted must survive into the deeper
+/// one. A rung that reformatted a lower rung's line would make a depth sweep
+/// uninterpretable without failing anything else.
+#[tokio::test]
+async fn each_depth_renders_a_superset_of_the_one_below() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+
+    let block_at = |level: u8| {
+        content_of(&render(
+            Some(&graph),
+            &root,
+            QUESTION,
+            &answer,
+            SearchConfig {
+                depth: Depth::new(level),
+                budget: 200_000,
+            },
+        ))
+    };
+
+    for level in 1..Depth::MAX.level() {
+        let shallow = block_at(level);
+        let deep = block_at(level + 1);
+        for line in shallow.lines() {
+            assert!(
+                deep.contains(line),
+                "depth {} lost the line `{line}` that depth {level} rendered",
+                level + 1
+            );
+        }
+        assert!(
+            deep.len() >= shallow.len(),
+            "depth {} rendered less than depth {level}",
+            level + 1
+        );
+    }
+
+    graph.shutdown();
+}
+
+/// A budget too small for every hit must say so. An agent that cannot tell a
+/// complete answer from a truncated one stops looking, which is the exact
+/// failure this line prevents.
+#[test]
+fn a_truncated_answer_says_it_was_truncated() {
+    let hits: Vec<Hit> = (0..6)
+        .map(|index| Hit {
+            path: format!("src/file{index}.rs"),
+            why: "ranked by MEANING against your query (cosine 0.900)".into(),
+        })
+        .collect();
+    let answer = super::Answer {
+        hits,
+        strategies: vec![Strategy::Semantic],
+        note: None,
+    };
+
+    let content = content_of(&render(
+        None,
+        Path::new("/nonexistent"),
+        "anything",
+        &answer,
+        SearchConfig {
+            depth: Depth::MIN,
+            budget: 130,
+        },
+    ));
+    assert!(
+        content.contains("TRUNCATED"),
+        "a truncated answer did not say so: {content}"
+    );
+    assert!(
+        content.contains("further result(s) were dropped"),
+        "the truncation line did not say what was dropped: {content}"
+    );
+
+    // The complement: given room, the same answer must NOT claim truncation.
+    let roomy = content_of(&render(
+        None,
+        Path::new("/nonexistent"),
+        "anything",
+        &answer,
+        SearchConfig {
+            depth: Depth::MIN,
+            budget: 100_000,
+        },
+    ));
+    assert!(
+        !roomy.contains("TRUNCATED"),
+        "an untruncated answer claimed truncation: {roomy}"
+    );
+}
+
+/// The schema is the whole user interface, so its promises are pinned:
+/// one required argument, no mode selector (invariant 9), and a description
+/// that corrects the lexical reading of the name.
+#[test]
+fn the_schema_offers_one_query_and_no_mode_selector() {
+    let schema = Search::default().schema();
+    assert_eq!(schema.name, "search");
+    assert!(schema.read_only);
+    assert!(!schema.speculation_safe, "the graph open writes (#923)");
+
+    let properties = schema.input_schema["properties"]
+        .as_object()
+        .expect("an object schema");
+    assert_eq!(
+        properties.keys().collect::<Vec<_>>(),
+        vec!["query"],
+        "a second parameter is a mode selector waiting to happen (invariant 9)"
+    );
+    assert_eq!(schema.input_schema["required"][0], "query");
+
+    let description = &schema.description;
+    assert!(
+        description.contains("MEANING"),
+        "the description must correct the lexical reading of the name `search`"
+    );
+    assert!(
+        description.contains("search(\""),
+        "the description must show worked argument shapes"
+    );
+    for shape in ["where are request headers", "CredentialStore"] {
+        assert!(
+            description.contains(shape),
+            "the description lost the `{shape}` example — it must show BOTH a described \
+             behaviour and a named symbol"
+        );
+    }
+}
+
+/// The dial is configuration, never a tool argument, and the advertised
+/// schema must not move when it changes — tool schemas ride at position 0 of
+/// the cached prefix (invariant 7).
+#[test]
+fn the_depth_dial_never_reaches_the_advertised_schema() {
+    let shallow = Search::with_config(SearchConfig {
+        depth: Depth::MIN,
+        budget: 1_000,
+    })
+    .schema();
+    let deep = Search::with_config(SearchConfig {
+        depth: Depth::MAX,
+        budget: 900_000,
+    })
+    .schema();
+    assert_eq!(
+        serde_json::to_string(&shallow).expect("serialize"),
+        serde_json::to_string(&deep).expect("serialize"),
+        "the depth setting changed the advertised schema, so a sweep would cost the prompt cache"
+    );
+}
+
+/// The allocator and the renderer must agree about how many hits were shown;
+/// they are separately written and a drift between them would silently drop
+/// results with no truncation line.
+#[test]
+fn the_rendered_hit_count_matches_the_allocation() {
+    let hits: Vec<Hit> = (0..7)
+        .map(|index| Hit {
+            path: format!("src/file{index}.rs"),
+            why: "matched 1 query term(s)".into(),
+        })
+        .collect();
+    let answer = super::Answer {
+        hits: hits.clone(),
+        strategies: vec![Strategy::FileScan],
+        note: None,
+    };
+    let config = SearchConfig {
+        depth: Depth::new(3),
+        budget: 900,
+    };
+    let allocation = allocate(hits.len(), config.depth, config.budget);
+    let content = content_of(&render(
+        None,
+        Path::new("/nonexistent"),
+        "anything",
+        &answer,
+        config,
+    ));
+
+    let shown = hits
+        .iter()
+        .filter(|hit| content.contains(&hit.path))
+        .count();
+    assert_eq!(shown, allocation.granted.len());
+    assert_eq!(allocation.omitted, hits.len() - shown);
+    assert!(facets_at(config.depth).len() >= 3);
+}
