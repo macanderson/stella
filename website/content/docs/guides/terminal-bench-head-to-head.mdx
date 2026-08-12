@@ -163,6 +163,35 @@ Hitting `api.anthropic.com` directly on a single model gives one backend, no
 routing lottery, and Claude Code on its home API where thinking engages
 natively.
 
+### Pin the upstream when either arm goes through a gateway
+
+Sometimes routing directly at the provider is not an option — a gateway may be
+the only surface with the model or the credential you need. If either arm goes
+through OpenRouter (or any other gateway), the routing lottery in the section
+above is not merely a confound to avoid by routing around it; it is a variable
+you can pin instead: **`--upstream-pin <vendor>`** fixes stella's arm to a
+named upstream, in order, and refuses fallback rather than letting the gateway
+silently pick per app identity.
+
+```bash
+stella run "…" --model openrouter/anthropic/claude-fable-5 \
+  --upstream-pin anthropic
+```
+
+This is the flag's actual reason to exist: a run's `--model` names a model
+family, not a vendor, and two arms that both say "Claude" through a gateway
+have not shown they were served by the same silicon unless the pin — or a
+direct endpoint — says so. Pass `--upstream-pin` on the launch command
+directly, never through `settings.json`. The Harbor trial launches stella with
+**`STELLA_NO_SETTINGS=1`** — filesystem isolation so a task repository cannot
+plant configuration a trial would trust — and a settings-defined pin would
+therefore never reach the process being measured. A command-line argument is
+the only authority that survives that isolation, which is the same reason
+`--base-url` is passed as a flag here rather than configured.
+
+See [API providers → pinning the upstream](/docs/api-providers#pinning-the-upstream)
+for why this exists and what it does on the wire.
+
 ### Give each arm its own key
 
 Two keys on the same account, one per arm:

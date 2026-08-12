@@ -20,7 +20,7 @@ import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import provenance
+from . import gate, provenance
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
 from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
@@ -361,6 +361,13 @@ def _cmd_contest(args: argparse.Namespace) -> int:
         out=None,
         region=args.region,
         bucket=args.bucket,
+        # The banned-behavior gate's three `cloud run` flags. Built by hand
+        # here because this namespace is, so an attribute added to the `run`
+        # parser and not added here is an AttributeError at submit time —
+        # after the contest TOML has already been written.
+        gate=args.gate,
+        no_gate=args.no_gate,
+        gate_allow=args.gate_allow,
     )
     return _cmd_cloud_run(cloud_args)
 
@@ -1173,6 +1180,10 @@ def main(argv: list[str] | None = None) -> int:
     contest_parser.add_argument("--vcpus", type=int, default=4)
     contest_parser.add_argument("--memory-mb", type=int, default=15360)
     contest_parser.add_argument("--no-wait", action="store_true")
+    # The same three flags `cloud run` declares, from the same definition:
+    # `contest --submit` hands off by building that command's namespace by
+    # hand, so a flag on one parser and not the other breaks the handoff.
+    gate.register_arguments(contest_parser)
     contest_parser.add_argument("--region")
     contest_parser.add_argument("--bucket")
     contest_parser.set_defaults(func=_cmd_contest)
