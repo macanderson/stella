@@ -226,6 +226,7 @@ stella inspect 42 --step 0 --diff --only system --format json |
 - **Executions from before the receipts plane landed.** They have no receipt rows and are omitted from the index rather than listed as empty.
 - **The literal wire bytes.** Receipts are taken before the provider adapter runs, and adapters transform the system block on the way out — Anthropic keeps only the last system message and inserts cache breakpoints, OpenAI and Gemini join system messages with `\n\n`. A receipt is the canonical pre-adapter view of the call.
 - **Tool JSON schemas.** The manifest records the messages, not the tool definitions sent alongside them.
+- **Which vendor served a gateway-routed call.** `step_receipt.provider` is the provider you configured — `openrouter` for every OpenRouter call, whichever vendor actually answered. That upstream is recorded, just not by this command — see [Telemetry → who actually served a gateway-routed call](/docs/telemetry#who-actually-served-a-gateway-routed-call).
 
 <Callout type="info">
 Receipts never leave your machine. The content-free export boundary (`stella-store`'s egress guard) strips prompts, paths, and tool payloads from anything replicated off-box, and is enforced by a compile-time column allowlist plus a sentinel-poisoning test. See [Telemetry](/docs/telemetry).

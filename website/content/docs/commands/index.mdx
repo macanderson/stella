@@ -188,6 +188,11 @@ Every one of them is registered with every subcommand, so **either position pars
     Required with `--model local/<model>` to point at a local OpenAI-compatible server; an
     optional proxy override for any other provider. Env `STELLA_BASE_URL`.
   </OptionCard>
+  <OptionCard name="--upstream-pin <vendor>" defaultValue="gateway's own choice">
+    Pin a **gateway** to these upstreams, in order, and refuse any fallback. Repeatable or
+    comma-separated. Inert on a direct endpoint. Env `STELLA_UPSTREAM_PIN`. See
+    [below](#--upstream-pin-holding-the-vendor-fixed).
+  </OptionCard>
   <OptionCard name="--budget <usd>" defaultValue="none (observed)">
     Hard USD spend cap for the whole run or session. Must be positive and finite. Env
     `STELLA_BUDGET`.
@@ -205,11 +210,66 @@ Every one of them is registered with every subcommand, so **either position pars
     Freeze all deck animation to a static frame, for CI and asciinema-style recordings.
     Env `STELLA_NO_ANIM` / `NO_COLOR`.
   </OptionCard>
+  <OptionCard name="-v / --verbose" defaultValue="warn">
+    Diagnostics: `-v` info, `-vv` debug, `-vvv` trace. See
+    [below](#diagnostics--v---log-level---log-file).
+  </OptionCard>
+  <OptionCard name="--log-level <spec>" defaultValue="warn">
+    Per-crate diagnostic filter — `warn,stella_store=debug`. Env `STELLA_LOG`; the flag
+    wins over both it and `-v`.
+  </OptionCard>
+  <OptionCard name="--log-file <path>" defaultValue="none">
+    Write diagnostics as JSONL to a file, created `0600`, defaulting to `info`. An
+    unwritable path is reported and the run continues.
+  </OptionCard>
 </CardGrid>
 
 <Callout type="warn">
 Prefer an environment variable or `credentials.toml` for anything long-lived. A key passed with `--api-key` is visible in your shell history and in `ps` output.
 </Callout>
+
+### `--upstream-pin`: holding the vendor fixed
+
+Only a **gateway** routes to somebody else's silicon, so this applies to OpenRouter — where
+it sets `provider.order` and `allow_fallbacks: false` — and is inert on a direct endpoint.
+
+```bash
+stella run "…" --model openrouter/anthropic/claude-fable-5 \
+  --upstream-pin z-ai --upstream-pin anthropic
+```
+
+Reach for it when **two runs must be comparable**. A gateway otherwise picks per app
+identity and may serve the same model slug from a different vendor between runs, which
+silently varies the thing a head-to-head claims to hold fixed. It is a flag rather than
+settings-only because a measured trial runs with settings isolation
+(`STELLA_NO_SETTINGS`), where an argument is the only authority that reaches it — the same
+reason `--base-url` is one. See [API providers](/docs/api-providers#pinning-the-upstream)
+for the gateway-routing background, and the
+[head-to-head guide](/docs/guides/terminal-bench-head-to-head#pin-the-upstream-when-either-arm-goes-through-a-gateway)
+for why a benchmark needs this.
+
+### Diagnostics: `-v`, `--log-level`, `--log-file`
+
+The diagnostic plane is the stream that explains *why* stella behaved the way it did — as
+distinct from what the agent did (the [event stream](/docs/event-stream-compatibility)) and
+what it cost (the [receipts](/docs/telemetry)). Records carry a stable code and typed
+fields, and **never** prompts, paths, or model output. [Diagnostics](/docs/diagnostics) is
+the full reference; the short version:
+
+```bash
+stella run "…" -vv                                   # debug everywhere
+stella run "…" --log-level 'warn,stella_model=trace' # quiet except where you are looking
+stella run "…" --log-file ./run.jsonl                # JSONL to a file, created 0600
+```
+
+A target is a Rust module path, so library crates are `stella_store`, `stella_model`, …
+and the binary's own records are under `stella` (hyphens are accepted too). Longest match
+wins; an unrecognised clause is reported and skipped, never fatal. Levels are `off`,
+`error`, `warn`, `info`, `debug`, `trace`.
+
+For a crash you did not anticipate you need no flag at all: stella writes
+`.stella/private/crash-*.jsonl` on a panic or a failed run, and
+[`stella doctor --last-failure`](/docs/commands/doctor) prints the newest.
 
 ### `--output-format` (a flag of `run` and `fleet`, not a global)
 
