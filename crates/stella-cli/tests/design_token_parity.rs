@@ -658,7 +658,9 @@ fn identity_gold_comes_from_the_brand_ramp() {
         light.get("--identity"),
         Some(deep),
         "light identity must be --stella-gold-800. NOT --stella-gold-deep \
-         (#a37200): that token is documented for small gold text on light \
-         surfaces and measures 4.05:1 there, under WCAG AA (#2591)."
+         (#8b5e1a): that token is documented for small gold text on light \
+         surfaces, a narrower job than identity, even though it now also \
+         clears WCAG AA on --surface (5.42:1; #2591 measured the \
+         pre-rebrand #a37200 at 4.05:1)."
     );
 }

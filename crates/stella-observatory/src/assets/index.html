@@ -21,8 +21,8 @@
    The rule now carries one carve-out, and the carve-out is measured rather
    than tasteful: **gold is permitted on identity, and nowhere else** — the
    wordmark, the favicon mark, and at most one primary action per page. It may
-   never encode a state. `--identity` #FFB000 against `--warn` #C9A227 is
-   1.32:1, so a reader told to separate "active" from "warning" by hue would be
+   never encode a state. `--identity` #C58A32 against `--warn` #C9A227 is
+   1.23:1, so a reader told to separate "active" from "warning" by hue would be
    reading a difference that is not there. Three jobs, three channels, no
    overlap: `--identity` says whose instrument this is, `--accent` says what is
    selected, `--ok`/`--warn`/`--bad` say what happened.
@@ -53,11 +53,12 @@
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values are taken from docs/brand/css/tokens.css rather than mixed
      here — --stella-gold-500 on ink, --stella-gold-800 on paper. The light
-     value is NOT the brand's --stella-gold-deep (#A37200): that token is
-     documented for "small gold text on light surfaces" and measures 4.05:1 on
-     --surface, under AA. Gold-800 is 6.75:1 and does the job the deep token
-     names (#2591). */
-  --identity:#FFB000; --identity-ink:#0B0B0C;
+     value is NOT the brand's --stella-gold-deep (#8B5E1A): that token is
+     documented for "small gold text on light surfaces" and measures 5.42:1 on
+     --surface (#2591 measured the pre-rebrand value, #A37200, at 4.05:1 —
+     re-verify before assuming that issue still applies). Gold-800 is 8.33:1
+     and does the job the deep token names regardless. */
+  --identity:#C58A32; --identity-ink:#0B0B0C;
   /* The three semantic colours, and the only colour anywhere. Desaturated to
      the reference's own register (its --pass/--fail), so they read as marks on
      an instrument rather than as UI chrome. --warn keeps a hue rather than
@@ -159,21 +160,21 @@
 
      --text 18.97:1   --text-2 7.49:1   --text-3 3.10:1
      --ok    5.91:1   --warn   5.99:1   --bad    6.74:1
-     --identity 6.46:1 (#795500)
+     --identity 8.33:1 (#674415)
 
    and on the dark side against --raised (#111111):
 
      --text 16.13:1   --text-2 7.31:1   --text-3 3.70:1
      --ok    8.52:1   --warn   7.81:1   --bad    6.17:1
-     --identity 10.31:1 (#FFB000)
+     --identity 6.34:1 (#C58A32)
 
    Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
    AA (4.5:1) on both. --text-3 clears neither and is not meant to, which is
    the constraint to hold when editing: it carries non-essential labelling
    only — a legend key, a units suffix — and never a value a reader must act
    on. The inversion pair (--ink on --accent) is 19.80:1 light, 16.91:1 dark,
-   and the identity fill pair (--identity-ink on --identity) is 6.75:1 light,
-   10.74:1 dark — both clear AA for the one primary action the rule allows.
+   and the identity fill pair (--identity-ink on --identity) is 8.70:1 light,
+   6.61:1 dark — both clear AA for the one primary action the rule allows.
 
    The --c1..--c4 series ramp is lightness-ordered rather than
    contrast-matched on purpose: a series is identified by its position in the
@@ -192,7 +193,7 @@
     --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
     --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
     --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
-    --identity:#795500; --identity-ink:#FFFFFF;
+    --identity:#674415; --identity-ink:#FFFFFF;
     --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
     --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
     --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
@@ -208,7 +209,7 @@
   --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
   --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
   --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
-  --identity:#795500; --identity-ink:#FFFFFF;
+  --identity:#674415; --identity-ink:#FFFFFF;
   --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
   --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
   --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
@@ -274,12 +275,12 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs).
 
-   These are the *color* cuts — the comet star is Phosphor Gold #FFB000 on
+   These are the *color* cuts — the comet star is Bronze Gold #C58A32 on
    both grounds. This file shipped the mono cuts while this comment claimed
    the color ones, which is the drift the identity carve-out above resolves:
    the wordmark is the canonical case of identity, so it is the one place gold
    is not merely allowed but expected. The star holds its full gold on paper
-   (1.76:1 against #FFFFFF) rather than dropping to the deep ramp, because
+   (2.98:1 against #FFFFFF) rather than dropping to the deep ramp, because
    WCAG 1.4.11 exempts logotypes from contrast minima and the brand rule is
    "shapes and marks stay full gold on both grounds"; the *text* half of the
    lockup is baked Ink and carries the legibility. */
