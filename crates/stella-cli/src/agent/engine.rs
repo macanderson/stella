@@ -279,11 +279,11 @@ pub(crate) fn approval_gate_for(
 /// and the sidecar transport is precisely what restores the answer those
 /// redirections took away (#1585).
 ///
-/// Stdio approval requires a text-safe renderer PLUS both terminal handles:
-/// stdin must accept the decision and stdout must present the prompt. A
-/// redirected/piped text-format run is still rendered as text, but must stay
-/// headless and fail closed at scope review — never read stdin for a decision
-/// no one is there to give.
+/// Otherwise the answer is exactly "is a human present to answer?", which is
+/// [`crate::interactive::human_can_answer`]'s — the single derivation this
+/// and the `ask_user` tool both read, so a redirected/piped text-format run
+/// can never leave one layer waiting for a human the other has concluded is
+/// absent.
 pub(crate) fn approval_capability_for(
     supervised: bool,
     is_text: bool,
@@ -292,7 +292,7 @@ pub(crate) fn approval_capability_for(
 ) -> PipelineApprovalCapability {
     if supervised {
         PipelineApprovalCapability::Sidecar
-    } else if is_text && stdin_is_terminal && stdout_is_terminal {
+    } else if crate::interactive::human_can_answer(is_text, stdin_is_terminal, stdout_is_terminal) {
         PipelineApprovalCapability::Stdio
     } else {
         PipelineApprovalCapability::Unavailable

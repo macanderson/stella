@@ -688,7 +688,10 @@ impl Supervised {
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
         use std::io::IsTerminal;
-        let interactive = std::io::stdin().is_terminal();
+        let interactive = approval::console_is_interactive(
+            std::io::stdin().is_terminal(),
+            std::io::stderr().is_terminal(),
+        );
         let mut approval_noted = false;
         loop {
             let moved = self.pump()?;
@@ -1360,7 +1363,10 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
     let mut console = console::Follower::open(&sidecar)?;
-    let interactive = std::io::stdin().is_terminal();
+    let interactive = approval::console_is_interactive(
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+    );
     let mut approval_noted = false;
     eprintln!(
         "{} {} — {}",

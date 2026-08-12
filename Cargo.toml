@@ -5,6 +5,7 @@ members = [
   "crates/stella-diff",
   "crates/stella-embed",
   "crates/stella-home",
+  "crates/stella-tty",
   "crates/stella-protocol",
   "crates/stella-core",
   "crates/stella-model",
@@ -28,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.16"
+version = "0.9.17"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"

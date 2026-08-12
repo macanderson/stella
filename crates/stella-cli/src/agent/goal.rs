@@ -109,10 +109,9 @@ pub(crate) async fn run_raw_one_shot(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
-    // Interactive text output may ask the human mid-turn — the condition
-    // `default_ask_io` applies for `ask_user`, applied here to the #2676
-    // approval responder too.
-    let ask = format == OutputFormat::Text;
+    // The one derivation of "a human is here to answer": `ask_user`'s io and
+    // the #2676 approval responder both read this value.
+    let ask = human_is_present(format == OutputFormat::Text);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code graph in the background so a
@@ -329,10 +328,11 @@ pub async fn run_goal_cmd(
     populate_schema_index(&registry, &cfg.workspace_root)?;
 
     let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
-    // Goal mode renders human-readable output (its ask io is wired with
-    // `default_ask_io(true)` below), so approvals may ask the human too.
+    // Goal mode always renders human-readable output, so its half of the
+    // fact is fixed at `true`; the stdio handles settle the rest.
+    let ask = human_is_present(true);
     let active_rules =
-        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, true);
+        crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code-graph index in the background so
     // `graph_query` is available for the goal loop without a manual `stella
     // init`. Non-blocking; status to stderr. Kept alive until the goal returns.
@@ -584,7 +584,8 @@ pub(crate) async fn run_goal_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
+        let interactive = InteractiveToolSet::new(&customs, tx.clone())
+            .with_ask_user(tty_ask_io(human_is_present(true)))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
@@ -799,7 +800,8 @@ async fn run_goal_pipeline_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
+        let interactive = InteractiveToolSet::new(&customs, tx.clone())
+            .with_ask_user(tty_ask_io(human_is_present(true)))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())

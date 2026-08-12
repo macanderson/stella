@@ -523,6 +523,13 @@ impl ToolRegistry {
         // background session build still runs; this just removes the race and
         // the chicken-and-egg gate.
         entries.push(Arc::new(crate::overview::ProjectOverview));
+        // The fused retrieval tool (#3032). Registered beside the five it
+        // subsumes rather than instead of them: the experiment is about what
+        // the schema menu SENDS, and deleting a working tool to run it would
+        // confound the measurement with a capability loss. Its depth dial is
+        // read from configuration once, here, so the advertised schema is
+        // byte-identical across settings (invariant 7).
+        entries.push(Arc::new(crate::search::Search::from_env()));
         entries.push(Arc::new(crate::graph::CodeGraphQuery));
         entries.push(Arc::new(crate::graph::semantic::SemanticCodeSearch));
         entries.push(Arc::new(crate::read_symbol::ReadSymbol::new(

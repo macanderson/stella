@@ -20,7 +20,6 @@
 //! The `ask_user` tool has the same shape (it has no TTL at all); fixing
 //! both means a cancellable line reader, which is its own change.
 
-use std::io::IsTerminal;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -101,26 +100,20 @@ impl ApprovalResponder for AskUserApprovalResponder {
     }
 }
 
-/// Attach the TTY-backed approval responder to `registry` when this surface
-/// is genuinely interactive: the caller wants interactive text output AND
-/// both stdio handles are terminals — the condition
-/// [`crate::agent::approval_capability_for`] already pins for the
-/// pipeline's own approval port (stdin must accept the decision, stdout
-/// must present the prompt; a piped text run must never read stdin for a
-/// decision no one is there to give). Anything less keeps the broker
-/// headless, whose refusal names the grant path (`tools.<name>` policy, or
-/// rerunning interactively).
-pub(crate) fn attach_interactive_approvals(registry: &ToolRegistry, interactive_output: bool) {
-    // `supervised: false` — a supervised child's approvals ride the sidecar
-    // transport (#1585), and its staged stdin could never pass the terminal
-    // test anyway; this attachment is exclusively for the local-TTY surface.
-    let capability = crate::agent::approval_capability_for(
-        false,
-        interactive_output,
-        std::io::stdin().is_terminal(),
-        std::io::stdout().is_terminal(),
-    );
-    if capability != crate::agent::PipelineApprovalCapability::Stdio {
+/// Attach the TTY-backed approval responder to `registry` when a human is
+/// present to answer.
+///
+/// `human_present` is [`crate::interactive::human_can_answer`]'s answer,
+/// derived once by the session driver and passed down — never re-derived
+/// here. Without a human the broker stays headless and refuses with the
+/// grant-path message (`tools.<name>` policy, or rerunning interactively)
+/// instead of reading a stdin nobody is holding.
+///
+/// A supervised child never reaches this attachment with `true`: its
+/// approvals ride the sidecar transport (#1585), and its staged stdin could
+/// not pass the terminal test in any case.
+pub(crate) fn attach_interactive_approvals(registry: &ToolRegistry, human_present: bool) {
+    if !human_present {
         return;
     }
     registry.attach_approval_responder(

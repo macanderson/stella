@@ -643,6 +643,38 @@ def _repeated_identical_tool_call(run: Run) -> list[Finding]:
 # --------------------------------------------------------------------------
 
 
+def same_model(observed: str, declared: str) -> bool:
+    """Whether two model spellings name the same model.
+
+    One name matches the other when its `/`-separated segments are a **suffix**
+    of the other's. That is the precise reading of "a provider prefix is a
+    spelling difference": the declaration writes
+    `openrouter/deepseek/deepseek-chat` and `step_usage.model` writes
+    `deepseek/deepseek-chat`, and the telemetry frequently writes the bare
+    `claude-sonnet-5` against a declared `anthropic/claude-sonnet-5` — the
+    provider is carried in its own `step_usage.provider` field, not in `model`.
+
+    Comparing on a fixed two-segment tail, as this did until the banned-behavior
+    gate was pointed at it, gets the three-segment case right and the
+    two-segment case exactly wrong: `anthropic/claude-sonnet-5` keeps its prefix
+    (it has only two parts) while the observed `claude-sonnet-5` has none, so
+    they compare unequal and the detector reports a spelling difference as a
+    routing defect. It fired on 20 of 20 trials of run `s5b2` that way, against
+    a `results.json` and a telemetry stream that both said Sonnet 5.
+
+    A *different* prefix on both sides is still a mismatch, and deliberately so:
+    `anthropic/claude-sonnet-5` against `bedrock/claude-sonnet-5` is neither
+    name being a suffix of the other, and which provider served a model is a
+    fact worth reporting rather than normalising away.
+    """
+    if observed == declared:
+        return True
+    left = observed.split("/")
+    right = declared.split("/")
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    return longer[-len(shorter) :] == shorter
+
+
 @detector(
     code="role-model-census-mismatch",
     title="the (role, model) census disagrees with the run's declared seat configuration",
@@ -663,19 +695,15 @@ def _role_model_mismatch(run: Run) -> list[Finding]:
     if not run.declared_roles and not run.declared_worker_model:
         return []
 
-    def tail(model: str) -> str:
-        parts = model.split("/")
-        return "/".join(parts[-2:]) if len(parts) > 2 else model
-
-    declared = {role: tail(model) for role, model in run.declared_roles.items()}
+    declared = dict(run.declared_roles)
     if run.declared_worker_model:
-        declared["worker"] = tail(run.declared_worker_model)
+        declared["worker"] = run.declared_worker_model
 
     occurrences = []
     for trial in run.trials:
         for (role, model), count in sorted(trial.role_census().items()):
             want = declared.get(role)
-            if want is None or tail(model) == want:
+            if want is None or same_model(model, want):
                 continue
             occurrences.append(
                 Occurrence(
@@ -685,7 +713,7 @@ def _role_model_mismatch(run: Run) -> list[Finding]:
                     location=f"role `{role}` ran {count} completed step(s)",
                     excerpt=(
                         f"declared (results.json match.contestants[].engine): {want}\n"
-                        f"observed (step_usage.model)                      : {tail(model)}\n"
+                        f"observed (step_usage.model)                      : {model}\n"
                         f"completed steps at the observed model            : {count}"
                     ),
                 )
@@ -1000,6 +1028,206 @@ def _repeated_file_read(run: Run) -> list[Finding]:
                 "list is under-counted rather than guessed at.",
                 "A legitimate re-read exists — a file the agent itself just "
                 "wrote. This states the count, never the intent.",
+            ],
+        )
+    ]
+
+
+# --------------------------------------------------------------------------
+# 11. The search tool that answered "that code does not exist"
+# --------------------------------------------------------------------------
+
+#: ERE metacharacters POSIX `grep` without `-E` reads as literal text. A pattern
+#: carrying one of these is a pattern the pre-#2989 fallback could not execute.
+_ERE_METACHARACTERS = ("|", "+", "(", ")", "?", "{")
+
+#: The disclosure #2989 attached to every zero-match answer from the degraded
+#: backend. Its *presence* is the proof the fixed code ran; keying on the string
+#: rather than on a version is deliberate — the gate reads traces, and a trace
+#: carries no binary version it could be asked for instead.
+_FALLBACK_DISCLOSURE = "searched with POSIX"
+
+
+@detector(
+    code="grep-ere-false-negative",
+    title="grep answered `(no matches)` for a pattern the POSIX fallback could not execute",
+    site="crates/stella-tools/src/grep/fallback.rs",
+    search_terms=("grep no matches alternation", "POSIX grep BRE fallback false negative"),
+)
+def _grep_ere_false_negative(run: Run) -> list[Finding]:
+    """A `grep` zero-match on an ERE pattern, with no fallback disclosure.
+
+    Before #2989 the POSIX fallback ran `grep -rn` with no `-E`, so `|`, `(`,
+    `)`, `+` and `{n,m}` were literal characters and every alternation the model
+    wrote matched nothing — reported as the fact `(no matches)`. A tool that
+    fails is recoverable; a tool that answers "that code does not exist" is not,
+    because the agent believes it and re-plans.
+
+    The discriminator is the disclosure #2989 attached to the degraded backend's
+    empty answer, not the pattern alone: after the fix, a zero-match *from the
+    fallback* always carries `(searched with POSIX grep -E: …)`, and a pattern
+    the fallback cannot execute faithfully is refused by name instead of
+    searched. So a bare `(no matches)` for an ERE pattern is the pre-fix shape.
+
+    Measured on two real runs whose SUT commits sit either side of the fix
+    (`git merge-base --is-ancestor b58e29a6 <sut>`): run `s5b2`, SUT
+    `62a0cb5048f0`, which does **not** contain it — 22 bare empties, 0
+    disclosures; run `post1`, SUT `018852a97387`, which does — 0 bare empties,
+    4 of 4 empties disclosed.
+    """
+    occurrences = []
+    for trial in run.trials:
+        for call in trial.tool_calls:
+            if call.name != "grep" or call.result is None:
+                continue
+            content = call.ok_content
+            if "no matches" not in content or _FALLBACK_DISCLOSURE in content:
+                continue
+            pattern = call.input.get("pattern")
+            if not isinstance(pattern, str):
+                continue
+            if not any(meta in pattern for meta in _ERE_METACHARACTERS):
+                continue
+            occurrences.append(
+                Occurrence(
+                    trial_uuid=trial.trial_uuid,
+                    task_id=trial.task_id,
+                    s3_key=trial.s3_key(),
+                    location=(
+                        f"tool `grep`, call `{call.call_id}` "
+                        f"(stella-events.jsonl:{call.result_index})"
+                    ),
+                    excerpt=(
+                        f"pattern : {pattern}\n"
+                        f"answer  : {content}\n"
+                        "\nNo `(searched with POSIX grep -E: …)` disclosure, so this "
+                        "empty answer did not come from the backend #2989 fixed."
+                    ),
+                )
+            )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="grep-ere-false-negative",
+            site="crates/stella-tools/src/grep/fallback.rs",
+            variant_source="grep zero-match on an ERE pattern with no POSIX-fallback disclosure",
+            title=(
+                "grep answered `(no matches)` for a pattern the POSIX fallback "
+                "could not execute"
+            ),
+            summary=(
+                "These `grep` calls carried an ERE metacharacter and came back "
+                "`(no matches)` with none of the POSIX-fallback disclosure #2989 "
+                "attaches to a degraded-backend empty answer. That is the shape of "
+                "the false negative #2989 fixed: the fallback ran BRE, read `|` and "
+                "`+` as literal text, and reported the miss as a fact. The agent "
+                "believes it and re-plans around code it was told does not exist."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=(
+                "grep no matches alternation",
+                "POSIX grep BRE fallback false negative",
+            ),
+            caveats=[
+                "A container with ripgrep on PATH takes the rg backend, whose "
+                "zero-match answer legitimately carries no disclosure and would be "
+                "read here as the defect. No run mirrored in this repository has "
+                "ever produced an rg-backed grep — `post1` disclosed on 4 of 4 "
+                "empties — but that is evidence about these images, not a proof "
+                "about every image.",
+                "The pattern is checked for an ERE metacharacter, never executed. "
+                "A pattern that genuinely matches nothing and happens to contain a "
+                "`?` is indistinguishable here from one the backend could not run.",
+            ],
+        )
+    ]
+
+
+# --------------------------------------------------------------------------
+# 12. A trial that measured nothing, and was graded anyway
+# --------------------------------------------------------------------------
+
+
+@detector(
+    code="graded-void-trial",
+    title="a trial completed zero model calls and its zero was still scored",
+    site="",
+    search_terms=("no step_usage graded zero", "credential failure scored as a task loss"),
+)
+def _graded_void_trial(run: Run) -> list[Finding]:
+    """Zero `step_usage` in the whole trial, with a reward recorded.
+
+    The general form of `void-model-call`, and the one that catches the case
+    that detector cannot see. `void-model-call` requires `reasoning` deltas —
+    it is the trial that *thought* and never got a call back. A credential that
+    has expired produces no reasoning at all: the request is rejected before
+    anything streams, so the trial emits nothing and the older detector stays
+    silent on it. That is the shape that produced twenty dead trials in one run
+    and scored every one of them as a task loss.
+
+    Keyed on the absence of completed model calls rather than on an
+    authentication string, deliberately. Scanning tool output for `401` is a
+    false-positive machine: across the three runs mirrored here, every single
+    `401` occurrence is task content — a `bottle` test fixture, an `objdump`
+    listing — and not one is a credential failure. The absence of a completed
+    call is the thing that makes the trial unmeasurable, whatever caused it.
+
+    Requires a recorded reward, because that is what makes it a *measurement*
+    defect rather than an infrastructure note: a void trial nobody graded costs
+    nothing, and a void trial graded 0 is a zero in a solve rate that measures
+    the harness.
+    """
+    occurrences = []
+    for trial in run.trials:
+        if trial.reward is None or trial.of_type("step_usage"):
+            continue
+        occurrences.append(
+            Occurrence(
+                trial_uuid=trial.trial_uuid,
+                task_id=trial.task_id,
+                s3_key=trial.s3_key(),
+                location=f"0 completed model calls, graded {trial.reward}",
+                excerpt=(
+                    f"step_usage       : 0   <- no model call ever completed\n"
+                    f"reasoning deltas : {len(trial.of_type('reasoning'))}\n"
+                    f"tool_start       : {len(trial.of_type('tool_start'))}\n"
+                    f"events in trial  : {len(trial.events)}\n"
+                    f"reward recorded  : {trial.reward}\n"
+                    f"harbor exception : {', '.join(trial.exception_types) or 'none recorded'}"
+                ),
+            )
+        )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="graded-void-trial",
+            site="",
+            variant_source="zero completed model calls on a trial that carries a reward",
+            title="a trial completed zero model calls and its zero was still scored",
+            summary=(
+                "These trials never completed a single model call and were graded "
+                "anyway. `step_usage` is emitted only when a step completes, so the "
+                "agent was never measured — the reward is a fact about the harness, "
+                "the credentials or the gateway, and averaging it into a solve rate "
+                "reports an infrastructure failure as the agent failing."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=(
+                "no step_usage graded zero",
+                "credential failure scored as a task loss",
+            ),
+            caveats=[
+                "States that no call *completed*, never why. An expired credential, a "
+                "gateway refusing the request and a trial killed before its first "
+                "response are indistinguishable here; all three are voids, and the "
+                "cause is not decided by this signal alone.",
+                "Overlaps `void-model-call` on a trial that streamed reasoning and was "
+                "graded. That is two true observations of one trial, not double "
+                "counting: this one is about the grade, the other about the thinking.",
             ],
         )
     ]

@@ -8,7 +8,7 @@ description: Store, list, and remove BYOK provider keys in credentials.toml — 
 ## Synopsis
 
 ```bash
-stella auth set <provider> [--key <key> | --stdin]
+stella auth set <provider> [--key <key> | --stdin] [--field <NAME=VALUE>]...
 stella auth remove <provider>
 stella auth list
 ```
@@ -31,6 +31,11 @@ Store (or replace) a provider's key. With no flag, stella shows an interactive m
   <OptionCard name="--stdin">
     Read the key from stdin, one trimmed line — for scripts and secret managers.
   </OptionCard>
+  <OptionCard name="--field <NAME=VALUE>">
+    Store one companion value a provider needs *beyond* its key. Repeatable. Only
+    Bedrock has any today. **Visible in shell history and in `ps`**, like `--key` —
+    omit it for a masked prompt covering each one.
+  </OptionCard>
 </CardGrid>
 
 ```bash
@@ -40,6 +45,33 @@ stella auth set anthropic
 # From a secret manager, nothing in shell history
 printf '%s' "$MY_KEY" | stella auth set zai --stdin
 ```
+
+**A credential set, not one secret.** Most providers authenticate with a single key, so
+`set` takes one and stops. Bedrock does not: it needs `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`, and `AWS_REGION` alongside the access-key id. Run `stella auth set
+bedrock` with no flags and stella prompts for each companion in turn — secrets masked,
+`AWS_REGION` not, because it is routing and a masked prompt would imply a secrecy it does
+not have. Blank input leaves an existing value alone.
+
+```bash
+# Interactive: prompts for the key, then for each companion field
+stella auth set bedrock
+
+# Scripted — these land in shell history, exactly as --key does
+stella auth set bedrock --key "$AWS_ACCESS_KEY_ID" \
+  --field AWS_SECRET_ACCESS_KEY="$SECRET" \
+  --field AWS_REGION=us-east-1
+```
+
+<Callout type="warn">
+`--key` and `--stdin` suppress the companion prompts entirely — a script that pipes a key
+must never block on a question. So a scripted `stella auth set bedrock --key …` with no
+`--field` stores a credential that **cannot sign a request**: it resolves fine at
+[`stella models`](/docs/commands/models) and then fails at the first call with a SigV4
+error naming a variable you believed you had just configured. `set` warns when it stores a
+Bedrock key with no `AWS_SECRET_ACCESS_KEY` beside it — rerun without `--key`/`--stdin`,
+or pass the field.
+</Callout>
 
 ### `stella auth remove <provider>`
 
@@ -51,7 +83,7 @@ stella auth remove openai
 
 ### `stella auth list`
 
-List every provider with a key in `credentials.toml`, each with a redacted preview and its resolution source.
+List every provider with a key in `credentials.toml`, each with a redacted preview and its resolution source. Companion values stored with `--field` are listed **by name only**, never by value — the same rule as the key itself, and the reason to show them at all is that a Bedrock row missing its `AWS_SECRET_ACCESS_KEY` otherwise looks identical to a working one.
 
 ```bash
 stella auth list

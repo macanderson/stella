@@ -58,6 +58,7 @@ pub mod schema_gate;
 pub mod scratch;
 pub mod screenshot;
 pub mod scripts;
+pub mod search;
 pub mod shell_touch;
 pub mod skill_grant;
 pub mod staleness;
