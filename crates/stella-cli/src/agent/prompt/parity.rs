@@ -434,10 +434,9 @@ fn every_engine_marker_is_taught_verbatim_by_every_static_prompt() {
 /// edit with the read it depends on", "read a file before editing it") are
 /// asserted here rather than left to survive a future trim on their own.
 ///
-/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
-/// the same reason `both_prompts_bind_the_model_to_skills` does: that file sits
-/// within a few lines of the 1500-line ratchet (#2985), and #2237 makes this
-/// module the home for prompt-content pins.
+/// Lives here rather than beside its siblings in `prompt/tests.rs` for the same
+/// reason `both_prompts_bind_the_model_to_skills` does: #2237 makes this module
+/// the home for prompt-content pins.
 #[test]
 fn both_prompts_batch_independent_tool_calls() {
     let shared = tool_steering!();
@@ -595,11 +594,9 @@ fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace
 /// separately, in the established `both_prompts_*` shape, so a trim cannot
 /// hollow the contract while the verbatim embedding assertion still passes.
 ///
-/// Lives here rather than beside its siblings in `prompt.rs`'s test module
-/// because that file sits within a few lines of the 1500-line ratchet
-/// (`scripts/check-file-size.sh`) — and #2237 already consolidates the
-/// per-contract pins into this module, so this is the direction of travel,
-/// not an exception to it.
+/// Lives here rather than beside its siblings in `prompt/tests.rs` because
+/// #2237 already consolidates the per-contract pins into this module, so this
+/// is the direction of travel, not an exception to it.
 #[test]
 fn both_prompts_bind_the_model_to_skills() {
     let shared = skill_use!();
@@ -666,10 +663,9 @@ fn both_prompts_bind_the_model_to_skills() {
 /// wasted call to the 14 of 20 trials where Claude Code — the arm being copied
 /// — touches git not at all.
 ///
-/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
-/// the same reason `both_prompts_bind_the_model_to_skills` does: that file sits
-/// within a few lines of the 1500-line ratchet, and #2237 makes this module the
-/// home for prompt-content pins.
+/// Lives here rather than beside its siblings in `prompt/tests.rs` for the same
+/// reason `both_prompts_bind_the_model_to_skills` does: #2237 makes this module
+/// the home for prompt-content pins.
 #[test]
 fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
     for claim in [
@@ -732,9 +728,8 @@ fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
 /// genuinely different shapes — a Rules bullet and a numbered methodology step
 /// — so the wording that survives is asserted here instead of the bytes.
 ///
-/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
-/// the reason its two predecessors do: that file sits within a few lines of the
-/// 1500-line ratchet (#2985), and #2237 makes this module the home for
+/// Lives here rather than beside its siblings in `prompt/tests.rs` for the
+/// reason its two predecessors do: #2237 makes this module the home for
 /// prompt-content pins.
 #[test]
 fn both_personas_route_a_described_behaviour_to_semantic_search_and_a_named_one_to_the_graph() {
