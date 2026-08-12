@@ -783,47 +783,11 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_verifier_would_pas
     assert!(log.contains(&"remove:0".to_string()));
 }
 
-#[tokio::test]
-async fn failed_final_verification_never_adopts_and_removes_all_candidates() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("candidate zero"),
-        text_result("candidate one"),
-    ]);
-    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let port = FakeWorkspacePort::new(
-        vec![
-            Ok(FakeWorkspace::new(
-                0,
-                vec![false, false],
-                Ok(vec![]),
-                log.clone(),
-            )),
-            Ok(FakeWorkspace::new(
-                1,
-                vec![false, false],
-                Ok(vec![]),
-                log.clone(),
-            )),
-        ],
-        log.clone(),
-    );
-
-    let (outcome, _, _) =
-        run_isolated(&provider, &port, isolated_config(2), "Fix the failing test").await;
-    let outcome = outcome.expect("red verification is a terminal outcome");
-    assert!(matches!(
-        outcome.status,
-        PipelineStatus::VerificationFailed { .. }
-    ));
-    let log = log.lock().unwrap().clone();
-    assert!(
-        !log.iter().any(|entry| entry.starts_with("adopt:")),
-        "{log:?}"
-    );
-    assert!(log.contains(&"remove:0".to_string()));
-    assert!(log.contains(&"remove:1".to_string()));
-}
+// `failed_final_verification_never_adopts_and_removes_all_candidates` lived
+// here until #2927. Its contract was the defect: a red verdict deleted the
+// candidate with the work still in it. It is renamed, inverted and moved to
+// `tests/delivery.rs` as `failed_final_verification_still_delivers_the_
+// winners_work`, beside the rest of the delivery contract.
 
 #[tokio::test]
 async fn post_verification_candidate_drift_is_rejected_before_adoption() {

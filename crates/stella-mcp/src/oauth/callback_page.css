@@ -27,10 +27,10 @@
    click. */
 :root{color-scheme:dark light;
   --ground:#0A0A0A;--text:#EDEDED;--text-2:#A1A1A1;
-  --ok:#4CC38A;--bad:#E5715F;--identity:#FFB000}
+  --ok:#4CC38A;--bad:#E5715F;--identity:#C58A32}
 @media (prefers-color-scheme:light){:root{
   --ground:#FFFFFF;--text:#0A0A0A;--text-2:#525252;
-  --ok:#11703A;--bad:#A32F1F;--identity:#795500}}
+  --ok:#11703A;--bad:#A32F1F;--identity:#674415}}
 body{margin:0;padding:48px;background:var(--ground);color:var(--text);
   font:13px/1.55 "JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
 h2{margin:0 0 8px;font-size:15px;font-weight:600;letter-spacing:.02em}

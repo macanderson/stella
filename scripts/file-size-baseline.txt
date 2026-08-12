@@ -7,8 +7,8 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1819 bench/harbor_adapter/stella_harbor/__init__.py
-4365 bench/harbor_adapter/stella_harbor/secure_launcher.py
+1839 bench/harbor_adapter/stella_harbor/__init__.py
+4366 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2352 bench/harbor_adapter/tests/test_adapter.py
 3368 bench/harbor_adapter/tests/test_secure_launcher.py
 8298 bench/terminal_bench_analysis/tb21_analysis.py
@@ -24,8 +24,8 @@
 1781 crates/stella-model/src/anthropic/tests.rs
 2094 crates/stella-model/src/openai.rs
 1862 crates/stella-model/src/zai/tests.rs
-3048 crates/stella-pipeline/src/pipeline.rs
-2391 crates/stella-pipeline/src/pipeline/tests.rs
+2951 crates/stella-pipeline/src/pipeline.rs
+2394 crates/stella-pipeline/src/pipeline/tests.rs
 1750 crates/stella-store/src/lib.rs
 2266 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs

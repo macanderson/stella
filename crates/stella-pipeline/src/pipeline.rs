@@ -113,6 +113,7 @@ mod attachments;
 // authored section's header so the prompt and the header cannot drift apart.
 pub(crate) mod authored;
 mod candidate_result;
+mod delivery;
 mod disclosure;
 mod evidence;
 mod execute_stage;
@@ -135,6 +136,9 @@ mod scope_stage;
 mod stage_budget;
 mod task_frame;
 mod triage_stage;
+/// The `Unverifiable`/`Unverified` ladder rungs' settle logic (#2908) — in
+/// its own module because `pipeline.rs` is closed to growth.
+mod unproven;
 /// The worker's opening user message (recall, research findings, goal,
 /// verification contract) — pure text assembly, in its own module because
 /// `pipeline.rs` is closed to growth.
@@ -1783,19 +1787,25 @@ impl<'a> Pipeline<'a> {
         // whole fan-out, not the one result that survives it.
         let ran = executed_count(&candidates);
         self.emit_text(candidate_winner_notice(best_idx, n, ran));
-        // Winner adoption + cleanup. An aborted winner adopts nothing — an
-        // aborted best-of-N run leaves the real tree untouched.
+        // Winner delivery + cleanup. The verdict is a claim ABOUT the work; it
+        // does not decide whether the work exists (#2927). `delivery` states
+        // the whole rule and the argument for it, rung by rung; the one thing
+        // still withheld is a candidate the pipeline refused on integrity.
         let mut adopt_failure: Option<WorkspaceError> = None;
+        let delivery = delivery::decide(delivery::WinnerFacts::of(&candidates[best_idx]));
         for (i, slot) in workspaces.into_iter().enumerate() {
             let Ok(ws) = slot else {
                 continue;
             };
             if i == best_idx
-                && candidates[best_idx]
-                    .verdict
-                    .as_ref()
-                    .is_some_and(|verdict| verdict.passed)
+                && let delivery::Delivery::Deliver { proven } = delivery
             {
+                // Delivery is never proof. The verdict, the status and the
+                // score are untouched above; this line is what stops the write
+                // itself from reading as a pass.
+                if !proven {
+                    self.warn(delivery::UNPROVEN_DELIVERY_NOTICE.to_string());
+                }
                 // The witness has already done its whole job by now — it armed
                 // the flip oracle and the flip was observed — so withholding it
                 // cannot change the verdict, only what lands in the tree.
@@ -1829,25 +1839,29 @@ impl<'a> Pipeline<'a> {
                     Err(e) => adopt_failure = Some(e),
                 }
             } else if single_shot_isolation {
-                // The `create_worktrees` run that did not pass. Discarding is
-                // right for best-of-N — the operator asked for the best of
-                // several and none was good, and the losers were never meant to
-                // survive. It is also right for an authored-witness abort,
-                // where the candidate is *poisoned* rather than merely
-                // unverified (a tampered artifact, an author that edited
-                // production code) and `witness_isolation`'s tests pin its
-                // removal.
+                // The `create_worktrees` run whose work was withheld — since
+                // #2927 that means an integrity refusal (the candidate wrote
+                // through its isolation, its witness was tampered with, its
+                // tree moved after verification) or an allowance it never
+                // got, never merely "it did not verify". Discarding is right
+                // for best-of-N — the operator asked for the best of several
+                // and none was good, and the losers were never meant to
+                // survive — and `witness_isolation`'s tests pin removal for a
+                // poisoned authored-witness candidate.
                 //
                 // It is wrong for this third caller. That operator asked where
-                // the work should *happen*, not that it be thrown away unless
-                // it verified — and without this they end up strictly worse off
-                // than with isolation off, where a failed run at least leaves
-                // its changes in the tree to look at. So keep the snapshot and
+                // the work should *happen*, not that it be thrown away — and
+                // without this they end up strictly worse off than with
+                // isolation off, where a failed run at least leaves its
+                // changes in the tree to look at. So keep the snapshot and
                 // name it: the same posture as the adopt-failure arm just
-                // above, and for the same reason — unverified is not worthless.
+                // above, and for the same reason — undelivered is not
+                // worthless. The reason is deliberately unnamed here because
+                // this arm has several, and each has already been stated on
+                // the stream by the stage that raised it.
                 self.warn(format!(
-                    "this run's changes did not verify, so they were not adopted into your \
-                     working tree — they are kept at {} for you to inspect or salvage",
+                    "this run's changes were not adopted into your working tree — they are \
+                     kept at {} for you to inspect or salvage",
                     ws.root()
                 ));
             } else {
@@ -2392,81 +2406,21 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // The turn went unobserved — every channel blind, or every
-                    // channel clear-eyed and empty over dispatched mutating
-                    // calls (#1701). The verifier is not asked, because the
-                    // only thing it could do is guess from an empty record —
-                    // which in the wild it did, returning `FAIL … the file
-                    // likely does not exist` about a file that was in the
-                    // container (#973).
-                    //
-                    // `passed: true` because a run is not failed by the absence
-                    // of a way to check it, and this shape already exists for
-                    // the review-waived path. What keeps it from reading as a
-                    // pass is the pair beside it: the summary says UNVERIFIABLE
-                    // in its first word, and the score is `Unverified`, so this
-                    // candidate can never tie a genuinely verified sibling in
-                    // best-of-N and then win the smaller-diff tiebreak.
-                    //
-                    // The arm above is what makes this defensible. Reaching
-                    // here means the turn *did* dispatch mutating calls and no
-                    // channel saw their effect — a real state: a Terminal-Bench
-                    // trial that wrote its answer through shell redirects
-                    // recorded no touch, could not be diffed, landed here, and
-                    // scored 1.0 against its verifier. Failing that closed
-                    // would report a correct run as broken, and no revision can
-                    // clear it — that workspace never becomes observable.
-                    let mut evidence = unverifiable_evidence(&inputs);
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.unverifiable(&evidence.summary);
-                    self.emit(AgentEvent::Verdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    // #2908: `Unverifiable` is a claim, not a verdict on the
-                    // run — "we could not see" must not read as "stop here."
-                    // Scoped to `effective_cmd.is_none()` — no tracked command
-                    // AND no witness — because that is the evidenced failure:
-                    // a run with a real command that merely went blind this
-                    // round (infra noise on the confirmation, say) is a
-                    // narrower, already-tested shape, and widening to it too
-                    // is a separate change, not this one. Bounded exactly like
-                    // every other back-edge on this ladder (`affords_repair`'s
-                    // revision/budget/wall-clock gate), and additionally by
-                    // the worker's OWN stopping condition: a round that
-                    // dispatched no further mutating call and moved no diff
-                    // line answered the nudge by declining to act, which is
-                    // bare's own termination — adopting it here is what keeps
-                    // this from looping the full revision allowance against a
-                    // worker that is already done.
-                    if effective_cmd.is_none()
-                        && self.affords_repair(&state, &meter, *spend.total, spend.budget)
+                    let ladder_ctx = unproven::LadderContext {
+                        snapshot: &snapshot,
+                        inputs: &inputs,
+                        effective_cmd,
+                    };
+                    match self
+                        .settle_unverifiable(engine, surface, spend, &meter, state, ladder_ctx)
+                        .await
                     {
-                        let mutating_before = state.signals.mutating_actions;
-                        let diff_lines_before = state.diff_lines;
-                        if let Err(abort) = self
-                            .revise_candidate(
-                                engine,
-                                surface,
-                                RevisionCause::Deterministic(UNPROVEN_CONTINUE_NUDGE),
-                                spend,
-                                &mut state,
-                            )
-                            .await
-                        {
-                            return CandidateResult::turn_aborted(state.messages, abort);
-                        }
-                        if state.signals.mutating_actions != mutating_before
-                            || state.diff_lines != diff_lines_before
-                        {
+                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Continue(next_state) => {
+                            state = next_state;
                             continue;
                         }
                     }
-                    return state.into_verified(
-                        true,
-                        &evidence,
-                        score_from_verification(false, None),
-                    );
                 }
                 LadderDecision::WitnessUnsatisfiable => {
                     // #2540: the authored witness failed identically on both
@@ -2625,75 +2579,24 @@ impl<'a> Pipeline<'a> {
                         // with the ask spent, and ends below.
                         continue;
                     }
-                    // Terminal. Nothing deterministic settled this turn, and
-                    // nothing else is going to: no model is asked, because the
-                    // evidence that reaches this arm is by construction the
-                    // evidence no oracle could settle, and a model handed it
-                    // would be guessing at it too — only with a verdict's
-                    // authority attached. Measured, that guess agreed with
-                    // Terminal-Bench's grader 46% of the time, and 17 of its
-                    // false passes cost 5 tasks outright.
-                    //
-                    // `passed: true` for exactly the reason the abstention arm
-                    // above uses it — a run is not failed by the absence of a
-                    // way to check it — and, exactly as there, what keeps it
-                    // from reading as a pass is the pair beside it: the
-                    // summary says UNVERIFIED in its first word and the score
-                    // is `Unverified`, so this candidate can never tie a
-                    // genuinely verified sibling in best-of-N and then win the
-                    // smaller-diff tiebreak.
-                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.unproven_verdict(&evidence.summary);
-                    self.emit(AgentEvent::Verdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    // #2908: scoped to `effective_cmd.is_none()` — no tracked
-                    // command AND no witness, the exact shape that let the
-                    // ladder end a run four minutes before the bare loop on
-                    // the same worker, on `pypi-server`. Where a command DOES
-                    // exist, either the evidence-demand arm above already
-                    // spent its one ask, or it declined to (off, or already
-                    // spent, or the pass does not stand alone) — those are
-                    // this arm's own established, separately-tested contract
-                    // and are unaffected here. The pipeline may downgrade the
-                    // CLAIM to unproven; it may not downgrade the RUN by
-                    // ending it a revision before the worker itself would
-                    // have stopped. Same bound as the `Unverifiable` arm
-                    // above: `affords_repair`'s existing revision/budget/
-                    // wall-clock gate, plus the worker's own stopping
-                    // condition (no further mutating call, no diff movement)
-                    // so a worker that is genuinely done is not walked
-                    // through the rest of its allowance for nothing.
-                    if effective_cmd.is_none()
-                        && self.affords_repair(&state, &meter, *spend.total, spend.budget)
+                    // Terminal by default — see `Pipeline::settle_unverified`
+                    // for why no model is asked, and how far the worker's own
+                    // handback is bounded (#2908).
+                    let ladder_ctx = unproven::LadderContext {
+                        snapshot: &snapshot,
+                        inputs: &inputs,
+                        effective_cmd,
+                    };
+                    match self
+                        .settle_unverified(engine, surface, spend, &meter, state, ladder_ctx)
+                        .await
                     {
-                        let mutating_before = state.signals.mutating_actions;
-                        let diff_lines_before = state.diff_lines;
-                        if let Err(abort) = self
-                            .revise_candidate(
-                                engine,
-                                surface,
-                                RevisionCause::Deterministic(UNPROVEN_CONTINUE_NUDGE),
-                                spend,
-                                &mut state,
-                            )
-                            .await
-                        {
-                            return CandidateResult::turn_aborted(state.messages, abort);
-                        }
-                        if state.signals.mutating_actions != mutating_before
-                            || state.diff_lines != diff_lines_before
-                        {
+                        std::ops::ControlFlow::Break(result) => return result,
+                        std::ops::ControlFlow::Continue(next_state) => {
+                            state = next_state;
                             continue;
                         }
                     }
-                    return state.into_verified(
-                        true,
-                        &evidence,
-                        score_from_verification(false, None),
-                    );
                 }
             }
         }
