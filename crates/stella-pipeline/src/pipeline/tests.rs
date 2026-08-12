@@ -2165,6 +2165,9 @@ mod airlock;
 mod best_of_n;
 mod chaos;
 mod degradation_gate;
+/// Winner-delivery witnesses (#2927) — a child module so it reaches the
+/// scripted ports above via `super::*`.
+mod delivery;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
