@@ -13,9 +13,16 @@
 //! `stella_core::ports::ToolExecutor` (the native `ToolRegistry`, or the
 //! MCP-merged set once that lands) and adds the `ask_user` schema. Actual
 //! I/O goes through the [`AskUserIo`] port so tests never touch a real
-//! terminal, and headless runs (`--output-format json|stream-json`, or a
-//! non-TTY stdin) get a named error instead of a hang on input that will
-//! never arrive.
+//! terminal.
+//!
+//! Whether the tool is added at all is [`human_can_answer`]'s answer — the
+//! single derivation of "is a human present to answer?" that every consumer
+//! of that fact reads. An unattended run (`--output-format json|stream-json`,
+//! or a redirected stdio handle) does not register `ask_user`, the same shape
+//! [`InteractiveToolSet::with_recall`] and
+//! [`InteractiveToolSet::with_skill_registry`] use: a tool that is offered
+//! and then always answers "unavailable" spends a model turn teaching the
+//! agent it had a capability it never had.
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,10 +82,15 @@ impl AskUserIo for TtyAskUserIo {
     }
 }
 
-/// Headless io: always a named error. Chosen when stdin isn't a TTY or the
-/// output format is machine-oriented — per the AskUser event's documented
-/// contract, headless runs fail the tool loudly rather than hanging.
+/// Headless io: always a named error. Reached only where a confirmation is
+/// structurally required but nobody can give it — `install_skill`'s
+/// user-confirm workflow on an unattended run — so the operation fails
+/// loudly rather than hanging or proceeding unapproved.
 pub struct HeadlessAskUserIo;
+
+/// The unattended fallback [`InteractiveToolSet::ask_io`] hands out. A unit
+/// struct with no state, so one shared instance serves every session.
+static HEADLESS_ASK_IO: HeadlessAskUserIo = HeadlessAskUserIo;
 
 #[async_trait]
 impl AskUserIo for HeadlessAskUserIo {
@@ -91,14 +103,48 @@ impl AskUserIo for HeadlessAskUserIo {
     }
 }
 
-/// Pick the production io for the current process: TTY when stdin is one
-/// and the caller wants interactive text output, headless otherwise.
-pub fn default_ask_io(interactive_output: bool) -> Box<dyn AskUserIo> {
-    if interactive_output && std::io::stdin().is_terminal() {
-        Box::new(TtyAskUserIo)
-    } else {
-        Box::new(HeadlessAskUserIo)
-    }
+/// **Whether a human is present to answer a question this run asks
+/// mid-turn.** The single derivation of that fact; every consumer reads it
+/// from here rather than re-deriving it.
+///
+/// Asking costs a human two capabilities, and both are needed: they must SEE
+/// the question (it is printed to stdout) and they must be able to ANSWER it
+/// (it is read from stdin). So a run has a human exactly when it renders the
+/// interactive text output *and* both stdio handles are real terminals. A
+/// `--output-format text` run with a piped or redirected stdin — an ordinary
+/// CI and wrapper shape — has nobody: the prompt goes out and the answer
+/// never comes back.
+///
+/// Pure over already-observed booleans so the condition is directly
+/// unit-testable without faking a terminal; [`human_is_present`] is the half
+/// that reads this process's handles. The consumers are [`tty_ask_io`] (the
+/// `ask_user` tool), [`crate::approval::attach_interactive_approvals`] (the
+/// #2676 approval responder) and [`crate::agent::approval_capability_for`]
+/// (the pipeline's approval port). Deriving it separately is what let the
+/// rules/approvals layer believe a human could be asked while `ask_user` had
+/// already resolved to an io that only returns an error.
+pub fn human_can_answer(
+    interactive_output: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> bool {
+    interactive_output && stdin_is_terminal && stdout_is_terminal
+}
+
+/// [`human_can_answer`] against this process's real stdio handles.
+pub fn human_is_present(interactive_output: bool) -> bool {
+    human_can_answer(
+        interactive_output,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+/// The production `ask_user` io for a surface a human can answer on, and
+/// `None` for one they cannot — where the tool is not offered at all (see
+/// [`InteractiveToolSet::with_ask_user`]).
+pub fn tty_ask_io(human_present: bool) -> Option<Box<dyn AskUserIo>> {
+    human_present.then(|| Box::new(TtyAskUserIo) as Box<dyn AskUserIo>)
 }
 
 /// Registry commands for the skills ecosystem (user requirement: the agent
@@ -228,7 +274,9 @@ fn scrub_skill_registry_command(command: &mut tokio::process::Command) {
 pub struct InteractiveToolSet<'a> {
     inner: &'a dyn ToolExecutor,
     events: EventSender,
-    io: Box<dyn AskUserIo>,
+    /// How `ask_user` reaches the human — `None` when nobody can answer, in
+    /// which case the tool is not registered (see [`Self::with_ask_user`]).
+    ask: Option<Box<dyn AskUserIo>>,
     skills: Option<SkillRegistry>,
     /// The context plane and the channel a mid-turn lookup announces on —
     /// see [`with_recall`](InteractiveToolSet::with_recall).
@@ -239,18 +287,36 @@ pub struct InteractiveToolSet<'a> {
 }
 
 impl<'a> InteractiveToolSet<'a> {
-    pub fn new(
-        inner: &'a dyn ToolExecutor,
-        events: impl Into<EventSender>,
-        io: Box<dyn AskUserIo>,
-    ) -> Self {
+    pub fn new(inner: &'a dyn ToolExecutor, events: impl Into<EventSender>) -> Self {
         Self {
             inner,
             events: events.into(),
-            io,
+            ask: None,
             skills: None,
             recall: None,
         }
+    }
+
+    /// Offer `ask_user`, reaching the human through `io`.
+    ///
+    /// `None` — the answer [`tty_ask_io`] gives for a surface no human can
+    /// answer on — does not register the tool at all, the same shape
+    /// [`Self::with_recall`] and [`Self::with_skill_registry`] use. It is
+    /// deliberately not registered against [`HeadlessAskUserIo`]: the model
+    /// picks a tool off its schema description alone, so advertising one that
+    /// can only answer "interactive input is unavailable" spends a whole turn
+    /// discovering a capability the run never had.
+    pub fn with_ask_user(mut self, io: Option<Box<dyn AskUserIo>>) -> Self {
+        self.ask = io;
+        self
+    }
+
+    /// The io a confirmation reaches for. Falls back to the headless refusal
+    /// when no human is present, which is what makes an unattended
+    /// `install_skill` impossible by design: the confirmation cannot be
+    /// given, so the install never runs.
+    fn ask_io(&self) -> &dyn AskUserIo {
+        self.ask.as_deref().unwrap_or(&HEADLESS_ASK_IO)
     }
 
     /// Give the agent a way to search the context plane **mid-turn**.
@@ -428,7 +494,7 @@ impl<'a> InteractiveToolSet<'a> {
             "No — don't install".to_string(),
         ];
         let answer = match self
-            .io
+            .ask_io()
             .prompt(
                 &format!("The agent wants to install skill `{id}` from the registry. Proceed?"),
                 &options,
@@ -522,7 +588,12 @@ impl<'a> InteractiveToolSet<'a> {
         }
     }
 
-    async fn execute_ask_user(&self, call_id: &str, input: &Value) -> ToolOutput {
+    async fn execute_ask_user(
+        &self,
+        io: &dyn AskUserIo,
+        call_id: &str,
+        input: &Value,
+    ) -> ToolOutput {
         let Some(question) = input.get("question").and_then(Value::as_str) else {
             return ToolOutput::Error {
                 message: "ask_user: missing required string field `question`".into(),
@@ -556,7 +627,7 @@ impl<'a> InteractiveToolSet<'a> {
         let mut presented = model_options.clone();
         presented.push(format!("{FREE_TEXT_LABEL}…"));
 
-        let raw = match self.io.prompt(question, &presented).await {
+        let raw = match io.prompt(question, &presented).await {
             Ok(line) => line,
             Err(e) => {
                 return ToolOutput::Error {
@@ -580,7 +651,7 @@ impl<'a> InteractiveToolSet<'a> {
             Ok(n) if n == model_options.len() + 1 => {
                 // They selected the free-text slot by number; re-prompt once
                 // for the actual text.
-                match self.io.prompt("Your answer:", &[]).await {
+                match io.prompt("Your answer:", &[]).await {
                     Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
                     _ => {
                         return ToolOutput::Error {
@@ -600,7 +671,9 @@ impl<'a> InteractiveToolSet<'a> {
 impl ToolExecutor for InteractiveToolSet<'_> {
     fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas = self.inner.schemas();
-        schemas.push(Self::ask_user_schema());
+        if self.ask.is_some() {
+            schemas.push(Self::ask_user_schema());
+        }
         if self.skills.is_some() {
             schemas.extend(Self::skills_schemas());
         }
@@ -611,13 +684,15 @@ impl ToolExecutor for InteractiveToolSet<'_> {
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        if name == "ask_user" {
+        if name == "ask_user"
+            && let Some(io) = &self.ask
+        {
             // `ToolExecutor::execute` doesn't carry the model's tool call_id,
             // so mint a process-unique id per invocation rather than emitting
             // a constant that would collide across every ask in a session
             // (the TUI keys its pending-ask card by this id).
             let id = format!("ask_user-{}", NEXT_ASK_ID.fetch_add(1, Ordering::Relaxed));
-            return self.execute_ask_user(&id, input).await;
+            return self.execute_ask_user(io.as_ref(), &id, input).await;
         }
         if name == "recall_context"
             && let Some((recall, events)) = &self.recall
@@ -711,6 +786,12 @@ mod tests {
         }
     }
 
+    /// A scripted io in the shape [`InteractiveToolSet::with_ask_user`] takes
+    /// — i.e. an attended surface.
+    fn scripted(answers: Vec<&'static str>) -> Option<Box<dyn AskUserIo>> {
+        Some(Box::new(ScriptedIo::new(answers)))
+    }
+
     #[async_trait]
     impl AskUserIo for ScriptedIo {
         async fn prompt(&self, _q: &str, options: &[String]) -> Result<String, String> {
@@ -757,7 +838,7 @@ mod tests {
     async fn schemas_include_native_tools_plus_ask_user() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec![])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec![]));
         let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"ask_user".to_string()));
@@ -783,7 +864,7 @@ mod tests {
         let inner = FakeInner;
         let io = SharedIo(std::sync::Arc::new(ScriptedIo::new(vec!["1"])));
         let handle = io.clone();
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(io));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(Some(Box::new(io)));
         let _ = set.execute("ask_user", &ask_input()).await;
 
         let seen = handle.0.seen_options.lock().expect("lock");
@@ -796,7 +877,7 @@ mod tests {
     async fn numeric_answer_selects_that_option() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["2"])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec!["2"]));
         match set.execute("ask_user", &ask_input()).await {
             ToolOutput::Ok { content } => assert_eq!(content, "staging"),
             other => panic!("expected Ok, got {other:?}"),
@@ -807,11 +888,8 @@ mod tests {
     async fn free_text_answer_returns_verbatim() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(
-            &inner,
-            tx,
-            Box::new(ScriptedIo::new(vec!["actually use the docker instance"])),
-        );
+        let set = InteractiveToolSet::new(&inner, tx)
+            .with_ask_user(scripted(vec!["actually use the docker instance"]));
         match set.execute("ask_user", &ask_input()).await {
             ToolOutput::Ok { content } => {
                 assert_eq!(content, "actually use the docker instance")
@@ -825,11 +903,8 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
         // "3" = the free-text slot (2 options + 1); then the actual text.
-        let set = InteractiveToolSet::new(
-            &inner,
-            tx,
-            Box::new(ScriptedIo::new(vec!["3", "my own words"])),
-        );
+        let set =
+            InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec!["3", "my own words"]));
         match set.execute("ask_user", &ask_input()).await {
             ToolOutput::Ok { content } => assert_eq!(content, "my own words"),
             other => panic!("expected Ok, got {other:?}"),
@@ -840,7 +915,7 @@ mod tests {
     async fn ask_user_emits_the_ask_user_event_with_structured_options() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["1"])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec!["1"]));
         let _ = set.execute("ask_user", &ask_input()).await;
         let event = rx.try_recv().expect("AskUser event emitted");
         match event {
@@ -860,7 +935,7 @@ mod tests {
         // session collided. Two invocations must now carry different ids.
         let (tx, mut rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["1", "1"])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec!["1", "1"]));
         let _ = set.execute("ask_user", &ask_input()).await;
         let _ = set.execute("ask_user", &ask_input()).await;
         let id_of = |e: AgentEvent| match e {
@@ -876,7 +951,8 @@ mod tests {
     async fn headless_io_fails_with_a_named_error_never_hangs() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(HeadlessAskUserIo));
+        let set =
+            InteractiveToolSet::new(&inner, tx).with_ask_user(Some(Box::new(HeadlessAskUserIo)));
         match set.execute("ask_user", &ask_input()).await {
             ToolOutput::Error { message } => {
                 assert!(message.contains("unavailable"), "{message}")
@@ -889,7 +965,7 @@ mod tests {
     async fn malformed_input_is_a_named_error() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec![])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec![]));
         let out = set
             .execute("ask_user", &serde_json::json!({"question": "?"}))
             .await;
@@ -907,7 +983,7 @@ mod tests {
     async fn non_ask_user_tools_fall_through_to_the_inner_executor() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec![])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec![]));
         match set.execute("bash", &Value::Null).await {
             ToolOutput::Ok { content } => assert_eq!(content, "inner ran bash"),
             other => panic!("expected inner fallthrough, got {other:?}"),
@@ -959,7 +1035,8 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
         // "1" = approve the install confirmation.
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["1"])))
+        let set = InteractiveToolSet::new(&inner, tx)
+            .with_ask_user(scripted(vec!["1"]))
             .with_skill_registry(registry);
 
         let out = set
@@ -1033,8 +1110,7 @@ mod tests {
             )],
             asked: std::sync::Mutex::new(Vec::new()),
         };
-        let set = InteractiveToolSet::new(&inner, stub, Box::new(ScriptedIo::new(vec![])))
-            .with_recall(&plane, tx);
+        let set = InteractiveToolSet::new(&inner, stub).with_recall(&plane, tx);
 
         let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
         assert!(
@@ -1086,8 +1162,7 @@ mod tests {
             frames: Vec::new(),
             asked: std::sync::Mutex::new(Vec::new()),
         };
-        let set = InteractiveToolSet::new(&inner, stub, Box::new(ScriptedIo::new(vec![])))
-            .with_recall(&plane, tx);
+        let set = InteractiveToolSet::new(&inner, stub).with_recall(&plane, tx);
         let out = set
             .execute(
                 "recall_context",
@@ -1100,6 +1175,102 @@ mod tests {
         assert!(content.contains("no relevant context"), "{content}");
     }
 
+    /// **The witness for the one-fact fix.** `--output-format text` with a
+    /// stdin that is not a terminal — an ordinary CI/wrapper invocation — is
+    /// the configuration where two independent derivations disagreed: the
+    /// rules/approvals layer was handed `format == Text` and believed a human
+    /// could be asked, while `ask_user`'s io had already resolved to the
+    /// headless implementation that only returns an error. Both consumers now
+    /// read [`human_can_answer`], so both say no.
+    #[tokio::test]
+    async fn a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact() {
+        // Interactive text output, stdin redirected, stdout still a terminal.
+        let present = human_can_answer(true, false, true);
+        assert!(!present, "a piped stdin cannot answer a mid-turn question");
+
+        // Consumer 1 — the `ask_user` tool is not offered at all.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(tty_ask_io(present));
+        let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
+        assert!(
+            !names.contains(&"ask_user".to_string()),
+            "no human, so no ask_user in the schema: {names:?}"
+        );
+
+        // Consumer 2 — the #2676 approval responder is not attached, so the
+        // broker refuses with the grant-path message instead of parking on a
+        // stdin nobody is holding.
+        let workspace = tempfile::tempdir().expect("workspace tempdir");
+        let registry = stella_tools::ToolRegistry::new(
+            workspace.path().to_path_buf(),
+            stella_tools::RegistryOptions::ambient(),
+        );
+        crate::approval::attach_interactive_approvals(&registry, present);
+        let outcome = registry
+            .approval_broker()
+            .resolve(None, &approval_request())
+            .await;
+        match outcome {
+            stella_tools::registry::approval::ApprovalOutcome::Denied { reason } => assert!(
+                reason.contains("no interactive surface"),
+                "the broker must stay headless: {reason}"
+            ),
+            other => panic!("no human, so nothing may approve: {other:?}"),
+        }
+
+        // Consumer 3 — the pipeline's approval port reads the same fact, so
+        // it cannot answer Stdio where the other two answered no.
+        for interactive_output in [true, false] {
+            for stdin_tty in [true, false] {
+                for stdout_tty in [true, false] {
+                    let fact = human_can_answer(interactive_output, stdin_tty, stdout_tty);
+                    let capability = crate::agent::approval_capability_for(
+                        false,
+                        interactive_output,
+                        stdin_tty,
+                        stdout_tty,
+                    );
+                    assert_eq!(
+                        fact,
+                        capability == crate::agent::PipelineApprovalCapability::Stdio,
+                        "({interactive_output}, {stdin_tty}, {stdout_tty}) must not fork"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The other side of the witness: an attended surface still gets the
+    /// tool. A fix that withheld `ask_user` everywhere would pass the test
+    /// above and delete the feature.
+    #[tokio::test]
+    async fn an_attended_run_still_offers_ask_user() {
+        assert!(human_can_answer(true, true, true), "a full TTY has a human");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec!["1"]));
+        let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
+        assert!(names.contains(&"ask_user".to_string()), "{names:?}");
+        assert!(
+            matches!(
+                set.execute("ask_user", &ask_input()).await,
+                ToolOutput::Ok { .. }
+            ),
+            "and it answers"
+        );
+    }
+
+    fn approval_request() -> stella_tools::registry::approval::ApprovalRequest {
+        stella_tools::registry::approval::ApprovalRequest {
+            tool: "bash".into(),
+            read_only: false,
+            reason: "commands need a human".into(),
+            gate: "command.started".into(),
+            subject: Some("rm -rf build/".into()),
+        }
+    }
+
     /// With no plane configured the tool is not offered at all — the same
     /// shape the skills registry uses. A tool that is advertised and then
     /// always answers "unavailable" trains the model out of calling it.
@@ -1107,7 +1278,7 @@ mod tests {
     async fn no_plane_means_no_tool() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let inner = FakeInner;
-        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec![])));
+        let set = InteractiveToolSet::new(&inner, tx).with_ask_user(scripted(vec![]));
         let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.contains(&"recall_context".to_string()), "{names:?}");
     }

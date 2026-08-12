@@ -56,11 +56,7 @@ fn process_free_surface_enumeration_omits_every_spawn_and_extension_action() {
     );
     assert!(registry.is_process_free());
     let (events, _) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(
-        &registry,
-        events,
-        Box::new(crate::interactive::HeadlessAskUserIo),
-    );
+    let interactive = crate::interactive::InteractiveToolSet::new(&registry, events);
     let names: std::collections::BTreeSet<String> = interactive
         .schemas()
         .into_iter()
