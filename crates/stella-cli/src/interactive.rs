@@ -123,12 +123,19 @@ impl AskUserIo for HeadlessAskUserIo {
 /// (the pipeline's approval port). Deriving it separately is what let the
 /// rules/approvals layer believe a human could be asked while `ask_user` had
 /// already resolved to an io that only returns an error.
+///
+/// A thin wrapper over [`stella_tty::human_can_answer`] — every consumer in
+/// this crate prints its prompt on stdout, so `stdout_is_terminal` is the
+/// right name for the third input here, but the underlying predicate is
+/// shared with `stella-model`'s credential prompt and the daemon console's
+/// stderr-rendered scope review too (#3036), neither of which could depend on
+/// this crate to read it.
 pub fn human_can_answer(
     interactive_output: bool,
     stdin_is_terminal: bool,
     stdout_is_terminal: bool,
 ) -> bool {
-    interactive_output && stdin_is_terminal && stdout_is_terminal
+    stella_tty::human_can_answer(interactive_output, stdin_is_terminal, stdout_is_terminal)
 }
 
 /// [`human_can_answer`] against this process's real stdio handles.
