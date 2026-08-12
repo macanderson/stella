@@ -19,9 +19,16 @@
 //!   graded subpath. The profile is inherited by every descendant of the
 //!   shell, which is what makes it a boundary rather than a check on the first
 //!   process.
-//! * **Linux** — a private mount namespace (`unshare --mount`) in which each
-//!   graded tree is bind-mounted back over itself read-only. `MS_RDONLY` is
-//!   enforced against root, which the container case needs.
+//! * **Linux** — a private mount namespace (`unshare --user --map-root-user
+//!   --mount`) in which each graded tree is bind-mounted back over itself
+//!   read-only. `MS_RDONLY` is enforced against root, which the container
+//!   case needs. The user-namespace pair is load-bearing, not decoration:
+//!   changing a pre-existing mount's propagation type requires `CAP_SYS_ADMIN`
+//!   in the user namespace that *owns* that mount, and an unprivileged CI
+//!   runner process has no such capability in the initial namespace it was
+//!   born into — `--user --map-root-user` gives it root, and therefore
+//!   `CAP_SYS_ADMIN`, inside a namespace of its own before `--mount` runs
+//!   (#3010).
 //!
 //! Neither is available everywhere, and a facility that is *present* is not
 //! the same as one that *works* — an unprivileged container, a missing
@@ -207,6 +214,8 @@ fn wrap_argv(
         Mechanism::MountNamespace => {
             let script = mount_script(protected, exempt)?;
             let argv = vec![
+                "--user".to_string(),
+                "--map-root-user".to_string(),
                 "--mount".to_string(),
                 "--propagation".to_string(),
                 "private".to_string(),
