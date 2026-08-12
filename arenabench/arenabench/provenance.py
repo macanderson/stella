@@ -58,6 +58,34 @@ version to recover, and inventing one would defeat the entire purpose: a
 fabricated "0.6.1" is indistinguishable from a measured one, which is exactly
 the confusion this file exists to prevent.
 
+# Why a seeded match can never be averaged with a clean one
+
+The apparatus has a fourth axis, and it is the only one this project can turn
+on deliberately: **lineage** (``stella_harbor.lineage``). A lineage seeds a
+trial's container with what an earlier trial of the same task learned —
+memories, promoted skills, authored tools, published context records — so the
+agent starts having already seen the task. That is a real experiment (it is the
+only way to measure whether self-improvement works at all), and it is also a
+contaminated one by construction.
+
+Nothing downstream can tell. A seeded ``result.json`` has the same shape, the
+same fields and the same solve rate as a clean one; the difference lives
+entirely in what was inside the container before the first turn. So the marker
+is carried here, in the record whose whole job is to stop two incomparable
+result sets being mixed, and it is carried in the **key**: a match with
+:attr:`Provenance.lineage_id` set spells a
+:attr:`~Provenance.comparability_key` no clean match can spell, and
+``arenabench.series`` groups its trend lines by that key. There is no averaging
+path that survives dropping it — :func:`assert_aggregable` refuses a set that
+mixes the two, so removing the marker from the key turns a silent average into
+a raised error rather than into a wrong number.
+
+The key is *appended to* rather than restructured, so every key written before
+lineage existed keeps its exact spelling and the whole archive stays groupable
+against itself. A clean match today is byte-identical to a clean match last
+month. That is deliberate and load-bearing: the feature is only defensible
+because opting out of it costs nothing and changes nothing.
+
 What *is* recoverable is a bound. Harbor's own ``JobConfig`` grew fields over
 time, and the config it wrote is on disk: a job config with no ``install_only``
 or ``extra_instruction_paths`` key was written by a Harbor that did not have
@@ -71,6 +99,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -79,11 +108,15 @@ __all__ = [
     "AGENT_SOURCE_OBSERVED",
     "AGENT_SOURCE_PINNED",
     "PROVENANCE_FILE",
+    "ContaminatedAggregateError",
     "Provenance",
+    "assert_aggregable",
     "backfill_match",
     "observe_agent_versions",
+    "observe_lineage",
     "read_match",
     "stamp_agent_versions",
+    "stamp_lineage",
     "write_match",
 ]
 
@@ -110,6 +143,12 @@ AGENT_SOURCE_PINNED = "pinned"
 
 #: Where an agent that speaks ATIF records the product that ran.
 _TRAJECTORY_NAME = "agent/trajectory.json"
+
+#: Where the Stella adapter discloses what a trial's container was seeded with
+#: (``stella_harbor.lineage``). Read back the same way agent versions are: off
+#: the artifacts the trials left behind, because the generation a trial
+#: actually got is only knowable after it ran.
+_LINEAGE_MANIFEST_NAME = "agent/lineage/manifest.json"
 
 
 @dataclass
@@ -167,9 +206,55 @@ class Provenance:
     #: than any version string, and recording it twice invites the two copies
     #: to disagree.
     agent_seats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: The lineage this match was seeded from, or ``""`` for a clean match.
+    #: Recorded at launch from the template, so a match killed before its first
+    #: trial finished is still marked contaminated — the marker must not depend
+    #: on any trial artifact surviving. See the module docstring.
+    lineage_id: str = ""
+    #: Per-seat lineage observation, keyed by contestant id: ``{"lineage",
+    #: "generations", "parents", "tasks", "trials", "unseeded"}``. Stamped
+    #: after the trials, because the generation a container actually received
+    #: is only knowable from what the trial wrote. ``generations`` is a sorted
+    #: list for the same reason ``agent_seats.versions`` is: one arm genuinely
+    #: spans several, one per task, and collapsing that erases the fact.
+    lineage_seats: dict[str, dict[str, Any]] = field(default_factory=dict)
     arenabench_version: str = ""
     recorded_at: float = field(default_factory=time.time)
     source: str = SOURCE_RECORDED
+
+    @property
+    def contaminated(self) -> bool:
+        """Whether any trial in this match started with prior knowledge.
+
+        True from the declaration alone: a match that *asked* to be seeded is
+        contaminated even if every seed turned out to be a first generation,
+        because the operator's intent is what a reader has to be warned about
+        and the per-trial detail may be missing for a match that was killed.
+        """
+        return bool(self.lineage_id or self.lineage_seats)
+
+    @property
+    def lineage_label(self) -> str:
+        """The lineage half of a comparability key, e.g. ``lineage:beta@3+4``.
+
+        Generations are named, not just the id: generation 1 of a chain and
+        generation 40 of it are different amounts of prior knowledge and
+        therefore different apparatus. A contaminated match with no observed
+        generation yet is ``lineage:<id>?`` — unknown, and visibly so, which is
+        the same discipline :meth:`_product_label` uses.
+        """
+        generations = sorted(
+            {
+                int(g)
+                for seat in self.lineage_seats.values()
+                for g in (seat.get("generations") or [])
+                if isinstance(g, int)
+            }
+        )
+        label = self.lineage_id or "?"
+        if not generations:
+            return f"lineage:{label}?"
+        return f"lineage:{label}@{'+'.join(str(g) for g in generations)}"
 
     def _key(self, sut: str) -> str:
         digest = (self.dataset_digest or "unknown").removeprefix("sha256:")[:8]
@@ -179,7 +264,13 @@ class Provenance:
             grader = f"harbor?{self.harbor_bound}"
         else:
             grader = "harbor?"
-        return f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
+        key = f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
+        # Appended only when the match is contaminated, so every key written
+        # before lineage existed keeps its exact spelling and a clean match
+        # today groups with the whole archive. A seeded match therefore cannot
+        # collide with a clean one in any grouping built on this string — which
+        # is the entire mechanism, see the module docstring.
+        return f"{key}/{self.lineage_label}" if self.contaminated else key
 
     @staticmethod
     def _product_label(seat: dict[str, Any]) -> str:
@@ -342,6 +433,14 @@ class Provenance:
             out["agent_products"] = list(self.agent_products)
             out["mixed_version_seats"] = list(self.mixed_version_seats)
             out["violated_pins"] = self.violated_pins
+        # Present only when true, so a clean record carries no affirmative
+        # claim about a feature it never used, and a grep for "contaminated"
+        # over an archive returns exactly the seeded matches. The empty
+        # `lineage_id`/`lineage_seats` that `asdict` always writes are the
+        # absence; this pair is the assertion.
+        if self.contaminated:
+            out["contaminated"] = True
+            out["lineage_label"] = self.lineage_label
         return out
 
     @classmethod
@@ -523,6 +622,159 @@ def stamp_agent_versions(match_dir: Path) -> Provenance | None:
         return record
     write_match(match_dir, record)
     return record
+
+
+class ContaminatedAggregateError(ValueError):
+    """A set of records that must not be reduced to one number.
+
+    Carries the offending keys so a caller can say *which* records disagreed
+    rather than only that they did.
+    """
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+        super().__init__(
+            "refusing to aggregate result sets measured on different apparatus: "
+            + "; ".join(keys)
+            + " — a seeded (lineage) run has seen its tasks before and its "
+            "number is not comparable with a clean one. Report them side by "
+            "side, labelled, and never summed."
+        )
+
+
+def assert_aggregable(records: Iterable[Provenance | None]) -> None:
+    """Refuse a set of records that cannot honestly be reduced to one number.
+
+    The rule the whole module states in prose, made executable at the one place
+    it can actually be violated: anything that combines several matches into a
+    single figure. Records that share a :attr:`~Provenance.comparability_key`
+    may be aggregated; anything else must be shown labelled instead.
+
+    ``None`` members are unprovenanced matches and are *not* silently tolerated
+    — an unknown apparatus is a different apparatus, and one of the archive's
+    real failure modes is exactly that (see the module docstring on why history
+    is labelled rather than guessed).
+
+    This is belt and braces on purpose. Because :meth:`Provenance._key` already
+    appends the lineage label, a seeded and a clean record cannot share a key
+    and this function cannot fire on that pair *while the key is intact*. That
+    is the point: deleting the lineage component from the key — the tempting
+    edit, made by someone who wants two runs to line up — converts a silent
+    wrong average into a raised error and a red test, rather than into a number
+    nobody can audit.
+    """
+    keys = sorted(
+        {
+            record.comparability_key if record is not None else "unprovenanced"
+            for record in records
+        }
+    )
+    if len(keys) > 1:
+        raise ContaminatedAggregateError(keys)
+
+
+def observe_lineage(match_dir: Path) -> dict[str, dict[str, Any]]:
+    """What each seat's containers were seeded with, read off its trials.
+
+    The lineage counterpart of :func:`observe_agent_versions`, and deliberately
+    the same shape: the adapter writes ``agent/lineage/manifest.json`` per
+    trial, and that is the only channel that can say which *generation* a
+    container actually received — the template names a lineage, not a number.
+
+    ``unseeded`` counts trials that ran under a lineage but received no prior
+    generation (the first run of a chain). It is kept because "3 of 5 trials
+    were seeded" and "5 of 5 were" are different amounts of contamination, and
+    a label that says only "seeded" would overclaim the first.
+
+    Best-effort throughout, for the reason its sibling is: a benchmark that
+    refuses to report because one artifact is unreadable is worse than one that
+    reports what it has and says how much that is.
+    """
+    seats: dict[str, dict[str, Any]] = {}
+    for job_dir in sorted(match_dir.glob("jobs/*")):
+        if not job_dir.is_dir():
+            continue
+        record = _seat_of(job_dir)
+        seat_id = str((record or {}).get("contestant") or "") or job_dir.name
+
+        lineage = ""
+        generations: set[int] = set()
+        parents: set[int] = set()
+        tasks: set[str] = set()
+        trials = 0
+        unseeded = 0
+        for manifest_path in sorted(job_dir.glob(f"*/{_LINEAGE_MANIFEST_NAME}")):
+            payload = _load_json_object(manifest_path)
+            if payload is None or payload.get("state") == "off":
+                continue
+            trials += 1
+            lineage = lineage or str(payload.get("lineage") or "")
+            if str(payload.get("task_id") or ""):
+                tasks.add(str(payload["task_id"]))
+            seeded = payload.get("seeded_generation")
+            if isinstance(seeded, int):
+                generations.add(seeded)
+            else:
+                unseeded += 1
+            harvested = payload.get("harvested_generation")
+            if isinstance(harvested, int):
+                parents.add(harvested)
+
+        if not trials:
+            continue
+        seats[seat_id] = {
+            "lineage": lineage,
+            "generations": sorted(generations),
+            "harvested": sorted(parents),
+            "tasks": sorted(tasks),
+            "trials": trials,
+            "unseeded": unseeded,
+        }
+    return seats
+
+
+def stamp_lineage(match_dir: Path) -> Provenance | None:
+    """Fold observed lineage generations into a match's record, in place.
+
+    The lineage half of the second write (:func:`stamp_agent_versions` is the
+    other), and idempotent for the same reason. Returns the updated record, or
+    ``None`` when there is no record or nothing new to say.
+
+    Never *downgrades*: a re-stamp against a half-deleted archive must not turn
+    a contaminated match into one that looks clean. That direction is the whole
+    hazard, so :attr:`Provenance.lineage_id` — recorded at launch from the
+    template — is only ever filled in here, never cleared.
+    """
+    record = read_match(match_dir)
+    if record is None:
+        return None
+    observed = observe_lineage(match_dir)
+    if not observed:
+        return None
+    changed = False
+    for seat_id, seat in observed.items():
+        if record.lineage_seats.get(seat_id) == seat:
+            continue
+        record.lineage_seats[seat_id] = seat
+        changed = True
+    if not record.lineage_id:
+        declared = next((s["lineage"] for s in observed.values() if s["lineage"]), "")
+        if declared:
+            record.lineage_id = declared
+            changed = True
+    if not changed:
+        return record
+    write_match(match_dir, record)
+    return record
+
+
+def _load_json_object(path: Path) -> dict[str, Any] | None:
+    """One JSON object off disk, or ``None`` for anything unreadable."""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
 
 
 def _job_configs(match_dir: Path) -> list[dict[str, Any]]:

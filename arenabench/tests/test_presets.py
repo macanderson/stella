@@ -220,7 +220,10 @@ class TestEffortReachesTheWire:
             job_dir=tmp_path / "job",
             log_path=tmp_path / "job.log",
         )
-        return runner._agent_environment(seat, run), run.notes
+        # A clean match: no lineage, so the seat environment is exactly
+        # what it was before lineage existed.
+        spec = MatchSpec.from_json({"name": "m", "dataset": "d", "contestants": []})
+        return runner._agent_environment(spec, seat, run), run.notes
 
     def _seat(self, env: str = "", **engine: object) -> Contestant:
         return Contestant.from_json(

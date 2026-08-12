@@ -39,6 +39,12 @@ dependencies = ["harbor==0.6.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "ruff>=0.6"]
+# Only `stella_harbor.lineage` needs an AWS SDK, and only when a run actually
+# opts into a lineage. Kept out of the base dependency set so a bench box that
+# never seeds a trial does not install boto3 to run one — the import is
+# deferred (`lineage._boto3`) and its absence is an actionable error rather
+# than a crash, matching how `arenabench.cloud` treats the same dependency.
+lineage = ["boto3>=1.34"]
 
 [project.urls]
 Homepage = "https://github.com/macanderson/stella"

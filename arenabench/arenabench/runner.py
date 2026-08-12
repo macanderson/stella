@@ -63,6 +63,14 @@ __all__ = ["ContestantRun", "Match", "MatchRunner"]
 
 log = logging.getLogger("arenabench.runner")
 
+#: The lineage opt-in the Stella adapter reads (``stella_harbor.lineage``).
+#: Spelled here rather than imported from that package: ``stella_harbor`` is a
+#: separate distribution the arena stages per match and does not import at
+#: module scope, and one string is a cheaper coupling than an import that can
+#: fail at launch. The adapter registers the same name host-only, so an
+#: unrecognised spelling refuses the run rather than silently running clean.
+LINEAGE_ENV = "STELLA_LINEAGE"
+
 #: Environment variables that must never be inherited by a contestant's Harbor
 #: process from the arena's own environment. Every one of them is a credential
 #: or a routing override that would silently make two seats identical — the
@@ -225,6 +233,12 @@ def _provenance_for(
         sut_sha256=sut_sha256,
         sut_seats=sut_seats,
         agent_seats=agent_seats,
+        # Recorded at launch from the template, before any trial has run, for
+        # the reason the whole record is written here: a match killed mid-run
+        # must still be attributable, and "this run was seeded" is the single
+        # most misleading fact to lose (see `arenabench.provenance`). The
+        # generations each seat actually received are stamped afterwards.
+        lineage_id=match.spec.lineage,
         arenabench_version=__version__,
         source=provenance.SOURCE_RECORDED,
     )
@@ -1042,7 +1056,7 @@ class MatchRunner:
         pin = match.sut_pin_for(contestant) if contestant.agent == "stella" else None
         env = _base_environment()
         env.update(seat_env)
-        env.update(self._agent_environment(contestant, run, pin))
+        env.update(self._agent_environment(match.spec, contestant, run, pin))
 
         # The seat's launch record — the only artifact that can say which
         # route this job's trials were actually served by. `launch_model`
@@ -1135,6 +1149,7 @@ class MatchRunner:
 
     def _agent_environment(
         self,
+        match_spec: MatchSpec,
         contestant: Contestant,
         run: ContestantRun,
         pin: sut.ResolvedPin | None = None,
@@ -1142,7 +1157,12 @@ class MatchRunner:
         """Agent-specific environment, layered over the operator's ``.env``.
 
         ``pin`` is the seat's SUT pin as :meth:`Match.sut_pin_for` observed it
-        — already resolved, never re-resolved here (#2098).
+        — already resolved, never re-resolved here (#2098). ``match_spec`` carries
+        the match-level settings a single seat cannot state for itself; today
+        that is ``lineage``, which is a property of the whole contest. It is
+        deliberately not named ``spec``: that name is already bound in this
+        body to the *agent* spec, and shadowing it would silently read
+        ``AgentSpec.lineage``.
         """
         spec = resolve_agent(contestant.agent)
         env: dict[str, str] = {}
@@ -1178,6 +1198,17 @@ class MatchRunner:
         # that mean something about the agent (#2411).
         if engine.base_url:
             env["STELLA_BASE_URL"] = engine.base_url
+        # Set only when the template asked for it. `_base_environment` scrubs
+        # every ambient STELLA_*, so omitting the key is the whole guarantee
+        # that a match with no `lineage` runs exactly as it did before this
+        # feature existed — the adapter's seed and harvest both return before
+        # any side effect when the variable is absent.
+        if match_spec.lineage:
+            env[LINEAGE_ENV] = match_spec.lineage
+            run.notes.append(
+                f"SEEDED from lineage {match_spec.lineage} — this arm has seen "
+                "its tasks before; its result is not comparable with a clean run"
+            )
         if engine.bare_loop:
             # Set here rather than inherited: `_base_environment` scrubs every
             # ambient STELLA_* so a host export can never stand in for a seat's
@@ -1376,6 +1407,33 @@ class MatchRunner:
                         seat_id,
                         len(versions),
                         ", ".join(str(v) for v in versions),
+                    )
+
+        # The lineage half of the same second write, and for the same reason:
+        # the template names a chain, but only a finished trial can say which
+        # *generation* its container actually received. Logged at WARNING even
+        # when everything worked, because "this ran correctly" and "this number
+        # is quotable" are different statements here, and the second one is
+        # false for every seeded match.
+        try:
+            stamped = provenance.stamp_lineage(match.workspace)
+        except Exception:  # never let bookkeeping fail a finished match
+            log.exception("could not stamp lineage for %s", match.spec.id)
+        else:
+            if stamped is not None:
+                match.provenance = stamped
+                for seat_id, seat in sorted(stamped.lineage_seats.items()):
+                    log.warning(
+                        "match %s seat %s ran seeded from lineage %s "
+                        "(generations %s over %d trials, %d unseeded): this arm "
+                        "had seen its tasks before and its solve rate is NOT "
+                        "comparable with a clean run",
+                        match.spec.id,
+                        seat_id,
+                        seat.get("lineage") or "?",
+                        ", ".join(str(g) for g in seat.get("generations") or []) or "-",
+                        seat.get("trials", 0),
+                        seat.get("unseeded", 0),
                     )
 
         if match.status != "cancelled":

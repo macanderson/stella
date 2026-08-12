@@ -798,6 +798,22 @@ class MatchSpec:
     #: unverified SUT so no number produced that way can be mistaken for one
     #: from a known commit.
     sut_ref: str = "main"
+    #: Opt in to **lineage**: carry what a Stella seat learned on a task in one
+    #: trial into the next trial of the same task
+    #: (:mod:`stella_harbor.lineage`). Empty — the default — means every trial
+    #: starts blank, which is what every published number was measured under.
+    #:
+    #: ``"<id>"`` chains onto the newest generation of that lineage;
+    #: ``"<id>@<n>"`` replays generation ``n``. The value **scopes** which
+    #: chain and which generation; it never selects a different operation —
+    #: harvest and seed are separate operations at separate call sites.
+    #:
+    #: Setting this **contaminates the match**: every seeded trial has seen its
+    #: task before, and the result is not comparable with a clean one. That is
+    #: why the id is recorded in :class:`arenabench.provenance.Provenance` and
+    #: rides into the comparability key — see that module's docstring, which
+    #: exists precisely to stop two incomparable result sets being averaged.
+    lineage: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -814,6 +830,7 @@ class MatchSpec:
             "capture_snapshots": self.capture_snapshots,
             "snapshot_interval": self.snapshot_interval,
             "sut_ref": self.sut_ref,
+            "lineage": self.lineage,
         }
 
     @classmethod
@@ -850,6 +867,11 @@ class MatchSpec:
             sut_ref=(
                 "main" if raw.get("sut_ref") is None else str(raw["sut_ref"]).strip()
             ),
+            # Absent means no lineage, and that is the only safe default: a
+            # payload written before this field existed described a match whose
+            # every trial started blank, and reading it as anything else would
+            # retroactively label clean history as contaminated.
+            lineage=str(raw.get("lineage") or "").strip(),
         )
 
     def sut_ref_for(self, contestant: Contestant) -> str:

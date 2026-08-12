@@ -238,6 +238,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     snapshot = match.snapshot()
     print(f"\nfinished in {snapshot['elapsed'] / 60:.1f}m")
+    # Printed above the numbers, not below them, because it changes what every
+    # number underneath means. A seeded arm had already seen these tasks, so
+    # its solve rate is a measurement of self-improvement and not of the agent
+    # — see the lineage section of `arenabench.provenance`.
+    if match.provenance is not None and match.provenance.contaminated:
+        print(
+            f"  !! SEEDED RUN ({match.provenance.lineage_label}) — these agents "
+            "had seen these tasks before. Not comparable with a clean run; "
+            "never average the two."
+        )
     worst = 0
     for entry in snapshot["contestants"]:
         totals = entry["totals"]
