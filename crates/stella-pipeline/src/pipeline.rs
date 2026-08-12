@@ -171,6 +171,29 @@ const NOTHING_ATTEMPTED_NUDGE: &str = "This turn ended without calling a single 
      file, running the command, applying the edit. Reasoning about a solution, or stating one in \
      prose, does not perform it.";
 
+/// What an [`LadderDecision::Unverifiable`] or an unanswerable
+/// [`LadderDecision::Unverified`] revision turn is told (#2908).
+///
+/// The pipeline may only ever ADD a claim about the work; it must never
+/// SUBTRACT the work itself. `Unverified`/`Unverifiable` mean the *claim*
+/// stalled — nothing available proved the change either way — and that used
+/// to be read as the *run* stalling too: the ladder reached one of these
+/// rungs and `verify_candidate` returned there, whatever the worker still had
+/// left to do. On `pypi-server` (ArenaBench run `w10p`) that difference was
+/// the whole result: the pipeline arm stopped four minutes before the bare
+/// arm on the identical worker and never built the wheel the bare arm
+/// shipped.
+///
+/// This message is not a claim about the change (a claim here would be
+/// exactly the model-verifier authority [`RevisionCause`] was built to
+/// exclude) — it states the one fact the pipeline actually knows: nothing
+/// could confirm the change, so if there is more to do, do it.
+const UNPROVEN_CONTINUE_NUDGE: &str = "Nothing available could confirm this change one way or \
+     the other — no test command is tracked, and no witness could be produced. That is not a \
+     verdict on the work; it means verification has nothing to check it against. If you believe \
+     the task is not yet complete, keep going with tool calls. If you believe it is complete, \
+     you do not need to do anything further.";
+
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a precise, careful software engineering agent. Make the smallest correct change.";
@@ -2400,6 +2423,45 @@ impl<'a> Pipeline<'a> {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // #2908: `Unverifiable` is a claim, not a verdict on the
+                    // run — "we could not see" must not read as "stop here."
+                    // Scoped to `effective_cmd.is_none()` — no tracked command
+                    // AND no witness — because that is the evidenced failure:
+                    // a run with a real command that merely went blind this
+                    // round (infra noise on the confirmation, say) is a
+                    // narrower, already-tested shape, and widening to it too
+                    // is a separate change, not this one. Bounded exactly like
+                    // every other back-edge on this ladder (`affords_repair`'s
+                    // revision/budget/wall-clock gate), and additionally by
+                    // the worker's OWN stopping condition: a round that
+                    // dispatched no further mutating call and moved no diff
+                    // line answered the nudge by declining to act, which is
+                    // bare's own termination — adopting it here is what keeps
+                    // this from looping the full revision allowance against a
+                    // worker that is already done.
+                    if effective_cmd.is_none()
+                        && self.affords_repair(&state, &meter, *spend.total, spend.budget)
+                    {
+                        let mutating_before = state.signals.mutating_actions;
+                        let diff_lines_before = state.diff_lines;
+                        if let Err(abort) = self
+                            .revise_candidate(
+                                engine,
+                                surface,
+                                RevisionCause::Deterministic(UNPROVEN_CONTINUE_NUDGE),
+                                spend,
+                                &mut state,
+                            )
+                            .await
+                        {
+                            return CandidateResult::turn_aborted(state.messages, abort);
+                        }
+                        if state.signals.mutating_actions != mutating_before
+                            || state.diff_lines != diff_lines_before
+                        {
+                            continue;
+                        }
+                    }
                     return state.into_verified(
                         true,
                         &evidence,
@@ -2587,6 +2649,46 @@ impl<'a> Pipeline<'a> {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // #2908: scoped to `effective_cmd.is_none()` — no tracked
+                    // command AND no witness, the exact shape that let the
+                    // ladder end a run four minutes before the bare loop on
+                    // the same worker, on `pypi-server`. Where a command DOES
+                    // exist, either the evidence-demand arm above already
+                    // spent its one ask, or it declined to (off, or already
+                    // spent, or the pass does not stand alone) — those are
+                    // this arm's own established, separately-tested contract
+                    // and are unaffected here. The pipeline may downgrade the
+                    // CLAIM to unproven; it may not downgrade the RUN by
+                    // ending it a revision before the worker itself would
+                    // have stopped. Same bound as the `Unverifiable` arm
+                    // above: `affords_repair`'s existing revision/budget/
+                    // wall-clock gate, plus the worker's own stopping
+                    // condition (no further mutating call, no diff movement)
+                    // so a worker that is genuinely done is not walked
+                    // through the rest of its allowance for nothing.
+                    if effective_cmd.is_none()
+                        && self.affords_repair(&state, &meter, *spend.total, spend.budget)
+                    {
+                        let mutating_before = state.signals.mutating_actions;
+                        let diff_lines_before = state.diff_lines;
+                        if let Err(abort) = self
+                            .revise_candidate(
+                                engine,
+                                surface,
+                                RevisionCause::Deterministic(UNPROVEN_CONTINUE_NUDGE),
+                                spend,
+                                &mut state,
+                            )
+                            .await
+                        {
+                            return CandidateResult::turn_aborted(state.messages, abort);
+                        }
+                        if state.signals.mutating_actions != mutating_before
+                            || state.diff_lines != diff_lines_before
+                        {
+                            continue;
+                        }
+                    }
                     return state.into_verified(
                         true,
                         &evidence,

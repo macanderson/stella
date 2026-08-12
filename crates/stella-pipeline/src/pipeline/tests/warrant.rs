@@ -276,6 +276,10 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
         text_result("single"),
         writing_tool_result("writing the fix"),
         text_result("done"),
+        // #2908: no test command and no witness author, so `effective_cmd`
+        // is `None` — the run now buys one continue round before settling
+        // `Unverifiable`.
+        text_result("nothing more to do"),
     ]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], DOCS_DIFF).with_blind_diff();
@@ -393,6 +397,10 @@ async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass
         text_result("single"),
         writing_tool_result("configuring nginx on port 8080"),
         text_result("nginx is installed and serving on 8080"),
+        // #2908: no test command and no witness author, so `effective_cmd`
+        // is `None` — the run now buys one continue round before settling
+        // `Unverifiable`.
+        text_result("nothing more to do"),
     ]);
     let resolver = OneProvider(&provider);
     // Exit 0, empty stdout: the probe LOOKED and the tree is unchanged.
@@ -502,9 +510,10 @@ async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass
     let events = drain(&mut rx);
     assert_eq!(
         provider.prompts().len(),
-        3,
-        "triage and two worker turns — a fourth call would mean a verifier was \
-         asked to guess about a workspace nothing collected"
+        4,
+        "triage, two worker turns, and #2908's continue round (the worker declining to \
+         act further) — a FIFTH call would mean a verifier was asked to guess about a \
+         workspace nothing collected"
     );
     assert!(
         events.iter().any(|event| matches!(

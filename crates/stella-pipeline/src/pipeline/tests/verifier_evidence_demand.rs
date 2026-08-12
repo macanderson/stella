@@ -122,13 +122,30 @@ async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer(
 /// cannot come back: with no tracked command, `verifier_pass_stands_alone` is
 /// true *by construction* — `touched_tests_passed` can only ever be `None`
 /// and the flip oracle never observes a candidate run — so an ask could not
-/// be satisfied by any worker on any turn. The pipeline must not buy one.
+/// be satisfied by any worker on any turn. The pipeline must not buy an
+/// EVIDENCE DEMAND here — `effective_cmd` is `None`, so there is nothing a
+/// worker could run to answer one, and `evidence_demand_is_worth_a_turn`
+/// still declines exactly as before.
+///
+/// #2908: what the pipeline must NOT do any more is stop the RUN over it.
+/// This is the `pypi-server` shape from ArenaBench run `w10p`: no tracked
+/// command, no witness, `Unverified` reached with nothing to ask for — and on
+/// `main@554bb4f` the run ended right there, four minutes before the bare
+/// loop on the same worker finished the task. The pipeline may only downgrade
+/// the CLAIM (the verdict stays unproven, never deterministic); it may not
+/// subtract the work by ending the run a revision short of where the worker
+/// would have stopped on its own. So one continue round IS bought — bounded
+/// by `affords_repair`, the same gate every other back-edge on this ladder
+/// uses — and this candidate's tools are empty, so that round cannot dispatch
+/// a mutating call either: the worker's own stopping condition (no further
+/// tool call) then ends the run on the next lap, at exactly one extra round,
+/// not the full revision allowance.
 #[tokio::test]
-async fn no_tracked_command_means_no_ask_at_all() {
+async fn no_tracked_command_buys_a_continue_round_but_never_an_evidence_demand() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
-        text_result("PASS — the change reads correct"),
+        text_result("nothing more to do"),
     ]);
     let runner = ScriptedRunner::scripted(Vec::new(), "@@ -1 +1 @@\n-old\n+new");
     let config = PipelineConfig {
@@ -145,22 +162,35 @@ async fn no_tracked_command_means_no_ask_at_all() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         !verdict.deterministic,
-        "nothing deterministic could have been observed here"
+        "nothing deterministic could have been observed here — an unanswerable ask must \
+         still never be bought"
+    );
+    assert!(
+        verdict.summary.starts_with("UNVERIFIED"),
+        "the claim stays honestly downgraded: {}",
+        verdict.summary
     );
     assert_eq!(
-        outcome.revisions, 0,
-        "an unanswerable ask must not be bought — this is the whole reason \
-         the feature was switched off the first time"
+        outcome.revisions, 1,
+        "one continue round is bought — #2908: the run must not end a revision short of \
+         where the worker itself would have stopped, even though no evidence demand was \
+         possible"
     );
     assert_eq!(
-        calls, 2,
-        "triage and worker — and nothing else: an unanswerable ask buys no turn"
+        calls, 3,
+        "triage, worker, and the one continue round; with no tools registered the round \
+         dispatches nothing, so the worker's own stopping condition ends the run here \
+         rather than spending the rest of the revision allowance"
     );
 }
 
 /// The ask is spent once per candidate. A worker that comes back without the
 /// evidence is not asked again — it already answered, and paying for the same
 /// answer twice is exactly the runaway cost this feature was reverted for.
+///
+/// (#2908's continue round is scoped to `effective_cmd.is_none()` — this
+/// scenario tracks a real command, so it is unaffected: the one-ask cap below
+/// is still the whole story.)
 #[tokio::test]
 async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     let provider = ScriptedProvider::new(vec![
@@ -208,6 +238,9 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
 /// Switched off, the pipeline is byte-for-byte the behaviour that shipped:
 /// relabel on the spot, no revision, no second verifier call. The flag is what
 /// makes the measurement in #1295 a two-arm comparison rather than a rebuild.
+///
+/// (#2908's continue round is scoped to `effective_cmd.is_none()` — this
+/// scenario tracks a real command, so it is unaffected.)
 #[tokio::test]
 async fn the_demand_can_be_switched_off() {
     let provider = ScriptedProvider::new(vec![
@@ -320,6 +353,9 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
 /// deliberately the same ones, because the *observable* contract they pin is
 /// what mattered and it has not moved — a missing toolchain is not a failing
 /// change, and it is not a passing one either.
+///
+/// (#2908's continue round is scoped to `effective_cmd.is_none()` — this
+/// scenario tracks a real command, so it is unaffected.)
 #[tokio::test]
 async fn a_missing_runner_is_unproven_rather_than_passed_or_failed() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
