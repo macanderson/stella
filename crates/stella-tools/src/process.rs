@@ -1,5 +1,5 @@
 //! Long-lived process group: `start_process`, `read_output`, `clear_output`,
-//! `send_stdin`, `stop_process`.
+//! `send_stdin`, `restart_process`, `stop_process`.
 //!
 //! For servers, REPLs, and watchers — anything that outlives one tool call.
 //! One-shot work belongs in `run_tests` / `build_project` / `run_script`,
@@ -72,10 +72,18 @@
 //!   `Child` is released, its log file is deleted, and a small tombstone
 //!   takes their place, so the handle still reports its exit instead of
 //!   degrading to "unknown handle".
-//! - `stop_process` closes stdin, sends SIGTERM to the process group,
-//!   waits `STOP_GRACE_MS`, then SIGKILLs the group. This is the ONLY path
-//!   that kills a started process on Stella's own initiative — a process
-//!   the model never explicitly stopped is left running when the table
+//! - `restart_process` replaces what runs under a handle: it closes stdin,
+//!   sends SIGTERM to the process group, waits `STOP_GRACE_MS`, SIGKILLs the
+//!   group if it must, and then spawns the same argv (or a corrected one)
+//!   under the same handle. It is the ONLY path that kills a started process
+//!   on Stella's own initiative, and it always leaves the handle running.
+//! - `stop_process` **reaps** a handle whose process has already exited. It
+//!   refuses one that is still running, because a service is usually the
+//!   deliverable and an agent that can take it down can manufacture the
+//!   failing baseline its own witness needs (#2864) — see
+//!   [`service`]'s module doc for why the capability withheld is "leave it
+//!   down" and not "stop".
+//! - A process the model never restarted is left running when the table
 //!   (and with it the whole tool registry) drops, on purpose, so that a
 //!   declared long-running service survives the turn that started it. A
 //!   process not reachable through this table at all (nothing spawned it
@@ -103,7 +111,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin};
 
 use crate::registry::Tool;
 
@@ -146,6 +154,13 @@ struct ProcessEntry {
     name: Option<String>,
     /// The spawned argv, joined for display.
     display: String,
+    /// The argv as spawned. Kept whole, not just joined, because
+    /// `restart_process` re-spawns it and a display string cannot be split
+    /// back into arguments without inventing a quoting dialect.
+    argv: Vec<String>,
+    /// The directory it was spawned in, so a replacement lands in the same
+    /// place rather than wherever the restarting call happened to be rooted.
+    cwd: PathBuf,
     child: Child,
     /// Taken out of `child` at spawn so `send_stdin` can write without
     /// holding the table lock across an await; `None` once closed.
@@ -495,7 +510,8 @@ impl Tool for StartProcess {
                 return ToolOutput::Error {
                     message: format!(
                         "{live} processes are already running and the limit is \
-                         {MAX_LIVE_PROCESSES} — stop one with stop_process (known handles: {}), \
+                         {MAX_LIVE_PROCESSES} — replace one with restart_process (known \
+                         handles: {}), \
                          or use run_tests/build_project/run_script for one-shot work",
                         table.known_handles()
                     ),
@@ -503,96 +519,27 @@ impl Tool for StartProcess {
             }
         }
 
-        // A private file, not a pipe: see the module doc's #2666 note on
-        // why the child's stdout/stderr must not depend on this process
-        // staying alive to read them.
-        let log_dir = self.scratch.clone().unwrap_or_else(std::env::temp_dir);
-        let named = match tempfile::Builder::new()
-            .prefix("stella-proc-")
-            .suffix(".log")
-            .tempfile_in(&log_dir)
-        {
-            Ok(named) => named,
-            Err(e) => {
+        // One spawn policy, shared with `restart_process` — see
+        // [`service::spawn_entry`].
+        let entry = match service::spawn_entry(&argv, name.clone(), root, self.scratch.as_deref()) {
+            Ok(entry) => entry,
+            Err(failure) => {
                 return ToolOutput::Error {
-                    message: format!("failed to create a log file for the process: {e}"),
+                    message: failure.to_string(),
                 };
             }
         };
-        let (log_file, log_path) = match named.keep() {
-            Ok(kept) => kept,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("failed to persist the process's log file: {e}"),
-                };
-            }
-        };
-        let stdout_stdio = match log_file.try_clone() {
-            Ok(f) => std::process::Stdio::from(f),
-            Err(e) => {
-                let _ = std::fs::remove_file(&log_path);
-                return ToolOutput::Error {
-                    message: format!("failed to duplicate the process log handle: {e}"),
-                };
-            }
-        };
-        let stderr_stdio = std::process::Stdio::from(log_file);
+        let display = entry.display.clone();
+        let pid = entry.pid;
 
-        let mut cmd = Command::new(&argv[0]);
-        cmd.args(&argv[1..]);
-        cmd.current_dir(root);
-        // Full spawn policy: git-repo retargeting and forced-color overrides
-        // are scrubbed along with credentials, exactly like `exec::drive` —
-        // a server's output lands in its log file, never a terminal.
-        crate::subprocess_env::scrub_spawn_env(&mut cmd);
-        crate::subprocess_env::inject_scratch_env(&mut cmd, self.scratch.as_deref());
-        cmd.stdin(std::process::Stdio::piped());
-        cmd.stdout(stdout_stdio);
-        cmd.stderr(stderr_stdio);
-        // No `kill_on_drop`: a started process is deliberately left running
-        // when this Rust value drops — see the module doc.
-        // Own process group so `stop_process` can take down grandchildren.
-        #[cfg(unix)]
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = std::fs::remove_file(&log_path);
-                return ToolOutput::Error {
-                    message: format!("failed to spawn `{}`: {e}", argv.join(" ")),
-                };
-            }
-        };
-        let pid = child.id().unwrap_or(0) as i32;
-        let stdin = child.stdin.take();
-
-        let display = argv.join(" ");
         let mut table = self.handle.lock().unwrap_or_else(|p| p.into_inner());
         table.next_id += 1;
         let handle = format!("proc-{}", table.next_id);
-        table.entries.insert(
-            handle.clone(),
-            ProcessEntry {
-                name: name.clone(),
-                display: display.clone(),
-                child,
-                stdin,
-                stdin_closed: false,
-                log_path,
-                read_pos: 0,
-                pid,
-                exit_code: None,
-            },
-        );
+        table.entries.insert(handle.clone(), entry);
         ToolOutput::Ok {
             content: format!(
                 "started `{display}`{} as {handle} (pid {pid}) — poll it with read_output, \
-                 stop it with stop_process",
+                 restart it with restart_process",
                 name.map(|n| format!(" ({n})")).unwrap_or_default()
             ),
         }
@@ -898,9 +845,9 @@ impl Tool for StopProcess {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "stop_process".into(),
-            description: "Stop a started process: closes stdin, sends SIGTERM to its process \
-                          group, waits briefly, then SIGKILLs. Remaining output stays \
-                          readable via read_output."
+            description: "Reap a started process that has already exited, releasing its \
+                          handle. A process that is STILL RUNNING is not stopped — use \
+                          restart_process to replace what runs under the handle."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -923,88 +870,40 @@ impl Tool for StopProcess {
                 };
             }
         };
-        // Phase 1, under the lock: close stdin (EOF lets well-behaved
-        // REPLs/servers exit on their own) and send the group SIGTERM.
-        let pid = {
-            let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(tomb) = table.tombstones.get(handle) {
-                return ToolOutput::Ok {
-                    content: format!("{handle} had already exited (code {})", tomb.exit_code),
-                };
-            }
-            let Some(entry) = table.entries.get_mut(handle) else {
-                return unknown_handle_error(&table, handle);
-            };
-            entry.stdin = None;
-            // Latch the close so a send_stdin holding the handle out for an
-            // in-flight write cannot put it back afterwards.
-            entry.stdin_closed = true;
-            if let Some(code) = entry.poll_exit() {
-                return ToolOutput::Ok {
-                    content: format!("{handle} had already exited (code {code})"),
-                };
-            }
-            #[cfg(unix)]
-            if entry.pid > 0 {
-                // SAFETY: signalling the child's own process group; the
-                // > 0 guard means we never signal our own group.
-                unsafe {
-                    libc::kill(-entry.pid, libc::SIGTERM);
-                }
-            }
-            entry.pid
-        };
-        // Phase 2: poll for exit without holding the lock across sleeps.
-        let mut waited = 0u64;
-        let exit_after_term = loop {
-            {
-                let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
-                let Some(entry) = table.entries.get_mut(handle) else {
-                    return ToolOutput::Error {
-                        message: format!("{handle} disappeared while stopping"),
-                    };
-                };
-                if let Some(code) = entry.poll_exit() {
-                    break Some(code);
-                }
-            }
-            if waited >= STOP_GRACE_MS {
-                break None;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            waited += 100;
-        };
-        if let Some(code) = exit_after_term {
-            return ToolOutput::Ok {
-                content: format!("{handle} terminated (code {code})"),
-            };
-        }
-        // Phase 3: it ignored SIGTERM — SIGKILL the group.
-        #[cfg(unix)]
-        if pid > 0 {
-            // SAFETY: same guarded group signal as above.
-            unsafe {
-                libc::kill(-pid, libc::SIGKILL);
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = pid;
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(entry) = table.entries.get_mut(handle) {
-            let _ = entry.child.start_kill();
-            let code = entry.poll_exit();
+        if let Some(tomb) = table.tombstones.get(handle) {
             return ToolOutput::Ok {
-                content: match code {
-                    Some(code) => format!("{handle} killed after SIGTERM grace (code {code})"),
-                    None => format!("{handle} killed after SIGTERM grace"),
-                },
+                content: format!("{handle} had already exited (code {})", tomb.exit_code),
+            };
+        }
+        let Some(entry) = table.entries.get_mut(handle) else {
+            return unknown_handle_error(&table, handle);
+        };
+        // Reaping a handle whose process is already gone is the whole of what
+        // this tool honestly did. Taking down a *running* service is refused:
+        // see `service`'s module doc for why the withheld capability is
+        // "leave it down" rather than "stop" (#2864).
+        if let Some(code) = entry.poll_exit() {
+            entry.stdin = None;
+            entry.stdin_closed = true;
+            return ToolOutput::Ok {
+                content: format!("{handle} had already exited (code {code})"),
             };
         }
         ToolOutput::Error {
-            message: format!("{handle} disappeared while stopping"),
+            message: service::StopRefusal::LiveService {
+                handle: handle.to_string(),
+                display: entry.display.clone(),
+                name: entry.name.clone(),
+            }
+            .to_string(),
         }
     }
 }
+
+pub mod service;
+
+pub use service::{RestartProcess, StopRefusal};
 
 #[cfg(test)]
 mod tests;

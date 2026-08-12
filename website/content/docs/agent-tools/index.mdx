@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 56 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 57 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -141,8 +141,11 @@ These 56 tools register in every session — no configuration, no prerequisites.
   <ToolCard name="send_stdin" access="mutating">
     Write text to a started process's stdin (e.g. a REPL command).
   </ToolCard>
+  <ToolCard name="restart_process" access="mutating">
+    Replace what runs under a started process handle — same argv to pick up an edit, or a corrected one — leaving the handle running.
+  </ToolCard>
   <ToolCard name="stop_process" access="mutating">
-    Stop a started process: SIGTERM to its process group, then SIGKILL; remaining output stays readable.
+    Reap a started process that has already exited. A process still running is not stopped: use restart_process.
   </ToolCard>
 </CardGrid>
 
@@ -475,7 +478,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 56 always-on tools, up to 68 native tools with the code graph, media keys, a search key, and an issue backend, plus the eight session tools — before any custom script tools or MCP servers merge in.
+All told: 57 always-on tools, up to 69 native tools with the code graph, media keys, a search key, and an issue backend, plus the eight session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

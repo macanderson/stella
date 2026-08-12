@@ -172,6 +172,7 @@ catalog! {
     "read_output"         => (false, false, Always, "process"),
     "clear_output"        => (false, false, Always, "process"),
     "send_stdin"          => (false, false, Always, "process"),
+    "restart_process"     => (false, false, Always, "process"),
     "stop_process"        => (false, false, Always, "process"),
     // Vendor-neutral repository tools; the two reads are local git queries.
     "repo_status"         => (true, true, Always, "repo"),
