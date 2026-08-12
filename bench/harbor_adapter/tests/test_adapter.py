@@ -816,11 +816,9 @@ class TestForwardedEnv:
         for key in list(os.environ):
             if key.startswith("STELLA_"):
                 monkeypatch.delenv(key, raising=False)
-        # Deliberately a name nothing registers. This test used to use
-        # `STELLA_LEAN_TOOLS`, which #3032 registered as a container knob — an
-        # example that stops being an example the moment the feature it names
-        # ships. `STELLA_NOT_A_KNOB` cannot be adopted by anything, which is
-        # what the assertion actually needs.
+        # A name nothing can ever register. This used `STELLA_LEAN_TOOLS`
+        # until #3032 registered it — an example stops being one the moment
+        # the feature it names ships.
         monkeypatch.setenv("STELLA_NOT_A_KNOB", "1")
         with pytest.raises(RuntimeError, match=r"unregistered STELLA_\* knobs"):
             _bare_agent()._forwarded_env()
