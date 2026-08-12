@@ -115,15 +115,21 @@ jobs:
             dir=$(mktemp -d)
             mkdir -p "$dir/graded/.git"
             printf original > "$dir/graded/sentinel"
+            # Mirrors `mount_script` exactly, `exec "$@"` tail included. An
+            # earlier version inlined the two writes instead, which made this
+            # step report a working recipe on a host where `contain.rs` still
+            # could not run the wrapped command -- the handoff was the broken
+            # link, and a probe that skips it cannot see that (#3011).
             script="mount --bind '$dir/graded' '$dir/graded' || exit 127
           mount -o remount,bind,ro '$dir/graded' || exit 126
           mount --bind '$dir/graded/.git' '$dir/graded/.git' || exit 125
           mount -o remount,bind,rw '$dir/graded/.git' || exit 124
-          printf pwned > '$dir/graded/sentinel' 2>/dev/null
+          exec \"\$@\""
+            inner="printf pwned > '$dir/graded/sentinel' 2>/dev/null
           printf ok > '$dir/graded/.git/exempt' 2>/dev/null
           exit 0"
             echo "--- $label"
-            "$@" /bin/sh -c "$script" && rc=0 || rc=$?
+            "$@" /bin/sh -c "$script" stella-contain /bin/sh -c "$inner" && rc=0 || rc=$?
             echo "    wrapper rc=$rc sentinel=$(cat "$dir/graded/sentinel") exempt=$([ -e "$dir/graded/.git/exempt" ] && echo present || echo absent)"
             rm -rf "$dir"
           }

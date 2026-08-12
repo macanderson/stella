@@ -223,7 +223,9 @@ fn wrap_argv(
                 "/bin/sh".to_string(),
                 "-c".to_string(),
                 script,
-                // $0 for the inner shell; the exec'd argv starts after it.
+                // $0 for the inner shell. `sh -c` binds this operand to $0 and
+                // starts the real argv at $1, which is why the script's tail
+                // is a bare `exec "$@"` — see `mount_script`.
                 "stella-contain".to_string(),
                 program.to_string(),
             ]
@@ -297,6 +299,16 @@ fn sbpl_escape(path: &str) -> String {
 /// applied. That includes the `rw` restore, which fails *closed* — a shell
 /// that cannot commit is a bad turn, a shell silently outside the boundary is
 /// a bad run.
+///
+/// The tail is `exec "$@"` with **no `shift`**, and the missing `shift` is the
+/// point. `sh -c <script> <name> <argv…>` assigns `<name>` to `$0`, so the
+/// wrapped command already begins at `$1`; a `shift` drops the program and
+/// leaves `exec` holding its first argument. It was there until #3011, which
+/// is why no Linux host had ever reached the wrapped command: the mounts
+/// applied, then `exec -c '<command>'` failed 127. The functional probe read
+/// that as [`Advisory::ProbeFailed`] and degraded — correctly, and loudly
+/// enough to be found, but only once a runner was configured to let the
+/// namespace open at all.
 fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
     let mut script = String::new();
     for root in protected {
@@ -311,7 +323,7 @@ fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
             "mount --bind {q} {q} || exit 127\nmount -o remount,bind,rw {q} || exit 127\n"
         ));
     }
-    script.push_str("shift\nexec \"$@\"\n");
+    script.push_str("exec \"$@\"\n");
     Some(script)
 }
 
@@ -445,9 +457,52 @@ mod tests {
         let ro = script.find("remount,bind,ro '/app'").expect(&script);
         let git = script.find("mount --bind '/app/.git'").expect(&script);
         assert!(ro < git, "{script}");
-        assert!(script.ends_with("shift\nexec \"$@\"\n"), "{script}");
+        assert!(script.ends_with("exec \"$@\"\n"), "{script}");
         // A half-applied namespace must not exec the command uncontained.
         assert!(script.contains("|| exit 127"), "{script}");
+    }
+
+    /// The handoff, executed rather than asserted about.
+    ///
+    /// The mounts are dropped from the script here so the check runs on any
+    /// host — what is under test is the `$0`/`exec "$@"` contract between
+    /// [`wrap_argv`]'s trailing operands and [`mount_script`]'s tail, which is
+    /// pure shell and platform-independent. A `shift` in that tail ate the
+    /// program and every Linux wrap died at `exec` (#3011); a string assertion
+    /// could not see it, because the string was exactly what its author meant
+    /// to write.
+    #[test]
+    fn the_inner_shell_execs_the_wrapped_command_itself() {
+        let (_program, argv) = wrap_argv(
+            Mechanism::MountNamespace,
+            &roots(&["/app"]),
+            &[],
+            "/bin/echo",
+            &["contained".to_string()],
+        )
+        .expect("wrap");
+
+        // Everything from `/bin/sh` onward is what `unshare` would exec.
+        let sh = argv.iter().position(|a| a == "/bin/sh").expect("inner sh");
+        let mut inner = argv[sh..].to_vec();
+        // Replace the generated script with its tail alone: no mount can run
+        // in a plain test process, and the tail is the part under test.
+        let script = inner.get_mut(2).expect("script slot");
+        *script = script
+            .rsplit_once("exit 127\n")
+            .map_or_else(|| script.clone(), |(_, tail)| tail.to_string());
+
+        let out = std::process::Command::new(&inner[0])
+            .args(&inner[1..])
+            .output()
+            .expect("run inner shell");
+        assert!(
+            out.status.success(),
+            "inner shell failed: {:?} stderr={}",
+            inner,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "contained");
     }
 
     /// The `.git` bind is taken *through* the read-only mount and clones its
