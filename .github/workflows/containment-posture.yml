@@ -59,6 +59,51 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # A ProbeFailed posture means "the kernel refused the recipe" and says
+      # nothing about which link refused it, because `probe_mechanism` collapses
+      # every failure into one variant by design. This step runs the recipe by
+      # hand so a red job carries the kernel's own message: without it, the only
+      # way to learn why a runner refuses is to guess, push, and read the same
+      # opaque line again -- which is how #3010 stayed open across two rounds.
+      # Cheap (no build) and `always()`, so a green job records the host's
+      # posture too, which is what makes the next regression legible.
+      - name: why (host containment facts)
+        if: always()
+        run: |
+          set -u
+          echo "kernel: $(uname -srm)"
+          unshare --version || true
+          echo "unprivileged_userns_clone: $(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo '<absent>')"
+          echo "apparmor_restrict_unprivileged_userns: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<absent>')"
+          echo "uid=$(id -u) cap-eff=$(grep CapEff /proc/self/status | tr -d '\t')"
+
+          probe() {
+            label=$1
+            shift
+            dir=$(mktemp -d)
+            mkdir -p "$dir/graded/.git"
+            printf original > "$dir/graded/sentinel"
+            script="mount --bind '$dir/graded' '$dir/graded' || exit 127
+          mount -o remount,bind,ro '$dir/graded' || exit 126
+          mount --bind '$dir/graded/.git' '$dir/graded/.git' || exit 125
+          printf pwned > '$dir/graded/sentinel' 2>/dev/null
+          printf ok > '$dir/graded/.git/exempt' 2>/dev/null
+          exit 0"
+            echo "--- $label"
+            "$@" /bin/sh -c "$script" && rc=0 || rc=$?
+            echo "    wrapper rc=$rc sentinel=$(cat "$dir/graded/sentinel") exempt=$([ -e "$dir/graded/.git/exempt" ] && echo present || echo absent)"
+            rm -rf "$dir"
+          }
+
+          probe "mount only (the pre-#3017 recipe)" \
+            unshare --mount --propagation private --
+          probe "user+mount (the current recipe)" \
+            unshare --user --map-root-user --mount --propagation private --
+          probe "user+mount, no propagation change" \
+            unshare --user --map-root-user --mount --
+          probe "sudo, mount only" \
+            sudo unshare --mount --propagation private --
+
       - name: install rust
         run: rustup show
 
