@@ -257,6 +257,9 @@ def _load_spec(run_dir: Path, match_id: str) -> MatchSpec:
         raise AssembleError(
             f"{template} is not a loadable match: {'; '.join(exc.problems)}"
         ) from exc
+    # Both, deliberately: the keyword only supplies an id the template lacks,
+    # and a template that carries its own would otherwise keep it — which is
+    # the spec-id collision `match_id_for` exists to avoid.
     return replace(spec, id=match_id)
 
 
@@ -380,9 +383,7 @@ def assemble_run(
                 "apparatus. Read them before quoting a number."
             )
 
-    missing = sorted(
-        {task for task in spec.tasks} - {cell["task"] for cell in cells}
-    )
+    missing = sorted(set(spec.tasks) - {cell["task"] for cell in cells})
     if missing:
         assembly.warnings.append(
             f"{len(missing)} task(s) produced no trial artifact: "
