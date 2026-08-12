@@ -49,8 +49,8 @@
 //!
 //! 1. **Rank.** Always semantically when an embedder resolves — the query is
 //!    embedded and the indexed files ranked against it, reusing the vector
-//!    table `stella init` already fills (#3014). See [`dispatch`] for the
-//!    ladder of strategies and what each one costs.
+//!    table `stella init` already fills (#3014). The `dispatch` function
+//!    below documents the ladder of strategies and what each one costs.
 //! 2. **Enrich, budget-driven.** The ranked hits are then spent against a
 //!    fixed character allowance, adding structure from the code graph:
 //!    symbols, kinds, imports, importers, signatures, docs, callers, callees,
