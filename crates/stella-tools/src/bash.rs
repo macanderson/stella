@@ -261,6 +261,69 @@ fn graph_advisory(command: &str, root: &Path, confinement: &ShellConfinement) ->
     None
 }
 
+/// A bare `sleep` blocking the whole trial budget goes undetected today:
+/// loop detection sees polls (`read_output`) between the sleeps so the
+/// interleaved-repeat rung reads the window as progressing, and the budget
+/// guard is spend-based, so idling costs $0. #2022's first step is honest
+/// visibility, not a refusal — a static text-shape check on the command, not
+/// a measured elapsed time, so it stays deterministic for the loop detector
+/// (never embed a timing here; see `stella-tool-timings-must-not-ride-tooloutput`).
+///
+/// Only a *bare* sleep is worth naming: `sleep 2 && curl` retry backoffs are
+/// ordinary and must stay unflagged, so this requires every segment of the
+/// command to be `sleep N` or an inert no-op (`echo`, `printf`, `true`) —
+/// anything else (a real command sharing the line) disqualifies the whole
+/// command, matching the observed pathological shape (`sleep 300; echo
+/// done`) rather than a compound one that happens to contain a sleep.
+const SLEEP_ADVISORY_THRESHOLD_SECS: u64 = 30;
+
+/// The accumulated seconds a *bare* sleep command blocks for, or `None` if
+/// any segment does real work beyond sleeping and a harmless no-op.
+fn bare_sleep_seconds(command: &str) -> Option<u64> {
+    let words = shell_words(command);
+    let mut segments: Vec<&[String]> = Vec::new();
+    let mut start = 0;
+    for (i, w) in words.iter().enumerate() {
+        if matches!(w.as_str(), ";" | "&" | "&&" | "|" | "||") {
+            segments.push(&words[start..i]);
+            start = i + 1;
+        }
+    }
+    segments.push(&words[start..]);
+
+    let mut total_secs = 0u64;
+    let mut saw_sleep = false;
+    for segment in &segments {
+        match segment {
+            [] => {}
+            [cmd, arg] if cmd == "sleep" => {
+                let secs = arg.parse::<f64>().ok()?;
+                total_secs += secs.round() as u64;
+                saw_sleep = true;
+            }
+            [cmd, ..] if matches!(cmd.as_str(), "echo" | "printf" | "true") => {}
+            _ => return None,
+        }
+    }
+    saw_sleep.then_some(total_secs)
+}
+
+/// A footer naming a bare `sleep` that crossed the advisory threshold, and
+/// the instrument (`read_output`/`wait_for`) that returns as soon as there is
+/// something to see instead of blocking the whole interval.
+fn sleep_advisory(command: &str) -> Option<String> {
+    let secs = bare_sleep_seconds(command)?;
+    if secs < SLEEP_ADVISORY_THRESHOLD_SECS {
+        return None;
+    }
+    Some(format!(
+        "\n\nnote: this call blocked for {secs}s inside a bare `sleep` with no other work in \
+         it. If you are waiting on a background process, poll with `read_output`/`wait_for` \
+         instead — they return as soon as there is something to see, so a short poll costs less \
+         of the trial's budget than sleeping through the whole interval."
+    ))
+}
+
 pub struct Bash {
     scratch: Option<std::path::PathBuf>,
     confinement: ShellConfinement,
@@ -451,6 +514,9 @@ impl Tool for Bash {
         // cut: a cross-root `cd` warning or a symbol-shaped-grep graph_query
         // nudge, when an index exists.
         if let Some(note) = graph_advisory(command, root, &self.confinement) {
+            combined.push_str(&note);
+        }
+        if let Some(note) = sleep_advisory(command) {
             combined.push_str(&note);
         }
 
@@ -821,6 +887,53 @@ mod tests {
         assert!(!bash_grep_is_symbol_shaped(r#"grep -rn "TODO:" ."#));
         assert!(!bash_grep_is_symbol_shaped("ls -la && cargo build"));
         assert!(!bash_grep_is_symbol_shaped("cat foo.rs"));
+    }
+
+    /// #2022 witness: the exact observed pathological shape
+    /// (`sleep 300; echo done`, `sleep 120` alone) is caught and its
+    /// accumulated seconds are named, so the advisory can fire on it.
+    #[test]
+    fn bare_sleep_is_detected_and_summed() {
+        assert_eq!(bare_sleep_seconds("sleep 300; echo done"), Some(300));
+        assert_eq!(bare_sleep_seconds("sleep 120"), Some(120));
+        assert_eq!(bare_sleep_seconds("sleep 60"), Some(60));
+        // Multiple bare sleeps in one call accumulate.
+        assert_eq!(
+            bare_sleep_seconds("sleep 30 && sleep 30"),
+            Some(60),
+            "accumulated sleep across the whole call, not just the last segment"
+        );
+        assert_eq!(
+            bare_sleep_seconds("sleep 2.5"),
+            Some(3),
+            "rounds to the nearest second"
+        );
+    }
+
+    /// The legitimate case must stay unflagged: a sleep inside a retry
+    /// backoff, or any command sharing the line with real work, is not the
+    /// pathological shape — only a command whose ENTIRE body is sleep-plus-
+    /// no-op is.
+    #[test]
+    fn a_sleep_beside_real_work_is_not_flagged() {
+        assert_eq!(
+            bare_sleep_seconds("sleep 2 && curl -s http://localhost:8080"),
+            None
+        );
+        assert_eq!(bare_sleep_seconds("sleep 5; tail -f build.log"), None);
+        assert_eq!(bare_sleep_seconds("read_output --wait 2"), None);
+        assert_eq!(bare_sleep_seconds("echo waiting; sleep 5; ls"), None);
+    }
+
+    #[test]
+    fn the_sleep_advisory_only_fires_past_the_threshold() {
+        assert!(
+            sleep_advisory("sleep 5").is_none(),
+            "under threshold, no nudge"
+        );
+        let note = sleep_advisory("sleep 300; echo done").expect("over threshold");
+        assert!(note.contains("300s"));
+        assert!(note.contains("read_output"));
     }
 
     #[tokio::test]
