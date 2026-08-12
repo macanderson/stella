@@ -44,6 +44,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+import bands
 from fingerprint import Fingerprint, fingerprint_of
 from run_trace import Run, Trial
 
@@ -838,3 +839,167 @@ def _no_post_verdict_file_change(run: Run) -> list[Finding]:
             )
         )
     return findings
+
+
+# --------------------------------------------------------------------------
+# 9. The prompt cache that stopped working
+# --------------------------------------------------------------------------
+
+
+@detector(
+    code="cache-collapse",
+    title="an arm's prompt cache hit rate collapsed below every healthy arm",
+    site="crates/stella-model/src/provider_parity.rs",
+    search_terms=("prompt cache hit rate collapsed", "cache_control not applied arm"),
+)
+def _cache_collapse(run: Run) -> list[Finding]:
+    """Pooled cache hit below the floor measured across nine real arms.
+
+    The band and the floor live in `bands`, next door, with the survey that
+    produced them. This is the sharper of the two separators it found — 93-100%
+    on every arm surveyed except the broken roster at 52% — and it is worth a
+    detector rather than only a band line because it is invisible in every
+    other projection: an arm whose cache stopped engaging emits perfectly
+    well-formed events, solves fewer tasks for reasons nothing else explains,
+    and costs several times what it should.
+
+    Per-trial occurrences, arm-level threshold: the decision is about the arm
+    (one misapplied `cache_control` affects every trial), while the citation
+    has to be a trial somebody can open.
+    """
+    band = bands.band_for("cache_hit")
+    if band is None:  # pragma: no cover — BANDS is a module constant
+        return []
+    metrics = bands.arm_metrics(run)
+    pooled = metrics.cache_hit
+    if not band.outside(pooled):
+        return []
+    occurrences = [
+        Occurrence(
+            trial_uuid=trial.trial_uuid,
+            task_id=trial.task_id,
+            s3_key=trial.s3_key(),
+            location=f"{measured.steps} completed model call(s)",
+            excerpt=(
+                f"prompt tokens (step_usage.input_tokens)        : "
+                f"{measured.prompt_tokens}\n"
+                f"served from cache (step_usage.cached_input_tokens): "
+                f"{measured.cached_tokens}\n"
+                f"trial cache hit                                : "
+                + (
+                    f"{measured.cache_hit:.1f}%"
+                    if measured.cache_hit is not None
+                    else "no prompt tokens recorded"
+                )
+            ),
+        )
+        for trial in run.trials
+        for measured in [bands.trial_metrics(trial)]
+        if not measured.void and band.outside(measured.cache_hit)
+    ]
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="cache-collapse",
+            site="crates/stella-model/src/provider_parity.rs",
+            variant_source="pooled prompt cache hit below the measured healthy floor",
+            title="an arm's prompt cache hit rate collapsed below every healthy arm",
+            summary=(
+                f"Pooled cache hit across this run's measured trials is "
+                f"{pooled:.1f}%, against a floor of {band.low:.0f}% "
+                f"({band.evidence}). Nothing else in the run says so: the "
+                "events are well formed and the only visible symptoms are cost "
+                "and a solve rate with no other explanation."
+            ),
+            occurrences=occurrences,
+            denominator=len(metrics.trials),
+            search_terms=(
+                "prompt cache hit rate collapsed",
+                "cache_control not applied arm",
+            ),
+            caveats=[
+                "The rate is `cached_input_tokens / input_tokens` summed over "
+                "`step_usage` — the same arithmetic ArenaBench's own "
+                "`cache_hit_rate` uses, so this cannot disagree with the number "
+                "shown on the match.",
+                "A short arm is not evidence: an arm of two trials has barely "
+                "enough prompt for a cache to engage at all.",
+            ],
+        )
+    ]
+
+
+# --------------------------------------------------------------------------
+# 10. One file, read to death
+# --------------------------------------------------------------------------
+
+
+@detector(
+    code="repeated-file-read",
+    title="one path was read many times inside a single trial",
+    site="crates/stella-core/src/driver.rs",
+    search_terms=("same file read repeatedly trial", "context lost re-reads file"),
+)
+def _repeated_file_read(run: Run) -> list[Finding]:
+    """One path named by `bands.REREAD_LIMIT`+ read-shaped calls in one trial.
+
+    Distinct from `repeated-identical-tool-call`, which is strictly *adjacent*
+    and requires byte-identical output. This is the diffuse form: thirteen
+    reads of one file spread across a trial, each with a different offset or a
+    changed file underneath, none of them adjacent — the shape that says the
+    agent keeps losing what it just read. The worst trial observed read one
+    file 13 times.
+    """
+    occurrences = []
+    for trial in run.trials:
+        measured = bands.trial_metrics(trial)
+        for path, count in sorted(measured.read_counts.items()):
+            if count < bands.REREAD_LIMIT:
+                continue
+            occurrences.append(
+                Occurrence(
+                    trial_uuid=trial.trial_uuid,
+                    task_id=trial.task_id,
+                    s3_key=trial.s3_key(),
+                    location=f"{count} read-shaped calls named `{path}`",
+                    excerpt=(
+                        f"path                : {path}\n"
+                        f"read-shaped calls   : {count}\n"
+                        f"tool calls in trial : {measured.tools}\n"
+                        "tools counted as reads: "
+                        + ", ".join(sorted(bands.READ_TOOLS))
+                    ),
+                )
+            )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="repeated-file-read",
+            site="crates/stella-core/src/driver.rs",
+            variant_source="one path read many times within a single trial",
+            title="one path was read many times inside a single trial",
+            summary=(
+                f"A single path was named by {bands.REREAD_LIMIT} or more "
+                "read-shaped tool calls inside one trial. Healthy arms average "
+                "0.1-0.9 re-reads per trial across *all* paths, so one path "
+                "alone crossing this is several times a healthy arm's whole "
+                "budget — the shape of an agent re-reading what it has already "
+                "been told."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=(
+                "same file read repeatedly trial",
+                "context lost re-reads file",
+            ),
+            caveats=[
+                "Read tools are named explicitly in `bands.READ_TOOLS`; the "
+                "wire carries no read-only flag, so a tool missing from that "
+                "list is under-counted rather than guessed at.",
+                "A legitimate re-read exists — a file the agent itself just "
+                "wrote. This states the count, never the intent.",
+            ],
+        )
+    ]

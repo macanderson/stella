@@ -263,6 +263,22 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
          formed: {}",
         steers[1]
     );
+    // #2810, end to end: the two warnings are the only two this turn can buy,
+    // and only the second one may claim to be the last. Asserted on the wire
+    // rather than on `steer_text` alone, because the budget and the wording
+    // are composed at the call site and it is that composition — not either
+    // half — that told the model the same thing twice.
+    assert!(
+        !steers[0].contains("LAST warning"),
+        "the first of two warnings is not the last: {}",
+        steers[0]
+    );
+    assert!(
+        steers[1].contains("LAST warning"),
+        "the warning that spends the budget must say the next loop of any \
+         kind ends the turn — which is precisely what happened next here: {}",
+        steers[1]
+    );
     assert_eq!(
         detections,
         vec![false, false, true],

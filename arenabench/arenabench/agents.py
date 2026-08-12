@@ -258,6 +258,24 @@ AGENTS: dict[str, AgentSpec] = {
         _builtin("mini-swe-agent", "Mini SWE-Agent", "Minimal SWE-bench scaffold."),
         _builtin("swe-agent", "SWE-Agent", "Princeton's SWE-agent scaffold."),
         _builtin("openhands", "OpenHands", "All-Hands OpenHands."),
+        _builtin(
+            "openhands-sdk",
+            "OpenHands SDK",
+            "Lightweight OpenHands Software Agent SDK, run directly in the "
+            "container without the full OpenHands Docker runtime.",
+        ),
+        _builtin(
+            "pi",
+            "Pi",
+            "Pi Coding Agent, run headless via 'pi --print --mode json'.",
+        ),
+        _builtin(
+            "nemo-agent",
+            "NeMo Agent Toolkit",
+            "NVIDIA's text-I/O agent framework. Only text-based verifiers "
+            "(no filesystem changes) can score it, so it is a poor seat for "
+            "most coding tasks in this dataset.",
+        ),
         _builtin("terminus-2", "Terminus 2", "Harbor's reference terminal agent."),
         _builtin("nop", "No-op", "Does nothing. A free floor for the scoreboard."),
         _builtin("oracle", "Oracle", "Applies the reference solution. A ceiling."),

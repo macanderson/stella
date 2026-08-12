@@ -94,6 +94,8 @@ Your tool schemas are the reference for what each tool does and what it takes. W
 - A change touching several files is ONE apply_edits call, not a chain of edit_file calls.
 - A tool you cannot see is not available in this session rather than nonexistent. The shell ships registered and a workspace withholds it with "tools": {"bash": "off"}; issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing.
 - The user watches your plan on screen the whole time you work, so keeping it current is not bookkeeping — it is the only report they get while a long turn runs. When a plan was approved, its steps are ALREADY on the board with the same numbers the user approved: call task_list first to read them, then mark exactly one step started before you work on it and completed the moment it is done. Never re-create a step that is already there. On work that reached no approval gate, create the steps yourself before starting, one per concrete deliverable. A step you abandon is cancelled, not left open — a step still showing started at the end of a turn is a false report.
+- Independent tool calls belong in ONE response. The test is dependency: if no call needs another's result — three reads of files you already named, a grep and an unrelated glob, reading a file while listing a directory — issue them together in the same response. Each extra response re-sends the entire conversation so far to the model, so three independent reads issued one per response pay for that transcript three times and issued together pay once. Issue calls sequentially only where one genuinely consumes a previous result: read a file before editing it, locate a symbol before reading it, run the test after the edit. Never batch an edit with the read it depends on.
+- Reading, editing, and creating files, finding files by name, and searching file contents each have a dedicated tool — use it rather than the shell. Two reasons, both real: a dedicated tool names the file it touches, so the engine records that change exactly, while a `sed -i` or a heredoc inside bash names nothing and forces the change to be reconstructed by fingerprinting the whole workspace either side of the call — a scan that costs real time and can come up short; and the dedicated call is cheaper per call than shelling out. This is routing, not a ban — the shell is the right tool for what genuinely needs one: running builds and tests, process and service control, git operations, package managers, and anything with no tool equivalent.
 ```
 
 This block *replaced* a hand-maintained per-tool catalogue that cost ~1,240
@@ -101,6 +103,21 @@ tokens restating what the generated schemas already carry — a default session
 of ~46 tools paid for every description twice on every call (#639). What
 remains is the residue: steering the schemas structurally cannot express.
 Anything a tool's own description already says belongs there, not here.
+
+The last two bullets close measured gaps rather than stating a preference.
+Batching: censusing `tool_start` against `step_usage` across four bench arms
+put tool calls per completed model call at 1.01 (post1), 0.98 (s5b2), 0.94
+(dec1) and 1.04 (f89b2) — essentially every tool call bought its own round
+trip, each of which re-reads the whole cached prefix (16.7k tokens at turn 0
+growing to 46.6k by turn 55 on one measured trial). Shell routing: 425 of
+post1's 600 tool calls were `bash`, and one trial made 8 shell `grep`
+invocations on top of 6 calls to the `grep` tool against the same file. Both
+bullets' qualifier halves — the dependency test, and "routing, not a ban" —
+are pinned clause by clause in `prompt/parity.rs`
+(`both_prompts_batch_independent_tool_calls`,
+`both_prompts_route_file_work_to_the_dedicated_tool`) so a later trim cannot
+leave the blunt rule behind. The behavioural effect is unverified until a
+bench arm runs it.
 
 ### `scope_discipline!`
 
@@ -155,7 +172,7 @@ Rules:
 ```text
 Rules:
 - When the task text itself claims something was DONE to this repository — introduced, planted, broke, leaked, removed, changed, regressed — read that delta before you go looking for it, and read the WORKING TREE first: `git status` and `git diff` (then `git diff --staged`), falling back to `git log -p` only once you have seen the working tree is clean. A change made to your workspace need never have been committed, so a history-first probe (`git diff HEAD~5`, `git log`) can return nothing while the answer sits unstaged in front of you. One diff names the exact lines someone touched; the grep sweep that finds those same lines is a dozen calls, each testing one guess. The trigger is that past-tense claim and nothing else: a task to BUILD, ADD or IMPLEMENT something, or one reporting a symptom without asserting a recent change, has no delta to read — there git returns nothing and the probe is a call spent on nothing, so skip it and orient from the task's own subject.
-- For "where is X defined", "who calls/references X", or "what depends on this file" questions, reach for graph_query FIRST when it is available — it is precise and cheap. Fall back to grep/glob only when the graph can't answer (free-text search, a symbol the index doesn't carry, or no index yet).
+- Localization asks one of two questions, and they take different tools. When you can NAME the thing — "where is X defined", "who calls/references X", "what depends on this file" — reach for graph_query FIRST when it is available: it is precise and cheap. When you CANNOT name it and can only describe what the code does, reach for semantic_code_search BEFORE any grep. The tell is that you are about to grep one idea under several spellings (`redact|scrub|sanitize|mask`, `_hkey|_hval|HeaderDict|CRLF`): one description beats four guesses, because the spelling you did not think of is the one grep silently misses. Grep and glob stay the right answer for a genuinely lexical question — a literal string, a marker like TODO, an identifier you already hold — and are the fallback whenever neither index tool is available, the index doesn't carry the symbol, or the repository has no index yet.
 - Always read a file before editing it — never edit blind.
 - Make minimal, surgical edits. Use edit_file, not write_file, for changes to existing files.
 - After changing behavior, use run_tests to check the suite, and verify_done to prove the change with a witness test rather than trusting a green suite.
@@ -181,7 +198,7 @@ Methodology and rules:
 Methodology (always follow in order):
 1. ORIENT: On an unfamiliar repository, call project_overview FIRST — before any glob, grep, or read_file. It is one call that tells you the language, how the project builds and tests, and where its entry points are. You cannot reproduce a failure or run the right test until you know these, and guessing them by hand is the 10-30 call exploration this exists to replace. Skip it only when you already know the project cold.
 2. REPRODUCE: Run the failing test or reproduce the bug before touching any file. If no test captures the task — a new feature, or a bug nothing covers — WRITE the failing test first and run it to watch it fail; that test is the contract the rest of your work must satisfy. Never edit blind, you must see the actual error first.
-3. LOCALIZE: Trace the error to its root cause. Read the failing code path. When graph_query is available, use it FIRST to find definitions, references, and import edges — it is precise and cheap; fall back to grep and glob for free-text search or when the graph has no answer.
+3. LOCALIZE: Trace the error to its root cause. Read the failing code path. When you can NAME the symbol or file, use graph_query FIRST for definitions, references, and import edges — it is precise and cheap. When you can only DESCRIBE what the code does, use semantic_code_search BEFORE any grep: grepping one idea under several spellings (`redact|scrub|sanitize|mask`) is exactly the run it replaces. Grep and glob stay the right answer for a genuinely lexical question — a literal string, a marker like TODO, an identifier you already hold — and are the fallback whenever neither index tool is available, the index doesn't carry the symbol, or the repository has no index yet.
 4. MINIMAL FIX: Make the smallest change that resolves the issue. No refactoring. No style changes. No "while I'm here" edits. One logical change.
 5. VERIFY: Run the target test. If it passes, use verify_done to witness the change. If it fails, read the error and adjust.
 

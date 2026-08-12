@@ -88,7 +88,7 @@ pub use event::{
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
     KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
     PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
-    TaskItem, TaskStatus, UsageIncompleteReason, VerdictEvidence,
+    TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
 };
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact

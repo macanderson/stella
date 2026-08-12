@@ -217,6 +217,17 @@ pub use call_role::ModelCallRole;
 // public name did not.
 pub use tags::KNOWN_TYPE_TAGS;
 
+/// The one spelling of "this usage envelope could not name its model", for
+/// [`AgentEvent::UsageIncomplete::model`].
+///
+/// A named constant rather than a literal at each emit site because it is a
+/// value consumers filter on, and because the sites that used to write it
+/// unconditionally are exactly the defect #2831 records: a field that reads as
+/// attribution while carrying a placeholder. Every caller that can name its
+/// model now does, and this is what remains for an adapter that genuinely
+/// cannot ([`crate::Provider::model`] returning `None`).
+pub const UNKNOWN_MODEL: &str = "unknown";
+
 /// Content-free reason a provider attempt cannot contribute a truthful usage
 /// envelope. Error bodies and prompts are deliberately unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,6 +678,19 @@ pub enum AgentEvent {
     UsageIncomplete {
         role: ModelCallRole,
         provider: String,
+        /// The model the failed call was dispatched to.
+        ///
+        /// Per-call attribution, on the same contract as
+        /// [`AgentEvent::StepUsage`]'s `provider`: this names what was
+        /// actually being called, never the session's configured default.
+        /// Sourced from [`crate::Provider::model`] (or the caller's own model
+        /// hint) rather than hardcoded — until #2831 every one of these rows
+        /// said [`UNKNOWN_MODEL`], which made a per-model failure census
+        /// uncomputable and left mid-turn fallback unable to say which model
+        /// had been failing.
+        ///
+        /// [`UNKNOWN_MODEL`] survives as the one documented spelling of "no
+        /// model could be named here", and is expected to be rare.
         model: String,
         reason: UsageIncompleteReason,
         duration_ms: u64,

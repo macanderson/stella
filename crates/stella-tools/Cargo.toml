@@ -17,7 +17,7 @@ stella-core = { path = "../stella-core" }
 # leaf crate by construction, so this adds no cycle.
 stella-diag = { path = "../stella-diag" }
 stella-graph = { path = "../stella-graph" }
-# The embedding seam plus its HTTP backend — the semantic `graph_query` op.
+# The embedding seam plus its HTTP backend — the `semantic_code_search` tool.
 # This crate is where the network is allowed to live: `stella-graph` stores
 # vectors and ranks them, and never learns what produced them (invariant 1).
 stella-embed = { path = "../stella-embed", features = ["http"] }

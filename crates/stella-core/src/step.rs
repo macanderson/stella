@@ -427,10 +427,13 @@ impl TurnState {
             // Not carried either: the bounded recovery allowance starts over,
             // exactly as `length_continuations` does.
             overflow_recovery: OverflowRecovery::default(),
-            loop_steer: LoopSteerBudget::resumed(checkpoint.loop_steered.then_some(LoopIdentity {
-                tools: checkpoint.loop_steered_pattern,
-                inputs: checkpoint.loop_steered_inputs,
-            })),
+            loop_steer: LoopSteerBudget::resumed(
+                checkpoint.loop_steered.then_some(LoopIdentity {
+                    tools: checkpoint.loop_steered_pattern,
+                    inputs: checkpoint.loop_steered_inputs,
+                }),
+                checkpoint.loop_steers_spent,
+            ),
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -527,6 +530,7 @@ impl TurnState {
                 .unwrap_or_default(),
             loop_steered_inputs: self.loop_steer.warned().and_then(|l| l.inputs.clone()),
             transcript_rewrites: self.transcript_rewrites,
+            loop_steers_spent: self.loop_steer.spent(),
         }
     }
 
@@ -740,14 +744,11 @@ pub struct Checkpoint {
     /// Restored so a resumed turn cannot earn a second warning for the same
     /// loop it was already told about.
     ///
-    /// A bool, not a count, and the count is not on the wire at all: a turn
-    /// may spend up to `driver::loop_escalation::MAX_LOOP_STEERS` warnings
-    /// on *distinct* loops (#1743), and `LoopSteerBudget::resumed` reconciles
-    /// this flag as one spent steer — never zero, so a resume cannot refund
-    /// a warning, and never the exact figure, so a turn resumed after
-    /// exhausting the budget may pay for one more warning. Carrying the
-    /// exact count means a new field on this struct, which is a change every
-    /// crate that builds a `Checkpoint` literal has to see (#2809).
+    /// The count itself rides in [`Self::loop_steers_spent`] as of #2809; this
+    /// flag stays because it is the only thing a checkpoint written before
+    /// that field carries, and `LoopSteerBudget::resumed` reconciles the two
+    /// so such a checkpoint still restores one spent steer rather than a
+    /// refund.
     pub loop_steered: bool,
     /// The tool pattern that warning was about, empty when `loop_steered` is
     /// `false` — or when the checkpoint predates this field (`#[serde(default)]`
@@ -774,6 +775,22 @@ pub struct Checkpoint {
     /// [`TurnState::from_checkpoint`]) — but it is the only record of how
     /// much compaction a turn has done, so it is carried rather than dropped.
     pub transcript_rewrites: u64,
+    /// How many of `driver::loop_escalation::MAX_LOOP_STEERS` stuck-loop
+    /// warnings this turn has spent (#2809).
+    ///
+    /// `#[serde(default)]` rather than a [`CHECKPOINT_VERSION`] bump, and last
+    /// in declaration order because that order IS the wire order
+    /// (`checkpoint_round_trips_byte_identically`). A checkpoint written
+    /// before this field decodes to `0`, which would read as a full refund on
+    /// its own — so it is never read on its own: `LoopSteerBudget::resumed`
+    /// takes the larger of this and what [`Self::loop_steered`] implies, which
+    /// restores the legacy one-spent-steer behaviour exactly for an old
+    /// checkpoint and the true count for a new one. Bumping the version
+    /// instead would have refused every in-flight checkpoint
+    /// ([`Checkpoint::from_json`]) to buy nothing this reconciliation does not
+    /// already give.
+    #[serde(default)]
+    pub loop_steers_spent: u32,
 }
 
 impl Checkpoint {
@@ -1176,6 +1193,11 @@ pub(crate) struct CancelUsageGuard {
     pub(crate) events: EventSender,
     pub(crate) role: stella_protocol::ModelCallRole,
     pub(crate) provider: String,
+    /// The model the abandoned call was dispatched to, captured when the guard
+    /// is armed for the same reason `provider` is: the drop path has no
+    /// borrow of the engine left to ask (#2831).
+    /// [`stella_protocol::UNKNOWN_MODEL`] when the adapter names none.
+    pub(crate) model: String,
     pub(crate) started: std::time::Instant,
     pub(crate) armed: bool,
     pub(crate) attempt_in_flight: Arc<AtomicBool>,
@@ -1195,7 +1217,7 @@ impl Drop for CancelUsageGuard {
         let _ = self.events.send(AgentEvent::UsageIncomplete {
             role: self.role,
             provider: self.provider.clone(),
-            model: "unknown".into(),
+            model: self.model.clone(),
             reason: stella_protocol::UsageIncompleteReason::Cancelled,
             duration_ms: self.started.elapsed().as_millis() as u64,
             retries: None,

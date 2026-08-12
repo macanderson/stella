@@ -413,6 +413,124 @@ fn every_engine_marker_is_taught_verbatim_by_every_static_prompt() {
     }
 }
 
+/// Witness for the batching gap: Stella essentially never issued two tool
+/// calls in one response, and neither prompt said it could.
+///
+/// Measured by censusing `tool_start` against `step_usage` (one completed model
+/// call) in the bench event logs of four arms: post1 600 tool calls over 595
+/// model calls (1.01 per turn, 519 of 595 turns carrying exactly one), s5b2
+/// 649/659, dec1 543/578, f89b2 2812/2707. Essentially every tool call bought
+/// its own round trip. That is the direct cost lever, because a turn re-reads
+/// the whole cached conversation prefix — measured growth on one real trial was
+/// 16.7k tokens at turn 0 to 46.6k by turn 55 — so three independent reads
+/// issued separately pay for that transcript three times and issued together
+/// pay once. `rg -ic parallel` over this file's subject returned 0 before this
+/// bullet: the capability was never mentioned at all.
+///
+/// The dependency test is the half that makes the rule safe, and it is pinned
+/// separately for that reason. Without it the instruction reads as "batch your
+/// calls" and produces an agent issuing an edit alongside the read of the file
+/// it has not seen yet — which is why the negative clauses ("Never batch an
+/// edit with the read it depends on", "read a file before editing it") are
+/// asserted here rather than left to survive a future trim on their own.
+///
+/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
+/// the same reason `both_prompts_bind_the_model_to_skills` does: that file sits
+/// within a few lines of the 1500-line ratchet (#2985), and #2237 makes this
+/// module the home for prompt-content pins.
+#[test]
+fn both_prompts_batch_independent_tool_calls() {
+    let shared = tool_steering!();
+    for claim in [
+        // The rule itself.
+        "Independent tool calls belong in ONE response",
+        // Why it pays — the cached prefix is re-sent per response, so the
+        // saving is per avoided round trip, not per avoided tool call.
+        "re-sends the entire conversation so far to the model",
+        // The dependency test, which is what makes batching safe rather than
+        // merely aggressive.
+        "The test is dependency",
+        "issue them together in the same response",
+        // The negative half: a dependent call is still sequential, and the
+        // read-before-edit case is named explicitly because it is the one a
+        // blunt batching rule breaks first.
+        "only where one genuinely consumes a previous result",
+        "read a file before editing it",
+        "Never batch an edit with the read it depends on",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the batching claim {claim:?} — \
+             dropping the dependency half leaves a blunt rule that batches an \
+             edit with the read it depends on"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
+/// Witness for the shell-routing gap: Stella reached for `bash` when it held a
+/// purpose-built tool, and neither prompt said not to.
+///
+/// Measured in bench run post1: 425 of 600 tool calls were `bash`. In one trial
+/// the worker made 8 shell `grep` invocations *on top of* 6 calls to its own
+/// `grep` tool, in the same session against the same file. `rg -ic "dedicated
+/// tool"` over both prompts returned 0.
+///
+/// Both stated reasons are pinned because they are different claims. The first
+/// is about the record: a shell command declares no path, so
+/// `stella_tools::shell_touch::WorkspaceProbe` has to fingerprint the workspace
+/// either side of every opaque call and attribute the difference — a walk whose
+/// bounds are recorded as saturation rather than guessed at, which is why it
+/// can come up short (deletions are dropped outright once either walk
+/// saturated). A dedicated tool declares its path and needs none of that. The
+/// prompt says "can come up short", deliberately not "invisible": shell
+/// mutations ARE attributed here, just reconstructed rather than declared.
+/// The second reason is the per-call cost, and it is the weaker of the two.
+///
+/// The reservation clause is pinned for the same reason the dependency test
+/// above is: shell is the right answer for a large share of real work on this
+/// benchmark, and an instruction that reads as "never use bash" fights the task
+/// and gets ignored wholesale. A trim that keeps the routing and drops the
+/// reservation would turn this into exactly that rule.
+#[test]
+fn both_prompts_route_file_work_to_the_dedicated_tool() {
+    let shared = tool_steering!();
+    for claim in [
+        // The routing itself, enumerated so a schema-level "use the right
+        // tool" cannot stand in for it.
+        "Reading, editing, and creating files, finding files by name, and \
+         searching file contents each have a dedicated tool",
+        "use it rather than the shell",
+        // Reason one: the record. A shell edit declares no path, so the
+        // change has to be reconstructed by a bounded workspace scan.
+        "names the file it touches",
+        "fingerprinting the whole workspace either side of the call",
+        // Reason two, and deliberately the weaker of the two.
+        "cheaper per call than shelling out",
+        // The negative half — this is routing, never a ban.
+        "This is routing, not a ban",
+        "running builds and tests, process and service control, git operations",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the shell-routing claim {claim:?} — \
+             dropping the reservation clause turns routing into a blanket ban \
+             on a tool that is the right answer for much of the work"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
 /// Witness for the skill-use gap (#2724): neither persona said the word
 /// "skill", so the only skill text the model ever saw was the volatile recall
 /// block's section header — a label with no contract. Each clause pinned
@@ -521,6 +639,78 @@ fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
          persona prescribes its own first move (ORIENT/REPRODUCE/LOCALIZE), and two \
          rules competing for the same slot is the drift this scoping avoids (#2984)"
     );
+}
+
+/// The localization discriminator (#3015), pinned in both personas and clause
+/// by clause so a trim cannot drop the half that keeps it from firing
+/// everywhere.
+///
+/// `semantic_code_search` (#3014) exists to remove a measured spiral: on TB2.1
+/// `fix-code-vulnerability`, 13 of 58 tool calls went to grepping ONE file for
+/// spelling variants of one concept (`_hkey|_hval|HeaderDict|CRLF`) — a
+/// semantic question asked of a substring index. The model decides whether to
+/// call a tool from context, and until this rule landed the localization bullet
+/// named `graph_query` alone and routed "free-text search" to grep by name,
+/// which is the wrong answer once a semantic index exists.
+///
+/// The rule is a **discriminator, not a preference**: the split is a property
+/// of the question the model is already holding — can you NAME the symbol, or
+/// can you only DESCRIBE what it does — so it is decidable before a call is
+/// spent. `graph_query` keeps the named case; grep keeps the genuinely lexical
+/// case. "Always try semantic search first" is the version deliberately NOT
+/// written: a repository with no index, or a question like "find every TODO",
+/// pays a call for nothing.
+///
+/// Unlike the delta-orientation rule above, this one is pinned in **both**
+/// prompts. It steers tool choice inside localization rather than a first move,
+/// so the pipeline persona's ORIENT/REPRODUCE/LOCALIZE methodology has a slot
+/// for it (step 3) rather than a competing rule — and `PIPELINE_SYSTEM_PROMPT`
+/// is what `stella run` and every bench measurement send (see prompt.rs's
+/// header note, #2231), so a localization fix reaching `SYSTEM_PROMPT` alone
+/// would be invisible to #2995, the measurement that settles whether the model
+/// reaches for the tool at all.
+///
+/// It is not a `macro_rules!` shared contract because the two sites are
+/// genuinely different shapes — a Rules bullet and a numbered methodology step
+/// — so the wording that survives is asserted here instead of the bytes.
+///
+/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
+/// the reason its two predecessors do: that file sits within a few lines of the
+/// 1500-line ratchet (#2985), and #2237 makes this module the home for
+/// prompt-content pins.
+#[test]
+fn both_personas_route_a_described_behaviour_to_semantic_search_and_a_named_one_to_the_graph() {
+    for (label, prompt) in STATIC_PROMPTS {
+        for claim in [
+            // The named half keeps the tool it always had.
+            "When you can NAME the",
+            "graph_query FIRST",
+            // The described half — the whole point, and stated as "before any
+            // grep" because the measured failure is grep spent first.
+            "semantic_code_search BEFORE any grep",
+            // The tell that makes the discriminator decidable in advance: an
+            // alternation of spellings of ONE idea is the case.
+            "`redact|scrub|sanitize|mask`",
+            // The negative half. Without it the rule degrades into "always try
+            // semantic search first", which spends a call on every lexical
+            // question and on every repository with no index.
+            "Grep and glob stay the right answer for a genuinely lexical question",
+            "the repository has no index yet",
+        ] {
+            assert!(
+                prompt.contains(claim),
+                "{label} must keep the localization claim {claim:?} — without it the rule \
+                 either stops naming semantic_code_search at all (the #3015 defect) or \
+                 fires on questions grep answers for free (#3015)"
+            );
+        }
+        assert!(
+            !prompt.contains("free-text search"),
+            "{label} still routes \"free-text search\" to grep by name. That was the wrong \
+             answer the moment semantic_code_search shipped (#3014) — a free-text question \
+             is precisely the described-behaviour case (#3015)"
+        );
+    }
 }
 
 /// Every way this check could come up empty, driven on hand-built sources.

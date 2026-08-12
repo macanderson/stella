@@ -40,10 +40,98 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
             reason: stella_protocol::UsageIncompleteReason::ProviderError,
             retries: Some(0),
             ..
-        } if provider == "anthropic-fallback" && model == "unknown" && model != provider
+        } if provider == "anthropic-fallback"
+            && model == stella_protocol::UNKNOWN_MODEL
+            && model != provider
     ));
     let wire = serde_json::to_string(incomplete[0]).unwrap();
     assert!(!wire.contains("private upstream body"));
+}
+
+/// An adapter that declares the model it is bound to (`Provider::model`), as
+/// every shipping adapter in `stella-model` does. `ScriptedProvider` takes the
+/// trait's `None` default, which is what the test above pins — this one is the
+/// other side, and lives here rather than in `driver/tests.rs` because that
+/// file is closed to growth (AGENTS.md § God files).
+struct ModelBoundProvider {
+    inner: ScriptedProvider,
+    model: String,
+}
+
+#[async_trait]
+impl Provider for ModelBoundProvider {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        self.inner.complete_ref(req).await
+    }
+}
+
+/// #2831's witness: the row that accounts for a FAILED call names the model
+/// that made it.
+///
+/// Fails on the code before #2831, which wrote `"unknown"` unconditionally at
+/// this emit site — 435 such rows in one 16-trial panel. That is exactly the
+/// population mid-turn model fallback (#2769) re-resolves from, so the
+/// failures that trigger a swap were the ones unable to say what had failed.
+#[tokio::test]
+async fn a_failed_call_names_the_model_that_made_it() {
+    let provider = ModelBoundProvider {
+        inner: ScriptedProvider {
+            id: "zai".into(),
+            script: TokioMutex::new(vec![Err(ProviderError::Terminal("upstream 500".into()))]),
+            calls: Arc::new(AtomicU32::new(0)),
+        },
+        model: "glm-5.2".into(),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let models: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::UsageIncomplete { model, .. } => Some(model.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        models,
+        vec!["glm-5.2"],
+        "the failed attempt must be attributable to the model it called, not \
+         to the {:?} placeholder",
+        stella_protocol::UNKNOWN_MODEL
+    );
+    // Still content-free: naming the model adds an identifier, never a body.
+    // Scoped to the usage envelopes on purpose — `RetriesExhausted` and
+    // `Error` carry the provider's message by contract, and it is only this
+    // event that promises never to.
+    let envelopes: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::UsageIncomplete { .. }))
+        .collect();
+    let wire = serde_json::to_string(&envelopes).unwrap();
+    assert!(!wire.contains("upstream 500"), "{wire}");
 }
 
 /// The salvaged accounting has to reach the *event stream*, not just the

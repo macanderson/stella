@@ -100,6 +100,30 @@ pub trait Provider: Send + Sync {
     /// Stable id for this provider instance, e.g. `"zai"` or `"anthropic"`.
     fn id(&self) -> &str;
 
+    /// The model slug this adapter dispatches to, when it is bound to one.
+    ///
+    /// The success path never needs this — [`CompletionResult::model`] names
+    /// the model that actually served the call, which is the stronger answer.
+    /// This exists for the path where there IS no result: a `UsageIncomplete`
+    /// envelope accounts for a call that failed or was cancelled, and until
+    /// #2831 it hardcoded `"unknown"` there, so a failed call could not be
+    /// attributed to the model that made it. That is precisely the population
+    /// mid-turn model fallback re-resolves from — the failures that trigger a
+    /// swap were the rows unable to name what failed.
+    ///
+    /// `None` means the adapter is not bound to a single model and cannot
+    /// answer before dispatch — `stella-serve`'s `RemoteProvider` is the real
+    /// instance, since there the HOST chooses the model and the engine holds
+    /// no ambient authority over it — not that the model is unknowable in
+    /// general;
+    /// callers render it as [`crate::UNKNOWN_MODEL`], which is the one documented
+    /// spelling of "this envelope could not name its model". Defaulted rather
+    /// than required so a test double or a future multiplexing adapter need
+    /// not claim a model it does not have.
+    fn model(&self) -> Option<&str> {
+        None
+    }
+
     /// Run one completion end-to-end (streams internally, aggregates the
     /// result). Returns a typed, retry-classified error on failure — never
     /// panics on a malformed/erroring HTTP response.

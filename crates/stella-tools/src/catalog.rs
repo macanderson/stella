@@ -142,6 +142,9 @@ catalog! {
     "glob"                => (true, true, Always, "search"),
     // The read that writes: graph queries bootstrap/catch up codegraph.db.
     "graph_query"         => (true, false, Always, "search"),
+    // Same store, same "read that writes" posture, and one more write besides:
+    // the pass stores the vectors it embeds on the way to answering.
+    "semantic_code_search" => (true, false, Always, "search"),
     // Context & memory. The overview and gather ride the same graph
     // substrate as graph_query; explorations is pure file reads.
     "project_overview"    => (true, false, Always, "context"),

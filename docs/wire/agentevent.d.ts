@@ -1691,6 +1691,21 @@ export type AgentEvent = {
   upstream_provider?: string | null;
 } | {
   duration_ms: number;
+  /**
+   * The model the failed call was dispatched to.
+   *
+   * Per-call attribution, on the same contract as
+   * [`AgentEvent::StepUsage`]'s `provider`: this names what was
+   * actually being called, never the session's configured default.
+   * Sourced from [`crate::Provider::model`] (or the caller's own model
+   * hint) rather than hardcoded — until #2831 every one of these rows
+   * said [`UNKNOWN_MODEL`], which made a per-model failure census
+   * uncomputable and left mid-turn fallback unable to say which model
+   * had been failing.
+   *
+   * [`UNKNOWN_MODEL`] survives as the one documented spelling of "no
+   * model could be named here", and is expected to be rare.
+   */
   model: string;
   /**
    * Accounting the adapter had already observed when the attempt died.

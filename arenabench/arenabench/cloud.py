@@ -1113,7 +1113,36 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
             run_id, jobs, dest, artifacts=args.artifacts
         )
         print(f"results   : {fetched} file(s) -> {dest}")
+        _assemble_fetched(dest)
     return 0 if final.failed == 0 else 1
+
+
+def _assemble_fetched(dest: Path) -> None:
+    """Fold what was just fetched into one match, and say where it landed.
+
+    A cloud run is submitted as one match and comes back as one Batch job per
+    trial; leaving it that way puts 178 contests in the operator's arena for a
+    single 89-task two-arm experiment. The fold itself lives in
+    :mod:`.assemble` because it is a pure local operation over the downloaded
+    files — this call is only the convenience of not having to type a second
+    command. A failure here never fails the fetch: the artifacts are on disk,
+    which is the part that cost money, and `arenabench assemble <dir>` retries
+    the free part.
+    """
+    from .assemble import AssembleError, assemble_run
+
+    try:
+        assembly = assemble_run(dest)
+    except AssembleError as exc:
+        print(f"assembled : not yet — {exc}")
+        return
+    print(
+        f"assembled : {assembly.trials} trial(s) into one match "
+        f"({assembly.match_id})"
+    )
+    for warning in assembly.warnings:
+        print(f"  !! {warning}")
+    print(f"open with : arenabench serve --workspace {dest}")
 
 
 def _cmd_cloud_status(args: Any, executor: CloudExecutor | None = None) -> int:
@@ -1142,7 +1171,66 @@ def _cmd_cloud_fetch(args: Any, executor: CloudExecutor | None = None) -> int:
         args.run_id, record["jobs"], dest, artifacts=args.artifacts
     )
     print(f"results   : {fetched} file(s) -> {dest}")
+    _assemble_fetched(dest)
     return 0
+
+
+def _cmd_cloud_merge(args: Any) -> int:
+    """``arenabench cloud merge <dest...> --out <dir>`` — pair arms fetched separately."""
+    from . import cloud_merge
+
+    bodies: list[dict[str, Any]] = []
+    for raw in args.dest:
+        bodies.extend(cloud_merge.load_fetched_results(Path(raw).expanduser()))
+    if not bodies:
+        print(f"no results.json found under: {', '.join(args.dest)}")
+        return 1
+    try:
+        merged = cloud_merge.merge_trial(bodies)
+    except cloud_merge.MergeError as exc:
+        print(f"error: {exc}")
+        return 2
+    out_dir = Path(args.out).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = cloud_merge.write_merged_trial(out_dir, merged)
+    tasks = len(merged["match"]["tasks"])
+    seats = len(merged["match"]["contestants"])
+    print(f"trial     : {tasks} task(s) x {seats} contestant(s) -> {target}")
+    if merged["incomplete_tasks"]:
+        print(
+            f"            {len(merged['incomplete_tasks'])} task(s) missing at "
+            "least one arm's cell — see trial.json's incomplete_tasks"
+        )
+    return 0
+
+
+def _merge_and_report(dest: Path, out: Callable[[str], None] = print) -> None:
+    """Regroup whatever ``fetch_results`` just wrote into one trial.
+
+    A no-op with a one-line note when nothing fetched (a run still in
+    flight) or when the fetched bodies don't merge (mixed datasets) — a
+    fetch that produced flat per-job files must not fail just because the
+    trial-level view could not be built from them.
+    """
+    from . import cloud_merge
+
+    bodies = cloud_merge.load_fetched_results(dest)
+    if not bodies:
+        return
+    try:
+        merged = cloud_merge.merge_trial(bodies)
+    except cloud_merge.MergeError as exc:
+        out(f"trial     : not merged — {exc}")
+        return
+    cloud_merge.write_merged_trial(dest, merged)
+    tasks = len(merged["match"]["tasks"])
+    seats = len(merged["match"]["contestants"])
+    out(f"trial     : {tasks} task(s) x {seats} contestant(s) -> {dest / 'trial.json'}")
+    if merged["incomplete_tasks"]:
+        out(
+            f"            {len(merged['incomplete_tasks'])} task(s) missing at "
+            "least one arm's cell — see trial.json's incomplete_tasks"
+        )
 
 
 def _cmd_cloud_watch(args: Any, executor: CloudExecutor | None = None) -> int:
@@ -1278,3 +1366,20 @@ def register_cli(subparsers: Any) -> None:
     fetch.add_argument("--out", help="local directory for downloaded results")
     _common_aws_arguments(fetch)
     fetch.set_defaults(func=_cmd_cloud_fetch)
+
+    merge = verbs.add_parser(
+        "merge",
+        help="regroup one or more already-fetched destinations into one trial",
+    )
+    merge.add_argument(
+        "dest",
+        nargs="+",
+        help="a `cloud fetch`/`cloud run` --out directory; pass more than one "
+             "to pair arms that were fetched separately (e.g. two runs "
+             "submitted as independent single-arm matches)",
+    )
+    merge.add_argument(
+        "--out", required=True,
+        help="directory to write the merged trial.json into",
+    )
+    merge.set_defaults(func=_cmd_cloud_merge)

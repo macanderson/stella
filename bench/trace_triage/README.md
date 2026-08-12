@@ -99,8 +99,39 @@ next comparison is against the truth.
 | `repeated-identical-tool-call` | adjacent identical `(tool, args)` with byte-identical output |
 | `role-model-census-mismatch` | `(role, model)` off `step_usage` against the run's declared seat |
 | `no-post-verdict-file-change` | no `verdict` at all, or a verdict with no `file_change` after it |
+| `cache-collapse` | pooled prompt cache hit below the floor measured across nine arms |
+| `repeated-file-read` | one path named by five or more read-shaped calls in one trial |
 
 `--list-detectors` prints the live registry.
+
+The last two read their thresholds from [`bands.py`](bands.py), which records
+the nine-arm survey they were measured off — and which is also where a metric
+that *cannot* separate a healthy arm from a broken one is marked as such, so it
+is reported and never concluded from.
+
+## The postmortem
+
+[`postmortem.py`](postmortem.py) answers the other question the same evidence
+supports: not "file an issue about this shape" but "**say, on screen, where
+this run went wrong**", so a defect is caught even when nobody reads the traces
+by hand.
+
+```sh
+make postmortem RUN=arenabench-cloud/s5b2        # writes it beside the match
+python3 bench/trace_triage/postmortem.py <dir> --stdout
+```
+
+It calls the same `detectors.run_all` over the same `run_trace.Run`, so the two
+surfaces cannot disagree about whether a run is healthy — the report is a
+second *rendering*, never a second detector set. It adds the band table, the
+cohort split that separates "the run is broken" from "the agent did badly"
+(a trial that completed zero model calls measured nothing, and its zero is not
+a loss), and it writes `postmortem.md` / `postmortem.json` into the match
+`arenabench assemble` folded the run into.
+
+A healthy run gets one clean paragraph. That is the load-bearing behaviour, not
+a nicety: a detector that always fires is noise, and noise is how a real
+finding gets ignored.
 
 ### Adding one
 

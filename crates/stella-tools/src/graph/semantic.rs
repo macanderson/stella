@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `graph_query op=semantic` — ask the code graph a question in English.
+//! `semantic_code_search` — ask the code graph a question in English.
 //!
 //! # The measurement that produced this
 //!
@@ -16,7 +16,19 @@
 //! (`_hkey|_hval|HeaderDict|CRLF`).
 //!
 //! Every one of those calls is an agent describing something semantically to
-//! an index that only matches substrings. This op is the missing index.
+//! an index that only matches substrings. This tool is the missing index.
+//!
+//! # Why a tool of its own
+//!
+//! It shipped first as `graph_query op=semantic` (#3003) and was split out
+//! one day later, because a parameter that *selects* an operation is exactly
+//! what AGENTS.md invariant #9 forbids: the model decides whether to call a
+//! tool from its `description` alone, and a two-verb tool teaches neither
+//! verb well. The open question this feature lives or dies on (#2995) is
+//! whether the model ever reaches for semantic search at all — burying it
+//! behind an `op` value on the structural-query tool is the worst possible
+//! way to advertise it. `graph_query` answers where a **named** symbol lives;
+//! this answers which files are **about** something.
 //!
 //! # Where the work happens
 //!
@@ -33,11 +45,14 @@
 
 use std::path::Path;
 
+use async_trait::async_trait;
+use serde_json::Value;
 use stella_embed::{Embedder, Resolution, SimilarityPosture};
 use stella_graph::vectors::FileVector;
-use stella_protocol::tool::ToolOutput;
+use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use super::{OpenedGraph, open_or_build, with_index_warning};
+use crate::registry::Tool;
 
 /// Files ranked back to the model. Enough to choose from, small enough that
 /// the answer is a pointer rather than a listing — the point is to replace a
@@ -66,7 +81,71 @@ pub(crate) const LEXICAL_FALLBACK_NOTE: &str = "(no semantic embedder is configu
 pub(crate) const DEGRADED_NOTE_PREFIX: &str =
     "(the semantic embedder failed, so this is a NAME match over paths and symbols";
 
-/// `graph_query op=semantic` end to end.
+/// Find the files a plain-English description is about.
+pub struct SemanticCodeSearch;
+
+#[async_trait]
+impl Tool for SemanticCodeSearch {
+    /// The description is the whole user interface: the model calls this tool
+    /// or does not, on these words alone. So it names the *situation* rather
+    /// than the mechanism — you know what the code does, you cannot guess what
+    /// it is called — and it names the losing behaviour it replaces, because
+    /// the measured failure is an agent that greps `redact|scrub|sanitize|mask`
+    /// in turn rather than asking once.
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "semantic_code_search".into(),
+            description: "Find the files that are ABOUT something you can only describe in \
+                          words — when you know what the code does but cannot guess what it is \
+                          called. Ask \"which file strips secrets before logging\" and get the \
+                          file back whether it is named `scrub.rs`, `sanitize.rs` or `hkey.rs`. \
+                          Reach for this the moment you are about to grep the same idea under \
+                          several spellings (`redact|scrub|sanitize|mask`): one call here \
+                          replaces that whole run, and the spellings you did not think of are \
+                          the ones grep silently misses. Use `graph_query` instead when you \
+                          already have the NAME of a symbol or file and want where it is \
+                          defined, referenced, or imported. Files are ranked by meaning against \
+                          the code-graph index; it needs an embedding backend configured, and \
+                          says so in its answer when there is none."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "A plain-English description of what the code you are \
+                                        looking for does — a sentence, not an identifier"
+                    }
+                },
+                "required": ["query"]
+            }),
+            read_only: true,
+            // Embedding is a network write-through: the pass stores vectors in
+            // codegraph.db on the way to answering, and `open_or_build` may
+            // bootstrap the index besides. A read that writes (#923).
+            speculation_safe: false,
+        }
+    }
+
+    async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
+        let query = input
+            .get("query")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim();
+        if query.is_empty() {
+            return ToolOutput::Error {
+                message: "`query` is required: a plain-English description of what the code \
+                          does, e.g. \"where request headers are sanitized\". For a symbol or \
+                          file you can already name, use `graph_query`"
+                    .into(),
+            };
+        }
+        semantic_query(root, query).await
+    }
+}
+
+/// `semantic_code_search` end to end.
 ///
 /// `open_or_build` runs a full `index_all` catch-up pass, which its contract
 /// says an async caller must wrap in `spawn_blocking`. The handle is then held
@@ -201,39 +280,178 @@ pub(crate) async fn semantic_query_with(
     ToolOutput::Ok { content }
 }
 
+/// The most files one eager (`stella init`) pass will embed.
+///
+/// Ten times the lazy per-query cap, and bounded for a different reason. The
+/// lazy cap trades coverage for the latency of a query the agent is waiting
+/// on; this pass runs before any turn starts, so its budget is the user's
+/// money and patience rather than a round trip. A repository larger than this
+/// gets a **stated** partial index — the emitted line names how many files
+/// were left — because a partial index that silently ranks a subset is worse
+/// than one that says which subset it ranked.
+pub const MAX_FILES_PER_EAGER_PASS: usize = 2_000;
+
+/// What an eager pass did, as data the caller renders.
+///
+/// Total by construction and never a `Result`: on this path a failure is a
+/// *report*, not an error to propagate — `stella init` must succeed with no
+/// embedder, with a broken embedder, and with a repository too big to finish,
+/// and the difference between those is something a human reads, not something
+/// a caller branches on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WarmOutcome {
+    /// The pass ran. `remaining` is what the cap left for the lazy path to
+    /// pick up on the first semantic query.
+    Warmed {
+        /// Files embedded by this pass.
+        embedded: usize,
+        /// Indexed files still carrying no vector under this fingerprint.
+        remaining: usize,
+        /// How many of those the pass could not read from disk. Separated from
+        /// `remaining` because the two want different sentences: the cap's
+        /// leftovers embed themselves on the next query, and an unreadable
+        /// file never will (#3016).
+        unreadable: usize,
+    },
+    /// The pass stopped early. `reason` is prose meant to be shown verbatim;
+    /// whatever was embedded before the failure is committed and counted.
+    Failed {
+        /// Files embedded before the failure — batches commit as they go.
+        embedded: usize,
+        /// Why it stopped, already phrased for a human.
+        reason: String,
+    },
+}
+
+/// Embed the workspace's indexed files **without answering a query** — the
+/// `stella init` pass.
+///
+/// The lazy per-query pass is right for a session and wrong
+/// for a single-turn run: it fires *after* the agent has already chosen to
+/// grep, so the spiral it exists to prevent has begun, and it never fires at
+/// all if the agent does not reach for semantic search. This runs the same
+/// render, the same table and the same `(file_id, fingerprint)` keying ahead
+/// of the first turn, where the work is free from the agent's perspective.
+///
+/// Batched rather than one big pass: each round asks for at most one
+/// request's worth of pending files, so the blocking file reads stay bounded between awaits and
+/// a pass killed halfway has committed every batch before it.
+pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usize) -> WarmOutcome {
+    // Deliberately NOT `open_or_build`: the caller has just run `index_all`,
+    // and a second catch-up pass would re-walk and re-hash the whole tree for
+    // a graph nothing has touched since. This pass embeds what the index
+    // already holds and indexes nothing itself.
+    let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot prepare the code graph store: {error}"))
+        .and_then(|db_path| {
+            stella_graph::CodeGraph::open(root, &db_path)
+                .map_err(|error| format!("could not open the code graph: {error}"))
+        });
+    let graph = match graph {
+        Ok(graph) => graph,
+        Err(reason) => {
+            return WarmOutcome::Failed {
+                embedded: 0,
+                reason,
+            };
+        }
+    };
+    let outcome = warm_opened(&graph, embedder, limit).await;
+    graph.shutdown();
+    outcome
+}
+
+async fn warm_opened(
+    graph: &stella_graph::CodeGraph,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> WarmOutcome {
+    let fingerprint = embedder.fingerprint().id();
+    let mut embedded = 0usize;
+    let mut unreadable = 0usize;
+    while embedded < limit {
+        let want = BATCH.min(limit - embedded);
+        let scan = match graph.files_pending_embedding(&fingerprint, want) {
+            Ok(scan) => scan,
+            Err(error) => {
+                return WarmOutcome::Failed {
+                    embedded,
+                    reason: format!("cannot read the code graph: {error}"),
+                };
+            }
+        };
+        // Overwritten, never summed: each round rescans the pending set from
+        // the start, so an unreadable file is stepped over again every round
+        // and adding the counts would multiply it by the round count. The last
+        // round's figure is the one that walked furthest.
+        unreadable = unreadable.max(scan.unreadable);
+        // No files means the pending set is exhausted — a window landing on
+        // unreadable rows keeps filling past them, so this is genuinely done
+        // rather than a scan that gave up early (#3016).
+        if scan.files.is_empty() {
+            break;
+        }
+        if let Err(reason) = embed_batch(graph, embedder, &fingerprint, &scan.files).await {
+            return WarmOutcome::Failed { embedded, reason };
+        }
+        embedded += scan.files.len();
+    }
+
+    let total = graph.file_count().unwrap_or(0);
+    let stored = graph.embedded_file_count(&fingerprint).unwrap_or(embedded);
+    WarmOutcome::Warmed {
+        embedded,
+        remaining: total.saturating_sub(stored),
+        unreadable,
+    }
+}
+
 /// Embed every file still pending under `fingerprint`, up to the per-pass cap.
 async fn catch_up_embeddings(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,
 ) -> Result<(), String> {
-    let pending = graph
+    let scan = graph
         .files_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_PASS)
         .map_err(|error| format!("cannot read the code graph: {error}"))?;
-    if pending.is_empty() {
+    if scan.files.is_empty() {
         return Ok(());
     }
 
-    for chunk in pending.chunks(BATCH) {
-        let texts: Vec<String> = chunk.iter().map(|p| p.text.clone()).collect();
-        let embeddings = embedder.embed(&texts).await.map_err(|e| e.to_string())?;
-        let rows: Vec<FileVector> = chunk
-            .iter()
-            .zip(embeddings)
-            .map(|(pending, embedding)| FileVector {
-                path: pending.path.clone(),
-                content_sha256: pending.content_sha256.clone(),
-                vector: embedding.vector,
-            })
-            .collect();
-        graph
-            .store_file_vectors(fingerprint, &rows)
-            // A write failure here is not recoverable by continuing: the next
-            // batch would be written into the same broken store and the pass
-            // would report success having stored nothing.
-            .map_err(|error| format!("cannot store file vectors: {error}"))?;
+    for chunk in scan.files.chunks(BATCH) {
+        embed_batch(graph, embedder, fingerprint, chunk).await?;
     }
     Ok(())
+}
+
+/// Embed one batch and commit it — the single place a file's vector comes into
+/// existence, shared by the lazy query pass and the eager `init` pass so there
+/// is one render, one table and one fingerprint discipline.
+async fn embed_batch(
+    graph: &stella_graph::CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    batch: &[stella_graph::vectors::PendingEmbed],
+) -> Result<(), String> {
+    let texts: Vec<String> = batch.iter().map(|p| p.text.clone()).collect();
+    let embeddings = embedder.embed(&texts).await.map_err(|e| e.to_string())?;
+    let rows: Vec<FileVector> = batch
+        .iter()
+        .zip(embeddings)
+        .map(|(pending, embedding)| FileVector {
+            path: pending.path.clone(),
+            content_sha256: pending.content_sha256.clone(),
+            vector: embedding.vector,
+        })
+        .collect();
+    graph
+        .store_file_vectors(fingerprint, &rows)
+        // A write failure here is not recoverable by continuing: the next
+        // batch would be written into the same broken store and the pass
+        // would report success having stored nothing.
+        .map_err(|error| format!("cannot store file vectors: {error}"))
+        .map(|_| ())
 }
 
 /// The honest fallback: rank indexed files by how many of the query's words
