@@ -300,8 +300,7 @@ async fn a_plan_step_naming_an_absolute_path_is_repaired_before_the_worker_sees_
         "the path-repair call carries the same split shape as the plan call; got {repair:#?}"
     );
     assert!(
-        repair[0].1.contains("no tool access")
-            && repair[0].1.contains("absolute filesystem path"),
+        repair[0].1.contains("no tool access") && repair[0].1.contains("absolute filesystem path"),
         "the repair instructions must explain why the path may be wrong: {}",
         repair[0].1
     );
