@@ -335,7 +335,7 @@ def _band_section(report: Report) -> list[str]:
     if report.noisy_sample:
         lines += [
             "",
-            f"> Only {report.metrics.trials and len(report.metrics.trials)} "
+            f"> Only {len(report.metrics.trials)} "
             "measured trial(s): every mean above is one or two trials wide. Read "
             "them as the trials they are, not as rates.",
         ]
