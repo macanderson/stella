@@ -113,6 +113,7 @@ mod attachments;
 // authored section's header so the prompt and the header cannot drift apart.
 pub(crate) mod authored;
 mod candidate_result;
+mod delivery;
 mod disclosure;
 mod evidence;
 mod execute_stage;
@@ -1786,19 +1787,25 @@ impl<'a> Pipeline<'a> {
         // whole fan-out, not the one result that survives it.
         let ran = executed_count(&candidates);
         self.emit_text(candidate_winner_notice(best_idx, n, ran));
-        // Winner adoption + cleanup. An aborted winner adopts nothing — an
-        // aborted best-of-N run leaves the real tree untouched.
+        // Winner delivery + cleanup. The verdict is a claim ABOUT the work; it
+        // does not decide whether the work exists (#2927). `delivery` states
+        // the whole rule and the argument for it, rung by rung; the one thing
+        // still withheld is a candidate the pipeline refused on integrity.
         let mut adopt_failure: Option<WorkspaceError> = None;
+        let delivery = delivery::decide(delivery::WinnerFacts::of(&candidates[best_idx]));
         for (i, slot) in workspaces.into_iter().enumerate() {
             let Ok(ws) = slot else {
                 continue;
             };
             if i == best_idx
-                && candidates[best_idx]
-                    .verdict
-                    .as_ref()
-                    .is_some_and(|verdict| verdict.passed)
+                && let delivery::Delivery::Deliver { proven } = delivery
             {
+                // Delivery is never proof. The verdict, the status and the
+                // score are untouched above; this line is what stops the write
+                // itself from reading as a pass.
+                if !proven {
+                    self.warn(delivery::UNPROVEN_DELIVERY_NOTICE.to_string());
+                }
                 // The witness has already done its whole job by now — it armed
                 // the flip oracle and the flip was observed — so withholding it
                 // cannot change the verdict, only what lands in the tree.
@@ -1832,25 +1839,29 @@ impl<'a> Pipeline<'a> {
                     Err(e) => adopt_failure = Some(e),
                 }
             } else if single_shot_isolation {
-                // The `create_worktrees` run that did not pass. Discarding is
-                // right for best-of-N — the operator asked for the best of
-                // several and none was good, and the losers were never meant to
-                // survive. It is also right for an authored-witness abort,
-                // where the candidate is *poisoned* rather than merely
-                // unverified (a tampered artifact, an author that edited
-                // production code) and `witness_isolation`'s tests pin its
-                // removal.
+                // The `create_worktrees` run whose work was withheld — since
+                // #2927 that means an integrity refusal (the candidate wrote
+                // through its isolation, its witness was tampered with, its
+                // tree moved after verification) or an allowance it never
+                // got, never merely "it did not verify". Discarding is right
+                // for best-of-N — the operator asked for the best of several
+                // and none was good, and the losers were never meant to
+                // survive — and `witness_isolation`'s tests pin removal for a
+                // poisoned authored-witness candidate.
                 //
                 // It is wrong for this third caller. That operator asked where
-                // the work should *happen*, not that it be thrown away unless
-                // it verified — and without this they end up strictly worse off
-                // than with isolation off, where a failed run at least leaves
-                // its changes in the tree to look at. So keep the snapshot and
+                // the work should *happen*, not that it be thrown away — and
+                // without this they end up strictly worse off than with
+                // isolation off, where a failed run at least leaves its
+                // changes in the tree to look at. So keep the snapshot and
                 // name it: the same posture as the adopt-failure arm just
-                // above, and for the same reason — unverified is not worthless.
+                // above, and for the same reason — undelivered is not
+                // worthless. The reason is deliberately unnamed here because
+                // this arm has several, and each has already been stated on
+                // the stream by the stage that raised it.
                 self.warn(format!(
-                    "this run's changes did not verify, so they were not adopted into your \
-                     working tree — they are kept at {} for you to inspect or salvage",
+                    "this run's changes were not adopted into your working tree — they are \
+                     kept at {} for you to inspect or salvage",
                     ws.root()
                 ));
             } else {
