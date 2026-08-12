@@ -60,8 +60,9 @@ Extension points are modules, not crates: a new node kind, retrieval signal,
 migration, or embedder follows the recipes under "Extending it" below. A new
 crate is justified only when the work (a) sits behind a port and would
 otherwise drag heavy dependencies into a deliberately light crate — the live
-example is the R14 ONNX-embedder follow-up, which would put a model runtime
-behind the [`src/embed.rs`](src/embed.rs) `Embedder` seam rather than into a
+example is the R14 ONNX-embedder follow-up (#2994), which would put a model
+runtime behind the `Embedder` seam — now in [`stella-embed`](../stella-embed),
+which is precisely that split having already happened once — rather than into a
 crate that today builds from `rusqlite`, `tokio`, and `serde`; (b) needs a
 dependency direction the current graph forbids — exactly why this crate takes
 no dependency on `contextgraph-host` and `stella-graph` takes none on this
@@ -100,7 +101,7 @@ sibling test module.
 | [`src/retrieval.rs`](src/retrieval.rs) | `recall` / `recall_scoped` / `recall_scoped_excluding`: fusion, dedup, MMR, budget packing, the coverage gate, `RecallTuning`, and `frame_from_node` (where a `ContextFrame` is actually minted — for packed survivors only). |
 | [`src/writeback.rs`](src/writeback.rs) | `ContextDelta` and `upsert`, plus bi-temporal fact supersession (`apply_fact`) and the `facts_as_of` audit read. |
 | [`src/provider.rs`](src/provider.rs) | The `ContextProvider` trait, `ContextStore`'s implementation of it (`info`/`capabilities`/`query`/`verify`), and `ProviderRegistry` fan-out. |
-| [`src/embed.rs`](src/embed.rs) | The `Embedder` seam, `EmbedderFingerprint`, and the offline `HashEmbedder` default. |
+| [`src/embed.rs`](src/embed.rs) | A re-export of [`stella-embed`](../stella-embed), which now owns the `Embedder` seam, `EmbedderFingerprint` and the offline `HashEmbedder` default. The seam moved down to a leaf so `stella-graph` could share it for semantic code search without either plane depending on the other; nothing above this module changed. |
 | [`src/clock.rs`](src/clock.rs) | `Clock`, `SystemClock`, `FixedClock`, `format_rfc3339`. Inject `FixedClock` whenever a test needs an exact T1→T2 correction. |
 | [`src/error.rs`](src/error.rs) | `ContextError` — the typed failure set, including the invariants the plane refuses to violate. |
 

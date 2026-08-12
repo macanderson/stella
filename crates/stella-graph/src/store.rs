@@ -79,6 +79,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "code_graph_imports",
     "code_graph_calls",
     "code_graph_storage_objects",
+    "code_graph_vectors",
 ];
 
 /// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
@@ -149,6 +150,29 @@ CREATE INDEX IF NOT EXISTS code_graph_storage_file ON code_graph_storage_objects
 -- the self-referencing CASCADE parent, which SQLite scans on every delete.
 CREATE INDEX IF NOT EXISTS code_graph_storage_level  ON code_graph_storage_objects(level, address);
 CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objects(parent_id);
+-- Semantic file vectors. They live HERE, beside the nodes they describe,
+-- rather than in `stella-context`'s `context.db`, so a semantic `graph_query`
+-- reads one database and cannot answer from a vector whose file the graph no
+-- longer has: the FK cascade deletes a vector with its file.
+--
+-- `fingerprint` is `stella_embed::EmbedderFingerprint::id()` and is part of
+-- the key, so vectors from two embedders coexist without ever being compared
+-- (`L-C2`); `content_sha256` is the hash of the text that was embedded, so a
+-- file whose content moved on is re-embedded rather than answered from a
+-- stale vector. `vector` is little-endian f32 — a fixed encoding, because the
+-- ranking it feeds must be byte-stable across machines.
+CREATE TABLE IF NOT EXISTS code_graph_vectors (
+    file_id        INTEGER NOT NULL REFERENCES code_graph_files(id) ON DELETE CASCADE,
+    fingerprint    TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    dims           INTEGER NOT NULL,
+    vector         BLOB NOT NULL,
+    embedded_at    INTEGER NOT NULL,
+    PRIMARY KEY (file_id, fingerprint)
+) WITHOUT ROWID;
+-- Both reads scan one fingerprint's whole vector set: the rank pass, and the
+-- pending pass that finds what still needs embedding.
+CREATE INDEX IF NOT EXISTS code_graph_vectors_fp ON code_graph_vectors(fingerprint);
 "#;
 
 /// Largest source file this index will read, in bytes.
@@ -1123,7 +1147,7 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hex
 }
 
-fn now_unix() -> i64 {
+pub(crate) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

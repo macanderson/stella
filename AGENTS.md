@@ -173,7 +173,7 @@ running at all.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
-tests that crate and its dependents rather than all 22 members (#1135). It
+tests that crate and its dependents rather than all 23 members (#1135). It
 widens to the whole workspace for a push to `main`, a tag, a diff touching a
 workspace-root manifest / `Cargo.lock` / a build script / the gate machinery,
 and for anything it cannot narrow with confidence. Two escape hatches sit
@@ -472,7 +472,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-one crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-two crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -492,6 +492,7 @@ the files you must plan around (see below).
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
+| Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
@@ -561,7 +562,7 @@ a plan needs and the part that rarely changes:
 | `stella-tools` | `src/registry.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other fourteen crates carry no god files — keep it that way. Each crate's
+The other fifteen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 
