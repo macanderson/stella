@@ -30,6 +30,7 @@ Round trip::
 from __future__ import annotations
 
 import logging
+import re
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -63,6 +64,12 @@ __all__ = [
 #: rename must keep loading, but nothing should keep *emitting* a name the rest
 #: of the codebase no longer uses, or the old spelling never dies.
 _ROLE_ALIASES = {"judge": "verifier"}
+
+#: The grammar of a ``[match] lineage`` value. Kept identical to
+#: ``stella_harbor.lineage``'s parser rather than imported from it: the
+#: adapter is a separate distribution the arena does not depend on, and a
+#: template must fail validation on this host rather than inside a container.
+_LINEAGE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(@[0-9]+)?")
 
 log = logging.getLogger("arenabench.config")
 
@@ -335,6 +342,24 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
         problems.append("match.sut_ref must be a string git ref")
         match_sut = None
 
+    # Refused rather than coerced, and refused rather than ignored. A lineage
+    # id is a contamination declaration: a value this file cannot key a
+    # generation from would run the match clean while its provenance said it
+    # was seeded, which is the one mislabelling `arenabench.provenance` exists
+    # to prevent. The grammar mirrors `stella_harbor.lineage`'s parser, which
+    # is what actually addresses the S3 prefix.
+    match_lineage = match_table.get("lineage")
+    if match_lineage is not None and not isinstance(match_lineage, str):
+        problems.append("match.lineage must be a string lineage id")
+        match_lineage = None
+    elif isinstance(match_lineage, str) and match_lineage.strip():
+        if _LINEAGE_RE.fullmatch(match_lineage.strip()) is None:
+            problems.append(
+                "match.lineage must be 1-64 characters of [A-Za-z0-9._-] "
+                "starting alphanumeric, optionally followed by @<generation>"
+            )
+            match_lineage = None
+
     if problems:
         raise MatchTemplateError(problems)
 
@@ -356,6 +381,7 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             # opt-out: a committed template that ran the project's default
             # branch before this key existed must keep meaning that (#2082).
             "sut_ref": match_sut,
+            "lineage": match_lineage,
         }
     )
     return replace(spec, contestants=tuple(contestants))
@@ -442,6 +468,11 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
             # exactly how a committed file silently ran a different Stella
             # than the match it came from (#2082).
             "sut_ref": spec.sut_ref,
+            # Written unconditionally, like `sut_ref` and for a sharper version
+            # of the same reason: this key is what makes a result seeded rather
+            # than clean, and a copy of the template that dropped it would
+            # describe a match nobody ran.
+            "lineage": spec.lineage,
         },
         "contestant": [
             {
@@ -532,6 +563,14 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
         "# at, recorded as unverified. A seat may override this with its own",
         "# sut_ref line — that is how two Stella builds race the same tasks.",
         _line("sut_ref", spec.sut_ref),
+        "# Lineage: carry what a Stella seat learned on a task in one trial into",
+        '# the next trial of the same task. "" (the default) starts every trial',
+        "# blank, which is how every published number was measured. Setting it",
+        "# CONTAMINATES the match — a seeded trial has seen its task before — so",
+        "# the id is stamped into provenance.json and into the comparability key,",
+        "# and a seeded result can never be averaged with a clean one.",
+        '# Use "<id>" to chain onto the newest generation, "<id>@<n>" to replay n.',
+        _line("lineage", spec.lineage),
         "",
     ]
 

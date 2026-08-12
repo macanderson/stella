@@ -91,6 +91,13 @@ from .exit_cause import (
     probe_sigkill_cause,
 )
 from .git_baseline import ensure_git, run_git_baseline
+from .lineage import (
+    LINEAGE_BUCKET_ENV,
+    LINEAGE_ENV,
+    disclosed_lineage,
+    harvest_lineage,
+    seed_lineage,
+)
 from .locate import locate_binary as _locate_binary
 from .loop_mode import NO_PIPELINE_ENV, loop_argv, loop_mode_name
 from .loop_mode import is_truthy as _is_truthy
@@ -264,6 +271,10 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # because the ambient check fails closed — an exported-but-unregistered
         # name refuses the run rather than enabling the policy.
         upstream_pin.ENV,
+        # The lineage opt-in and its store (:mod:`lineage`). Host-only: read
+        # here to decide what is copied in; meaningless to the CLI inside.
+        LINEAGE_ENV,
+        LINEAGE_BUCKET_ENV,
     }
 )
 
@@ -950,6 +961,10 @@ class StellaAgent(BaseInstalledAgent):
         # The returned report is what trial metadata and the ATIF trajectory
         # disclose, so it has to be the report of the step that actually ran.
         self._workspace_git_baseline = await run_git_baseline(self, environment)
+        # After the baseline (the seed's `.stella/` exclusion needs a git dir),
+        # before the first turn. A no-op with no lineage; it raises rather
+        # than let a trial run clean under a seeded label.
+        self._lineage = await seed_lineage(self, environment)
         await self._build_code_graph(environment)
 
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
@@ -1112,6 +1127,9 @@ class StellaAgent(BaseInstalledAgent):
         if stderr:
             self._write_log(_RUN_STDERR_NAME, stderr)
         await self._export_private_telemetry(environment)
+        # Learned state, kept apart from the telemetry above: that measures
+        # this run; this is what the next generation inherits.
+        self._lineage = await harvest_lineage(self, environment)
 
         # Populate now so Harbor keeps metrics even though it deliberately
         # skips a second post-run call once AgentContext is non-empty.
@@ -1666,6 +1684,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_witness_authored_state": witness_authored_state,
             "stella_self_verdict_state": self_verdict_state,
             "stella_workspace_git_baseline": workspace_git_baseline,
+            # The contamination marker (:mod:`lineage`) — present iff seeded.
+            "stella_lineage": disclosed_lineage(getattr(self, "_lineage", None)),
         }
         if envelope is not None:
             extra["stella_accounting"] = envelope_accounting(envelope)

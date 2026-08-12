@@ -185,6 +185,19 @@ def match_row(match: Any) -> dict[str, Any]:
     seat_signatures = [_seat_signature(c) for c in spec.contestants]
     dataset_digest = (prov.dataset_digest if prov else "") or ""
     sut_commit = (prov.sut_commit if prov else "") or ""
+    # The contamination token. A seeded match ran agents that had already seen
+    # these tasks, so it is a different apparatus in the strongest sense this
+    # arena has — and the trend view is precisely where that would disappear,
+    # because a line through a clean series and a seeded point reads as the SUT
+    # improving. Empty for a clean match, so every group key written before
+    # lineage existed keeps its exact spelling (`arenabench.provenance`).
+    # getattr, like `color` below: records written before lineage existed and
+    # the duck-typed stand-ins in the tests carry neither attribute.
+    lineage_token = (
+        getattr(prov, "lineage_label", "")
+        if prov and getattr(prov, "contaminated", False)
+        else ""
+    )
     # Metrics before the task list, because the list may have to come from
     # them: an empty ``spec.tasks`` means "the whole dataset" (MatchSpec's
     # contract), so the comparability key derives the list from the trials
@@ -267,9 +280,19 @@ def match_row(match: Any) -> dict[str, Any]:
             # provenance never recorded a dataset digest, the registry name
             # stands in — two unprovenanced matches on different datasets are
             # different measurements too, and "unknown" must not join them.
+            # A seeded match is a different apparatus and must never share a
+            # group with a clean one — see the lineage section of
+            # `arenabench.provenance`. Surfaced beside the key as well as
+            # inside it, because the key is a grouping token and this is a
+            # warning the client has to *render*.
+            "contaminated": bool(lineage_token),
+            "lineage": lineage_token,
             "group_key": (
                 f"{dataset_digest.removeprefix('sha256:')[:8] or spec.dataset or 'unknown'}"
                 f"|{_task_digest(tasks)}|{seat_sig_token}"
+                # Appended only when contaminated, so every group key written
+                # before lineage existed keeps its exact spelling.
+                + (f"|{lineage_token}" if lineage_token else "")
             ),
         },
         "seats": seats,
