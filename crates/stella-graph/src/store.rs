@@ -161,6 +161,13 @@ CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objec
 -- file whose content moved on is re-embedded rather than answered from a
 -- stale vector. `vector` is little-endian f32 — a fixed encoding, because the
 -- ranking it feeds must be byte-stable across machines.
+--
+-- Deliberately a rowid table. `WITHOUT ROWID` is the natural-looking choice
+-- for a two-column key, and it is the wrong one here: SQLite spills any row
+-- wider than about a twentieth of a page onto overflow chains in a
+-- `WITHOUT ROWID` B-tree, and a 1536-dimension f32 vector is ~6 KiB against a
+-- 4 KiB page. Every rank pass reads every row, so that trade would put the
+-- one hot read of this table on an overflow walk to save an integer per row.
 CREATE TABLE IF NOT EXISTS code_graph_vectors (
     file_id        INTEGER NOT NULL REFERENCES code_graph_files(id) ON DELETE CASCADE,
     fingerprint    TEXT NOT NULL,
@@ -169,7 +176,7 @@ CREATE TABLE IF NOT EXISTS code_graph_vectors (
     vector         BLOB NOT NULL,
     embedded_at    INTEGER NOT NULL,
     PRIMARY KEY (file_id, fingerprint)
-) WITHOUT ROWID;
+);
 -- Both reads scan one fingerprint's whole vector set: the rank pass, and the
 -- pending pass that finds what still needs embedding.
 CREATE INDEX IF NOT EXISTS code_graph_vectors_fp ON code_graph_vectors(fingerprint);
