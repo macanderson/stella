@@ -51,6 +51,12 @@ impl RepoStatusPort for NeverRepoStatus {
 /// run owns it.
 pub(super) type SeedProbe = Arc<std::sync::Mutex<Option<(Vec<String>, bool)>>>;
 
+/// Every `(id, status)` the pipeline drove onto this candidate's plan board,
+/// in order. The board itself is the real `TaskBoard` on the CLI side; here
+/// the transitions are all the test needs, because the question a plan-rail
+/// witness asks is whether the pipeline moved the checklist *at all*.
+pub(super) type StepProbe = Arc<std::sync::Mutex<Vec<(String, stella_protocol::TaskStatus)>>>;
+
 /// A scripted [`CandidateWorkspace`]: per-candidate command results, a
 /// canned adoption outcome, and a shared log of lifecycle calls.
 pub(super) struct FakeWorkspace {
@@ -72,6 +78,10 @@ pub(super) struct FakeWorkspace {
     /// rather than a `log` entry so the tests that assert exact lifecycle
     /// sequences stay untouched.
     seeded: SeedProbe,
+    /// What `mark_plan_step` received, in order — see [`StepProbe`].
+    steps_marked: StepProbe,
+    /// What `announce_changes` was last handed, or `None` if never called.
+    announced: Arc<std::sync::Mutex<Option<bool>>>,
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -93,6 +103,8 @@ impl FakeWorkspace {
             graft_result: Ok(()),
             escaped: Vec::new(),
             seeded: Arc::default(),
+            steps_marked: Arc::default(),
+            announced: Arc::default(),
             log,
         }
     }
@@ -101,6 +113,16 @@ impl FakeWorkspace {
     /// port — the boxed workspace itself is unreachable once the run owns it.
     pub(super) fn seeded_probe(&self) -> SeedProbe {
         self.seeded.clone()
+    }
+
+    /// The plan-step transition probe, cloned out for the same reason.
+    pub(super) fn steps_probe(&self) -> StepProbe {
+        self.steps_marked.clone()
+    }
+
+    /// The change-announce probe, cloned out for the same reason.
+    pub(super) fn announced_probe(&self) -> Arc<std::sync::Mutex<Option<bool>>> {
+        self.announced.clone()
     }
 
     pub(super) fn with_repo_status(mut self, repo_status: SeqRepoStatus) -> Self {
@@ -192,6 +214,15 @@ impl CandidateWorkspace for FakeWorkspace {
     }
     fn seed_task_board(&self, steps: &[String], announce: bool) {
         *self.seeded.lock().unwrap() = Some((steps.to_vec(), announce));
+    }
+    fn announce_changes(&self, announce: bool) {
+        *self.announced.lock().unwrap() = Some(announce);
+    }
+    fn mark_plan_step(&self, id: &str, status: stella_protocol::TaskStatus) {
+        self.steps_marked
+            .lock()
+            .unwrap()
+            .push((id.to_string(), status));
     }
     async fn seal(&self) -> Result<(), WorkspaceError> {
         self.log.lock().unwrap().push(format!("seal:{}", self.id));

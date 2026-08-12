@@ -690,6 +690,14 @@ pub async fn run_deck(
                                         model.queue.remove(*index);
                                     }
                                     WorkspaceInput::QueueClear => model.queue.clear(),
+                                    // Esc-with-something-to-say drains the
+                                    // backlog into the running turn, so the
+                                    // deck's mirror of it empties here — the
+                                    // same one-mutation-site discipline every
+                                    // other queue edit follows. Leaving the
+                                    // rows up would show prompts as "waiting"
+                                    // that are already in the model's hands.
+                                    WorkspaceInput::Steer { .. } => model.queue.clear(),
                                     // `/clear`: a session reset to seq-0 has no
                                     // backlog — the transcript itself resets on
                                     // the driver's `Inbound::SessionReset`, so

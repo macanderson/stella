@@ -449,7 +449,13 @@ impl GitCandidateWorkspaces {
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
                 let board = registry.task_board();
-                let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
+                // Kept concrete beside the erased handle: the change-announce
+                // latch (`CandidateWorkspace::announce_changes`) is a registry
+                // posture, and the pipeline can only decide it after `create`
+                // — it is the caller who knows the fan-out width, not us.
+                let registry = Arc::new(registry);
+                let announce_target = registry.clone();
+                let registry: Arc<dyn stella_core::ToolExecutor> = registry;
                 // The witness author's reads honor the operator's tool policy
                 // exactly like the worker's do (#1784): before this wrap, a
                 // `"tools": {"read_file": "off"}` switch reached every worker
@@ -503,6 +509,10 @@ impl GitCandidateWorkspaces {
                         overlay: overlay_untracked,
                     },
                     task_board,
+                    changes: ChangeAnnounce {
+                        registry: announce_target,
+                        events: self.events.clone(),
+                    },
                     omitted,
                 })
             }
@@ -688,6 +698,36 @@ impl RepoStatusPort for SnapshotRepoStatus {
     }
 }
 
+/// Whether this candidate's mutations ride the turn's event channel live.
+///
+/// The registry carries the latch (`attach_events` announces everything,
+/// `attach_read_events` announces reads alone); this pair is what lets the
+/// pipeline flip it *after* `create`, which is the only moment anyone knows
+/// how wide the fan-out is. Holding the concrete `Arc<ToolRegistry>` beside
+/// the erased tool stack costs one pointer and keeps the decision where
+/// [`CandidateWorkspace::announce_changes`] documents it.
+///
+/// `events: None` — a host that wired no event sink — makes every call a
+/// no-op: there is no channel to announce onto, and re-attaching `None` would
+/// be a way to lose one.
+struct ChangeAnnounce {
+    registry: Arc<stella_tools::ToolRegistry>,
+    events: Option<stella_core::EventSender>,
+}
+
+impl ChangeAnnounce {
+    fn set(&self, announce: bool) {
+        let Some(events) = self.events.clone() else {
+            return;
+        };
+        if announce {
+            self.registry.attach_events(events);
+        } else {
+            self.registry.attach_read_events(events);
+        }
+    }
+}
+
 /// One live candidate shadow — see the module docs for the lifecycle.
 pub(crate) struct GitCandidateWorkspace {
     /// The real repo's toplevel (canonicalized): the adoption target.
@@ -722,6 +762,8 @@ pub(crate) struct GitCandidateWorkspace {
     /// pipeline drives it through [`CandidateWorkspace::seed_task_board`]
     /// right after `create` (#1719); see [`task_events`].
     task_board: task_events::CandidateTaskBoard,
+    /// This candidate's change-announce latch — see [`ChangeAnnounce`].
+    changes: ChangeAnnounce,
     /// Ignored paths present in the real tree and elided from this snapshot —
     /// see [`snapshot_gaps`]. A display list for the candidate's context, not
     /// a set anything branches on.
@@ -896,6 +938,14 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     fn seed_task_board(&self, steps: &[String], announce: bool) {
         self.task_board.seed(steps, announce);
+    }
+
+    fn announce_changes(&self, announce: bool) {
+        self.changes.set(announce);
+    }
+
+    fn mark_plan_step(&self, id: &str, status: stella_protocol::TaskStatus) {
+        self.task_board.mark(id, status);
     }
 
     async fn seal(&self) -> Result<(), WorkspaceError> {

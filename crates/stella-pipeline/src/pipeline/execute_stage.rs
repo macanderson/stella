@@ -12,6 +12,8 @@
 
 use super::*;
 
+use stella_protocol::TaskStatus;
+
 /// The per-turn signal counters [`Pipeline::filtered_turn_events`] hands
 /// back beside its sender: read after the turn ends, folded into the
 /// candidate's [`ChangeSignals`]. Shared `Arc`s because the sender's closure
@@ -44,6 +46,28 @@ impl TurnTallies {
 const VERIFY_DONE_TOOL: &str = "verify_done";
 const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
 
+/// Which slice of which plan [`Pipeline::run_plan_steps`] is walking, and the
+/// board it reports onto.
+///
+/// The three positional fields travel together because they are one fact —
+/// where in the plan this walk sits — and separating them is how a resumed
+/// run's prompts came to be able to say "step 1 of 2" about the fourth step of
+/// five. `board` joins them because every one of its ids is derived from
+/// `offset`: the ordinals the scope gate numbered, not the index in `steps`.
+pub(super) struct PlanWalk<'p> {
+    /// The steps this walk runs — a *tail* of the plan on a resume.
+    pub(super) steps: &'p [PlanStep],
+    /// Where `steps[0]` sits in the whole plan (0 for a fresh run).
+    pub(super) offset: usize,
+    /// How many steps the whole plan has.
+    pub(super) total: usize,
+    /// The candidate whose private board this walk moves, when the run is
+    /// isolated. `None` on the shared-tree and resumed paths, where there is
+    /// no private board — the session's own tap still mirrors whatever the
+    /// worker's `task_*` calls do.
+    pub(super) board: Option<&'p dyn CandidateWorkspace>,
+}
+
 impl<'a> Pipeline<'a> {
     /// Execute stage: one turn for simple/single-task; one turn per plan step
     /// for multi-step (each step guides a fresh engine turn). The last turn's
@@ -53,6 +77,7 @@ impl<'a> Pipeline<'a> {
         &self,
         plan: Option<&[PlanStep]>,
         engine: &Engine<'_>,
+        board: Option<&dyn CandidateWorkspace>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
@@ -88,29 +113,57 @@ impl<'a> Pipeline<'a> {
             }
             Ok(())
         } else {
-            self.run_plan_steps(steps, 0, steps.len(), engine, spend, state)
-                .await
+            self.run_plan_steps(
+                PlanWalk {
+                    steps,
+                    offset: 0,
+                    total: steps.len(),
+                    board,
+                },
+                engine,
+                spend,
+                state,
+            )
+            .await
         }
     }
 
-    /// Walk `steps` — a plan's tail beginning at `offset` within a plan of
-    /// `total` steps — one engine turn per step. Split from
-    /// [`Pipeline::execute_plan`] so a resumed run (#1671) can finish the
-    /// steps its crashed predecessor never reached while each prompt still
-    /// names its true position ("step 4 of 5", not "step 1 of 2").
+    /// Walk a plan's steps — one engine turn each — reporting each one on the
+    /// candidate's board as it goes.
+    ///
+    /// Split from [`Pipeline::execute_plan`] so a resumed run (#1671) can
+    /// finish the steps its crashed predecessor never reached; [`PlanWalk`]
+    /// is what lets those prompts still name their true position ("step 4 of
+    /// 5", not "step 1 of 2").
     pub(super) async fn run_plan_steps(
         &self,
-        steps: &[PlanStep],
-        offset: usize,
-        total: usize,
+        walk: PlanWalk<'_>,
         engine: &Engine<'_>,
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
+        let PlanWalk {
+            steps,
+            offset,
+            total,
+            board,
+        } = walk;
+        // The board ids the scope gate numbered. `offset + i` is the position
+        // in the WHOLE plan, so a resumed run's tail still moves the rows a
+        // reader is looking at rather than restarting the checklist at 1.
+        let mark = |i: usize, status: TaskStatus| {
+            if let Some(ws) = board {
+                ws.mark_plan_step(&(offset + i + 1).to_string(), status);
+            }
+        };
         for (i, step) in steps.iter().enumerate() {
             // The resume frame's cursor: which step's turn is in flight, so a
             // kill during this turn resumes here and not at the plan's top.
             self.record_progress(|p| p.next_step = Some(offset + i));
+            // The plan rail's whole job, driven by the one party that knows
+            // the answer — see `CandidateWorkspace::mark_plan_step`. Before
+            // the turn, so the row is already pulsing while the step runs.
+            mark(i, TaskStatus::InProgress);
             state
                 .messages
                 .push(CompletionMessage::user(plan_steps::step_prompt(
@@ -130,6 +183,7 @@ impl<'a> Pipeline<'a> {
             {
                 TurnOutcome::Completed { text, cost_usd } => {
                     *spend.total += cost_usd;
+                    mark(i, TaskStatus::Completed);
                     // #1702: a worker that declares the whole goal done ends
                     // the walk — the remaining steps could only re-confirm
                     // finished work. The declaration is screened for polarity
@@ -141,6 +195,16 @@ impl<'a> Pipeline<'a> {
                     let closed_out = plan_steps::goal_declared_complete(&text);
                     state.final_text = text;
                     if closed_out {
+                        // #1702's early close-out: the remaining steps are not
+                        // abandoned, they are covered. Saying so on the rail is
+                        // the difference between a plan that reads `6/6 done`
+                        // and one that reads `2/6` beside an answer claiming
+                        // the work is finished — the second is the report a
+                        // reader cannot reconcile, and it is the one the rail
+                        // gave before this.
+                        for (j, _) in steps.iter().enumerate().skip(i + 1) {
+                            mark(j, TaskStatus::Completed);
+                        }
                         break;
                     }
                 }
@@ -150,6 +214,11 @@ impl<'a> Pipeline<'a> {
                     cost_usd,
                 } => {
                     *spend.total += cost_usd;
+                    // A step whose turn aborted did not finish, and a rail
+                    // that left it pulsing would keep implying work is in
+                    // flight after the run stopped — the same half-invariant
+                    // `Plan::finish` holds on the TUI side.
+                    mark(i, TaskStatus::Cancelled);
                     return Err(TurnAbort { reason, kind });
                 }
             }

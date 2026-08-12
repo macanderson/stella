@@ -230,6 +230,12 @@ pub struct InteractiveToolSet<'a> {
     events: EventSender,
     io: Box<dyn AskUserIo>,
     skills: Option<SkillRegistry>,
+    /// The context plane and the channel a mid-turn lookup announces on —
+    /// see [`with_recall`](InteractiveToolSet::with_recall).
+    recall: Option<(
+        &'a dyn stella_pipeline::ports::ContextRecallPort,
+        EventSender,
+    )>,
 }
 
 impl<'a> InteractiveToolSet<'a> {
@@ -243,6 +249,106 @@ impl<'a> InteractiveToolSet<'a> {
             events: events.into(),
             io,
             skills: None,
+            recall: None,
+        }
+    }
+
+    /// Give the agent a way to search the context plane **mid-turn**.
+    ///
+    /// Recall runs once, at the top of a turn, against the goal as stated —
+    /// and that is the one moment the agent knows least about what it will
+    /// need. It has not read the code yet, has not hit the procedural wall
+    /// yet, and cannot know that the answer to the question it is about to
+    /// spend twenty minutes on is sitting in a memory nobody thought to
+    /// retrieve. Every later "am I sure about this?" had no way to ask.
+    ///
+    /// So the same port the turn-start recall uses is exposed as a tool. Not
+    /// a second retrieval system, not a cache: the identical port, so a
+    /// mid-turn recall and a turn-start recall can never disagree about what
+    /// the plane holds or what it costs.
+    ///
+    /// `None` (no context plane configured) simply does not register the
+    /// tool, which is the same shape `with_skill_registry` uses — a tool that
+    /// is offered and then always answers "unavailable" teaches the model to
+    /// stop calling it.
+    /// `events` is the TURN's channel, not this set's own. The deck hands
+    /// `InteractiveToolSet` a stub sender on purpose — it paints its own
+    /// `ask_user` card, so the set's emission would double it — and a recall
+    /// that never reaches the transcript is exactly the silent side effect
+    /// this tool exists to replace.
+    pub fn with_recall(
+        mut self,
+        recall: &'a dyn stella_pipeline::ports::ContextRecallPort,
+        events: impl Into<EventSender>,
+    ) -> Self {
+        self.recall = Some((recall, events.into()));
+        self
+    }
+
+    /// The `recall_context` schema. Single-purpose by invariant 9: it
+    /// searches, and the `query` scopes what it searches for — there is no
+    /// mode flag, and writing to the plane stays `save_memory`'s job.
+    fn recall_schema() -> ToolSchema {
+        ToolSchema {
+            name: "recall_context".into(),
+            description: "Search this workspace's context plane — durable memories, past                           episodes, indexed symbols — for anything relevant to a question,                           and get it back as citable frames. The turn's opening recall ran                           against the goal as stated, before you had read anything; call                           this the moment you hit something the goal did not predict: a                           procedural wall, a convention you cannot find written down, a                           decision you are uneasy about, or a failure that smells like one                           somebody already solved here. Costs no model call. Returns                           `no relevant context` when the plane has nothing — which is an                           answer, not a failure."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What you actually want to know, in a sentence.                                         Retrieval is semantic — a real question recalls                                         better than a keyword."
+                    }
+                },
+                "required": ["query"]
+            }),
+            // Reads the plane and changes nothing in the workspace. NOT
+            // speculation-safe: the recall port can be a network CGP host, and
+            // a duplicate speculative call is real traffic against it (#923).
+            read_only: true,
+            speculation_safe: false,
+        }
+    }
+
+    /// Run one mid-turn recall and answer with what it found.
+    ///
+    /// Emits the same `ContextRecall` event the turn-start recall does, so the
+    /// deck's recall table renders a mid-turn lookup exactly as it renders the
+    /// opening one — an agent reaching for context is a thing the reader
+    /// should see happen, not a silent side effect of a tool result.
+    async fn execute_recall_context(
+        &self,
+        recall: &dyn stella_pipeline::ports::ContextRecallPort,
+        events: &EventSender,
+        input: &Value,
+    ) -> ToolOutput {
+        let Some(query) = input.get("query").and_then(Value::as_str) else {
+            return ToolOutput::Error {
+                message: "recall_context: missing required string field `query`".into(),
+            };
+        };
+        if query.trim().is_empty() {
+            return ToolOutput::Error {
+                message: "recall_context: `query` must say what you want to know".into(),
+            };
+        }
+        let found = recall.recall(query).await;
+        if let Some(event) = found.telemetry_event() {
+            let _ = events.send(event);
+        }
+        match crate::memory::render_recalled_frames(&found.frames) {
+            Some(text) => ToolOutput::Ok { content: text },
+            // Deliberately an Ok, not an Error. "The plane holds nothing about
+            // this" is a real answer and a useful one — it tells the agent to
+            // stop looking and decide — while an error reads as a broken tool
+            // and teaches it not to ask again.
+            None => ToolOutput::Ok {
+                content: format!(
+                    "no relevant context for `{query}` — the plane has nothing on this, so \
+                     decide from what is in front of you"
+                ),
+            },
         }
     }
 
@@ -498,6 +604,9 @@ impl ToolExecutor for InteractiveToolSet<'_> {
         if self.skills.is_some() {
             schemas.extend(Self::skills_schemas());
         }
+        if self.recall.is_some() {
+            schemas.push(Self::recall_schema());
+        }
         schemas
     }
 
@@ -509,6 +618,11 @@ impl ToolExecutor for InteractiveToolSet<'_> {
             // (the TUI keys its pending-ask card by this id).
             let id = format!("ask_user-{}", NEXT_ASK_ID.fetch_add(1, Ordering::Relaxed));
             return self.execute_ask_user(&id, input).await;
+        }
+        if name == "recall_context"
+            && let Some((recall, events)) = &self.recall
+        {
+            return self.execute_recall_context(*recall, events, input).await;
         }
         if let Some(registry) = &self.skills {
             if name == "search_skills" {
@@ -868,5 +982,133 @@ mod tests {
             !ws.path().join("demo-skill/SKILL.md").exists(),
             "install must stage into a tempdir, never write the workspace root directly"
         );
+    }
+
+    /// A scripted context plane, standing in for the workspace memory.
+    struct ScriptedPlane {
+        frames: Vec<stella_pipeline::ports::RecalledFrame>,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl stella_pipeline::ports::ContextRecallPort for ScriptedPlane {
+        async fn recall(&self, goal: &str) -> stella_pipeline::ports::Recall {
+            self.asked.lock().expect("lock").push(goal.to_string());
+            stella_pipeline::ports::Recall {
+                frames: self.frames.clone(),
+                ..Default::default()
+            }
+        }
+    }
+
+    fn memory_frame(label: &str, content: &str) -> stella_pipeline::ports::RecalledFrame {
+        stella_pipeline::ports::RecalledFrame {
+            citation_label: label.into(),
+            provider: "workspace".into(),
+            source: "memory".into(),
+            kind: "memory".into(),
+            uri: None,
+            method: None,
+            content: content.into(),
+            token_cost: 12,
+            id: Some("nod_7".into()),
+            content_digest: None,
+        }
+    }
+
+    /// **The witness for mid-turn recall.** The plane was reachable exactly
+    /// once per turn — at the top, against the goal as stated — which is the
+    /// one moment the agent knows least about what it will need. An agent
+    /// that hit a procedural wall at step 12 had no way to ask whether
+    /// anybody had written the answer down.
+    #[tokio::test]
+    async fn recall_context_searches_the_plane_mid_turn_and_announces_it() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (stub, _stub_rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let plane = ScriptedPlane {
+            frames: vec![memory_frame(
+                "pushing this repo",
+                "the pre-push hook runs the whole suite; use skip_hooks for docs-only pushes",
+            )],
+            asked: std::sync::Mutex::new(Vec::new()),
+        };
+        let set = InteractiveToolSet::new(&inner, stub, Box::new(ScriptedIo::new(vec![])))
+            .with_recall(&plane, tx);
+
+        let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
+        assert!(
+            names.contains(&"recall_context".to_string()),
+            "a configured plane offers the tool: {names:?}"
+        );
+
+        let out = set
+            .execute(
+                "recall_context",
+                &serde_json::json!({ "query": "why does every push time out here?" }),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected an answer: {out:?}");
+        };
+        assert!(
+            content.contains("pre-push hook runs the whole suite"),
+            "the frame's content must reach the agent: {content}"
+        );
+        assert!(
+            content.contains("nod_7"),
+            "and its citation handle, so `cite_memory` can close the loop: {content}"
+        );
+        assert_eq!(
+            plane.asked.lock().expect("lock").as_slice(),
+            ["why does every push time out here?"],
+            "the query reaches the plane verbatim — retrieval is semantic"
+        );
+
+        // The lookup is visible. A reader watching a turn should see the agent
+        // reach for context, not infer it from a tool result.
+        let event = rx.try_recv().expect("a mid-turn recall announces itself");
+        assert!(
+            matches!(&event, AgentEvent::ContextRecall { frames, .. } if frames.len() == 1),
+            "{event:?}"
+        );
+    }
+
+    /// An empty plane is an ANSWER, not a failure. Returning an error here
+    /// would read as a broken tool and teach the model to stop asking — which
+    /// is the state this whole tool exists to leave.
+    #[tokio::test]
+    async fn an_empty_plane_answers_rather_than_erroring() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (stub, _stub_rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let plane = ScriptedPlane {
+            frames: Vec::new(),
+            asked: std::sync::Mutex::new(Vec::new()),
+        };
+        let set = InteractiveToolSet::new(&inner, stub, Box::new(ScriptedIo::new(vec![])))
+            .with_recall(&plane, tx);
+        let out = set
+            .execute(
+                "recall_context",
+                &serde_json::json!({ "query": "anything?" }),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("an empty plane is an ordinary answer: {out:?}");
+        };
+        assert!(content.contains("no relevant context"), "{content}");
+    }
+
+    /// With no plane configured the tool is not offered at all — the same
+    /// shape the skills registry uses. A tool that is advertised and then
+    /// always answers "unavailable" trains the model out of calling it.
+    #[tokio::test]
+    async fn no_plane_means_no_tool() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec![])));
+        let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
+        assert!(!names.contains(&"recall_context".to_string()), "{names:?}");
     }
 }

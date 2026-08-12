@@ -158,14 +158,19 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         "failed tool-result prefix is crimson",
     );
     // A stage is a section rule, not a row (see `row::push_rule`), so its
-    // first column is the rule's own hairline rather than a status glyph. This
-    // is the one entry whose left edge is deliberately structural: a phase
-    // boundary should recede until you scroll for it, and four bolded `◇ stage`
-    // rows in twenty lines is what it looked like when it did not.
+    // first column is the rule's own seam rather than a status glyph. This is
+    // the one entry whose left edge is deliberately structural: a phase
+    // boundary should recede until you scroll for it, and four bolded
+    // `◇ stage` rows in twenty lines is what it looked like when it did not.
+    //
+    // The *louder* seam, though. The plain hairline is 1.26:1 and is
+    // documented as never being the only carrier of structure — but a stage
+    // rule is precisely the transcript's coarsest structure, and at that
+    // contrast neither the line nor the label set into it could be read.
     assert_eq!(
         prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
-        Some(theme::HAIRLINE),
-        "a stage opens a hairline section rule",
+        Some(theme::HAIRLINE_STRONG),
+        "a stage opens a section rule on the louder seam",
     );
     // A prompt is the strongest landmark in the scrollback — where a reader
     // re-orients when scrolling back — and rides the interactive-chrome
@@ -184,4 +189,137 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         None,
         "agent prose rides an unstyled, glyph-less rail",
     );
+}
+
+/// **The witness for the transcript's tool-class colours.**
+///
+/// Before this, every tool name in the scrollback rendered in one colour —
+/// the brand gold — so the row said *a tool ran* and nothing more. The class
+/// is what a reader actually wants from a log of actions, and it is now
+/// carried by the one span they scan for.
+///
+/// Asserted from both ends: the name wears its class hue, and two calls of
+/// different classes do not agree. A regression that put every name back on
+/// one colour fails the second half even if someone re-pointed the first.
+#[test]
+fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
+    let name_fg = |tool: &str| -> Option<Color> {
+        let mut out = Vec::new();
+        entry_lines(
+            &TranscriptEntry::ToolStart {
+                call_id: "c".into(),
+                name: tool.into(),
+                input: "x".into(),
+                raw: "{}".into(),
+                path: None,
+            },
+            &[],
+            false,
+            false,
+            false,
+            80,
+            &mut out,
+        );
+        // span 0 is the rail prefix; span 1 is the padded tool name.
+        out[0].spans[1].style.fg
+    };
+    for tool in [
+        "read_file",
+        "write_file",
+        "bash",
+        "run_tests",
+        "repo_push",
+        "task",
+    ] {
+        assert_eq!(
+            name_fg(tool),
+            Some(crate::tool_class::classify(tool).color()),
+            "`{tool}` must render in its own class hue"
+        );
+        assert_ne!(
+            name_fg(tool),
+            Some(theme::ACCENT),
+            "`{tool}` must not wear the reserved gold — every name doing so is \
+             what made the accent mean nothing"
+        );
+    }
+    for (a, b) in [
+        ("read_file", "write_file"),
+        ("write_file", "bash"),
+        ("bash", "run_tests"),
+        ("run_tests", "repo_push"),
+        ("repo_push", "task"),
+    ] {
+        assert_ne!(name_fg(a), name_fg(b), "`{a}` and `{b}` must differ");
+    }
+}
+
+/// An argument-less call renders no argument column.
+///
+/// `project_overview` takes no arguments; the compact-JSON fallback printed a
+/// literal `{}` beside it, and a reader — the deck's own owner — read that as
+/// the tool having returned an empty object. There is no honest rendering of
+/// "nothing"; absence is the rendering.
+#[test]
+fn an_argument_less_call_prints_no_empty_object() {
+    let mut out = Vec::new();
+    entry_lines(
+        &TranscriptEntry::ToolStart {
+            call_id: "c".into(),
+            name: "project_overview".into(),
+            input: String::new(),
+            raw: "{}".into(),
+            path: None,
+        },
+        &[],
+        false,
+        false,
+        false,
+        80,
+        &mut out,
+    );
+    let rendered: String = out[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        rendered.contains("project_overview"),
+        "the call is still named: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("{}"),
+        "an empty argument object must not reach the row: {rendered:?}"
+    );
+}
+
+/// A sub-agent dispatch is the most consequential row a transcript can carry —
+/// another agent starts here, with its own budget and its own tool calls — and
+/// it rendered in the same quiet tier as the compaction and spend bookkeeping.
+#[test]
+fn a_sub_agent_dispatch_is_not_bookkeeping() {
+    let mut out = Vec::new();
+    entry_lines(
+        &TranscriptEntry::SubAgent {
+            agent_id: "sub:1".into(),
+            finished: None,
+            instruction_preview: "read the layout".into(),
+            write_access: false,
+        },
+        &[],
+        false,
+        false,
+        false,
+        80,
+        &mut out,
+    );
+    let label = out[0].spans[0].style;
+    assert_eq!(
+        label.fg,
+        Some(crate::tool_class::ToolClass::Delegate.color()),
+        "a dispatch wears the delegation class, like the `task` call that made it"
+    );
+    assert!(
+        label.add_modifier.contains(Modifier::BOLD),
+        "and it is bold, like every row a scan should stop on"
+    );
+    for tier in [theme::TEXT_TERTIARY, theme::TEXT_SECONDARY] {
+        assert_ne!(label.fg, Some(tier), "a dispatch is not a neutral note");
+    }
 }

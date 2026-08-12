@@ -67,6 +67,8 @@ const ALL_RGB_TOKENS: &[Color] = &[
     AMBER,
     TEAL,
     MAGENTA,
+    CITRON,
+    ORCHID,
     CODE,
     DIFF_ADD_BG,
     DIFF_DEL_BG,
@@ -518,6 +520,8 @@ fn palette_law_gold_is_the_brand() {
         (CODE, "CODE"),
         (SYNTAX_STRING, "SYNTAX_STRING"),
         (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
+        (CITRON, "CITRON"),
+        (ORCHID, "ORCHID"),
     ] {
         assert_ne!(role, ACCENT, "{name} must not be the reserved gold");
         let sep = hue_separation(role, ACCENT);
@@ -854,4 +858,101 @@ fn gold_gradient_spans_deep_to_bright_gold() {
 fn lighten_moves_toward_white() {
     assert_eq!(lighten(ACCENT, 0.0), ACCENT);
     assert_eq!(lighten(ACCENT, 1.0), Color::Rgb(255, 255, 255));
+}
+
+/// The transcript's tool-class hues are a *set*, and a set only works if
+/// every member is telling apart from every other one — not just from gold.
+///
+/// This is the law behind `crate::tool_class`: six classes, six categorical
+/// hues, none of them the reserved brand accent, and at least 30° of hue
+/// between every pair (the same floor `palette_law_gold_is_the_brand`'s
+/// clause 5 applies against gold, and the floor that killed `AGENT_ICE`).
+/// A seventh class cannot be added without either finding a seventh gap or
+/// admitting the reader can no longer see the difference — which is a
+/// decision, and this test is where it gets made.
+#[test]
+fn every_tool_class_is_categorical_and_distinct() {
+    use crate::tool_class::ToolClass;
+    for class in ToolClass::ALL {
+        let color = class.color();
+        assert_ne!(
+            color,
+            ACCENT,
+            "{} must not wear the reserved gold — a tool name is not the brand, \
+             not active, and not focused",
+            class.label()
+        );
+        let sep = hue_separation(color, ACCENT);
+        assert!(
+            sep >= 30.0,
+            "{} ({color:?}) is {sep:.1}° from the gold accent",
+            class.label()
+        );
+    }
+    for (i, a) in ToolClass::ALL.iter().enumerate() {
+        for b in &ToolClass::ALL[..i] {
+            let sep = hue_separation(a.color(), b.color());
+            assert!(
+                sep >= 30.0,
+                "the `{}` and `{}` classes are {sep:.1}° apart; 30° is the floor \
+                 for two hues to be told apart in a terminal cell",
+                a.label(),
+                b.label()
+            );
+        }
+    }
+}
+
+/// A stage rule is hued by phase now, and the mapping it uses is the
+/// statline's — one answer to "which phase is this", rendered twice.
+///
+/// The rule that survives from when the label was neutral: no stage may wear
+/// a colour that reads as a verdict on the work, because a boundary is not an
+/// outcome. `Complete` is the one exception and it is the honest one — the
+/// stage whose whole meaning is "this finished".
+#[test]
+fn a_stage_rule_is_hued_by_phase_and_never_by_verdict() {
+    use stella_protocol::StageKind as S;
+    for stage in [
+        S::Triage,
+        S::ContextRecall,
+        S::Research,
+        S::Plan,
+        S::ScopeReview,
+        S::Witness,
+        S::Execute,
+        S::Verify,
+        S::Verdict,
+        S::Reflect,
+        S::ContextWrite,
+    ] {
+        let color = stage_rule_color(stage);
+        assert_ne!(color, BAD, "{stage:?} must not read as a failure");
+        assert_ne!(color, OK, "{stage:?} must not read as a settled success");
+        assert_ne!(
+            color, TEXT_SECONDARY,
+            "{stage:?} must not fall back to the neutral tier the rules used to \
+             be drawn in — a phase boundary is structure, not bookkeeping"
+        );
+        assert_ne!(
+            color, ACCENT,
+            "{stage:?} is history by the time it is read; gold means active"
+        );
+        // The statline's live dot has the same job and answers separately —
+        // but only `Execute` may differ, and only in that direction.
+        if !matches!(stage, S::Execute) {
+            assert_eq!(
+                color,
+                stage_color(stage),
+                "{stage:?} must read the same in the transcript and the statline"
+            );
+        }
+    }
+    assert_eq!(stage_rule_color(S::Complete), OK);
+    assert_eq!(
+        stage_color(S::Execute),
+        ACCENT,
+        "the statline's LIVE execute dot keeps the accent — that is the one \
+         status gold carries"
+    );
 }

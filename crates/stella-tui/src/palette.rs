@@ -263,13 +263,35 @@ pub const DATA_3: Color = Color::Rgb(0xE4, 0x40, 0x8F);
 /// Categorical 4 -- deep teal, hue 175° (134° from gold). 10.54:1 on ground.
 pub const DATA_4: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
 
+// The transcript's tool-class series extends the categorical set by two.
+// Five distinguishable hues were not enough to give every *kind* of tool call
+// its own colour, and the transcript is the one surface where that matters:
+// it is a log of actions, and the reader's first question of any row is what
+// KIND of thing happened -- a read, a write, a shell, a test, a push, a
+// hand-off. Both new values obey the same three laws the four above do: no
+// blue anywhere (the comet kit has none), at least 30° of hue from the gold
+// accent so neither can be mistaken for "active", and at least 30° from every
+// other categorical hue so two adjacent rows are told apart by hue alone.
+//
+// Placed in the two gaps the existing series leaves: 80.6° between gold's
+// 30° exclusion zone and the success green (142°), and 290° between the
+// violet (256°) and the rose (331°). The wrap-around gap (331° → 41°) is
+// gold's own, and stays empty.
+
+/// Categorical 5 -- citron, hue 81° (39° from gold, 61° from the success
+/// green). 11.08:1 on ground. The transcript's repository/VCS class.
+pub const DATA_5: Color = Color::Rgb(0xA3, 0xD1, 0x4B);
+/// Categorical 6 -- orchid, hue 290° (34° from the violet, 41° from the
+/// rose). 6.76:1 on ground. The transcript's delegation/orchestration class.
+pub const DATA_6: Color = Color::Rgb(0xD4, 0x6F, 0xE8);
+
 /// Every palette colour, paired with its token name.
 ///
 /// Lets a test walk the whole palette -- see theme.rs's
 /// `every_dark_palette_value_has_a_fallback` -- without a hand-maintained
 /// second list. Names match the kit's token vocabulary at
 /// `docs/brand/css/tokens.css`.
-pub const ALL: [(&str, Color); 37] = [
+pub const ALL: [(&str, Color); 39] = [
     ("void", VOID),
     ("ground", GROUND),
     ("surface", SURFACE),
@@ -307,4 +329,6 @@ pub const ALL: [(&str, Color); 37] = [
     ("data-2", DATA_2),
     ("data-3", DATA_3),
     ("data-4", DATA_4),
+    ("data-5", DATA_5),
+    ("data-6", DATA_6),
 ];

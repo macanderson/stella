@@ -268,7 +268,11 @@ pub(crate) fn push_rule(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let hair = Style::new().fg(theme::HAIRLINE);
+    // The louder seam, not the hairline. A stage rule is the transcript's
+    // coarsest structure; drawn at 1.26:1 it was invisible on every screen
+    // that was not the author's, and the label set into it inherited the
+    // dimness of the line it sat on.
+    let hair = Style::new().fg(theme::HAIRLINE_STRONG);
     let text = label.to_uppercase();
     // `── ` + label + ` ` — the lead is fixed so successive rules stack into a
     // straight left edge, and only the trailing fill is elastic.

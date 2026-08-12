@@ -142,6 +142,12 @@ pub const TEAL: Color = palette::DATA_4;
 /// against [`DANGER`]'s red-pink, so it never carries an error meaning and
 /// never appears without a neutral label or glyph beside it.
 pub const MAGENTA: Color = palette::DATA_3;
+/// Citron — the repository/VCS tool class in the transcript. `data-5`,
+/// 11.08:1 on ground, 39° from gold and 61° from the success green.
+pub const CITRON: Color = palette::DATA_5;
+/// Orchid — the delegation/orchestration tool class in the transcript.
+/// `data-6`, 6.76:1 on ground, 34° from the violet and 41° from the rose.
+pub const ORCHID: Color = palette::DATA_6;
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
 // Role names remap onto the palette so call sites read as intent (accent,
@@ -620,6 +626,13 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (AMBER, 179, 3),
     (TEAL, 44, 6),
     (MAGENTA, 168, 5),
+    // The tool-class pair. 149 (175,215,95) and 171 (215,95,255) are the
+    // nearest cube entries; at 16 colours they share green/magenta with their
+    // hue neighbours, which is the ordinary collapse every categorical hue
+    // takes there — the tool NAME is always beside the colour, so the class is
+    // never carried by hue alone.
+    (CITRON, 149, 10),
+    (ORCHID, 171, 13),
     (CODE, 72, 2),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
@@ -727,6 +740,10 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (AMBER, Color::Rgb(0x92, 0x40, 0x0E)),
     (TEAL, Color::Rgb(0x0F, 0x76, 0x6E)),
     (MAGENTA, Color::Rgb(0xA6, 0x18, 0x5C)),
+    // The tool-class pair, darkened for AA on the warm paper: citron drops to
+    // an olive (5.49:1), orchid to a deep purple (6.24:1).
+    (CITRON, Color::Rgb(0x4D, 0x6B, 0x12)),
+    (ORCHID, Color::Rgb(0x8B, 0x2B, 0xA8)),
     // Syntax bodies. Strings take green-800 (6.38:1 — green-700 sat at
     // 4.49:1 on the warm paper).
     (SYNTAX_STRING, Color::Rgb(0x16, 0x65, 0x34)),
@@ -787,6 +804,31 @@ pub fn rule() -> Style {
     Style::default().fg(RULE)
 }
 
+/// The border of a panel that *contains* something a reader works in — the
+/// transcript, PLAN, PROOF, the deck's section boxes.
+///
+/// [`HAIRLINE_STRONG`], not [`RULE`]. The plain hairline is 1.26:1 and is
+/// documented as decoration that "may never be the only thing conveying
+/// structure" — which is exactly the job a panel border does have. At 1.57:1
+/// the seam is still quiet enough to recede and finally strong enough to
+/// enclose. Popovers and cards that already sit on a lifted ground keep
+/// [`rule`].
+pub fn panel_rule() -> Style {
+    Style::default().fg(HAIRLINE_STRONG)
+}
+
+/// The words set into a panel's border.
+///
+/// A ratatui `Block` title with no style of its own inherits the border's, so
+/// every panel label was being drawn in the seam colour — legible only to
+/// someone who already knew what it said. A title is content: it takes the
+/// caption tier and its own weight.
+pub fn panel_title() -> Style {
+    Style::default()
+        .fg(TEXT_SECONDARY)
+        .add_modifier(Modifier::BOLD)
+}
+
 // ── Status → color / glyph ──────────────────────────────────────────────────
 
 /// A color per agent lifecycle status (dashboard, traces, session HUD).
@@ -816,8 +858,31 @@ pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
         S::Triage | S::ContextRecall | S::Research | S::Plan | S::ScopeReview | S::Witness => RUN,
         S::Execute => ACCENT,
         S::Verify | S::Verdict => TEAL,
-        S::Reflect | S::ContextWrite => MUTED,
+        // The wind-down stages *write*: reflection mines lessons into
+        // `.stella/`, context-write upserts facts. They wore the neutral tier
+        // and were the only stages a reader could not see at all; the rose is
+        // the same hue the transcript paints a mutating tool call, so "this
+        // phase changed something durable" is one colour wherever it appears.
+        S::Reflect | S::ContextWrite => MAGENTA,
         S::Complete => OK,
+    }
+}
+
+/// The stage colour a **transcript section rule** renders in — the same phase
+/// families [`stage_color`] uses, with one deliberate divergence.
+///
+/// `Execute` is the accent on the statline, because the statline's dot is
+/// *current state* and gold means active — the one status the kit gives it. A
+/// transcript rule is the opposite: it is history, written once and scrolled
+/// past, and by the time it is read the stage is over. Gold on a settled thing
+/// is the reservation's exact failure mode, so the execute rule takes the
+/// citron instead: the brightest categorical hue there is (11.08:1), 39° clear
+/// of gold, and — like the stage it marks — the one that says the workspace
+/// changed here.
+pub fn stage_rule_color(stage: stella_protocol::StageKind) -> Color {
+    match stage {
+        stella_protocol::StageKind::Execute => CITRON,
+        other => stage_color(other),
     }
 }
 

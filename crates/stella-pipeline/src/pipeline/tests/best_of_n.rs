@@ -775,7 +775,7 @@ async fn workspace_creation_seeds_the_plan_and_only_a_lone_candidate_may_report(
         let mut probes = Vec::new();
         for i in 0..n {
             let ws = FakeWorkspace::new(i as usize, vec![], Ok(vec![]), log.clone());
-            probes.push(ws.seeded_probe());
+            probes.push((ws.seeded_probe(), ws.announced_probe()));
             script.push(Ok(ws));
         }
         let port = FakeWorkspacePort::new(script, log.clone());
@@ -783,13 +783,136 @@ async fn workspace_creation_seeds_the_plan_and_only_a_lone_candidate_may_report(
             .create_candidate_workspaces(&port, n, Some(&plan))
             .await;
         assert_eq!(created.len(), n as usize);
-        for probe in probes {
+        for (seeded, announced) in probes {
             assert_eq!(
-                *probe.lock().unwrap(),
+                *seeded.lock().unwrap(),
                 Some((approved.clone(), announce)),
                 "n={n}: the gate's step strings must reach the board verbatim, \
                  and announce must be n == 1"
             );
+            // The change-announce latch rides the same seam and the same
+            // answer: a lone candidate's edits are the ones that become the
+            // user's, so its `FileChange`s go out live and the transcript can
+            // render each edit's diff under the call that made it. A wider
+            // fan-out still withholds — several trees spliced into one Files
+            // tab is nobody's tree.
+            assert_eq!(
+                *announced.lock().unwrap(),
+                Some(announce),
+                "n={n}: only a lone candidate may announce its mutations live"
+            );
         }
+    }
+}
+
+/// **The plan-rail witness.** A multi-step plan running in an isolated
+/// candidate must move that candidate's board as it walks — one
+/// `InProgress` before each step's turn and one `Completed` after it.
+///
+/// Before this, nothing did. #1719 made a candidate's `task_start "3"`
+/// *resolve*, which was necessary and not sufficient: the execute stage's
+/// step prompts say what to do and never mention the board, so unless the
+/// worker volunteered a `task_*` call — and on a real six-step session it
+/// made none of the sixty tool calls it made — the deck's PLAN rail sat at
+/// `0/6` from the first turn to the last while the transcript beneath it
+/// reported step after step finishing.
+///
+/// Driven by the pipeline rather than asked of the model for the same reason
+/// `ladder_decision` is deterministic: the stage wrote the step prompt, so it
+/// already knows which step is in flight, and buying that answer back at a
+/// model round trip per step would be both slower and less reliable.
+#[tokio::test]
+async fn a_plan_walk_moves_the_candidates_board_step_by_step() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: multi"),
+        text_result(r#"["read the layout","fold the rail"]"#),
+        text_result("step 1 done"),
+        text_result("step 2 done"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ws = FakeWorkspace::new(0, vec![false, true], Ok(vec![]), log.clone());
+    let steps = ws.steps_probe();
+    let port = FakeWorkspacePort::new(vec![Ok(ws)], log.clone());
+
+    let (outcome, _events, _messages) = run_isolated(
+        &provider,
+        &port,
+        lone_isolated_config(),
+        "Unify the plan surfaces",
+    )
+    .await;
+    assert_eq!(
+        outcome.expect("run succeeds").status,
+        PipelineStatus::Completed
+    );
+
+    use stella_protocol::TaskStatus;
+    assert_eq!(
+        *steps.lock().unwrap(),
+        vec![
+            ("1".to_string(), TaskStatus::InProgress),
+            ("1".to_string(), TaskStatus::Completed),
+            ("2".to_string(), TaskStatus::InProgress),
+            ("2".to_string(), TaskStatus::Completed),
+        ],
+        "each plan step is started before its turn and completed after it — \
+         the ordinals are the ones the scope gate numbered, so the rail's rows \
+         and the board's ids are the same rows"
+    );
+}
+
+/// The close-out half (#1702): a worker that declares the whole goal finished
+/// ends the walk, and the steps it covered are reported *complete* rather than
+/// left pending.
+///
+/// Without this the rail reads `1/8` beside a final answer claiming the work
+/// is done — a report a reader cannot reconcile, and strictly worse than the
+/// old permanently-empty board because it looks like an answer.
+#[tokio::test]
+async fn a_declared_complete_goal_completes_the_steps_it_covered() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: multi"),
+        text_result(r#"["read the layout","fold the rail","test it"]"#),
+        text_result("PLAN COMPLETE: all three were one edit."),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ws = FakeWorkspace::new(0, vec![false, true], Ok(vec![]), log.clone());
+    let steps = ws.steps_probe();
+    let port = FakeWorkspacePort::new(vec![Ok(ws)], log.clone());
+
+    let (outcome, _events, _messages) = run_isolated(
+        &provider,
+        &port,
+        lone_isolated_config(),
+        "Unify the plan surfaces",
+    )
+    .await;
+    assert_eq!(
+        outcome.expect("run succeeds").status,
+        PipelineStatus::Completed
+    );
+
+    use stella_protocol::TaskStatus;
+    let marked = steps.lock().unwrap().clone();
+    for id in ["1", "2", "3"] {
+        assert!(
+            marked
+                .iter()
+                .any(|(step, status)| step == id && *status == TaskStatus::Completed),
+            "step {id} must be reported complete when the goal was declared \
+             finished — it was covered, not abandoned: {marked:?}"
+        );
+    }
+}
+
+/// A LONE isolated candidate: `create_worktrees: always` is what makes a
+/// single-shot run take the snapshot path, which is exactly the deck's
+/// default shape and the one the plan-rail defect lived in. `isolated_config`
+/// reaches isolation only at n >= 2, where two candidates race one scripted
+/// provider — no good for asserting an ordered transition log.
+fn lone_isolated_config() -> PipelineConfig {
+    PipelineConfig {
+        create_worktrees: crate::ports::WorktreePolicy::Always,
+        ..isolated_config(1)
     }
 }

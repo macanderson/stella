@@ -1993,7 +1993,7 @@ impl<'a> Pipeline<'a> {
         };
 
         if let Err(abort) = self
-            .execute_plan(frame.plan, engine, spend, &mut state)
+            .execute_plan(frame.plan, engine, surface.workspace, spend, &mut state)
             .await
         {
             return CandidateResult::turn_aborted(state.messages, abort);

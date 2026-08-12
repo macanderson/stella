@@ -144,8 +144,8 @@ pub(crate) fn render_hud(
     }
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::rule())
-        .title(" stella ");
+        .border_style(theme::panel_rule())
+        .title(Span::styled(" stella ", theme::panel_title()));
     Paragraph::new(Line::from(spans))
         .block(block)
         .render(area, buf);
@@ -207,10 +207,15 @@ pub(crate) fn render_transcript_window(
             window.end.min(total)
         )
     };
+    // The title carries its OWN style. A ratatui title with none inherits the
+    // border's, and the border is the deliberately-below-3.0 hairline — so
+    // `transcript · 0-23 / 38`, the one label that says where in the history
+    // you are, rendered at 1.26:1 and could not be read at all. The seam stays
+    // quiet (it is decoration); the words on it do not.
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::rule())
-        .title(title);
+        .border_style(theme::panel_rule())
+        .title(Span::styled(title, theme::panel_title()));
     if let Some(hint) = hint {
         block = block.title_bottom(
             Line::from(Span::styled(

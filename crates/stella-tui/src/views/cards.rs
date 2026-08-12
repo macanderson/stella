@@ -72,7 +72,7 @@ pub(crate) fn card_frame(
     }
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::rule())
+        .border_style(theme::panel_rule())
         .title(Line::from(title));
     if !hints.is_empty() {
         block = block.title(

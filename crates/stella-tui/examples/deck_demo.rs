@@ -96,6 +96,17 @@ async fn main() -> std::io::Result<()> {
                     let tx = react_tx.clone();
                     tokio::spawn(async move { mini_run(&tx, &id).await });
                 }
+                // Esc-with-something-to-say. The demo has no engine to
+                // inject into, so it echoes the steer onto the lane as text —
+                // enough to see the deck's own half of the round trip.
+                WorkspaceInput::Steer { agent, texts } => {
+                    for text in texts {
+                        let _ = react_tx.send(Inbound::Event {
+                            agent: agent.clone(),
+                            event: stella_protocol::AgentEvent::Steered { text },
+                        });
+                    }
+                }
                 WorkspaceInput::Control { agent, control } => {
                     let status = match control {
                         AgentControl::Pause => AgentStatus::Paused,
