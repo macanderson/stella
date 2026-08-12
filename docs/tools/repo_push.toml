@@ -1,0 +1,113 @@
+# repo_push — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "repo_push"
+category = "repo"
+availability = "always"
+read_only = false
+available_for_speculation = false
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Push the current (or named) branch to the primary remote and report what went: the branch, the remote, every commit published, and the files with their line counts. STRUCTURALLY refuses the repository's default branch — publish work on a feature branch. Force-push does not exist here. Set `skip_hooks` when a repository's pre-push hook is slower than the push is worth (a full test suite on a docs-only change); the tool checks the push's own diff and REFUSES to skip them when it carries any source file, so this can never take a code change past the repository's gate.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "branch": {
+      "description": "Branch to push (default: the current branch)",
+      "type": "string"
+    },
+    "skip_hooks": {
+      "description": "Run the push without the repository's pre-push hooks. Granted only when the push changes no source file — otherwise the call is refused and says which files made it source. Use it when a hook would run a full test suite over a change that has no code in it.",
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE: none.
+# `repo_push` has 4 calls in the wider census, but none in the 2829-row
+# capture the examples are drawn from. No payload is shown, because an
+# invented one would teach the reader what the author imagined this tool is
+# for.
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 4 · trials that used it 2/408 · calls per model call 0.0003 · mean
+# position of first use 37.5 · failures 4 (100.0%).
+# A measurement, not a contract: it ages, the schema above does not.

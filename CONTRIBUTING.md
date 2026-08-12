@@ -93,6 +93,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-it
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+./scripts/check-tool-docs.sh
 cargo build -p stella-cli --bin stella && \
   STELLA_BIN="$PWD/target/debug/stella" ./scripts/test-self-driving.sh
 ```

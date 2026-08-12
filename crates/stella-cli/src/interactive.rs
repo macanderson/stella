@@ -361,7 +361,7 @@ impl<'a> InteractiveToolSet<'a> {
     /// The `recall_context` schema. Single-purpose by invariant 9: it
     /// searches, and the `query` scopes what it searches for — there is no
     /// mode flag, and writing to the plane stays `save_memory`'s job.
-    fn recall_schema() -> ToolSchema {
+    pub(crate) fn recall_schema() -> ToolSchema {
         ToolSchema {
             name: "recall_context".into(),
             description: "Search this workspace's context plane — durable memories, past                           episodes, indexed symbols — for anything relevant to a question,                           and get it back as citable frames. The turn's opening recall ran                           against the goal as stated, before you had read anything; call                           this the moment you hit something the goal did not predict: a                           procedural wall, a convention you cannot find written down, a                           decision you are uneasy about, or a failure that smells like one                           somebody already solved here. Costs no model call. Returns                           `no relevant context` when the plane has nothing — which is an                           answer, not a failure."
@@ -433,7 +433,7 @@ impl<'a> InteractiveToolSet<'a> {
         self
     }
 
-    fn skills_schemas() -> Vec<ToolSchema> {
+    pub(crate) fn skills_schemas() -> Vec<ToolSchema> {
         vec![
             ToolSchema {
                 name: "search_skills".into(),
@@ -563,7 +563,7 @@ impl<'a> InteractiveToolSet<'a> {
         }
     }
 
-    fn ask_user_schema() -> ToolSchema {
+    pub(crate) fn ask_user_schema() -> ToolSchema {
         ToolSchema {
             name: "ask_user".into(),
             description: "Ask the user a multiple-choice question when a decision is genuinely \
@@ -745,6 +745,19 @@ impl ToolExecutor for InteractiveToolSet<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
     }
+}
+
+/// Every tool this layer declares, unconditioned by session state — what
+/// `crate::tool_docs` documents. Deliberately not `schemas()`: that answer
+/// drops `recall_context` when no context plane is configured and the two
+/// skills-registry tools when no registry is, and neither absence is a
+/// property of the tool.
+#[cfg(test)]
+pub(crate) fn declared_session_schemas() -> Vec<ToolSchema> {
+    let mut schemas = vec![InteractiveToolSet::ask_user_schema()];
+    schemas.extend(InteractiveToolSet::skills_schemas());
+    schemas.push(InteractiveToolSet::recall_schema());
+    schemas
 }
 
 #[cfg(test)]

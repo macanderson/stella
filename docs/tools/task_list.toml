@@ -1,0 +1,103 @@
+# task_list — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "task_list"
+category = "task"
+availability = "always"
+read_only = true
+available_for_speculation = true
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Show the session task board: every task as `[status] #id subject (owner)` — [ ] pending, [~] in_progress, [x] completed, [-] cancelled. Use it to re-check the plan or find a task id.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {},
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE: none.
+# `task_list` has no call to record: it was advertised and never called. No
+# payload is shown, because an invented one would teach the reader what the
+# author imagined this tool is for.
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Never called. Across 408 trials and 15304 model calls (census of
+# 2026-08-11), `task_list` was advertised and chosen zero times. That is a
+# fact about the tool menu, not a defect in the tool — see #3032, which this
+# page is input to.
