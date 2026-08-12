@@ -1007,6 +1007,57 @@ class TestFetchMergesIntoOneTrial:
         assert (tmp_path / "000-stella-task-a" / "results.json").exists()
         assert (tmp_path / "001-cc-task-a" / "results.json").exists()
 
+    def test_an_assembled_run_is_not_also_merged(self, tmp_path, monkeypatch) -> None:
+        """The ordering half: the merge is the fallback, never a second write.
+
+        A default fetch downloads only each job's ``results.json``, so
+        ``match.toml`` is absent and assembly declines — which is why the
+        merge above still has to run. When the spec *is* on disk the assembled
+        match is the restoration of the submitted one and strictly better, so
+        the merge must not also fire and leave a rival ``trial.json`` beside
+        it claiming to describe the same run.
+        """
+        import arenabench.assemble as assemble_mod
+
+        assembled = assemble_mod.Assembly(
+            match_id="r1",
+            match_dir=tmp_path / "assembled" / "r1",
+            tasks=("task-a",),
+            linked={"stella": 1, "claude-code": 1},
+        )
+        monkeypatch.setattr(
+            assemble_mod, "assemble_run", lambda run_dir, **kw: assembled
+        )
+
+        s3 = FakeS3(
+            {
+                "runs/r1/job-stella/results.json": _single_task_result(
+                    "task-a", "stella", 1.0
+                ),
+                "runs/r1/job-cc/results.json": _single_task_result(
+                    "task-a", "claude-code", 0.0
+                ),
+            }
+        )
+        executor = _executor(s3=s3, dynamodb=FakeDynamo([{"Items": []}]))
+        executor.load_jobs = lambda run_id: {  # type: ignore[method-assign]
+            "jobs": [
+                {"id": "job-stella", "label": "000-stella-task-a"},
+                {"id": "job-cc", "label": "001-cc-task-a"},
+            ]
+        }
+
+        args = argparse.Namespace(
+            run_id="r1", artifacts=True, out=str(tmp_path), region=None, bucket=None
+        )
+        rc = _cmd_cloud_fetch(args, executor=executor)
+
+        assert rc == 0
+        assert not (tmp_path / "trial.json").exists(), (
+            "an assembled run must not also be merged — two files describing "
+            "one run is the ambiguity assembly exists to remove"
+        )
+
 
 class TestCloudMerge:
     """`arenabench cloud merge` — pairing arms that were fetched separately."""
