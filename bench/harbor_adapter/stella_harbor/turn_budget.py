@@ -61,6 +61,30 @@ a version of Harbor. It **fails open**, always: any missing, unreadable, or
 mis-shaped input reads as "no deadline known" and leaves the flag off, which is
 exactly the behaviour that shipped before this module existed. Guessing a
 deadline is the one outcome that is worse than not having one.
+
+## The cost of that fail-open, and the one thing that makes it survivable (#2957)
+
+Failing open is right, and it is also **silent** — which is how this module
+spent a whole benchmark run arming nothing at all. `task.path` pointed into
+Harbor's download *cache*, where a content digest sits between the task and its
+definition (`<task>/<sha>/task.toml`); [`_task_agent_timeout`] read only the
+*export* shape (`<task>/task.toml`), the open raised `OSError`, and the
+fail-open did exactly what it says. Every trial ran with no wall clock of its
+own and the run died on Harbor's SIGKILL instead of stopping itself.
+
+The measurement, either side of the break:
+
+* 2026-08-09, three `fix-git` trials: **130 of 130** `budget_tick` events
+  carried `deadline_remaining_ms`, and one stopped itself with
+  `task deadline exceeded by 18.1s — stopping with partial work`.
+* 2026-08-11, the twenty pipeline trials of `w10p`: **0 of 1087**.
+
+Both layouts are now read. The lesson worth keeping is not "handle two paths",
+it is that a fail-open on a *derived* value needs the derived value **recorded**:
+what made this diagnosable at all was `stella_turn_budget_sec` in the adapter's
+own result, which said `"unarmed"` in plain text. Without that field the
+investigation is a bisect. Any future input added here should be recorded the
+same way.
 """
 
 from __future__ import annotations
@@ -219,18 +243,63 @@ def _task_agent_timeout(trial_config: Mapping[str, Any]) -> Any:
     ``None`` when the trial names no local task path — a dataset resolved from
     a registry ref rather than an offline export has ``task.path: null``, and
     the task definition is then not on this host at all.
+
+    **Harbor materialises a task in two layouts, and both have to be read.** An
+    *export* puts the definition directly at ``<task>/task.toml``; the download
+    *cache* interposes a content digest, ``<task>/<sha>/task.toml``. Reading
+    only the first is what silently disarmed the deadline: `task.path` pointed
+    into the cache, the open raised ``OSError``, the fail-open returned ``None``,
+    and every trial ran with no wall clock of its own while the adapter recorded
+    ``stella_turn_budget_sec: "unarmed"``. Measured either side of it — 130 of
+    130 `budget_tick` events armed on 2026-08-09, then 0 of 1087 on 2026-08-11.
+
+    ArenaBench already knew about both shapes and enumerates them for exactly
+    this reason (``arenabench/arenabench/registry.py::_iter_task_tomls``); this
+    is the same knowledge, applied on the deadline path where it was missing.
+    Deliberately **not** shared code: `stella_harbor` is the installed Harbor
+    adapter and does not import `arenabench` (the dependency runs the other
+    way), so the alternative to a second reader is a coupling that would make
+    the adapter unusable without ArenaBench.
     """
     task = trial_config.get("task")
     path = task.get("path") if isinstance(task, Mapping) else None
     if not path:
         return None
+    for candidate in _task_config_candidates(Path(path)):
+        try:
+            with open(candidate, "rb") as handle:
+                task_config = tomllib.load(handle)
+        except (OSError, ValueError):
+            continue
+        agent = task_config.get("agent")
+        timeout = agent.get("timeout_sec") if isinstance(agent, Mapping) else None
+        if timeout is not None:
+            return timeout
+    return None
+
+
+def _task_config_candidates(root: Path) -> list[Path]:
+    """Every place a task definition may sit under ``root``, nearest first.
+
+    The export layout is tried before the cache one so a directory holding both
+    resolves to the export — the same precedence ``resolve_turn_budget`` uses
+    throughout: the most specific statement of the deadline wins.
+
+    A digest directory is found by globbing rather than by pattern-matching the
+    name, because the digest's spelling is Harbor's business and a run that
+    changed it must not silently stop arming the deadline again. Sorted so the
+    choice is deterministic when a cache holds more than one digest for a task;
+    every candidate is then tried in turn, so an unreadable first entry costs
+    nothing.
+    """
+    candidates = [root / TASK_CONFIG_FILENAME]
     try:
-        with open(Path(path) / TASK_CONFIG_FILENAME, "rb") as handle:
-            task_config = tomllib.load(handle)
-    except (OSError, ValueError):
-        return None
-    agent = task_config.get("agent")
-    return agent.get("timeout_sec") if isinstance(agent, Mapping) else None
+        candidates.extend(sorted(root.glob("*/" + TASK_CONFIG_FILENAME)))
+    except OSError:
+        # An unreadable or non-existent root is "no deadline known", the same
+        # fail-open every other failure here takes.
+        pass
+    return candidates
 
 
 def resolve_turn_budget(

@@ -36,6 +36,7 @@ def _trial_tree(
     *,
     task_timeout_sec: object = 900.0,
     trial_config: dict[str, object] | None = None,
+    digest: str | None = None,
 ) -> Path:
     """Lay out a Harbor single-step trial and return its agent ``logs_dir``.
 
@@ -44,11 +45,19 @@ def _trial_tree(
     immediately beneath it, and the task definition wherever ``task.path``
     says. Built on disk rather than mocked because the thing under test is a
     file layout, and a mock of it would agree with whatever the code does.
+
+    ``digest`` selects the **cache** layout — ``<task>/<sha>/task.toml`` — over
+    the export layout ``<task>/task.toml``. Both are real; Harbor writes the
+    first when a dataset is downloaded and the second when it is exported, and
+    reading only the export shape is what disarmed the deadline for a whole
+    benchmark run (#2957).
     """
     task_dir = tmp_path / "task"
     task_dir.mkdir()
+    definition_dir = task_dir if digest is None else task_dir / digest
+    definition_dir.mkdir(exist_ok=True)
     if task_timeout_sec is not None:
-        (task_dir / "task.toml").write_text(
+        (definition_dir / "task.toml").write_text(
             f'schema_version = "1.1"\n\n[agent]\ntimeout_sec = {task_timeout_sec}\n',
             encoding="utf-8",
         )
@@ -63,6 +72,90 @@ def _trial_tree(
     logs_dir.mkdir(parents=True)
     (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
     return logs_dir
+
+
+class TestBothTaskLayoutsArmTheDeadline:
+    """**The witness for #2957.**
+
+    Harbor materialises a task definition two ways — an *export* puts it at
+    ``<task>/task.toml``, the download *cache* interposes a content digest at
+    ``<task>/<sha>/task.toml``. Reading only the export shape returned ``None``
+    for every cache-layout trial, and because the discovery fails open by
+    design, the deadline was simply never armed and nothing said so.
+
+    Measured either side of the break: 130 of 130 ``budget_tick`` events carried
+    ``deadline_remaining_ms`` on 2026-08-09 (and one trial stopped itself with
+    ``task deadline exceeded by 18.1s — stopping with partial work``), against
+    **0 of 1087** across the twenty pipeline trials of ``w10p`` on 2026-08-11,
+    where the adapter recorded ``stella_turn_budget_sec: "unarmed"``.
+
+    Every test here fails on ``main``: the cache cases return ``None`` there.
+    """
+
+    def test_the_export_layout_still_arms_it(self, tmp_path: Path) -> None:
+        """The control. Without this the cases below prove only that something
+        changed, not that the layout is what decides it."""
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=900.0)
+        assert turn_budget.discover_trial_deadline(logs_dir) == 900.0
+
+    def test_the_cache_layout_arms_it_too(self, tmp_path: Path) -> None:
+        logs_dir = _trial_tree(
+            tmp_path,
+            task_timeout_sec=900.0,
+            digest="8f14e45fceea167a5a36dedd4bea2543",
+        )
+        assert turn_budget.discover_trial_deadline(logs_dir) == 900.0
+
+    def test_a_cache_layout_trial_yields_a_turn_budget(self, tmp_path: Path) -> None:
+        """End to end: the argv value, reserve subtracted, is what was missing."""
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=900.0, digest="abc123")
+        assert resolve_turn_budget(None, None, logs_dir) == "840"
+
+    def test_the_digest_directory_name_is_not_pattern_matched(
+        self, tmp_path: Path
+    ) -> None:
+        """Found by globbing, so Harbor changing the digest's spelling cannot
+        silently disarm the deadline a fourth time."""
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=1800.0, digest="not-a-sha-at-all")
+        assert turn_budget.discover_trial_deadline(logs_dir) == 1800.0
+
+    def test_the_export_layout_wins_when_a_directory_holds_both(
+        self, tmp_path: Path
+    ) -> None:
+        """Most-specific-first, the same precedence the rest of this module uses.
+
+        Also the case that keeps the search from being order-dependent noise: a
+        cache directory left beside an export must not change the answer.
+        """
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=900.0)
+        stale = tmp_path / "task" / "0000stale"
+        stale.mkdir()
+        (stale / "task.toml").write_text(
+            'schema_version = "1.1"\n\n[agent]\ntimeout_sec = 60.0\n',
+            encoding="utf-8",
+        )
+        assert turn_budget.discover_trial_deadline(logs_dir) == 900.0
+
+    def test_a_digest_directory_missing_the_agent_table_falls_through(
+        self, tmp_path: Path
+    ) -> None:
+        """A readable but timeout-free definition must not end the search.
+
+        Returning ``None`` on the first *parseable* candidate would reintroduce
+        the bug for a cache holding one incomplete definition beside a good one.
+        """
+        task_dir = tmp_path / "task"
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=None, digest="0000empty")
+        (task_dir / "0000empty" / "task.toml").write_text(
+            'schema_version = "1.1"\n', encoding="utf-8"
+        )
+        good = task_dir / "9999good"
+        good.mkdir()
+        (good / "task.toml").write_text(
+            'schema_version = "1.1"\n\n[agent]\ntimeout_sec = 1800.0\n',
+            encoding="utf-8",
+        )
+        assert turn_budget.discover_trial_deadline(logs_dir) == 1800.0
 
 
 class TestTurnBudgetReachesTheEngine:
@@ -353,6 +446,13 @@ class TestDiscoveryFailsOpenNeverGuesses:
 
     def test_a_task_directory_with_no_task_toml(self, tmp_path: Path) -> None:
         logs_dir = _trial_tree(tmp_path, task_timeout_sec=None)
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
+
+    def test_a_cache_layout_with_no_task_toml_under_the_digest(
+        self, tmp_path: Path
+    ) -> None:
+        """The second layout must fail open too, not merely be searched."""
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=None, digest="deadbeef")
         assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_task_toml_that_is_not_toml(self, tmp_path: Path) -> None:
