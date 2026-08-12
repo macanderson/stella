@@ -416,6 +416,20 @@ def test_every_registered_agent_declares_how_it_launches(monkeypatch, import_pat
         assert launch_flags(seat), slug
 
 
+def test_the_registry_declares_every_agent_harbor_actually_installs():
+    """Harbor 0.6.1's `AgentFactory._AGENTS` is the ground truth for what
+    `--agent <slug>` can launch; `nemo-agent`, `openhands-sdk`, and `pi` were
+    installed there but absent from this registry, so an operator asking for
+    any of them by slug got `resolve_agent`'s "unknown agent" error despite
+    the CLI being real. `terminus`/`terminus-1` are deliberately excluded:
+    they exist as `AgentName` enum members but no class is registered for
+    them in Harbor's factory, so they are not actually launchable either.
+    """
+    for slug in ("nemo-agent", "openhands-sdk", "pi"):
+        spec = resolve_agent(slug)
+        assert spec.harbor_agent == slug
+
+
 class TestRecorder:
     """The recorder is optional, so its failures must stay cheap and quiet.
 
