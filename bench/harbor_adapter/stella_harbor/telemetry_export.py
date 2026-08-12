@@ -31,8 +31,13 @@ PRIVATE_TELEMETRY_FILES = ("store.db", "reflections.jsonl", "context.db")
 _DEFAULT_WORKDIR = "/app"
 
 
-async def _call(method: Any, *args: Any) -> Any:
-    """Invoke a Harbor file helper that may be either sync or async."""
+async def await_maybe(method: Any, *args: Any) -> Any:
+    """Invoke a Harbor file helper that may be either sync or async.
+
+    Public because :mod:`stella_harbor.lineage` needs the same absorption for
+    the same reason, and two copies of it are two things that can disagree
+    about which Harbor releases are supported.
+    """
     result = method(*args)
     if inspect.isawaitable(result):
         result = await result
@@ -57,9 +62,9 @@ async def export_private_telemetry(
         for name in (base, f"{base}-wal", f"{base}-shm"):
             source = f"{workdir}/.stella/private/{name}"
             try:
-                if not await _call(environment.is_file, source):
+                if not await await_maybe(environment.is_file, source):
                     continue
                 target_dir.mkdir(parents=True, exist_ok=True)
-                await _call(environment.download_file, source, target_dir / name)
+                await await_maybe(environment.download_file, source, target_dir / name)
             except Exception:  # noqa: BLE001 — export never fails a trial
                 continue

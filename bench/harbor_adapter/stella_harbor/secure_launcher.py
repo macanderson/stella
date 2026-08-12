@@ -119,6 +119,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/freshness.py",
     "bench/harbor_adapter/stella_harbor/git_baseline.py",
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
+    "bench/harbor_adapter/stella_harbor/lineage.py",
     "bench/harbor_adapter/stella_harbor/live_feed.py",
     "bench/harbor_adapter/stella_harbor/locate.py",
     "bench/harbor_adapter/stella_harbor/loop_mode.py",
