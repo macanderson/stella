@@ -14,16 +14,20 @@
 //!
 //! # Coverage, stated honestly
 //!
-//! 155 sample events, covering:
+//! Deliberately no totals. Every count here is derived from a list the tests
+//! already walk, so a number in this comment is a second copy that only ever
+//! goes stale — and one had: "nineteen enums" was written when the arm-count
+//! table held nineteen rows and was never touched as the table grew past it.
+//! What the coverage IS, checked rather than claimed:
 //!
-//! - All 36 `AgentEvent` variants: exhaustive, and *proved* exhaustive — the
+//! - Every `AgentEvent` variant: exhaustive, and *proved* exhaustive — the
 //!   sample table is checked against [`KNOWN_TYPE_TAGS`], which the
 //!   `agent_event_tags!` macro generates from a match the compiler requires to
 //!   be total. A new variant that reaches the wire without a sample here fails
 //!   [`every_known_tag_has_a_sample`].
-//! - Every arm of all nineteen enums in the payload graph — `ProofStep`,
-//!   `SubAgentPhase`, `MediaJobState`, `ToolOutput`, and fifteen unit-only
-//!   vocabularies. Two independent checks, because they catch different
+//! - Every arm of every enum in the payload graph — `ProofStep`,
+//!   `SubAgentPhase`, `MediaJobState`, `ToolOutput`, `DeliveryOutcome` and the
+//!   unit-only vocabularies. Two independent checks, because they catch different
 //!   mistakes: [`every_nested_vocabulary_is_fully_sampled`] compares each
 //!   sample list's length against the arm count in the schema's own `$defs`
 //!   (so growing a vocabulary without extending the samples fails), and
@@ -459,6 +463,11 @@ fn every_nested_vocabulary_is_fully_sampled() {
         ("MediaJobState", all_media_job_states().len()),
         ("ToolOutput", all_tool_outputs().len()),
         ("SubAgentPhase", all_subagent_phases().len()),
+        ("DeliveryDecline", all_delivery_declines().len()),
+        // Two arms, and both are sampled directly rather than through an
+        // `all_*` helper: `Delivered` carries six fields with no vocabulary of
+        // its own, so a helper enumerating it would be a list of one.
+        ("DeliveryOutcome", 2),
     ]);
     for (name, sampled) in counts {
         assert_eq!(
@@ -501,6 +510,8 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "MediaJobState",
         "ToolOutput",
         "SubAgentPhase",
+        "DeliveryDecline",
+        "DeliveryOutcome",
     ]);
     assert_eq!(
         enum_defs, rows,

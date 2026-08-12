@@ -1,4 +1,4 @@
-//! The payload of [`AgentEvent::CandidateDelivery`] — what happened to the
+//! The payload of [`crate::AgentEvent::CandidateDelivery`] — what happened to the
 //! winning candidate's work, said out loud instead of inferred (#2942).
 //!
 //! # Why this signal exists
@@ -6,7 +6,7 @@
 //! Adopting a candidate workspace into the real tree is one of the most
 //! consequential things the pipeline does, and until this module it emitted
 //! nothing of its own. The only trace was the burst of
-//! [`AgentEvent::FileChange`] rows adoption re-emits afterwards, and reading
+//! [`crate::AgentEvent::FileChange`] rows adoption re-emits afterwards, and reading
 //! that burst as "adoption ran" is an **inference**, not a declared signal —
 //! the failure invariant "every emitted signal names its consumer" describes
 //! from the other side.

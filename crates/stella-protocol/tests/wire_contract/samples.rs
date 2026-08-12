@@ -10,6 +10,7 @@
 
 use serde_json::json;
 use stella_protocol::completion::FinishReason;
+use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
     PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
@@ -49,6 +50,11 @@ pub(crate) fn all_budget_modes() -> Vec<BudgetMode> {
 
 pub(crate) fn all_budget_scopes() -> Vec<BudgetScope> {
     vec![BudgetScope::Turn, BudgetScope::Session]
+}
+
+pub(crate) fn all_delivery_declines() -> Vec<DeliveryDecline> {
+    use DeliveryDecline::*;
+    vec![NothingCreated, IntegrityRefusal, AdoptFailed]
 }
 
 pub(crate) fn all_policy_kinds() -> Vec<PolicyKind> {
@@ -571,6 +577,31 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             message: "the provider refused".into(),
             retryable: false,
         },
+        // Both optional-field shapes of the delivery decision: `root` present
+        // for a delivery that had a workspace, and absent below for the decline
+        // that never created one.
+        AgentEvent::CandidateDelivery {
+            root: Some("/tmp/stella_candidate_0".into()),
+            delivery: DeliveryOutcome::Delivered {
+                created: 2,
+                modified: 5,
+                deleted: 1,
+                lines_added: 340,
+                lines_removed: 76,
+                proven: true,
+            },
+        },
+        AgentEvent::CandidateDelivery {
+            root: None,
+            delivery: DeliveryOutcome::Delivered {
+                created: 0,
+                modified: 0,
+                deleted: 0,
+                lines_added: 0,
+                lines_removed: 0,
+                proven: false,
+            },
+        },
         AgentEvent::Complete {
             model: "opus".into(),
             cost_usd: 0.42,
@@ -623,6 +654,12 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 deadline_remaining_ms: None,
             },
         ]
+    }));
+    events.extend(all_delivery_declines().into_iter().map(|reason| {
+        AgentEvent::CandidateDelivery {
+            root: Some("/tmp/stella_candidate_0".into()),
+            delivery: DeliveryOutcome::Declined { reason },
+        }
     }));
     events.extend(
         all_policy_kinds()
