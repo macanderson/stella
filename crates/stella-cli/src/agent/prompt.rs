@@ -38,11 +38,11 @@ use super::*;
 
 /// The cross-tool steering shared by both static prompts — what the generated
 /// schemas cannot say. No trailing newline: each prompt continues with its own
-/// blank line and section header. The last two bullets — batching independent
-/// calls, and routing file work off the shell — carry their measurement and
-/// their clause-by-clause pins in `prompt/parity.rs`, which is where
-/// prompt-content provenance lives while this file sits against the 1500-line
-/// ratchet (#2985).
+/// blank line and section header. The last three bullets — batching independent
+/// calls, routing file work off the shell, and where scratch belongs — carry
+/// their measurement and their clause-by-clause pins in `prompt/parity.rs`,
+/// which is where prompt-content provenance lives while this file sits against
+/// the 1500-line ratchet (#2985).
 macro_rules! tool_steering {
     () => {
         r#"Your tool schemas are the reference for what each tool does and what it takes. What they cannot tell you, because each describes one tool in isolation:
@@ -52,7 +52,8 @@ macro_rules! tool_steering {
 - A tool you cannot see is not available in this session rather than nonexistent. The shell ships registered and a workspace withholds it with "tools": {"bash": "off"}; issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing.
 - The user watches your plan on screen the whole time you work, so keeping it current is not bookkeeping — it is the only report they get while a long turn runs. When a plan was approved, its steps are ALREADY on the board with the same numbers the user approved: call task_list first to read them, then mark exactly one step started before you work on it and completed the moment it is done. Never re-create a step that is already there. On work that reached no approval gate, create the steps yourself before starting, one per concrete deliverable. A step you abandon is cancelled, not left open — a step still showing started at the end of a turn is a false report.
 - Independent tool calls belong in ONE response. The test is dependency: if no call needs another's result — three reads of files you already named, a grep and an unrelated glob, reading a file while listing a directory — issue them together in the same response. Each extra response re-sends the entire conversation so far to the model, so three independent reads issued one per response pay for that transcript three times and issued together pay once. Issue calls sequentially only where one genuinely consumes a previous result: read a file before editing it, locate a symbol before reading it, run the test after the edit. Never batch an edit with the read it depends on.
-- Reading, editing, and creating files, finding files by name, and searching file contents each have a dedicated tool — use it rather than the shell. Two reasons, both real: a dedicated tool names the file it touches, so the engine records that change exactly, while a `sed -i` or a heredoc inside bash names nothing and forces the change to be reconstructed by fingerprinting the whole workspace either side of the call — a scan that costs real time and can come up short; and the dedicated call is cheaper per call than shelling out. This is routing, not a ban — the shell is the right tool for what genuinely needs one: running builds and tests, process and service control, git operations, package managers, and anything with no tool equivalent."#
+- Reading, editing, and creating files, finding files by name, and searching file contents each have a dedicated tool — use it rather than the shell. Two reasons, both real: a dedicated tool names the file it touches, so the engine records that change exactly, while a `sed -i` or a heredoc inside bash names nothing and forces the change to be reconstructed by fingerprinting the whole workspace either side of the call — a scan that costs real time and can come up short; and the dedicated call is cheaper per call than shelling out. This is routing, not a ban — the shell is the right tool for what genuinely needs one: running builds and tests, process and service control, git operations, package managers, and anything with no tool equivalent.
+- Scratch has a sanctioned home, and it is not the workspace: `$STELLA_SCRATCH`, a session-private directory exported into every shell you run. Read that path from the environment — never construct one — and use it for bytes too large to sit in the transcript: have the shell write the file there directly (`curl … > "$STELLA_SCRATCH/dump.json"`) and page it back with get_state. For state you want to reference later by name rather than by size — a parse result, an extracted list, a computed digest — save_state and get_state hold it under a key with no file to clean up. Both vanish when the session ends. What remains forbidden is scratch in the workspace or the repository: no backup copies, no `.bak`/`.orig` files, no debug artifacts left behind. A file the task asked for is not scratch, and neither is a test you wrote to prove your change — that is the deliverable, and deleting it destroys the evidence that the work is correct."#
     };
 }
 
@@ -337,7 +338,6 @@ Methodology (always follow in order):
 
 Rules:
 - Never modify existing tests to make them pass. Adding a NEW test that pins the task's expected behavior is required by step 2; weakening one that exists is forbidden.
-- Never create backup files, scratch files, or debug artifacts.
 - Prefer edit_file (surgical) over write_file (full rewrite).
 - Always read a file before editing it — never edit blind.
 - If you are editing more than 3 files for a single-task fix, you are overcomplicating it.
