@@ -563,19 +563,125 @@ mod tests {
             .unwrap_or(false)
     }
 
+    /// Run one git command in the fixture, hermetically, and report everything
+    /// on failure.
+    ///
+    /// # Why the environment is scrubbed
+    ///
+    /// The fixture repository is created *inside* a checkout that sets
+    /// `core.hooksPath` per-clone (`make hooks`), and the developer running the
+    /// suite has a global config of their own — signing keys, `init.templateDir`,
+    /// aliases, `commit.gpgsign`. Inheriting any of that makes a test's outcome
+    /// depend on the machine, and the per-repo `git config` calls below cannot
+    /// override every shape of it. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`
+    /// pointed at an empty file is git's own supported way to say "no ambient
+    /// configuration"; `HOME` follows it because a few lookups still go there,
+    /// and `GIT_DIR`/`GIT_WORK_TREE` are cleared so an ambient value cannot
+    /// redirect the command at the *real* repository.
+    ///
+    /// # Why the panic says this much
+    ///
+    /// It used to report `git {args:?} failed: {stderr}`, and a flake in CI
+    /// printed exactly `git ["commit", "-q", "-m", "seed"] failed:` — an empty
+    /// stderr and nothing else (#2959). That names the command and withholds the
+    /// only part that explains it, so the next reader gets a non-diagnosis. A
+    /// failing process has three channels and the message now carries all three,
+    /// plus an explicit note when git said nothing at all, because "no output"
+    /// is itself the diagnostic signature of a resource failure rather than a
+    /// git-level refusal.
     async fn sh_git(dir: &Path, args: &[&str]) {
         let out = tokio::process::Command::new("git")
             .args(args)
             .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("HOME", dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .output()
             .await
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr)
+            .unwrap_or_else(|e| panic!("could not spawn git {args:?} in {dir:?}: {e}"));
+        if out.status.success() {
+            return;
+        }
+        panic!(
+            "{}",
+            git_failure_message(
+                args,
+                dir,
+                &format!("{:?}", out.status),
+                &String::from_utf8_lossy(&out.stdout),
+                &String::from_utf8_lossy(&out.stderr),
+            )
         );
+    }
+
+    /// The failure report [`sh_git`] panics with. Pure over owned data, so the
+    /// diagnostic is itself testable — a message that only appears inside a
+    /// panic on a machine that is already misbehaving is a message nobody ever
+    /// checks (#2959).
+    fn git_failure_message(
+        args: &[&str],
+        dir: &Path,
+        status: &str,
+        stdout: &str,
+        stderr: &str,
+    ) -> String {
+        let silent = if stderr.trim().is_empty() && stdout.trim().is_empty() {
+            " — git produced NO output, which points at the environment \
+             (disk full, process limits) rather than at the command itself"
+        } else {
+            ""
+        };
+        format!(
+            "git {args:?} in {dir:?} failed: status={status}{silent}\n\
+             --- stderr ---\n{stderr}\n--- stdout ---\n{stdout}"
+        )
+    }
+
+    /// **The witness for #2959.** The observed CI failure printed
+    /// `git ["commit", "-q", "-m", "seed"] failed:` and stopped — command named,
+    /// cause withheld. Each assertion below is a fact that message lacked.
+    #[test]
+    fn a_git_failure_reports_status_and_both_streams() {
+        let msg = git_failure_message(
+            &["commit", "-q", "-m", "seed"],
+            Path::new("/tmp/fixture"),
+            "ExitStatus(unix_wait_status(32512))",
+            "some stdout",
+            "fatal: could not write",
+        );
+        assert!(
+            msg.contains("32512"),
+            "the exit status must be named: {msg}"
+        );
+        assert!(msg.contains("fatal: could not write"), "stderr: {msg}");
+        assert!(msg.contains("some stdout"), "stdout too: {msg}");
+        assert!(msg.contains("/tmp/fixture"), "and where it ran: {msg}");
+        assert!(
+            !msg.contains("NO output"),
+            "the silence note must not fire when git did talk: {msg}"
+        );
+    }
+
+    /// The exact shape that defeated the last reader: a non-zero exit with
+    /// nothing on either stream. The message has to say so out loud, because
+    /// "git failed and said nothing" is a different diagnosis from "git
+    /// refused", and only one of them points at the host.
+    #[test]
+    fn a_silent_git_failure_says_that_it_was_silent() {
+        let msg = git_failure_message(
+            &["commit", "-q", "-m", "seed"],
+            Path::new("/tmp/fixture"),
+            "ExitStatus(unix_wait_status(256))",
+            "",
+            "   \n",
+        );
+        assert!(
+            msg.contains("NO output"),
+            "an empty-stream failure must name its own emptiness: {msg}"
+        );
+        assert!(msg.contains("disk full"), "and point somewhere: {msg}");
     }
 
     async fn commit_fixture(dir: &Path) {
