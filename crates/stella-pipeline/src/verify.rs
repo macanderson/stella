@@ -68,9 +68,14 @@
 //! `AgentEvent::FileChange` is emitted by tools whose *input* names a path, so
 //! it records what the agent touched **through tools** and misses every shell
 //! redirect, `patch` and `make`; the git diff of the tree misses nothing. Only
-//! the second may back a ladder decision. `LadderInputs::file_change_events`
-//! carries the first and is read by nothing here (#2873) — the ladder's
-//! channels are the flip receipt, the touched tests, and git.
+//! the second may back a ladder decision — the ladder's channels are the flip
+//! receipt, the touched tests, and git. A tool-touch tally (once carried on
+//! the wire as `LadderInputs::file_change_events`) was removed in #2934: it
+//! read as zero in every isolated candidate/witness workspace (#2873), which
+//! is exactly the case a reader most needs a real answer for, and a field
+//! that structurally cannot be nonzero where it matters is worse than no
+//! field. Wiring that tally so it is not blind inside an isolated workspace
+//! is tracked separately as #2907.
 //!
 //! Linters and typecheckers are deliberately **excluded** from the flip
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
@@ -498,38 +503,6 @@ pub struct LadderInputs {
     /// directory is not a git repository, so `git diff` there can only ever
     /// answer `false`.
     pub diff_available: bool,
-    /// Mutating file touches the recorder observed this turn, from the registry
-    /// that emitted the `FileChange` events (`FileTouchPort`).
-    ///
-    /// **Recorded only: [`ladder_decision`] does not read it** (#2873). It is a
-    /// tally of what the agent touched **through tools**, which is a different
-    /// question from whether the tree changed — a `bash` heredoc mutates the
-    /// workspace and emits nothing here — and the ladder's authority on the
-    /// second question is git ([`Self::diff_available`] with
-    /// [`Self::diff_lines`]).
-    ///
-    /// Three predicates conjoined on it until #2873, each documented as if it
-    /// were a live channel, and it is **zero wherever the ladder actually
-    /// runs**. Measured, not inferred: on the 2026-08-11 Terminal-Bench panel,
-    /// across 53 pipeline trials that reached a verdict, the 49 that ran in a
-    /// candidate workspace **all** recorded `0` before the verdict and the 4
-    /// that did not **all** recorded a non-zero count — 53/53 — with
-    /// [`Self::mutating_actions`] between 6 and 147 beside it. Both operands of
-    /// the `max` in `observed_mutations` therefore read zero on every one of
-    /// those 49 runs; the tree's own account of the event half is
-    /// `verify_probes::DIFF_PROBE_FAILED` ("the engine emits no `FileChange`
-    /// events … inside a best-of-N or witness candidate the count is always
-    /// zero"), which `pipeline::tests::warrant` had already written down.
-    ///
-    /// It is deliberately not deleted with the read, for the same reason
-    /// [`Self::no_test_surface`] was not: the pipeline still sets it, the
-    /// snapshot still puts it on the wire, and `replay` still renders it,
-    /// because "the tools declared this many touches" is a fact worth reading
-    /// off a corpus of traces. Whether it should regain a decision role — which
-    /// needs a signal a candidate can actually feed, not a wider read of this
-    /// one — or be retired is #2873; what it must not do is keep claiming an
-    /// effect it never had.
-    pub file_change_events: u32,
     /// Tool calls this turn that were *capable* of changing the workspace:
     /// every dispatched call except those whose tool the registry advertises
     /// as `read_only`.
@@ -679,11 +652,11 @@ impl LadderInputs {
     /// Every conjunct is an **observation** channel. [`Self::mutating_actions`]
     /// is absent because it is a dispatch record, not a look at the world, and
     /// the rung above ([`Self::nothing_was_attempted`]) is where the ladder
-    /// reads it. [`Self::file_change_events`] was a fourth conjunct until
-    /// #2873 and belongs to that same dispatch side — it counts what the tools
-    /// declared, never what the tree did, and inside a candidate workspace it
-    /// is pinned at zero, so it contributed a constant `true` to a predicate
-    /// whose doc advertised it as a channel.
+    /// reads it. A tool-touch tally (`file_change_events`) was a fourth
+    /// conjunct until #2873, and was removed from the wire entirely in #2934:
+    /// it counted what the tools declared, never what the tree did, and
+    /// inside a candidate workspace it was pinned at zero, so it contributed a
+    /// constant `true` to a predicate whose doc advertised it as a channel.
     pub fn evidence_is_blind(&self) -> bool {
         !self.has_flip_receipt() && self.touched_tests_passed.is_none() && !self.diff_available
     }
@@ -740,10 +713,11 @@ impl LadderInputs {
     /// *something* happened, whoever caused it — and a turn with something to
     /// explain deserves a verdict, not this shortcut.
     ///
-    /// [`Self::file_change_events`] was one of them until #2873, where it was
-    /// pure redundancy: every `FileChange` is emitted from a mutating tool
-    /// call, so a non-zero count implies a non-zero
-    /// [`Self::mutating_actions`], which the first conjunct already excludes.
+    /// A tool-touch tally (`file_change_events`, removed from the wire in
+    /// #2934) was one of them until #2873, where it was pure redundancy: every
+    /// `FileChange` is emitted from a mutating tool call, so a non-zero count
+    /// implies a non-zero [`Self::mutating_actions`], which the first conjunct
+    /// already excludes.
     pub fn nothing_was_attempted(&self) -> bool {
         self.mutating_actions == 0
             && self.diff_lines == 0
@@ -773,8 +747,9 @@ impl LadderInputs {
     /// flip or a green test each corroborate the work, and either one sends
     /// the turn on to the rungs that can credit it.
     ///
-    /// [`Self::file_change_events`] used to sit beside them as a third
-    /// corroborator, and it was pointing the wrong way (#2873). The premise of
+    /// A tool-touch tally (`file_change_events`, removed from the wire in
+    /// #2934) used to sit beside them as a third corroborator, and it was
+    /// pointing the wrong way (#2873). The premise of
     /// this predicate is that git *looked at the collected tree and found it
     /// unchanged*. A tool tally saying "I wrote files" against that reading is
     /// evidence **for** the effects having landed somewhere this run does not

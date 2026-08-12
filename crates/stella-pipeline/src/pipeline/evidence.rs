@@ -38,7 +38,6 @@ impl<'a> Pipeline<'a> {
             diff_lines: state.diff_lines,
             diff_budget: self.config.diff_budget_lines,
             diff_available: state.diff_available,
-            file_change_events: state.signals.file_changes,
             mutating_actions: state.signals.mutating_actions,
             new_diag_errors: 0,
             new_diag_warnings: 0,

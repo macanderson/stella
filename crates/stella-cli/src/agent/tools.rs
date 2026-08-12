@@ -369,7 +369,7 @@ pub(crate) struct WorkspacePorts {
 /// reason. The bug this closes was two numbers describing one event from two
 /// wires: `record_touch` announced six changes down the session channel while
 /// the pipeline, counting on a sender it had handed the *engine*, told its
-/// verifier `file_change_events=0` — and the verifier reported the file as probably
+/// verifier the tally was zero — and the verifier reported the file as probably
 /// absent while it sat in the container (#973).
 ///
 /// Not part of [`WorkspacePorts`]: that bundle is rooted at a path, and this is

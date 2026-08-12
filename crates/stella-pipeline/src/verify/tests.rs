@@ -164,7 +164,6 @@ fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
         diff_lines: 5,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 1,
         mutating_actions: 1,
         ..Default::default()
     };
@@ -209,7 +208,6 @@ fn red_touched_tests_revise_without_a_verifier() {
         diff_lines: 3,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     });
@@ -224,7 +222,6 @@ fn full_deterministic_pass_submits_fast() {
         diff_lines: 40,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     });
@@ -244,7 +241,6 @@ fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
         diff_lines: 0,
         diff_budget: 100,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     };
@@ -285,7 +281,6 @@ fn a_recorded_file_touch_is_not_evidence_of_a_changed_tree() {
         diff_lines: 0,
         diff_budget: 100,
         diff_available: false,
-        file_change_events: 6,
         mutating_actions: 1,
         ..Default::default()
     };
@@ -307,7 +302,6 @@ fn a_red_test_outranks_blindness() {
         diff_lines: 0,
         diff_budget: 100,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     };
@@ -334,7 +328,6 @@ fn a_readable_empty_diff_is_not_blindness() {
         diff_lines: 0,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     };
@@ -375,7 +368,6 @@ fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
         diff_budget: 400,
         // Not a git repository, so the probe is permanently dark here.
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 0,
         ..Default::default()
     };
@@ -405,7 +397,6 @@ fn a_no_op_verdict_is_a_result_not_a_missing_one() {
         diff_lines: 0,
         diff_budget: 400,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 0,
         ..Default::default()
     };
@@ -435,7 +426,6 @@ fn a_blind_turn_that_did_act_still_abstains() {
         diff_lines: 0,
         diff_budget: 400,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 8,
         ..Default::default()
     };
@@ -468,7 +458,6 @@ fn one_positive_observation_defeats_the_no_op_rung() {
         diff_lines: 0,
         diff_budget: 400,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 0,
         ..Default::default()
     };
@@ -520,7 +509,6 @@ fn a_verify_done_receipt_is_a_deterministic_pass() {
         flip: FlipOutcome::NotAchieved,
         touched_tests_passed: None,
         mutating_actions: 6,
-        file_change_events: 3,
         diff_available: true,
         diff_lines: 10,
         diff_budget: 400,
@@ -589,7 +577,6 @@ fn an_unverified_summary_never_denies_a_verify_done_receipt() {
     let inputs = LadderInputs {
         verify_done_flip: true,
         mutating_actions: 6,
-        file_change_events: 3,
         diff_available: true,
         diff_lines: 900,
         diff_budget: 400,
@@ -690,7 +677,6 @@ fn flip_and_green_but_over_diff_budget_is_unproven() {
         diff_lines: 500,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     });
@@ -710,7 +696,6 @@ fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
         diff_lines: 5,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     });
@@ -725,7 +710,6 @@ fn tests_indeterminate_escalates_to_verifier() {
         diff_lines: 5,
         diff_budget: 100,
         diff_available: true,
-        file_change_events: 0,
         mutating_actions: 1,
         ..Default::default()
     });
@@ -905,7 +889,6 @@ proptest! {
             diff_lines: 0,
             diff_budget,
             diff_available,
-            file_change_events: 0,
             mutating_actions: 0,
             ..Default::default()
         };
@@ -934,7 +917,6 @@ proptest! {
         touched in prop::option::of(any::<bool>()),
         diff_lines in 0u32..800,
         diff_available in any::<bool>(),
-        file_change_events in 0u32..50,
     ) {
         let inputs = LadderInputs {
             flip,
@@ -942,7 +924,6 @@ proptest! {
             diff_lines,
             diff_budget: 400,
             diff_available,
-            file_change_events,
             mutating_actions,
             ..Default::default()
         };
@@ -1100,7 +1081,6 @@ fn a_verifier_pass_with_no_flip_and_no_green_test_stands_alone() {
         diff_available: true,
         diff_lines: 40,
         diff_budget: 400,
-        file_change_events: 12,
         mutating_actions: 30,
         ..Default::default()
     };

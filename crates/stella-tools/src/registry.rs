@@ -310,8 +310,8 @@ pub struct ToolRegistry {
     /// host attaches its session channel with [`ToolRegistry::attach_events`],
     /// and `record_touch` sends there directly; a verifier that wraps the
     /// *engine's* sender to tally `FileChange`s therefore sees none of them and
-    /// concludes nothing was touched (#973 — the verifier was told
-    /// `file_change_events=0` with six in the stream). A counter on the
+    /// concludes nothing was touched (#973 — the verifier was told the tally
+    /// was zero with six in the stream). A counter on the
     /// recorder is readable no matter which channel the events went down, and
     /// unlike the ledger's length it never falls back when a file is touched
     /// twice: this is a count of *touches*, one per emitted event.

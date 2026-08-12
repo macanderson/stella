@@ -32,7 +32,6 @@ fn snapshot(rung: Option<LadderRung>) -> LadderSnapshot {
         diff_lines: 0,
         diff_budget: 0,
         diff_available: false,
-        file_change_events: 0,
         mutating_actions: 0,
         new_diag_errors: 0,
         new_diag_warnings: 0,
