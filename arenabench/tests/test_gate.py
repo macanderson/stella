@@ -51,7 +51,7 @@ class _Runner:
         )
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv, **kwargs):  # noqa: ANN001 - the subprocess.run shape
+    def __call__(self, argv, **kwargs):  # the subprocess.run shape
         self.calls.append(list(argv))
         self.completed.args = list(argv)
         return self.completed
@@ -90,7 +90,7 @@ class TestExitContract:
         assert "1" in outcome.error
 
     def test_a_timeout_is_an_error_not_a_ban(self, tmp_path: Path) -> None:
-        def runner(argv, **kwargs):  # noqa: ANN001
+        def runner(argv, **kwargs):
             raise subprocess.TimeoutExpired(cmd=list(argv), timeout=0.5)
 
         outcome = run_gate(_spec("check"), tmp_path, runner=runner, timeout=0.5)
@@ -100,7 +100,7 @@ class TestExitContract:
     def test_a_gate_that_cannot_be_executed_is_an_error_not_a_ban(
         self, tmp_path: Path
     ) -> None:
-        def runner(argv, **kwargs):  # noqa: ANN001
+        def runner(argv, **kwargs):
             raise FileNotFoundError(2, "No such file or directory", argv[0])
 
         outcome = run_gate(_spec("no-such-checker"), tmp_path, runner=runner)
@@ -408,14 +408,17 @@ def _gate_script(tmp_path: Path, body: str) -> GateSpec:
     )
 
 
+#: Two trials of one run, as ``jobs.json`` records them.
+GATE_RECORD = {
+    "run_id": "r-test",
+    "jobs": [
+        {"id": "job-001", "label": "000-stella-task-a"},
+        {"id": "job-002", "label": "001-cc-task-a"},
+    ],
+}
+
+
 class TestSettledGate:
-    RECORD = {
-        "run_id": "r-test",
-        "jobs": [
-            {"id": "job-001", "label": "000-stella-task-a"},
-            {"id": "job-002", "label": "001-cc-task-a"},
-        ],
-    }
 
     def test_a_banned_trial_cancels_the_run_and_leaves_the_dispute_record(
         self, tmp_path: Path, capsys
