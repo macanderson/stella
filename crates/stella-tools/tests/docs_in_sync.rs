@@ -295,27 +295,41 @@ fn permissions_read_only_prose_matches_the_native_catalog() {
     );
 }
 
+/// English for a small count, for prose that spells its numbers out.
+///
+/// A table rather than a `match` arm per count: the previous shape hard-coded
+/// the current number in the assertion *and* in the panic message, so adding
+/// one session tool meant editing the test's control flow in three places and
+/// getting a failure that named the old word twice. The number a doc must
+/// contain is data; only the range is a judgement.
+fn spell(n: usize) -> &'static str {
+    const WORDS: &[&str] = &[
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "eleven", "twelve",
+    ];
+    WORDS.get(n).copied().unwrap_or_else(|| {
+        panic!("no spelling for {n} — extend WORDS, or stop spelling this count out in prose")
+    })
+}
+
 /// The session layer is counted in prose as a word, so it needs its own pin.
 #[test]
 fn session_tool_count_prose_matches_the_catalog() {
     let Some(index) = read_doc(INDEX) else { return };
 
     let session = catalog::names_where(|a| a == Availability::Session).len();
-    let spelled = match session {
-        7 => "**seven**",
-        n => panic!(
-            "the session-tool count changed to {n} — update the prose in \
-             {INDEX} (\"layers **seven** more tools\", \"plus the seven session \
-             tools\") and this test's spelling table"
-        ),
-    };
+    let word = spell(session);
+    let layered = format!("layers **{word}** more tools");
+    let summary = format!("plus the {word} session tools");
     assert!(
-        index.contains(&format!("layers {spelled} more tools")),
-        "{INDEX} no longer spells the session-tool count as {spelled}"
+        index.contains(&layered),
+        "the session-tool count is {session}, so {INDEX} should say \"{layered}\" — \
+         update the prose (and add a card for the new tool)"
     );
     assert!(
-        index.contains("plus the seven session tools"),
-        "{INDEX} no longer spells the session-tool count in the summary line"
+        index.contains(&summary),
+        "the session-tool count is {session}, so {INDEX}'s summary line should say \
+         \"{summary}\""
     );
 }
 
