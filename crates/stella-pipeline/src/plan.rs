@@ -220,7 +220,12 @@ fn balanced_span(text: &str, open: char, close: char) -> Option<&str> {
 const PLANNER_INSTRUCTIONS: &str = "You are the planner for a coding agent. Produce a short ordered plan of \
      concrete steps to accomplish the goal. Respond with a JSON array of \
      step strings, e.g. [\"step one\", \"step two\"]. Keep it minimal — the \
-     fewest steps that fully accomplish the goal.";
+     fewest steps that fully accomplish the goal. You have no tool access and \
+     cannot see the real repository: state each step as an OUTCOME (what \
+     should be true when it is done), never as a literal absolute path or a \
+     specific shell command — a path or command you have not verified exists \
+     may be wrong, and the worker that carries out the step can see the tree \
+     and choose one correctly.";
 
 /// Assemble the planner's split context (L-E6): goal + recalled frames +
 /// repo-structure summary, and an instruction to emit a JSON array of steps.
@@ -340,6 +345,57 @@ pub fn plan_repair_prompt(previous_response: &str) -> ManagementPrompt {
     ManagementPrompt {
         instructions: PLAN_REPAIR_INSTRUCTIONS,
         payload: format!("Previous response:\n{echoed}\n\nJSON array:"),
+    }
+}
+
+/// Whether `step` names an absolute filesystem path — something a blind
+/// planner (no tool access, no view of the tree) cannot actually know is
+/// real. Measured: 32% of plan steps across a benchmark run named `/app`,
+/// half of which the candidate sandbox refuses outright as written, and the
+/// rest are copied straight from the goal text with no guarantee the build
+/// system or layout they imply matches the real repository (#2932:
+/// `python setup.py sdist` shipped no wheel because the plan prescribed it
+/// sight-unseen, while the same worker chose correctly with no plan at all).
+///
+/// Matched word-by-word, not by scanning for a bare `/` anywhere in the
+/// text: a URL (`https://example.com/api`) is one word that starts with a
+/// scheme name, never with `/`, so it is never mistaken for a path, and a
+/// word like `and/or` or `3/4` does not start with `/` either. Surrounding
+/// punctuation a model commonly wraps a path in — backticks, quotes,
+/// parens, a trailing comma or period — is stripped before the check.
+pub fn names_an_absolute_path(step: &str) -> bool {
+    step.split_whitespace().any(|word| {
+        let trimmed = word
+            .trim_start_matches(['(', '`', '"', '\'', '['])
+            .trim_end_matches([')', '`', '"', '\'', ']', ',', '.', ';', ':']);
+        trimmed.len() > 1 && trimmed.starts_with('/') && !trimmed[1..].starts_with('/')
+    })
+}
+
+/// The repair call's fixed instruction block for a plan that parsed cleanly
+/// but named an absolute path (#2932) — distinct from
+/// [`PLAN_REPAIR_INSTRUCTIONS`], which is for a response that failed to
+/// parse at all.
+const PLAN_PATH_REPAIR_INSTRUCTIONS: &str = "Your plan named one or more absolute filesystem paths, but you have no \
+     tool access and cannot see the real repository layout — those paths were \
+     guessed from the goal text and may be wrong. Re-emit the SAME plan as a \
+     strict JSON array of step strings, restating any step that named an \
+     absolute path or a shell command as an OUTCOME instead (what should be \
+     true when the step is done) — never a literal path or command you have \
+     not verified exists.";
+
+/// A short re-prompt asking the planner to restate any step that named an
+/// absolute path declaratively — the pipeline's other bounded repair retry
+/// (L-V2), alongside [`plan_repair_prompt`]'s unparseable-response one.
+pub fn plan_path_repair_prompt(steps: &[PlanStep]) -> ManagementPrompt {
+    let mut payload = String::from("## Previous plan\n");
+    for (i, step) in steps.iter().enumerate() {
+        payload.push_str(&format!("{}. {}\n", i + 1, step.description));
+    }
+    payload.push_str("\n## Plan (JSON array of step strings)\n");
+    ManagementPrompt {
+        instructions: PLAN_PATH_REPAIR_INSTRUCTIONS,
+        payload,
     }
 }
 
@@ -562,5 +618,49 @@ mod tests {
             p.chars().count() < PLAN_REPAIR_ECHO_CHARS + 500,
             "the prompt must be bounded by the echo ceiling, not the response size"
         );
+    }
+
+    /// #2932 witness: the exact `pypi-server` plan step that shipped no wheel
+    /// because a blind planner prescribed `python setup.py sdist` against a
+    /// tree it never saw — real absolute paths in various positions and
+    /// wrappers must all be caught.
+    #[test]
+    fn an_absolute_path_step_is_flagged() {
+        for step in [
+            "Start pypiserver on port 8080 with `pypi-server -p 8080 /app/dist`",
+            "Clone the repository into /app/pyknotid",
+            "Write the summary to /app/summary.csv",
+            "Verify (/app/ssl/server.crt) exists",
+            "Read '/app/config.json' for settings",
+        ] {
+            assert!(names_an_absolute_path(step), "should flag: {step}");
+        }
+    }
+
+    /// The false-positive side: prose that merely contains a `/` must not be
+    /// flagged, or the repair retry would fire on nearly every plan.
+    #[test]
+    fn ordinary_prose_with_a_slash_is_not_flagged() {
+        for step in [
+            "Install the package with pip and/or conda",
+            "Split the ratio 3/4 across both shards",
+            "Fetch https://example.com/api/v1 for the schema",
+            "Configure read/write access for the service account",
+            "Run tests in the ci/cd pipeline",
+        ] {
+            assert!(!names_an_absolute_path(step), "should not flag: {step}");
+        }
+    }
+
+    #[test]
+    fn path_repair_prompt_lists_every_step_and_asks_for_json() {
+        let steps = vec![
+            PlanStep::new("Clone the repository into /app/pyknotid"),
+            PlanStep::new("Install build dependencies"),
+        ];
+        let p = plan_path_repair_prompt(&steps).rendered();
+        assert!(p.contains("/app/pyknotid"));
+        assert!(p.contains("Install build dependencies"));
+        assert!(p.contains("JSON array of step strings"));
     }
 }

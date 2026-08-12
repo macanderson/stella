@@ -274,3 +274,68 @@ async fn the_conversational_path_does_not_carry_the_worker_prompt() {
         );
     }
 }
+
+/// #2932 witness: a plan that parses cleanly but names an absolute path
+/// spends one bounded repair call restating it declaratively, and the
+/// repaired plan — not the original path-naming one — is what the worker
+/// sees. Fails on `main`, where a step naming `/app/pyknotid` reaches the
+/// worker verbatim with no repair call in between.
+#[tokio::test]
+async fn a_plan_step_naming_an_absolute_path_is_repaired_before_the_worker_sees_it() {
+    let provider = plan_call_with(
+        RoleCallOverrides::default(),
+        text_result(r#"["Clone the repository into /app/pyknotid"]"#),
+        vec![text_result(r#"["Clone the pyknotid repository"]"#)],
+    )
+    .await;
+
+    let repair = call(&provider, 2);
+    let roles: Vec<_> = repair.iter().map(|(role, _)| *role).collect();
+    assert_eq!(
+        roles,
+        vec![
+            stella_protocol::MessageRole::System,
+            stella_protocol::MessageRole::User,
+        ],
+        "the path-repair call carries the same split shape as the plan call; got {repair:#?}"
+    );
+    assert!(
+        repair[0].1.contains("no tool access") && repair[0].1.contains("absolute filesystem path"),
+        "the repair instructions must explain why the path may be wrong: {}",
+        repair[0].1
+    );
+    assert!(
+        repair[1].1.contains("/app/pyknotid"),
+        "the repair payload must echo the flagged step: {}",
+        repair[1].1
+    );
+
+    let worker_step = call(&provider, 3);
+    let worker_text: String = worker_step.iter().map(|(_, t)| t.as_str()).collect();
+    assert!(
+        !worker_text.contains("/app/pyknotid"),
+        "the worker must see the repaired step, not the original path-naming one: {worker_text}"
+    );
+    assert!(
+        worker_text.contains("Clone the pyknotid repository"),
+        "the worker must see the repaired step's text: {worker_text}"
+    );
+}
+
+/// The other direction: a plan with no absolute path spends no extra call —
+/// the repair retry is conditional, not a tax on every plan.
+#[tokio::test]
+async fn a_plan_with_no_absolute_path_skips_the_repair_call() {
+    let provider = plan_call_with(
+        RoleCallOverrides::default(),
+        text_result(r#"["Install and start nginx"]"#),
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(
+        provider.prompts().len(),
+        3,
+        "triage, plan, and the one step turn — no path-repair call: {:?}",
+        provider.prompts()
+    );
+}

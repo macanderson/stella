@@ -18,6 +18,10 @@
 //! - [`goal_declared_complete`] is the close-out channel the prompt offers: a
 //!   reply that opens or closes with an affirmative [`PLAN_COMPLETE_MARKER`]
 //!   line ends the step loop.
+//! - [`outstanding_work_prompt`] is #2933's narrower close-out: a step
+//!   answered with no tool calls at all almost always means the rest are
+//!   covered too, and the walk asks about all of them in one further turn
+//!   instead of one per remaining step.
 //!
 //! **The close-out is screened here, not downstream, because the backstop this
 //! module originally leaned on does not always exist.** The first version
@@ -29,6 +33,49 @@
 //! negated echo of the marker skipped nine of ten steps for reward 0.0
 //! (#2104). Most of Terminal-Bench is that shape, so the screen is the
 //! backstop.
+
+use super::*;
+use crate::plan::{names_an_absolute_path, parse_plan, plan_path_repair_prompt};
+
+impl<'a> Pipeline<'a> {
+    /// One bounded repair retry (L-V2) for a plan that parsed cleanly but
+    /// named an absolute filesystem path — a blind planner cannot know a
+    /// path it never saw is real, and #2932 measured 32% of plan steps in
+    /// one benchmark run naming `/app`, most refused outright by the
+    /// candidate sandbox. Degrades to the original plan on any repair
+    /// failure: a plan naming a path the worker has to correct is still
+    /// better than no plan.
+    pub(super) async fn resolve_plan_paths(
+        &self,
+        steps: Vec<PlanStep>,
+        resolved: &ResolvedRole<'a>,
+        overrides: &RoleCallOverrides,
+        spend: &mut Spend<'_>,
+    ) -> Result<Vec<PlanStep>, PipelineStageAbort> {
+        if !steps.iter().any(|s| names_an_absolute_path(&s.description)) {
+            return Ok(steps);
+        }
+        match self
+            .metered_raw_call(
+                RawCall {
+                    role: ModelCallRole::PlanRepair,
+                    resolved,
+                    messages: plan_path_repair_prompt(&steps).into_messages(),
+                    policy: RetryPolicy::deterministic(),
+                    overrides,
+                    timeout: self.config.engine.model_timeout,
+                },
+                spend.budget,
+                spend.total,
+            )
+            .await
+        {
+            Ok(repair) => Ok(parse_plan(&repair.text).unwrap_or(steps)),
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => Err(abort),
+            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(steps),
+        }
+    }
+}
 
 /// The line a worker opens with to declare the whole goal finished and end
 /// the step loop. Matched at line start (after leading whitespace) so prose
@@ -52,6 +99,33 @@ pub(super) fn step_prompt(index: usize, total: usize, description: &str) -> Stri
         index + 1,
         total,
         description,
+    )
+}
+
+/// The one consolidated follow-up sent instead of walking the rest of the
+/// plan one step per turn (#2933).
+///
+/// [`step_prompt`] already instructs a worker that finished a step in an
+/// earlier turn to answer in one line with no tool calls — the correct
+/// behavior for *that* step. The loop's fault was upstream of the prompt: a
+/// worker that closed out step 1 with no tool calls almost always covered
+/// the whole goal there too, and the loop re-asked every remaining step
+/// individually anyway, paying one full model call per step for a reply
+/// that was `Already done` every time (measured: 52 such calls in one
+/// 20-trial arm, 0 in the arm with no plan stage). This prompt asks about
+/// every remaining step at once, so the loop pays for at most one more
+/// call instead of one per step.
+pub(super) fn outstanding_work_prompt(remaining: &[PlanStep]) -> String {
+    let mut listed = String::new();
+    for (i, step) in remaining.iter().enumerate() {
+        listed.push_str(&format!("{}. {}\n", i + 1, step.description));
+    }
+    format!(
+        "The previous step needed no tool calls, which usually means the remaining plan steps \
+         below are already covered too. This is the last check before the walk ends: if every \
+         one of them is genuinely already done, say so in one line and make no tool calls. If \
+         any of them are not actually done, do that work now — there will be no further \
+         per-step turn to catch it.\n\n{listed}"
     )
 }
 

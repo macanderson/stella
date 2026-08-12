@@ -24,6 +24,12 @@ pub(super) struct TurnTallies {
     opaque: Arc<AtomicU32>,
     verify_confirmations: Arc<AtomicU32>,
     errored_commands: Arc<AtomicU32>,
+    /// Every `ToolStart` this turn dispatched, read-only calls included —
+    /// unlike `mutating`, which excludes them on purpose (#2933). Not folded
+    /// into `ChangeSignals`: that struct is the candidate's running total,
+    /// and this is read once per turn, by the plan-step walk alone, to tell
+    /// a turn that acted from one that only answered.
+    tool_calls: Arc<AtomicU32>,
 }
 
 impl TurnTallies {
@@ -34,6 +40,11 @@ impl TurnTallies {
         signals.opaque_actions += self.opaque.load(Ordering::Relaxed);
         signals.verify_done_confirmations += self.verify_confirmations.load(Ordering::Relaxed);
         signals.errored_commands += self.errored_commands.load(Ordering::Relaxed);
+    }
+
+    /// How many tool calls this one turn dispatched, mutating or not.
+    pub(super) fn tool_call_count(&self) -> u32 {
+        self.tool_calls.load(Ordering::Relaxed)
     }
 }
 
@@ -97,6 +108,7 @@ impl<'a> Pipeline<'a> {
                     state.flip_halt.clone(),
                 )
                 .await
+                .0
             {
                 TurnOutcome::Completed { text, cost_usd } => {
                     state.final_text = text;
@@ -171,7 +183,7 @@ impl<'a> Pipeline<'a> {
                     total,
                     &step.description,
                 )));
-            match self
+            let (outcome, tool_calls) = self
                 .run_engine_turn(
                     engine,
                     &mut state.messages,
@@ -179,8 +191,8 @@ impl<'a> Pipeline<'a> {
                     &mut state.signals,
                     state.flip_halt.clone(),
                 )
-                .await
-            {
+                .await;
+            match outcome {
                 TurnOutcome::Completed { text, cost_usd } => {
                     *spend.total += cost_usd;
                     mark(i, TaskStatus::Completed);
@@ -212,6 +224,7 @@ impl<'a> Pipeline<'a> {
                     // `UNVERIFIABLE` and refutes nothing (#2104).
                     let closed_out = plan_steps::goal_declared_complete(&text);
                     state.final_text = text;
+                    let remaining = i + 1 < steps.len();
                     if closed_out {
                         // #1702's early close-out: the remaining steps are not
                         // abandoned, they are covered. Saying so on the rail is
@@ -222,6 +235,49 @@ impl<'a> Pipeline<'a> {
                         // gave before this.
                         for (j, _) in steps.iter().enumerate().skip(i + 1) {
                             mark(j, TaskStatus::Completed);
+                        }
+                        break;
+                    }
+                    // #2933: a turn that dispatched no tool call at all
+                    // answered rather than worked, and `step_prompt` already
+                    // tells the worker to do exactly that when a step is
+                    // already covered — which measured true for the whole
+                    // remaining plan far more often than not. Walking the
+                    // rest one step per turn just repeats the same no-op
+                    // answer at one full model call each; ask once instead,
+                    // then stop regardless of what it finds.
+                    if tool_calls == 0 && remaining {
+                        state.messages.push(CompletionMessage::user(
+                            plan_steps::outstanding_work_prompt(&steps[i + 1..]),
+                        ));
+                        let (follow_up, _) = self
+                            .run_engine_turn(
+                                engine,
+                                &mut state.messages,
+                                spend.budget,
+                                &mut state.signals,
+                                state.flip_halt.clone(),
+                            )
+                            .await;
+                        match follow_up {
+                            TurnOutcome::Completed { text, cost_usd } => {
+                                *spend.total += cost_usd;
+                                state.final_text = text;
+                                for (j, _) in steps.iter().enumerate().skip(i + 1) {
+                                    mark(j, TaskStatus::Completed);
+                                }
+                            }
+                            TurnOutcome::Aborted {
+                                reason,
+                                kind,
+                                cost_usd,
+                            } => {
+                                *spend.total += cost_usd;
+                                for (j, _) in steps.iter().enumerate().skip(i + 1) {
+                                    mark(j, TaskStatus::Cancelled);
+                                }
+                                return Err(TurnAbort { reason, kind });
+                            }
                         }
                         break;
                     }
@@ -266,6 +322,11 @@ impl<'a> Pipeline<'a> {
     /// `mutating_actions` answers "was anything even asked to change", which
     /// nothing can defeat, because it is counted off the calls this pipeline
     /// dispatched rather than off any look at the world.
+    /// Returns the turn's outcome alongside its own tool-call count — see
+    /// [`TurnTallies::tool_call_count`] — so a caller that needs to tell an
+    /// acting turn from a purely narrated one (#2933) does not have to infer
+    /// it from `ChangeSignals`, which is the candidate's running total, not
+    /// this one turn's.
     pub(super) async fn run_engine_turn(
         &self,
         engine: &Engine<'_>,
@@ -273,7 +334,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
-    ) -> TurnOutcome {
+    ) -> (TurnOutcome, u32) {
         // Every execute turn gets a halt now (#2661): armed with the tracked
         // command when `run_candidate` observed a failing baseline, otherwise
         // watching only for a confirmed `verify_done` — the deterministic
@@ -286,8 +347,9 @@ impl<'a> Pipeline<'a> {
         let outcome = halted
             .run_turn_with_sender(messages, budget, &filtered)
             .await;
+        let tool_calls = tallies.tool_call_count();
         tallies.fold_into(signals);
-        outcome
+        (outcome, tool_calls)
     }
 
     /// Drive a checkpoint-restored turn to its end under the same event
@@ -345,6 +407,8 @@ impl<'a> Pipeline<'a> {
         // oracle.
         let seen_command_errors = Arc::new(AtomicU32::new(0));
         let command_errors = seen_command_errors.clone();
+        let seen_tool_calls = Arc::new(AtomicU32::new(0));
+        let tool_calls = seen_tool_calls.clone();
         // The `verify_done` calls in flight, so their results can be scored
         // (#2129). Correlated by `call_id` for the same reason the command
         // map below is — a step dispatches calls concurrently.
@@ -390,6 +454,11 @@ impl<'a> Pipeline<'a> {
                     consumer.send(event)
                 }
                 AgentEvent::ToolStart { call } => {
+                    // Unconditional, unlike `mutating` below: #2933's replay
+                    // guard needs "did this turn act at all", not "did it
+                    // mutate", to tell a worker that made a read-only lookup
+                    // from one that only narrated in prose.
+                    tool_calls.fetch_add(1, Ordering::Relaxed);
                     // Counted at dispatch, not at result: a call that errored
                     // or timed out still means the turn *tried* to act, and
                     // the no-op rung is about the attempt. Only a name the
@@ -497,6 +566,7 @@ impl<'a> Pipeline<'a> {
                 opaque: seen_opaque,
                 verify_confirmations: seen_verify,
                 errored_commands: seen_command_errors,
+                tool_calls: seen_tool_calls,
             },
         )
     }
