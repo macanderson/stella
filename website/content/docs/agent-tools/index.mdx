@@ -59,6 +59,9 @@ These 58 tools register in every session — no configuration, no prerequisites.
 #### Search
 
 <CardGrid size="md">
+  <ToolCard name="search" access="read">
+    One way to find code, whatever form the question takes: a description of behaviour, a question, or a symbol name. Ranks by meaning rather than substring, then spends a fixed context budget attaching structure to the top hits — symbols, imports, importers, signatures, docs, callers, callees, a body excerpt — so one call usually replaces a run of grep/glob/read_file round trips. How much detail each hit carries is the `STELLA_SEARCH_DEPTH` dial (1–10, default 4), owned by configuration and never by the model; `STELLA_SEARCH_BUDGET` is the hard stop in characters. Degrades to symbol-name matching without an embedder and to an index-free file scan without a code graph, and every answer states which strategies ran and whether it was truncated.
+  </ToolCard>
   <ToolCard name="grep" access="read">
     Search file contents with a regex (ripgrep-backed when available); once the code-graph index exists, matches carry a code-map footer.
   </ToolCard>
@@ -273,7 +276,7 @@ These 58 tools register in every session — no configuration, no prerequisites.
 <Callout type="info">
 `verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `semantic_code_search`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `recall_context`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
+The read-only partition is exactly: `read_file`, `read_symbol`, `search`, `grep`, `glob`, `graph_query`, `semantic_code_search`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `recall_context`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered
@@ -470,14 +473,22 @@ The remaining three session tools are read-only **discovery** tools layered over
 Set `STELLA_LEAN_TOOLS=1` to advertise only a lean core toolset plus the discovery tools; everything else stays out of the prompt until a `tool_search` surfaces it.
 
 ```bash
-# Trim the prompt to the core eleven plus the discovery tools.
+# Trim the prompt to the default core plus the discovery tools.
 STELLA_LEAN_TOOLS=1 stella run "wire up the new webhook handler"
 
 # Or choose your own core — a comma-separated list replaces the default.
+# The discovery tools still ride along on top of it.
 STELLA_LEAN_TOOLS=read_file,grep,glob,bash stella run "audit the config loader"
+
+# Or close the set: `only:` advertises exactly these and nothing else,
+# discovery tools included. This is the form a fixed-size experiment needs.
+STELLA_LEAN_TOOLS=only:search,read_file,edit_file,write_file,bash \
+  stella run "audit the config loader"
 ```
 
-The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`, `grep`, `glob`, `gather_context`, `build_project`, `run_tests`, `verify_done`, `bash`, and `ask_user`. Note what is *not* in it — `delete_file` and `apply_edits` are absent, so lean mode is read/write/edit rather than full file CRUD.
+The default core is exactly thirteen tools: `read_file`, `write_file`, `edit_file`, `bash`, `grep`, `glob`, `graph_query`, `read_symbol`, `gather_context`, `verify_done`, `build_project`, `run_tests`, and `ask_user`. Note what is *not* in it — `delete_file` and `apply_edits` are absent, so lean mode is read/write/edit rather than full file CRUD.
+
+`graph_query` and `read_symbol` are core rather than searchable on purpose: a model that does not know the code graph exists has no reason to search for it, so hiding the structural retrieval tools behind `tool_search` pins every lean session to grep.
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 

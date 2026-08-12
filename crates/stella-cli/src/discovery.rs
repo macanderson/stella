@@ -24,7 +24,10 @@
 //!
 //! With `STELLA_LEAN_TOOLS=1` (or a comma-separated custom core list) the
 //! session advertises only a small core toolset plus the three discovery
-//! tools; everything else stays hidden until a `tool_search` surfaces it —
+//! tools; `STELLA_LEAN_TOOLS=only:a,b,c` advertises exactly `a,b,c` and
+//! nothing else, which is the form a fixed-size bench arm needs (see
+//! [`LEAN_TOOLS_ENV`]). Everything else stays hidden until a `tool_search`
+//! surfaces it —
 //! matched tools are *activated* and advertised from the next model call.
 //! Execution is deliberately permissive: a hidden tool called by name still
 //! runs (the model may know it from history), so lean mode can never
@@ -52,9 +55,27 @@ pub const SKILL_SEARCH: &str = "skill_search";
 pub const MCP_SEARCH: &str = "mcp_search";
 
 /// The env switch for lean frontloading: `1`/`true` for the default core
-/// set, a comma-separated list for a custom core, unset/`0`/`false` for the
-/// full catalog (today's behavior).
+/// set, a comma-separated list for a custom core, `only:a,b,c` for a **closed**
+/// set, unset/`0`/`false` for the full catalog (today's behavior).
+///
+/// The `only:` form exists because the other three cannot express a tool set
+/// of a stated size. Lean mode always adds the three discovery tools on top
+/// of the core, which is right for a session — they are what makes hiding the
+/// long tail safe — and wrong for an experiment: an arm specified as five
+/// tools that ships eight is not the arm anyone reasoned about, and
+/// `tool_search` sitting beside a `search` tool additionally competes with
+/// the thing under test for the model's attention. `only:` takes the list
+/// literally and adds nothing. It borrows its `verb:` shape from
+/// `tool_search`'s own `select:` query grammar rather than inventing a second
+/// env var.
+///
+/// Execution stays permissive in every form (see [`DiscoveryToolSet::execute`]):
+/// a tool that is not advertised still runs when called by name, so a closed
+/// set can never deadlock a turn.
 pub const LEAN_TOOLS_ENV: &str = "STELLA_LEAN_TOOLS";
+
+/// The [`LEAN_TOOLS_ENV`] prefix selecting a closed set.
+const ONLY_PREFIX: &str = "only:";
 
 /// The default lean core: the tools an agent needs to make *any* progress
 /// (file CRUD, exec, search, the definition of done, and asking the user).
@@ -115,13 +136,27 @@ pub fn new_activation() -> ActivatedTools {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeanConfig {
     pub core: HashSet<String>,
+    /// Whether the three discovery tools ride on top of [`Self::core`].
+    ///
+    /// True for every form of [`LEAN_TOOLS_ENV`] except `only:` — see that
+    /// constant's docs for why a closed set had to become expressible.
+    pub discovery: bool,
 }
 
 impl LeanConfig {
-    /// The default core set (see [`DEFAULT_CORE_TOOLS`]).
+    /// The default core set (see [`DEFAULT_CORE_TOOLS`]), plus discovery.
     pub fn default_core() -> Self {
         Self {
             core: DEFAULT_CORE_TOOLS.iter().map(|s| s.to_string()).collect(),
+            discovery: true,
+        }
+    }
+
+    /// Exactly these tools and nothing else — no discovery layer.
+    pub fn closed(names: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            core: names.into_iter().collect(),
+            discovery: false,
         }
     }
 }
@@ -136,14 +171,20 @@ pub(crate) fn lean_from_env() -> Option<LeanConfig> {
     if trimmed == "1" || trimmed.eq_ignore_ascii_case("true") {
         return Some(LeanConfig::default_core());
     }
-    Some(LeanConfig {
-        core: trimmed
-            .split(',')
+    let names = |list: &str| {
+        list.split(',')
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|name| !name.is_empty())
             .map(str::to_string)
-            .collect(),
-    })
+            .collect::<Vec<_>>()
+    };
+    match trimmed.strip_prefix(ONLY_PREFIX) {
+        Some(list) => Some(LeanConfig::closed(names(list))),
+        None => Some(LeanConfig {
+            core: names(trimmed).into_iter().collect(),
+            discovery: true,
+        }),
+    }
 }
 
 /// The MCP-registry lookup port — injectable so unit tests never hit the
@@ -794,11 +835,16 @@ impl<'a> DiscoveryToolSet<'a> {
 impl ToolExecutor for DiscoveryToolSet<'_> {
     fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas = self.inner.schemas();
+        // No lean config at all means the full catalog, which has always
+        // carried the discovery tools; only a `only:` set withholds them.
+        let advertise_discovery = self.lean.as_ref().is_none_or(|lean| lean.discovery);
         if let Some(lean) = &self.lean {
             let activated = self.activated.read().unwrap_or_else(|p| p.into_inner());
             schemas.retain(|s| lean.core.contains(&s.name) || activated.contains(&s.name));
         }
-        schemas.extend(self.discovery_schemas());
+        if advertise_discovery {
+            schemas.extend(self.discovery_schemas());
+        }
         // A live skill's allowed-tools grant narrows the whole advertised
         // surface, this layer's own tools included (#2682).
         self.invoke.filter_schemas(&mut schemas);
@@ -1113,6 +1159,7 @@ mod tests {
                     .iter()
                     .map(|s| s.to_string())
                     .collect(),
+                discovery: true,
             }));
 
         let names: Vec<String> = set.schemas().into_iter().map(|s| s.name).collect();
@@ -1160,6 +1207,7 @@ mod tests {
             .with_registry_search(Box::new(StubRegistry))
             .with_lean(Some(LeanConfig {
                 core: HashSet::new(),
+                discovery: true,
             }));
         match set.execute("screenshot", &Value::Null).await {
             ToolOutput::Ok { content } => assert_eq!(content, "inner ran screenshot"),
@@ -1173,6 +1221,7 @@ mod tests {
         let activation = new_activation();
         let lean = Some(LeanConfig {
             core: HashSet::new(),
+            discovery: true,
         });
         {
             let set = DiscoveryToolSet::new(&inner, std::env::temp_dir())
@@ -1328,15 +1377,16 @@ mod tests {
     #[test]
     fn lean_env_parsing_covers_all_forms() {
         let _lock = crate::test_env::lock();
-        let cases: &[(&str, Option<usize>)] = &[
-            ("0", None),
-            ("false", None),
-            ("", None),
-            ("1", Some(DEFAULT_CORE_TOOLS.len())),
-            ("true", Some(DEFAULT_CORE_TOOLS.len())),
-            ("read_file, bash", Some(2)),
+        let cases: &[(&str, Option<usize>, bool)] = &[
+            ("0", None, false),
+            ("false", None, false),
+            ("", None, false),
+            ("1", Some(DEFAULT_CORE_TOOLS.len()), true),
+            ("true", Some(DEFAULT_CORE_TOOLS.len()), true),
+            ("read_file, bash", Some(2), true),
+            ("only:read_file, bash", Some(2), false),
         ];
-        for (value, expected_core_len) in cases {
+        for (value, expected_core_len, expected_discovery) in cases {
             unsafe { std::env::set_var(LEAN_TOOLS_ENV, value) };
             let lean = lean_from_env();
             assert_eq!(
@@ -1344,8 +1394,62 @@ mod tests {
                 *expected_core_len,
                 "for env value {value:?}"
             );
+            if let Some(lean) = &lean {
+                assert_eq!(
+                    lean.discovery, *expected_discovery,
+                    "for env value {value:?}"
+                );
+            }
         }
         unsafe { std::env::remove_var(LEAN_TOOLS_ENV) };
         assert_eq!(lean_from_env(), None);
+    }
+
+    /// The witness for `only:` — a bench arm specified as N tools must
+    /// advertise exactly N schemas.
+    ///
+    /// The plain-list form silently adds three discovery tools on top, which
+    /// is right for a session and wrong for an experiment: an arm reasoned
+    /// about as five tools that ships eight measures something nobody
+    /// designed, and `tool_search` beside a `search` tool competes with the
+    /// thing under test. Both halves are asserted here so the difference
+    /// between the two forms cannot quietly disappear.
+    #[tokio::test]
+    async fn an_only_set_advertises_exactly_its_members_and_a_plain_list_does_not() {
+        let inner = FakeInner;
+        let arm = ["read_file", "bash"];
+
+        let closed = DiscoveryToolSet::new(&inner, std::env::temp_dir())
+            .with_registry_search(Box::new(StubRegistry))
+            .with_lean(Some(LeanConfig::closed(
+                arm.iter().map(|name| name.to_string()),
+            )));
+        let mut names: Vec<String> = closed.schemas().into_iter().map(|s| s.name).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["bash".to_string(), "read_file".to_string()],
+            "an `only:` set must advertise exactly its members — no discovery layer"
+        );
+
+        // The contrast, so this test fails if the two forms ever converge.
+        let open = DiscoveryToolSet::new(&inner, std::env::temp_dir())
+            .with_registry_search(Box::new(StubRegistry))
+            .with_lean(Some(LeanConfig {
+                core: arm.iter().map(|name| name.to_string()).collect(),
+                discovery: true,
+            }));
+        let open_names: Vec<String> = open.schemas().into_iter().map(|s| s.name).collect();
+        assert!(
+            open_names.contains(&TOOL_SEARCH.to_string()),
+            "the plain-list form must keep the discovery layer: {open_names:?}"
+        );
+
+        // Withholding a schema is not withholding the capability: execution
+        // stays permissive, so a closed set can never deadlock a turn.
+        match closed.execute("screenshot", &Value::Null).await {
+            ToolOutput::Ok { content } => assert_eq!(content, "inner ran screenshot"),
+            other => panic!("a closed set must still execute hidden tools, got {other:?}"),
+        }
     }
 }
