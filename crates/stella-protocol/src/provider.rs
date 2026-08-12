@@ -116,7 +116,7 @@ pub trait Provider: Send + Sync {
     /// instance, since there the HOST chooses the model and the engine holds
     /// no ambient authority over it — not that the model is unknowable in
     /// general;
-    /// callers render it as [`UNKNOWN_MODEL`], which is the one documented
+    /// callers render it as [`crate::UNKNOWN_MODEL`], which is the one documented
     /// spelling of "this envelope could not name its model". Defaulted rather
     /// than required so a test double or a future multiplexing adapter need
     /// not claim a model it does not have.

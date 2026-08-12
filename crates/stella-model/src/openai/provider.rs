@@ -1,4 +1,4 @@
-//! The [`Provider`] port impl for [`OpenAiProvider`] — the whole of this
+//! The [`stella_protocol::Provider`] port impl for [`OpenAiProvider`] — the whole of this
 //! adapter's public surface, and nothing else.
 //!
 //! Split out of `openai.rs` rather than grown inside it: that file is a
@@ -10,9 +10,9 @@
 //! reasons about SSE, pricing, or the wire dialect moved with it.
 
 use async_trait::async_trait;
-use stella_protocol::{
-    CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver,
-};
+use stella_protocol::{CompletionRequestRef, CompletionResult, ProviderError};
+
+use crate::provider::{Provider, ToolCallObserver};
 
 use super::OpenAiProvider;
 
