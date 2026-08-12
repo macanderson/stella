@@ -1185,6 +1185,15 @@ def _assemble_fetched(dest: Path) -> None:
     command. A failure here never fails the fetch: the artifacts are on disk,
     which is the part that cost money, and `arenabench assemble <dir>` retries
     the free part.
+
+    Assembly needs ``match.toml``, which only a ``--artifacts`` fetch brings
+    down — so on the default path it *always* declines, and declining alone
+    would leave the plain fetch with no view spanning the arms at all. That is
+    the regression #3018 fixed and this restores: when assembly cannot run,
+    :func:`_merge_and_report` still folds the per-job ``results.json`` bodies
+    into one ``trial.json``. The order is the point — the assembled match is a
+    restoration of the submitted spec and strictly better, and the merge is
+    what a fetch that never downloaded the spec can honestly build instead.
     """
     from .assemble import AssembleError, assemble_run
 
@@ -1192,6 +1201,7 @@ def _assemble_fetched(dest: Path) -> None:
         assembly = assemble_run(dest)
     except AssembleError as exc:
         print(f"assembled : not yet — {exc}")
+        _merge_and_report(dest)
         return
     print(
         f"assembled : {assembly.trials} trial(s) into one match "
