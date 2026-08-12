@@ -968,19 +968,19 @@ class StellaAgent(BaseInstalledAgent):
         await self._build_code_graph(environment)
 
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
-        """Index the task workspace so ``graph_query`` is offered at all.
+        """Index the task workspace, and embed it, before the first turn.
 
-        The tool is registered only when ``.stella/private/codegraph.db``
-        exists (`stella-tools` registry), and a fresh task checkout has never
-        been initialized — so without this the agent is never offered code
-        intelligence and falls back to grep/glob for every discovery step.
-
-        `stella init` resolves no config and needs no credential: with no
-        provider it takes the directory heuristic for domains and builds the
-        graph regardless ("the code graph needs no provider"). Best-effort by
-        construction — a workspace with nothing indexable (or no tree-sitter
-        grammar for its language) is the normal case on this benchmark, not a
-        failure, and must never block the run.
+        `graph_query` needs ``.stella/private/codegraph.db``, which a fresh
+        task checkout has never had: without this the agent is offered no code
+        intelligence and greps for every discovery step. Init also embeds what
+        it indexed, so ``semantic_code_search`` answers on the FIRST tool call
+        rather than after the grepping starts — that half needs an embedding
+        backend in the container (``VOYAGE_API_KEY`` / ``OPENAI_API_KEY`` /
+        ``STELLA_EMBED_URL``), which this rig lacks today: the gap #2995
+        measures. Neither half needs a credential otherwise, and best-effort
+        is by construction — a workspace with nothing indexable (or no
+        tree-sitter grammar) is this benchmark's normal case, not a failure,
+        and must never block a run. All of it is off the agent's clock.
         """
         cwd = getattr(environment.task_env_config, "workdir", None)
         command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""

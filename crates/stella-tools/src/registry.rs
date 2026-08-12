@@ -524,6 +524,7 @@ impl ToolRegistry {
         // the chicken-and-egg gate.
         entries.push(Arc::new(crate::overview::ProjectOverview));
         entries.push(Arc::new(crate::graph::CodeGraphQuery));
+        entries.push(Arc::new(crate::graph::semantic::SemanticCodeSearch));
         entries.push(Arc::new(crate::read_symbol::ReadSymbol::new(
             read_file,
             span_reads.clone(),

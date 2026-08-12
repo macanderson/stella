@@ -31,7 +31,7 @@ for a session (`crates/stella-cli/src/agent/graph.rs`) and `stella-tools` uses i
 ## Semantic file vectors
 
 Beside the symbol and import tables sits `code_graph_vectors`: one vector per
-`(file, embedder fingerprint)`, so `graph_query op=semantic` can answer a
+`(file, embedder fingerprint)`, so the `semantic_code_search` tool can answer a
 question phrased in English rather than in identifiers. They live **here**,
 next to the nodes they describe, rather than in `stella-context`'s
 `context.db`, for two reasons that are the same reason: a semantic query then
@@ -48,10 +48,14 @@ arithmetic to `stella_embed::rank` — pure and property-tested there).
 
 Three properties worth knowing before changing anything here:
 
-- **Lazy and capped.** Nothing is embedded until a semantic query asks, and
-  then at most `MAX_FILES_PER_PASS` files. There is no upfront whole-repository
-  build to stall a first query; a capped pass resumes on the next one, and a
-  caller that finds work pending says so in its answer.
+- **Two callers, both capped.** `stella init` embeds the tree it just indexed
+  (`stella_tools::graph::semantic::warm_file_vectors`, capped at
+  `MAX_FILES_PER_EAGER_PASS`) so the first tool call of a run can be answered;
+  a semantic query then tops up whatever is still pending, at most
+  `MAX_FILES_PER_PASS` files at a time, which is what covers files written
+  after init and workspaces that never ran it. A capped pass of either kind
+  resumes on the next one, and a caller that finds work pending says so in its
+  answer rather than ranking a subset quietly.
 - **One render.** `render_file_text` is the only way a file becomes embeddable
   text. A mismatch between what was indexed and what a later pass would index
   degrades ranking with no error to catch it, so there is exactly one function.

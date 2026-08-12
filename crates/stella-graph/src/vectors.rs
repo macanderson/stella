@@ -16,10 +16,18 @@
 //!
 //! # The shape
 //!
-//! - **Lazy and incremental.** Nothing is embedded until a semantic query
-//!   asks for it, and then only [`MAX_FILES_PER_PASS`] files at a time. There
-//!   is no upfront whole-repository index build to stall the first query, and
-//!   the cost is paid once per `(file content, embedder)` pair.
+//! - **Two passes, one mechanism.** This module answers "which files have no
+//!   vector" and stores the ones a caller comes back with; *when* that happens
+//!   is the caller's decision, and there are two callers. `stella init` embeds
+//!   the tree it just indexed, up front, so the first tool call of a run can
+//!   already be answered — the pass that matters for a single-turn run, where
+//!   there is no second session to amortise an index over. The per-query pass
+//!   then tops up **incrementally**, [`MAX_FILES_PER_PASS`] files at a time,
+//!   for everything written after init: the agent's own edits, a file added
+//!   later, a workspace that never ran init at all. Neither pass is a second
+//!   way for a vector to exist — both render through [`render_file_text`] and
+//!   both write the same `(file_id, fingerprint)` row — and the cost is paid
+//!   once per `(file content, embedder)` pair either way.
 //! - **One render, used everywhere.** [`render_file_text`] is the only way a
 //!   file becomes embeddable text. A mismatch between what was indexed and
 //!   what a later pass would index degrades ranking silently, with no error to

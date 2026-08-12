@@ -1,6 +1,9 @@
-//! Code-graph build cluster: workspace index construction and the
-//! session-lifetime live watcher.
+//! Code-graph build cluster: workspace index construction, the eager semantic
+//! embedding pass, and the session-lifetime live watcher.
 use super::*;
+
+#[cfg(test)]
+mod tests;
 
 /// Build the workspace code-graph index into `.stella/private/codegraph.db` (the
 /// `stella-graph` tree-sitter indexer). This is the data side of `init`: the
@@ -11,8 +14,29 @@ use super::*;
 /// succeeds, offline included) — the graph can always be rebuilt on a later
 /// `init` once a toolchain/parser is available. Progress goes to `emit`
 /// (plain text, no ANSI) so both the CLI and the deck transcript can show it.
+///
 pub(super) async fn build_code_graph(
     workspace_root: &std::path::Path,
+    emit: &mut dyn FnMut(String),
+) {
+    build_code_graph_with(
+        workspace_root,
+        &stella_embed::EmbedderEnv::from_process(),
+        emit,
+    )
+    .await;
+}
+
+/// [`build_code_graph`] against an explicit embedder configuration.
+///
+/// The environment arrives as **data** rather than being read in here, for the
+/// reason the semantic tool gives for its own embedder parameter: resolution is
+/// a pure function of it (`stella_embed::resolve`), so the witness test drives
+/// exactly the code a real `stella init` runs — no test-only branch, and no
+/// process-environment mutation racing every other test in the binary.
+async fn build_code_graph_with(
+    workspace_root: &std::path::Path,
+    embed_env: &stella_embed::EmbedderEnv,
     emit: &mut dyn FnMut(String),
 ) {
     emit("◈ indexing code graph…".to_string());
@@ -31,6 +55,102 @@ pub(super) async fn build_code_graph(
         Err(e) => emit(format!(
             "! code-graph indexing task failed: {e} — run `stella init` again to retry"
         )),
+    }
+    warm_semantic_index(workspace_root, embed_env, emit).await;
+}
+
+/// Embed the files just indexed, so `semantic_code_search` can answer on the
+/// **first** tool call of the first turn.
+///
+/// # Why eagerly, and why here
+///
+/// The vector pass is lazy by default (`stella_tools::graph::semantic`), which
+/// is right for a long interactive session and wrong for a single-turn run in
+/// a fresh checkout: the lazy pass fires only once the agent has *already*
+/// decided to search, which is after the grep spiral it exists to prevent has
+/// begun — and never at all if the agent does not reach for the tool. `stella
+/// init` is the one place that runs before any turn, so work done here is free
+/// from the agent's perspective.
+///
+/// # Why it is automatic rather than a flag
+///
+/// `stella init` is not a free command: it already resolves a provider and
+/// spends a model call on domain inference, and already prints what that cost.
+/// An embedding pass is the same kind of spend on the same command, so it
+/// needs the same treatment — do it, bound it, and say what it did — not a
+/// flag that leaves the capability off for everyone who never found it. With
+/// no embedder configured it is a labelled no-op, which is the normal case.
+async fn warm_semantic_index(
+    workspace_root: &std::path::Path,
+    embed_env: &stella_embed::EmbedderEnv,
+    emit: &mut dyn FnMut(String),
+) {
+    use stella_embed::Embedder;
+    use stella_tools::graph::semantic::MAX_FILES_PER_EAGER_PASS;
+
+    let embedder = match stella_embed::resolve(embed_env) {
+        stella_embed::Resolution::Configured(embedder) => embedder,
+        // Named rather than silent: init is where a workspace is configured,
+        // so it is the one moment a hint about an unused capability is help
+        // instead of noise.
+        stella_embed::Resolution::Unconfigured => {
+            emit(
+                "· semantic index: skipped — no embedding backend configured (set \
+                 VOYAGE_API_KEY, OPENAI_API_KEY, or STELLA_EMBED_URL + STELLA_EMBED_MODEL to \
+                 enable `semantic_code_search`)"
+                    .to_string(),
+            );
+            return;
+        }
+        // A half-configured backend is neither off nor working, and a typo
+        // must not read as a deliberate opt-out.
+        stella_embed::Resolution::Incomplete(reason) => {
+            emit(format!("! semantic index: not built — {reason}"));
+            return;
+        }
+    };
+
+    emit("◈ embedding files for semantic search…".to_string());
+    let outcome = stella_tools::graph::semantic::warm_file_vectors(
+        workspace_root,
+        embedder.as_ref(),
+        MAX_FILES_PER_EAGER_PASS,
+    )
+    .await;
+    emit(format_warm_outcome(
+        &outcome,
+        &embedder.fingerprint().model_id,
+    ));
+}
+
+/// The one-line report of an eager embedding pass.
+///
+/// A partial index says so: a pass that stopped at the cap, or gave up on a
+/// broken backend, names how many files were left unembedded, because an index
+/// that silently ranks a subset of the repository is worse than one that says
+/// which subset it ranked. The leftovers are not lost — the lazy per-query
+/// pass picks them up.
+fn format_warm_outcome(
+    outcome: &stella_tools::graph::semantic::WarmOutcome,
+    model: &str,
+) -> String {
+    use stella_tools::graph::semantic::WarmOutcome;
+    match outcome {
+        WarmOutcome::Warmed {
+            embedded,
+            remaining: 0,
+        } => format!("✓ semantic index: {embedded} files embedded by {model}"),
+        WarmOutcome::Warmed {
+            embedded,
+            remaining,
+        } => format!(
+            "✓ semantic index: {embedded} files embedded by {model} — {remaining} left \
+             unembedded (they embed on demand as semantic searches reach them)"
+        ),
+        WarmOutcome::Failed { embedded, reason } => format!(
+            "! semantic index: stopped after {embedded} files — {reason} (the rest embed on \
+             demand)"
+        ),
     }
 }
 

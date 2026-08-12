@@ -26,6 +26,16 @@ fn workspace() -> tempfile::TempDir {
     dir
 }
 
+/// Index into the workspace-private path the tools use, the way `stella init`
+/// leaves it — the eager pass opens `.stella/private/codegraph.db` and would
+/// find nothing beside a db written to the fixture root.
+fn index_as_init_does(root: &Path) {
+    let db = stella_store::workspace_private_sqlite_path(root, "codegraph.db").expect("db path");
+    let graph = stella_graph::CodeGraph::open(root, &db).expect("open");
+    graph.index_all().expect("index");
+    graph.shutdown();
+}
+
 fn open(root: &Path) -> stella_graph::CodeGraph {
     let graph = stella_graph::CodeGraph::open(root, &root.join("codegraph.db")).expect("open");
     graph.index_all().expect("index");
@@ -75,6 +85,139 @@ async fn concept_server() -> MockServer {
 
 fn embedder(server: &MockServer) -> HttpEmbedder {
     HttpEmbedder::new(&format!("{}/v1", server.uri()), "concept-2", None, 2, 0.2)
+}
+
+/// The split (invariant #9): semantic search is its own tool with its own
+/// verb, and `graph_query` no longer carries an operation selector for it.
+#[test]
+fn semantic_search_is_a_tool_of_its_own_and_graph_query_no_longer_offers_the_op() {
+    let schema = SemanticCodeSearch.schema();
+    assert_eq!(schema.name, "semantic_code_search");
+    let properties = &schema.input_schema["properties"];
+    assert!(
+        properties.get("query").is_some(),
+        "the input is the question: {properties}"
+    );
+    for selector in ["op", "mode", "kind"] {
+        assert!(
+            properties.get(selector).is_none(),
+            "`{selector}` would select an operation, which invariant #9 forbids"
+        );
+    }
+
+    let graph_query = crate::graph::CodeGraphQuery.schema();
+    let ops = graph_query.input_schema["properties"]["op"]["enum"]
+        .as_array()
+        .expect("an op enum")
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !ops.contains(&"semantic".to_string()),
+        "graph_query kept the semantic op: {ops:?}"
+    );
+    // Discovery goes the other way instead: the structural tool points at the
+    // one that answers a question it cannot.
+    assert!(
+        graph_query.description.contains("semantic_code_search"),
+        "graph_query must name where a description-shaped question goes"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_query_names_the_tool_that_takes_an_identifier() {
+    let ws = workspace();
+    let output = SemanticCodeSearch
+        .execute(&serde_json::json!({ "query": "  " }), ws.path())
+        .await;
+    let ToolOutput::Error { message } = output else {
+        panic!("an empty query must be an error");
+    };
+    assert!(message.contains("graph_query"), "{message}");
+}
+
+/// The eager pass: the index is populated with no query asked, which is what
+/// makes semantic search available on the FIRST tool call of a one-turn run.
+#[tokio::test]
+async fn an_eager_pass_embeds_the_corpus_and_no_query() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    // The eager pass deliberately does not index; `stella init` has just run
+    // `index_all`, which is what this stands in for.
+    index_as_init_does(&root);
+    let server = concept_server().await;
+
+    let outcome = warm_file_vectors(&root, &embedder(&server), MAX_FILES_PER_EAGER_PASS).await;
+    assert_eq!(
+        outcome,
+        WarmOutcome::Warmed {
+            embedded: FIXTURE.len(),
+            remaining: 0
+        }
+    );
+
+    // Every text sent was a file render, never a question.
+    for request in server.received_requests().await.expect("requests") {
+        let body: serde_json::Value = serde_json::from_slice(&request.body).expect("json");
+        for input in body["input"].as_array().expect("inputs") {
+            assert!(
+                input.as_str().unwrap_or_default().starts_with("file: "),
+                "the eager pass embedded something that is not a file: {input}"
+            );
+        }
+    }
+
+    // And the pass is idempotent: a second one has nothing left to do.
+    let again = warm_file_vectors(&root, &embedder(&server), MAX_FILES_PER_EAGER_PASS).await;
+    assert_eq!(
+        again,
+        WarmOutcome::Warmed {
+            embedded: 0,
+            remaining: 0
+        }
+    );
+}
+
+/// A repository past the cap gets a *stated* partial index — the number left
+/// over is what the caller renders, so it can never be silent.
+#[tokio::test]
+async fn a_pass_that_hits_its_cap_reports_what_it_left() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    index_as_init_does(&root);
+    let server = concept_server().await;
+
+    let outcome = warm_file_vectors(&root, &embedder(&server), 1).await;
+    assert_eq!(
+        outcome,
+        WarmOutcome::Warmed {
+            embedded: 1,
+            remaining: FIXTURE.len() - 1
+        }
+    );
+}
+
+/// A dead backend is a report, never a panic and never a lost graph.
+#[tokio::test]
+async fn a_broken_backend_makes_the_eager_pass_a_named_failure() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    index_as_init_does(&root);
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_matcher("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("upstream is down"))
+        .mount(&server)
+        .await;
+
+    let WarmOutcome::Failed { embedded, reason } =
+        warm_file_vectors(&root, &embedder(&server), MAX_FILES_PER_EAGER_PASS).await
+    else {
+        panic!("a 500 must report a failure");
+    };
+    assert_eq!(embedded, 0);
+    assert!(reason.contains("500"), "{reason}");
 }
 
 #[tokio::test]
