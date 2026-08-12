@@ -217,6 +217,23 @@ pub trait CandidateWorkspace: Send + Sync {
     async fn escaped_paths(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Seal the workspace's current state and apply everything produced
+    /// since the last delivery (the starting snapshot, on the first call) to
+    /// the real tree — the same all-or-nothing contract as [`Self::adopt`],
+    /// run at execute-stage step boundaries so a process killed before the
+    /// run ever reaches a verdict still has that step's work in the graded
+    /// tree (#2941). [`Self::adopt`]'s final delivery only has to send
+    /// whatever a checkpoint has not already sent.
+    ///
+    /// Deliberately gated on the same fact [`Self::announce_changes`]
+    /// already gates on, not on a caller-supplied flag: several candidates'
+    /// trees delivered piecemeal into one real tree would be nobody's tree,
+    /// so a substrate that is not the sole candidate in its fan-out answers
+    /// `Ok(empty)` without touching git. A substrate that cannot checkpoint
+    /// at all shares that answer by construction — the default below.
+    async fn deliver_checkpoint(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        Ok(Vec::new())
+    }
     /// Apply this workspace's changes — relative to its starting snapshot —
     /// to the real tree. All-or-nothing: on conflict the real tree is left
     /// byte-identical and the error names the conflicting paths

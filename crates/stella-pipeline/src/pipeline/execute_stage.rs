@@ -184,6 +184,24 @@ impl<'a> Pipeline<'a> {
                 TurnOutcome::Completed { text, cost_usd } => {
                     *spend.total += cost_usd;
                     mark(i, TaskStatus::Completed);
+                    // #2941: a process killed between here and the run's
+                    // eventual verdict — the harness's wall-clock cap, a
+                    // SIGKILL, a crash — must not discard a step that
+                    // already finished. `deliver_checkpoint` is a no-op for
+                    // every candidate but the sole one in its fan-out (see
+                    // its doc), so this costs nothing on the common
+                    // multi-candidate path.
+                    if let Some(ws) = board
+                        && let Err(error) = ws.deliver_checkpoint().await
+                    {
+                        return Err(TurnAbort {
+                            reason: format!(
+                                "candidate could not deliver step {}'s work early: {error}",
+                                offset + i + 1
+                            ),
+                            kind: AbortKind::Failure,
+                        });
+                    }
                     // #1702: a worker that declares the whole goal done ends
                     // the walk — the remaining steps could only re-confirm
                     // finished work. The declaration is screened for polarity
@@ -219,6 +237,15 @@ impl<'a> Pipeline<'a> {
                     // flight after the run stopped — the same half-invariant
                     // `Plan::finish` holds on the TUI side.
                     mark(i, TaskStatus::Cancelled);
+                    // Best-effort, and deliberately not propagated: an
+                    // aborted turn can still have left real file writes
+                    // behind, and this is the last chance to save them
+                    // (#2941). The abort already has its own reason; a
+                    // delivery failure on top of it would only obscure why
+                    // the turn actually stopped.
+                    if let Some(ws) = board {
+                        let _ = ws.deliver_checkpoint().await;
+                    }
                     return Err(TurnAbort { reason, kind });
                 }
             }
