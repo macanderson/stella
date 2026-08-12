@@ -7,19 +7,19 @@ stella is Latin for star. The logomark is a comet — a four-point star with thr
 ## logomark — use this exact svg, never redraw it
 
 ```svg
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none"><line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none"><line x1="10" y1="48" x2="30" y2="48" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="34" x2="30" y2="34" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="62" x2="30" y2="62" stroke="#C58A32" stroke-width="7" stroke-linecap="round"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#C58A32"/></svg>
 ```
 
 Lockup = this mark + "stella" in JetBrains Mono ExtraBold, lowercase, tracking −2%, text optically centered on the star. Clearspace = half a star-height on all sides. Minimum sizes: 16px favicon, 24px UI. Below 16px use the star alone.
 
 ## color — hard tokens
 
-- **Phosphor Gold `#FFB000`** — THE brand color (CRT amber phosphor + the gold star). Primary buttons, focus rings, key accents, the mark. Never body text on light surfaces.
-- **gold-deep `#A37200`** — gold for small text on light surfaces (3.79:1, AA-large only).
-- **Ink `#0B0B0C`** — dark surface. Never pure black. **Paper `#F4F1EA`** — text on dark. **Paper-bg `#F6F2E9`** — light surface.
-- Gold ramp 50→950: `#FFF8E4 #FDECC3 #FCDFA1 #FCD07D #FDC154 #FFB000 #D09100 #A37200 #795500 #523900 #2E1F00`
-- Warm neutral ramp 50→950: `#FBF9F4 #E4E2DC #CECBC5 #B8B5AE #A29F98 #8D8A82 #736C68 #575150 #3C3839 #222022 #0B0B0C`
-- Semantic (shadcn-style): primary = gold with ink foreground; ring = gold. Dark: background ink, card `#131315`, border `#232327`, muted-foreground `#9B9890`, destructive `#E4573F`. Light: background `#F6F2E9`, card `#FCFAF4`, border `#E4DECF`, muted-foreground `#6E6A5F`, destructive `#D4432F`.
+- **Bronze Gold `#C58A32`** — THE brand color (CRT amber phosphor + the gold star). Primary buttons, focus rings, key accents, the mark. Never body text on light surfaces.
+- **gold-deep `#8B5E1A`** — gold for small text on light surfaces (3.79:1, AA-large only).
+- **Ink `#10100F`** — dark surface. Never pure black. **Paper `#F2EEE5`** — text on dark. **Paper-bg `#F5F0E6`** — light surface.
+- Gold ramp 50→950: `#FBF3E3 #F3DEC0 #EBCB9D #DFB473 #D39F50 #C58A32 #A97227 #8B5E1A #674415 #462E10 #291B0D`
+- Warm neutral ramp 50→950: `#FAF7F1 #E5E0D7 #CEC7BC #B7AFA4 #A1988D #8B8278 #716963 #554F4B #3B3735 #24211F #10100F`
+- Semantic (shadcn-style): primary = gold with ink foreground; ring = gold. Dark: background ink, card `#171614`, border `#2C2924`, muted-foreground `#A19A8E`, destructive `#E4573F`. Light: background `#F5F0E6`, card `#FBF8F2`, border `#DED5C6`, muted-foreground `#6F675B`, destructive `#D4432F`.
 - Budget per view: surfaces + text ≈86%, secondary ≈10%, gold ≤4%. Gold is the signal, never the surface.
 - Contrast facts to respect: gold on ink 10.7:1 (AAA); gold on paper-bg 1.64:1 (decorative only — swap to gold-deep for text).
 
@@ -29,7 +29,7 @@ One family everywhere, including headings and marketing copy: **JetBrains Mono**
 
 ## shape & space
 
-Radius scale 4/6/10/14/18 (base token 10px; cards 16–18px; pills 999). Borders 1px everywhere (`#232327` dark / `#E4DECF` light). Cards sit slightly lighter than the background in dark mode. 8px spacing grid, generous rhythm, section padding ≥84px.
+Radius scale 4/6/10/14/18 (base token 10px; cards 16–18px; pills 999). Borders 1px everywhere (`#2C2924` dark / `#DED5C6` light). Cards sit slightly lighter than the background in dark mode. 8px spacing grid, generous rhythm, section padding ≥84px.
 
 ## texture — subtle, classy, nearly subliminal
 
