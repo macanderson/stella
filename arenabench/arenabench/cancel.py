@@ -49,7 +49,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .cloud import _QUEUED_STATES, _RUNNING_STATES
+from .cloud import _QUEUED_STATES, _RUNNING_STATES, _SETTLED_STATES
 
 __all__ = [
     "CancelPlan",
@@ -57,12 +57,6 @@ __all__ = [
     "cancel_run",
     "plan_cancellation",
 ]
-
-#: Batch states that mean the trial will produce nothing further, so signalling
-#: it would be noise. Not imported from :mod:`.cloud` because it has no name
-#: there — ``progress_from_states`` folds "not queued and not running" into
-#: succeeded/failed inline.
-SETTLED_STATES: frozenset[str] = frozenset({"SUCCEEDED", "FAILED"})
 
 
 @dataclass(frozen=True)
@@ -108,11 +102,14 @@ def plan_cancellation(
         state = states.get(job_id)
         if state in _RUNNING_STATES:
             terminate.append(job_id)
-        elif state in SETTLED_STATES:
+        elif state in _SETTLED_STATES:
             settled.append(job_id)
+        elif state is None or state in _QUEUED_STATES:
+            cancel.append(job_id)
         else:
-            # _QUEUED_STATES and unknown alike: see the docstring.
-            assert state is None or state in _QUEUED_STATES or True
+            # Batch declares no other states today. If it grows one, the safe
+            # reading is "still alive, still billing" — the same direction the
+            # unknown-id rule above takes, for the same reason.
             cancel.append(job_id)
     return CancelPlan(
         cancel=tuple(cancel),
@@ -182,7 +179,7 @@ def _signal(
     except Exception as exc:  # noqa: BLE001 - see the docstring
         out(f"  !! {verb} {job_id} failed: {exc}")
         return
-    out(f"  {verb}d {job_id}" if verb == "cancel" else f"  {verb}d {job_id}")
+    out(f"  {verb}d {job_id}")
 
 
 def abort_record(

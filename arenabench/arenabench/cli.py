@@ -361,6 +361,13 @@ def _cmd_contest(args: argparse.Namespace) -> int:
         out=None,
         region=args.region,
         bucket=args.bucket,
+        # The banned-behavior gate's three `cloud run` flags. Built by hand
+        # here because this namespace is, so an attribute added to the `run`
+        # parser and not added here is an AttributeError at submit time —
+        # after the contest TOML has already been written.
+        gate=args.gate,
+        no_gate=args.no_gate,
+        gate_allow=args.gate_allow,
     )
     return _cmd_cloud_run(cloud_args)
 
