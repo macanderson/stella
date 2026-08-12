@@ -137,7 +137,11 @@ catalog! {
     "edit_file"           => (false, false, Always, "file"),
     "apply_edits"         => (false, false, Always, "file"),
     "delete_file"         => (false, false, Always, "file"),
-    // Search
+    // Search. The fused entry point (#3063) ranks semantically and enriches
+    // from the code graph, so it shares `graph_query`'s "read that writes"
+    // posture — `open_or_build` may bring codegraph.db up to date on the way
+    // to answering, which is never safe to speculate.
+    "search"              => (true, false, Always, "search"),
     "grep"                => (true, true, Always, "search"),
     "glob"                => (true, true, Always, "search"),
     // The read that writes: graph queries bootstrap/catch up codegraph.db.
