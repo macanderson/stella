@@ -107,6 +107,21 @@ would launch a browser on nearly every PR — the same disjoint-paths reasoning
 that gave `wire-schema.yml` its own file. It is deliberately not a required
 check yet (#2425).
 
+A fifth, `containment-posture.yml`, is the same shape for the same reasons: it
+asserts on a real Actions Linux runner that the graded-tree write ban is
+actually `Enforced` rather than merely present in source (#2998). The test
+(`crates/stella-tools/tests/graded_tree_containment.rs`) *skips* its two
+enforcement assertions on a non-`Enforced` host — correctly, since a laptop or
+a restricted container has a permanent reason to be `Advisory` and must not
+fail an ordinary `cargo test` — so `contain.rs::mount_script`'s Linux
+mount-namespace recipe was proved by no test anywhere, CI's own required job
+running on exactly such a host. `STELLA_REQUIRE_CONTAINMENT=1` turns that skip
+into a panic, and this workflow is where that flag is set on the one host it is
+honest to set it on. Also deliberately not required yet (#3011): the recipe
+took two rounds to hold and each round failed for a fact about the runner
+rather than a regression in the diff, which is the precise trap #1863 and #1892
+already paid down for the Rust gate.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
