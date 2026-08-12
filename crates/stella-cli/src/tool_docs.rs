@@ -60,6 +60,7 @@ use stella_tools::catalog::{self, Availability, ToolEntry};
 use stella_tools::media::{
     HostDataIsolation, HostMediaOperation, MediaBackend, MediaOperationIdSource,
 };
+use stella_tools::registry::Tool;
 use stella_tools::{RegistryOptions, ToolRegistry};
 
 /// The env var that turns the drift guard into a writer, spelled like
@@ -202,7 +203,7 @@ struct InertSpendGate;
 #[async_trait]
 impl MediaSpendGate for InertSpendGate {
     async fn authorize(&self, _request: &MediaSpendRequest) -> CostDecision {
-        CostDecision::Deny("tool-docs: never executed".into())
+        CostDecision::Deny
     }
 }
 
@@ -391,6 +392,28 @@ fn literal_block(label: &str, body: &str) -> String {
     format!("'''\n{body}\n'''")
 }
 
+/// Greedy word wrap. Prose in these pages is generated from format strings
+/// and would otherwise land as 300-character comment lines; the payloads it
+/// sits beside are never wrapped, because a clipped example must stay
+/// byte-faithful to what the run produced.
+fn wrap(text: &str, width: usize) -> String {
+    let mut out = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
 /// Every line of `body`, commented. The example payloads ride as comments
 /// because that is what the maintainer asked for and because a comment cannot
 /// be mistaken for the contract — the observed shape of `ok.content` is
@@ -469,43 +492,59 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
 fn example_comment(name: &str, fixture: &Fixture) -> String {
     let p = &fixture.provenance;
     let Some(example) = fixture.examples.get(name) else {
-        let called = fixture.usage.get(name).map(|usage| usage.calls).unwrap_or(0);
-        let why = if called == 0 {
-            "no call to record: it was never called".to_string()
-        } else {
-            format!(
+        let why = match fixture.usage.get(name).map(|usage| usage.calls) {
+            // Absent from the census entirely: these are the tools whose
+            // registration needs a backend the measured runs had none of, so
+            // they were never advertised and never had the chance to be
+            // called. That is a different fact from "offered and refused".
+            None => format!(
+                "no call to record: it was not advertised in the runs the capture \
+                 comes from, so it never had the chance to be called"
+            ),
+            Some(0) => "no call to record: it was advertised and never called".to_string(),
+            Some(called) => format!(
                 "{called} calls in the wider census, but none in the \
                  {rows}-row capture the examples are drawn from",
                 rows = p.corpus_rows,
-            )
+            ),
         };
-        return format!(
-            "OBSERVED EXAMPLE: none.\n\
-             `{name}` has {why}. No payload is shown, because an invented one \
-             would teach the reader what the author imagined this tool is for."
+        return wrap(
+            &format!(
+                "OBSERVED EXAMPLE: none.\n\
+                 `{name}` has {why}. No payload is shown, because an invented one \
+                 would teach the reader what the author imagined this tool is for."
+            ),
+            76,
         );
     };
 
     let clipped = |flag: bool| if flag { " (clipped)" } else { "" };
+    let preamble = wrap(
+        &format!(
+            "OBSERVED EXAMPLE — a real call from a real run, not an illustration.\n\
+             Run: {source}\n\
+             Captured {captured} · task `{task}` · trial `{trial}` · result: \
+             {outcome} arm.\n\
+             Selection: {selection}.\n\
+             Scrubbing: {scrubbing}.",
+            source = p.source,
+            captured = p.captured,
+            task = example.task,
+            trial = example.trial,
+            outcome = example.outcome,
+            selection = p.selection,
+            scrubbing = p.scrubbing,
+        ),
+        76,
+    );
     format!(
-        "OBSERVED EXAMPLE — a real call from a real run, not an illustration.\n\
-         Run: {source}\n\
-         Captured {captured} · task `{task}` · trial `{trial}` · result: {outcome} arm.\n\
-         Selection: {selection}.\n\
-         Scrubbing: {scrubbing}.\n\
+        "{preamble}\n\
          \n\
          input{input_clip}:\n\
          {input}\n\
          \n\
          output{output_clip}:\n\
          {output}",
-        source = p.source,
-        captured = p.captured,
-        task = example.task,
-        trial = example.trial,
-        outcome = example.outcome,
-        selection = p.selection,
-        scrubbing = p.scrubbing,
         input_clip = clipped(example.input_truncated),
         output_clip = clipped(example.output_truncated),
         input = example.input,
@@ -574,7 +613,7 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
         example_rule = rule("example"),
         example = comment_block(&example_comment(entry.name, fixture)),
         usage_rule = rule("usage"),
-        usage = comment_block(&usage_comment(entry.name, fixture)),
+        usage = comment_block(&wrap(&usage_comment(entry.name, fixture), 76)),
     )
 }
 

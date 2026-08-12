@@ -1,0 +1,117 @@
+# project_overview — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "project_overview"
+category = "context"
+availability = "always"
+read_only = true
+available_for_speculation = false
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3035: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+CALL THIS FIRST on an unfamiliar repository. Returns one JSON object describing the whole project — language and frameworks, the build/test/lint commands, entry-point files, the storage schema, domain taxonomy, index freshness, and the version-control state (current branch or DETACHED position, uncommitted and shelved/stashed changes, branches with ahead/behind vs the default, and the last 10 commits) — assembled from static manifests, the code graph and git. Takes no arguments and costs no model call. Replaces the usual opening burst of glob/grep/read_file: use it before those, then reach for graph_query or gather_context once you know what to ask about, or repo_history / repo_recover to go deeper on git.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {},
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE — a real call from a real run, not an illustration.
+# Run: Terminal-Bench trial traces (stella-events.jsonl), distilled by
+# scripts/build-tool-doc-examples.py
+# Captured 2026-08-11 · task `build-cython-ext` · trial
+# `build-cython-ext__J9nn7YQ` · result: ok arm.
+# Selection: first ok-arm call per tool in capture order; first call of any
+# kind when the tool never succeeded.
+# Scrubbing: home paths collapsed to /<home>, credential-shaped tokens
+# redacted, input clipped at 600 and output at 900 characters with the clip
+# declared per example.
+#
+# input:
+# {}
+#
+# output (clipped):
+# {
+#   "ok": {
+#     "content": "{\n  \"code\": {\n    \"busiest_file\": null,\n    \"entry_points\": [],\n    \"languages\": [],\n    \"top_level\": null\n  },\n  \"domains\": [],\n  \"git\": {\n    \"branch\": \"master\",\n    \"branch_convention\": null,\n    \"branch_count\": 1,\n    \"branches\": [\n      {\n        \"current\": true,\n        \"name\": \"master\"\n      }\n    ],\n    \"default_branch\": null,\n    \"detached\": false,\n    \"note\": \"orientation only — `repo_status` is the next step for live state (ahead/behind, changed files, shelved count, commits no ref points at); `repo_history` goes deeper (position log, full branch list); `repo_recover` searches the object store for commits even the reflog has forgotten\",\n    \"recent_commits\": [\n      \"50c2d4d stella-harbor: task workspace baseline\"\n    ],\n    \"remotes\": [],\n    \"repository\": true,\n    \"shelved\"
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 33 · trials that used it 29/408 · calls per model call 0.0022 · mean
+# position of first use 8.1 · failures 0 (0.0%).
+# A measurement, not a contract: it ages, the schema above does not.

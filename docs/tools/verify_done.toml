@@ -1,0 +1,143 @@
+# verify_done — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "verify_done"
+category = "build"
+availability = "always"
+read_only = false
+available_for_speculation = false
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3035: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Prove a change is done: test_cmd must PASS on your code and FAIL on the pre-change baseline (git HEAD, or the pinned session/task baseline in orchestrated workspaces) with your test files layered in. Call before declaring any implementation complete. Never mutates the working tree.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "test_cmd": {
+      "description": "Command that runs the witness test(s), e.g. `cargo test -p my-crate my_test` or `pnpm vitest run path/to/file.test.ts`",
+      "type": "string"
+    },
+    "test_files": {
+      "description": "Workspace-relative paths of the NEW or CHANGED test files that witness this change",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "timeout_secs": {
+      "description": "Per-run timeout in seconds (default 300, max 600)",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "test_cmd",
+    "test_files"
+  ],
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE — a real call from a real run, not an illustration.
+# Run: Terminal-Bench trial traces (stella-events.jsonl), distilled by
+# scripts/build-tool-doc-examples.py
+# Captured 2026-08-11 · task `build-cython-ext` · trial
+# `build-cython-ext__5nLVNS5` · result: ok arm.
+# Selection: first ok-arm call per tool in capture order; first call of any
+# kind when the tool never succeeded.
+# Scrubbing: home paths collapsed to /<home>, credential-shaped tokens
+# redacted, input clipped at 600 and output at 900 characters with the clip
+# declared per example.
+#
+# input:
+# {
+#   "test_cmd": "python -m pytest pyknotid/tests/test_witness_build.py -q",
+#   "test_files": [
+#     "/app/pyknotid/tests/test_witness_build.py"
+#   ],
+#   "timeout_secs": 120
+# }
+#
+# output (clipped):
+# {
+#   "ok": {
+#     "content": "WITNESS CONFIRMED — deterministic definition of done met:\n- new code:      `python -m pytest pyknotid/tests/test_witness_build.py -q` exit 0 (PASS)\n- previous code: baseline 4eb46f9a (pinned by refs/stella/task-baseline) + your test files → exit 1 (FAIL)\nCheck the tail below: an assertion failure is a strong witness; a compile error (test references symbols that don't exist on the baseline) is weaker — prefer behavioral assertions when possible.\n--- previous-code failure tail ---\nF....                                                                    [100%]\n=================================== FAILURES ===================================\n___________________________ test_torus_uses_math_gcd ___________________________\n\n    def test_torus_uses_math_gcd():\n        \"\"\"fractions.gcd was removed in Python 3.9; must use math.gcd.\"\"\"\n>       src = _re
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 453 · trials that used it 160/408 · calls per model call 0.0296 · mean
+# position of first use 27.9 · failures 419 (92.5%).
+# A measurement, not a contract: it ages, the schema above does not.

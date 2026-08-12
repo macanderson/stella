@@ -42,7 +42,8 @@ GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test self-driving-test
+GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test tool-docs \
+               self-driving-test
 
 .PHONY: help
 help: ## Show this help
@@ -231,6 +232,20 @@ command-docs: ## Assert every stella subcommand has a listed reference page (#99
 .PHONY: brand-case
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
+
+# The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
+# the artifact is derived from stella-tools' catalog and stella-cli's session
+# layers at once, so a push narrowed to either crate must still re-derive the
+# whole directory. It needs no network and no model — every input is either
+# source or the committed example fixture.
+.PHONY: tool-docs
+tool-docs: ## Assert docs/tools/ still describes the declared tools
+	@./scripts/check-tool-docs.sh
+
+.PHONY: tool-docs-update
+tool-docs-update: ## Regenerate docs/tools/ after a tool change (commit the diff!)
+	@STELLA_REFRESH_TOOL_DOCS=1 cargo test --quiet -p stella-cli --bin stella tool_docs
+	@git --no-pager diff --stat -- docs/tools || true
 
 .PHONY: wire-schema
 wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#971)

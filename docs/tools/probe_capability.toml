@@ -1,0 +1,129 @@
+# probe_capability — GENERATED FILE, DO NOT EDIT.
+#
+# Regenerate:   make tool-docs-update
+# Guarded by:   make tool-docs (a `make gate` step)
+#
+# Where each field comes from:
+#   name / description / input_schema      the tool's own ToolSchema
+#   read_only / available_for_speculation / category / availability
+#                                          crates/stella-tools/src/catalog.rs
+#   output_schema                          stella_protocol::ToolOutput
+#   risk_level                             nothing declares it (see below)
+
+name = "probe_capability"
+category = "environment"
+availability = "always"
+read_only = true
+available_for_speculation = true
+
+# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
+# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
+# would have introduced the machinery, was closed wontfix). The two booleans
+# above are the only machine-checked safety claims a tool makes. Relabelling
+# them "low/medium/high" would add no information while reading as a reviewed
+# judgement, and hand-writing 72 judgements would manufacture a source of truth
+# nobody reviewed. Tracked in #3035: put a `risk` column on `ToolEntry`, where
+# it is declared once and reviewed like every other column.
+risk_level = "undeclared"
+
+description = '''
+Check whether a binary is available on PATH. Answers with the resolved path or a cached not-found message (install mid-session won't be seen until restart). Never executes the binary — a PATH lookup only, safe to call for any name.
+'''
+
+# The JSON Schema the model is handed for this tool's arguments, verbatim.
+input_schema = '''
+{
+  "properties": {
+    "name": {
+      "description": "Command name: 1-64 chars of [A-Za-z0-9._+-].",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+'''
+
+# The envelope every tool answers in. Declared; what rides inside
+# `ok.content` is a per-tool text convention with no schema behind it.
+output_schema = '''
+{
+  "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    }
+  ]
+}
+'''
+
+# ── example ───────────────────────────────────────────────────────────────
+# OBSERVED EXAMPLE — a real call from a real run, not an illustration.
+# Run: Terminal-Bench trial traces (stella-events.jsonl), distilled by
+# scripts/build-tool-doc-examples.py
+# Captured 2026-08-11 · task `openssl-selfsigned-cert` · trial
+# `openssl-selfsigned-cert__mYeVDop` · result: ok arm.
+# Selection: first ok-arm call per tool in capture order; first call of any
+# kind when the tool never succeeded.
+# Scrubbing: home paths collapsed to /<home>, credential-shaped tokens
+# redacted, input clipped at 600 and output at 900 characters with the clip
+# declared per example.
+#
+# input:
+# {
+#   "name": "openssl"
+# }
+#
+# output:
+# {
+#   "ok": {
+#     "content": "openssl: /usr/bin/openssl"
+#   }
+# }
+
+# ── usage ─────────────────────────────────────────────────────────────────
+# Measured 2026-08-11 across 408 trials / 15304 model calls:
+# calls 76 · trials that used it 38/408 · calls per model call 0.0050 · mean
+# position of first use 7.0 · failures 53 (69.7%).
+# A measurement, not a contract: it ages, the schema above does not.
