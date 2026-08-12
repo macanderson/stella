@@ -429,3 +429,49 @@ async fn the_command_chain_gates_the_index_composed_build_and_test_commands() {
         "the chain must see the index-composed command line"
     );
 }
+
+/// `restart_process` accepts a replacement argv, which is a second door onto
+/// the same authority `start_process`'s gate above fences. Ungated it would be
+/// a policy bypass: deny `bash -c …` at the spawn, then propose it again as a
+/// restart. The gate must see the joined replacement argv and refuse before
+/// anything is signalled or spawned.
+#[tokio::test]
+async fn the_command_chain_gates_a_restart_process_argv_override() {
+    let (_dir, reg) = telemetry_fixture();
+    let bus = HookBus::new("sess");
+    let denied_command = StdArc::new(StdMutex::new(String::new()));
+    let sink = denied_command.clone();
+    bus.on_blocking(hook_names::COMMAND_STARTED, move |event| {
+        let command = event.payload["command"].as_str().unwrap_or("").to_string();
+        if command.starts_with("bash") {
+            *sink.lock().unwrap() = command;
+            return HookDecision::Deny {
+                reason: "no shell".into(),
+            };
+        }
+        HookDecision::Allow
+    })
+    .detach();
+    reg.attach_bus(bus);
+
+    let started = reg
+        .execute("start_process", &serde_json::json!({"argv": ["cat"]}))
+        .await;
+    assert!(!started.is_error(), "an allowed spawn: {started:?}");
+
+    let out = reg
+        .execute(
+            "restart_process",
+            &serde_json::json!({"handle": "proc-1", "argv": ["bash", "-c", "echo hi"]}),
+        )
+        .await;
+    assert!(
+        out.is_error(),
+        "a denied restart argv must not spawn: {out:?}"
+    );
+    assert_eq!(
+        *denied_command.lock().unwrap(),
+        "bash -c echo hi",
+        "the chain must see the joined replacement argv"
+    );
+}

@@ -10,6 +10,11 @@ publish.workspace = true
 
 [dependencies]
 contextgraph-types.workspace = true
+# The embedding seam, which this crate used to define. It moved down to a leaf
+# so `stella-graph` could share one `Embedder` and one fingerprint discipline
+# without either plane depending on the other (#1511's shape). `src/embed.rs`
+# is now the re-export.
+stella-embed = { path = "../stella-embed" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

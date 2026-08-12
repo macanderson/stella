@@ -168,7 +168,7 @@ pub trait ToolExecutor: Send + Sync {
 /// correct final state, so the engine must not be handed a way to end one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveService {
-    /// The handle the model holds and would pass to `stop_process`
+    /// The handle the model holds and would pass to `restart_process`
     /// (`proc-3`).
     pub handle: String,
     /// The label the model gave the process at start, when it gave one.

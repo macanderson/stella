@@ -149,9 +149,7 @@ async fn clear_output_discards_buffered_output_before_the_next_read() {
         "read_output must see nothing after clear_output drained the buffer: {content}"
     );
 
-    let _ = StopProcess(table)
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
+    teardown(&table, &handle).await;
 }
 
 /// #2699: `read_output`'s `clear` field is removed, not silently
@@ -186,9 +184,7 @@ async fn read_output_clear_true_is_a_named_deprecation_error() {
     };
     assert!(content.contains("still_here"), "{content}");
 
-    let _ = StopProcess(table)
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
+    teardown(&table, &handle).await;
 }
 
 /// `start_process` used to apply only the credential scrub — a
@@ -222,10 +218,7 @@ async fn start_process_scrubs_git_repo_and_forced_color_env() {
     }
     crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(&observed);
 
-    let stopped = StopProcess(table)
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handle).await;
 }
 
 #[tokio::test]
@@ -244,6 +237,12 @@ async fn unknown_handles_are_named_errors_on_every_tool() {
         StopProcess(table.clone())
             .execute(&serde_json::json!({"handle": "proc-9"}), &root)
             .await,
+        RestartProcess {
+            handle: table.clone(),
+            scratch: None,
+        }
+        .execute(&serde_json::json!({"handle": "proc-9"}), &root)
+        .await,
     ] {
         match out {
             ToolOutput::Error { message } => {
@@ -257,9 +256,20 @@ async fn unknown_handles_are_named_errors_on_every_tool() {
     }
 }
 
+/// Take a live process down the way the runtime does.
+///
+/// No tool verb leaves a service stopped any more (#2864), so a test that
+/// needs a process gone reaches for the same internal `terminate` the
+/// `restart_process` path uses. Calling `stop_process` here would assert the
+/// refusal, not the teardown.
+#[cfg(unix)]
+async fn teardown(table: &ProcessTableHandle, handle: &str) {
+    let _ = super::service::terminate(table, handle).await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
-async fn cat_echoes_stdin_and_stop_reports_the_lifecycle() {
+async fn cat_echoes_stdin_and_the_lifecycle_is_reported_after_it_ends() {
     let (table, root) = tools();
     let handle = start(&table, &root, &["cat"]).await;
 
@@ -274,12 +284,9 @@ async fn cat_echoes_stdin_and_stop_reports_the_lifecycle() {
     let echoed = wait_for_output(&table, &root, &handle, "hello_process").await;
     assert!(echoed.contains("running"), "{echoed}");
 
-    // Stop: cat exits on stdin EOF/SIGTERM; afterwards the state is
-    // exited and stdin writes are refused.
-    let stopped = StopProcess(table.clone())
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    // cat exits on stdin EOF/SIGTERM; afterwards the state is exited and
+    // stdin writes are refused.
+    teardown(&table, &handle).await;
     let after = SendStdin(table.clone())
         .execute(&serde_json::json!({"handle": handle, "text": "x"}), &root)
         .await;
@@ -374,7 +381,7 @@ async fn a_drained_exited_process_is_reaped_but_its_handle_still_answers() {
 /// Nothing used to cap how many children `start_process` could create.
 #[cfg(unix)]
 #[tokio::test]
-async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
+async fn the_live_process_cap_refuses_a_runaway_and_an_exit_frees_a_slot() {
     let (table, root) = tools();
     let mut handles = Vec::new();
     for _ in 0..MAX_LIVE_PROCESSES {
@@ -393,7 +400,7 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
                 message.contains(&MAX_LIVE_PROCESSES.to_string()),
                 "{message}"
             );
-            assert!(message.contains("stop_process"), "{message}");
+            assert!(message.contains("restart_process"), "{message}");
         }
         other => panic!(
             "the {}th start must be refused: {other:?}",
@@ -401,10 +408,7 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
         ),
     }
 
-    let stopped = StopProcess(table.clone())
-        .execute(&serde_json::json!({"handle": handles[0]}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handles[0]).await;
     let again = StartProcess {
         handle: table.clone(),
         scratch: None,
@@ -417,9 +421,7 @@ async fn the_live_process_cap_refuses_a_runaway_and_a_stop_frees_a_slot() {
     );
 
     for handle in handles.iter().skip(1) {
-        let _ = StopProcess(table.clone())
-            .execute(&serde_json::json!({"handle": handle}), &root)
-            .await;
+        teardown(&table, handle).await;
     }
     let _ = StopProcess(table)
         .execute(&serde_json::json!({"handle": "proc-999"}), &root)
@@ -496,9 +498,7 @@ async fn exited_unread_entries_are_evicted_oldest_first_never_running_ones() {
     assert!(content.contains("discarded"), "{content}");
 
     for handle in [keeper, extra] {
-        let _ = StopProcess(table.clone())
-            .execute(&serde_json::json!({"handle": handle}), &root)
-            .await;
+        teardown(&table, &handle).await;
     }
 }
 
@@ -534,10 +534,7 @@ async fn start_process_injects_stella_scratch_into_spawned_process() {
     );
 
     // Stop the process.
-    let stopped = StopProcess(table)
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handle).await;
 }
 
 /// A send_stdin whose write was in flight when stop_process closed stdin
@@ -579,10 +576,7 @@ async fn a_concurrent_send_stdin_cannot_resurrect_a_stopped_stdin() {
     }
     assert!(taken, "send_stdin never took the stdin handle out");
 
-    let stopped = StopProcess(table.clone())
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handle).await;
     // The killed process closes the pipe's read end, failing the write.
     let write_result = writer.await.expect("send task");
     assert!(write_result.is_error(), "{write_result:?}");
@@ -626,10 +620,7 @@ async fn long_running_process_scrubs_inherited_credentials() {
     }
     crate::subprocess_env::test_support::assert_scrubbed(&observed);
 
-    let stopped = StopProcess(table)
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handle).await;
 }
 
 /// The witness for #2666: a `start_process`d child used to be SIGKILLed the
@@ -695,7 +686,7 @@ async fn a_started_child_outlives_the_process_tables_drop() {
 /// visible only to the process tools themselves, so the driver could not
 /// tell a turn that left a service up from one that did not.
 #[tokio::test]
-async fn a_started_process_is_reported_live_until_it_is_stopped() {
+async fn a_started_process_is_reported_live_until_it_ends() {
     let (table, root) = tools();
     let start_tool = StartProcess {
         handle: table.clone(),
@@ -737,10 +728,7 @@ async fn a_started_process_is_reported_live_until_it_is_stopped() {
         live[0].display
     );
 
-    let stopped = StopProcess(table.clone())
-        .execute(&serde_json::json!({"handle": handle}), &root)
-        .await;
-    assert!(!stopped.is_error(), "{stopped:?}");
+    teardown(&table, &handle).await;
     assert!(
         start_tool.live_services().is_empty(),
         "a stopped process must not be reported: {:?}",
@@ -799,8 +787,114 @@ async fn live_services_are_ordered_oldest_handle_first() {
     assert_eq!(live, expected, "start order, every time");
 
     for handle in expected {
-        let _ = StopProcess(table.clone())
-            .execute(&serde_json::json!({"handle": handle}), &root)
-            .await;
+        teardown(&table, &handle).await;
     }
+}
+
+/// **The #2864 witness.** On `pypi-server__HRUntZQ` the agent ran
+/// `stop_process` on the server it had been asked to build — twice — so that
+/// its witness test would fail against an absent service, and restarted it
+/// three seconds before the trial ended. The grader found a dead port and
+/// correct work scored zero.
+///
+/// Fails on `main`, where the stop succeeds and the service is gone: here it
+/// is refused by name, and the process is still running afterwards.
+#[cfg(unix)]
+#[tokio::test]
+async fn stopping_a_live_service_is_refused_and_leaves_it_running() {
+    let (table, root) = tools();
+    let handle = start(
+        &table,
+        &root,
+        &[
+            "sh",
+            "-c",
+            "echo serving; i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done",
+        ],
+    )
+    .await;
+    wait_for_output(&table, &root, &handle, "serving").await;
+    let pid = {
+        let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+        t.entries.get_mut(&handle).expect("entry").pid
+    };
+    assert!(pid > 0);
+
+    let refused = StopProcess(table.clone())
+        .execute(&serde_json::json!({"handle": handle}), &root)
+        .await;
+    let ToolOutput::Error { message } = refused else {
+        panic!("stopping a live service must be refused: {refused:?}");
+    };
+    // The refusal has to teach the substitute, or the model finds another
+    // route to the same state.
+    assert!(message.contains("still running"), "{message}");
+    assert!(message.contains("restart_process"), "{message}");
+    assert!(message.contains("RUNNING service"), "{message}");
+
+    // The service the run would be judged on is still up.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        unsafe { libc::kill(pid, 0) == 0 },
+        "the refused stop still took the service (pid {pid}) down"
+    );
+    let status = ReadOutput(table.clone())
+        .execute(&serde_json::json!({"handle": handle}), &root)
+        .await;
+    let ToolOutput::Ok { content } = status else {
+        panic!("read_output after a refused stop: {status:?}");
+    };
+    assert!(content.contains("running"), "{content}");
+
+    teardown(&table, &handle).await;
+}
+
+/// The other half of the same contract: the legitimate reason to stop a
+/// service — pick up an edit, or fix a bad argv — is preserved, and its
+/// postcondition is always "something is running under this handle". That is
+/// what makes the refusal above structural rather than a blocklist: no
+/// sequence of the remaining verbs reaches "the graded service is down".
+#[cfg(unix)]
+#[tokio::test]
+async fn restart_replaces_the_process_and_leaves_the_handle_running() {
+    let (table, root) = tools();
+    let handle = start(&table, &root, &["sh", "-c", "echo first; sleep 60"]).await;
+    wait_for_output(&table, &root, &handle, "first").await;
+    let first_pid = {
+        let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+        t.entries.get_mut(&handle).expect("entry").pid
+    };
+
+    let restarted = RestartProcess {
+        handle: table.clone(),
+        scratch: None,
+    }
+    .execute(
+        &serde_json::json!({"handle": handle, "argv": ["sh", "-c", "echo second; sleep 60"]}),
+        &root,
+    )
+    .await;
+    let ToolOutput::Ok { content } = restarted else {
+        panic!("restart_process failed: {restarted:?}");
+    };
+    assert!(content.contains("restarted"), "{content}");
+
+    let second_pid = {
+        let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+        t.entries.get_mut(&handle).expect("entry").pid
+    };
+    assert_ne!(first_pid, second_pid, "restart reused the old process");
+    assert!(
+        unsafe { libc::kill(second_pid, 0) == 0 },
+        "the handle is not running after a restart"
+    );
+    assert!(
+        unsafe { libc::kill(first_pid, 0) != 0 },
+        "the replaced process (pid {first_pid}) is still running"
+    );
+    // The replacement's own output is what the handle now reports.
+    let seen = wait_for_output(&table, &root, &handle, "second").await;
+    assert!(seen.contains("running"), "{seen}");
+
+    teardown(&table, &handle).await;
 }

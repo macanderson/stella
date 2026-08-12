@@ -410,6 +410,7 @@ pub(crate) const PROCESS_FREE_FORBIDDEN_TOOLS: &[&str] = &[
     "read_output",
     "clear_output",
     "send_stdin",
+    "restart_process",
     "stop_process",
 ];
 

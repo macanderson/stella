@@ -159,6 +159,11 @@ struct State {
     /// would leave every turn after the first without a memo.
     armed: bool,
     entries: HashMap<ShadowKey, ShadowObservation>,
+    /// This turn's run of same-class rejections (#2863). It lives here rather
+    /// than in the tool for the reason the entries do: a `Tool` is handed an
+    /// input and a root and holds no turn state, and this bracket is the only
+    /// turn boundary a `ToolRegistry` is told about.
+    rejections: super::cap::Tally,
 }
 
 impl ShadowMemo {
@@ -168,11 +173,34 @@ impl ShadowMemo {
         let mut state = self.lock();
         state.armed = true;
         state.entries.clear();
+        state.rejections = super::cap::Tally::default();
     }
 
-    /// End the turn: every observation was true of *that* turn only.
+    /// End the turn: every observation was true of *that* turn only, and so
+    /// was the rejection run — a fresh turn is owed a fresh gate.
     pub fn invalidate(&self) {
-        self.lock().entries.clear();
+        let mut state = self.lock();
+        state.entries.clear();
+        state.rejections = super::cap::Tally::default();
+    }
+
+    /// Which rejection class has closed the gate for this turn, if any —
+    /// asked before a call so the refused one pays for no shadow (#2863).
+    ///
+    /// Inert without a bracket, exactly like [`Self::get`]: a host that marks
+    /// no turn boundaries has no turn to bound.
+    pub(super) fn gate_closed(&self) -> Option<super::phases::Verdict> {
+        let state = self.lock();
+        state.armed.then(|| state.rejections.closed()).flatten()
+    }
+
+    /// Fold one call's verdict into this turn's run.
+    pub(super) fn record_verdict(&self, verdict: super::phases::Verdict) {
+        let mut state = self.lock();
+        if !state.armed {
+            return;
+        }
+        state.rejections = state.rejections.record(verdict);
     }
 
     pub(super) fn get(&self, key: &ShadowKey) -> Option<ShadowObservation> {

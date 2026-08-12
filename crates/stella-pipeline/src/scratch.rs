@@ -28,9 +28,14 @@
 //! `build`) are deliberately absent: producing one of those is frequently the
 //! whole job, and the same reasoning keeps them out of
 //! `stella_tools::shell_touch::SKIP_DIRS`. Coverage data (`.gcda`) is likewise
-//! absent — it is a *file suffix* rather than a directory, and whether a gcov
-//! task's coverage data is scratch or deliverable is a judgement this list
-//! cannot make (#2877 tracks it).
+//! absent, and stays absent: whether a gcov task's coverage data is scratch or
+//! deliverable is a judgement no list of names can make. The seal check now
+//! answers the question this list was being asked to approximate — *did the
+//! verification run write this path* — by observing the run rather than by
+//! recognizing the filename (`stella_cli::candidate_ws::oracle_writes`,
+//! #2877). This list survives it because adoption's pathspecs still need a
+//! set of names to exclude from the *delivered patch*, which is a different
+//! question with a different answer.
 
 /// Directory names that hold tool scratch, matched at **any depth**.
 ///

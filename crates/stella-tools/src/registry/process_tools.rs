@@ -1,6 +1,30 @@
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use super::Tool;
+
+/// The joined argv a process tool proposes to run, for the `command.started`
+/// policy chain (`ToolRegistry::command_line_for`).
+///
+/// Shared by `start_process` and `restart_process` because they are two doors
+/// onto one authority: a restart with an explicit argv proposes a new command
+/// line, and gating only the spawn would let a denied `bash -c …` come back
+/// as a replacement. Lives here rather than in the match arm because
+/// `registry.rs` is a grandfathered god file closed to growth.
+///
+/// `None` when no argv is supplied, which the two callers read differently: a
+/// spawn without one is a malformed call the tool names itself, while a
+/// restart without one re-runs the argv this chain already judged at start
+/// time and has nothing new to gate.
+pub(super) fn gated_argv(input: &Value) -> Option<String> {
+    input.get("argv").and_then(|v| v.as_array()).map(|argv| {
+        argv.iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
+}
 
 /// Built-ins that launch child processes or delegate to another executor.
 /// Kept as one closed list so a process-free media registry can omit the
@@ -45,6 +69,10 @@ pub(super) fn builtins(
         Arc::new(crate::process::ReadOutput(processes.clone())),
         Arc::new(crate::process::ClearOutput(processes.clone())),
         Arc::new(crate::process::SendStdin(processes.clone())),
+        Arc::new(crate::process::RestartProcess {
+            handle: processes.clone(),
+            scratch: scratch_path.clone(),
+        }),
         Arc::new(crate::process::StopProcess(processes)),
         Arc::new(crate::repo::RepoStatusTool(repo.clone())),
         Arc::new(crate::repo::RepoDiffTool(repo.clone())),

@@ -886,7 +886,7 @@ impl ToolExecutor for McpToolSet {
     /// Forwarded from the native layer, which owns the process table. An
     /// external MCP server's own long-running state is not reported here and
     /// deliberately so: the end-of-turn assertion (#2764) names things the
-    /// model can act on with `stop_process`, and a remote server's children
+    /// model can act on with `restart_process`, and a remote server's children
     /// are not among them.
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.native

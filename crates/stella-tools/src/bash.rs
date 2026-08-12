@@ -31,15 +31,21 @@
 //! and does not pretend to be one — read [`confine`]'s header for what it
 //! cannot enforce.
 //!
-//! **There is no per-command OS confinement here.** `STELLA_BASH_SANDBOX` —
-//! the opt-in Seatbelt/`bwrap` wrapper that used to sit on this spawn — was
+//! **There is no session-wide OS sandbox here.** `STELLA_BASH_SANDBOX` — the
+//! opt-in Seatbelt/`bwrap` wrapper that used to sit on this spawn — was
 //! removed (#1300). It wrapped this one tool while `build_project`,
 //! `run_tests`, `verify_done`, `run_script`, `start_process`, the `repo_*`
 //! and `ci_status` invocations, custom manifest tools, and hook actions all
 //! spawned around it, so "sandbox: on" claimed a session-wide bound it never
-//! had. Isolation belongs to the container the whole Stella process runs in,
-//! which no spawn path can step around — see
-//! `docs/spec/remote-sandboxes.md` §2.
+//! had. Session isolation still belongs to the container the whole Stella
+//! process runs in — see `docs/spec/remote-sandboxes.md` §2.
+//!
+//! What *is* new is deliberately not that claim. [`contain`] puts an OS write
+//! ban on the **graded tree specifically**, armed only inside an isolated
+//! candidate and wired to this tool alone (#2931), because a text audit of the
+//! command cannot survive `chr(47)` and a worker proved it. It says what it
+//! covers and names the surfaces it does not; read its header before extending
+//! either claim.
 
 use std::path::Path;
 use std::time::Duration;
@@ -52,6 +58,7 @@ use tokio::process::Command;
 use crate::registry::Tool;
 
 pub mod confine;
+pub mod contain;
 
 pub use confine::ShellConfinement;
 
@@ -401,8 +408,18 @@ impl Tool for Bash {
             command
         };
 
-        let mut cmd = Command::new("bash");
-        cmd.args(["-c", command]);
+        // The text audit above is the friendly half — it catches the copied
+        // path and explains the substitute. This is the half a `chr(47)`
+        // cannot talk around: where the host declared a distinct graded tree
+        // and this OS provides a boundary, the shell and every descendant of
+        // it run with writes to that tree refused by the kernel (#2931).
+        let bash_args = ["-c".to_string(), command.to_string()];
+        let (program, args) =
+            contain::wrap(self.confinement.os_boundary_roots(root), "bash", &bash_args)
+                .unwrap_or_else(|| ("bash".to_string(), bash_args.to_vec()));
+
+        let mut cmd = Command::new(program);
+        cmd.args(&args);
         cmd.current_dir(root);
         // Full spawn policy, not just the credential scrub: a hook-exported
         // GIT_DIR or a forced-color override must not reach the shell either

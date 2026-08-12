@@ -25,6 +25,8 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+pub(crate) mod semantic;
+
 /// Frames rendered per query before eliding the tail — enough for every
 /// realistic definition/importer list while bounding a pathological one
 /// (e.g. `references` on a one-letter name) to a sane prompt size.
@@ -129,10 +131,15 @@ impl Tool for CodeGraphQuery {
             description: "Query the indexed code graph instead of grepping: where a symbol is \
                           defined or referenced, what a definition calls (callees), which call \
                           sites name it (callers, best-effort by name), what a file imports, \
-                          which files import it, or a file's full graph neighborhood. Cheaper \
-                          and more precise than grep for symbol/dependency questions. The index \
-                          builds automatically and refreshes live as files change — no manual \
-                          re-index needed."
+                          which files import it, a file's full graph neighborhood, or — with \
+                          `semantic` — which files are about a concept you can only describe in \
+                          words. Use `semantic` FIRST when you do not already know the name you \
+                          are looking for: `semantic` with \"where are request headers \
+                          sanitized\" finds the file whether it is called `scrub.rs`, `sanitize\
+                          .rs` or `hkey.rs`, which is the search a grep for spelling variants \
+                          cannot do. Cheaper and more precise than grep for \
+                          symbol/dependency/concept questions. The index builds automatically \
+                          and refreshes live as files change — no manual re-index needed."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -140,14 +147,17 @@ impl Tool for CodeGraphQuery {
                     "op": {
                         "type": "string",
                         "enum": ["definitions", "references", "callees", "callers",
-                                 "imports", "importers", "neighbors"],
+                                 "imports", "importers", "neighbors", "semantic"],
                         "description": "definitions/references/callees/callers take a symbol \
                                         name; imports/importers/neighbors take a \
-                                        workspace-relative file path"
+                                        workspace-relative file path; semantic takes a \
+                                        natural-language description of what the code does"
                     },
                     "target": {
                         "type": "string",
-                        "description": "The symbol name or file path to query"
+                        "description": "The symbol name, file path, or — for `semantic` — a \
+                                        plain-English description of the behaviour you are \
+                                        looking for"
                     }
                 },
                 "required": ["op", "target"]
@@ -166,9 +176,15 @@ impl Tool for CodeGraphQuery {
             return ToolOutput::Error {
                 message: "`target` is required: a symbol name for \
                           definitions/references/callees/callers, a file path for \
-                          imports/importers/neighbors"
+                          imports/importers/neighbors, a plain-English description for semantic"
                     .into(),
             };
+        }
+        // `semantic` is the one op that cannot run under `spawn_blocking`: it
+        // awaits a model between the graph reads, so it manages its own
+        // blocking hop around the `index_all` catch-up pass.
+        if op == "semantic" {
+            return semantic::semantic_query(root, target).await;
         }
         // `run_query` opens SQLite and runs a full `index_all` catch-up pass,
         // which `stella_graph::CodeGraph::index_all`'s own contract says a
@@ -323,10 +339,19 @@ pub(crate) fn run_query_with(
     match op {
         "definitions" | "references" | "callees" | "callers" => symbol_query(graph, op, target),
         "imports" | "importers" | "neighbors" => path_query(graph, op, target),
+        // Reachable, and deliberately not silently mapped onto a frame query:
+        // `semantic` awaits a model, so it has no synchronous form. Callers of
+        // this function (the `stella graph` subcommand, `gather_context`) are
+        // sync by construction; wiring the subcommand up is #2992.
+        "semantic" => ToolOutput::Error {
+            message: "`semantic` is only available through the `graph_query` tool — it calls an \
+                      embedding model, and this entry point is synchronous"
+                .into(),
+        },
         other => ToolOutput::Error {
             message: format!(
                 "unknown op `{other}` — expected definitions, references, callees, callers, \
-                 imports, importers, or neighbors"
+                 imports, importers, neighbors, or semantic"
             ),
         },
     }
