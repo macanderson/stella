@@ -274,14 +274,29 @@ fn sbpl_escape(path: &str) -> String {
 
 /// The shell program run inside the fresh mount namespace: bind each graded
 /// tree over itself, remount that bind read-only, then bind each `.git` back
-/// rw before exec'ing the real command.
+/// and remount *that* read-write before exec'ing the real command.
 ///
-/// The order is the whole recipe. A bind mount does not inherit `MS_RDONLY`
-/// from the mount it is taken through — only from the superblock — which is
-/// why the read-only-ness needs its own `remount` step and why the `.git`
-/// bind, taken *after* that remount, comes back writable. Any link failing
-/// aborts with a distinctive status rather than exec'ing uncontained: a
-/// namespace that half-applied must not look like one that applied.
+/// The order is the whole recipe, and both remounts are load-bearing:
+///
+/// * `MS_RDONLY` is a property of the mount, not of the bind operation, so a
+///   fresh `mount --bind` of a writable tree is writable — the read-only-ness
+///   needs its own `remount` step.
+/// * A bind taken *through* a read-only mount does **not** come back writable.
+///   `mount --bind` clones the source mount's flags, `MS_RDONLY` included, so
+///   the `.git` bind inherits the ban it exists to escape and needs a
+///   `remount,bind,rw` of its own. This was the recipe's claim in the opposite
+///   direction until a runner contradicted it: on
+///   `Linux 6.17.0-1022-azure`, under `sudo unshare --mount`, all three mounts
+///   returned success and `printf ok > <graded>/.git/exempt` still failed with
+///   `Read-only file system` (#3011). A candidate is a `git worktree` sharing
+///   this object store, so that is every `git commit` the model runs inside
+///   its own workspace failing — the exemption is not a nicety.
+///
+/// Any link failing aborts with a distinctive status rather than exec'ing
+/// uncontained: a namespace that half-applied must not look like one that
+/// applied. That includes the `rw` restore, which fails *closed* — a shell
+/// that cannot commit is a bad turn, a shell silently outside the boundary is
+/// a bad run.
 fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
     let mut script = String::new();
     for root in protected {
@@ -292,7 +307,9 @@ fn mount_script(protected: &[PathBuf], exempt: &[PathBuf]) -> Option<String> {
     }
     for git in exempt {
         let q = sh_quote(git.to_str()?);
-        script.push_str(&format!("mount --bind {q} {q} || exit 127\n"));
+        script.push_str(&format!(
+            "mount --bind {q} {q} || exit 127\nmount -o remount,bind,rw {q} || exit 127\n"
+        ));
     }
     script.push_str("shift\nexec \"$@\"\n");
     Some(script)
@@ -431,6 +448,27 @@ mod tests {
         assert!(script.ends_with("shift\nexec \"$@\"\n"), "{script}");
         // A half-applied namespace must not exec the command uncontained.
         assert!(script.contains("|| exit 127"), "{script}");
+    }
+
+    /// The `.git` bind is taken *through* the read-only mount and clones its
+    /// `MS_RDONLY`, so binding alone restores nothing — a runner proved the
+    /// exemption dead exactly that way (#3011). The `rw` remount is the whole
+    /// exemption, and it has to come after the bind that needs it.
+    #[test]
+    fn the_git_exemption_is_remounted_writable_after_its_bind() {
+        let script = mount_script(&roots(&["/app"]), &roots(&["/app/.git"])).expect("script");
+        let bind = script.find("mount --bind '/app/.git'").expect(&script);
+        let rw = script
+            .find("mount -o remount,bind,rw '/app/.git'")
+            .expect(&script);
+        assert!(bind < rw, "{script}");
+        // The graded tree itself is never restored — only its `.git`.
+        assert!(!script.contains("remount,bind,rw '/app'"), "{script}");
+        // Failing to restore `rw` aborts rather than exec'ing uncontained.
+        assert!(
+            script.contains("mount -o remount,bind,rw '/app/.git' || exit 127"),
+            "{script}"
+        );
     }
 
     /// Quoting is the difference between a protected path and an injection:

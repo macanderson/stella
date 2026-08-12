@@ -18,12 +18,14 @@ name: containment-posture
 # set it on: a Linux CI runner declaring it expects the mechanism to work.
 #
 # Deliberately its own workflow, not a job folded into ci.yml's required
-# checks. A local (non-Docker-nested) test against rust:1.90 confirmed the
-# current recipe -- `unshare --mount --propagation private -- ...`, no
-# `--user` -- does NOT hold for a non-root process even with `util-linux`
-# installed, which raises the possibility the recipe needs CAP_SYS_ADMIN
-# plumbing (`--user --map-root-user`) it does not currently have; see #2931's
-# follow-up issue for that specific question. Making this job a required
+# checks. The recipe took two rounds to hold and each round was a different
+# refusal: the pre-#3010 form -- `unshare --mount --propagation private --`,
+# no `--user` -- does not hold for a non-root process even with `util-linux`
+# installed, because it never acquires CAP_SYS_ADMIN; #3010 added
+# `--user --map-root-user` to acquire it, and this runner then refused *that*
+# at the `/proc/self/uid_map` write, Ubuntu 24.04 restricting unprivileged
+# user namespaces by default (#3011, and the sysctl step below). Making this
+# job a required
 # branch-protection context before a maintainer has seen it go green on an
 # actual GitHub Actions VM (not a nested container, which the local
 # reproduction could not fully stand in for) risks turning `main` red on
@@ -59,6 +61,36 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The runner denies the recipe for a reason that is about Ubuntu, not
+      # about `contain.rs`: `kernel.apparmor_restrict_unprivileged_userns=1`
+      # (Ubuntu 24.04's default) lets `unshare --user` create the namespace and
+      # then refuses the `/proc/self/uid_map` write, so an unprivileged process
+      # never reaches the `CAP_SYS_ADMIN` #3010 added `--map-root-user` to
+      # obtain. Every one of the three unprivileged variants below failed that
+      # way on `Linux 6.17.0-1022-azure` (#3011).
+      #
+      # Lowering it puts the runner in the configuration the Linux recipe is
+      # written for -- an ordinary host where unprivileged user namespaces are
+      # permitted -- which is the state a graded bench run executes in.
+      #
+      # Be exact about what this job then proves and what it does not. It
+      # proves the recipe in `mount_script` holds on a real kernel when
+      # unprivileged user namespaces are available. It does NOT prove Stella is
+      # `Enforced` on a stock GitHub-hosted runner: there, `posture()` correctly
+      # returns `Advisory(ProbeFailed)` and the post-hoc sealed-bytes detector
+      # is the backstop, which is the degradation the functional probe exists to
+      # report rather than paper over. Asserting a host fact we had to arrange
+      # would be the trap this workflow's header already warns about; asserting
+      # the recipe, on a host that permits it, is the thing under test.
+      - name: permit unprivileged user namespaces (see comment)
+        run: |
+          set -eu
+          before=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<absent>')
+          if [ "$before" != '<absent>' ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          echo "apparmor_restrict_unprivileged_userns: $before -> $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo '<absent>')"
+
       # A ProbeFailed posture means "the kernel refused the recipe" and says
       # nothing about which link refused it, because `probe_mechanism` collapses
       # every failure into one variant by design. This step runs the recipe by
@@ -86,6 +118,7 @@ jobs:
             script="mount --bind '$dir/graded' '$dir/graded' || exit 127
           mount -o remount,bind,ro '$dir/graded' || exit 126
           mount --bind '$dir/graded/.git' '$dir/graded/.git' || exit 125
+          mount -o remount,bind,rw '$dir/graded/.git' || exit 124
           printf pwned > '$dir/graded/sentinel' 2>/dev/null
           printf ok > '$dir/graded/.git/exempt' 2>/dev/null
           exit 0"
