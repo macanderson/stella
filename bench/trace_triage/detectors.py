@@ -1003,3 +1003,115 @@ def _repeated_file_read(run: Run) -> list[Finding]:
             ],
         )
     ]
+
+
+# --------------------------------------------------------------------------
+# 11. The search tool that answered "that code does not exist"
+# --------------------------------------------------------------------------
+
+#: ERE metacharacters POSIX `grep` without `-E` reads as literal text. A pattern
+#: carrying one of these is a pattern the pre-#2989 fallback could not execute.
+_ERE_METACHARACTERS = ("|", "+", "(", ")", "?", "{")
+
+#: The disclosure #2989 attached to every zero-match answer from the degraded
+#: backend. Its *presence* is the proof the fixed code ran; keying on the string
+#: rather than on a version is deliberate — the gate reads traces, and a trace
+#: carries no binary version it could be asked for instead.
+_FALLBACK_DISCLOSURE = "searched with POSIX"
+
+
+@detector(
+    code="grep-ere-false-negative",
+    title="grep answered `(no matches)` for a pattern the POSIX fallback could not execute",
+    site="crates/stella-tools/src/grep/fallback.rs",
+    search_terms=("grep no matches alternation", "POSIX grep BRE fallback false negative"),
+)
+def _grep_ere_false_negative(run: Run) -> list[Finding]:
+    """A `grep` zero-match on an ERE pattern, with no fallback disclosure.
+
+    Before #2989 the POSIX fallback ran `grep -rn` with no `-E`, so `|`, `(`,
+    `)`, `+` and `{n,m}` were literal characters and every alternation the model
+    wrote matched nothing — reported as the fact `(no matches)`. A tool that
+    fails is recoverable; a tool that answers "that code does not exist" is not,
+    because the agent believes it and re-plans.
+
+    The discriminator is the disclosure #2989 attached to the degraded backend's
+    empty answer, not the pattern alone: after the fix, a zero-match *from the
+    fallback* always carries `(searched with POSIX grep -E: …)`, and a pattern
+    the fallback cannot execute faithfully is refused by name instead of
+    searched. So a bare `(no matches)` for an ERE pattern is the pre-fix shape.
+
+    Measured on two real runs whose SUT commits sit either side of the fix
+    (`git merge-base --is-ancestor b58e29a6 <sut>`): run `s5b2`, SUT
+    `62a0cb5048f0`, which does **not** contain it — 22 bare empties, 0
+    disclosures; run `post1`, SUT `018852a97387`, which does — 0 bare empties,
+    4 of 4 empties disclosed.
+    """
+    occurrences = []
+    for trial in run.trials:
+        for call in trial.tool_calls:
+            if call.name != "grep" or call.result is None:
+                continue
+            content = call.ok_content
+            if "no matches" not in content or _FALLBACK_DISCLOSURE in content:
+                continue
+            pattern = call.input.get("pattern")
+            if not isinstance(pattern, str):
+                continue
+            if not any(meta in pattern for meta in _ERE_METACHARACTERS):
+                continue
+            occurrences.append(
+                Occurrence(
+                    trial_uuid=trial.trial_uuid,
+                    task_id=trial.task_id,
+                    s3_key=trial.s3_key(),
+                    location=(
+                        f"tool `grep`, call `{call.call_id}` "
+                        f"(stella-events.jsonl:{call.result_index})"
+                    ),
+                    excerpt=(
+                        f"pattern : {pattern}\n"
+                        f"answer  : {content}\n"
+                        "\nNo `(searched with POSIX grep -E: …)` disclosure, so this "
+                        "empty answer did not come from the backend #2989 fixed."
+                    ),
+                )
+            )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="grep-ere-false-negative",
+            site="crates/stella-tools/src/grep/fallback.rs",
+            variant_source="grep zero-match on an ERE pattern with no POSIX-fallback disclosure",
+            title=(
+                "grep answered `(no matches)` for a pattern the POSIX fallback "
+                "could not execute"
+            ),
+            summary=(
+                "These `grep` calls carried an ERE metacharacter and came back "
+                "`(no matches)` with none of the POSIX-fallback disclosure #2989 "
+                "attaches to a degraded-backend empty answer. That is the shape of "
+                "the false negative #2989 fixed: the fallback ran BRE, read `|` and "
+                "`+` as literal text, and reported the miss as a fact. The agent "
+                "believes it and re-plans around code it was told does not exist."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=(
+                "grep no matches alternation",
+                "POSIX grep BRE fallback false negative",
+            ),
+            caveats=[
+                "A container with ripgrep on PATH takes the rg backend, whose "
+                "zero-match answer legitimately carries no disclosure and would be "
+                "read here as the defect. No run mirrored in this repository has "
+                "ever produced an rg-backed grep — `post1` disclosed on 4 of 4 "
+                "empties — but that is evidence about these images, not a proof "
+                "about every image.",
+                "The pattern is checked for an ERE metacharacter, never executed. "
+                "A pattern that genuinely matches nothing and happens to contain a "
+                "`?` is indistinguishable here from one the backend could not run.",
+            ],
+        )
+    ]
