@@ -1052,4 +1052,54 @@ mod tests {
             .count();
         assert_eq!(created, 1, "the replaced artifact must not survive");
     }
+
+    /// #3148: `create_witness_test` is the one tool mounted outside
+    /// `stella_tools::catalog` — a **declared** exemption, pinned from both
+    /// sides, where before this test it was a silence.
+    ///
+    /// It is deliberately not a catalog row: it exists only inside the
+    /// candidate-workspace mount, must never be model-visible in an ordinary
+    /// session, and its artifact's lifecycle is the witness stage's, not the
+    /// registry's. The catalog pins (`registry_advertises_exactly_the_catalog
+    /// _tool_set`) cannot see it because it never enters a `ToolRegistry` —
+    /// so nothing would have noticed a *second* bespoke tool accumulating
+    /// out here either. Now:
+    ///
+    /// - a new out-of-catalog name on this surface fails here until it is
+    ///   cataloged or added to `EXEMPT` with its own issue;
+    /// - `create_witness_test` joining the catalog fails here too, so the
+    ///   exemption is retired instead of going stale.
+    #[tokio::test]
+    async fn the_out_of_catalog_surface_is_exactly_the_declared_exemption() {
+        const EXEMPT: &[&str] = &["create_witness_test"];
+
+        let root = tempfile::tempdir().unwrap();
+        let registry: Arc<dyn ToolExecutor> = Arc::new(
+            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
+        );
+        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), root.path(), registry);
+
+        let advertised: Vec<String> = tools
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        let out_of_catalog: Vec<&str> = advertised
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !stella_tools::catalog::ALL_NAMES.contains(name))
+            .collect();
+        assert_eq!(
+            out_of_catalog, EXEMPT,
+            "every tool this executor advertises beyond the declared \
+             exemption must be a catalog row (#3148)"
+        );
+        for name in EXEMPT {
+            assert!(
+                !stella_tools::catalog::ALL_NAMES.contains(name),
+                "{name} joined the catalog — retire its exemption here \
+                 and give it the standard docs/policy surface (#3148)"
+            );
+        }
+    }
 }
