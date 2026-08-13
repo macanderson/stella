@@ -442,16 +442,54 @@ fn inline_targets(rest: &str, out: &mut Vec<ImportSpec>) {
             b'[' => depth += 1,
             b']' if depth > 0 => {
                 depth -= 1;
-                if bytes.get(index + 1) == Some(&b'(')
-                    && let Some(target) = destination(&rest[index + 2..])
-                {
-                    push_target(out, target);
+                if bytes.get(index + 1) == Some(&b'(') {
+                    let body = &rest[index + 2..];
+                    if let Some(target) = destination(body) {
+                        push_target(out, target);
+                    }
+                    // Resume after the link's closing `)`. Without this the
+                    // scan walks back into the destination and title, where a
+                    // `](...)`-shaped substring in the title would mint a
+                    // spurious edge — the failure direction this module avoids.
+                    if let Some(close) = link_close(body.as_bytes()) {
+                        index += 2 + close;
+                    }
                 }
             }
             _ => {}
         }
         index += 1;
     }
+}
+
+/// The offset of the `)` that closes an inline link whose body — its
+/// destination and optional title — begins at the head of `body`, or `None`
+/// if none closes it. A quoted title is skipped whole so a `)` inside it
+/// (or a `](...)` link-shaped substring anywhere in it) does not end the
+/// link early or mint an edge.
+fn link_close(body: &[u8]) -> Option<usize> {
+    let mut index = 0;
+    let mut depth = 0usize;
+    while index < body.len() {
+        match body[index] {
+            b'\\' => index += 1,
+            quote @ (b'"' | b'\'') => {
+                index += 1;
+                while index < body.len() && body[index] != quote {
+                    if body[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+            }
+            b'(' => depth += 1,
+            b')' if depth == 0 => return Some(index),
+            b')' => depth -= 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 /// The link destination at the head of `text`: an angle-bracketed target up
@@ -760,6 +798,16 @@ mod tests {
         assert_eq!(
             targets("prose with ](./not-a-link.md) in it\n"),
             Vec::<String>::new()
+        );
+    }
+
+    /// A `](...)`-shaped substring inside a link *title* names nothing; the
+    /// scan must resume past the whole link so the title cannot mint an edge.
+    #[test]
+    fn a_link_shaped_substring_in_a_title_is_not_an_edge() {
+        assert_eq!(
+            targets("[link](./real.md \"note: [brackets](./other.md)\")\n"),
+            vec!["./real.md"]
         );
     }
 
