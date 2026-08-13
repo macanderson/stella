@@ -165,9 +165,8 @@ named reason.
    progress toward the objective.
 2. **The verifier assesses from evidence.** The verifier is not a passive transcript
    reader — it runs as its own bounded engine turn with read-only access to the
-   same tools the worker used (`read_file`, `grep`, `ci_status`, and so on),
-   actively inspecting the changed files, tests, and CI, and rejecting
-   claimed-but-unproven success.
+   same tools the worker used, actively inspecting the evidence the round
+   produced and rejecting claimed-but-unproven success.
 3. **Repeat or finish.** If the verifier is not satisfied, another round begins —
    until the verifier confirms or a backstop (round cap, budget, abort) ends the run.
 
@@ -224,9 +223,9 @@ the pipeline is fully green.
 stella monitor
 ```
 
-Under the hood it uses the `ci_status` tool, and the goal is considered met only
-when the latest CI run is all-green — the same judged-loop discipline as goal
-mode, with "all CI checks pass" as the objective.
+The goal is considered met only when the latest CI run is all-green — the same
+judged-loop discipline as goal mode, with "all CI checks pass" as the
+objective.
 
 ## Parallel: fleets
 

@@ -62,8 +62,9 @@ same tables.
     retries.
   </OptionCard>
   <OptionCard name="files_touched">
-    The per-execution file-touch ledger — CRUD letters, line deltas, JSON audit log
-    ([details](/docs/telemetry/files-touched)).
+    The per-execution file-touch ledger — CRUD letters, line deltas, JSON audit log.
+    (Historical: the file tools that fed it were removed in the 2026-08 tool purge,
+    so new rows appear only from surfaces that still report file changes.)
   </OptionCard>
   <OptionCard name="tool_calls">
     One row per tool call (native, MCP, skill, or agent) — shape, timing, success, bytes
@@ -410,6 +411,3 @@ Three ways to read the canonical local telemetry back:
   self-contained `dashboard.html` report, scoped to the session you are in so
   the archive is safe to share. See
   [the dashboard page](/docs/telemetry/dashboard).
-
-Every file it reads, creates, updates, or deletes is also recorded per run — see
-[Files touched](/docs/telemetry/files-touched).

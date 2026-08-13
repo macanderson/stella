@@ -67,7 +67,7 @@ pipeline and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`,
 `revisions`, `candidates_run`, `model`, `events`, and `reflection`; a `--no-pipeline` (raw step-loop)
 run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
 top-level `files_touched` key holding the
-[files-touched](/docs/telemetry/files-touched) telemetry payload — which the pipeline
+[file-touch telemetry](/docs/telemetry) payload — which the pipeline
 summary does **not** carry. That payload is the serialized telemetry object, so the array
 of records sits one level in, at `.files_touched.files_touched`.
 
@@ -176,9 +176,8 @@ stella stats --format json | jq '.rows[] | {model, total_cost_usd}'
 stella inspect 42 --step 3 --format json | jq '{schema_version, verified}'
 ```
 
-The one exemption is `stella scripts list --format json`: its frame is shared
-byte-for-byte with the `list_scripts` tool and carries its own `schema_version`,
-pinned by the scripts-index spec.
+The one exemption is `stella scripts list --format json`: its frame carries its
+own `schema_version`, pinned by the scripts-index spec.
 
 ## Configure via environment
 

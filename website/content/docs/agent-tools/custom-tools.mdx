@@ -69,8 +69,7 @@ Every field, in the shape the manifest parser accepts:
   <OptionCard name="name" required>
     The name the model sees. Must match `^[a-z][a-z0-9_]{1,63}$` — a lowercase
     letter followed by 1–63 more of `[a-z0-9_]`. A name that collides with a
-    built-in (or `ask_user`) is skipped with a diagnostic rather than shadowing
-    it.
+    built-in is skipped with a diagnostic rather than shadowing it.
   </OptionCard>
   <OptionCard name="description" required>
     What the tool does, advertised to the model. An empty description is an
@@ -134,7 +133,7 @@ input="$(cat)"    # {"path": "src/lib.rs"}
 wc -w < "$path"
 ```
 
-Exit **0** returns the captured stdout as the tool result; a **non-zero** exit returns an error carrying the exit code and the stderr tail. Both streams are truncated middle-out past a byte cap, same as the built-in `bash` tool.
+Exit **0** returns the captured stdout as the tool result; a **non-zero** exit returns an error carrying the exit code and the stderr tail. Both streams are truncated middle-out past a byte cap.
 
 ## Validating manifests
 
