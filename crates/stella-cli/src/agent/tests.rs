@@ -179,28 +179,27 @@ fn assemble_system_prompt_bakes_a_byte_stable_orientation_map() {
     assert!(first.contains("Entry points:"), "{first}");
 }
 
-/// The #336 wave-1 steering-parity witness: `read_symbol` (#383) must be
-/// advertised in BOTH static base personas the way its siblings `repo_diff`
-/// (#381) and `diagnostics` (#384) are — a tool the prompt never mentions
-/// loses to guessed read_file offsets no matter how good it is.
-///
-/// The catalogue line this used to match is gone (#639): what `read_symbol`
-/// *does* now comes from its schema, and only the offset-guessing steering —
-/// which no single schema can express — stayed behind.
+/// The #336 wave-1 steering-parity witness, re-derived for the five-tool
+/// surface: `search` must be advertised FIRST in BOTH static base personas —
+/// a tool the prompt never mentions loses to shell grep no matter how good
+/// it is (h2h891 measured 1 search call in 10 trials against a prompt that
+/// never named it). `read_symbol`'s offset-guessing line left with the tool;
+/// the successor steering — search before any lexical guess — is the line
+/// that must not silently vanish.
 #[test]
-fn both_static_prompts_carry_a_read_symbol_steering_line() {
+fn both_static_prompts_carry_a_search_first_steering_line() {
     for (name, prompt) in [
         ("SYSTEM_PROMPT", SYSTEM_PROMPT),
         ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
     ] {
         assert!(
-            prompt.contains("read_symbol"),
-            "{name} must carry a read_symbol steering line"
+            prompt.contains("search comes first for every code question"),
+            "{name} must advertise search first"
         );
         assert!(
-            prompt.contains("guessing read_file offsets after a graph_query"),
-            "{name}'s read_symbol line must steer AWAY from offset-guessing — \
-             that round-trip is the tool's reason to exist (issue #330)"
+            prompt.contains("call search with the idea instead"),
+            "{name} must steer multi-spelling greps back to search — that \
+             lexical spiral is the measured defect search exists to remove"
         );
     }
 }

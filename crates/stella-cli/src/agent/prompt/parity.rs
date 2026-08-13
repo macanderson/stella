@@ -430,9 +430,9 @@ fn every_engine_marker_is_taught_verbatim_by_every_static_prompt() {
 /// The dependency test is the half that makes the rule safe, and it is pinned
 /// separately for that reason. Without it the instruction reads as "batch your
 /// calls" and produces an agent issuing an edit alongside the read of the file
-/// it has not seen yet — which is why the negative clauses ("Never batch an
-/// edit with the read it depends on", "read a file before editing it") are
-/// asserted here rather than left to survive a future trim on their own.
+/// it has not seen yet. The minimal rewrite folds the negative clause into the
+/// sequencing sentence and keeps read-before-edit as its own sentence; both
+/// halves stay pinned.
 ///
 /// Lives here rather than beside its siblings in `prompt.rs`'s test module for
 /// the same reason `both_prompts_bind_the_model_to_skills` does: that file sits
@@ -443,20 +443,13 @@ fn both_prompts_batch_independent_tool_calls() {
     let shared = tool_steering!();
     for claim in [
         // The rule itself.
-        "Independent tool calls belong in ONE response",
-        // Why it pays — the cached prefix is re-sent per response, so the
-        // saving is per avoided round trip, not per avoided tool call.
-        "re-sends the entire conversation so far to the model",
-        // The dependency test, which is what makes batching safe rather than
+        "Send independent tool calls together in one response",
+        // The dependency half, which is what makes batching safe rather than
         // merely aggressive.
-        "The test is dependency",
-        "issue them together in the same response",
-        // The negative half: a dependent call is still sequential, and the
-        // read-before-edit case is named explicitly because it is the one a
-        // blunt batching rule breaks first.
-        "only where one genuinely consumes a previous result",
-        "read a file before editing it",
-        "Never batch an edit with the read it depends on",
+        "sequence calls only when one needs another's result",
+        // The read-before-edit case, named because it is the one a blunt
+        // batching rule breaks first.
+        "Read a file before you edit it",
     ] {
         assert!(
             shared.contains(claim),
@@ -482,43 +475,35 @@ fn both_prompts_batch_independent_tool_calls() {
 /// all-read-only *prefix* of a step's calls while the response is still
 /// streaming: the first mutating call permanently ends the early-start window.
 /// So `read, read, read, edit` and `read, edit, read, read` are the same work
-/// to the model and materially different wall clock to the engine, and until
-/// this clause neither prompt said so — `rg -c "reads first"` over the shared
-/// literal returned 0.
+/// to the model and materially different wall clock to the engine.
 ///
-/// The qualifier halves are pinned for the reason the dependency test above
-/// is: without "changes speed, never meaning" the rule invites reordering as
-/// if it changed semantics (or fearing mutations mid-response, which stay
-/// correct — sequential semantics are preserved by construction), and without
-/// the closing deferral to the dependency rule, reads-first reads as license
-/// to batch a read whose input a mutation in the same response produces.
-///
-/// Phrased by property (read-only), never by tool name, because the registry
-/// varies by assembly and the shared literal must stay honest in all of them —
-/// the same constraint `skill_use!` documents for `skill_search`.
+/// Re-expressed on the minimal five-tool steering (#3179): one sentence in
+/// the batching paragraph now carries the rule, the mechanism, and the
+/// speed-never-meaning qualifier; each is pinned so a trim cannot leave a
+/// cargo-cult rule (mechanism dropped) or a semantics-fearing one (qualifier
+/// dropped). Phrased by property (read-only), never by tool name, because the
+/// registry varies by assembly.
 #[test]
 fn both_prompts_teach_reads_first_ordering() {
     let shared = tool_steering!();
     for claim in [
+        // The rule itself.
+        "put reads first and mutations last",
         // The mechanism, both halves: concurrency is a read-only property...
         "consecutive read-only calls concurrently",
         // ...and the early start exists and is worth chasing.
         "while the response is still streaming",
-        // Mutations stay sequential — the fact that makes ordering safe.
+        // Mutations stay sequential — the fact that makes ordering safe —
+        // and the early-start window ends at the first mutation.
         "runs alone, in call order",
-        // The fence, stated exactly: early start ends; later reads still group.
-        "no call after it starts early",
-        // The rule itself.
-        "put reads first and mutations last",
-        // Qualifier one: ordering is a speed lever, never a semantic one.
-        "This changes speed, never meaning",
-        // Qualifier two: the dependency test still governs membership.
-        "the dependency rule above still decides",
+        "nothing after it starts early",
+        // The qualifier: ordering is a speed lever, never a semantic one.
+        "Ordering changes speed, never meaning",
     ] {
         assert!(
             shared.contains(claim),
             "the shared literal must keep the ordering claim {claim:?} — dropping \
-             the mechanism leaves a cargo-cult rule, and dropping either qualifier \
+             the mechanism leaves a cargo-cult rule, and dropping the qualifier \
              leaves one that reorders dependent work or fears correct mutations \
              (#3173)"
         );
@@ -531,54 +516,46 @@ fn both_prompts_teach_reads_first_ordering() {
     }
 }
 
-/// Witness for the shell-routing gap: Stella reached for `bash` when it held a
-/// purpose-built tool, and neither prompt said not to.
+/// Witness for search-first discovery, the successor to two retired pins.
 ///
-/// Measured in bench run post1: 425 of 600 tool calls were `bash`. In one trial
-/// the worker made 8 shell `grep` invocations *on top of* 6 calls to its own
-/// `grep` tool, in the same session against the same file. `rg -ic "dedicated
-/// tool"` over both prompts returned 0.
+/// The shell-routing pin (post1: 425 of 600 tool calls were `bash`, 8 shell
+/// greps beside 6 `grep`-tool calls in one trial) and the graph/semantic
+/// localization discriminator (#3015: 13 of 58 calls grepping ONE file for
+/// spelling variants of one concept) both steered toward tools the five-tool
+/// product no longer ships. The fused `search` (#3076) replaced that whole
+/// menu — semantic rank, then symbol names, then keyword scan, one call — and
+/// the measured defect both pins guarded against (lexical guessing at a
+/// semantic question) is now guarded by one rule: search first, grep in bash
+/// only for one exact literal you already hold.
 ///
-/// Both stated reasons are pinned because they are different claims. The first
-/// is about the record: a shell command declares no path, so
-/// `stella_tools::shell_touch::WorkspaceProbe` has to fingerprint the workspace
-/// either side of every opaque call and attribute the difference — a walk whose
-/// bounds are recorded as saturation rather than guessed at, which is why it
-/// can come up short (deletions are dropped outright once either walk
-/// saturated). A dedicated tool declares its path and needs none of that. The
-/// prompt says "can come up short", deliberately not "invisible": shell
-/// mutations ARE attributed here, just reconstructed rather than declared.
-/// The second reason is the per-call cost, and it is the weaker of the two.
-///
-/// The reservation clause is pinned for the same reason the dependency test
-/// above is: shell is the right answer for a large share of real work on this
-/// benchmark, and an instruction that reads as "never use bash" fights the task
-/// and gets ignored wholesale. A trim that keeps the routing and drops the
-/// reservation would turn this into exactly that rule.
+/// The reservation clause is pinned for the same reason the old shell pin
+/// kept one: the shell IS the right answer for builds, tests, git, packages,
+/// and processes, and a rule that reads as "never use bash" fights the task
+/// and gets ignored wholesale (h2h891: bash carried >90% of real work).
 #[test]
-fn both_prompts_route_file_work_to_the_dedicated_tool() {
+fn both_prompts_route_code_discovery_to_search_first() {
     let shared = tool_steering!();
     for claim in [
-        // The routing itself, enumerated so a schema-level "use the right
-        // tool" cannot stand in for it.
-        "Reading, editing, and creating files, finding files by name, and \
-         searching file contents each have a dedicated tool",
-        "use it rather than the shell",
-        // Reason one: the record. A shell edit declares no path, so the
-        // change has to be reconstructed by a bounded workspace scan.
-        "names the file it touches",
-        "fingerprinting the whole workspace either side of the call",
-        // Reason two, and deliberately the weaker of the two.
-        "cheaper per call than shelling out",
-        // The negative half — this is routing, never a ban.
-        "This is routing, not a ban",
-        "running builds and tests, process and service control, git operations",
+        // The rule itself, and the paste-your-evidence contract.
+        "search comes first for every code question",
+        "a pasted error, stack trace, or log excerpt, exactly as you have it",
+        // The degradation ladder the tool actually implements — meaning, then
+        // tree-sitter symbols, then keywords — so the prompt's promise stays
+        // honest about what a degraded call still returns (#3172).
+        "matches by meaning, falls back to symbol matching, then to keyword matching",
+        // The lexical reservation: grep keeps the one job it is right for.
+        "only to list every occurrence of one exact string you already hold",
+        // The tell that routes multi-spelling greps back to search.
+        "call search with the idea instead",
+        // The shell reservation — routing, never a ban.
+        "bash runs everything else: builds, tests, git, packages, processes",
     ] {
         assert!(
             shared.contains(claim),
-            "the shared literal must keep the shell-routing claim {claim:?} — \
-             dropping the reservation clause turns routing into a blanket ban \
-             on a tool that is the right answer for much of the work"
+            "the shared literal must keep the search-first claim {claim:?} — \
+             dropping the reservation clauses turns steering into a ban, and \
+             dropping the rule reverts to lexical guessing at semantic \
+             questions (#3015)"
         );
     }
     for (label, prompt) in STATIC_PROMPTS {
@@ -615,21 +592,16 @@ fn both_prompts_route_file_work_to_the_dedicated_tool() {
 fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace_one() {
     let shared = tool_steering!();
     for claim in [
-        // The destination, and that it is read rather than derived.
-        "$STELLA_SCRATCH",
-        "exported into every shell you run",
-        "Read that path from the environment — never construct one",
-        // The two jobs, kept distinct: bytes by size, state by key.
-        "too large to sit in the transcript",
-        "page it back with get_state",
-        "save_state and get_state hold it under a key",
-        // The negative half — #448's rule, intact and legible.
-        "What remains forbidden is scratch in the workspace or the repository",
-        "no backup copies",
-        "no debug artifacts left behind",
-        // The clause the deletions above turned on: a witness is not scratch.
-        "neither is a test you wrote to prove your change",
-        "deleting it destroys the evidence",
+        // The permission: a sanctioned destination, named (#2912). The
+        // save_state/get_state clauses left with those tools; $STELLA_SCRATCH
+        // is the surviving home and bash still exports it.
+        "Keep temporary files in $STELLA_SCRATCH",
+        // The prohibition — #448's rule, intact and legible.
+        "never in the workspace",
+        "leave no backups, copies, or debug artifacts behind",
+        // The clause the measured deletions turned on: a deliverable is not
+        // scratch, so the agent stops deleting its own evidence.
+        "A file the task asked for is a deliverable, not scratch",
     ] {
         assert!(
             shared.contains(claim),
@@ -662,19 +634,14 @@ fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace
 fn both_prompts_bind_the_model_to_skills() {
     let shared = skill_use!();
     for claim in [
-        // What a skill is, and where the selected ones arrive.
-        "durable procedures",
+        // Where the selected skills arrive.
         "arrive in the recalled-context block",
-        // The check-before-work rule — conditional on the tool, because
-        // `skill_search` is a session-layer tool absent from reduced
-        // assemblies and this one static text must stay honest in all of
-        // them (never fork the prefix per-assembly).
-        "when a skill-search tool is available",
-        // An explicit request is an instruction, not a suggestion.
-        "an instruction to apply it, not optional context",
+        // An explicit request is an instruction, not a suggestion. (The
+        // skill-search clause left with the discovery tools.)
+        "A skill the user names is an instruction",
         // The honest escape hatch: deviation is stated, never silent —
         // without it the contract degrades into ritual compliance.
-        "set it aside and say so with the reason",
+        "say so and why",
     ] {
         assert!(
             shared.contains(claim),
@@ -736,11 +703,10 @@ fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
         "claims something was DONE to this repository",
         // Working tree before history: the measured failure was a
         // history-first probe against an uncommitted change.
-        "read the WORKING TREE first",
-        "need never have been committed",
+        "`git status` and `git diff`",
+        "only once the working tree is clean",
         // The negative half — what stops a discriminator becoming a recipe.
-        "a task to BUILD, ADD or IMPLEMENT something",
-        "the probe is a call spent on nothing",
+        "A task with no claimed change gets no history probe",
     ] {
         assert!(
             SYSTEM_PROMPT.contains(claim),
@@ -750,83 +716,11 @@ fn the_default_persona_reads_the_delta_only_when_the_task_claims_one() {
         );
     }
     assert!(
-        !PIPELINE_SYSTEM_PROMPT.contains("read the WORKING TREE first"),
+        !PIPELINE_SYSTEM_PROMPT.contains("claims something was DONE to this repository"),
         "the delta-orientation rule is scoped to the default persona: the pipeline \
          persona prescribes its own first move (ORIENT/REPRODUCE/LOCALIZE), and two \
          rules competing for the same slot is the drift this scoping avoids (#2984)"
     );
-}
-
-/// The localization discriminator (#3015), pinned in both personas and clause
-/// by clause so a trim cannot drop the half that keeps it from firing
-/// everywhere.
-///
-/// `semantic_code_search` (#3014) exists to remove a measured spiral: on TB2.1
-/// `fix-code-vulnerability`, 13 of 58 tool calls went to grepping ONE file for
-/// spelling variants of one concept (`_hkey|_hval|HeaderDict|CRLF`) — a
-/// semantic question asked of a substring index. The model decides whether to
-/// call a tool from context, and until this rule landed the localization bullet
-/// named `graph_query` alone and routed "free-text search" to grep by name,
-/// which is the wrong answer once a semantic index exists.
-///
-/// The rule is a **discriminator, not a preference**: the split is a property
-/// of the question the model is already holding — can you NAME the symbol, or
-/// can you only DESCRIBE what it does — so it is decidable before a call is
-/// spent. `graph_query` keeps the named case; grep keeps the genuinely lexical
-/// case. "Always try semantic search first" is the version deliberately NOT
-/// written: a repository with no index, or a question like "find every TODO",
-/// pays a call for nothing.
-///
-/// Unlike the delta-orientation rule above, this one is pinned in **both**
-/// prompts. It steers tool choice inside localization rather than a first move,
-/// so the pipeline persona's ORIENT/REPRODUCE/LOCALIZE methodology has a slot
-/// for it (step 3) rather than a competing rule — and `PIPELINE_SYSTEM_PROMPT`
-/// is what `stella run` and every bench measurement send (see prompt.rs's
-/// header note, #2231), so a localization fix reaching `SYSTEM_PROMPT` alone
-/// would be invisible to #2995, the measurement that settles whether the model
-/// reaches for the tool at all.
-///
-/// It is not a `macro_rules!` shared contract because the two sites are
-/// genuinely different shapes — a Rules bullet and a numbered methodology step
-/// — so the wording that survives is asserted here instead of the bytes.
-///
-/// Lives here rather than beside its siblings in `prompt.rs`'s test module for
-/// the reason its two predecessors do: that file sits within a few lines of the
-/// 1500-line ratchet (#2985), and #2237 makes this module the home for
-/// prompt-content pins.
-#[test]
-fn both_personas_route_a_described_behaviour_to_semantic_search_and_a_named_one_to_the_graph() {
-    for (label, prompt) in STATIC_PROMPTS {
-        for claim in [
-            // The named half keeps the tool it always had.
-            "When you can NAME the",
-            "graph_query FIRST",
-            // The described half — the whole point, and stated as "before any
-            // grep" because the measured failure is grep spent first.
-            "semantic_code_search BEFORE any grep",
-            // The tell that makes the discriminator decidable in advance: an
-            // alternation of spellings of ONE idea is the case.
-            "`redact|scrub|sanitize|mask`",
-            // The negative half. Without it the rule degrades into "always try
-            // semantic search first", which spends a call on every lexical
-            // question and on every repository with no index.
-            "Grep and glob stay the right answer for a genuinely lexical question",
-            "the repository has no index yet",
-        ] {
-            assert!(
-                prompt.contains(claim),
-                "{label} must keep the localization claim {claim:?} — without it the rule \
-                 either stops naming semantic_code_search at all (the #3015 defect) or \
-                 fires on questions grep answers for free (#3015)"
-            );
-        }
-        assert!(
-            !prompt.contains("free-text search"),
-            "{label} still routes \"free-text search\" to grep by name. That was the wrong \
-             answer the moment semantic_code_search shipped (#3014) — a free-text question \
-             is precisely the described-behaviour case (#3015)"
-        );
-    }
 }
 
 /// Every way this check could come up empty, driven on hand-built sources.

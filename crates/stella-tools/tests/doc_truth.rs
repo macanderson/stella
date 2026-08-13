@@ -70,7 +70,10 @@ fn shipped_docs_do_not_claim_the_shell_is_opt_in() {
 /// `tool_steering!` block told every session the workspace had to enable the
 /// shell. Asserted here rather than in `stella-cli` because this crate owns the
 /// fact being described, and because the prompt's own test previously *pinned*
-/// the false sentence.
+/// the false sentence. The minimal five-tool prompt no longer names the toggle
+/// at all — bash is simply one of the five — so the guarded property is now
+/// one-sided: the false polarity must never return, and if the switch prose
+/// ever comes back it must name the real switch rather than the inverted one.
 #[test]
 fn the_system_prompt_states_the_switch_in_its_real_polarity() {
     let prompt = include_str!("../../stella-cli/src/agent/prompt.rs");
@@ -79,9 +82,10 @@ fn the_system_prompt_states_the_switch_in_its_real_polarity() {
         "the system prompt still tells the model there is no shell by default; \
          `bash` is registered by default since #710"
     );
-    assert!(
-        prompt.contains(r#"tools": {"bash": "off"}"#),
-        "the system prompt should name the real switch (`\"bash\": \"off\"`) so a model \
-         asked to bound its own surface gives the operator a working instruction"
-    );
+    if prompt.contains(r#""bash": "on""#) {
+        panic!(
+            "the system prompt names the shell switch in its inverted polarity; \
+             the real switch is `\"bash\": \"off\"` (#710, #615)"
+        );
+    }
 }

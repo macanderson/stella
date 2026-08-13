@@ -101,6 +101,7 @@ const ONLY_PREFIX: &str = "only:";
 /// `tool_search` round trip to obey it, and both outcomes are charged to lean
 /// mode rather than to this list (#3032).
 const DEFAULT_CORE_TOOLS: &[&str] = &[
+    "search",
     "read_file",
     "write_file",
     "edit_file",
@@ -1449,9 +1450,11 @@ mod tests {
     /// Not "every tool the prompt names" — the prompts mention plenty that
     /// lean mode deliberately hides behind `tool_search`, and asserting that
     /// would be asserting #3033's unbuilt design. The narrow, true property is
-    /// about the imperative: the prompt does not merely mention `apply_edits`,
-    /// it forbids the alternative it offers instead, so a core carrying
-    /// `edit_file` alone ships instructions the session cannot obey.
+    /// about the imperative: the prompt opens by naming its five tools, so a
+    /// lean core missing any of them ships instructions the session cannot
+    /// obey. `search` joined the core with the five-tool prompt (#3079's
+    /// lean-core half: the prompt now advertises it first, so a core without
+    /// it would be the exact mismatch this test exists to prevent).
     ///
     /// Anti-vacuity is the first assertion: the mandate is read out of
     /// `prompt.rs` at compile time, so deleting the sentence fails this test
@@ -1459,22 +1462,20 @@ mod tests {
     #[test]
     fn the_lean_core_offers_every_tool_the_prompt_commands() {
         const PROMPT_SOURCE: &str = include_str!("agent/prompt.rs");
-        const MANDATE: &str = "ONE apply_edits call, not a chain of edit_file calls";
+        const MANDATE: &str = "Your tools are search, read_file, edit_file, write_file, and bash.";
         assert!(
             PROMPT_SOURCE.contains(MANDATE),
             "the prompt no longer carries {MANDATE:?} — re-derive this test \
              from whatever replaced it rather than deleting it"
         );
         let core = LeanConfig::default_core().core;
-        assert!(
-            core.contains("edit_file"),
-            "premise of the mandate is gone; the pairing below is moot"
-        );
-        assert!(
-            core.contains("apply_edits"),
-            "the prompt commands ONE apply_edits call over a chain of \
-             edit_file calls, and the lean core advertises edit_file without \
-             it — a session whose instructions name a tool it cannot see"
-        );
+        for tool in ["search", "read_file", "edit_file", "write_file", "bash"] {
+            assert!(
+                core.contains(tool),
+                "the prompt names {tool} in its tool mandate and the lean \
+                 core does not advertise it — a session whose instructions \
+                 name a tool it cannot see"
+            );
+        }
     }
 }
