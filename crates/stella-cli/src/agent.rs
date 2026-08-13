@@ -386,7 +386,7 @@ async fn run_pipeline_one_shot(
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         // Outermost: the discovery layer (tool_search/skill_search/mcp_search)
         // must see the complete advertised catalog below it.
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
 
         let ws_ports = workspace_ports(
@@ -1991,7 +1991,7 @@ async fn run_turn(
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         // Outermost discovery layer; the session-scoped `activated` handle
         // keeps lean-mode activations across the per-turn stack rebuild.
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let hook_runner = ShellHookRunner;

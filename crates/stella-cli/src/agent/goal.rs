@@ -588,7 +588,7 @@ pub(crate) async fn run_goal_turn(
             .with_ask_user(tty_ask_io(human_is_present(true)))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
         // Inline skill invocations (#2682) ride the engine's steering seam:
         // arm the queue and publish it as this turn's steering, so an
@@ -804,7 +804,7 @@ async fn run_goal_pipeline_turn(
             .with_ask_user(tty_ask_io(human_is_present(true)))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_sub_agent_dispatcher(sub_agents);
         // Inline skill invocations (#2682): armed here because the ports

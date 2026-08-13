@@ -105,7 +105,7 @@ pub(super) async fn run_lead_pipeline_turn(
             hunk_io,
             cfg.workspace_root.clone(),
         );
-        let tools = crate::discovery::DiscoveryToolSet::new(&gated, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&gated, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let tapped = TaskTap {

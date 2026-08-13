@@ -246,6 +246,32 @@ mod narrowing_tests {
         assert!(!effective.allows("bash"), "a grant must never transfer");
     }
 
+    /// #3120's first family: `search:on` used to resolve as a *group* switch
+    /// too (the group then shared the tool's name), so the read-only idiom
+    /// re-enabled grep, glob, graph_query and semantic_code_search alongside
+    /// the one tool it named. A tool name now addresses exactly that tool;
+    /// the family stays addressable under its own key, `retrieval`.
+    #[test]
+    fn enabling_the_search_tool_does_not_enable_its_family() {
+        let mut effective = ToolPolicy::allow_all();
+        effective.narrow_with(&ToolPolicy::parse_spec("*:off,search:on").unwrap());
+
+        assert!(effective.allows("search"));
+        for sibling in ["grep", "glob", "graph_query", "semantic_code_search"] {
+            assert!(
+                !effective.allows(sibling),
+                "`search:on` names one tool and must not re-enable `{sibling}`"
+            );
+        }
+
+        // The family switch still exists — under the group's own name.
+        let family = ToolPolicy::parse_spec("*:off,retrieval:on").unwrap();
+        for name in catalog::names_in_group("retrieval") {
+            assert!(family.allows(name), "`retrieval:on` must cover `{name}`");
+        }
+        assert!(!family.allows("read_file"));
+    }
+
     /// A narrowing scope must not disturb tools neither side mentions.
     #[test]
     fn tools_no_scope_mentions_are_untouched() {
