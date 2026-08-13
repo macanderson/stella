@@ -4,7 +4,7 @@
 //! that remains fit one more call of this role?", and an answer is only worth
 //! having if it comes from a measurement. `stella-core`'s raw-call seam
 //! deliberately holds no such measurement — a margin invented there would be a
-//! second, invisible policy on top of the operator's `--turn-budget`, which is
+//! second, invisible policy on top of the operator's `--turn-timeout`, which is
 //! exactly what `stella_core::driver::settlement::check_budget` refuses to do
 //! to itself. This module is the pipeline's equivalent of the basis the engine
 //! already has: where the step loop forecasts from `TurnState::last_step`,

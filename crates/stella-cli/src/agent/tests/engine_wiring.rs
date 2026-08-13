@@ -24,7 +24,7 @@ fn cfg_with_engine(provider_id: &str, engine_settings_json: &str) -> Config {
 }
 
 #[test]
-fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
+fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
     // The policy it feeds (`driver::truncation::ContinuationBudget`) is inert
     // unless something sets it, and "inert" is indistinguishable from "working"
     // in every test that only exercises the engine crate. This is the wire, so
@@ -34,7 +34,7 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
     // the process, so a worker that declines a continuation while a verifier
     // spends the remaining time past it would defeat the point.
     let mut cfg = cfg_for("zai");
-    cfg.turn_budget = Some(std::time::Duration::from_secs(840));
+    cfg.turn_timeout = Some(std::time::Duration::from_secs(840));
 
     assert_eq!(
         crate::agent::engine_config_for(&cfg).turn_budget,
@@ -51,14 +51,14 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
 }
 
 #[test]
-fn the_turn_budget_flag_is_also_the_pipelines_run_deadline() {
+fn the_turn_timeout_flag_is_also_the_pipelines_run_deadline() {
     // #1507: the repair gate's clock axis measures the RUN's elapsed time, so
     // it must be fed a run-scoped deadline — and at this surface the flag
     // declares the invocation's external deadline, which is exactly that.
     // `apply_pipeline_tuning` is where every driver (run, goal, fleet, deck)
     // folds settings into a `PipelineConfig`, so this is the one wire.
     let mut cfg = cfg_for("zai");
-    cfg.turn_budget = Some(std::time::Duration::from_secs(840));
+    cfg.turn_timeout = Some(std::time::Duration::from_secs(840));
     let tuned =
         crate::agent::apply_pipeline_tuning(&cfg, stella_pipeline::PipelineConfig::default());
     assert_eq!(tuned.run_budget, Some(std::time::Duration::from_secs(840)),);

@@ -65,7 +65,7 @@ TASKSET_SHA=$(sort "$TASKFILE" | shasum -a 256 | awk '{print $1}')
 echo "arm=$ARM job=$JOB tasks=$N taskset_sha256=$TASKSET_SHA"
 echo "sut=$STELLA_SOURCE_COMMIT worker=$TB_MODEL effort=$STELLA_WORKER_EFFORT"
 echo "judge=$STELLA_WITNESS_AUTHOR_MODEL triage=$STELLA_TRIAGE_MODEL"
-echo "budget/trial=${STELLA_BUDGET:-<uncapped>} concurrency=${TB_CONCURRENCY:-5}"
+echo "budget/trial=${STELLA_SPEND_LIMIT:-<uncapped>} concurrency=${TB_CONCURRENCY:-5}"
 echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cd "$TB_REPO" || exit 1

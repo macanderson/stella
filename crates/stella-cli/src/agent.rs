@@ -364,7 +364,7 @@ async fn run_pipeline_one_shot(
         // for: skills, draft claims, and the volatile record channel.
         inject_recall_block(&mut messages, m.pipeline_recall_block(prompt).await);
     }
-    let mut budget = crate::runtime::one_shot_budget_guard(budget_limit, cfg.turn_budget);
+    let mut budget = crate::runtime::one_shot_budget_guard(budget_limit, cfg.turn_timeout);
     budget.begin_turn();
     // Reflection's only view of this turn's cost, wall clock, retries and loop
     // firings: the worker's tool-calling turns are deliberately kept out of

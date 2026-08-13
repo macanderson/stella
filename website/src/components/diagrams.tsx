@@ -966,9 +966,9 @@ export function EventContractDiagram() {
 }
 
 /**
- * Budget: two ceilings, drawn in the order they fire, because that order is the
+ * Spend limit: two ceilings, drawn in the order they fire, because that order is the
  * guide's thesis. The left one costs nothing when it trips, which is why it is
- * the accented node — the reader's instinct is to reach for --budget, and the
+ * the accented node — the reader's instinct is to reach for --spend-limit, and the
  * cheaper stop is the one before it.
  */
 export function BudgetGuardDiagram() {
@@ -977,7 +977,7 @@ export function BudgetGuardDiagram() {
       className="sdg"
       viewBox="0 0 720 220"
       role="img"
-      aria-label="A plan meets the scope review first, which stops it before the first edit at zero cost. Steps that get past it are metered between steps and stages, never inside a tool call, so a budget abort never leaves a half-applied edit."
+      aria-label="A plan meets the scope review first, which stops it before the first edit at zero cost. Steps that get past it are metered between steps and stages, never inside a tool call, so a spend-limit abort never leaves a half-applied edit."
     >
       <title>The two places a run is stopped</title>
       <Defs />

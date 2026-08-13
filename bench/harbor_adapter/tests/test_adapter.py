@@ -274,7 +274,7 @@ class TestVersion:
 class TestBuildCommand:
     def test_uses_harbor_model_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("STELLA_MODEL", raising=False)
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.delenv("STELLA_BASE_URL", raising=False)
         monkeypatch.delenv("STELLA_DISABLE_REFLECTION", raising=False)
         agent = _bare_agent()
@@ -292,14 +292,14 @@ class TestBuildCommand:
             "anthropic/claude-fable-5",
         ]
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
-        # No `--budget`, ever: a trial runs under no spend cap (#2411).
-        assert "--budget" not in cmd
+        # No `--spend-limit`, ever: a trial runs under no spend cap (#2411).
+        assert "--spend-limit" not in cmd
         assert cmd[-5:] == ["run", "--output-format", "stream-json", "--", "Fix the bug"]
         assert "--base-url" not in cmd  # not set
 
     def test_env_overrides_and_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STELLA_MODEL", "zai/glm-5.2")
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("STELLA_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
         agent = _bare_agent()
         agent.model_name = None  # env should win when Harbor didn't set one
@@ -307,7 +307,7 @@ class TestBuildCommand:
         cmd = agent._build_command("Add a feature")
 
         assert cmd[cmd.index("--model") + 1] == "zai/glm-5.2"
-        assert "--budget" not in cmd
+        assert "--spend-limit" not in cmd
         assert cmd[cmd.index("--base-url") + 1] == (
             "https://api.z.ai/api/coding/paas/v4"
         )
@@ -437,13 +437,13 @@ class TestRunScriptEnvironmentIsRegistered:
             
     
 class TestNoBudgetCap:
-    """An empty ``STELLA_BUDGET`` means *no cap*, and must reach nothing.
+    """An empty ``STELLA_SPEND_LIMIT`` means *no cap*, and must reach nothing.
 
     The head-to-head protocol permits exactly one difference between the arms —
     the endpoint. Claude Code has no per-trial spend ceiling, so Stella must be
-    able to run without one too. ``race.sh`` says that with ``STELLA_BUDGET=""``.
+    able to run without one too. ``race.sh`` says that with ``STELLA_SPEND_LIMIT=""``.
 
-    Before this, the empty string was forwarded verbatim as ``--budget ""``.
+    Before this, the empty string was forwarded verbatim as ``--spend-limit ""``.
     Clap's ``parse_budget`` rejects it and exits 2 *before the turn starts*, so
     Harbor records ``NonZeroAgentExitCodeError`` and scores 0.0 — the same
     shape, and the same silence, as the substituted-binary failure #1018 was
@@ -453,14 +453,14 @@ class TestNoBudgetCap:
     def test_empty_budget_omits_the_flag_instead_of_passing_an_unparseable_one(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_BUDGET", "")
+        monkeypatch.setenv("STELLA_SPEND_LIMIT", "")
         monkeypatch.delenv("STELLA_BASE_URL", raising=False)
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--budget" not in cmd
+        assert "--spend-limit" not in cmd
         # The failure mode was an empty argv element, not just a stray flag.
         assert "" not in cmd
         assert cmd[-5:] == ["run", "--output-format", "stream-json", "--", "Fix the bug"]
@@ -468,11 +468,11 @@ class TestNoBudgetCap:
     def test_whitespace_budget_is_treated_as_no_cap_not_as_a_number(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_BUDGET", "   ")
+        monkeypatch.setenv("STELLA_SPEND_LIMIT", "   ")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
-        assert "--budget" not in agent._build_command("Fix the bug")
+        assert "--spend-limit" not in agent._build_command("Fix the bug")
 
     def test_unset_budget_is_no_cap_rather_than_a_development_default(
         self, monkeypatch: pytest.MonkeyPatch
@@ -480,33 +480,33 @@ class TestNoBudgetCap:
         """No cap is the only state now — it used to be opt-in.
 
         Unset resolved to `_DEFAULT_BUDGET` ("5.0"), so a trial run without a
-        deliberate `STELLA_BUDGET=""` carried a ceiling nobody chose for it.
+        deliberate `STELLA_SPEND_LIMIT=""` carried a ceiling nobody chose for it.
         Match `5292a68cdabf` is what that costs: three losses, every one the
         guard firing at roughly a third of the task's allowed wall clock with
         the work all but done (#2411).
         """
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--budget" not in cmd
+        assert "--spend-limit" not in cmd
 
     def test_empty_budget_is_not_forwarded_into_the_container(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Omitting the flag is not enough: the CLI also reads the env var.
 
-        ``--budget`` is declared ``env = "STELLA_BUDGET"``, so forwarding an
+        ``--spend-limit`` is declared ``env = "STELLA_SPEND_LIMIT"``, so forwarding an
         empty value into the container fails the identical parse the omitted
         flag was avoiding — just one layer further in, where it is harder to see.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "")
+        monkeypatch.setenv("STELLA_SPEND_LIMIT", "")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
-        assert "STELLA_BUDGET" not in agent._forwarded_env()
+        assert "STELLA_SPEND_LIMIT" not in agent._forwarded_env()
 
     def test_a_cap_that_is_set_is_refused_rather_than_forwarded(
         self, monkeypatch: pytest.MonkeyPatch
@@ -518,11 +518,11 @@ class TestNoBudgetCap:
         capped without meaning to, pointed the other way. The message names
         the variable and where the bound belongs instead.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.setenv("STELLA_SPEND_LIMIT", "0.17")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
-        with pytest.raises(RuntimeError, match="STELLA_BUDGET"):
+        with pytest.raises(RuntimeError, match="STELLA_SPEND_LIMIT"):
             agent._build_command("Fix the bug")
 
     def test_no_cap_is_recorded_as_no_cap_rather_than_as_the_default(
@@ -537,7 +537,7 @@ class TestNoBudgetCap:
         Nor may it simply vanish: the metadata dict drops ``None`` values, and
         an absent key reads identically to an adapter too old to record one.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "")
+        monkeypatch.setenv("STELLA_SPEND_LIMIT", "")
         monkeypatch.delenv("STELLA_DISABLE_REFLECTION", raising=False)
         agent = _bare_agent()
         agent._metrics = {"status": "completed", "steps": 1}
@@ -561,7 +561,7 @@ class TestNoBudgetCap:
     def test_env_sh_lets_an_explicit_empty_value_survive(self) -> None:
         """``-`` and not ``:-``, asserted on the artifact rather than the diff.
 
-        ``${STELLA_BUDGET:-0.60}`` substitutes on *empty as well as unset*, so
+        ``${STELLA_SPEND_LIMIT:-0.60}`` substitutes on *empty as well as unset*, so
         the no-cap posture is unreachable through the sanctioned entry point no
         matter what the adapter does.
         """
@@ -572,13 +572,13 @@ class TestNoBudgetCap:
         assert env_sh.is_file()
 
         def _budget_after_sourcing(preset: str | None) -> str:
-            setter = "export STELLA_BUDGET=''" if preset == "" else "true"
+            setter = "export STELLA_SPEND_LIMIT=''" if preset == "" else "true"
             script = (
                 f'export TB_REPO="{repo_root}"; '
                 f'export TB_ROOT="$(mktemp -d)"; '
                 f"{setter}; "
                 f'source "{env_sh}" >/dev/null 2>&1; '
-                f'printf "%s" "${{STELLA_BUDGET-<unset>}}"'
+                f'printf "%s" "${{STELLA_SPEND_LIMIT-<unset>}}"'
             )
             done = subprocess.run(
                 ["bash", "-c", script], capture_output=True, text=True, check=False
@@ -635,13 +635,13 @@ class TestForwardedEnv:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-real")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
         monkeypatch.setenv("STELLA_MODEL", "anthropic/claude-fable-5")
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("_ADAPTER_TEST_SENTINEL", "not-a-key")
 
         env = _bare_agent()._forwarded_env()
 
         assert "STELLA_MODEL" not in env
-        assert "STELLA_BUDGET" not in env
+        assert "STELLA_SPEND_LIMIT" not in env
         assert "ANTHROPIC_API_KEY" not in env
         assert "OPENAI_API_KEY" not in env
         assert "_ADAPTER_TEST_SENTINEL" not in env
@@ -1401,7 +1401,7 @@ class TestRun:
     def test_mounted_internal_stream_is_source_of_truth_and_is_not_overwritten(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         source_envelope = _trajectory_envelope()
         durable_stream = _stream_for(source_envelope)
@@ -1479,7 +1479,7 @@ class TestRun:
     def test_nonzero_exit_persists_stream_context_and_atif_before_raising(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         agent = _bare_agent()
         agent.logs_dir = tmp_path
@@ -1501,7 +1501,7 @@ class TestRun:
                 assert command[command.index("--base-url") + 1] == (
                     "https://openrouter.ai/api/v1"
                 )
-                assert "STELLA_BUDGET" not in env
+                assert "STELLA_SPEND_LIMIT" not in env
                 assert env["STELLA_DISABLE_REFLECTION"] == "1"
                 assert env["STELLA_NO_ENV_FILE"] == "1"
                 assert env["STELLA_NO_SETTINGS"] == "1"
@@ -1811,7 +1811,7 @@ class TestPopulateContext:
     def test_populates_from_stashed_metrics(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.delenv("STELLA_DISABLE_REFLECTION", raising=False)
         agent = _bare_agent()
         agent._metrics = {

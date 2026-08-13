@@ -332,7 +332,7 @@ impl<'a> Pipeline<'a> {
         // The reserve is supplied here rather than there because that seam
         // measures nothing — no pace estimate, no per-role history — and a
         // margin invented in a place with no basis is a second, invisible
-        // policy on top of the operator's `--turn-budget`, which
+        // policy on top of the operator's `--turn-timeout`, which
         // `driver::settlement::check_budget` forbids itself for exactly this
         // reason. This caller does have a basis, so it is the caller that
         // anticipates. The engine's step loop does the same thing with the

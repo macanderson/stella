@@ -421,8 +421,8 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core BudgetGuard: turn and session USD axes, enforced at step boundaries",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
-            mechanism: "--budget / --turn-budget on the session axis, surviving across turns",
-            witness: "budget_cap_holds_across_turns_rather_than_resetting_each_one",
+            mechanism: "--spend-limit / --turn-timeout on the session axis, surviving across turns",
+            witness: "spend_limit_cap_holds_across_turns_rather_than_resetting_each_one",
         },
         api: SurfacePosture::Shipped {
             mechanism: "budget {mode, turn_limit_usd, session_limit_usd} on turn and session \

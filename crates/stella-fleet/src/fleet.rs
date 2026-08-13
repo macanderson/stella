@@ -592,7 +592,7 @@ where
         //     post-run `record_spend` alone only stopped launching the NEXT
         //     wave, so a single wide fan-out wave (the common case: every
         //     positional prompt is an independent task, all in one wave) ran to
-        //     completion and could spend far past `--budget`. Checking the
+        //     completion and could spend far past `--spend-limit`. Checking the
         //     shared parent guard as each task claims a concurrency slot stops
         //     launching further workers once the cap is crossed. Combined with
         //     each child's per-child remaining-budget sub-cap (fleet_cmd), the
@@ -842,7 +842,7 @@ where
         //    the in-memory gate. Stamping first meant the `?` returned before
         //    `record_spend` ran, and the parent guard then let the rest of the
         //    fan-out run as if this child had cost nothing — a fleet spending
-        //    past `--budget` because a disk error, not because of its plan.
+        //    past `--spend-limit` because a disk error, not because of its plan.
         //    Over-counting a child whose ledger row was lost is the safe
         //    direction; under-counting is not.
         let finished_at_ms = self.clock.now_ms();

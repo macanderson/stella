@@ -83,7 +83,7 @@ class TestArgv:
 class TestRegistration:
     def test_the_pin_is_registered_host_only(self) -> None:
         # The ambient check fails closed: exported but unregistered refuses the
-        # run rather than enabling the policy (an unlisted STELLA_TURN_BUDGET
+        # run rather than enabling the policy (an unlisted STELLA_TURN_TIMEOUT
         # once killed all ten trials of a run).
         assert "STELLA_UPSTREAM_PIN" in _HOST_ONLY_STELLA_ENV
 

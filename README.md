@@ -53,8 +53,8 @@ in Rust as a workspace of focused crates.
   files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only explicitly enrolled Oxagen
   Enterprise managed mode can derive a closed, content-free operational rollup.
-- **Budget enforcement** — A `--budget` flag aborts cleanly between steps, never
-  mid-tool.
+- **Budget enforcement** — A `--spend-limit` flag aborts cleanly between steps,
+  never mid-tool.
 - **Goal & fleet modes** — `goal` works in judged rounds; `fleet` fans a task DAG
   out to parallel workers that share one tree under cooperative file claims, or
   take their own git worktree when a task opts in.
@@ -433,7 +433,7 @@ stella monitor main          # drive a branch/PR's CI to green as a judged goal
 
 ```bash
 stella fleet "fix the flaky auth test" "tighten the CI cache key"   # two isolated tasks
-stella fleet --plan .stella/fleet.toml --max-concurrency 2 --budget 5.0
+stella fleet --plan .stella/fleet.toml --max-concurrency 2 --spend-limit 5.0
 ```
 
 Wave-scheduled by dependency and recorded in `.stella/private/fleet.db`. Workers
@@ -466,9 +466,9 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 
 ### Global flags
 
-`--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
+`--model provider/id` · `--api-key` · `--base-url` · `--spend-limit <usd>` ·
 `--accessible` · `--plain` · `--no-anim` (also as `STELLA_MODEL`,
-`STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
+`STELLA_BASE_URL`, `STELLA_SPEND_LIMIT`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
 `STELLA_NO_ANIM`). All of them are registered with every subcommand, so they
 parse before _or_ after the subcommand token.
 `--output-format text|json|stream-json` (env `STELLA_OUTPUT_FORMAT`) is

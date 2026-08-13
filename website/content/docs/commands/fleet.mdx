@@ -67,12 +67,12 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
   </OptionCard>
 </CardGrid>
 
-## Budget
+## Spend limit
 
-The budget cap is the **global** `--budget` flag (or `STELLA_BUDGET`) rather than one of `fleet`'s own; it reads most clearly before the subcommand, though [either position parses](/docs/commands#global-flags). Each child is guarded by the aggregate cap divided across the concurrency width (`budget ÷ max-concurrency`), and the fleet stops launching new waves once total metered spend crosses the cap.
+The spend limit cap is the **global** `--spend-limit` flag (or `STELLA_SPEND_LIMIT`) rather than one of `fleet`'s own; it reads most clearly before the subcommand, though [either position parses](/docs/commands#global-flags). Each child is guarded by the aggregate cap divided across the concurrency width (`spend limit ÷ max-concurrency`), and the fleet stops launching new waves once total metered spend crosses the cap.
 
 ```bash
-stella --budget 5 fleet --plan release-prep.toml
+stella --spend-limit 5 fleet --plan release-prep.toml
 ```
 
 ## stella fleet clean

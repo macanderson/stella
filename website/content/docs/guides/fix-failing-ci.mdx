@@ -13,7 +13,7 @@ This is the task [`stella monitor`](/docs/commands/monitor) exists for.
 
 ```bash
 # From the repository, with `gh` authenticated.
-stella --budget 5.00 monitor feature/payments-refactor
+stella --spend-limit 5.00 monitor feature/payments-refactor
 ```
 
 That is the guide. The rest of this page is what that command is doing, how to
@@ -38,8 +38,8 @@ for a pull request.
     Fixes are committed and pushed between checks — that is how the next CI run gets
     triggered at all. There is no dry-run mode; the feedback loop *is* the remote.
   </OptionCard>
-  <OptionCard name="A budget, realistically">
-    Reading failure logs is input-token-heavy. `--budget` is a
+  <OptionCard name="A spend limit, realistically">
+    Reading failure logs is input-token-heavy. `--spend-limit` is a
     [global flag](/docs/commands#global-flags), so it goes before the subcommand.
   </OptionCard>
 </CardGrid>
@@ -154,12 +154,12 @@ gh run list --branch feature/payments-refactor --limit 5
 gh run view <run-id> --log-failed
 ```
 
-### The budget aborts it
+### The spend limit aborts it
 
-`--budget` is a hard cap, checked **between** steps and stages — never
+`--spend-limit` is a hard cap, checked **between** steps and stages — never
 mid-tool-call, so you are never left with a half-applied edit. An aborted run
 leaves its already-pushed commits in place; nothing is rolled back. Raise the
-cap and re-run, or see [Work within a budget](/docs/guides/budget).
+cap and re-run, or see [Work within a spend limit](/docs/guides/spend-limit).
 
 ## Confirming it, afterwards
 
@@ -193,7 +193,7 @@ different requirements (a non-TTY surface, JSON output, an explicit scope-review
 bypass):
 
 ```bash
-stella --budget 2.00 \
+stella --spend-limit 2.00 \
   run --output-format json --test-command "cargo test --workspace" "fix the failing tests" \
   | jq -e '.status == "completed" and .verdict.deterministic == true'
 ```
@@ -213,7 +213,7 @@ thresholds ends the run rather than silently auto-approving itself. See
   <SpecCard title="Goal mode" href="/docs/agent-modes#outcome-driven-goal-mode">
     The round loop `monitor` is built on, and how the verifier is chosen.
   </SpecCard>
-  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+  <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
     Where the abort lands, and how to make the money go further.
   </SpecCard>
   <SpecCard title="stella fleet" href="/docs/commands/fleet">

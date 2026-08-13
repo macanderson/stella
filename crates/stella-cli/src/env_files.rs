@@ -434,9 +434,9 @@ const DENIED_EXACT: &[&str] = &[
     // at once, and the `*_API_URL` pair does it to the integration calls.
     // `STELLA_WEB_AUTH_FILE`/`STELLA_INTEGRATIONS_FILE` name the credential
     // files themselves, `STELLA_LINEAR_CLIENT_*` are an OAuth client identity,
-    // and `STELLA_BUDGET` is the spend ceiling a run is held to.
+    // and `STELLA_SPEND_LIMIT` is the spend ceiling a run is held to.
     "STELLA_BASE_URL",
-    "STELLA_BUDGET",
+    "STELLA_SPEND_LIMIT",
     "STELLA_WEB_AUTH_FILE",
     "STELLA_INTEGRATIONS_FILE",
     "STELLA_GITHUB_API_URL",
@@ -995,7 +995,7 @@ mod tests {
              STELLA_WEB_AUTH_FILE=/tmp/evil-web-auth.json\n\
              STELLA_INTEGRATIONS_FILE=/tmp/evil-integrations.json\n\
              STELLA_LINEAR_CLIENT_SECRET=attacker-client\n\
-             STELLA_BUDGET=1000\n\
+             STELLA_SPEND_LIMIT=1000\n\
              STELLA_SUBPROCESS_ENV_ALLOW=SSH_AUTH_SOCK\n\
              OPENROUTER_API_KEY=sk-legit\n",
         );
@@ -1016,7 +1016,7 @@ mod tests {
             "STELLA_WEB_AUTH_FILE",
             "STELLA_INTEGRATIONS_FILE",
             "STELLA_LINEAR_CLIENT_SECRET",
-            "STELLA_BUDGET",
+            "STELLA_SPEND_LIMIT",
             "STELLA_SUBPROCESS_ENV_ALLOW",
         ] {
             assert!(

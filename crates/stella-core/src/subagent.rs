@@ -33,7 +33,7 @@
 //! `min(requested, parent's remaining headroom)` — see
 //! [`BudgetGuard::carve`]. A child therefore cannot spend a parent past a
 //! configured cap even when the caller asks for more than is left, which is
-//! what keeps `--budget` a *hard* ceiling once turns nest. Spend settles
+//! what keeps `--spend-limit` a *hard* ceiling once turns nest. Spend settles
 //! back into the parent exactly once, on every path including failure.
 //! A carve with no room under an enforced cap refuses the spawn outright
 //! rather than paying for the one model call that budget-checking-between-

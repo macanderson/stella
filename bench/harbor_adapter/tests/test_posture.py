@@ -869,7 +869,7 @@ class TestWitnessArmEndToEnd:
         """
         worker = "openrouter/z-ai/glm-5.1"
         author = "openrouter/deepseek/deepseek-v4-pro"
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.setenv(_WITNESS_AUTHOR_ENV, author)
 
@@ -943,7 +943,7 @@ class TestWitnessArmEndToEnd:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The disabled tier is a field, not a log line — the point of #1007."""
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
         reason = (

@@ -197,7 +197,7 @@ _HARBOR_ENV_ALLOWLIST = frozenset(
         "DOCKER_HOST",
         "DOCKER_TLS_VERIFY",
         "STELLA_BINARY",
-        "STELLA_BUDGET",
+        "STELLA_SPEND_LIMIT",
         "STELLA_DISABLE_REFLECTION",
         "STELLA_SOURCE_COMMIT",
     }

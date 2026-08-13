@@ -80,7 +80,7 @@ plan prints every exclusion with its reason.
 **A higher budget default ($2.50/trial).** Declared agent timeouts run 30 minutes
 to 8 hours against expert time estimates measured in days. Terminal-Bench's
 $0.60 cap would truncate most of this set and record the truncation as failure.
-`STELLA_BUDGET=` (explicitly empty) means no cap.
+`STELLA_SPEND_LIMIT=` (explicitly empty) means no cap.
 
 ## The sentinel's two gates
 

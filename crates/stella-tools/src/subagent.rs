@@ -53,7 +53,7 @@
 //! [`SubAgentSpendLedger`](stella_core::subagent::SubAgentSpendLedger) the
 //! registry exposes through `ToolExecutor::drain_sub_agent_spend_usd`, which
 //! the engine folds into the parent's budget at the next step boundary. That
-//! ordering is what keeps `--budget` a hard ceiling: a tool cannot charge the
+//! ordering is what keeps `--spend-limit` a hard ceiling: a tool cannot charge the
 //! guard directly, because the engine holds it mutably for the whole turn.
 //!
 //! This tool deliberately does **not** charge. It used to, on the line after

@@ -13,7 +13,7 @@ stella goal <goal> [--no-pipeline] [global flags]
 
 ## What it does
 
-`stella goal` works in rounds, each run through the [staged pipeline](/docs/inference-pipeline) by default — pass `--no-pipeline` for raw step-loop rounds instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--budget` limit, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds, each run through the [staged pipeline](/docs/inference-pipeline) by default — pass `--no-pipeline` for raw step-loop rounds instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
 
 Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
 
@@ -34,7 +34,7 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
     Pin the worker model. The verifier is routed to a different family automatically when one
     is available.
   </OptionCard>
-  <OptionCard name="--budget <usd>">
+  <OptionCard name="--spend-limit <usd>">
     Cap total spend across all rounds; work aborts cleanly once the cap is exceeded.
   </OptionCard>
 </CardGrid>
@@ -58,7 +58,7 @@ stella goal "Migrate the config loader to use serde and add tests"
 Pin the worker model and cap spend across all rounds:
 
 ```bash
-stella --model anthropic/claude-fable-5 --budget 10.00 \
+stella --model anthropic/claude-fable-5 --spend-limit 10.00 \
   goal "Make the CLI exit with a non-zero code on invalid input"
 ```
 
