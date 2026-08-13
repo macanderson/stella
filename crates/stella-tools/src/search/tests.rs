@@ -19,6 +19,7 @@ use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, Similar
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 
+use super::cache::GatherCache;
 use super::{
     ChunkWarmOutcome, Hit, Search, SearchConfig, Strategy, dispatch, render, warm_chunk_vectors,
 };
@@ -275,6 +276,7 @@ async fn one_search_call_answers_what_today_takes_several_tools() {
             depth: Depth::new(8),
             budget: 200_000,
         },
+        &mut GatherCache::default(),
     );
     let content = content_of(&output);
     assert!(
@@ -368,6 +370,7 @@ async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() 
         "scrub",
         &answer,
         SearchConfig::default(),
+        &mut GatherCache::default(),
     ));
     assert!(
         content.contains("symbol NAMES (not by meaning)"),
@@ -409,6 +412,7 @@ async fn with_no_index_at_all_the_file_scan_answers_and_labels_itself() {
         "credential rotation",
         &answer,
         SearchConfig::default(),
+        &mut GatherCache::default(),
     ));
     assert!(
         content.contains("no index was available"),
@@ -444,6 +448,7 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
                 depth: Depth::new(level),
                 budget: 200_000,
             },
+            &mut GatherCache::default(),
         ));
         content
             .lines()
@@ -492,6 +497,7 @@ async fn the_default_answer_carries_the_body_without_a_follow_up_read() {
         QUESTION,
         &answer,
         SearchConfig::default(),
+        &mut GatherCache::default(),
     ));
     assert!(
         content.contains("signature:"),
@@ -613,6 +619,7 @@ async fn a_misconfigured_embedder_note_joins_the_cut_list_note_instead_of_replac
         "widget",
         SearchConfig::default(),
         stella_embed::Resolution::Incomplete("STELLA_EMBED_MODEL is unset".into()),
+        &std::sync::Mutex::new(GatherCache::default()),
     )
     .await;
 
@@ -817,6 +824,7 @@ async fn the_matched_symbol_leads_the_detailed_facets() {
         "sensitive credentials",
         &answer,
         SearchConfig::default(),
+        &mut GatherCache::default(),
     ));
     assert!(
         content.contains("body of `scrub_credentials`"),
@@ -857,6 +865,7 @@ async fn caller_entries_carry_their_site_not_a_placeholder() {
             focus: None,
         },
         Depth::new(8),
+        &mut GatherCache::default(),
     );
     assert!(
         block.contains("callers:"),
@@ -901,6 +910,7 @@ fn a_truncated_answer_says_it_was_truncated() {
             depth: Depth::MIN,
             budget: 130,
         },
+        &mut GatherCache::default(),
     ));
     assert!(
         content.contains("TRUNCATED"),
@@ -921,6 +931,7 @@ fn a_truncated_answer_says_it_was_truncated() {
             depth: Depth::MIN,
             budget: 100_000,
         },
+        &mut GatherCache::default(),
     ));
     assert!(
         !roomy.contains("TRUNCATED"),
@@ -1016,6 +1027,7 @@ fn the_rendered_hit_count_matches_the_allocation() {
         "anything",
         &answer,
         config,
+        &mut GatherCache::default(),
     ));
 
     let shown = hits

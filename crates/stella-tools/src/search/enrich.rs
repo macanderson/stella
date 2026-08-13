@@ -28,9 +28,10 @@
 use std::path::Path;
 
 use stella_core::search::{Depth, Facet, facets_at};
-use stella_graph::{CodeGraph, NeighborhoodSymbol};
+use stella_graph::{CodeGraph, FileNeighborhood, NeighborhoodSymbol};
 
 use super::Hit;
+use super::cache::{self, GatherCache};
 
 /// Symbols named per hit. Past this the list stops being a summary.
 const MAX_SYMBOLS: usize = 8;
@@ -48,11 +49,17 @@ const MAX_BODY_LINES: usize = 40;
 /// know all degrade to fewer lines, never to an error. A search that failed
 /// to enrich a hit still found the hit, and losing the whole answer over a
 /// detail line would be the worst possible trade.
+///
+/// The neighborhood comes through `cache` ([`gathered_neighborhood`]); the
+/// source is read fresh on every call, both because it is the cache's
+/// invalidation identity and because the facets derived from it must describe
+/// the bytes on disk now, not the bytes at gather time.
 pub(crate) fn render_hit(
     graph: Option<&CodeGraph>,
     root: &Path,
     hit: &Hit,
     depth: Depth,
+    cache: &mut GatherCache,
 ) -> String {
     let facets = facets_at(depth);
     // `Facet::Path` is the header and is present at every depth by
@@ -62,7 +69,9 @@ pub(crate) fn render_hit(
     let Some(graph) = graph else {
         return block;
     };
-    let Ok(neighborhood) = graph.file_neighborhood(Path::new(&hit.path)) else {
+    let source = std::fs::read_to_string(root.join(&hit.path)).ok();
+    let Some(neighborhood) = gathered_neighborhood(cache, graph, &hit.path, source.as_deref())
+    else {
         return block;
     };
     // The matched symbol leads the detailed facets when the ranking named
@@ -84,7 +93,6 @@ pub(crate) fn render_hit(
         )
         .take(MAX_DETAILED_SYMBOLS)
         .collect();
-    let source = std::fs::read_to_string(root.join(&hit.path)).ok();
 
     for facet in facets {
         let line =
@@ -162,6 +170,37 @@ pub(crate) fn render_hit(
         }
     }
     block
+}
+
+/// The file's neighborhood, from the session cache when the file's bytes
+/// still match the entry, and from the graph otherwise (#3163).
+///
+/// `source` doubles as the cache key: `None` (an unreadable or non-UTF-8
+/// file) has no identity to validate against, so it bypasses the cache in
+/// both directions — gathered fresh, never stored. A graph the query fails
+/// against degrades to `None` exactly as the un-cached gather did, and is
+/// likewise never stored.
+fn gathered_neighborhood(
+    cache: &mut GatherCache,
+    graph: &CodeGraph,
+    path: &str,
+    source: Option<&str>,
+) -> Option<FileNeighborhood> {
+    let identity = source.map(cache::content_identity);
+    if let Some(identity) = &identity
+        && let Some(neighborhood) = cache.lookup(path, identity)
+    {
+        return Some(neighborhood);
+    }
+    let neighborhood = graph.file_neighborhood(Path::new(path)).ok()?;
+    #[cfg(test)]
+    {
+        cache.gathered += 1;
+    }
+    if let Some(identity) = identity {
+        cache.store(path.to_string(), identity, neighborhood.clone());
+    }
+    Some(neighborhood)
 }
 
 /// `    label: a, b, c` — or nothing at all when there is nothing to say.
