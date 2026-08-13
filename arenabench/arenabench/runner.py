@@ -188,6 +188,15 @@ def _provenance_for(
 
     sut_seats: dict[str, dict[str, str]] = {}
     agent_seats: dict[str, dict[str, Any]] = {}
+    # Only the seats that declared a restriction. An absent entry means the
+    # shipping catalog, which is what every match before #3032 ran — so a
+    # record says the true thing about an unrestricted arm by saying nothing,
+    # and the archive's existing records are already correct.
+    tool_set_seats: dict[str, list[str]] = {
+        contestant.id: list(contestant.engine.tool_set)
+        for contestant in match.spec.contestants
+        if contestant.engine.tool_set
+    }
     for contestant in match.spec.contestants:
         if contestant.agent != "stella":
             # A pinned release is knowable *before* the trials, unlike an
@@ -233,6 +242,10 @@ def _provenance_for(
         sut_sha256=sut_sha256,
         sut_seats=sut_seats,
         agent_seats=agent_seats,
+        # Recorded at launch from the template for `lineage_id`'s reason
+        # below: the tool set is this experiment's independent variable, and a
+        # match killed mid-run must still say which arm it was.
+        tool_set_seats=tool_set_seats,
         # Recorded at launch from the template, before any trial has run, for
         # the reason the whole record is written here: a match killed mid-run
         # must still be attributable, and "this run was seeded" is the single
@@ -1075,6 +1088,11 @@ class MatchRunner:
             "launch_model": launch_model(contestant),
             "base_url": contestant.engine.base_url,
         }
+        if contestant.engine.tool_set:
+            # Which tools THIS seat advertised — the per-seat half of #3032,
+            # recorded on the same terms as the SUT pin below so the seat
+            # manifest and provenance cannot disagree about what an arm ran.
+            record["tool_set"] = list(contestant.engine.tool_set)
         if pin is not None:
             # Which Stella THIS seat launched — the per-seat half of #2082.
             # The same observation provenance recorded, so the two artifacts
@@ -1215,6 +1233,18 @@ class MatchRunner:
             # declared configuration. The adapter turns this into
             # `stella run --no-pipeline`.
             env["STELLA_NO_PIPELINE"] = "1"
+        if engine.tool_set:
+            # Set here for `bare_loop`'s reason and one more: the value is the
+            # experiment's independent variable, so it must come from the
+            # template that will be published beside the number, never from
+            # whatever the operator's shell happened to export. Omitted when
+            # undeclared, which is the whole guarantee that an arm naming no
+            # tool set runs exactly as it did before this field existed — the
+            # adapter's forwarder returns empty on an absent value.
+            # `only:` — a CLOSED set. The bare comma list would add the three
+            # discovery tools on top, and an arm specified as five tools that
+            # ships eight is not the arm anyone reasoned about.
+            env["STELLA_LEAN_TOOLS"] = "only:" + ",".join(engine.tool_set)
         env.setdefault("STELLA_DISABLE_REFLECTION", "1")
 
         # Both packages must be importable by the Harbor subprocess: the

@@ -91,10 +91,20 @@ const ONLY_PREFIX: &str = "only:";
 /// together: `read_symbol` is what turns a `graph_query` hit into source
 /// without a guessed `read_file` offset, which is exactly what the shared
 /// tool steering tells the model to do.
+///
+/// `apply_edits` is core because the prompt *commands* it: "A change touching
+/// several files is ONE apply_edits call, not a chain of edit_file calls"
+/// (`agent/prompt.rs`, pinned by
+/// `both_prompts_keep_the_steering_the_schemas_cannot_carry`). Offering
+/// `edit_file` without it shipped a session whose own instructions named a
+/// tool it could not see — the model either disobeys the rule or spends a
+/// `tool_search` round trip to obey it, and both outcomes are charged to lean
+/// mode rather than to this list (#3032).
 const DEFAULT_CORE_TOOLS: &[&str] = &[
     "read_file",
     "write_file",
     "edit_file",
+    "apply_edits",
     "bash",
     "grep",
     "glob",
@@ -1434,51 +1444,37 @@ mod tests {
         assert_eq!(lean_from_env(), None);
     }
 
-    /// The witness for `only:` — a bench arm specified as N tools must
-    /// advertise exactly N schemas.
+    /// The lean core may not withhold a tool the static prompt *commands*.
     ///
-    /// The plain-list form silently adds three discovery tools on top, which
-    /// is right for a session and wrong for an experiment: an arm reasoned
-    /// about as five tools that ships eight measures something nobody
-    /// designed, and `tool_search` beside a `search` tool competes with the
-    /// thing under test. Both halves are asserted here so the difference
-    /// between the two forms cannot quietly disappear.
-    #[tokio::test]
-    async fn an_only_set_advertises_exactly_its_members_and_a_plain_list_does_not() {
-        let inner = FakeInner;
-        let arm = ["read_file", "bash"];
-
-        let closed = DiscoveryToolSet::new(&inner, std::env::temp_dir())
-            .with_registry_search(Box::new(StubRegistry))
-            .with_lean(Some(LeanConfig::closed(
-                arm.iter().map(|name| name.to_string()),
-            )));
-        let mut names: Vec<String> = closed.schemas().into_iter().map(|s| s.name).collect();
-        names.sort();
-        assert_eq!(
-            names,
-            vec!["bash".to_string(), "read_file".to_string()],
-            "an `only:` set must advertise exactly its members — no discovery layer"
-        );
-
-        // The contrast, so this test fails if the two forms ever converge.
-        let open = DiscoveryToolSet::new(&inner, std::env::temp_dir())
-            .with_registry_search(Box::new(StubRegistry))
-            .with_lean(Some(LeanConfig {
-                core: arm.iter().map(|name| name.to_string()).collect(),
-                discovery: true,
-            }));
-        let open_names: Vec<String> = open.schemas().into_iter().map(|s| s.name).collect();
+    /// Not "every tool the prompt names" — the prompts mention plenty that
+    /// lean mode deliberately hides behind `tool_search`, and asserting that
+    /// would be asserting #3033's unbuilt design. The narrow, true property is
+    /// about the imperative: the prompt does not merely mention `apply_edits`,
+    /// it forbids the alternative it offers instead, so a core carrying
+    /// `edit_file` alone ships instructions the session cannot obey.
+    ///
+    /// Anti-vacuity is the first assertion: the mandate is read out of
+    /// `prompt.rs` at compile time, so deleting the sentence fails this test
+    /// rather than silently satisfying it.
+    #[test]
+    fn the_lean_core_offers_every_tool_the_prompt_commands() {
+        const PROMPT_SOURCE: &str = include_str!("agent/prompt.rs");
+        const MANDATE: &str = "ONE apply_edits call, not a chain of edit_file calls";
         assert!(
-            open_names.contains(&TOOL_SEARCH.to_string()),
-            "the plain-list form must keep the discovery layer: {open_names:?}"
+            PROMPT_SOURCE.contains(MANDATE),
+            "the prompt no longer carries {MANDATE:?} — re-derive this test \
+             from whatever replaced it rather than deleting it"
         );
-
-        // Withholding a schema is not withholding the capability: execution
-        // stays permissive, so a closed set can never deadlock a turn.
-        match closed.execute("screenshot", &Value::Null).await {
-            ToolOutput::Ok { content } => assert_eq!(content, "inner ran screenshot"),
-            other => panic!("a closed set must still execute hidden tools, got {other:?}"),
-        }
+        let core = LeanConfig::default_core().core;
+        assert!(
+            core.contains("edit_file"),
+            "premise of the mandate is gone; the pairing below is moot"
+        );
+        assert!(
+            core.contains("apply_edits"),
+            "the prompt commands ONE apply_edits call over a chain of \
+             edit_file calls, and the lean core advertises edit_file without \
+             it — a session whose instructions name a tool it cannot see"
+        );
     }
 }
