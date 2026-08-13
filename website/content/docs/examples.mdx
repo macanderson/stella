@@ -57,8 +57,8 @@ Three consequences:
 
 Multipliers: [goal mode](/docs/agent-modes#outcome-driven-goal-mode) repeats rounds until
 the verifier signs off, up to 8. [Fleets](/docs/agent-fleets) run one pipeline per task, and
-`--budget` is enforced fleet-wide across the concurrency width. Cap either with
-`--budget <usd>`, a hard limit enforced between steps.
+`--spend-limit` is enforced fleet-wide across the concurrency width. Cap either with
+`--spend-limit <usd>`, a hard limit enforced between steps.
 
 ## Single key
 
@@ -82,7 +82,7 @@ Two habits make one-key runs materially better:
 stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
 
 # Cap the spend — enforced between steps, aborts cleanly
-stella --budget 2.00 goal "the linter passes and the snapshot tests are green"
+stella --spend-limit 2.00 goal "the linter passes and the snapshot tests are green"
 ```
 
 When every role is the same family, make the verifier *behave* differently — strict prompt,
@@ -140,7 +140,7 @@ adding to an OpenAI verifier and inert everywhere else.
 ## Dirt cheap
 
 Point every role at the cheapest capable models, turn thinking off where it doesn't pay,
-cap output, and put a hard `--budget` under it. Good for lint sweeps, docstrings, and
+cap output, and put a hard `--spend-limit` under it. Good for lint sweeps, docstrings, and
 mechanical migrations.
 
 ```json title="~/.stella/settings.json"
@@ -174,7 +174,7 @@ mechanical migrations.
 export DEEPSEEK_API_KEY="sk-..."   # worker and triage
 export ZAI_API_KEY="..."           # verifier
 
-stella --budget 0.25 run "add docstrings to every public function in src/api/"
+stella --spend-limit 0.25 run "add docstrings to every public function in src/api/"
 stella stats --format text
 ```
 
@@ -284,7 +284,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."   # worker
 export OPENAI_API_KEY="sk-..."          # verifier
 export DEEPSEEK_API_KEY="sk-..."        # triage
 
-stella --budget 8.00 run \
+stella --spend-limit 8.00 run \
   "port the auth middleware to the new session store; all tests must pass" \
   --test-command "cargo test -p auth"
 ```
@@ -399,7 +399,7 @@ endpoints.
 
 <Callout type="info">
   Local models have no catalog prices, so `stella stats` dollar columns read zero and
-  `--budget` has nothing to meter against. Bound runs with `--test-command` and goal-mode
+  `--spend-limit` has nothing to meter against. Bound runs with `--test-command` and goal-mode
   round caps instead.
 </Callout>
 
