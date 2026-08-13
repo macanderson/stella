@@ -89,6 +89,13 @@ pub(crate) enum ImportSpec {
     /// [`Self::TsRelative`] only in name — the resolution is the same — so
     /// neither language has to borrow the other's vocabulary.
     PathRelative { specifier: String },
+    /// A markdown link target (#3103): an inline `[text](./doc.md)` or a
+    /// reference definition `[label]: ../spec.md`, resolved literally
+    /// against the linking document's directory. Distinct from
+    /// [`Self::PathRelative`] in resolution, not just name: a document names
+    /// its target file exactly — no extension ladder — and may suffix a
+    /// `#fragment` naming a section inside it.
+    MarkdownLink { specifier: String },
 }
 
 /// Resolve a file's raw import specifiers to edges. `root` must already be
@@ -138,6 +145,21 @@ pub(crate) fn resolve(
             }
             ImportSpec::TsRelative { specifier } | ImportSpec::PathRelative { specifier } => {
                 let to_path = resolve_ts_relative(&specifier, file_dir, root);
+                edges.push(ImportEdge {
+                    specifier,
+                    to_path,
+                    kind: ImportKind::Relative,
+                });
+            }
+            ImportSpec::MarkdownLink { specifier } => {
+                // The `#fragment` names a section of the target document;
+                // the file edge is the part before it. (A pure-fragment
+                // self link never gets this far — extraction skips it.)
+                let path = match specifier.split_once('#') {
+                    Some((path, _fragment)) => path,
+                    None => specifier.as_str(),
+                };
+                let to_path = existing_within_root(&file_dir.join(path), root);
                 edges.push(ImportEdge {
                     specifier,
                     to_path,

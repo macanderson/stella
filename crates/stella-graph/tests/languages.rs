@@ -233,6 +233,67 @@ fn typescript_index_and_relative_imports_resolve() {
 }
 
 #[test]
+fn markdown_links_resolve_between_documents() {
+    // A markdown link is an import edge (#3103): the forward direction
+    // answers "what does this document cite", the reverse one "which
+    // documents reference this one".
+    let fx = Fixture::build(&[
+        (
+            "docs/a.md",
+            "# A\n\nSee [the spec](./spec/b.md#section) and \
+             [the readme](../README.md).\n\n\
+             [dead]: ./missing.md\n[web]: https://example.com/x\n",
+        ),
+        (
+            "docs/spec/b.md",
+            "# B\n\nbody\n\nSetext sub\n----------\ntext\n",
+        ),
+        ("README.md", "# Readme\n"),
+    ]);
+
+    let targets = fx.import_targets("docs/a.md");
+    assert!(
+        targets.iter().any(|t| t == "docs/spec/b.md"),
+        "`./spec/b.md#section` should resolve past its fragment; got {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|t| t == "README.md"),
+        "`../README.md` should resolve against the document's directory; got {targets:?}"
+    );
+    // A dead relative link keeps its edge — the rot IS the finding — while
+    // an absolute URL never becomes an edge at all.
+    assert!(
+        targets.iter().any(|t| t == "./missing.md"),
+        "a dead link stays recorded as its unresolved specifier; got {targets:?}"
+    );
+    assert!(
+        !targets.iter().any(|t| t.contains("example.com")),
+        "an absolute URL is not a workspace edge; got {targets:?}"
+    );
+
+    // Reverse edge: the cited document knows who cites it.
+    let importers: Vec<String> = fx
+        .graph
+        .importers_of(Path::new("docs/spec/b.md"))
+        .unwrap()
+        .into_iter()
+        .flat_map(|f| f.relations)
+        .filter_map(|r| r.display_name)
+        .collect();
+    assert!(
+        importers.iter().any(|i| i == "docs/a.md"),
+        "the reverse edge must name the citing document; got {importers:?}"
+    );
+
+    // The setext heading (#3103's second half) is a section symbol exactly
+    // like an ATX one, findable under its breadcrumb.
+    assert!(has_label_starting(
+        &fx.def_labels("B › Setext sub"),
+        "section B › Setext sub ("
+    ));
+}
+
+#[test]
 fn javascript_require_resolves_relative() {
     let fx = Fixture::build(&[
         (

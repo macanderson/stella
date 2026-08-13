@@ -154,15 +154,15 @@ pub(crate) fn parse_sql_tree(grammars: &Grammars, source: &str) -> Option<tree_s
 /// unparseable input → the caller records a skip and continues.
 pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> Option<Parsed> {
     // Markdown ahead of the grammar lookup, because it has none: its sections
-    // come from a line scan in this crate ([`crate::markdown`]), which is why
-    // it is the one language present in every build. A document with no
-    // headings yields no symbols and is still a successful parse — it is a
-    // file the index knows about, with a file-level vector, exactly like a
-    // source file that declares nothing.
+    // and link edges come from line scans in this crate ([`crate::markdown`]),
+    // which is why it is the one language present in every build. A document
+    // with no headings yields no symbols and is still a successful parse — it
+    // is a file the index knows about, with a file-level vector, exactly like
+    // a source file that declares nothing.
     if lang == Language::Markdown {
         return Some(Parsed {
             symbols: crate::markdown::sections(source),
-            imports: Vec::new(),
+            imports: crate::markdown::links(source),
             calls: Vec::new(),
         });
     }
@@ -193,9 +193,8 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
             extract_ts_imports(&pack.imports, root, src)
         }
         Language::Sql => Vec::new(), // SQL has no imports
-        // Unreachable: markdown returned above, before the pack lookup. A
-        // link between documents IS an import edge and would be worth
-        // extracting, but it is a separate change (#3103).
+        // Unreachable: markdown returned above, before the pack lookup —
+        // its link edges ride that early return (#3103).
         Language::Markdown => Vec::new(),
         Language::Go => extract_go_imports(&pack.imports, root, src),
         Language::Java => extract_java_imports(&pack.imports, root, src),
@@ -1270,6 +1269,7 @@ mod added_language_tests {
             .map(|spec| match spec {
                 ImportSpec::Bare { specifier }
                 | ImportSpec::PathRelative { specifier }
+                | ImportSpec::MarkdownLink { specifier }
                 | ImportSpec::TsRelative { specifier }
                 | ImportSpec::PyAbsolute { specifier }
                 | ImportSpec::RustUse { specifier } => specifier.clone(),
