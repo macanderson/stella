@@ -78,8 +78,11 @@ impl Tool for ProjectOverview {
         };
         let overview = match overview {
             Ok(overview) => overview,
-            Err(_) => {
-                return ToolOutput::error("the project overview was cancelled");
+            Err(join_error) => {
+                return ToolOutput::error(crate::blocking::worker_failure(
+                    "the project overview",
+                    join_error,
+                ));
             }
         };
         ToolOutput::Ok {

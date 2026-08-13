@@ -188,7 +188,12 @@ impl Tool for CodeGraphQuery {
         let target = target.to_string();
         tokio::task::spawn_blocking(move || run_query(&root, &op, &target))
             .await
-            .unwrap_or_else(|_| ToolOutput::error("the code-graph query was cancelled"))
+            .unwrap_or_else(|error| {
+                ToolOutput::error(crate::blocking::worker_failure(
+                    "the code-graph query",
+                    error,
+                ))
+            })
     }
 }
 

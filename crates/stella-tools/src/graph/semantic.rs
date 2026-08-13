@@ -162,8 +162,11 @@ pub(crate) async fn semantic_query(root: &Path, query: &str) -> ToolOutput {
         Ok(Err(message)) => {
             return ToolOutput::error(message);
         }
-        Err(_) => {
-            return ToolOutput::error("the code-graph query was cancelled");
+        Err(join_error) => {
+            return ToolOutput::error(crate::blocking::worker_failure(
+                "the code-graph query",
+                join_error,
+            ));
         }
     };
 
