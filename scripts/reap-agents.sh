@@ -24,8 +24,7 @@
 #
 #   (B) An orphaned OS subprocess a *now-dead* stella spawned mid-turn — a
 #       custom manifest tool, the hook runner, contextgraph-host's stdio
-#       provider connections (and, from builds predating the 2026-08 tool
-#       purge, the removed shell tool). Each calls setsid() before exec and
+#       provider connections. Each calls setsid() before exec and
 #       carries its own Drop-based "kill_group" backstop
 #       (contextgraph-host/src/stdio.rs, crates/stella-tools/src/exec.rs) —
 #       but that backstop is Rust destructor logic, which a SIGKILL'd parent

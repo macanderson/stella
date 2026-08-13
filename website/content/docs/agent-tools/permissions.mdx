@@ -59,13 +59,13 @@ For the full hook model — events, matchers, timeouts, and the JSON payload del
 
 Hooks and guard rules decide *whether* a command runs. Containment bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for.
 
-**stella has no per-command sandbox.** Earlier versions had one: `STELLA_BASH_SANDBOX=workspace-write|restricted` wrapped the since-removed `bash` tool in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
+**stella has no per-command sandbox.** A `STELLA_BASH_SANDBOX=workspace-write|restricted` setting existed in earlier versions, wrapping one spawn path in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
 
 <Callout type="warn">
 If you set `STELLA_BASH_SANDBOX` in a shell profile, a CI job, or a service unit, it is inert — nothing reads it and nothing warns you. Remove it, and if you were relying on it for containment, replace it with a container.
 </Callout>
 
-The reason it went is that it covered `bash` and nothing else. The other command-running built-ins of the day — build, test, script, and process tools, the repo and CI tools — plus the custom-manifest and hook paths all spawned on their own, and every one of them ran unconfined while the setting said "sandbox: on". A boundary you can step around by starting a process a different way is not a boundary, and one that people believe in is worse than a clearly absent one. (Those built-ins are gone now, but the lesson stands: custom script tools, MCP servers, and hooks still spawn processes of their own.)
+The reason it went is that it covered one spawn path and nothing else while the others — custom script tools, MCP servers, and hooks all spawn processes of their own — ran unconfined, and the setting still said "sandbox: on". A boundary you can step around by starting a process a different way is not a boundary, and one that people believe in is worse than a clearly absent one.
 
 Run the whole stella process inside a container instead — Docker, Podman, or a remote sandbox. The boundary then sits *outside* every spawn path rather than on one of them, so no tool can route around it, and it holds for file writes, network, and process execution alike.
 

@@ -84,10 +84,6 @@ All 12 tools register in every session — no configuration, no prerequisites. G
 
 The read-only partition is exactly: `task_list`, `get_state`, `list_state`, and `get_environment`. The other eight are mutating.
 
-<Callout type="info">
-Earlier releases shipped a much larger built-in surface — file editing, a shell, code search, repo operations, web access, media generation, issue-tracker integration, process control, and more, 79 tools at its peak. The 2026-08 tool purge removed all of it in favor of the 12-tool core above. Capabilities beyond the core now come from [custom script tools](/docs/agent-tools/custom-tools) and [MCP servers](/docs/agent-tools/mcp), where each workspace chooses exactly the surface it wants.
-</Callout>
-
 ## Switching tools off
 
 Every tool ships **on**. The one way to turn something off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it reads the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:

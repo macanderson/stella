@@ -3,9 +3,7 @@
 **Date:** 2026-08-10
 **Scope:** Full comparison of the agent/turn loop, skill usage, MCP usage, memory saving, and effective system prompts between Stella (`~/Projects/stella`, Rust) and "zappy code" (a rebranded Claude Code source tree, TypeScript — its own `package.json` labels it "leaked source (2026-03-31)"; all analysis here stays at the design/mechanism level).
 **Output:** 20 GitHub issues filed on `macanderson/stella` (#2673–#2692), plus a build order (below).
-**Post-comparison note (2026-08):** the 2026-08 tool purge later reduced
-Stella's built-in tool surface to 12; tool names below describe the surface
-as of the comparison date.
+Tool names below describe the surface as of the comparison date.
 
 ---
 

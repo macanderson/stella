@@ -7,11 +7,6 @@ status: proposed
 # Design: Remote sandboxes — one sandbox type, on your disk or someone else's
 
 **Status:** Proposed · **Date:** 2026-08-02 · **Nothing here is built.**
-**Note (2026-08):** the tool inventory this document generalizes over (§ the
-shell, file, process, repo, and web tools) was removed in the 2026-08 tool
-purge — the built-in surface is now 12 tools, none of which spawns a
-workspace process. The invariants still bind any future execution surface;
-read the per-tool sections as describing the pre-purge registry.
 This document describes a destination, not the code. Where it names a
 file or a type that exists today (`crates/stella-tools/src/registry.rs`,
 `Tool::execute`, `stella-fleet`'s worktree port), that is the *current*

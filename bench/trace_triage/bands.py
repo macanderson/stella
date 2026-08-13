@@ -80,11 +80,11 @@ __all__ = [
 #: nothing else. A tool missing from this list is simply not counted as a read
 #: — the re-read metric under-reports rather than inventing a category.
 #:
-#: These are **recorded-trace** names, not the shipping catalog: every one of
-#: them was removed in the 2026-08 tool purge, and they stay here because this
+#: These are **recorded-trace** names, not the shipping catalog: they stay
+#: here because this
 #: module's subject is archived runs (the survey above included), whose
-#: streams state exactly these names. A post-purge trace simply has no
-#: read-shaped calls to count.
+#: streams state exactly these names. A trace stating none of them simply has
+#: no read-shaped calls to count.
 READ_TOOLS = frozenset(
     {
         "read_file",

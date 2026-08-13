@@ -2,11 +2,6 @@
 # Source: docs/design/serve-surface.md (2026-07-20). Builds the headless engine
 # service (Option B of oxagen ADR-033) so Oxagen drives the Rust core over HTTP/SSE.
 #
-# HISTORICAL ARTIFACT: authored before the 2026-08 tool purge. Tool names in
-# the task prompts below (repo_commit, build_project, run_tests, verify_done,
-# run_script, ask_user) name tools that no longer exist; this plan is kept as
-# the record of how the serve surface was built, not as a runnable plan.
-#
 # Run from the stella repo root, on a FEATURE BRANCH (shared-tree commits land on
 # the current branch):
 #   git checkout feat/serve-engine

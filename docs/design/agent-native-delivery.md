@@ -7,10 +7,8 @@ status: proposed
 # Agent-Native Delivery — the issue tracker as the agent's working memory
 
 Status: proposal, unbuilt. Phases in §11; the Phase-1 Linear extraction is
-filed separately. Note (2026-08): the issue toolset this proposal extends
-(`create_issue`, `start_work_on_issue`, …) was removed in the 2026-08 tool
-purge — building this design now means reintroducing an issue surface, not
-extending one.
+filed separately. No built-in issue toolset ships today, so building this
+design means introducing an issue surface, not extending one.
 
 **Companion files:** [`agent-native-delivery/provider.jira.toml`](agent-native-delivery/provider.jira.toml)
 and [`agent-native-delivery/provider.linear.toml`](agent-native-delivery/provider.linear.toml)

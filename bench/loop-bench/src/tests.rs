@@ -885,10 +885,10 @@ fn every_attributable_event_reaches_its_own_counter() {
     assert_eq!(count(&r, "tool.repo_stats"), 1);
 }
 
-/// The channel is keyed by whatever name the stream states, so a pre-purge
-/// stream's tool names — `project_overview` and `graph_query` were removed in
-/// the 2026-08 tool purge — still land under their own keys when an archived
-/// trial is replayed, instead of vanishing or sharing a bucket.
+/// The channel is keyed by whatever name the stream states, so an archived
+/// stream's tool names — `project_overview` and `graph_query` appear only in
+/// archived traces — still land under their own keys when the trial is
+/// replayed, instead of vanishing or sharing a bucket.
 #[test]
 fn a_pre_purge_streams_removed_tool_names_still_count_under_their_own_keys() {
     let r = distill_events(

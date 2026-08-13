@@ -980,11 +980,9 @@ class StellaAgent(BaseInstalledAgent):
         """Index the task workspace, and embed it, before the first turn.
 
         The index is ``.stella/private/codegraph.db``, which a fresh task
-        checkout has never had. Its original consumers were the ``graph_query``
-        and ``semantic_code_search`` tools, both removed in the 2026-08 tool
-        purge; what still reads it is the engine's own context plane — recall
-        fans out through the CGP host over this index — so the step keeps
-        buying the turn code intelligence it would otherwise lack. The
+        checkout has never had. What reads it is the engine's own context
+        plane — recall fans out through the CGP host over this index — so the
+        step buys the turn code intelligence it would otherwise lack. The
         embedding half needs a backend in the container (``VOYAGE_API_KEY`` /
         ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), which this rig lacks
         today: the gap #2995 measures. Neither half needs a credential

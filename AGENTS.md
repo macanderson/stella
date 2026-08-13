@@ -108,10 +108,6 @@ would launch a browser on nearly every PR — the same disjoint-paths reasoning
 that gave `wire-schema.yml` its own file. It is deliberately not a required
 check yet (#2425).
 
-(A fifth, `containment-posture.yml`, existed to prove the bash tool's
-graded-tree write ban on a real Actions Linux runner (#2998, #3011); it was
-deleted with the bash tool in the 2026-08 tool purge.)
-
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -396,11 +392,6 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-(The standalone `verify_done` tool that automated this in a shadow worktree
-was removed in the 2026-08 tool purge, with the rest of the wide built-in
-surface. The contract did not go with it — it is enforced at the PR level as
-above, and at runtime by the pipeline's witness stage below.)
-
 The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the verifier's resolution, never the worker) author the failing witness test,
@@ -609,7 +600,7 @@ editing Stella's own code should know what lives where:
 
 | Path | Purpose |
 |---|---|
-| `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Written by hand — the `save_memory` write-side tool was removed in the 2026-08 tool purge.) |
+| `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. Written by hand. |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
 | `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |

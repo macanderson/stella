@@ -24,18 +24,17 @@ for confirmed issues, keeping you informed along the way.
 Especially interesting, given what Stella promises:
 
 - **Workspace-root escape** — any way a tool call reaches outside the pinned
-  workspace root: traversal, symlinks, race conditions. Since the 2026-08 tool
-  purge the built-in surface is the task board, the scratch state plane, and
-  `get_environment` — no built-in file CRUD or shell remains — so the paths
-  that matter run through the built-ins' own state files under `.stella/` and
-  through the extension surfaces (custom manifest tools, hooks, MCP servers).
+  workspace root: traversal, symlinks, race conditions. The built-in surface
+  is the task board, the scratch state plane, and `get_environment` — no
+  built-in file CRUD or shell — so the paths that matter run through the
+  built-ins' own state files under `.stella/` and through the extension
+  surfaces (custom manifest tools, hooks, MCP servers).
 - **Phone-home violations** — telemetry, update checks, or analytics leaving the
   machine in Community/default mode. Zero is the contract there, and the only
   governed exception is an explicitly enrolled Oxagen Enterprise seat. Network
   traffic the user asked for is *not* a violation: the chosen model provider and
-  configured MCP servers. No built-in tool fetches a URL since the 2026-08 tool
-  purge removed the `web` family. Traffic from any sanctioned surface to a host
-  the user did not configure *is* in scope.
+  configured MCP servers. No built-in tool fetches a URL. Traffic from any
+  sanctioned surface to a host the user did not configure *is* in scope.
 - **Credential exposure** — API keys leaking into logs, telemetry, error
   messages, or files with permissive modes.
 - **Prompt/tool injection with impact** — untrusted content (repo files, MCP

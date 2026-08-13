@@ -7,10 +7,8 @@ status: living
 # Removing a built-in tool — the repeatable checklist
 
 The procedure for deleting a dispatchable tool from Stella so that no source,
-doc, config, or CLI surface still claims it exists. Applied first in the
-2026-08 purge that reduced the built-in surface from 79 tools to the 12
-subagent / task-board / scratch-state / environment tools; written so the next
-removal — one tool or fifty — is the same mechanical sweep.
+doc, config, or CLI surface still claims it exists. Written so any removal —
+one tool or fifty — is the same mechanical sweep.
 
 The compiler and the gate are the system. A removal is not "find every
 mention by memory"; it is: unhook the tool at its registration and declaration
@@ -97,9 +95,10 @@ The final gate, run per removed tool name:
 git ls-files -z | xargs -0 rg -l --fixed-strings '<tool_name>'
 ```
 
-Every remaining hit is either (a) updated, (b) a deliberate historical
-reference (an ADR, an issue postmortem) that names the tool as *removed*, or
-(c) a defect. There is no fourth category. Anything discovered that cannot be
+Every remaining hit is either (a) updated or deleted, (b) a record that must
+stay as recorded (an issue postmortem, archived bench data, a trace fixture),
+or (c) a defect. There is no fourth category — in particular, prose docs do
+not get "removed in ..." notes: delete the sentence, don't memorialize it. Anything discovered that cannot be
 fixed in the same change is filed as a GitHub issue before finishing
 (AGENTS.md § "Nothing left behind").
 

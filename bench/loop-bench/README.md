@@ -55,9 +55,7 @@ For each trial dir `<jobs-dir>/<job-name>/<task>__<id>/`, `distill_events` reads
 calls, and a terminal
 event is `complete` or an `error` with `retryable: false`. The reward comes from
 `verifier/reward.txt`. Per-tool-name counts live in the feature-attribution
-map's `tool.<name>` keys; the dedicated file-write and graph-tool columns the
-table once carried (`wr`, `ov`, `gq`) died with their subjects in the 2026-08
-tool purge.
+map's `tool.<name>` keys.
 
 Beside those loop-health counters, every trial also carries a **per-feature
 attribution** map — see [§ Feature attribution](#feature-attribution-2382).

@@ -293,9 +293,8 @@ fresh as files change, for exactly as long as a session runs.
 `.stella/explorations/` holds **exploration maps** — high-fidelity notes on how
 a codebase slice fits together, each carrying a `path → sha256` manifest so
 staleness is a per-file verdict rather than a blunt "this might be old." The
-agent tools that wrote and read these maps (`save_exploration` / `explorations`)
-were removed in the 2026-08 tool purge; the maps themselves are plain files, so
-existing ones remain readable and reviewable.
+maps are plain files — readable, reviewable, and rendered with per-file
+staleness verdicts by `stella observe`'s filesystem view.
 
 ## The domain taxonomy
 

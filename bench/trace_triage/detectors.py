@@ -8,10 +8,10 @@ split is what makes the whole set testable against a fixture trace, and it is
 why adding a detector is one decorated function and nothing else.
 
 The tool names in here (`bash`, `grep`, ...) are **recorded-trace**
-vocabulary: those built-ins were removed in the 2026-08 tool purge, and the
-detectors keep matching them because this module's subject is archived runs,
-whose streams state exactly these names. A post-purge trace simply never
-trips the shapes keyed on them.
+vocabulary — names appearing in archived runs, whose streams state exactly
+these names. The detectors match what the traces say, not the shipping
+catalog; a trace stating none of these names simply never trips the shapes
+keyed on them.
 
 ## Adding a detector
 

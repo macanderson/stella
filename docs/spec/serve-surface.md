@@ -605,18 +605,12 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
 
 ## Containment posture (why the sidecar runs *inside* Oxagen's sandbox)
 
-The tools sweep found that turning `tools.bash: off` did **not** remove
-arbitrary shell execution — `build_project`, `run_tests`, `verify_done`, and
-`run_script` all shelled out via `bash -c`, and nothing confined any of them
-in-process. (All of those tools, the shell included, were removed in the
-2026-08 tool purge; the conclusion below never rested on which spawn paths
-exist, and custom tools and hooks still spawn.) (The built-in OS sandbox, `STELLA_BASH_SANDBOX`, covered the
-`bash` tool alone and was removed in #1300 for exactly the reason this
-paragraph gives: it bounded one spawn path out of many. This section's
-conclusion is unchanged by that — it never rested on the sandbox.) The web
-tools are an unguarded SSRF primitive when enabled. Several credentials/config
-knobs are process-global (web auth, provider keys), so **multi-tenant in one
-process is a non-starter.**
+Nothing confines a spawned command in-process — custom manifest tools and
+hook actions run with the engine process's own privileges, and no per-command
+sandbox exists (the one that once wrapped a single spawn path was removed in
+#1300 for bounding one path out of many; this section's conclusion never
+rested on it). Several credentials/config knobs are process-global (web auth,
+provider keys), so **multi-tenant in one process is a non-starter.**
 
 Therefore the serve model is **one engine process per trust boundary, run inside
 Oxagen's existing Firecracker/Modal sandbox** (the same isolation

@@ -225,8 +225,8 @@ def format_tool_input(name: str, arguments: Any) -> str:
     if not isinstance(arguments, dict):
         return summarize("" if arguments is None else _as_text(arguments))
 
-    # `apply_edits` (removed in the 2026-08 tool purge, still present in the
-    # archived pre-purge traces this renders) carries its paths inside a batch
+    # `apply_edits` (a name appearing only in the archived traces this
+    # renders) carries its paths inside a batch
     # rather than at the top level; surfacing them keeps its row reading like
     # the other file tools' instead of falling through to the raw-JSON tail.
     if name == "apply_edits" and isinstance(arguments.get("edits"), list):

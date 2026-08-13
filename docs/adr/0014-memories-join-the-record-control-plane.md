@@ -14,11 +14,6 @@ status: proposed
   [#2284](https://github.com/macanderson/stella/issues/2284)
 - Scope note: outside the Phase 0 series, like ADR 0013. It decides governance
   of an existing surface, not a new feature.
-- Post-record note (2026-08): the `save_memory` tool this ADR's decisions are
-  written against was removed in the 2026-08 tool purge, which reduced the
-  built-in surface to 12 tools. The memory *files* and their governance
-  question remain; a ratification would have to restate D2/D3 against
-  whatever write path replaces the tool.
 
 ## Context
 

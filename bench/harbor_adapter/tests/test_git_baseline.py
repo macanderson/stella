@@ -147,9 +147,9 @@ class TestScriptBehavior:
         assert log.stdout.strip() == (
             f"stella-harbor <stella-harbor@bench.invalid> {GIT_BASELINE_COMMIT_MESSAGE}"
         )
-        # The witness-baseline pin (#2067): a pre-purge SUT's `verify_done`
-        # resolved this ref in preference to a HEAD the agent's own commits
-        # have advanced past. Still written post-purge; see GIT_BASELINE_REF.
+        # The witness-baseline pin (#2067): a frozen SUT's `verify_done`
+        # resolves this ref in preference to a HEAD the agent's own commits
+        # have advanced past. Always written; see GIT_BASELINE_REF.
         pinned = _git(tmp_path, "rev-parse", "--verify", GIT_BASELINE_REF)
         assert pinned.returncode == 0
         assert pinned.stdout.strip() == report["commit"]

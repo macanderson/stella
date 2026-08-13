@@ -98,10 +98,7 @@ pub struct TrialReport {
     pub model_calls: u32,
     /// `tool_start` events. Zero is the signal this harness exists for; see
     /// `zero_work` below. Per-tool-name counts live in `features` (the
-    /// `tool.<name>` keys); the dedicated file-write and graph-tool columns
-    /// this report once carried died with their subjects in the 2026-08 tool
-    /// purge — no built-in mutates the repo or queries the code graph any
-    /// more.
+    /// `tool.<name>` keys).
     pub tool_calls: u32,
     /// Pipeline stages in first-seen order, de-duplicated: this is the set of
     /// stages the turn reached, not a transition log, so a verify → execute

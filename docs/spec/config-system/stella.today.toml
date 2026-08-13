@@ -5,10 +5,6 @@
 # single-file TOML shape. This is the migration target for phase 1: a pure
 # transliteration, no new semantics, no invented keys.
 #
-# NOTE (2026-08): the tool purge later reduced the built-in surface to 12
-# tools; tool names and groups in the [tools] examples below (bash, process,
-# file, read_file, ...) reflect the pre-purge catalog.
-#
 #   *** THIS FILE NOW LOADS — with one exception, noted below. ***
 #
 # Phase 1 shipped: drop this at <repo>/stella.toml (or ~/.stella/stella.toml)

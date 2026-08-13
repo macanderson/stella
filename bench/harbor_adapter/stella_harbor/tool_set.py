@@ -65,10 +65,9 @@ _PRESET_WORDS = frozenset({"1", "true", "0", "false"})
 #: tools, with no discovery layer on top (``ONLY_PREFIX`` in
 #: ``crates/stella-cli/src/discovery.rs``).
 #:
-#: Always emitted, never optional. The bare comma list lets the engine's
-#: discovery layer stack its own additions on top of the named core (before
-#: the 2026-08 tool purge that meant `tool_search`, `skill_search` and
-#: `mcp_search`), which is right for a session and wrong for a measured arm:
+#: Always emitted, never optional. A bare comma list is open to the engine
+#: stacking its own additions on top of the named core, which is right for a
+#: session and wrong for a measured arm:
 #: an arm that advertises more tools than it names is not the arm anyone
 #: reasoned about. Accepted on input too, so an operator who writes the
 #: prefix by hand gets the same set as one who does not.

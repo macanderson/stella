@@ -176,9 +176,6 @@ stella stats --format json | jq '.rows[] | {model, total_cost_usd}'
 stella inspect 42 --step 3 --format json | jq '{schema_version, verified}'
 ```
 
-The one exemption is `stella scripts list --format json`: its frame carries its
-own `schema_version`, pinned by the scripts-index spec.
-
 ## Configure via environment
 
 Every core global flag has an environment variable, so a CI job can be configured without

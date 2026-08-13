@@ -3,13 +3,8 @@
 Survey date: 2026-08-10. A ten-question audit of what the agent loop actually
 exposed on that date — what existed, what did not, and whether "skills drive
 everything" is a direction worth taking. Every claim carries the file and line
-where it was read. Line numbers are as of this date and will drift.
-
-> **Superseded by events:** the 2026-08 tool purge
-> (`docs/playbooks/tool-removal.md`) removed most of the tool surface this
-> survey inventories — the built-ins are now the 12 task-board / sub-agent /
-> scratch-state / environment tools. Read every "exists today" below as
-> "existed on 2026-08-10".
+where it was read. Line numbers are as of this date and will drift; read
+every "exists today" below as "existed on 2026-08-10".
 
 ## 1. Skills: no invocation tool, no functions, no prompt text
 

@@ -54,9 +54,8 @@ explicitly enables repository trust, and managed denial always wins.
 Untrusted project scope may retain cosmetic provider metadata and may narrow
 an already granted capability. It may not:
 
-- enable effectful tools (the shell, web, process, and paid-media families
-  this line named before the 2026-08 tool purge no longer exist as built-ins;
-  the prohibition binds any effectful surface, present or reintroduced);
+- enable effectful tools — the prohibition binds any effectful surface,
+  built-in or extension;
 - replace agent system prompts;
 - load workspace custom tools, commands, agents, skills, memories, or rules as
   privileged instructions;
@@ -64,8 +63,8 @@ an already granted capability. It may not:
 
 ### Paid-media host-data isolation
 
-(The paid-media tools were removed from the built-in surface in the 2026-08
-tool purge; this section binds any reintroduction.)
+(No built-in media tool exists; this section binds any host that constructs
+one.)
 
 An approving `MediaSpendGate` is necessary but not sufficient. The registry
 constructs approving image/video tools only when the host also supplies a

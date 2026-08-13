@@ -8,9 +8,7 @@ status: living
 
 # `docs/tools/`
 
-One TOML page per dispatchable tool — 12 of them — generated from the declarations by `crates/stella-cli/src/tool_docs.rs` and re-derived by the `tool-docs` gate step. A tool added to `crates/stella-tools/src/catalog.rs` without regenerating turns the gate red; there is no path where a new tool ships undocumented.
-
-The 2026-08 tool purge reduced the built-in surface from 79 tools to these 12 — the subagent / task-board / scratch-state / environment set. The other 67 built-ins (file editing, shell, search, repo, web, media, issue, process, and skill tools among them) were removed. See `docs/playbooks/tool-removal.md` for the removal procedure.
+One TOML page per dispatchable tool — 12 of them, the subagent / task-board / scratch-state / environment set — generated from the declarations by `crates/stella-cli/src/tool_docs.rs` and re-derived by the `tool-docs` gate step. A tool added to `crates/stella-tools/src/catalog.rs` without regenerating turns the gate red; there is no path where a new tool ships undocumented.
 
 Each page carries the tool's name, description, input schema, output schema, `read_only`, `available_for_speculation`, category, and a commented example input and output payload.
 
@@ -19,7 +17,7 @@ Two fields are stated absences rather than values, because inventing them would 
 - **`risk_level` is `"undeclared"`.** Nothing in the repository carries a per-tool risk level. Tracked in #3060.
 - **`output_schema` is the envelope only.** Every tool answers in `ToolOutput { ok | error }`, which is declared and is what the field holds; the shape of the text inside `ok.content` is a per-tool convention with nothing behind it, so the observed example is its only evidence.
 
-**Examples are observed, not written.** They come from Terminal-Bench trial traces (stella-events.jsonl), distilled by scripts/build-tool-doc-examples.py, captured 2026-08-11 over 2829 call/result pairs across 10 tasks — a capture taken against the pre-purge 79-tool surface. 4 of the 12 tools carry a real example; the rest say so.
+**Examples are observed, not written.** They come from Terminal-Bench trial traces (stella-events.jsonl), distilled by scripts/build-tool-doc-examples.py, captured 2026-08-11 over 2829 call/result pairs across 10 tasks. 4 of the 12 tools carry a real example; the rest say so.
 
 | Tool | Category | Availability | Read-only | Speculation-safe | Observed example |
 |---|---|---|---|---|---|
