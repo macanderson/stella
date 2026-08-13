@@ -55,7 +55,9 @@ from .sut import arenabench_home
 
 __all__ = [
     "connect",
+    "experiment_document",
     "experiments_db_path",
+    "experiments_payload",
     "load_results",
     "store_results",
 ]
@@ -135,15 +137,60 @@ def load_results(db_path: Path | None = None) -> list[dict[str, Any]]:
 
     Reads normalize through ``json()`` when the linked SQLite has it, so
     rows written in either encoding (binary JSONB or JSON text) come back
-    as the same Python mapping.
+    as the same Python mapping. A workspace that never stored an
+    experiment gets an empty list — looking must not create a database.
     """
+    path = experiments_db_path() if db_path is None else db_path
+    if not path.exists():
+        return []
     select = (
         "SELECT json(results) FROM experiment_results"
         if _jsonb_available()
         else "SELECT results FROM experiment_results"
     )
-    conn = connect(db_path)
+    conn = connect(path)
     try:
         return [json.loads(row[0]) for row in conn.execute(select)]
     finally:
         conn.close()
+
+
+def experiments_payload(db_path: Path | None = None) -> dict[str, Any]:
+    """Every stored document summarized for a listing surface (#3215).
+
+    One row per document: the document's own ``experiment`` header plus
+    the calculation version, which is what a gallery needs to name a card.
+    The full document stays behind :func:`experiment_document` — a listing
+    that shipped whole documents would grow with every trial they record.
+    """
+    summaries = []
+    for document in load_results(db_path):
+        experiment = document.get("experiment")
+        header = experiment if isinstance(experiment, Mapping) else {}
+        summaries.append(
+            {
+                "id": header.get("id"),
+                "title": header.get("title"),
+                "status": header.get("status"),
+                "schema": document.get("schema"),
+                "calculation_version": document.get("calculation_version"),
+            }
+        )
+    return {"experiments": summaries}
+
+
+def experiment_document(
+    experiment_id: str, db_path: Path | None = None
+) -> dict[str, Any] | None:
+    """The full stored document whose experiment id matches, or ``None``.
+
+    When one id was stored more than once, the *latest* row wins: a re-run
+    of a calculation supersedes its predecessor, and rows are read in
+    insertion order.
+    """
+    found = None
+    for document in load_results(db_path):
+        experiment = document.get("experiment")
+        if isinstance(experiment, Mapping) and experiment.get("id") == experiment_id:
+            found = document
+    return found
