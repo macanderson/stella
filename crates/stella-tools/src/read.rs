@@ -282,7 +282,9 @@ impl Tool for ReadFile {
         // MAX_LINES is a ceiling, not just the default: the flood protection
         // the module header promises must hold for explicit limits too.
         let limit = match crate::input::optional_u64(input, "limit") {
-            Ok(limit) => limit.map(|n| (n as usize).min(MAX_LINES)).unwrap_or(MAX_LINES),
+            Ok(limit) => limit
+                .map(|n| (n as usize).min(MAX_LINES))
+                .unwrap_or(MAX_LINES),
             Err(err) => {
                 return ToolOutput::Error {
                     message: err.to_string(),

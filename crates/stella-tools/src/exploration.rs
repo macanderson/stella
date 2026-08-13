@@ -66,7 +66,10 @@ pub const LEDGER_FILES_KEY: &str = "_session_read_files";
 /// fabricated evidence. `files_touched` is the registry ledger's
 /// `(path, op-letters)` rows; only rows recording a read (`R`) count.
 /// Returns `None` when the input is already correct as-is.
-pub(crate) fn ledger_augmented(files_touched: Vec<(String, String)>, input: &Value) -> Option<Value> {
+pub(crate) fn ledger_augmented(
+    files_touched: Vec<(String, String)>,
+    input: &Value,
+) -> Option<Value> {
     let Value::Object(map) = input else {
         return None;
     };
@@ -77,10 +80,7 @@ pub(crate) fn ledger_augmented(files_touched: Vec<(String, String)>, input: &Val
         .collect();
     if !read_paths.is_empty() {
         let mut map = map.clone();
-        map.insert(
-            LEDGER_FILES_KEY.to_string(),
-            serde_json::json!(read_paths),
-        );
+        map.insert(LEDGER_FILES_KEY.to_string(), serde_json::json!(read_paths));
         Some(Value::Object(map))
     } else if map.contains_key(LEDGER_FILES_KEY) {
         let mut map = map.clone();

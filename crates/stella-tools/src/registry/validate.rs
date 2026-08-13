@@ -171,7 +171,8 @@ fn check(schema: &Value, input: &Value) -> Option<InputError> {
             .collect();
         unknown.sort();
         if let Some(field) = unknown.first() {
-            let mut allowed: Vec<&String> = properties.into_iter().flatten().map(|(k, _)| k).collect();
+            let mut allowed: Vec<&String> =
+                properties.into_iter().flatten().map(|(k, _)| k).collect();
             allowed.sort();
             let allowed = allowed
                 .iter()

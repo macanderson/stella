@@ -935,7 +935,10 @@ mod tests {
         let ToolOutput::Error { message } = out else {
             panic!("expected a refusal, got {out:?}");
         };
-        assert_eq!(message, "field `test_files`[0] must be a string, got number");
+        assert_eq!(
+            message,
+            "field `test_files`[0] must be a string, got number"
+        );
     }
 
     #[tokio::test]
