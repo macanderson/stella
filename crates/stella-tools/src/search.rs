@@ -169,11 +169,12 @@ const DEFAULT_BUDGET_CHARS: usize = 9_000;
 /// name match wearing a semantic answer's clothes is worse than no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Strategy {
-    /// The query exactly names an indexed symbol, so its defining files are
-    /// pinned above whatever the ranked strategies return (#3125). Not a
-    /// ladder rung: it contributes *alongside* the rung that ranks, because
-    /// an exact answer must never lose to a guessed one.
-    ExactName,
+    /// The query named an indexed symbol exactly, and the graph knows where it
+    /// is defined. Not a ranking — a lookup that either hit or did not.
+    ///
+    /// Not a ladder rung either: it contributes *alongside* the rung that
+    /// ranks, because an exact answer must never lose to a guessed one.
+    ExactSymbol,
     /// The query and the files were embedded and compared by meaning.
     Semantic,
     /// The code graph's paths and symbol names were matched by term.
@@ -187,9 +188,7 @@ impl Strategy {
     /// The word that appears in the answer's `via:` line.
     const fn label(self) -> &'static str {
         match self {
-            Strategy::ExactName => {
-                "exact (the query names an indexed symbol; its definition is pinned first)"
-            }
+            Strategy::ExactSymbol => "exact symbol name (code-graph definition sites)",
             Strategy::Semantic => "semantic (embedding rank over the code-graph index)",
             Strategy::GraphNames => "names (path + symbol-name terms over the code-graph index)",
             Strategy::FileScan => "scan (path + content terms over the working tree, no index)",
@@ -361,24 +360,95 @@ impl Tool for Search {
         let query = input
             .get("query")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim();
-        if query.is_empty() {
-            return ToolOutput::Error {
-                message: "`query` is required: what you are looking for, as a question, a \
-                          description of the behaviour, or a symbol name — e.g. \"where request \
-                          headers are sanitized\" or \"CredentialStore\""
-                    .into(),
-            };
-        }
-        run_search(root, query, self.config).await
+            .unwrap_or_default();
+        // Validation (the blank-query refusal included) lives in [`report`],
+        // so this door and the CLI's `stella search` cannot drift apart.
+        search(root, query, self.config).await
     }
 }
 
-/// One `search` end to end — the shared engine behind the `search` tool and
-/// the `stella search` subcommand, so a human at the CLI and the model inside
-/// a turn see the same answer for the same question (the `stella graph` /
-/// `graph_query` precedent).
+/// The refusal both doors return for a blank query. One string, one place:
+/// the tool's `execute` and the CLI's `stella search` reach it through the
+/// same [`report`] path, so the wording cannot fork between them.
+const QUERY_REQUIRED: &str = "`query` is required: what you are looking for, as a question, a \
+                              description of the behaviour, or a symbol name — e.g. \"where \
+                              request headers are sanitized\" or \"CredentialStore\"";
+
+/// One ranked hit, as data — the crate-private `Hit` with its fields public,
+/// for consumers outside this crate ([`SearchReport`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    /// Workspace-relative, forward-slash.
+    pub path: String,
+    /// Why this file ranked, as a phrase — see `Hit::why` for why it is
+    /// words rather than a score column.
+    pub why: String,
+}
+
+/// One search, as data plus the rendered answer — the seam the CLI's
+/// `stella search --format json` consumes.
+///
+/// The agent's door deliberately gets **only** [`Self::rendered`]: the module
+/// docs argue at length that a structured match list invites the model to
+/// reshape it in a shell pipeline and lose the ranking's meaning. A test
+/// script is the opposite consumer — it must assert on hit *order* without
+/// parsing prose — so the decided answer rides beside the rendered one
+/// instead of being thrown away at render time. Same dispatch, same render,
+/// one mechanism; only what survives the call differs.
+#[derive(Debug, Clone)]
+pub struct SearchReport {
+    /// The ranked hits, best first — empty when the search failed.
+    pub hits: Vec<SearchHit>,
+    /// The strategies that ran, in order, as the labels the answer's `via:`
+    /// line prints. More than one means an earlier rung came back empty.
+    pub strategies: Vec<&'static str>,
+    /// Why the semantic strategy did not run, or ran degraded — verbatim.
+    pub note: Option<String>,
+    /// Exactly what the agent's door would have returned.
+    pub rendered: ToolOutput,
+}
+
+impl SearchReport {
+    /// The structured half of an [`Answer`], paired with its rendering.
+    fn of(answer: &Answer, rendered: ToolOutput) -> Self {
+        Self {
+            hits: answer
+                .hits
+                .iter()
+                .map(|hit| SearchHit {
+                    path: hit.path.clone(),
+                    why: hit.why.clone(),
+                })
+                .collect(),
+            strategies: answer.strategies.iter().map(|s| s.label()).collect(),
+            note: answer.note.clone(),
+            rendered,
+        }
+    }
+
+    /// A search that never reached dispatch: no hits, no strategies, just
+    /// the error the caller must surface.
+    fn failed(message: &str) -> Self {
+        Self {
+            hits: Vec::new(),
+            strategies: Vec::new(),
+            note: None,
+            rendered: ToolOutput::Error {
+                message: message.into(),
+            },
+        }
+    }
+}
+
+/// One `search` end to end, rendered — the agent's door.
+pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
+    report(root, query, config).await.rendered
+}
+
+/// One `search` end to end, as a [`SearchReport`] — the CLI's door
+/// (`stella search --format json`), and the single mechanism the tool's own
+/// `search` wraps, so a scripted test and an agent call exercise identical
+/// code.
 ///
 /// `open_or_build` runs a full `index_all` catch-up pass, which its contract
 /// says an async caller must wrap in `spawn_blocking`. The handle is then held
@@ -386,17 +456,12 @@ impl Tool for Search {
 /// reads against a local file, so paying a thread hop for each would cost more
 /// than it saves. This is `semantic_code_search`'s discipline, deliberately
 /// unchanged (`crate::graph::semantic`).
-pub async fn run_search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
-    // Guarded here, not only in the tool wrapper, so every surface —
-    // `stella search ""` included — refuses an empty question instead of
-    // walking the tree to report that nothing matches nothing.
-    if query.trim().is_empty() {
-        return ToolOutput::Error {
-            message: "the query is empty: say what you are looking for — a question, a \
-                      description of the behaviour, or a symbol name"
-                .into(),
-        };
+pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
+    let query = query.trim();
+    if query.is_empty() {
+        return SearchReport::failed(QUERY_REQUIRED);
     }
+
     let owned_root = root.to_path_buf();
     let opened =
         tokio::task::spawn_blocking(move || crate::graph::open_or_build(&owned_root)).await;
@@ -407,9 +472,7 @@ pub async fn run_search(root: &Path, query: &str, config: SearchConfig) -> ToolO
         // workspace the indexer cannot serve.
         Ok(Err(message)) => (None, Some(message)),
         Err(_) => {
-            return ToolOutput::Error {
-                message: "the search was cancelled".into(),
-            };
+            return SearchReport::failed("the search was cancelled");
         }
     };
 
@@ -439,7 +502,10 @@ pub async fn run_search(root: &Path, query: &str, config: SearchConfig) -> ToolO
     if let Some(graph) = graph {
         graph.shutdown();
     }
-    crate::graph::with_index_warning(output, index_warning)
+    SearchReport::of(
+        &answer,
+        crate::graph::with_index_warning(output, index_warning),
+    )
 }
 
 /// Choose and run the ranking strategies, in cost order, stopping at the
@@ -447,7 +513,9 @@ pub async fn run_search(root: &Path, query: &str, config: SearchConfig) -> ToolO
 ///
 /// The ladder, and why it is a ladder rather than a fusion:
 ///
-/// - **Semantic** first whenever an embedder resolves, so the vector index is
+/// - **Exact symbol** first, and it is not a ranking at all — it is the graph
+///   answering "where is this defined" with a fact. It leads whenever it hits.
+/// - **Semantic** next whenever an embedder resolves, so the vector index is
 ///   exercised on every search rather than only when a model happens to pick
 ///   the semantic tool (#2995). A backend that fails mid-flight degrades to
 ///   the next rung with the failure quoted, never a lost turn.
@@ -459,8 +527,25 @@ pub async fn run_search(root: &Path, query: &str, config: SearchConfig) -> ToolO
 ///   its language is the normal case on Terminal-Bench, where the graph is
 ///   empty and both rungs above return nothing at all.
 ///
-/// Fusing them instead would mix three incomparable scales into one ordering
-/// and make the answer's `via:` line a lie.
+/// Fusing them instead would mix incomparable scales into one ordering and
+/// make the answer's `via:` line a lie.
+///
+/// # Why the top rung is a stack rather than a stop
+///
+/// Every rung below the first was unreachable in practice (#3125). "Stop at
+/// the first that produces hits" plus an admission floor that rejects nothing —
+/// measured: the lowest cosine anywhere in a 158-file corpus was 0.418 against
+/// a floor of 0.25, so 158 of 158 files were admitted — means semantic never
+/// returns empty and nothing after it ever runs. `via: semantic` on 9 of 9
+/// probes. The floor itself is #2993; this is the structural consequence, and
+/// it bites hardest exactly where ranking is weakest, on a bare symbol name.
+///
+/// So the exact rung **prepends** rather than replacing: its hits are
+/// certainties and lead, the semantic ranking follows for context with its
+/// duplicates removed, and `via:` names both. Concatenating is not the fusion
+/// the paragraph above forbids — no score from one rung is ever compared
+/// against a score from another, and each hit still says in its own `why:`
+/// which kind of answer it is.
 pub(crate) async fn dispatch(
     graph: Option<&CodeGraph>,
     root: &Path,
@@ -470,17 +555,11 @@ pub(crate) async fn dispatch(
     let mut strategies = Vec::new();
     let mut note = None;
 
-    // The certainty rung, before any ranking (#3125): a query that IS a
-    // symbol the graph knows has an exact answer, and an exact answer must
-    // never lose to a ranked guess — which it did whenever the semantic rung
-    // returned anything at all, putting the one definition of `ContextFrame`
-    // at rank 5 of 139 on a real corpus. Pinned hits lead the answer; the
-    // ranked strategy still runs and fills in the neighbourhood.
-    let pinned = graph
-        .map(|graph| enrich::exact_hits(graph, query, MAX_NAME_HITS))
-        .unwrap_or_default();
-    if !pinned.is_empty() {
-        strategies.push(Strategy::ExactName);
+    let exact = graph.map_or_else(Vec::new, |graph| {
+        enrich::exact_symbol_hits(graph, query, MAX_NAME_HITS)
+    });
+    if !exact.is_empty() {
+        strategies.push(Strategy::ExactSymbol);
     }
 
     if let (Some(graph), Some(embedder)) = (graph, embedder) {
@@ -488,7 +567,7 @@ pub(crate) async fn dispatch(
         match semantic_hits(graph, embedder, query).await {
             Ok((hits, coverage)) if !hits.is_empty() => {
                 return Answer {
-                    hits: pin_first(pinned, hits),
+                    hits: lead_with(exact, hits),
                     strategies,
                     // Coverage rides even on a successful answer: it is
                     // exactly the successful-looking partial answer that
@@ -503,10 +582,22 @@ pub(crate) async fn dispatch(
         }
     }
 
+    // A definition site is a complete answer on its own, so it is returned
+    // before the term-matching rungs rather than after them — reaching a name
+    // match having already found the definition would rank the certainty below
+    // the guesses.
+    if !exact.is_empty() {
+        return Answer {
+            hits: exact,
+            strategies,
+            note,
+        };
+    }
+
     if let Some(graph) = graph {
         strategies.push(Strategy::GraphNames);
         let (hits, matched) = enrich::name_hits(graph, query, MAX_NAME_HITS);
-        if !hits.is_empty() || !pinned.is_empty() {
+        if !hits.is_empty() {
             if matched > hits.len() {
                 note = merge_notes(
                     note,
@@ -517,8 +608,10 @@ pub(crate) async fn dispatch(
                     )),
                 );
             }
+            // No pinning here: an exact hit returns above, so this rung only
+            // ever runs when the graph knew no symbol by that name.
             return Answer {
-                hits: pin_first(pinned, hits),
+                hits,
                 strategies,
                 note,
             };
@@ -556,18 +649,6 @@ pub(crate) async fn dispatch(
     }
 }
 
-/// The exact hits first, then the ranked ones that are not already present —
-/// a file both found is reported once, wearing its certain `why`.
-fn pin_first(pinned: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
-    let mut hits = pinned;
-    for hit in ranked {
-        if !hits.iter().any(|kept| kept.path == hit.path) {
-            hits.push(hit);
-        }
-    }
-    hits
-}
-
 /// One note out of up to two, oldest first — the `Answer` carries a single
 /// caveat line, and two truths must not cost one of them.
 fn merge_notes(base: Option<String>, extra: Option<String>) -> Option<String> {
@@ -575,6 +656,24 @@ fn merge_notes(base: Option<String>, extra: Option<String>) -> Option<String> {
         (Some(base), Some(extra)) => Some(format!("{base}; {extra}")),
         (base, extra) => base.or(extra),
     }
+}
+
+/// Put the certainties first and let the ranking follow, minus anything the
+/// certainties already named.
+///
+/// Order within each group is preserved, and no score from one group is ever
+/// weighed against a score from the other — the concatenation is the whole
+/// operation. A file reached by both is reported once, as the exact hit,
+/// because "this is where it is defined" is strictly more information than
+/// "this scored 0.61".
+fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
+    if exact.is_empty() {
+        return ranked;
+    }
+    let led: std::collections::HashSet<String> = exact.iter().map(|hit| hit.path.clone()).collect();
+    let mut hits = exact;
+    hits.extend(ranked.into_iter().filter(|hit| !led.contains(&hit.path)));
+    hits
 }
 
 /// Embed what is pending, embed the query, rank. `Err` carries a reason
@@ -740,16 +839,35 @@ fn merge_rungs(
 /// evidence of absence.
 ///
 /// `None` when both rungs are complete, so a healthy workspace pays no tokens
-/// for the disclosure. A counter that cannot be **read** fails toward
-/// disclosure, not toward silence: `.ok()?` here used to make a read error
-/// indistinguishable from full coverage, which is the exact direction this
-/// note exists to never fail in.
+/// for the disclosure.
+///
+/// **And a complete workspace must be able to reach `None`** (#3124). This
+/// asked `embedded_chunk_count >= symbol_count` until chunk coverage was
+/// measured on a corpus small enough to finish: chunk rows are keyed on the
+/// hash of the rendered chunk, so two byte-identical bodies in one file store
+/// one row for two symbols and that comparison is unsatisfiable forever. A
+/// 158-file workspace froze at 1,810 of 1,814 across thirty passes and warned
+/// on every search — and the warning's own advice is "use `bash` with `grep -n`
+/// for anything exact", which is precisely the call this module exists to stop
+/// the model making. A disclosure nobody can ever clear is not a disclosure; it
+/// is noise with a suggestion attached.
+///
+/// Both halves are like-for-like counts of **files**:
+/// `pending_chunk_file_count` is exact by construction (see
+/// `stella_graph`'s `NEEDS_CHUNK_PASS`), and whole-file vectors are one row per
+/// file, so neither side can dedup out from under the other.
+///
+/// **A counter that cannot be read fails toward disclosure, not toward
+/// silence.** `.ok()?` made a read error indistinguishable from full coverage,
+/// which is the one direction this note must never fail in: the two hazards it
+/// exists for — a partial index that reads as complete, and a complete index
+/// that can never say so — are both cases of the answer misrepresenting what it
+/// saw, and an unreadable counter is a third.
 fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
-    let (Ok(symbols), Ok(chunks), Ok(total_files), Ok(files)) = (
-        graph.symbol_count(),
-        graph.embedded_chunk_count(fingerprint),
+    let (Ok(total_files), Ok(files), Ok(chunks_pending)) = (
         graph.file_count(),
         graph.embedded_file_count(fingerprint),
+        graph.pending_chunk_file_count(fingerprint),
     ) else {
         return Some(
             "COVERAGE UNKNOWN — the index's coverage counters could not be read, so how much \
@@ -757,15 +875,15 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
                 .to_string(),
         );
     };
-    if chunks >= symbols && files >= total_files {
+    if chunks_pending == 0 && files >= total_files {
         return None;
     }
     Some(format!(
-        "PARTIAL INDEX — this ranking saw {chunks} of {symbols} symbols/sections and {files} \
-         of {total_files} files. Embedding fills in path order a batch per call, so the \
-         remainder is NOT a random sample: it is the tail of the tree alphabetically. Run \
-         `stella init` to finish it; until then treat a miss as inconclusive and use `bash` \
-         with `grep -n` for anything exact."
+        "PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
+         indexed file(s) still have symbols with no vector. Embedding fills in path order a \
+         batch per call, so the remainder is NOT a random sample: it is the tail of the tree \
+         alphabetically. Run `stella init` to finish it; until then treat a miss as \
+         inconclusive and use `bash` with `grep -n` for anything exact."
     ))
 }
 
@@ -827,46 +945,219 @@ async fn catch_up_chunk_embeddings(
         .map_err(|error| format!("the code graph could not be read: {error}"))?;
 
     for file in &scan.files {
-        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
-        let needed: Vec<(usize, &str)> = file
-            .chunks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
-            .collect();
-
-        for batch in needed.chunks(EMBED_BATCH) {
-            let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
-            let embeddings = embedder
-                .embed(&texts)
-                .await
-                .map_err(|error| format!("the embedder failed: {error}"))?;
-            for ((index, _), embedding) in batch.iter().zip(embeddings) {
-                vectors[*index] = Some(embedding.vector);
-            }
-        }
-
-        let rows: Vec<stella_graph::ChunkVector> = file
-            .chunks
-            .iter()
-            .zip(vectors)
-            .map(|(chunk, vector)| stella_graph::ChunkVector {
-                chunk_sha256: chunk.chunk_sha256.clone(),
-                name: chunk.name.clone(),
-                kind: chunk.kind.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                vector,
-            })
-            .collect();
-        graph
-            .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
-            // Not recoverable by continuing: the next file would be written
-            // into the same broken store and the pass would report success
-            // having stored nothing.
-            .map_err(|error| format!("the chunk index could not be written: {error}"))?;
+        embed_and_store_chunk_file(graph, embedder, fingerprint, file).await?;
     }
     Ok(())
+}
+
+/// Embed one file's pending chunks and store them — the single place a chunk
+/// vector comes into existence, shared by the lazy per-query catch-up above
+/// and the eager `stella init` pass below, so there is one render, one table
+/// and one fingerprint discipline (mirrors `embed_batch` in
+/// `crate::graph::semantic` for whole-file vectors).
+async fn embed_and_store_chunk_file(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    file: &stella_graph::PendingChunkFile,
+) -> Result<(), String> {
+    let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
+    let needed: Vec<(usize, &str)> = file
+        .chunks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
+        .collect();
+
+    for batch in needed.chunks(EMBED_BATCH) {
+        let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
+        let embeddings = embedder
+            .embed(&texts)
+            .await
+            .map_err(|error| format!("the embedder failed: {error}"))?;
+        for ((index, _), embedding) in batch.iter().zip(embeddings) {
+            vectors[*index] = Some(embedding.vector);
+        }
+    }
+
+    let rows: Vec<stella_graph::ChunkVector> = file
+        .chunks
+        .iter()
+        .zip(vectors)
+        .map(|(chunk, vector)| stella_graph::ChunkVector {
+            chunk_sha256: chunk.chunk_sha256.clone(),
+            name: chunk.name.clone(),
+            kind: chunk.kind.clone(),
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            vector,
+        })
+        .collect();
+    graph
+        .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
+        // Not recoverable by continuing: the next file would be written
+        // into the same broken store and the pass would report success
+        // having stored nothing.
+        .map_err(|error| format!("the chunk index could not be written: {error}"))
+        .map(|_| ())
+}
+
+/// The most files one eager (`stella init`) chunk-embedding pass will
+/// process. Matches `crate::graph::semantic::MAX_FILES_PER_EAGER_PASS`'s cap
+/// and its reasoning: this pass runs before any turn starts, so its budget is
+/// the user's money and patience rather than a round trip, and a workspace
+/// larger than this gets a **stated** partial index rather than a silent one.
+pub const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
+
+/// What an eager chunk-embedding pass did, as data the caller renders. Total
+/// by construction and never a `Result` — `stella init` must succeed with no
+/// embedder, a broken embedder, and a workspace too big to finish in one
+/// pass, and telling those apart is something a human reads, not something a
+/// caller branches on (same contract as
+/// `crate::graph::semantic::WarmOutcome`, kept as its own type because a
+/// chunk pass counts files-with-pending-chunk-work, not files-with-no-vector
+/// — the two are not interchangeable once a file can be partially chunked).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChunkWarmOutcome {
+    /// The pass ran. `files_remaining` is what the cap left for the lazy
+    /// per-query pass (`catch_up_chunk_embeddings`) to pick up on the first
+    /// `search` call.
+    Warmed {
+        /// Files whose chunks this pass embedded or re-stamped.
+        files_embedded: usize,
+        /// Indexed files still carrying a symbol with no chunk vector under
+        /// this fingerprint, per the same pre-filter `chunks_pending_embedding`
+        /// scans with — an upper bound, not an exact count: a file whose
+        /// symbols happen to render byte-identical text to one another can
+        /// read as pending forever even once fully covered (see the "no
+        /// progress" comment in `warm_chunks_opened` — filed as #3128).
+        files_remaining: usize,
+        /// How many of those this pass could not read from disk. Separated
+        /// from `files_remaining` for the reason
+        /// `crate::graph::semantic::WarmOutcome::Warmed::unreadable` gives:
+        /// the cap's leftovers embed themselves on the next query, an
+        /// unreadable file never will.
+        unreadable: usize,
+    },
+    /// The pass stopped early. `reason` is prose meant to be shown verbatim;
+    /// whatever was embedded before the failure is committed and counted.
+    Failed {
+        /// Files whose chunks were embedded before the failure — each file
+        /// commits as it completes.
+        files_embedded: usize,
+        reason: String,
+    },
+}
+
+/// Embed the workspace's indexed chunks — symbols, markdown sections —
+/// **without answering a query**: the `stella init` pass for `search`'s
+/// primary ranking rung (#3098).
+///
+/// The lazy per-query pass above is right for a long session and wrong for a
+/// single-turn run in a fresh checkout: it fires only once `search` has
+/// already been called, capped at `stella_graph::MAX_FILES_PER_CHUNK_PASS`
+/// (64) files, so a workspace this crate's own repository's size needs
+/// roughly 25 calls before its first full pass completes — meaning the first
+/// several searches in a session rank against whichever files happened to be
+/// processed first, not the best answer. Running the same pass here, ahead of
+/// the first turn, makes that work free from the agent's perspective —
+/// mirroring `crate::graph::semantic::warm_file_vectors` one layer down, and
+/// deliberately not `open_or_build`, for the identical reason it gives: the
+/// caller has just run `index_all`, and a second catch-up pass would re-walk
+/// and re-hash a tree nothing has touched since.
+pub async fn warm_chunk_vectors(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> ChunkWarmOutcome {
+    let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot prepare the code graph store: {error}"))
+        .and_then(|db_path| {
+            CodeGraph::open(root, &db_path)
+                .map_err(|error| format!("could not open the code graph: {error}"))
+        });
+    let graph = match graph {
+        Ok(graph) => graph,
+        Err(reason) => {
+            return ChunkWarmOutcome::Failed {
+                files_embedded: 0,
+                reason,
+            };
+        }
+    };
+    let outcome = warm_chunks_opened(&graph, embedder, limit).await;
+    graph.shutdown();
+    outcome
+}
+
+async fn warm_chunks_opened(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> ChunkWarmOutcome {
+    let fingerprint = embedder.fingerprint().id();
+    let mut files_embedded = 0usize;
+    let mut unreadable = 0usize;
+    while files_embedded < limit {
+        let want = stella_graph::MAX_FILES_PER_CHUNK_PASS.min(limit - files_embedded);
+        let scan = match graph.chunks_pending_embedding(&fingerprint, want) {
+            Ok(scan) => scan,
+            Err(error) => {
+                return ChunkWarmOutcome::Failed {
+                    files_embedded,
+                    reason: format!("cannot read the code graph: {error}"),
+                };
+            }
+        };
+        // Overwritten, never summed — same discipline as
+        // `crate::graph::semantic::warm_opened`: each round rescans the
+        // pending set from the start, so an unreadable file is stepped over
+        // again every round and summing would multiply it by the round count.
+        unreadable = unreadable.max(scan.unreadable);
+        // No files means the pending set is exhausted — a window landing on
+        // unreadable rows keeps filling past them, so this is genuinely done
+        // rather than a scan that gave up early (#3016).
+        if scan.files.is_empty() {
+            break;
+        }
+        // The pre-filter is exact since #3128: it reads a per-file coverage
+        // marker rather than comparing a raw symbol count against stored rows,
+        // so a file whose symbols render byte-identical text is no longer
+        // selected forever after being fully embedded.
+        //
+        // This guard stays anyway, and is not redundant belt-and-braces. It
+        // asserts the loop's own termination condition — a window that embeds
+        // nothing cannot be made progress by another window — which holds
+        // whatever the pre-filter's precision happens to be. Deleting it would
+        // make the loop's boundedness depend on a SQL predicate in another
+        // crate being right, which is exactly the coupling that produced
+        // #3128. `PendingChunkFile::to_embed()` is the per-symbol truth.
+        let mut made_progress = false;
+        for file in &scan.files {
+            if file.to_embed() > 0 {
+                made_progress = true;
+            }
+            if let Err(reason) =
+                embed_and_store_chunk_file(graph, embedder, &fingerprint, file).await
+            {
+                return ChunkWarmOutcome::Failed {
+                    files_embedded,
+                    reason,
+                };
+            }
+            files_embedded += 1;
+        }
+        if !made_progress {
+            break;
+        }
+    }
+
+    let files_remaining = graph.pending_chunk_file_count(&fingerprint).unwrap_or(0);
+    ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        unreadable,
+    }
 }
 
 /// Render an answer against the allocation the budget allows.

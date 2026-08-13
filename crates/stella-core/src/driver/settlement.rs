@@ -95,7 +95,7 @@ impl super::Engine<'_> {
     /// spawns a child from inside `ToolExecutor::execute`, where the engine
     /// already holds `budget` mutably, so the child's cost arrives
     /// out-of-band through [`crate::ports::ToolExecutor::drain_sub_agent_spend_usd`].
-    /// Charging it at the next boundary is what keeps a configured `--budget`
+    /// Charging it at the next boundary is what keeps a configured `--spend-limit`
     /// a hard ceiling once turns nest — `evaluate()` below is then reading a
     /// guard that already knows what the children spent. Deferring to
     /// end-of-turn instead would let a parent and its children each run to
@@ -175,7 +175,7 @@ fn check_budget(
     // The forecast for one more step is what the last one cost. Same rule,
     // same words, as `truncation::ContinuationBudget::affords_another` — and
     // no safety margin invented here either: the caller owns the deadline
-    // (`runtime::one_shot_budget_guard` derives it from `--turn-budget`, which
+    // (`runtime::one_shot_budget_guard` derives it from `--turn-timeout`, which
     // the bench adapter already sets to Harbor's timeout minus a teardown
     // reserve). A margin baked in at this level would be a second, invisible
     // policy on top of the one the operator configured.

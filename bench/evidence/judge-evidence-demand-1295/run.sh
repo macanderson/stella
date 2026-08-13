@@ -35,7 +35,7 @@ export TB_MODEL="${TB_MODEL:-anthropic/claude-sonnet-5}"
 # #1295's ask is structurally unreachable — so the control arm would measure
 # the precondition rather than the feature.
 export STELLA_WITNESS_AUTHOR_MODEL="${STELLA_WITNESS_AUTHOR_MODEL:-anthropic/claude-opus-5}"
-export STELLA_BUDGET="${STELLA_BUDGET:-0.60}"
+export STELLA_SPEND_LIMIT="${STELLA_SPEND_LIMIT:-0.60}"
 export STELLA_DISABLE_REFLECTION=1
 export STELLA_SOURCE_COMMIT="${STELLA_SOURCE_COMMIT:-$(git -C "$TB_REPO" rev-parse HEAD)}"
 

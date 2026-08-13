@@ -63,10 +63,7 @@ here and the index your terminal shows can never drift apart.
 
 <CardGrid size="sm">
   <SpecCard title="stella search" href="/docs/commands/search">
-    Find code by meaning — the agent's `search` tool at the CLI
-  </SpecCard>
-  <SpecCard title="stella graph" href="/docs/commands/graph">
-    Query the code graph — definitions, references, callers, imports
+    Find code — the CLI door to the `search` tool the agent calls
   </SpecCard>
   <SpecCard title="stella storage" href="/docs/commands/storage">
     Inspect the storage map — layers, namespaces, relations
@@ -176,7 +173,7 @@ Two of them are specialized rather than day-to-day. `stella arena` is a benchmar
 
 The following flags apply to **every** command. Most have a corresponding environment variable so you can set it once for a shell session or in your CI configuration — the exception is `--api-key`, which is intentionally env-less (use `credentials.toml` or a provider key env var such as `ANTHROPIC_API_KEY` instead).
 
-Every one of them is registered with every subcommand, so **either position parses** — `stella --budget 5 run "…"` and `stella run "…" --budget 5` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
+Every one of them is registered with every subcommand, so **either position parses** — `stella --spend-limit 5 run "…"` and `stella run "…" --spend-limit 5` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
 
 The cards below are in `stella --help`'s own order, for the same reason the subcommand index above is: a flag that lands without a card shows up as a gap in a known sequence rather than as an absence nobody can see.
 
@@ -198,14 +195,14 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     comma-separated. Inert on a direct endpoint. Env `STELLA_UPSTREAM_PIN`. See
     [below](#--upstream-pin-holding-the-vendor-fixed).
   </OptionCard>
-  <OptionCard name="--budget <usd>" defaultValue="none (observed)">
+  <OptionCard name="--spend-limit <usd>" defaultValue="none (observed)">
     Hard USD spend cap for the whole run or session. Must be positive and finite. Env
-    `STELLA_BUDGET`.
+    `STELLA_SPEND_LIMIT`.
   </OptionCard>
-  <OptionCard name="--turn-budget <secs>" defaultValue="unbounded">
+  <OptionCard name="--turn-timeout <secs>" defaultValue="unbounded">
     Wall-clock seconds one turn may spend before it wraps up — the time twin of
-    `--budget`, for callers under an external deadline. Advisory in interactive
-    sessions. Env `STELLA_TURN_BUDGET`.
+    `--spend-limit`, for callers under an external deadline. Advisory in interactive
+    sessions. Env `STELLA_TURN_TIMEOUT`.
   </OptionCard>
   <OptionCard name="--max-output-tokens <n>" defaultValue="the model's own ceiling">
     Cap output tokens per step *below* what the model can write, to spend less. Clamped to
@@ -314,14 +311,14 @@ For a crash you did not anticipate you need no flag at all: stella writes `.stel
   </OptionCard>
 </CardGrid>
 
-### `--budget` modes
+### `--spend-limit` modes
 
 <CardGrid size="md">
   <SpecCard title="Observed">
-    Omit `--budget`. Spend is metered for the cost summary but never blocks.
+    Omit `--spend-limit`. Spend is metered for the cost summary but never blocks.
   </SpecCard>
   <SpecCard title="Enforced">
-    Pass `--budget <usd>`. A hard cap: work aborts cleanly — never mid-tool — once spend
+    Pass `--spend-limit <usd>`. A hard cap: work aborts cleanly — never mid-tool — once spend
     exceeds it.
   </SpecCard>
 </CardGrid>

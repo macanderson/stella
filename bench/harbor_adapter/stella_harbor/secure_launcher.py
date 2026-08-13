@@ -3625,9 +3625,9 @@ def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
     # does the most damage — it measures an agent in order to publish the
     # number, and a trial the guard stops publishes our ceiling as the agent's
     # limit.
-    if str(environ.get("STELLA_BUDGET") or "").strip():
+    if str(environ.get("STELLA_SPEND_LIMIT") or "").strip():
         raise RuntimeError(
-            "secure launcher requires STELLA_BUDGET to be unset: a claim run "
+            "secure launcher requires STELLA_SPEND_LIMIT to be unset: a claim run "
             "carries no per-trial spend cap. The spend bound is the dedicated "
             f"provider key's ${_DEDICATED_KEY_HARD_LIMIT_USD:.2f} hard limit, "
             "which fails the run visibly instead of truncating a trial into a "

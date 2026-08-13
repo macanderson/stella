@@ -1350,7 +1350,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
     // abort says so — while here the turn simply ran out of wall clock on its
     // FIRST cap hit, allowance untouched. Both used to return `None` from
     // `plan_continuation` and land on the same abort, which made
-    // `--turn-budget` self-defeating: it exists to stop a turn before a harness
+    // `--turn-timeout` self-defeating: it exists to stop a turn before a harness
     // kills it, and a nonzero exit is scored as the agent dying just as a kill
     // is. Four of the five nonzero exits on a ten-task Terminal-Bench 2.1 gate
     // were this, each with zero continuations spent. A zero budget makes

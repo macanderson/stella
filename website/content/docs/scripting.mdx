@@ -200,12 +200,12 @@ editing the command line:
     exactly where the flag exists — `run` and `fleet` — so exporting it for a
     whole session never garbles the other commands' output.
   </OptionCard>
-  <OptionCard name="STELLA_BUDGET">
-    Equivalent to `--budget`. Hard USD cap for the whole run. Unset means
+  <OptionCard name="STELLA_SPEND_LIMIT">
+    Equivalent to `--spend-limit`. Hard USD cap for the whole run. Unset means
     spend is metered but never blocked.
   </OptionCard>
-  <OptionCard name="STELLA_TURN_BUDGET">
-    Equivalent to `--turn-budget`. Wall-clock seconds one turn may spend — the
+  <OptionCard name="STELLA_TURN_TIMEOUT">
+    Equivalent to `--turn-timeout`. Wall-clock seconds one turn may spend — the
     one to set when the *runner* will kill the job on elapsed time. Set it
     slightly below that deadline and the run stops at a safe boundary, so the
     work on disk is reported instead of destroyed with the process.
@@ -250,7 +250,7 @@ editing the command line:
 ```bash
 export STELLA_MODEL=anthropic/claude-fable-5
 export STELLA_OUTPUT_FORMAT=stream-json
-export STELLA_BUDGET=5
+export STELLA_SPEND_LIMIT=5
 stella run "update the changelog for the pending release"
 ```
 
@@ -284,7 +284,7 @@ Pair headless runs with an [enforced budget](/docs/telemetry#budget-observed-vs-
 so an automated job can never overspend:
 
 ```bash
-stella --budget 3 run --output-format json "port the utils module to the new client"
+stella --spend-limit 3 run --output-format json "port the utils module to the new client"
 ```
 
 Work aborts cleanly once the cap is reached — never mid-tool — so the workspace is left in
@@ -293,7 +293,7 @@ a consistent state, and the summary comes back `"status": "aborted"` with the ca
 is the number you spend:
 
 ```bash
-stella --budget 10 fleet --plan cleanup.toml --max-concurrency 4
+stella --spend-limit 10 fleet --plan cleanup.toml --max-concurrency 4
 ```
 
 ## Exit codes
@@ -322,7 +322,7 @@ stella --budget 10 fleet --plan cleanup.toml --max-concurrency 4
 </CardGrid>
 
 ```bash
-stella --budget 3 run --output-format json \
+stella --spend-limit 3 run --output-format json \
   --test-command "cargo test -p stella-store" \
   "make the store migration idempotent on an already-v2 file" > result.json
 case $? in
@@ -364,7 +364,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           STELLA_MODEL: anthropic/claude-fable-5
           STELLA_OUTPUT_FORMAT: json
-          STELLA_BUDGET: "3"
+          STELLA_SPEND_LIMIT: "3"
         run: stella run --test-command "cargo test --workspace" "${{ inputs.task }}" > result.json
 
       - name: Summarize

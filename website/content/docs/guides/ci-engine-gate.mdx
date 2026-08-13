@@ -50,7 +50,7 @@ take that.
   </OptionCard>
   <OptionCard name="A key per engine, as repository secrets">
     These runs cost real money on every PR. Budget for it in step 1 by keeping the
-    task set small, and cap it in step 2 with `--budget`.
+    task set small, and cap it in step 2 with `--spend-limit`.
   </OptionCard>
   <OptionCard name="Tasks with deterministic verifiers">
     A task nobody can grade automatically is a task this job cannot gate on. If a
@@ -112,7 +112,7 @@ for e in stella claude; do rm -rf "work/$e"; git worktree add -f "work/$e" HEAD;
 
 ```bash
 # Stella — one JSON object on stdout.
-( cd work/stella && stella --budget 1.00 \
+( cd work/stella && stella --spend-limit 1.00 \
   run --output-format json "$(cat "../../$task/TASK.md")" ) > work/stella/stella.json
 
 # Claude Code — a JSON *array*; the result is the last element.

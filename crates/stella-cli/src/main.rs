@@ -713,14 +713,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             .map_err(failure::CliFailure::from);
         }
-        Some(Command::Graph { op, target }) => {
-            // Reads the local index only — works with zero API keys.
-            return contextgraph::run_graph(*op, target).map_err(failure::CliFailure::from);
-        }
-        Some(Command::Search { query }) => {
-            // Reads (or builds) the local index; the only network is an
-            // explicitly configured embedder — no model API key needed.
-            return signals::block_on_interruptible(rt()?, search_cmd::run(query))
+        Some(Command::Search { query, format }) => {
+            // Ranks semantically when an embedder is configured (a network
+            // write-through into codegraph.db); otherwise reads the local
+            // index only.
+            return signals::block_on_interruptible(rt()?, search_cmd::run_search(query, *format))
                 .map_err(failure::CliFailure::from);
         }
         Some(Command::Scripts { cmd }) => {
@@ -1013,7 +1010,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     // giving it one for a value it never consults would widen its signature to
     // carry something straight through. `main` is where the flag and the config
     // are both in hand.
-    cfg.turn_budget = cli.globals.turn_budget;
+    cfg.turn_timeout = cli.globals.turn_timeout;
     cfg.max_output_tokens = cli.globals.max_output_tokens;
     cfg.plan_mode = cli.globals.plan_mode;
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER
@@ -1077,7 +1074,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 agent::run_one_shot(
                     &cfg,
                     &prompt,
-                    cli.globals.budget,
+                    cli.globals.spend_limit,
                     output_format,
                     !no_pipeline,
                     test_command.as_deref(),
@@ -1130,7 +1127,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, !no_pipeline),
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, !no_pipeline),
             )?;
         }
         Command::Fleet {
@@ -1177,7 +1174,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     plan.as_deref(),
                     base_ref.as_deref(),
                     max_concurrency,
-                    cli.globals.budget,
+                    cli.globals.spend_limit,
                     watch,
                     !no_pipeline,
                     task_timeout.map(std::time::Duration::from_secs),
@@ -1209,7 +1206,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             );
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, true),
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, true),
             )?;
         }
         Command::Chat => {
@@ -1226,7 +1223,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         rt()?,
                         command_deck::run_deck_session(
                             &mut cfg,
-                            cli.globals.budget,
+                            cli.globals.spend_limit,
                             deck_presentation(&cli.globals),
                             None,
                         ),
@@ -1249,7 +1246,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     eprintln!("  The Command Deck needs both stdin and stdout on a terminal.");
                     signals::block_on_interruptible(
                         rt()?,
-                        agent::run_interactive(&cfg, cli.globals.budget),
+                        agent::run_interactive(&cfg, cli.globals.spend_limit),
                     )?;
                 }
             }
@@ -1276,7 +1273,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 rt()?,
                 command_deck::run_deck_session(
                     &mut cfg,
-                    cli.globals.budget,
+                    cli.globals.spend_limit,
                     deck_presentation(&cli.globals),
                     Some(request),
                 ),
@@ -1300,7 +1297,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Command::Init
         | Command::Daemon { .. }
         | Command::Tools { .. }
-        | Command::Graph { .. }
         | Command::Search { .. }
         | Command::Scripts { .. }
         | Command::Storage { .. }

@@ -19,7 +19,9 @@ use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, Similar
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 
-use super::{Hit, Search, SearchConfig, Strategy, dispatch, render};
+use super::{
+    ChunkWarmOutcome, Hit, Search, SearchConfig, Strategy, dispatch, render, warm_chunk_vectors,
+};
 use crate::registry::Tool;
 
 /// The question the witness asks. Every word of it is checked against the
@@ -183,6 +185,25 @@ fn indexed_fixture(workspace: &Path) -> (std::path::PathBuf, CodeGraph) {
     (root, graph)
 }
 
+/// Same fixture, indexed at the real `.stella/private/codegraph.db` path
+/// [`crate::graph::open_or_build`] resolves — what `warm_chunk_vectors` and
+/// every production caller actually open, unlike [`indexed_fixture`]'s
+/// `<root>/codegraph.db`, which only the tests calling `dispatch`/`render`
+/// directly ever touch. Closes the graph before returning so the caller's own
+/// connection (opened fresh, matching `stella init`'s real sequencing) is not
+/// racing an already-open one.
+fn write_fixture_at_the_real_workspace_path(workspace: &Path) -> std::path::PathBuf {
+    for (path, body) in FIXTURE {
+        let file = workspace.join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.canonicalize().expect("canonicalize");
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    opened.graph.shutdown();
+    root
+}
+
 fn content_of(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Ok { content } => content.clone(),
@@ -318,6 +339,13 @@ async fn a_surface_embedder_cannot_answer_the_same_question() {
 /// With no embedder the answer must still be useful, and must say which
 /// strategy produced it — a name match wearing a meaning match's clothes is
 /// worse than no answer.
+///
+/// The query is a *term*, not a symbol name: `scrub` appears inside
+/// `scrub_record` and `Scrubber` but names neither, so it reaches the
+/// term-matching rung rather than the exact one (#3125). An exact name takes
+/// the shorter route now, which is
+/// [`an_exact_name_without_an_embedder_is_still_a_certainty`]'s subject — this
+/// test is about the rung that guesses.
 #[tokio::test]
 async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() {
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -695,13 +723,13 @@ async fn an_exact_symbol_name_outranks_the_semantic_guess() {
         answer.hits
     );
     assert!(
-        top.why.contains("exact symbol-name match"),
+        top.why.contains("EXACT name match"),
         "the pinned hit must say why it leads: {}",
         top.why
     );
     assert_eq!(
         answer.strategies,
-        vec![Strategy::ExactName, Strategy::Semantic],
+        vec![Strategy::ExactSymbol, Strategy::Semantic],
         "via: must name both contributors"
     );
 
@@ -964,4 +992,394 @@ fn the_rendered_hit_count_matches_the_allocation() {
     assert_eq!(shown, allocation.granted.len());
     assert_eq!(allocation.omitted, hits.len() - shown);
     assert!(facets_at(config.depth).len() >= 3);
+}
+
+/// The witness for the eager `stella init` chunk pass (#3098): a fixture
+/// wider than one lazy per-query window (`MAX_FILES_PER_CHUNK_PASS`, 64)
+/// would take several `search` calls to fully cover — this proves one
+/// `warm_chunk_vectors` call finishes it, so `search` can rank by meaning on
+/// its very first invocation rather than the ~25th on a repository this
+/// crate's own size.
+#[tokio::test]
+async fn one_eager_pass_embeds_every_pending_chunk_no_matter_how_many_files() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    let ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        unreadable,
+    } = outcome
+    else {
+        panic!("expected Warmed, got {outcome:?}");
+    };
+    assert_eq!(
+        files_embedded,
+        FIXTURE.len(),
+        "every fixture file has symbols to chunk"
+    );
+    assert_eq!(files_remaining, 0, "nothing left pending after one pass");
+    assert_eq!(unreadable, 0);
+
+    // Idempotent: a second pass over an already-warm index embeds nothing new.
+    let again = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert_eq!(
+        again,
+        ChunkWarmOutcome::Warmed {
+            files_embedded: 0,
+            files_remaining: 0,
+            unreadable: 0,
+        },
+        "re-running against a fully warm index must be a no-op, not a re-embed"
+    );
+}
+
+/// A capped pass says honestly what it left behind, rather than reporting
+/// success over a partial index — the same discipline
+/// `crate::graph::semantic::WarmOutcome` holds for whole-file vectors.
+#[tokio::test]
+async fn a_capped_pass_reports_what_it_left_pending() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    // FIXTURE has 4 files; cap the pass at fewer files than that.
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 2).await;
+    let ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        ..
+    } = outcome
+    else {
+        panic!("expected Warmed, got {outcome:?}");
+    };
+    assert_eq!(files_embedded, 2, "the pass must stop exactly at its cap");
+    assert!(
+        files_remaining > 0,
+        "a capped pass over a wider fixture must say something is still pending"
+    );
+}
+
+/// #3128: two symbols that render byte-identical text collapse to one stored
+/// row, so the pending-files pre-filter's raw symbol-count-vs-stored-count
+/// comparison can never reach equality for that file — without the "no
+/// progress" early exit, `warm_chunk_vectors` would re-select and re-stamp it
+/// on every round until its cap, never returning promptly even once every
+/// real symbol is embedded. This is the witness for that early exit.
+#[tokio::test]
+async fn a_file_whose_symbols_collide_on_rendered_text_does_not_spin_the_pass() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = {
+        let file = workspace.path().join("src/dupes.rs");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        // Two distinct symbols, same name, same kind, byte-identical body —
+        // ordinary trait-stub-across-fixtures shape, not a contrived one.
+        fs::write(
+            &file,
+            "mod a {\n    pub fn execute() { todo!() }\n}\n\
+             mod b {\n    pub fn execute() { todo!() }\n}\n",
+        )
+        .expect("write");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+        opened.graph.shutdown();
+        root
+    };
+
+    // First pass: real embedding work happens (however few distinct chunks
+    // there are), and the pass must still terminate rather than hang.
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert!(
+        matches!(outcome, ChunkWarmOutcome::Warmed { .. }),
+        "expected Warmed, got {outcome:?}"
+    );
+
+    // Second pass over the now-embedded fixture: with the collision, the
+    // pre-filter still selects `src/dupes.rs` (symbol count 2 > stored rows
+    // 1), so without the early exit this would spend its entire `limit`
+    // re-visiting it. It must instead return quickly, having made no further
+    // progress, and must not report a growing `files_embedded` each time.
+    let again = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    let ChunkWarmOutcome::Warmed { files_embedded, .. } = again else {
+        panic!("expected Warmed, got {again:?}");
+    };
+    assert!(
+        files_embedded <= stella_graph::MAX_FILES_PER_CHUNK_PASS,
+        "a fully-covered fixture must stop after at most one window, not spin \
+         toward the cap: files_embedded={files_embedded}"
+    );
+}
+
+/// **The witness for #3124.** A workspace with nothing left to embed must stop
+/// describing itself as partial.
+///
+/// It is the same collision as #3128, read by a different consumer: the note
+/// compared `embedded_chunk_count` against `symbol_count`, and chunk rows are
+/// keyed on the hash of the rendered chunk, so the two byte-identical bodies
+/// below store one row for two symbols and that comparison can never hold
+/// again. Measured on a 158-file workspace, coverage froze at 1,810 of 1,814
+/// and every search carried the warning — whose own advice is to go back to
+/// `grep`, the call this module exists to remove.
+///
+/// The premise is asserted first, so this cannot pass vacuously: if the fixture
+/// ever stops colliding, the old comparison would have succeeded too and the
+/// test would be proving nothing.
+#[tokio::test]
+async fn a_fully_embedded_workspace_stops_calling_itself_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let file = workspace.path().join("src/accessors.rs");
+    fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+    // Two distinct symbols, byte-identical rendered text — the ordinary
+    // trait-accessor shape, not a contrived one.
+    fs::write(
+        &file,
+        "mod a {\n    pub fn id() -> u8 { 0 }\n}\n\
+         mod b {\n    pub fn id() -> u8 { 0 }\n}\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    crate::graph::open_or_build(&root)
+        .expect("open_or_build")
+        .graph
+        .shutdown();
+
+    let fingerprint = ConceptEmbedder.fingerprint().id();
+    let warmed = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert!(
+        matches!(warmed, ChunkWarmOutcome::Warmed { .. }),
+        "expected Warmed, got {warmed:?}"
+    );
+
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    super::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
+        .await
+        .expect("whole-file vectors");
+
+    // The premise: the collision really happened, so the count comparison this
+    // note used to make is unsatisfiable for this workspace.
+    let symbols = opened.graph.symbol_count().expect("symbol_count");
+    let chunks = opened
+        .graph
+        .embedded_chunk_count(&fingerprint)
+        .expect("embedded_chunk_count");
+    assert!(
+        chunks < symbols,
+        "fixture no longer collides ({chunks} chunk rows for {symbols} symbols) — the old \
+         `chunks >= symbols` test would have passed and this witness proves nothing"
+    );
+
+    let note = super::coverage_note(&opened.graph, &fingerprint);
+    opened.graph.shutdown();
+    assert!(
+        note.is_none(),
+        "a workspace with nothing left to embed still calls itself partial: {note:?}"
+    );
+}
+
+/// The other half of the same contract: a workspace that genuinely has work
+/// left must still say so. Without this, #3124 could be "fixed" by never
+/// warning at all, which loses the disclosure #3117 added.
+#[tokio::test]
+async fn a_workspace_with_work_left_still_says_it_is_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    // Indexed, nothing embedded at all — the state right after `stella init`
+    // on a build with no embedder configured.
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    let note = super::coverage_note(&opened.graph, &ConceptEmbedder.fingerprint().id());
+    opened.graph.shutdown();
+
+    let note = note.expect("an unembedded workspace must disclose that it is partial");
+    assert!(note.contains("PARTIAL INDEX"), "{note}");
+}
+
+/// The blank-query refusal lives in `report` — one validation both doors
+/// share — and the agent's door still surfaces it. This pins the refusal
+/// from the `execute` side so moving the check cannot silently lose it.
+#[tokio::test]
+async fn a_blank_query_is_refused_through_the_tool_door() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let output = Search::default()
+        .execute(&serde_json::json!({"query": "   "}), workspace.path())
+        .await;
+    let ToolOutput::Error { message } = output else {
+        panic!("a blank query must be an error, got: {output:?}");
+    };
+    assert!(message.contains("`query` is required"), "{message}");
+    assert!(
+        !workspace.path().join(".stella").exists(),
+        "a refused query must not create workspace state as a side effect"
+    );
+}
+
+/// `SearchReport` is the CLI's `--format json` contract: the decided answer
+/// as data beside the rendering. Hit order is rank order, strategies carry
+/// the exact labels the `via:` line prints, and the note survives verbatim.
+#[test]
+fn the_report_preserves_rank_order_and_strategy_labels() {
+    let answer = super::Answer {
+        hits: vec![
+            Hit {
+                path: "src/first.rs".into(),
+                why: "the top hit".into(),
+                focus: None,
+            },
+            Hit {
+                path: "src/second.rs".into(),
+                why: "the runner-up".into(),
+                focus: None,
+            },
+        ],
+        strategies: vec![Strategy::Semantic, Strategy::GraphNames],
+        note: Some("degraded: the backend hiccuped".into()),
+    };
+    let rendered = ToolOutput::Ok {
+        content: "the rendered answer".into(),
+    };
+    let report = super::SearchReport::of(&answer, rendered.clone());
+
+    let paths: Vec<&str> = report.hits.iter().map(|hit| hit.path.as_str()).collect();
+    assert_eq!(paths, ["src/first.rs", "src/second.rs"]);
+    assert_eq!(report.hits[0].why, "the top hit");
+    assert_eq!(
+        report.strategies,
+        [Strategy::Semantic.label(), Strategy::GraphNames.label()]
+    );
+    assert_eq!(
+        report.note.as_deref(),
+        Some("degraded: the backend hiccuped")
+    );
+    assert_eq!(report.rendered, rendered);
+}
+
+/// **The witness for #3125.** A query that exactly names an indexed symbol
+/// returns that symbol's defining file first, even when embedding rank puts
+/// something else on top.
+///
+/// The fixture is built so semantic ranking is *wrong on purpose* and provably
+/// so: the decoy's chunk contains only dimension-2 words, so it projects onto
+/// the query's own direction and scores 1.0, while the definition's chunk
+/// carries a dimension-3 word from its body and scores lower. On `main` the
+/// ladder returns at the semantic rung and the decoy is rank 1.
+///
+/// Measured cause: asked for `ContextFrame` — one definition in its repository
+/// — the semantic-only ladder returned it at rank 5 of 139, because the graph's
+/// exact-name rung is unreachable whenever semantic returns anything, and an
+/// admission floor of 0.25 against a corpus whose lowest cosine is 0.418 means
+/// it always does.
+#[tokio::test]
+async fn an_exact_symbol_name_beats_the_ranking_that_would_bury_it() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for (path, body) in [
+        // The definition. Its body pulls it toward another dimension, so it
+        // cannot win the ranking on its own.
+        (
+            "src/holder.rs",
+            "pub fn socket_registry_of(matrix: &Matrix) -> u8 {\n\
+             matrix.rows().sum();\n\
+             0\n\
+             }\n",
+        ),
+        // The decoy: nothing but dimension-2 words, so it scores 1.0 against
+        // this query and outranks the definition every time.
+        (
+            "src/wirehub.rs",
+            "//! socket header request http wire\n\
+             pub fn send_socket_header_request() {\n\
+             socket_header_request_wire();\n\
+             }\n",
+        ),
+    ] {
+        let file = workspace.path().join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    // The premise: the ranking really does prefer the decoy. Without this the
+    // test could pass on `main` by luck and prove nothing.
+    let (ranking, _) = super::semantic_hits(&graph, &ConceptEmbedder, "socket_registry_of")
+        .await
+        .expect("the fixture must rank");
+    assert_eq!(
+        ranking.first().map(|hit| hit.path.as_str()),
+        Some("src/wirehub.rs"),
+        "the decoy must outrank the definition semantically, or this witness proves nothing: {ranking:?}"
+    );
+
+    let answer = dispatch(
+        Some(&graph),
+        &root,
+        "socket_registry_of",
+        Some(&ConceptEmbedder),
+    )
+    .await;
+    graph.shutdown();
+
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/holder.rs"),
+        "the defining file must lead: {:?}",
+        answer.hits
+    );
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol, Strategy::Semantic],
+        "`via:` must name both rungs, never silently skip one"
+    );
+    assert!(
+        answer.hits[0].why.contains("EXACT"),
+        "the leading hit must say it is a fact rather than a score: {:?}",
+        answer.hits[0]
+    );
+    assert!(
+        answer
+            .hits
+            .iter()
+            .filter(|h| h.path == "src/holder.rs")
+            .count()
+            == 1,
+        "a file reached by both rungs must be reported once: {:?}",
+        answer.hits
+    );
+}
+
+/// The exact rung needs no embedder: it reads the graph, not a vector index.
+/// On a workspace with no embedding backend — the common case on
+/// Terminal-Bench — a symbol name should still be answered with a fact rather
+/// than with a term-overlap guess.
+#[tokio::test]
+async fn an_exact_name_without_an_embedder_is_still_a_certainty() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    graph.shutdown();
+    assert_eq!(answer.strategies, vec![Strategy::ExactSymbol]);
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/hkey.rs"),
+        "{:?}",
+        answer.hits
+    );
+}
+
+/// A question is not a symbol, so the exact rung must stay out of the way —
+/// otherwise every sentence-shaped search pays a graph lookup that can only
+/// ever miss, and `via:` starts naming a strategy that did nothing.
+#[tokio::test]
+async fn a_sentence_never_reaches_the_exact_symbol_rung() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    graph.shutdown();
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::Semantic],
+        "a multi-word question must not engage the exact-symbol rung"
+    );
 }

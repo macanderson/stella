@@ -129,7 +129,7 @@ def test_run_instruction_binds_after_double_dash(monkeypatch: pytest.MonkeyPatch
     # the positional, not parse as a flag: one 2026-07-31 trial
     # (pytorch-model-recovery) exited 2 before the agent started because its
     # instruction opened with "- ".
-    monkeypatch.delenv("STELLA_BUDGET", raising=False)
+    monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
     monkeypatch.delenv("STELLA_MODEL", raising=False)
     monkeypatch.delenv("STELLA_BASE_URL", raising=False)
     agent = StellaAgent.__new__(StellaAgent)

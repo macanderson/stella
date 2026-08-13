@@ -298,7 +298,7 @@ async fn the_pool_binds_and_a_failed_child_charges_nothing() {
     );
 }
 
-/// A session that passed no `--budget` must still install a pool ceiling
+/// A session that passed no `--spend-limit` must still install a pool ceiling
 /// (#1849).
 ///
 /// `DEFAULT_POOL_LIMIT_USD` was documented as the bound that stops "a model

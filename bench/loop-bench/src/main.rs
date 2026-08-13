@@ -122,7 +122,7 @@ struct Args {
     #[arg(long, default_value_t = 4)]
     concurrent: usize,
 
-    /// Per-task USD budget cap (STELLA_BUDGET).
+    /// Per-task USD budget cap (STELLA_SPEND_LIMIT).
     #[arg(long, default_value_t = 0.20)]
     budget: f64,
 
@@ -522,7 +522,7 @@ fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Res
     // would report as a zero-work loop failure for every task — the harness
     // manufacturing the signal it gates on. Warn loudly rather than hand
     // harbor a cap that cannot pass. The threshold is not `<= 0.0` because the
-    // cap reaches stella at four decimals (see the `STELLA_BUDGET` env below),
+    // cap reaches stella at four decimals (see the `STELLA_SPEND_LIMIT` env below),
     // so a positive-but-tinier-than-that cap is rounded to `0.0000` and is
     // exactly as unspendable — check the value that will actually be sent, not
     // the one the operator typed.
@@ -566,7 +566,7 @@ fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Res
         cmd.args(["-i", task]);
     }
 
-    cmd.env("STELLA_BUDGET", format!("{:.4}", args.budget));
+    cmd.env("STELLA_SPEND_LIMIT", format!("{:.4}", args.budget));
     match &args.stella_binary {
         Some(path) => {
             cmd.env("STELLA_BINARY", path);

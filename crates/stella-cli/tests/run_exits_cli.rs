@@ -45,7 +45,7 @@ fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
             // Closed port on loopback: connection refused, at once.
             "--base-url",
             "http://127.0.0.1:1",
-            "--budget",
+            "--spend-limit",
             "0.05",
             "--output-format",
             format,

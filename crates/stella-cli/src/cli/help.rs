@@ -56,7 +56,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Ask about this workspace",
-        &["search", "graph", "storage", "scripts", "tools", "commands"],
+        &["search", "storage", "scripts", "tools", "commands"],
     ),
     (
         "Steer what the agent knows",
@@ -131,7 +131,7 @@ fn root_template(cmd: &clap::Command) -> String {
 {{options}}
 
 Run `stella help <command>` for a command's full description.
-Session flags work on either side of it: `stella run … --budget 5`.
+Session flags work on either side of it: `stella run … --spend-limit 5`.
 Flags are one line here; `stella <command> --help` explains each in full.",
         on = header.render(),
         off = header.render_reset(),

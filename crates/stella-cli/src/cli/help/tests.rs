@@ -247,7 +247,7 @@ fn session_flags_still_parse_to_their_own_values() {
             "stella",
             "--model",
             "zai/glm-5.2",
-            "--budget",
+            "--spend-limit",
             "5",
             "--plan-mode",
             "chat",
@@ -260,9 +260,9 @@ fn session_flags_still_parse_to_their_own_values() {
         "--model's value landed on a different flag's slot"
     );
     assert_eq!(
-        matches.get_one::<f64>("budget").copied(),
+        matches.get_one::<f64>("spend_limit").copied(),
         Some(5.0),
-        "--budget's value landed on a different flag's slot"
+        "--spend-limit's value landed on a different flag's slot"
     );
     assert!(
         matches.get_flag("plan_mode"),
@@ -291,7 +291,7 @@ fn the_first_screen_shows_the_commands_people_type() {
         );
     }
     assert!(
-        !fold.contains("--budget") && !fold.contains("--model"),
+        !fold.contains("--spend-limit") && !fold.contains("--model"),
         "session flags are back above the fold, which is the bug this layout fixed:\n{fold}"
     );
 }
@@ -514,7 +514,7 @@ fn the_docs_index_summaries_are_the_clis_own() {
         }
     }
 
-    // Headings that carry no command card (`--budget` modes and the like)
+    // Headings that carry no command card (`--spend-limit` modes and the like)
     // are page furniture, not groups.
     let groups: Vec<(String, Vec<(String, String)>)> = sections
         .into_iter()

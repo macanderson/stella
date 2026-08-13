@@ -89,7 +89,10 @@ fn no_selector_recolors_the_page_background_as_text() {
         "--ink:#0A0A0A",
         "--ink:#FFFFFF",
         ".tf button[aria-checked=\"true\"]{color:var(--ink)",
-        ".ctx-row button.on{color:var(--ink)",
+        // Was .ctx-row button.on before the call inspector replaced each
+        // row's own two buttons with a single view toggle; the ink-on-accent
+        // inversion pattern this test pins moved with it.
+        ".ctx-toggle button.on{color:var(--ink)",
     ] {
         assert!(page.contains(needle), "missing {needle}");
     }

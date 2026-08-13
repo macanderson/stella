@@ -19,7 +19,7 @@ under an external kill — had no way to supply one:
 * Harbor 0.6.1 passes `agent_timeout_sec` to the **oracle** agent only
   (`trial.py`: `if config.agent.name == AgentName.ORACLE.value`), so an
   installed agent is never told the deadline it is running against.
-* Exporting `STELLA_TURN_BUDGET` was worse than doing nothing: the adapter's
+* Exporting `STELLA_TURN_TIMEOUT` was worse than doing nothing: the adapter's
   fail-closed ambient check rejects any unregistered `STELLA_*` name, so it
   refused the run rather than enabling the policy.
 
@@ -40,7 +40,7 @@ The two inputs above are both things a *caller* has to remember to supply, and
 in match `cc00894779ff` neither was: every trial's `config.json` records
 `agent.kwargs: {}`, and ArenaBench's `harbor run` command line
 (`arenabench/arenabench/runner.py`) passes no `--agent-kwarg` at all. So
-`resolve_turn_budget(None, None)` returned `None`, `--turn-budget` was omitted
+`resolve_turn_budget(None, None)` returned `None`, `--turn-timeout` was omitted
 from argv, `Config::turn_budget` stayed `None`, and
 `stella_cli::runtime::one_shot_budget_guard` never called
 `BudgetGuard::set_task_deadline`. The whole #1481/#1503/#1507 mechanism was
@@ -100,12 +100,12 @@ from typing import Any
 TRIAL_CONFIG_FILENAME = "config.json"
 TASK_CONFIG_FILENAME = "task.toml"
 
-# Host-side name for the deadline, forwarded to the CLI as `--turn-budget`.
+# Host-side name for the deadline, forwarded to the CLI as `--turn-timeout`.
 # Registered host-only in the adapter: it is read on the host and expressed as
 # argv, so the container environment stays exactly as narrow as it was and the
-# empty-string parse trap that killed six trials on `--budget` cannot recur on
-# a second variable.
-TURN_BUDGET_ENV = "STELLA_TURN_BUDGET"
+# empty-string parse trap that killed six trials on `--spend-limit` cannot
+# recur on a second variable.
+TURN_BUDGET_ENV = "STELLA_TURN_TIMEOUT"
 
 # Wall clock held back from the harness deadline so the turn ends as a result
 # rather than as a kill.
@@ -307,7 +307,7 @@ def resolve_turn_budget(
     env_value: Any = None,
     trial_logs_dir: Any = None,
 ) -> str | None:
-    """Return the ``--turn-budget`` argv value, or ``None`` to omit the flag.
+    """Return the ``--turn-timeout`` argv value, or ``None`` to omit the flag.
 
     Precedence is deadline-first, most-specific-source-first:
 
@@ -316,7 +316,7 @@ def resolve_turn_budget(
     2. The deadline discovered from this trial's own Harbor configuration
        (``trial_logs_dir``). Same authority as (1) — it *is* Harbor's number —
        but derived rather than stated, so an explicit kwarg still wins.
-    3. ``STELLA_TURN_BUDGET`` — a static operator fallback, last because one
+    3. ``STELLA_TURN_TIMEOUT`` — a static operator fallback, last because one
        value cannot be right for a dataset whose tasks carry different
        timeouts.
 

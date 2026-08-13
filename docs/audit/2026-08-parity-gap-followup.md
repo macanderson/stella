@@ -121,8 +121,8 @@ parsed as a flag.
 **No per-invocation tool policy.** `crates/stella-tools/src/policy.rs:4` states the
 constraint outright — a tool is on "unless something says otherwise, and there
 is exactly one way to say otherwise — a `tools` entry in `settings.json`". The
-global flag set (`crates/stella-cli/src/cli.rs:87-192`) carries `--model`, `--budget`,
-`--turn-budget`, `--output-format` and friends, and no tool switch. So
+global flag set (`crates/stella-cli/src/cli.rs:87-192`) carries `--model`, `--spend-limit`,
+`--turn-timeout`, `--output-format` and friends, and no tool switch. So
 "run this one task read-only" means editing settings and editing them back.
 
 The policy model itself is already the right shape for this: precedence is

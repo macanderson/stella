@@ -1061,7 +1061,7 @@ mod tests {
     }
 
     /// Option B (#2641): the seal-time repair only fires when a seal is
-    /// reached, and the run that motivated this issue died on the turn budget
+    /// reached, and the run that motivated this issue died on the turn timeout
     /// without ever sealing. Teardown audits and repairs too, so a candidate
     /// dropped without a seal still leaves the graded tree whole.
     #[tokio::test]
@@ -1083,7 +1083,7 @@ mod tests {
         scratch_git(ws.dir(), &["commit", "-q", "-m", "worker commit"]);
         assert_ne!(scratch_git(&root, &["rev-parse", &branch_ref]), ref_before);
 
-        // No `seal()` at all — the shape a turn-budget death takes.
+        // No `seal()` at all — the shape a turn-timeout death takes.
         ws.remove().await;
 
         assert_eq!(

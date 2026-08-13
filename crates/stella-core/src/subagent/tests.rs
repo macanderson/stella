@@ -1158,7 +1158,7 @@ impl ToolExecutor for SpendingTools {
 
 /// A child dispatched from *inside* a tool call spends money the engine's
 /// guard cannot see — the engine holds it mutably for the whole turn. Folding
-/// that spend in at the next step boundary is what keeps `--budget` a hard
+/// that spend in at the next step boundary is what keeps `--spend-limit` a hard
 /// ceiling once turns nest; deferring to end-of-turn would let the parent and
 /// its children each run to the cap independently.
 #[tokio::test]

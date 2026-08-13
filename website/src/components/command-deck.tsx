@@ -78,7 +78,7 @@ export function HeroTerminal() {
 export function FleetTerminal() {
   return (
     <Terminal title="zsh — stella fleet">
-      <Prompt>stella --budget 2 fleet --plan release-prep.toml</Prompt>
+      <Prompt>stella --spend-limit 2 fleet --plan release-prep.toml</Prompt>
       <Dim>{"  read release-prep.toml — 5 tasks, dependency-ordered into 3 waves\n\n"}</Dim>
       {"  lead          orchestrating              "}
       <Ok>{"done"}</Ok>

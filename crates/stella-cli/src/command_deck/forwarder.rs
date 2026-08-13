@@ -72,6 +72,9 @@ pub(crate) fn spawn_forwarder(
         let mut usage_warned = false;
         let mut store_warned = false;
         let mut persistence_complete = true;
+        // Shared with every blocking persistence hop below, so the provider id
+        // is not re-allocated once per persisted event.
+        let provider_id: Arc<str> = scope.provider_id.as_str().into();
         // The deck's half of the diagnostic timeline. The renderer covers the
         // one-shot and pipeline paths; every deck lane and sub-session worker
         // arrives here instead, and a bridge on only one of the two would make
@@ -93,9 +96,36 @@ pub(crate) fn spawn_forwarder(
                 let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
                 guard.seed_from_plan(&proposal.steps);
             }
-            if let Some((store, id)) = &execution {
-                let outcome =
-                    agent::persist_event_detailed(store, *id, seq, &event, &scope.provider_id);
+            let event = if let Some((store, id)) = &execution {
+                // Off the reactor for the same reason the one-shot renderer's
+                // hop exists — see `agent::persistence::spawn_renderer`, which
+                // carries the measured numbers. This lane matters at least as
+                // much: the deck is the default interactive shell on a TTY, so
+                // a five-second `busy_timeout` stall here is a five-second
+                // unresponsive UI.
+                //
+                // The event moves in and back out rather than being cloned; it
+                // is still owed to `cache_insight_for` and the deck below.
+                let store = Arc::clone(store);
+                let id = *id;
+                let provider_id = Arc::clone(&provider_id);
+                let joined = tokio::task::spawn_blocking(move || {
+                    let outcome =
+                        agent::persist_event_detailed(&store, id, seq, &event, &provider_id);
+                    (event, outcome)
+                })
+                .await;
+                let (event, outcome) = match joined {
+                    Ok(pair) => pair,
+                    // The event went with the panicking or shutting-down task,
+                    // so this lane loses one rendered event; what it must not
+                    // lose is the admission that persistence is incomplete.
+                    Err(_) => {
+                        persistence_complete = false;
+                        seq += 1;
+                        continue;
+                    }
+                };
                 if !outcome.is_complete() {
                     persistence_complete = false;
                     // One warning per condition per turn, each naming what
@@ -128,7 +158,10 @@ pub(crate) fn spawn_forwarder(
                     }
                 }
                 seq += 1;
-            }
+                event
+            } else {
+                event
+            };
             // Derived BEFORE the event is moved into the send below, but
             // emitted AFTER it: the insight annotates the usage the event
             // carries, so the deck must fold the event first or the annotation

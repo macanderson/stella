@@ -1,56 +1,82 @@
 ---
 title: stella search
-description: Find code by meaning — the agent's search tool at the CLI, with symbols, imports, signatures, callers, and source attached to every hit.
+description: Find code by meaning or by name — the CLI door to the same `search` tool the agent calls.
 ---
 
-Ask your workspace the question you actually have — a sentence, a behaviour description, or a symbol name — and get back the files that answer it, each already carrying its symbols, imports, signatures, callers, and a source excerpt. It is the same engine behind the agent's [`search` tool](/docs/agent-tools), so what you see here is exactly what the model receives for the same question.
+Find the files that answer a question you can only describe in words — the same `search` tool the agent reaches for on every turn, run from your shell. Ranks semantically when an embedder is configured, and degrades honestly through graph symbol-name matching and then a file scan when it is not.
 
 ## Synopsis
 
 ```bash
-stella search <query>
+stella search "<query>" [--format text|json]
 ```
 
 ## What it does
 
-`stella search` ranks the workspace against your query and then spends a fixed context budget enriching the best hits with structure from the code graph. The words you use do not have to appear anywhere in the code:
-
-```bash
-stella search "where are request headers sanitized before logging"
-stella search "the retry/backoff policy for failed HTTP requests"
-stella search CredentialStore
-```
-
-Three strategies run in cost order, stopping at the first that produces hits, and the answer's `via:` line always names which one ran:
+`stella search` runs the exact dispatch ladder the agent's `search` tool runs inside a turn:
 
 <CardGrid size="md">
   <OptionCard name="semantic">
-    The query and the indexed files are embedded and compared by meaning.
-    Runs whenever an embedder is configured (`STELLA_EMBED_URL` +
-    `STELLA_EMBED_MODEL`).
+    Ranked by MEANING against your query, over the code-graph vector index —
+    only when an embedder is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
+    `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`).
   </OptionCard>
   <OptionCard name="names">
-    Query terms matched against paths and symbol names in the code graph —
-    what a path glob cannot do. The answer labels itself a name match.
+    Falls back to matching your query's words against symbol and path names in
+    the code-graph index — no embedder required.
   </OptionCard>
   <OptionCard name="scan">
-    An index-free walk of the working tree, ranking files by term matches in
-    path and contents. The fallback for a workspace `stella init` cannot
-    index.
+    Falls back further to a plain file scan when no index is available at
+    all — the normal case for a workspace with no tree-sitter grammar for its
+    language.
   </OptionCard>
 </CardGrid>
 
-Every answer states what happened: which strategies ran, whether the ranking saw the whole workspace (a partially embedded index is disclosed, never silent), and whether the context budget truncated the result list.
+The answer always states which strategies ran (`via: …`), so a result you get from the CLI is never ambiguous about how sharp it is.
 
-## Dials
+`query` takes whatever form you have it in — a sentence, a behaviour description, or a bare symbol/file name — exactly as the agent's tool accepts it.
 
-Both are environment variables, shared with the agent's tool — they shape the answer, never the schema:
+## Examples
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `STELLA_SEARCH_DEPTH` | `10` | How much to say about the top hit, 1 (path only) to 10 (everything, source body included). The tail decays from here and unspent budget deepens it back. |
-| `STELLA_SEARCH_BUDGET` | `9000` | The context allowance one answer may spend, in characters. The hard stop. |
+Ask a question in plain English:
 
-## Offline behaviour
+```bash
+stella search "where are request headers sanitized before logging"
+```
 
-The command reads — and on first use builds — `.stella/private/codegraph.db`, and needs no model API key. The only network it will ever touch is an explicitly configured embedding endpoint; without one it degrades to the name and scan strategies and says so in the answer.
+A symbol name works just as well as a sentence:
+
+```bash
+stella search "what calls resolve_provider"
+```
+
+## `--format json`
+
+For scripted testing — feeding real queries through the exact ranking the agent uses and reading the answer back as data:
+
+```bash
+stella search "the retry/backoff policy for failed HTTP requests" --format json
+```
+
+```json
+{
+  "schema_version": 1,
+  "query": "the retry/backoff policy for failed HTTP requests",
+  "ok": true,
+  "strategies": ["semantic (embedding rank over the code-graph index)"],
+  "note": null,
+  "hits": [
+    {
+      "path": "crates/stella-core/src/retry.rs",
+      "why": "ranked by MEANING against your query — best match is `RetryPolicy` (struct) at line 12 (cosine 0.612)"
+    }
+  ],
+  "content": "search `...` — N result(s) at depth 10\nvia: semantic\n..."
+}
+```
+
+The parts a test script asserts on ride as data, not prose: `hits` is the ranking in rank order (each with the `why` phrase the agent reads), `strategies` lists which rungs of the ladder actually ran — more than one entry means an earlier rung came back empty — and `note` carries the degradation reason verbatim when the semantic rung was skipped or failed. `content` is still the exact rendered text the agent would receive, and `error` is `null` on success.
+
+The command exits non-zero on failure even under `--format json`, so a script can check the exit code without parsing the body — the JSON envelope on stdout stays valid either way, with `ok: false` and `error` set.
+
+Two environment dials tune the rendering, the same ones the agent's registration reads: `STELLA_SEARCH_DEPTH` (how much is said about the top hit) and `STELLA_SEARCH_BUDGET` (the answer's character allowance). They shape `content` only — the `hits` ranking is unaffected.

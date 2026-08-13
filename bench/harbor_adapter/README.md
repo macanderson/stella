@@ -51,7 +51,7 @@ STELLA_BUILD_GIT_SHA="$claim_sha" \
 
 export STELLA_BINARY="$PWD/target/x86_64-unknown-linux-gnu/release/stella"
 export STELLA_SOURCE_COMMIT="$claim_sha"
-# No STELLA_BUDGET: a trial runs under no per-trial spend cap, and the launcher
+# No STELLA_SPEND_LIMIT: a trial runs under no per-trial spend cap, and the launcher
 # refuses one if it is exported (#2411).
 export STELLA_DISABLE_REFLECTION=1
 export PATH="$claim_venv/bin:$PATH"
@@ -105,7 +105,7 @@ test "$(command -v harbor)" = "$claim_venv/bin/harbor"
 test "$(harbor --version)" = 0.6.1
 test -x "$STELLA_BINARY"
 test "${#STELLA_SOURCE_COMMIT}" = 40
-test -z "${STELLA_BUDGET:-}"
+test -z "${STELLA_SPEND_LIMIT:-}"
 test "$STELLA_DISABLE_REFLECTION" = 1
 umask 077
 claim_adapter_root="$claim_repo/bench/harbor_adapter"
@@ -531,7 +531,7 @@ Every result exposes manifest-ready metadata keys:
 | Variable | Effect |
 |---|---|
 | `--model` (Harbor) | Required literal `provider/model_id`. Repeated models are allowed only when all use one provider roster. |
-| `STELLA_BUDGET` | Per-task USD target. Development defaults to `5.0`; the claim launcher requires the exact frozen value `0.17`. |
+| `STELLA_SPEND_LIMIT` | Per-task USD target. Development defaults to `5.0`; the claim launcher requires the exact frozen value `0.17`. |
 | `STELLA_BASE_URL` | Base-URL override for non-claim provider experiments. Claim-eligible OpenRouter runs reject anything except `https://openrouter.ai/api/v1`. |
 | `STELLA_BINARY` | Development may locate a binary automatically; the claim launcher requires a canonical absolute executable path to an ELF64 little-endian x86_64 artifact. |
 | `STELLA_SOURCE_COMMIT` | Development-only runs may omit it. The claim launcher requires an exact lowercase 40-hex value and verifies that it is the unique commit embedded by `STELLA_BUILD_GIT_SHA`. |

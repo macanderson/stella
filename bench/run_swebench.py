@@ -27,7 +27,7 @@ Usage examples
 
 Stella is invoked one-shot as::
 
-    <stella-bin> --model <model> --budget <usd> run --output-format json "<problem>"
+    <stella-bin> --model <model> --spend-limit <usd> run --output-format json "<problem>"
 
 inside a pristine checkout of the target repo at ``base_commit``. The model's
 patch is collected as the ``git diff`` of the working tree after the run.
@@ -310,7 +310,7 @@ def build_stella_cmd(
         stella_bin,
         "--model",
         model,
-        "--budget",
+        "--spend-limit",
         str(budget),
     ]
     if base_url:
@@ -412,7 +412,7 @@ def run_instance(
         # 2) run stella
         cmd = build_stella_cmd(stella_bin, model, budget, prompt, base_url)
         env = os.environ.copy()
-        env.setdefault("STELLA_BUDGET", str(budget))
+        env.setdefault("STELLA_SPEND_LIMIT", str(budget))
         try:
             rc, out = run_cmd(cmd, cwd=workdir, timeout=timeout, log_path=log_path, env=env)
             cost_usd = extract_cost_usd(out)
@@ -509,7 +509,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--budget",
         type=float,
         default=DEFAULT_BUDGET,
-        help="USD budget cap per instance (`stella --budget`).",
+        help="USD budget cap per instance (`stella --spend-limit`).",
     )
     run.add_argument(
         "--base-url",
@@ -684,7 +684,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     summary = {
         "run_id": run_id,
         "model_name_or_path": args.model,
-        # The per-task cap passed to `stella --budget`.
+        # The per-task cap passed to `stella --spend-limit`.
         "budget_usd": args.budget,
         "base_url": args.base_url,
         "dataset": args.instances or f"{args.dataset_name}:{args.split}",

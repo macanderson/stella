@@ -307,41 +307,61 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
     source.lines().nth(index)
 }
 
-/// Files that **define** a symbol exactly named by the query — the certainty
-/// rung (#3125).
+/// The files that define a symbol the query names **exactly** — a lookup, not
+/// a ranking (#3125).
 ///
-/// The signal the ladder used to discard: whether the query *is* a symbol the
-/// graph knows is a fact about the index, not a mode the model selects, so
-/// consulting it reintroduces no mode parameter (invariant 9). A ranked
-/// strategy can only guess; a definition lookup is exact, and an exact answer
-/// must never lose to a guess — semantic ranking put the one definition of
-/// `ContextFrame` at rank 5 of 139 on a real corpus.
+/// Ranking is the wrong instrument for this question and measurably so: asked
+/// for `ContextFrame`, a name with exactly one definition in its repository,
+/// embedding rank returned that definition at **rank 5 of 139** because a
+/// symbol name is a handful of tokens against whole files of prose. The graph
+/// already holds the answer as a fact.
 ///
-/// The matched symbol rides as the hit's focus, so the detailed facets
-/// describe the definition itself. Deterministic: paths ascending, deduped.
-pub(crate) fn exact_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
+/// Consulting it introduces no mode parameter and so does not reopen invariant
+/// 9: nothing about the *call* changes, and nothing is inferred about intent.
+/// Whether the query names an indexed symbol is a property of the index, which
+/// this module is entitled to read — the same standing on which it decides to
+/// rank semantically at all.
+///
+/// A sentence is not a symbol, so a multi-word query is refused before the
+/// query runs rather than after it returns nothing. That is the common case,
+/// and it keeps this free for every search that is a question.
+///
+/// The matched symbol rides as the hit's focus, so the detailed facets the
+/// renderer pays for describe the definition itself rather than whatever
+/// happens to sit first in the file.
+pub(crate) fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
     let name = query.trim();
-    // A query with whitespace is a description, not a symbol; skip the read.
-    if name.is_empty() || name.chars().any(char::is_whitespace) {
+    if name.is_empty() || name.split_whitespace().count() != 1 {
         return Vec::new();
     }
     let Ok(spans) = graph.definition_spans(name) else {
         return Vec::new();
     };
-    let mut paths: Vec<String> = spans.into_iter().map(|span| span.path).collect();
-    paths.sort();
-    paths.dedup();
-    paths.truncate(limit);
-    paths
-        .into_iter()
-        .map(|path| Hit {
+
+    let mut seen = std::collections::HashSet::new();
+    let mut hits = Vec::new();
+    for span in spans {
+        // `definition_spans` is already `WHERE s.name = ?`, so this only guards
+        // the contract rather than filtering: an inexact hit here would be a
+        // ranking wearing a certainty's label, which is the one thing this
+        // strategy must never do.
+        if span.name != name || !seen.insert(span.path.clone()) {
+            continue;
+        }
+        hits.push(Hit {
             why: format!(
-                "defines `{name}` — an exact symbol-name match, pinned above the ranked results"
+                "EXACT name match — `{}` ({}) is DEFINED here at line {}. This is a code-graph \
+                 fact, not a similarity score.",
+                span.name, span.kind, span.start_line
             ),
-            path,
-            focus: Some(name.to_string()),
-        })
-        .collect()
+            path: span.path,
+            focus: Some(span.name),
+        });
+        if hits.len() >= limit {
+            break;
+        }
+    }
+    hits
 }
 
 /// Rank indexed files by how many query terms appear in their path or their

@@ -126,7 +126,7 @@ Deck turns run the [staged pipeline](/docs/inference-pipeline) by default;
 The non-interactive workhorse: one prompt in, verified work out, exit code
 back. Defaults to the staged pipeline; `--test-command` arms the
 deterministic fail→pass flip oracle; `--no-pipeline` selects the raw loop.
-Combine with `--output-format json|stream-json` and `--budget` for headless
+Combine with `--output-format json|stream-json` and `--spend-limit` for headless
 automation — see [`stella run`](/docs/commands/run) and
 [Scripting](/docs/scripting).
 
@@ -142,7 +142,7 @@ judged rounds until an independent verifier (routed to a different model family
 than the worker whenever possible) confirms the objective is met *from
 evidence*. Each round is a full [staged pipeline](/docs/inference-pipeline)
 run by default (`--no-pipeline` for raw step-loop rounds). Backstops — a
-round cap, `--budget`, worker aborts — end the run honestly as "not met"
+round cap, `--spend-limit`, worker aborts — end the run honestly as "not met"
 rather than optimistically.
 
 ```bash
@@ -154,7 +154,7 @@ Where `stella run` executes a single one-shot prompt, `stella goal` runs
 [agent step loop](/docs/inference-pipeline), and then a separate verifier model
 reviews the evidence and decides whether the objective has been satisfied. The
 loop ends when the verifier confirms — or when a backstop trips: a hard round cap
-(default **8** rounds), the `--budget` limit, or a worker-turn abort. Reaching
+(default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching
 a backstop ends the run honestly, reporting the goal as **not met** with a
 named reason.
 
@@ -207,12 +207,12 @@ You can combine goal mode with global flags, for example pinning a specific
 worker model or capping spend:
 
 ```bash
-stella --model anthropic/claude-fable-5 --budget 5.00 \
+stella --model anthropic/claude-fable-5 --spend-limit 5.00 \
   goal "Migrate the config loader to the new settings schema and keep all tests green"
 ```
 
 See [Configuration](/docs/configuration) and [Telemetry](/docs/telemetry) for
-more on `--model` and `--budget`.
+more on `--model` and `--spend-limit`.
 
 ## CI monitor: `stella monitor`
 

@@ -146,8 +146,8 @@ follows is the complete map; each card links to its detail page.
     title="A hard USD spend cap"
     href="/docs/telemetry#budget-observed-vs-enforced"
     meta={[
-      { label: "Surface", value: "--budget · STELLA_BUDGET" },
-      { label: "Example", value: 'stella --budget 2.00 goal "…"' },
+      { label: "Surface", value: "--spend-limit · STELLA_SPEND_LIMIT" },
+      { label: "Example", value: 'stella --spend-limit 2.00 goal "…"' },
     ]}
   >
     Enforced, not advisory: work aborts cleanly once spend passes the cap.
@@ -321,7 +321,7 @@ Full walkthrough: the [coding-plan recipe](/docs/api-providers#zai).
 **Pin a model and a hard budget for an unattended CI run:**
 
 ```bash
-STELLA_MODEL=anthropic/claude-fable-5 STELLA_BUDGET=5 \
+STELLA_MODEL=anthropic/claude-fable-5 STELLA_SPEND_LIMIT=5 \
   stella run --output-format json "port the utils module to the new API"
 ```
 

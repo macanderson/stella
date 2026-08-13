@@ -8,7 +8,7 @@
 //! matters is `cost_usd`: `Fleet::dispatch` meters it into the parent
 //! `BudgetGuard` before stamping anything, precisely because the money is
 //! already spent by the time a worker returns. Synthesizing `$0` there
-//! under-counts the aggregate `--budget` gate — the one direction that
+//! under-counts the aggregate `--spend-limit` gate — the one direction that
 //! comment calls unsafe (#1216).
 //!
 //! A dead worker cannot report, but its receipts can. The engine writes a

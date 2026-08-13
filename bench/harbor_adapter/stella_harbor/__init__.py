@@ -228,7 +228,7 @@ _LAUNCHER_CONTROLS: dict[str, str] = {
 
 _CLAIM_CONTAINER_ENV = frozenset(
     {
-        "STELLA_BUDGET",
+        "STELLA_SPEND_LIMIT",
         "STELLA_DISABLE_REFLECTION",
         # The advertised tool set; :mod:`tool_set` says why the container.
         tool_set.ENV,
@@ -252,7 +252,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # forwarded into the container. Unpacked from the tuple `posture.py`
         # defines beside the selectors themselves, because registering them is
         # load-bearing rather than tidy — the ambient check fails closed, and an
-        # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run. A
+        # unlisted `STELLA_TURN_TIMEOUT` killed all ten trials of a run. A
         # hand-kept second copy of this list is how a new selector (#1211 §6.2,
         # §6.7, §6.8; the read-only roles of #2549) arrives unregistered.
         *POSTURE_SELECTOR_ENV,
@@ -1299,8 +1299,8 @@ class StellaAgent(BaseInstalledAgent):
     ) -> list[str]:
         """Build the headless one-shot Stella argument vector.
 
-        Global flags (``--model``, ``--budget``, ``--base-url``) precede the
-        ``run`` subcommand — they are top-level CLI flags in Stella.
+        Global flags (``--model``, ``--spend-limit``, ``--base-url``) precede
+        the ``run`` subcommand — they are top-level CLI flags in Stella.
         ``--output-format`` is a flag *of* ``run`` since stella#1493 demoted
         it from global (it was a promise most subcommands ignored), so it
         rides after the subcommand token. Returning an argv preserves the
@@ -1314,13 +1314,14 @@ class StellaAgent(BaseInstalledAgent):
             _INSTALL_PATH,
             "--model",
             model,
-            # Omitted entirely when there is no cap. `--budget ""` is not "no
-            # budget" to clap, it is a malformed number, and it exits 2 before
-            # the turn starts.
-            *(["--budget", budget] if budget is not None else []),
-            # Omit-when-absent, same discipline and same reason as `--budget`:
-            # an absent flag is "no deadline", an empty value exits 2.
-            *(["--turn-budget", turn_budget] if turn_budget is not None else []),
+            # Omitted entirely when there is no cap. `--spend-limit ""` is not
+            # "no limit" to clap, it is a malformed number, and it exits 2
+            # before the turn starts.
+            *(["--spend-limit", budget] if budget is not None else []),
+            # Omit-when-absent, same discipline and same reason as
+            # `--spend-limit`: an absent flag is "no deadline", an empty
+            # value exits 2.
+            *(["--turn-timeout", turn_budget] if turn_budget is not None else []),
         ]
         if base_url:
             base_url = _validated_public_base_url(base_url)
@@ -1400,15 +1401,15 @@ class StellaAgent(BaseInstalledAgent):
         denied on the step that would have put the binary on ``PATH`` — the one
         assertion the grader then failed it for.
 
-        A non-empty ``STELLA_BUDGET`` is refused rather than ignored. Ignoring
-        it would let an operator believe a run was bounded when it was not,
-        which is the same class of mistake pointed the other way.
+        A non-empty ``STELLA_SPEND_LIMIT`` is refused rather than ignored.
+        Ignoring it would let an operator believe a run was bounded when it
+        was not, which is the same class of mistake pointed the other way.
         """
-        declared = self._configured_value("STELLA_BUDGET", None)
+        declared = self._configured_value("STELLA_SPEND_LIMIT", None)
         if declared is not None and str(declared).strip():
             raise RuntimeError(
-                f"STELLA_BUDGET={declared!r} is refused: a benchmark trial runs "
-                "under no spend cap, because a ceiling only one side carries "
+                f"STELLA_SPEND_LIMIT={declared!r} is refused: a benchmark trial "
+                "runs under no spend cap, because a ceiling only one side carries "
                 "stops that agent where the work finishes and the score reads "
                 "it as the other agent being better (#2411). Bound spend at the "
                 "provider key, which fails a run visibly instead of truncating "
@@ -1484,12 +1485,13 @@ class StellaAgent(BaseInstalledAgent):
                         + ", ".join(unexpected_extra)
                     )
 
-        # Not forwarded at all when there is no cap: the CLI declares `--budget`
-        # with `env = "STELLA_BUDGET"`, so an empty value in the container's
-        # environment fails the same parse the omitted flag was avoiding.
+        # Not forwarded at all when there is no cap: the CLI declares
+        # `--spend-limit` with `env = "STELLA_SPEND_LIMIT"`, so an empty value
+        # in the container's environment fails the same parse the omitted
+        # flag was avoiding.
         budget = self._configured_budget()
         if budget is not None:
-            forwarded["STELLA_BUDGET"] = budget
+            forwarded["STELLA_SPEND_LIMIT"] = budget
         reflection = self._configured_value(
             "STELLA_DISABLE_REFLECTION", _DEFAULT_DISABLE_REFLECTION
         )

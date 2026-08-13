@@ -154,6 +154,9 @@ pub(crate) fn spawn_renderer(
 ) -> tokio::task::JoinHandle<RendererOutcome> {
     tokio::spawn(async move {
         let mut tool_names: HashMap<String, String> = HashMap::new();
+        // Shared with every blocking persistence hop below, so the provider id
+        // is not re-allocated once per persisted event.
+        let provider_id: Arc<str> = provider_id.into();
         let mut outcome = RendererOutcome {
             events: Vec::new(),
             persistence_complete: true,
@@ -187,10 +190,51 @@ pub(crate) fn spawn_renderer(
                 event
             };
             let preview = matches!(event, AgentEvent::TextDelta { .. });
-            if let Some((store, id)) = &execution
+            let event = if let Some((store, id)) = &execution
                 && !preview
             {
-                let persisted = persist_event_detailed(store, *id, seq, &event, &provider_id);
+                // `record_event` is a synchronous `rusqlite` write and this is a
+                // Tokio worker thread. At the default durability the write costs
+                // 37 microseconds (`stella_store::migrations::Durability`), which
+                // inline would be unremarkable — but `busy_timeout` is five
+                // seconds, and that pragma exists precisely because a second
+                // same-workspace session contending for the write lock is an
+                // expected condition rather than an exotic one. Run inline, the
+                // worst case is therefore a five-second stalled reactor rather
+                // than one slow write, and `paranoid` durability turns the
+                // ordinary case into 4 ms an event as well. Both belong on the
+                // blocking pool.
+                //
+                // The event moves in and back out rather than being cloned: it is
+                // still needed for rendering below, and a `ToolResult` payload is
+                // exactly the event least worth copying.
+                //
+                // The feeding channel stays unbounded on purpose. `EventSender`
+                // is synchronous by construction (invariant #2 keeps
+                // `stella-core` I/O-free), so a bounded channel could only
+                // `try_send` — dropping telemetry — or block the engine thread,
+                // which is strictly worse than the stall this hop removes.
+                let store = Arc::clone(store);
+                let id = *id;
+                let provider_id = Arc::clone(&provider_id);
+                let joined = tokio::task::spawn_blocking(move || {
+                    let persisted = persist_event_detailed(&store, id, seq, &event, &provider_id);
+                    (event, persisted)
+                })
+                .await;
+                let (event, persisted) = match joined {
+                    Ok(pair) => pair,
+                    // The blocking pool only fails here if `persist_event_detailed`
+                    // panicked or the runtime is shutting down. The event went with
+                    // the task either way, so the turn loses one rendered line —
+                    // what it must not lose is the admission that persistence is no
+                    // longer complete.
+                    Err(_) => {
+                        outcome.persistence_complete = false;
+                        seq += 1;
+                        continue;
+                    }
+                };
                 if !persisted.is_complete() {
                     outcome.persistence_complete = false;
                     // This path used to print "store write failed" for BOTH
@@ -208,7 +252,10 @@ pub(crate) fn spawn_renderer(
                     }
                 }
                 seq += 1;
-            }
+                event
+            } else {
+                event
+            };
             match format {
                 // One line per event — the stable machine interface.
                 // Serialization of a protocol enum never fails; if it somehow
@@ -1299,5 +1346,75 @@ mod stream_tests {
             recon.digest_mismatches
         );
         assert_eq!(recon.messages, original);
+    }
+}
+
+#[cfg(test)]
+mod reactor_tests {
+    /// The two async drains that write telemetry to SQLite, named by the
+    /// function whose body must show the blocking hop.
+    const DRAIN_SITES: [(&str, &str); 2] = [
+        ("src/agent/persistence.rs", "pub(crate) fn spawn_renderer("),
+        (
+            "src/command_deck/forwarder.rs",
+            "pub(crate) fn spawn_forwarder(",
+        ),
+    ];
+
+    /// Every SQLite write on an event drain must run on the blocking pool.
+    ///
+    /// `Store::record_event` is a synchronous `rusqlite` write, and both drains
+    /// are `tokio::spawn`ed tasks — so an inline call blocks a Tokio worker for
+    /// as long as the write takes. That is 37 microseconds at the default
+    /// durability, 4 ms under `STELLA_STORE_DURABILITY=paranoid`, and up to the
+    /// full five-second `busy_timeout` whenever a second same-workspace session
+    /// holds the write lock. The pragma exists because that contention is
+    /// expected, which is what makes the worst case reachable rather than
+    /// theoretical.
+    ///
+    /// This is a source-grep guard for the same reason `resume_frame.rs`'s
+    /// `every_pipeline_construction_declares_its_resume_frame` is one: what can
+    /// regress here is *wiring*, not logic. Observing "this ran on the blocking
+    /// pool" at runtime needs either a wall-clock race or a seam injected into
+    /// `persist_event_detailed` purely to be observed, and the first is flaky
+    /// while the second is test-shaped production code. The lexical check has
+    /// neither problem and fails the moment a call site moves back inline.
+    #[test]
+    fn every_event_drain_persists_off_the_reactor() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (relative, signature) in DRAIN_SITES {
+            let path = crate_root.join(relative);
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let start = source
+                .find(signature)
+                .unwrap_or_else(|| panic!("{relative}: `{signature}` not found"));
+            let body = &source[start..];
+
+            // The first call after the signature is the drain's own; later ones
+            // in the same file belong to tests.
+            let call = body
+                .find("persist_event_detailed(")
+                .unwrap_or_else(|| panic!("{relative}: no persistence call after `{signature}`"));
+            let hop = body[..call].rfind("spawn_blocking(").unwrap_or_else(|| {
+                panic!(
+                    "{relative}: the SQLite write in `{signature}` is inline on a Tokio worker \
+                     thread — a contended write stalls the reactor for up to the five-second \
+                     busy_timeout. Move it onto `tokio::task::spawn_blocking`."
+                )
+            });
+            assert!(
+                !body[hop..call].contains(".await"),
+                "{relative}: `spawn_blocking` closes before the persistence call, so the write \
+                 is still running on the reactor"
+            );
+            assert!(
+                body[call..]
+                    .get(..600)
+                    .is_some_and(|w| w.contains(".await")),
+                "{relative}: the blocking hop is never awaited — detaching it would let events \
+                 persist out of `seq` order"
+            );
+        }
     }
 }

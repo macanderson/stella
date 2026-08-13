@@ -503,6 +503,14 @@ impl CodeGraph {
         vectors::chunks::chunk_count(&self.inner.read_guard(), fingerprint)
     }
 
+    /// How many indexed files still carry a symbol with no chunk vector under
+    /// `fingerprint`. What an eager chunk-embedding pass reports as
+    /// `remaining` — cheap on purpose, since it is checked after every pass
+    /// without re-rendering or re-hashing anything.
+    pub fn pending_chunk_file_count(&self, fingerprint: &str) -> Result<usize, GraphError> {
+        vectors::chunks::pending_chunk_file_count(&self.inner.read_guard(), fingerprint)
+    }
+
     /// The structured neighborhood of `file` — its symbols and import edges
     /// in both directions — for UI consumers (the deck's Graph tab). The
     /// frame methods above render prose for the model; this keeps the shape.

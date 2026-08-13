@@ -54,7 +54,7 @@ came through:
   [skills](/docs/agent-tools/skills) are recalled per prompt and injected as
   a volatile block after the byte-stable system prefix, so prompt caching
   survives across turns.
-- **Budgets are enforced everywhere.** `--budget` caps USD spend on every
+- **Spend limits are enforced everywhere.** `--spend-limit` caps USD spend on every
   path; without it, spend is still metered for the cost summary.
 - **Everything is recorded.** Each turn opens an execution record (files
   touched, tool use, memory citations, cost, outcome) in the workspace
@@ -290,7 +290,7 @@ not what to do. The engine works in rounds; after each round an
 whenever possible, and holding a **read-only view** of the same tool stack —
 assesses the goal *from evidence* (running tests, reading CI, inspecting
 files), never from the worker's claims. Rounds continue until the verifier
-confirms the goal, or a backstop (round cap, `--budget`, worker abort) ends
+confirms the goal, or a backstop (round cap, `--spend-limit`, worker abort) ends
 the run honestly as *not met*.
 
 Each working round is a staged pipeline run by default; `--no-pipeline`

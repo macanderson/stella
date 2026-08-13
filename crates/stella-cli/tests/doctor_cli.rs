@@ -67,7 +67,7 @@ fn doctor(dir: &tempfile::TempDir, args: &[&str]) -> Output {
         .env_remove("STELLA_HOME")
         .env_remove("STELLA_MODEL")
         .env_remove("STELLA_BASE_URL")
-        .env_remove("STELLA_BUDGET")
+        .env_remove("STELLA_SPEND_LIMIT")
         .output()
         .expect("run stella doctor")
 }

@@ -179,7 +179,7 @@ abort relaunches under a new job name rather than resuming — the rules in
 spent **$88.29** over 89 Stella trials on `glm-5.2` with no per-trial cap, so
 the control arm is that order of magnitude and the treatment arm is that plus
 whatever the second model's authoring costs — which is the number this
-experiment exists to measure rather than predict. `STELLA_BUDGET` defaults to
+experiment exists to measure rather than predict. `STELLA_SPEND_LIMIT` defaults to
 `0.60` per trial in `../run/env.sh`; a capped run measures a different agent, so
 decide the cap once and use the same one in both arms.
 

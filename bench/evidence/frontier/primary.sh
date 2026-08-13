@@ -52,7 +52,7 @@ fi
 
 echo "tier=$TIER job=$JOB tasks=$N concurrency=$CONC attempts=$FB_ATTEMPTS"
 echo "backend=$FB_ENV upload=${FB_UPLOAD}${FB_UPLOAD:+/$FB_UPLOAD_VISIBILITY}"
-echo "sut=$STELLA_SOURCE_COMMIT model=$TB_MODEL budget/trial=${STELLA_BUDGET:-uncapped}"
+echo "sut=$STELLA_SOURCE_COMMIT model=$TB_MODEL budget/trial=${STELLA_SPEND_LIMIT:-uncapped}"
 echo "dataset=$FB_DATASET"
 echo "harbor=$(harbor --version) started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 

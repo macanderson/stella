@@ -222,7 +222,7 @@ mod tests {
         Config {
             model_id: provider.default_model.to_string(),
             provider,
-            turn_budget: None,
+            turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
             model_pinned_by_flag: false,

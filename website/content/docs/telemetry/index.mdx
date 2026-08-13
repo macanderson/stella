@@ -1,6 +1,6 @@
 ---
 title: Telemetry & budget
-description: Local-first metering, the opt-in Oxagen Enterprise operational export boundary, spool diagnostics, and how --budget becomes a hard spend cap.
+description: Local-first metering, the opt-in Oxagen Enterprise operational export boundary, spool diagnostics, and how --spend-limit becomes a hard spend cap.
 ---
 
 stella meters every run **locally**. Token usage, cost, per-step accounting, and the
@@ -365,12 +365,12 @@ when an operator needs a synchronous delivery attempt before maintenance.
 
 ## Budget: observed vs. enforced
 
-The `--budget` flag (or the `STELLA_BUDGET` environment variable) attaches a USD spend
+The `--spend-limit` flag (or the `STELLA_SPEND_LIMIT` environment variable) attaches a USD spend
 limit to the whole run or session.
 
-- **Observed mode (default, no `--budget`)** — stella meters spend for the end-of-run cost
+- **Observed mode (default, no `--spend-limit`)** — stella meters spend for the end-of-run cost
   summary but never blocks. Use it to *see* what a task costs.
-- **Enforced mode (`--budget <usd>`)** — a hard cap. Once total spend exceeds the limit,
+- **Enforced mode (`--spend-limit <usd>`)** — a hard cap. Once total spend exceeds the limit,
   work aborts **cleanly** — never in the middle of a tool call — so you are never left with
   a half-applied edit.
 
@@ -379,10 +379,10 @@ limit to the whole run or session.
 stella run "summarize the architecture of this repo"
 
 # Enforced: stop cleanly once spend passes $2.00
-stella --budget 2.00 goal "all tests pass and clippy is clean"
+stella --spend-limit 2.00 goal "all tests pass and clippy is clean"
 
 # Via environment, e.g. in CI
-export STELLA_BUDGET=5
+export STELLA_SPEND_LIMIT=5
 stella run "port the utils module to the new API"
 ```
 

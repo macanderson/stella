@@ -47,14 +47,14 @@ in Rust as a workspace of focused crates.
 - **Prompt-cache-native memory** — Lessons saved with `save_memory` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by the agent and the `stella graph` command
+  Go, Java, C, PHP, SQL) queried by the agent and the `stella search` command
   instead of grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and the
   files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only explicitly enrolled Oxagen
   Enterprise managed mode can derive a closed, content-free operational rollup.
-- **Budget enforcement** — A `--budget` flag aborts cleanly between steps, never
-  mid-tool.
+- **Budget enforcement** — A `--spend-limit` flag aborts cleanly between steps,
+  never mid-tool.
 - **Goal & fleet modes** — `goal` works in judged rounds; `fleet` fans a task DAG
   out to parallel workers that share one tree under cooperative file claims, or
   take their own git worktree when a task opts in.
@@ -363,7 +363,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)  | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
 | [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)      | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
 | [`init`](https://stella.oxagen.sh/docs/commands/init)                 | Infer this workspace's domain taxonomy and build the code-graph index                                             |
-| [`graph <op> <target>`](https://stella.oxagen.sh/docs/commands/graph) | Query the code graph — definitions, references, callees/callers, imports, neighbors (offline)                     |
+| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)     | Find code by meaning or by name — the CLI door to the agent's `search` tool                                       |
 | [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)     | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
 | [`scripts <cmd>`](https://stella.oxagen.sh/docs/commands/scripts)     | List and run the project's package-manager scripts by canonical verb (offline)                                    |
 | [`tools`](https://stella.oxagen.sh/docs/commands/tools)               | List every tool available this session; `--validate` checks custom manifests                                      |
@@ -433,7 +433,7 @@ stella monitor main          # drive a branch/PR's CI to green as a judged goal
 
 ```bash
 stella fleet "fix the flaky auth test" "tighten the CI cache key"   # two isolated tasks
-stella fleet --plan .stella/fleet.toml --max-concurrency 2 --budget 5.0
+stella fleet --plan .stella/fleet.toml --max-concurrency 2 --spend-limit 5.0
 ```
 
 Wave-scheduled by dependency and recorded in `.stella/private/fleet.db`. Workers
@@ -446,11 +446,12 @@ the serde form of the fleet DAG: `[[tasks]]` entries with `id`, `title`,
 ### Code graph queries
 
 ```bash
-stella graph definitions run_turn     # where is this symbol defined?
-stella graph importers src/auth.rs    # which files import it?
+stella search "where is run_turn defined"    # a symbol name works as well as a sentence
+stella search "what imports src/auth.rs"     # blast radius before you edit it
 ```
 
-Built by `stella init`, answered offline, no API key needed.
+Built by `stella init`, ranked offline by name/graph match when no embedder is
+configured, and by meaning when one is.
 
 ### Project setup & introspection
 
@@ -465,9 +466,9 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 
 ### Global flags
 
-`--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
+`--model provider/id` · `--api-key` · `--base-url` · `--spend-limit <usd>` ·
 `--accessible` · `--plain` · `--no-anim` (also as `STELLA_MODEL`,
-`STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
+`STELLA_BASE_URL`, `STELLA_SPEND_LIMIT`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
 `STELLA_NO_ANIM`). All of them are registered with every subcommand, so they
 parse before _or_ after the subcommand token.
 `--output-format text|json|stream-json` (env `STELLA_OUTPUT_FORMAT`) is
@@ -694,7 +695,7 @@ flowchart TD
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
     CORE -->|emits AgentEvent stream| STORE["stella-store<br/>SQLite: executions · events · telemetry"]
     U -->|"recall · episodes · bi-temporal facts"| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
-    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `graph_query` + `stella graph`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
+    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `graph_query` + `stella search`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
     MODEL -.->|versioned serde| PROTO["stella-protocol — shared types + Provider/tool ports"]
     TOOLS -.-> PROTO
     STORE -.-> PROTO
