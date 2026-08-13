@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn the_task_tap_forwards_parallel_safe_names() {
         let inner = Claiming;
-        let registry = ToolRegistry::with_issue_backend(std::path::PathBuf::from("."), None);
+        let registry = ToolRegistry::new(std::path::PathBuf::from("."));
         let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn the_task_tap_forwards_active_skill_slugs() {
         let inner = Claiming;
-        let registry = ToolRegistry::with_issue_backend(std::path::PathBuf::from("."), None);
+        let registry = ToolRegistry::new(std::path::PathBuf::from("."));
         let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,

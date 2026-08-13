@@ -43,16 +43,11 @@ pub(super) async fn run_lead_pipeline_turn(
     budget: &mut BudgetGuard,
     cfg: &Config,
     active_rules: &crate::rules::ResolvedRules,
-    registry_options: &stella_tools::RegistryOptions,
     execution: Option<(Arc<Store>, i64)>,
-    files_before: usize,
     in_tx: &UnboundedSender<Inbound>,
-    ask_io: &DeckAskUserIo,
-    hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>>,
     scope_gate: &DeckApprovalGate,
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
-    activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
     pause: &lead_control::LeadPause,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
@@ -76,9 +71,10 @@ pub(super) async fn run_lead_pipeline_turn(
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
     );
-    // As in `run_lead_turn`: the recorder announces on this turn's channel.
-    // Candidate registries are deliberately left unattached — a candidate's
-    // edits live in a shadow worktree and are only the user's once adopted.
+    // As in `run_lead_turn`: registry-born events (task board, sub-agent
+    // lifecycle) ride this turn's channel. Candidate registries are
+    // deliberately left unattached — a candidate's edits live in a shadow
+    // worktree and are only the user's once adopted.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
     // As in `run_lead_turn`: one stop — or one pause — lands on the stage,
     // its tool calls, and their children alike.
@@ -87,29 +83,11 @@ pub(super) async fn run_lead_pipeline_turn(
     let result = {
         let customs =
             CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
-        let (stub_tx, _) = mpsc::unbounded_channel();
-        let mut interactive = InteractiveToolSet::new(&customs, stub_tx)
-            .with_ask_user(Some(Box::new(ask_io.clone())))
-            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        // Mid-turn `recall_context`, over the SAME port the pipeline's recall
-        // stage uses below — one plane, so a step-12 lookup and the step-0
-        // recall can never disagree about what it holds.
-        if let Some(memory) = memory {
-            interactive = interactive.with_recall(memory, tx.clone());
-        }
-        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
-        // As in `run_lead_turn`: above the policy filter, so a refused call
-        // never raises a card.
-        let gated = stella_tools::hunk_review::HunkGate::new(
-            &permitted,
-            hunk_io,
-            cfg.workspace_root.clone(),
-        );
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&gated, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-            .with_activation(activated.clone());
+        // The operator's switches, applied over the complete surface — MCP
+        // and custom tools included.
+        let permitted = agent::PolicyToolSet::new(&customs, agent::session_tool_policy(cfg));
         let tapped = TaskTap {
-            inner: &tools,
+            inner: &permitted,
             events: tx.clone(),
             registry,
             supervisor: Some(sup_tx.clone()),
@@ -134,13 +112,9 @@ pub(super) async fn run_lead_pipeline_turn(
         let ws_ports = agent::workspace_ports(
             cfg.workspace_root.clone(),
             cfg,
-            registry_options.clone(),
             active_rules.clone(),
             mcp,
-            agent::SessionPlane::new(
-                stella_core::EventSender::new(tx.clone()),
-                std::sync::Arc::clone(registry),
-            ),
+            agent::SessionPlane::new(stella_core::EventSender::new(tx.clone())),
         )?;
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = match memory {
@@ -155,10 +129,9 @@ pub(super) async fn run_lead_pipeline_turn(
             recall,
             repo: &ws_ports.repo_structure,
             repo_status: &ws_ports.repo_status,
-            touches: &crate::agent::RegistryTouches(registry),
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
-            lint: Some(&ws_ports.lint_probe),
+            lint: None,
             mutation: Some(&ws_ports.mutation_probe),
             coverage: Some(&ws_ports.coverage_probe),
             approvals: scope_gate,
@@ -203,7 +176,6 @@ pub(super) async fn run_lead_pipeline_turn(
             store,
             *id,
             registry,
-            files_before,
             outcome_label,
             cost,
             persistence_complete,

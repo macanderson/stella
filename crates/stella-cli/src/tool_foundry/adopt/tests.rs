@@ -1,59 +1,55 @@
-//! End to end over the real commands: mine receipts, author, adopt, enable —
-//! and confirm the tool is unreachable at every step until the last one.
+//! End to end over the real commands: stage, adopt, enable — and confirm the
+//! tool is unreachable at every step until the last one.
 
-use stella_core::GapDetectionConfig;
-use stella_store::{ToolCallRow, ToolCallState};
+use stella_core::{ParamKind, ProposedTool, ToolParameter};
 
 use super::*;
-use crate::tool_foundry::run_tools_author_in;
 
-/// How many times each seeded command is recorded. The detector's shipping
-/// `GapDetectionConfig::min_reuse_ratio` asks that *argument sets* recur, not
-/// just program names (#2378); these fixtures are about the adoption protocol,
-/// so each command is retyped three times the way a real incantation would be.
-const SEEDED_REPEATS: usize = 3;
-
-/// A workspace with a real on-disk store, seeded with the `bash` receipts the
-/// detector mines — each command recorded [`SEEDED_REPEATS`] times. Returns the
-/// root and the store.
-fn workspace(commands: &[&str]) -> (tempfile::TempDir, Store) {
+/// A workspace with a real on-disk store. Returns the root and the store.
+fn workspace() -> (tempfile::TempDir, Store) {
     let ws = tempfile::tempdir().expect("tmp");
     let store = Store::open(ws.path()).expect("store");
-    let id = store
-        .begin_execution("run", "p", "zai", "glm-5.2")
-        .expect("execution");
-    let rows: Vec<ToolCallRow> = commands
-        .iter()
-        .cycle()
-        .take(commands.len() * SEEDED_REPEATS)
-        .enumerate()
-        .map(|(i, command)| ToolCallRow {
-            error_class: None,
-            call_id: format!("c{i}"),
-            name: "bash".into(),
-            surface: "native".into(),
-            args_json: serde_json::json!({ "command": command }).to_string(),
-            args_digest: format!("d{i}"),
-            reason: String::new(),
-            state: ToolCallState::Ok,
-            error: String::new(),
-            bytes_out: 0,
-            duration_ms: 1,
-        })
-        .collect();
-    store.record_tool_calls(id, &rows).expect("record");
     (ws, store)
 }
 
-/// The motivating capability, staged: reading a file the receipts named.
-/// Returns the tool's name.
-fn author_cat(root: &Path, store: &Store) -> String {
+/// The motivating capability, staged through the real authoring pass
+/// ([`stella_tools::foundry_author::author`]) into `PROPOSED_DIR`, exactly as
+/// a reviewed proposal lands there. Returns the tool's name.
+fn author_cat(root: &Path, _store: &Store) -> String {
     std::fs::write(root.join("a.txt"), "alpha-contents\n").unwrap();
     std::fs::write(root.join("b.txt"), "beta-contents\n").unwrap();
     std::fs::write(root.join("c.txt"), "gamma-contents\n").unwrap();
-    run_tools_author_in(root, store, Some("cat"), GapDetectionConfig::default())
-        .expect("authoring succeeds");
-    "cat".to_string()
+    let proposal = ProposedTool {
+        name: "cat".into(),
+        description: "read one file's contents".into(),
+        signature: "cat <path>".into(),
+        command_template: "cat {p1}".into(),
+        parameters: vec![ToolParameter {
+            name: "p1".into(),
+            kind: ParamKind::Path,
+            examples: vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
+        }],
+        occurrences: 3,
+        distinct_arguments: 3,
+        examples: vec!["cat a.txt".into(), "cat b.txt".into(), "cat c.txt".into()],
+    };
+    let authored = stella_tools::foundry_author::author(&proposal).expect("authoring succeeds");
+    let staged = root.join(stella_tools::foundry_author::PROPOSED_DIR);
+    std::fs::create_dir_all(&staged).expect("create proposed dir");
+    let script_path = staged.join(&authored.script_filename);
+    std::fs::write(&script_path, &authored.script).expect("write script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+            .expect("mark executable");
+    }
+    std::fs::write(
+        staged.join(&authored.manifest_filename),
+        &authored.manifest_toml,
+    )
+    .expect("write manifest");
+    authored.name
 }
 
 /// What a session would actually be offered, given what is on disk and what
@@ -71,7 +67,7 @@ fn session_tools(root: &Path) -> Vec<String> {
 /// last step. This is #830's guardrail as a single readable trace.
 #[test]
 fn a_tool_is_unreachable_until_it_is_both_proven_and_approved() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -126,7 +122,7 @@ fn a_tool_is_unreachable_until_it_is_both_proven_and_approved() {
 /// tool, and the difference has to be readable.
 #[test]
 fn a_withheld_tool_is_explained_not_silently_dropped() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -144,7 +140,7 @@ fn a_withheld_tool_is_explained_not_silently_dropped() {
 /// relocated pair is removed and the staged one is untouched for review.
 #[test]
 fn a_failed_witness_adopts_nothing_and_leaves_the_staged_pair() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -175,7 +171,7 @@ fn a_failed_witness_adopts_nothing_and_leaves_the_staged_pair() {
 /// the script and then enabling it is the attack this refuses by name.
 #[test]
 fn enabling_a_tool_whose_script_changed_is_refused() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -193,7 +189,7 @@ fn enabling_a_tool_whose_script_changed_is_refused() {
 /// old approval — the edit does not ride in on the previous decision.
 #[test]
 fn re_adoption_proves_the_new_bytes_and_needs_a_new_approval() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -228,7 +224,7 @@ fn re_adoption_proves_the_new_bytes_and_needs_a_new_approval() {
 /// halves of closing the hand-move hole.
 #[test]
 fn a_hand_moved_manifest_is_refused_and_withheld() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
@@ -281,7 +277,7 @@ fn a_hand_written_tool_is_unaffected_by_the_gate() {
 /// anything ever used it.
 #[test]
 fn the_report_shows_reuse_and_names_false_starts() {
-    let (ws, store) = workspace(&["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let (ws, store) = workspace();
     let root = ws.path();
     let _home = crate::paths::test_user_home(root.to_path_buf());
 
@@ -325,11 +321,11 @@ fn adopting_a_manifest_without_provenance_is_refused() {
 /// Adopting something that was never staged says so, rather than failing on a
 /// missing file three steps later.
 #[test]
-fn adopting_an_unstaged_name_points_at_the_author_command() {
+fn adopting_an_unstaged_name_points_at_the_staging_step() {
     let ws = tempfile::tempdir().expect("tmp");
     let store = Store::open(ws.path()).expect("store");
     let err = adopt_in(ws.path(), &store, "nothing_here").expect_err("nothing to adopt");
-    assert!(err.contains("stella tools --author nothing_here"), "{err}");
+    assert!(err.contains("stage a `nothing_here.toml`"), "{err}");
 }
 
 /// Enabling a name with no adoption record is refused with the step that would

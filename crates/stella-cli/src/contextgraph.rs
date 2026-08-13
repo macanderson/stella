@@ -270,7 +270,7 @@ impl ContextProvider for GraphProvider {
         &self.caps
     }
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
-        let db_path = stella_tools::graph::graph_db_path(&self.workspace_root);
+        let db_path = crate::search_cmd::codegraph::graph_db_path(&self.workspace_root);
         if !db_path.exists() {
             return Ok(ContextQueryResult {
                 frames: Vec::new(),

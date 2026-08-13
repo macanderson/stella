@@ -337,27 +337,8 @@ fn every_web_surface_agrees_with_the_observatory_palette() {
     );
 }
 
-/// The two loopback auth landing pages are one stylesheet, kept in two places.
-///
-/// `stella-mcp` (OAuth) and `stella-tools` (tracker auth) each run a one-shot
-/// listener that serves a two-state page, and they share no dependency to put
-/// a stylesheet behind. Copying it is the right call for six values; letting
-/// the copies drift is not, and "keep these two files identical" written in a
-/// comment is the same non-defence the observatory/arenabench contract was
-/// before this file existed.
-#[test]
-fn the_two_auth_landing_pages_share_one_stylesheet() {
-    let mcp = read("crates/stella-mcp/src/oauth/callback_page.css");
-    let tools = read("crates/stella-tools/src/tracker_auth_page.css");
-    assert_eq!(
-        mcp, tools,
-        "crates/stella-mcp/src/oauth/callback_page.css and \
-         crates/stella-tools/src/tracker_auth_page.css must stay byte-identical \
-         — edit one and copy it over the other"
-    );
-}
-
-/// Those pages carry the instrument palette too, for the tokens they use.
+/// The MCP OAuth landing page carries the instrument palette too, for the
+/// tokens it uses.
 #[test]
 fn the_auth_landing_pages_use_the_instrument_palette() {
     let canon = canonical();

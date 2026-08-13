@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
-use stella_pipeline::CandidateWorkspacePort;
 use stella_protocol::event::BudgetMode; // no longer re-exported via `super::*` (#971)
 
 #[test]
@@ -114,96 +113,6 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
     );
 }
 
-/// The scripts section rides the byte-stable prompt prefix: two
-/// assemblies over the same workspace must be byte-identical, the verb
-/// bindings must be present, and a scriptless workspace must add
-/// nothing (docs/spec/scripts-index.md).
-#[test]
-fn assemble_system_prompt_carries_a_byte_stable_scripts_section() {
-    let root = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        root.path().join("package.json"),
-        r#"{"scripts": {"build": "next build", "test": "vitest"}}"#,
-    )
-    .unwrap();
-    std::fs::write(root.path().join("pnpm-lock.yaml"), "").unwrap();
-
-    let authority = crate::settings::AuthorityPolicy {
-        project_prompts_allowed: true,
-        ..crate::settings::AuthorityPolicy::default()
-    };
-    let rules = crate::rules::ResolvedRules::default();
-    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
-    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
-    assert_eq!(first, second, "same workspace state ⇒ identical bytes");
-    assert!(first.contains("## Project scripts"), "section present");
-    assert!(first.contains("build → pnpm run build"), "{first}");
-    assert!(first.contains("install → pnpm install"), "{first}");
-
-    let empty = tempfile::tempdir().expect("tempdir");
-    let bare = assemble_system_prompt(SYSTEM_PROMPT, empty.path(), &authority, &rules, None);
-    assert!(
-        !bare.contains("## Project scripts"),
-        "no scripts → no section, no noise"
-    );
-}
-
-/// Zero-call orientation (issue #328): over a pre-indexed workspace, the
-/// interactive system prompt carries the project map — languages, layout,
-/// entry points — baked into the byte-stable prefix, so orientation costs no
-/// model round-trip and is unconditional rather than left to the model's
-/// discretion. Two assemblies over the same index state must be
-/// byte-identical: that is the invariant that lets the whole prefix ride the
-/// provider's prompt cache (AGENTS.md invariant #7).
-#[test]
-fn assemble_system_prompt_bakes_a_byte_stable_orientation_map() {
-    let root = graph_fixture();
-
-    let authority = crate::settings::AuthorityPolicy {
-        project_prompts_allowed: true,
-        ..crate::settings::AuthorityPolicy::default()
-    };
-    let rules = crate::rules::ResolvedRules::default();
-    let first = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
-    let second = assemble_system_prompt(SYSTEM_PROMPT, root.path(), &authority, &rules, None);
-    assert_eq!(
-        first, second,
-        "same index state ⇒ identical bytes (the prompt-cache invariant)"
-    );
-    assert!(first.contains("## Project map"), "{first}");
-    assert!(first.contains("Languages: rust"), "{first}");
-    assert!(
-        first.contains("Layout (2 indexed files): 2 at the root"),
-        "the slow-churning skeleton includes the top-level layout: {first}"
-    );
-    assert!(first.contains("Entry points:"), "{first}");
-}
-
-/// The #336 wave-1 steering-parity witness, re-derived for the five-tool
-/// surface: `search` must be advertised FIRST in BOTH static base personas —
-/// a tool the prompt never mentions loses to shell grep no matter how good
-/// it is (h2h891 measured 1 search call in 10 trials against a prompt that
-/// never named it). `read_symbol`'s offset-guessing line left with the tool;
-/// the successor steering — search before any lexical guess — is the line
-/// that must not silently vanish.
-#[test]
-fn both_static_prompts_carry_a_search_first_steering_line() {
-    for (name, prompt) in [
-        ("SYSTEM_PROMPT", SYSTEM_PROMPT),
-        ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
-    ] {
-        assert!(
-            prompt.contains("search comes first for every code question"),
-            "{name} must advertise search first"
-        );
-        assert!(
-            prompt.contains("call search with the idea instead"),
-            "{name} must steer multi-spelling greps back to search — that \
-             lexical spiral is the measured defect search exists to remove"
-        );
-    }
-}
-
 /// Build a real code-graph index in a tempdir: `hub.rs` (three symbols) is
 /// busiest, `leaf.rs` (one) is not. Returns the workspace root tempdir.
 fn graph_fixture() -> tempfile::TempDir {
@@ -258,79 +167,64 @@ fn graph_snapshot_is_none_without_an_index() {
     assert!(graph_snapshot_focus(root.path(), Some("x.rs")).is_none());
 }
 
-#[cfg(unix)]
-#[test]
-fn schema_index_population_visibly_rejects_unsafe_legacy_codegraph() {
-    use std::os::unix::fs::PermissionsExt;
+/// Whether the workspace's code-graph index exists on disk — the fact the
+/// session builder promises, read through the same resolver production uses.
+fn graph_index_exists(root: &std::path::Path) -> bool {
+    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .ok()
+        .flatten()
+        .is_some_and(|db| db.exists())
+}
 
-    let root = tempfile::tempdir().expect("tempdir");
-    let dot = root.path().join(".stella");
-    std::fs::create_dir_all(&dot).unwrap();
-    std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o777)).unwrap();
-    std::fs::write(dot.join("codegraph.db"), b"unsafe legacy graph").unwrap();
-    let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-
-    let error = populate_schema_index(&registry, root.path()).unwrap_err();
-    assert!(
-        error.contains("legacy") && error.contains("private"),
-        "{error}"
-    );
-    assert!(dot.join("codegraph.db").exists());
+/// The files the index currently covers, read through the real graph store.
+fn graph_indexed_files(root: &std::path::Path) -> Vec<String> {
+    let Some(db) = stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .ok()
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    let Ok(graph) = stella_graph::CodeGraph::open(root, &db) else {
+        return Vec::new();
+    };
+    let files = graph.all_files().unwrap_or_default();
+    graph.shutdown();
+    files
 }
 
 /// Auto-build on session start (task part A): a workspace with a source
-/// file. `graph_query` is now advertised from turn 1 regardless (it builds
-/// its own index on first use), so this pins what [`spawn_session_graph`]
-/// still adds: it builds `.stella/private/codegraph.db` EAGERLY in the
-/// background, so the first real query harvests a ready index instead of
-/// paying the build cost inline. Awaiting the returned handle is the
-/// deterministic "index ready" signal.
+/// file. [`spawn_session_graph`] builds `.stella/private/codegraph.db`
+/// EAGERLY in the background, so `stella search` and the deck's Graph tab
+/// harvest a ready index instead of paying the build cost inline. Awaiting
+/// the returned handle is the deterministic "index ready" signal.
 #[tokio::test]
 async fn spawn_session_graph_eagerly_builds_the_index_in_the_background() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("lib.rs"), "pub fn find_me() {}\n").unwrap();
 
-    let registry = Arc::new(ToolRegistry::with_issue_backend(root.clone(), None));
-    let advertises = |r: &ToolRegistry| r.schemas().iter().any(|s| s.name == "graph_query");
+    assert!(!graph_index_exists(&root), "no index on disk yet");
 
-    // Turn 1: advertised already, and no index on disk yet — the tool does
-    // not wait for one, it builds on first use.
-    assert!(!stella_tools::graph::graph_available(&root).unwrap());
-    assert!(
-        advertises(&registry),
-        "graph_query is advertised from the start, index or not"
-    );
-
-    let (session_graph, build) =
-        spawn_session_graph(&root, registry.clone(), Box::new(|_| {}), Box::new(|| {}));
+    let (session_graph, build) = spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}));
     build.await.expect("background build task");
 
-    // After the build: the db exists, the tool is advertised, and it
-    // dispatches against the freshly built index.
     assert!(
-        stella_tools::graph::graph_available(&root).unwrap(),
+        graph_index_exists(&root),
         "the background build must create .stella/private/codegraph.db"
     );
     assert!(
-        advertises(&registry),
-        "graph_query stays advertised after the build"
+        graph_indexed_files(&root)
+            .iter()
+            .any(|file| file.ends_with("lib.rs")),
+        "the built index covers the workspace's source"
     );
-    let out = registry
-        .execute(
-            "graph_query",
-            &serde_json::json!({"op": "definitions", "target": "find_me"}),
-        )
-        .await;
-    assert!(!out.is_error(), "graph_query must dispatch: {out:?}");
     session_graph.shutdown();
 }
 
 /// Live freshness (task part B): after the session graph is up, a
 /// brand-new source file the agent (or an external tool) writes is
 /// incrementally re-indexed by the live `notify` watcher, so the very next
-/// `graph_query` reflects it — the staleness that makes the model distrust
-/// the graph is gone. Polls with a generous budget because the OS watcher
+/// query reflects it. Polls with a generous budget because the OS watcher
 /// + debounce are asynchronous, and re-writes the file each iteration so a
 /// create event lost during the watcher's async arming window is retried
 /// (the un-indexed file re-parses on the first event that lands).
@@ -340,16 +234,14 @@ async fn session_graph_live_refreshes_after_a_file_is_added() {
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("lib.rs"), "pub fn original() {}\n").unwrap();
 
-    let registry = Arc::new(ToolRegistry::with_issue_backend(root.clone(), None));
-    let (session_graph, build) =
-        spawn_session_graph(&root, registry.clone(), Box::new(|_| {}), Box::new(|| {}));
+    let (session_graph, build) = spawn_session_graph(&root, Box::new(|_| {}), Box::new(|| {}));
     build.await.expect("background build task");
 
-    // The new symbol is absent from the just-built index.
-    let before = stella_tools::graph::run_query(&root, "definitions", "added_later");
     assert!(
-        matches!(&before, ToolOutput::Ok { content } if content.contains("no definitions")),
-        "the new symbol must not be indexed yet: {before:?}"
+        !graph_indexed_files(&root)
+            .iter()
+            .any(|file| file.ends_with("added.rs")),
+        "the new file must not be indexed yet"
     );
 
     let added = root.join("added.rs");
@@ -357,9 +249,9 @@ async fn session_graph_live_refreshes_after_a_file_is_added() {
     for _ in 0..150 {
         std::fs::write(&added, "pub fn added_later() {}\n").unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let ToolOutput::Ok { content } =
-            stella_tools::graph::run_query(&root, "definitions", "added_later")
-            && content.contains("added_later")
+        if graph_indexed_files(&root)
+            .iter()
+            .any(|file| file.ends_with("added.rs"))
         {
             reflected = true;
             break;
@@ -367,7 +259,7 @@ async fn session_graph_live_refreshes_after_a_file_is_added() {
     }
     assert!(
         reflected,
-        "the live watcher must re-index the new file so graph_query reflects it"
+        "the live watcher must re-index the new file so queries reflect it"
     );
     session_graph.shutdown();
 }
@@ -456,11 +348,6 @@ fn an_untrusted_project_record_is_absent_from_the_system_prompt() {
 #[test]
 fn untrusted_project_prompt_sources_are_absent_from_the_system_prompt() {
     let root = tempfile::tempdir().expect("tempdir");
-    std::fs::write(
-        root.path().join("package.json"),
-        r#"{"scripts": {"authority-marker": "echo project-script"}}"#,
-    )
-    .unwrap();
     std::fs::create_dir_all(root.path().join(".stella/memories")).unwrap();
     std::fs::write(
         root.path().join(".stella/memories/project.md"),
@@ -473,20 +360,6 @@ fn untrusted_project_prompt_sources_are_absent_from_the_system_prompt() {
         "PROJECT_RULE_AUTHORITY_MARKER",
     )
     .unwrap();
-    std::fs::create_dir_all(root.path().join(".stella/explorations")).unwrap();
-    std::fs::write(
-        root.path().join(".stella/explorations/project.json"),
-        serde_json::json!({
-            "slice": "authority-map",
-            "title": "PROJECT_MAP_AUTHORITY_MARKER",
-            "summary": "project map",
-            "content": "body",
-            "files": [],
-            "created_at_ms": 1u64
-        })
-        .to_string(),
-    )
-    .unwrap();
 
     let mut cfg = cfg_for("zai");
     cfg.workspace_root = root.path().to_path_buf();
@@ -494,10 +367,8 @@ fn untrusted_project_prompt_sources_are_absent_from_the_system_prompt() {
     let untrusted_rules = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
     let untrusted = build_system_prompt(&cfg, root.path(), &untrusted_rules);
     for marker in [
-        "authority-marker",
         "PROJECT_MEMORY_AUTHORITY_MARKER",
         "PROJECT_RULE_AUTHORITY_MARKER",
-        "PROJECT_MAP_AUTHORITY_MARKER",
     ] {
         assert!(
             !untrusted.contains(marker),
@@ -509,53 +380,11 @@ fn untrusted_project_prompt_sources_are_absent_from_the_system_prompt() {
     let trusted_rules = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
     let trusted = build_system_prompt(&cfg, root.path(), &trusted_rules);
     for marker in [
-        "authority-marker",
         "PROJECT_MEMORY_AUTHORITY_MARKER",
         "PROJECT_RULE_AUTHORITY_MARKER",
-        "PROJECT_MAP_AUTHORITY_MARKER",
     ] {
         assert!(trusted.contains(marker), "trusted marker missing: {marker}");
     }
-}
-
-#[test]
-fn system_prompt_carries_the_workspace_maps_index() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let dir = root.path().join(".stella/explorations");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("cli.json"),
-        serde_json::json!({
-            "slice": "cli", "title": "CLI surface", "summary": "maps the CLI",
-            "content": "big body that must NOT be in the prompt",
-            "files": [], "created_at_ms": 1u64
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let mut cfg = cfg_for("zai");
-    cfg.authority.project_prompts_allowed = true;
-    let rules = crate::rules::ResolvedRules::default();
-    let prompt = build_system_prompt(&cfg, root.path(), &rules);
-    assert!(
-        prompt.contains("## Workspace maps"),
-        "index section missing"
-    );
-    assert!(prompt.contains("`cli`") && prompt.contains("CLI surface"));
-    assert!(
-        !prompt.contains("big body"),
-        "map bodies must stay pull-only, never in the prompt"
-    );
-
-    // No maps → no section, no tokens.
-    let bare = tempfile::tempdir().expect("tempdir");
-    let empty = build_system_prompt(
-        &cfg_for("zai"),
-        bare.path(),
-        &crate::rules::ResolvedRules::default(),
-    );
-    assert!(!empty.contains("## Workspace maps"));
 }
 
 /// The #639 acceptance criterion, guarded across the WHOLE prefix rather than
@@ -569,31 +398,12 @@ fn system_prompt_carries_the_workspace_maps_index() {
 #[test]
 fn the_cached_prefix_carries_no_wall_clock_or_per_process_bytes() {
     let root = tempfile::tempdir().expect("tempdir");
-    let dir = root.path().join(".stella/explorations");
-    std::fs::create_dir_all(&dir).unwrap();
-    // A completed map and a draft claimed live by THIS process: the pair that
-    // used to put a relative age and a pid straight into the cached prefix.
-    for (slice, status, pid) in [
-        ("cli", "complete", None),
-        ("wip", "draft", Some(std::process::id())),
-    ] {
-        std::fs::write(
-            dir.join(format!("{slice}.json")),
-            serde_json::json!({
-                "slice": slice, "title": format!("Map {slice}"), "summary": "covers it",
-                "content": "body", "files": [], "created_at_ms": 1_700_000_000_000u64,
-                "status": status, "pid": pid,
-            })
-            .to_string(),
-        )
-        .unwrap();
-    }
+    std::fs::create_dir_all(root.path().join(".stella/memories")).unwrap();
     std::fs::write(
-        root.path().join("package.json"),
-        r#"{"scripts": {"build": "next build"}}"#,
+        root.path().join(".stella/memories/lesson.md"),
+        "PREFIX_MEMORY_MARKER: prefer rg here\n",
     )
     .unwrap();
-    std::fs::write(root.path().join(".stella/memories/.keep"), "").ok();
 
     let mut cfg = cfg_for("zai");
     cfg.authority.project_prompts_allowed = true;
@@ -603,17 +413,8 @@ fn the_cached_prefix_carries_no_wall_clock_or_per_process_bytes() {
     // The fixture must actually reach the prefix, or every assertion below
     // passes vacuously on a record that silently failed to parse.
     assert!(
-        prompt.contains("`cli`") && prompt.contains("## Project scripts"),
+        prompt.contains("PREFIX_MEMORY_MARKER"),
         "the fixture never reached the prefix — this guard would be vacuous:\n{prompt}"
-    );
-    assert!(
-        prompt.contains("saved 2023-11-14"),
-        "freshness must render as an absolute stamp, not a relative age:\n{prompt}"
-    );
-    assert!(
-        !prompt.contains("`wip`"),
-        "an in-progress draft belongs in the volatile recall block, never the \
-         cached prefix (#639):\n{prompt}"
     );
 
     for volatile in [" ago", "just now", "IN PROGRESS", "abandoned draft"] {
@@ -726,20 +527,8 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     let store = open_store(root);
     let mcp = load_mcp_plan(&cfg);
 
-    let registry = ToolRegistry::with_backends_and_options(
-        root.to_path_buf(),
-        None,
-        None,
-        registry_options(&cfg),
-    );
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let interactive = InteractiveToolSet::new(&registry, event_tx);
-    let interactive = match engine::skill_registry_for_run(root.to_path_buf()) {
-        Some(registry) => interactive.with_skill_registry(registry),
-        None => interactive,
-    };
-    let discovery = crate::discovery::DiscoveryToolSet::new(&interactive, root.to_path_buf());
-    let schema_names: Vec<String> = discovery
+    let registry = ToolRegistry::new(root.to_path_buf());
+    let schema_names: Vec<String> = registry
         .schemas()
         .into_iter()
         .map(|schema| schema.name)
@@ -758,15 +547,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
         "workspace telemetry store opened under isolation"
     );
     assert!(matches!(mcp, McpPlan::None));
-    assert!(schema_names.iter().any(|name| name == "tool_search"));
-    for forbidden in [
-        "skill_search",
-        "mcp_search",
-        "search_skills",
-        "install_skill",
-        "hostile_workspace_tool",
-        "hostile_user_tool",
-    ] {
+    for forbidden in ["hostile_workspace_tool", "hostile_user_tool"] {
         assert!(
             !schema_names.iter().any(|name| name == forbidden),
             "{forbidden} leaked into the isolated tool schema: {schema_names:?}"
@@ -792,7 +573,6 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     assert!(!normal_rules.is_empty());
     assert_eq!(normal_skills.len(), 2);
     assert_eq!(normal_custom_tools.len(), 2);
-    assert!(engine::skill_registry_for_run(root.to_path_buf()).is_some());
     assert!(matches!(load_mcp_plan(&cfg), McpPlan::Invalid(_)));
 }
 
@@ -959,173 +739,6 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     assert!(
         !json_config.headless_bypass_scope_review,
         "a JSON-format run's wired config must never bypass scope review"
-    );
-}
-
-#[tokio::test]
-async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
-    let root = tempfile::tempdir().unwrap();
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root.path())
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    git(&["init", "-q"]);
-    git(&["config", "user.email", "t@t.t"]);
-    git(&["config", "user.name", "t"]);
-    std::fs::write(root.path().join("base.txt"), "base\n").unwrap();
-    git(&["add", "base.txt"]);
-    git(&["commit", "-q", "-m", "base"]);
-
-    let rule_path = root.path().join(".stella/rules/protect-session.md");
-    std::fs::create_dir_all(rule_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &rule_path,
-        "---\nguard-tool: Write\nguard-deny-path: protected/**\n---\nOriginal session guard.",
-    )
-    .unwrap();
-    let mut cfg = cfg_for("zai");
-    cfg.workspace_root = root.path().to_path_buf();
-    cfg.authority.project_prompts_allowed = true;
-
-    let parent_rules = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
-    let parent = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-    crate::rules::attach_rule_guards(&parent, &parent_rules);
-    let parent_denied = parent
-        .execute(
-            "write_file",
-            &serde_json::json!({"path": "protected/parent.txt", "content": "no\n"}),
-        )
-        .await;
-    assert!(parent_denied.is_error(), "parent guard was not attached");
-
-    // Mutate the source after the parent session has resolved and attached
-    // it. Candidate creation must retain that original session snapshot.
-    std::fs::remove_file(&rule_path).unwrap();
-    let prompt = build_system_prompt(&cfg, root.path(), &parent_rules);
-    assert!(
-        prompt.contains("Original session guard. ^protect-session [enforced]"),
-        "prompt rendering diverged from the parent rule snapshot: {prompt}"
-    );
-    let ws_ports = workspace_ports(
-        root.path().to_path_buf(),
-        &cfg,
-        stella_tools::RegistryOptions::default(),
-        parent_rules.clone(),
-        None,
-        crate::agent::SessionPlane::none(),
-    )
-    .unwrap();
-    let candidate = ws_ports.candidate_workspaces.create().await.unwrap();
-    let output = candidate
-        .tools()
-        .execute(
-            "write_file",
-            &serde_json::json!({"path": "protected/candidate.txt", "content": "no\n"}),
-        )
-        .await;
-    candidate.seal().await.unwrap();
-    let adopted = candidate.adopt(&[]).await.unwrap();
-    let landed = root.path().join("protected/candidate.txt").exists();
-    candidate.remove().await;
-
-    assert!(
-        output.is_error(),
-        "candidate reloaded weakened sources instead of retaining the parent snapshot: {output:?}"
-    );
-    assert!(
-        adopted.is_empty(),
-        "prohibited candidate edit was adoptable: {adopted:?}"
-    );
-    assert!(!landed, "prohibited candidate edit reached the parent tree");
-}
-
-/// Witness for #441: a rule denial *inside a best-of-N candidate* must
-/// reach the journal as a typed `PolicyDecision`, not just as a tool error.
-/// Candidate workspaces are the primary real users of the rule-guard bus,
-/// so before this the typed record existed for the session and was missing
-/// exactly where most denials happen.
-#[tokio::test]
-async fn a_candidate_rule_denial_reaches_the_journal_as_a_policy_decision() {
-    let root = tempfile::tempdir().unwrap();
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root.path())
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    git(&["init", "-q"]);
-    git(&["config", "user.email", "t@t.t"]);
-    git(&["config", "user.name", "t"]);
-    std::fs::write(root.path().join("base.txt"), "base\n").unwrap();
-    git(&["add", "base.txt"]);
-    git(&["commit", "-q", "-m", "base"]);
-
-    let rule_path = root.path().join(".stella/rules/protect-session.md");
-    std::fs::create_dir_all(rule_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &rule_path,
-        "---\nguard-tool: Write\nguard-deny-path: protected/**\n---\nSession guard.",
-    )
-    .unwrap();
-    let mut cfg = cfg_for("zai");
-    cfg.workspace_root = root.path().to_path_buf();
-    cfg.authority.project_prompts_allowed = true;
-    let parent_rules = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
-    let ws_ports = workspace_ports(
-        root.path().to_path_buf(),
-        &cfg,
-        stella_tools::RegistryOptions::default(),
-        parent_rules.clone(),
-        None,
-        crate::agent::SessionPlane::events_only(stella_core::EventSender::new(tx)),
-    )
-    .unwrap();
-
-    let candidate = ws_ports.candidate_workspaces.create().await.unwrap();
-    let output = candidate
-        .tools()
-        .execute(
-            "write_file",
-            &serde_json::json!({"path": "protected/candidate.txt", "content": "no\n"}),
-        )
-        .await;
-    candidate.remove().await;
-    drop(ws_ports);
-
-    assert!(
-        output.is_error(),
-        "precondition: the guard must still deny inside the candidate"
-    );
-
-    let mut decisions = Vec::new();
-    while let Ok(event) = rx.try_recv() {
-        if let AgentEvent::PolicyDecision { kind, subject, .. } = event {
-            decisions.push((kind, subject));
-        }
-    }
-    assert!(
-        decisions
-            .iter()
-            .any(|(kind, _)| *kind == stella_protocol::PolicyKind::Blocked),
-        "the candidate's denial never reached the journal: {decisions:?}"
     );
 }
 
@@ -1555,8 +1168,8 @@ fn every_summary_envelope_leads_with_its_version() {
 // ---------------------------------------------------------------------------
 
 /// Assemble a session tool stack the way every driver does — real registry,
-/// customs, interactive, the policy filter, discovery on top — and return the
-/// advertised names plus a closure-free handle for calling into it.
+/// customs, the policy filter on top — and return the advertised names plus
+/// a closure-free handle for calling into it.
 ///
 /// Deliberately not a mock: the point of these witnesses is *where* the
 /// decorator sits in the real chain, which a fake inner executor cannot show.
@@ -1565,68 +1178,72 @@ async fn stack_names_and_execute(
     policy: stella_tools::policy::ToolPolicy,
     custom_tools: Vec<stella_tools::custom::CustomTool>,
     call: &str,
+    input: serde_json::Value,
 ) -> (Vec<String>, ToolOutput) {
-    let registry =
-        ToolRegistry::with_backends_and_options(root.to_path_buf(), None, None, Default::default());
+    let registry = ToolRegistry::new(root.to_path_buf());
     let customs = CustomToolSet::new(&registry, custom_tools, root.to_path_buf());
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let interactive = InteractiveToolSet::new(&customs, event_tx);
-    let permitted = PolicyToolSet::new(&interactive, policy);
-    let tools = crate::discovery::DiscoveryToolSet::new(&permitted, root.to_path_buf());
+    let tools = PolicyToolSet::new(&customs, policy);
     let names = tools
         .schemas()
         .into_iter()
         .map(|schema| schema.name)
         .collect();
-    let output = tools
-        .execute(call, &serde_json::json!({"command": "echo hi"}))
-        .await;
+    let output = tools.execute(call, &input).await;
     (names, output)
 }
 
-/// **Witness for the default flip, at the session boundary.** With the
-/// shipped policy (no settings at all), the assembled stack advertises `bash`
-/// and runs it. On the old code the registry was constructed with
-/// `RegistryOptions::bash = false` unless a settings key said otherwise, so
-/// the schema was absent and the call was an unknown tool.
+/// **Witness for the shipped default, at the session boundary.** With no
+/// settings at all, the assembled stack advertises the whole registry
+/// surface and runs it.
 #[tokio::test]
-async fn the_session_stack_ships_with_bash_available() {
+async fn the_session_stack_ships_with_the_registry_surface_available() {
     let root = tempfile::tempdir().unwrap();
     let (names, output) = stack_names_and_execute(
         root.path(),
         stella_tools::policy::ToolPolicy::allow_all(),
         vec![],
-        "bash",
+        "save_state",
+        serde_json::json!({"key": "note", "content": "hi"}),
+    )
+    .await;
+
+    for expected in stella_tools::catalog::ALL_NAMES {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "`{expected}` must be advertised with no settings at all: {names:?}"
+        );
+    }
+    assert!(
+        !output.is_error(),
+        "a default built-in must run: {output:?}"
+    );
+}
+
+/// **Witness: `{"save_state": "off"}` hides AND refuses.** Hiding alone is a
+/// prompt-budget measure; a capability gate has to hold when the model calls
+/// the name anyway, from a stale prompt or a replayed trajectory.
+#[tokio::test]
+async fn a_settings_entry_hides_and_refuses_a_tool_in_the_real_stack() {
+    let root = tempfile::tempdir().unwrap();
+    let policy =
+        serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"save_state": "off"}}"#)
+            .unwrap()
+            .tool_policy();
+    let (names, output) = stack_names_and_execute(
+        root.path(),
+        policy,
+        vec![],
+        "save_state",
+        serde_json::json!({"key": "note", "content": "hi"}),
     )
     .await;
 
     assert!(
-        names.iter().any(|name| name == "bash"),
-        "bash must be advertised with no settings at all: {names:?}"
-    );
-    match output {
-        ToolOutput::Ok { content } => assert!(content.contains("hi"), "{content}"),
-        ToolOutput::Error { message, .. } => panic!("default bash must run: {message}"),
-    }
-}
-
-/// **Witness: `{"bash": "off"}` hides AND refuses.** Hiding alone is a
-/// prompt-budget measure; a capability gate has to hold when the model calls
-/// the name anyway, from a stale prompt or a replayed trajectory.
-#[tokio::test]
-async fn a_settings_entry_hides_and_refuses_bash_in_the_real_stack() {
-    let root = tempfile::tempdir().unwrap();
-    let policy = serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"bash": "off"}}"#)
-        .unwrap()
-        .tool_policy();
-    let (names, output) = stack_names_and_execute(root.path(), policy, vec![], "bash").await;
-
-    assert!(
-        !names.iter().any(|name| name == "bash"),
+        !names.iter().any(|name| name == "save_state"),
         "a switched-off tool must not be advertised: {names:?}"
     );
     assert!(
-        names.iter().any(|name| name == "read_file"),
+        names.iter().any(|name| name == "task_list"),
         "and nothing else is withheld"
     );
     match output {
@@ -1640,33 +1257,37 @@ async fn a_settings_entry_hides_and_refuses_bash_in_the_real_stack() {
 
 /// **Witness: a group key disables the whole family in the real stack.**
 #[tokio::test]
-async fn a_group_entry_disables_every_process_tool_in_the_real_stack() {
+async fn a_group_entry_disables_every_scratch_tool_in_the_real_stack() {
     let root = tempfile::tempdir().unwrap();
     let policy =
-        serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"process": "off"}}"#)
+        serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"scratch": "off"}}"#)
             .unwrap()
             .tool_policy();
-    let (names, output) =
-        stack_names_and_execute(root.path(), policy, vec![], "start_process").await;
+    let (names, output) = stack_names_and_execute(
+        root.path(),
+        policy,
+        vec![],
+        "save_state",
+        serde_json::json!({"key": "note", "content": "hi"}),
+    )
+    .await;
 
-    for withheld in stella_tools::catalog::names_in_group("process") {
+    for withheld in stella_tools::catalog::names_in_group("scratch") {
         assert!(
             !names.iter().any(|name| name == withheld),
             "`{withheld}` must be withheld by the group switch: {names:?}"
         );
     }
     assert!(
-        names.iter().any(|name| name == "bash"),
-        "bash is its own group"
+        names.iter().any(|name| name == "task_list"),
+        "the task family is its own group"
     );
     assert!(matches!(output, ToolOutput::Error { .. }));
 }
 
 /// **Witness: the decorator sits ABOVE the custom-tool layer.** A customer's
-/// registered tool is not in any compile-time table and never passed through
-/// `RegistryOptions`, so the old per-capability booleans could not reach it at
-/// all. `tool_search` must not advertise it either — which is why the policy
-/// filter goes *below* the discovery layer, not on top of it.
+/// registered tool is not in any compile-time table, so only a filter above
+/// the whole assembled stack can reach it by name.
 #[tokio::test]
 async fn a_customer_registered_tool_is_covered_by_the_policy() {
     let root = tempfile::tempdir().unwrap();
@@ -1687,7 +1308,8 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
         root.path(),
         stella_tools::policy::ToolPolicy::allow_all(),
         custom_tools.clone(),
-        "read_file",
+        "task_list",
+        serde_json::json!({}),
     )
     .await;
     assert!(names.iter().any(|name| name == "deploy_to_staging"));
@@ -1697,8 +1319,14 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
     )
     .unwrap()
     .tool_policy();
-    let (names, output) =
-        stack_names_and_execute(root.path(), policy, custom_tools, "deploy_to_staging").await;
+    let (names, output) = stack_names_and_execute(
+        root.path(),
+        policy,
+        custom_tools,
+        "deploy_to_staging",
+        serde_json::json!({}),
+    )
+    .await;
     assert!(
         !names.iter().any(|name| name == "deploy_to_staging"),
         "a custom tool named in settings must be withheld: {names:?}"

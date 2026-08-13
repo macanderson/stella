@@ -1,13 +1,12 @@
 //! Witness: `stella init` embeds the tree it just indexed, before any turn
-//! runs and without a semantic search having been issued.
+//! runs and without a search having been issued.
 //!
-//! The whole point of moving the embedding pass forward is that a single-turn
-//! run in a fresh checkout never gets a second chance at it: the lazy pass
-//! fires after the agent has already started grepping, and never at all if the
-//! agent does not reach for `semantic_code_search`. So the assertion that
-//! matters is not "vectors exist eventually" — it is that they exist with
-//! **no query embedded**, which is exactly what the mock's received bodies can
-//! tell apart.
+//! The whole point of running the embedding pass eagerly is that a fresh
+//! checkout never gets a second chance at it: the lazy pass fires only once
+//! `stella search` has already been asked, so the first searches would rank
+//! against a partial index. The assertion that matters is not "vectors exist
+//! eventually" — it is that they exist with **no query embedded**, which is
+//! exactly what the mock's received bodies can tell apart.
 
 use super::*;
 
@@ -224,7 +223,7 @@ async fn a_broken_backend_reports_and_leaves_init_successful() {
 #[test]
 fn a_capped_pass_names_what_it_left_unembedded() {
     let rendered = format_warm_outcome(
-        &stella_tools::graph::semantic::WarmOutcome::Warmed {
+        &crate::search_cmd::semantic::WarmOutcome::Warmed {
             embedded: 2_000,
             remaining: 3_231,
             unreadable: 0,
@@ -245,7 +244,7 @@ fn a_capped_pass_names_what_it_left_unembedded() {
 #[test]
 fn an_unreadable_file_is_named_as_a_problem_not_as_the_cap() {
     let rendered = format_warm_outcome(
-        &stella_tools::graph::semantic::WarmOutcome::Warmed {
+        &crate::search_cmd::semantic::WarmOutcome::Warmed {
             embedded: 68,
             remaining: 32,
             unreadable: 32,
@@ -262,10 +261,9 @@ fn an_unreadable_file_is_named_as_a_problem_not_as_the_cap() {
     );
 }
 
-/// THE WITNESS for #3098's fix: on `main` the chunk vector table is empty
-/// until `search` has already been called several times (each call capped at
-/// `MAX_FILES_PER_CHUNK_PASS`, 64 files); here `stella init` alone leaves
-/// every symbol in the fixture chunk-embedded, with no semantic query issued.
+/// THE WITNESS for #3098: the lazy chunk pass is capped per search call, so
+/// full coverage would otherwise take several searches; `stella init` alone
+/// leaves every symbol in the fixture chunk-embedded, with no query issued.
 #[tokio::test]
 async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
     use stella_embed::Embedder;
@@ -313,7 +311,7 @@ async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
 #[test]
 fn a_capped_chunk_pass_names_what_it_left_unembedded() {
     let rendered = format_chunk_warm_outcome(
-        &stella_tools::search::ChunkWarmOutcome::Warmed {
+        &crate::search_cmd::engine::ChunkWarmOutcome::Warmed {
             files_embedded: 2_000,
             files_remaining: 1_231,
             unreadable: 0,

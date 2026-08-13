@@ -1,24 +1,22 @@
 //! The CLI's approval responder (#2676): a `RequireApproval` gate decision
-//! becomes an interactive yes/no question through the same io the
-//! `ask_user` tool uses ([`crate::interactive::AskUserIo`]), so the parked
-//! tool call proceeds or fails on a real human decision.
+//! becomes an interactive yes/no question through the interactive question
+//! io ([`crate::interactive::AskUserIo`]), so the parked tool call proceeds
+//! or fails on a real human decision.
 //!
 //! Wiring: [`attach_interactive_approvals`] is called by
 //! `crate::rules::enforce_workspace_rules` — the same session-wiring
 //! shorthand that arms the rule guards able to *produce* a
 //! `RequireApproval` — with each driver declaring whether its surface is
 //! interactive. Headless surfaces (fleet workers, sub-agent lanes,
-//! machine-output runs, the deck until it grows an approval card) attach
-//! nothing, so the registry's broker stays headless and refuses with the
-//! structured grant-path message instead of hanging on stdin that will
-//! never answer.
+//! machine-output runs) attach nothing, so the registry's broker stays
+//! headless and refuses with the structured grant-path message instead of
+//! hanging on stdin that will never answer.
 //!
 //! Known hazard, tracked rather than hidden: [`crate::interactive::TtyAskUserIo`]
 //! reads stdin on the blocking pool, and the broker's TTL cannot cancel
 //! that read once it starts — a timed-out approval leaves the read pending,
 //! and the user's next line answers the dead prompt instead of the REPL.
-//! The `ask_user` tool has the same shape (it has no TTL at all); fixing
-//! both means a cancellable line reader, which is its own change.
+//! Fixing it means a cancellable line reader, which is its own change.
 
 use std::sync::Arc;
 
@@ -30,9 +28,8 @@ use stella_tools::registry::approval::{
 
 use crate::interactive::{AskUserIo, TtyAskUserIo};
 
-/// [`ApprovalResponder`] over any [`AskUserIo`] — the same injectable io
-/// seam the `ask_user` tool uses, so tests script it and the production
-/// wiring hands it a TTY.
+/// [`ApprovalResponder`] over any [`AskUserIo`] — the injectable io seam, so
+/// tests script it and the production wiring hands it a TTY.
 pub(crate) struct AskUserApprovalResponder {
     io: Box<dyn AskUserIo>,
 }
@@ -157,11 +154,11 @@ mod tests {
 
     fn request() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "bash".into(),
+            tool: "task".into(),
             read_only: false,
-            reason: "commands need a human".into(),
-            gate: "command.started".into(),
-            subject: Some("rm -rf build/".into()),
+            reason: "spawns need a human".into(),
+            gate: "tool.call.requested".into(),
+            subject: Some("task: refactor the parser".into()),
         }
     }
 
@@ -220,8 +217,8 @@ mod tests {
         let responder = AskUserApprovalResponder::new(Box::new(ScriptedIo::new(vec!["1"])));
         let _ = responder.respond(&request()).await;
         let question = AskUserApprovalResponder::question(&request());
-        assert!(question.contains("bash"));
-        assert!(question.contains("rm -rf build/"));
-        assert!(question.contains("commands need a human"));
+        assert!(question.contains("task"));
+        assert!(question.contains("task: refactor the parser"));
+        assert!(question.contains("spawns need a human"));
     }
 }

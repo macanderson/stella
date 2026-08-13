@@ -19,9 +19,6 @@
 //! `tool_result`. The restored transcript therefore already *contains* every
 //! completed step's effects as facts the model can read; the resumed turn's
 //! first provider call simply asks for the step after the last committed one.
-//! The staleness map rides the same checkpoint commit, so the no-clobber
-//! guard survives the crash too — a file something else edited while the run
-//! was dead is refused, not overwritten ([`crate::durability::bind_session`]).
 //!
 //! # What resuming honestly costs
 //!
@@ -44,8 +41,7 @@
 //!   `resumed_complete_unverified` (#1615).
 //! - **A turn that executed in a candidate worktree resumes in the
 //!   workspace, as a plain turn.** The candidate died with the process;
-//!   restoration declines (`PipelineResume::from_progress`), and the
-//!   restored staleness map is what keeps the resumed writes honest.
+//!   restoration declines (`PipelineResume::from_progress`).
 
 use super::outcome::{VerificationRequirement, pipeline_status_result, turn_outcome_result};
 use super::*;
@@ -83,10 +79,8 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     }
 
     let provider = build_provider(cfg)?;
-    let registry_options = registry_options(cfg);
     let tools_registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
-    populate_schema_index(&tools_registry, &cfg.workspace_root)?;
+        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
     crate::subagent::install_for_session(cfg, &tools_registry)?;
     // `interactive_approvals: false` — a daemon-resumed turn answers approvals
     // through the daemon's own one-shot gate (sidecar or staged stdio), never
@@ -99,7 +93,6 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     );
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        tools_registry.clone(),
         Box::new(|line| eprintln!("  {line}")),
         Box::new(|| {}),
     );
@@ -119,19 +112,15 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     let calibration = seed_calibration(&store, cfg);
 
     // Adopt the record and bind durability to the SAME session id — this is
-    // both how the checkpoint is found and how the staleness map is restored
-    // before anything can touch a file.
+    // how the checkpoint is found.
     let record =
         crate::session_persist::adopt_record(record, stella_store::SessionStatus::InProgress);
     registry
         .upsert(&record)
         .map_err(|e| format!("cannot re-own session {}: {e}", record.id))?;
-    if let Some(warning) = crate::durability::bind_session(
-        &cfg.durability,
-        &tools_registry,
-        &cfg.workspace_root,
-        &record.id,
-    ) {
+    if let Some(warning) =
+        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &record.id)
+    {
         eprintln!("  {warning}");
     }
     let Some(json) = cfg.durability.checkpoint() else {
@@ -188,7 +177,6 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         }
     }
     let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id));
-    let files_before = tools_registry.files_touched().len();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let events = stella_core::EventSender::new(tx.clone());
     tools_registry.bridge_policy_plane(events.clone());
@@ -214,12 +202,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone())
-            .with_ask_user(tty_ask_io(human_is_present(true)))
-            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
         let hook_runner = ShellHookRunner;
         match restored {
             Some((spec, frame_config)) => {
@@ -244,10 +227,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let ws_ports = workspace_ports(
                     cfg.workspace_root.clone(),
                     cfg,
-                    crate::agent::tools::registry_options(cfg),
                     active_rules.clone(),
                     mcp.clone(),
-                    crate::agent::SessionPlane::new(events.clone(), tools_registry.clone()),
+                    crate::agent::SessionPlane::new(events.clone()),
                 )?;
                 // The run's ORIGINAL decisions, restored from the frame — a
                 // flag environment that changed across the crash must not
@@ -275,10 +257,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     recall: &no_recall,
                     repo: &ws_ports.repo_structure,
                     repo_status: &ws_ports.repo_status,
-                    touches: &crate::agent::RegistryTouches(&tools_registry),
                     diagnostics: &ws_ports.diagnostic_runner,
                     tests: &ws_ports.test_runner,
-                    lint: Some(&ws_ports.lint_probe),
+                    lint: None,
                     mutation: Some(&ws_ports.mutation_probe),
                     coverage: Some(&ws_ports.coverage_probe),
                     approvals: &approval_gate,
@@ -425,26 +406,21 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // drop ours, and only then await the renderer — otherwise the channel
     // never closes and a completed resume hangs.
     drop(tx);
-    // Resume arms no bracket of its own, so there is nothing here to settle.
-    let persistence_complete =
-        close_event_stream(&tools_registry, events, renderer, TurnBracket::Leave)
-            .await
-            .persistence_complete;
-    let files = tools_registry.files_touched();
+    let persistence_complete = close_event_stream(&tools_registry, events, renderer)
+        .await
+        .persistence_complete;
     if let Some((store, id)) = &execution
         && !record_execution_end(
             store,
             *id,
             &tools_registry,
-            files_before,
             label,
             cost_usd,
             persistence_complete,
         )
     {
-        warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
+        warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
     }
-    plain::files_touched_panel(&files);
     if let Some(set) = &mcp {
         set.close_all().await;
     }

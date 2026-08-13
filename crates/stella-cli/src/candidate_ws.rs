@@ -1,8 +1,7 @@
 //! Best-of-N candidate isolation over real git — the production
 //! [`CandidateWorkspacePort`]. Each candidate gets a detached shadow
-//! worktree (the `verify_done` shadow pattern: temp-dir path, pid+counter
-//! name, forced removal + prune on every exit) snapshotting the user's
-//! CURRENT tree state:
+//! worktree (temp-dir path, pid+counter name, forced removal + prune on
+//! every exit) snapshotting the user's CURRENT tree state:
 //!
 //! 1. `git worktree add --detach <tmp> <HEAD>` — never a branch, never a
 //!    checkout of the user's tree;
@@ -62,8 +61,8 @@
 //!
 //! Candidates drive the built-in [`stella_tools::ToolRegistry`] PLUS the session's custom
 //! script tools, both rooted at the snapshot (with the session's workspace
-//! rules and schema gate applied) — a [`CustomToolSet`] owning the registry
-//! by `Arc`. Custom tools spawn subprocesses with the snapshot as cwd
+//! rules applied) — a [`CustomToolSet`] owning the registry by `Arc`.
+//! Custom tools spawn subprocesses with the snapshot as cwd
 //! ([`CustomToolSet::new_owned`]), so their writes land in the isolated
 //! shadow, never the real tree.
 //!
@@ -100,11 +99,9 @@
 //!   join safely too. Deferred until measured need — Phase 1's allowlist
 //!   already covers the servers that showed real pickup.
 //!
-//! The interactive layer (`ask_user`) is withheld regardless of phase,
-//! unconditionally: a fan-out of N candidates has no single owner for a
-//! prompt, so candidates run non-interactively — there is no
-//! `InteractiveToolSet` in a candidate's stack for either MCP phase to
-//! reintroduce it through.
+//! Candidates run non-interactively regardless of phase: a fan-out of N
+//! candidates has no single owner for a prompt, so nothing in a candidate's
+//! stack can ask the human anything.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -119,7 +116,6 @@ use stella_pipeline::ports::{
     RepoStatusPort, TestRunner, WorkspaceError,
 };
 
-use stella_tools::RegistryOptions;
 use stella_tools::custom::{CustomTool, CustomToolSet};
 
 use crate::agent::{
@@ -142,10 +138,11 @@ use witness_tools::WitnessToolExecutor;
 /// no identity configured (CI), and their real identity must never be
 /// implied on machinery commits.
 ///
-/// The email is also `verify_done`'s vocabulary: its baseline walk skips
-/// seal commits by this identity (#2067). A `const` array cannot embed the
-/// other crate's constant, so a parity test below pins the two spellings
-/// together instead.
+/// The email is the machinery identity the pipeline's witness prompt tells
+/// authors to exclude from history walks
+/// ([`stella_pipeline::witness::MACHINERY_COMMIT_EMAIL`]). A `const` array
+/// cannot embed the other crate's constant, so a parity test pins the two
+/// spellings together instead.
 const SNAPSHOT_IDENT: [&str; 4] = [
     "-c",
     "user.name=stella-pipeline",
@@ -153,8 +150,14 @@ const SNAPSHOT_IDENT: [&str; 4] = [
     "user.email=pipeline@stella.invalid",
 ];
 
-/// Shadow names carry pid + a process-wide counter (the `verify_done`
-/// pattern): concurrent candidates must never collide on a path.
+/// The subject line of every seal commit written into a shadow's private
+/// history. The leading `stella: ` prefix is part of the machinery
+/// vocabulary the pipeline's witness prompt tells authors to exclude from
+/// history walks, so the spelling stays fixed.
+const CANDIDATE_SEAL_SUBJECT: &str = "stella: candidate verified snapshot";
+
+/// Shadow names carry pid + a process-wide counter: concurrent candidates
+/// must never collide on a path.
 static SHADOW_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// One git command against `repo` through the fleet's [`SystemGitCli`]
@@ -260,9 +263,8 @@ async fn copy_preserving_mtime(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Best-effort removal of a candidate shadow worktree — the registration and
-/// the directory both, then a prune for any stale registration (the
-/// `verify_done` cleanup discipline: called on every path, success or
-/// failure).
+/// the directory both, then a prune for any stale registration. Called on
+/// every path, success or failure.
 async fn cleanup(toplevel: &Path, dir: &Path) {
     if let Some(d) = dir.to_str() {
         let _ = SystemGitCli
@@ -277,17 +279,12 @@ async fn cleanup(toplevel: &Path, dir: &Path) {
 /// rooted at the session's workspace.
 pub(crate) struct GitCandidateWorkspaces {
     /// The session workspace root — possibly a subdirectory of the repo
-    /// toplevel (the `verify_done` canonicalization trap: the shadow mirrors
-    /// the TOPLEVEL, and the candidate's ports re-descend into the matching
-    /// subdirectory).
+    /// toplevel (the shadow mirrors the TOPLEVEL, and the candidate's ports
+    /// re-descend into the matching subdirectory).
     root: PathBuf,
-    /// Construction inputs for the per-candidate tool registry — host
-    /// attestations and media prerequisites, same as the session's.
-    options: RegistryOptions,
     /// The operator's tool switches, applied over each candidate's own tool
-    /// stack. A candidate registry is built from the same `RegistryOptions`
-    /// as the session's, so without this best-of-N would be a way around a
-    /// `"tools": {"bash": "off"}`.
+    /// stack — best-of-N must not be a way around a
+    /// `"tools": {"task": "off"}`.
     policy: stella_tools::policy::ToolPolicy,
     /// The session's custom script tools, re-rooted at each candidate's
     /// snapshot (their subprocesses spawn with the snapshot as cwd, so they
@@ -309,48 +306,23 @@ pub(crate) struct GitCandidateWorkspaces {
     /// rule denials evaluating and blocking exactly as before — they simply
     /// never land as typed `PolicyDecision` events.
     events: Option<stella_core::EventSender>,
-    /// The **session** registry, whose file ledger is the one persisted as
-    /// `files_touched` and read for `execution_reflection.wrote_files`.
-    ///
-    /// Handed to every candidate this port creates so an adoption can
-    /// attribute what it delivered back into it (#2907). Without it the
-    /// session's ledger records only what happened *outside* the candidate —
-    /// the research stage's reads — and the durable record of an isolated run
-    /// says it changed nothing. `None` is a host that keeps no such ledger,
-    /// and makes `attribute_adopted` a no-op.
-    session_registry: Option<Arc<stella_tools::ToolRegistry>>,
 }
 
 impl GitCandidateWorkspaces {
     pub(crate) fn new(
         root: PathBuf,
-        options: RegistryOptions,
         policy: stella_tools::policy::ToolPolicy,
         custom_tools: Vec<CustomTool>,
         active_rules: crate::rules::ResolvedRules,
     ) -> Self {
         Self {
             root,
-            options,
             policy,
             custom_tools,
             active_rules,
             candidate_mcp: None,
             events: None,
-            session_registry: None,
         }
-    }
-
-    /// Attribute every candidate's adopted changes back into the session's
-    /// file ledger (#2907) — see [`Self::session_registry`]. Without this the
-    /// port still works exactly as before and the durable record stays blind
-    /// to whatever the candidates changed.
-    pub(crate) fn with_session_registry(
-        mut self,
-        registry: Arc<stella_tools::ToolRegistry>,
-    ) -> Self {
-        self.session_registry = Some(registry);
-        self
     }
 
     /// Journal the policy decisions made inside every candidate this port
@@ -383,8 +355,7 @@ impl GitCandidateWorkspaces {
             .await
             .map_err(snap)?;
         // Kept before canonicalization: it is the spelling the operator and
-        // the task statement use, and the shell confinement below has to
-        // refuse it by that name too.
+        // the task statement use.
         let toplevel_as_git_spells_it = PathBuf::from(toplevel.trim());
         let toplevel = toplevel_as_git_spells_it
             .canonicalize()
@@ -419,44 +390,11 @@ impl GitCandidateWorkspaces {
         match populate_snapshot(&toplevel, &dir, &root_rel).await {
             Ok((overlay_untracked, baseline)) => {
                 let ws_root = dir.join(&root_rel);
-                // This candidate's shell is the one tool that can still reach
-                // the real tree (#1300 removed the local sandbox), and two
-                // benchmark losses came of it: a wrong intermediate written
-                // straight to `/app/summary.csv`, and Stella's own
-                // witness-baseline ref rewritten from inside a candidate. The
-                // registry is told which tree it is delivering *into*, so the
-                // shell refuses to name it — see `stella_tools::bash::confine`
-                // for what that is worth and what it cannot enforce. The
-                // TOPLEVEL, not `canon_root`: adoption applies against the
-                // whole repository, so everything under it is graded.
-                //
-                // Every spelling the tree answers to is registered, not just
-                // the canonical one: the audit compares names, and on macOS
-                // `/var/folders/…` and `/private/var/folders/…` are the same
-                // directory — a guard that knew only the canonical form let
-                // the other straight through.
-                let mut options = self.options.clone();
-                options.shell_confinement =
-                    stella_tools::bash::ShellConfinement::graded_tree(toplevel.clone())
-                        .and_alias(toplevel_as_git_spells_it.clone())
-                        .and_alias(self.root.clone())
-                        .and_alias(canon_root.clone());
-                let registry = crate::agent::new_tool_registry(ws_root.clone(), options).await;
+                let registry = stella_tools::ToolRegistry::new(ws_root.clone());
                 // Same governance as the session registry: workspace rules
-                // and the schema gate travel with the tree — best-of-N must
-                // not be a way around them. Applied while `registry` is still
-                // a plain `ToolRegistry`, before it moves into the `Arc`.
-                //
-                // A schema-gate failure is still a failure PAST the worktree
-                // registration, so it takes the same teardown as
-                // `populate_snapshot`'s errors below — a bare `?` here leaked
-                // both the registered worktree and its temp directory, and the
-                // leak survived the process (only a later `git worktree prune`
-                // would notice).
-                if let Err(reason) = crate::agent::populate_schema_index(&registry, &ws_root) {
-                    cleanup(&toplevel, &dir).await;
-                    return Err(snap(reason));
-                }
+                // travel with the tree — best-of-N must not be a way around
+                // them. Applied while `registry` is still a plain
+                // `ToolRegistry`, before it moves into the `Arc`.
                 crate::rules::attach_rule_guards(&registry, &self.active_rules);
                 // `attach_rule_guards` is what gives this registry a live
                 // HookBus, so the bridge must follow it — and both must
@@ -464,41 +402,21 @@ impl GitCandidateWorkspaces {
                 // before the `Arc<dyn ToolExecutor>` coercion below erases it.
                 if let Some(events) = &self.events {
                     registry.bridge_policy_plane(events.clone());
-                    // Reads only. A candidate's *mutations* are re-emitted by
-                    // adoption against the real tree, so announcing them here
-                    // would claim edits the user's checkout has not received —
-                    // but silencing the whole stream (what this used to do)
-                    // also swallowed every read, leaving an isolated run's
-                    // Files tab reading "no files touched yet" through
-                    // hundreds of tool calls.
-                    registry.attach_read_events(events.clone());
                 }
                 // The candidate's tool surface: the snapshot-rooted registry
                 // plus the session's custom script tools, owned as one value
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
                 let board = registry.task_board();
-                // Kept concrete beside the erased handle: the change-announce
-                // latch (`CandidateWorkspace::announce_changes`) is a registry
-                // posture, and the pipeline can only decide it after `create`
-                // — it is the caller who knows the fan-out width, not us.
-                let registry = Arc::new(registry);
-                let announce_target = registry.clone();
-                let registry: Arc<dyn stella_core::ToolExecutor> = registry;
-                // The witness author's reads honor the operator's tool policy
-                // exactly like the worker's do (#1784): before this wrap, a
-                // `"tools": {"read_file": "off"}` switch reached every worker
-                // surface while the witness author kept reading through the
-                // raw registry — an unstated exemption from a setting that
-                // claims to govern the session's whole tool stack.
-                let witness_reads: Arc<dyn stella_core::ToolExecutor> = Arc::new(
-                    crate::agent::PolicyToolSet::new_owned(registry.clone(), self.policy.clone()),
-                );
+                let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
                 // `canon_root`, not `self.root`: the frame screen compares
                 // spellings, and the goal's paths are phrased against the
-                // real, resolved location of the workspace (#2130).
+                // real, resolved location of the workspace (#2130). The
+                // author's reads honor the operator's tool policy exactly
+                // like the worker's do (#1784) — the executor carries the
+                // policy itself.
                 let witness_tools =
-                    WitnessToolExecutor::new(ws_root.clone(), &canon_root, witness_reads);
+                    WitnessToolExecutor::new(ws_root.clone(), &canon_root, self.policy.clone());
                 let native =
                     CustomToolSet::new_owned(registry, self.custom_tools.clone(), ws_root.clone());
                 // MCP: layer the candidate_safe-filtered session view on top
@@ -548,12 +466,7 @@ impl GitCandidateWorkspaces {
                         overlay: overlay_untracked,
                     },
                     task_board,
-                    changes: ChangeAnnounce {
-                        registry: announce_target,
-                        events: self.events.clone(),
-                        announced: AtomicBool::new(false),
-                    },
-                    session_registry: self.session_registry.clone(),
+                    sole_candidate: AtomicBool::new(false),
                     omitted,
                 })
             }
@@ -679,22 +592,6 @@ async fn populate_snapshot(
     ]);
     git(dir, &commit_args).await?;
     let baseline = git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string();
-    // Pin the session baseline where every tool later running in this
-    // workspace can see it. The pipeline advances HEAD with seal commits
-    // after each verified step, so by the time the worker calls
-    // `verify_done` HEAD already contains the work under proof — the pin is
-    // what keeps its flip oracle measuring against the pre-session tree
-    // (#2067). Per-worktree, so parallel candidates never clobber each
-    // other and nothing appears in the user's real checkout.
-    git(
-        dir,
-        &[
-            "update-ref",
-            stella_tools::verify::WITNESS_BASELINE_WORKTREE_REF,
-            &baseline,
-        ],
-    )
-    .await?;
     Ok((overlay, baseline))
 }
 
@@ -736,56 +633,6 @@ impl RepoStatusPort for SnapshotRepoStatus {
 
     async fn artifact_identity(&self, path: &str) -> Option<stella_pipeline::ArtifactIdentity> {
         fs_artifact_identity(&self.ws_root, path)
-    }
-}
-
-/// The audit-log reason recorded against every file an adoption attributes
-/// back into the session ledger (#2907). Fixed text, like every other
-/// deterministic reason in this crate: the model authored the edit inside the
-/// candidate and its own stated reason went into the candidate's ledger, which
-/// is discarded — so inventing one here would be prose nobody wrote. What this
-/// row honestly knows is *how* the change reached the session's tree.
-const ADOPTED_TOUCH_REASON: &str =
-    "adopted into the working tree from an isolated candidate workspace";
-
-/// Whether this candidate's mutations ride the turn's event channel live.
-///
-/// The registry carries the latch (`attach_events` announces everything,
-/// `attach_read_events` announces reads alone); this pair is what lets the
-/// pipeline flip it *after* `create`, which is the only moment anyone knows
-/// how wide the fan-out is. Holding the concrete `Arc<ToolRegistry>` beside
-/// the erased tool stack costs one pointer and keeps the decision where
-/// [`CandidateWorkspace::announce_changes`] documents it.
-///
-/// `events: None` — a host that wired no event sink — makes every call a
-/// no-op: there is no channel to announce onto, and re-attaching `None` would
-/// be a way to lose one.
-struct ChangeAnnounce {
-    registry: Arc<stella_tools::ToolRegistry>,
-    events: Option<stella_core::EventSender>,
-    /// Mirrors the latest `set` call — a plain read of the same fact,
-    /// independent of whether an event sink was ever wired. Lets
-    /// [`GitCandidateWorkspace::deliver_checkpoint_inner`] ask "is this the
-    /// sole candidate in its fan-out" without adding a second flag the
-    /// pipeline would have to keep in sync with this one (#2941).
-    announced: AtomicBool,
-}
-
-impl ChangeAnnounce {
-    fn set(&self, announce: bool) {
-        self.announced.store(announce, Ordering::Relaxed);
-        let Some(events) = self.events.clone() else {
-            return;
-        };
-        if announce {
-            self.registry.attach_events(events);
-        } else {
-            self.registry.attach_read_events(events);
-        }
-    }
-
-    fn is_set(&self) -> bool {
-        self.announced.load(Ordering::Relaxed)
     }
 }
 
@@ -838,12 +685,10 @@ pub(crate) struct GitCandidateWorkspace {
     /// pipeline drives it through [`CandidateWorkspace::seed_task_board`]
     /// right after `create` (#1719); see [`task_events`].
     task_board: task_events::CandidateTaskBoard,
-    /// This candidate's change-announce latch — see [`ChangeAnnounce`].
-    changes: ChangeAnnounce,
-    /// The session registry this candidate's adopted changes are attributed
-    /// back into — see [`GitCandidateWorkspaces::session_registry`] and
-    /// [`CandidateWorkspace::attribute_adopted`].
-    session_registry: Option<Arc<stella_tools::ToolRegistry>>,
+    /// Whether the pipeline marked this candidate as the sole one in its
+    /// fan-out ([`CandidateWorkspace::announce_changes`]) — the fact
+    /// [`GitCandidateWorkspace::deliver_checkpoint_inner`] gates on (#2941).
+    sole_candidate: AtomicBool,
     /// Ignored paths present in the real tree and elided from this snapshot —
     /// see [`snapshot_gaps`]. A display list for the candidate's context, not
     /// a set anything branches on.
@@ -896,10 +741,7 @@ impl GitCandidateWorkspace {
             "--no-gpg-sign",
             "-q",
             "-m",
-            // The subject is `verify_done`'s vocabulary too: its baseline
-            // walk skips exactly these seals (#2067), so the two crates
-            // share one spelling.
-            stella_tools::verify::CANDIDATE_SEAL_SUBJECT,
+            CANDIDATE_SEAL_SUBJECT,
         ]);
         git(&self.dir, &commit_args).await.map_err(fail)?;
         let sealed = git(&self.dir, &["rev-parse", "HEAD"])
@@ -989,7 +831,7 @@ impl GitCandidateWorkspace {
     /// candidate that is not the sole one in its fan-out — see the trait
     /// doc for why that is decided here rather than by the caller.
     async fn deliver_checkpoint_inner(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
-        if !self.changes.is_set() {
+        if !self.sole_candidate.load(Ordering::Relaxed) {
             return Ok(Vec::new());
         }
         self.seal_inner().await?;
@@ -1077,7 +919,7 @@ impl CandidateWorkspace for GitCandidateWorkspace {
     }
 
     fn announce_changes(&self, announce: bool) {
-        self.changes.set(announce);
+        self.sole_candidate.store(announce, Ordering::Relaxed);
     }
 
     fn mark_plan_step(&self, id: &str, status: stella_protocol::TaskStatus) {
@@ -1102,46 +944,6 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         self.adopt_inner(withhold).await
-    }
-
-    fn attribute_adopted(&self, adopted: &[AdoptedChange]) {
-        let Some(registry) = &self.session_registry else {
-            return;
-        };
-        for change in adopted {
-            let op = match change.kind {
-                stella_protocol::FileChangeKind::Created => {
-                    stella_tools::file_touch::FileOp::Create
-                }
-                stella_protocol::FileChangeKind::Modified => {
-                    stella_tools::file_touch::FileOp::Update
-                }
-                stella_protocol::FileChangeKind::Deleted => {
-                    stella_tools::file_touch::FileOp::Delete
-                }
-                // Adoption reports what a patch DID, and a patch cannot read.
-                // Skipped rather than mapped onto a mutating op, for the same
-                // reason `delivery::delivered` counts it nowhere: an
-                // impossible row must stay visibly absent, never inflate a
-                // real number.
-                stella_protocol::FileChangeKind::Read => continue,
-            };
-            // Adoption's paths are relative to the repository TOPLEVEL (the
-            // tree `git apply` ran against), while the session registry is
-            // rooted at the session workspace, which may be a subdirectory of
-            // it. Rejoining against the toplevel and letting the registry
-            // re-normalize is what makes the two agree — and makes a change
-            // outside the session root drop out rather than be recorded under
-            // a path that escapes it.
-            let absolute = self.toplevel.join(&change.path);
-            let _ = registry.attribute_external_change(
-                &absolute,
-                op,
-                ADOPTED_TOUCH_REASON,
-                u64::from(change.added),
-                u64::from(change.removed),
-            );
-        }
     }
 
     async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {

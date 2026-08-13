@@ -56,7 +56,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Ask about this workspace",
-        &["search", "storage", "scripts", "tools", "commands"],
+        &["search", "storage", "tools", "commands"],
     ),
     (
         "Steer what the agent knows",
@@ -80,7 +80,6 @@ const GROUPS: &[(&str, &[&str])] = &[
         &[
             "auth",
             "models",
-            "connect",
             "mcp",
             "config",
             "migrate",

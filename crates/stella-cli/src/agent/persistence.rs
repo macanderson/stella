@@ -27,118 +27,10 @@ pub(crate) async fn close_event_stream(
     registry: &ToolRegistry,
     tx: stella_core::EventSender,
     renderer: tokio::task::JoinHandle<RendererOutcome>,
-    bracket: TurnBracket,
 ) -> RendererOutcome {
-    // Ahead of `detach_event_stream`, because the settle's `FileChange`s are
-    // born on this sender: settling after the detach would still write the
-    // durable ledger while the journal and the live deck saw nothing change.
-    if matches!(bracket, TurnBracket::Settle) {
-        registry.settle_workspace_probe();
-    }
     registry.detach_event_stream();
     drop(tx);
     renderer.await.unwrap_or_default()
-}
-
-#[cfg(test)]
-mod turn_bracket_tests {
-    use super::*;
-
-    /// Witness for #2337.
-    ///
-    /// The raw step loop arms one workspace-probe bracket per turn and has no
-    /// later stage to close it, so `close_event_stream` is where it settles —
-    /// and it has to settle while the sender is still live, because that is
-    /// where a `FileChange` is born. Fails on `main`, where the function took
-    /// no bracket and settled nothing: a file that only `bash` knew about
-    /// reached the durable ledger and never the journal.
-    #[tokio::test]
-    async fn a_settled_bracket_journals_what_only_the_shell_knew_it_wrote() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path().to_path_buf();
-        let registry = ToolRegistry::new(root, stella_tools::RegistryOptions::default());
-
-        let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-        let tx = stella_core::EventSender::new(raw_tx);
-        registry.attach_events(tx.clone());
-        let renderer = spawn_renderer(rx, OutputFormat::Json, None, "test".to_string(), true);
-
-        registry.begin_workspace_probe();
-        // Opaque by construction: `classify_file_op` reads a tool's input, and
-        // no input describes what a shell command will touch. The tree is the
-        // only witness, which is the whole reason the probe exists.
-        registry
-            .execute(
-                "bash",
-                &serde_json::json!({ "command": "printf hi > witnessed.txt" }),
-            )
-            .await;
-
-        let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Settle).await;
-        let journalled: Vec<&str> = rendered
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                AgentEvent::FileChange { path, .. } => Some(path.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            journalled
-                .iter()
-                .any(|path| path.ends_with("witnessed.txt")),
-            "a settled bracket must journal the shell's write; saw {journalled:?}"
-        );
-    }
-
-    /// The other half of the pair, and the reason the choice is a parameter
-    /// rather than an unconditional settle: the staged pipeline settles in its
-    /// own verify stage and re-arms from that walk, so a settle here would buy
-    /// nothing but a second walk over a tree nothing has touched since.
-    #[tokio::test]
-    async fn leaving_the_bracket_settles_nothing_here() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path().to_path_buf();
-        let registry = ToolRegistry::new(root, stella_tools::RegistryOptions::default());
-
-        let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-        let tx = stella_core::EventSender::new(raw_tx);
-        registry.attach_events(tx.clone());
-        let renderer = spawn_renderer(rx, OutputFormat::Json, None, "test".to_string(), true);
-
-        registry.begin_workspace_probe();
-        registry
-            .execute(
-                "bash",
-                &serde_json::json!({ "command": "printf hi > unwitnessed.txt" }),
-            )
-            .await;
-
-        let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Leave).await;
-        assert!(
-            !rendered.events.iter().any(|event| matches!(
-                event,
-                AgentEvent::FileChange { path, .. } if path.ends_with("unwitnessed.txt")
-            )),
-            "an unsettled bracket must leave the delta for its own owner to settle"
-        );
-    }
-}
-
-/// Whether closing this stream also closes the turn's workspace-probe bracket.
-///
-/// The raw step loop arms one bracket per turn ([`super::goal::run_raw_one_shot`])
-/// and has no later stage to settle it, so the settle belongs here — the last
-/// instant at which the sender is still live. The staged pipeline settles in
-/// its own verify stage and re-arms from that same walk, so asking for a
-/// settle here would only buy a second walk to re-measure a tree that nothing
-/// has touched since the first one.
-pub(crate) enum TurnBracket {
-    /// Settle the armed probe before releasing the senders.
-    Settle,
-    /// Leave it armed — this path settles its bracket elsewhere, or never
-    /// armed one, in which case `settle_workspace_probe` is a no-op anyway.
-    Leave,
 }
 
 /// `durable_pre_persisted` is set when [`super::output::event_sender_for_run`]
@@ -341,28 +233,17 @@ fn defer_stream_terminal(
     }
 }
 
-/// Close out one execution's audit record. `files_before` is the session
-/// file-touch ledger length captured before this execution began: only paths
-/// first touched at or past it are attributed here, so a registry reused
-/// across turns (REPL, deck) records each execution's own file slice rather
-/// than the whole session. Citations, agent uses, and MCP usage are drained
-/// (each already single-execution); the file ledger is non-destructive because
-/// the episode recorders re-read it after this returns.
+/// Close out one execution's audit record: drain the registry's agent-use
+/// and MCP-usage ledgers (each already single-execution), settle the
+/// outcome, and hand the finished row to the downstream projections.
 pub(crate) fn record_execution_end(
     store: &Store,
     execution_id: i64,
     registry: &ToolRegistry,
-    files_before: usize,
     outcome_label: &str,
     cost_usd: f64,
     persistence_complete: bool,
 ) -> bool {
-    let files_ok = store
-        .record_files_touched(execution_id, &file_touch_rows(registry, files_before))
-        .is_ok();
-    let citations_ok = store
-        .record_memory_citations(execution_id, &memory_citation_rows(registry))
-        .is_ok();
     let uses: Vec<stella_store::AgentUseRow> = registry
         .drain_agent_uses()
         .into_iter()
@@ -379,21 +260,11 @@ pub(crate) fn record_execution_end(
     // local writes succeed, the provider-side usage envelope is unknowable and
     // the execution must never become exportable.
     let terminal_usage_known = outcome_label != "cancelled";
-    let audit_complete = persistence_complete
-        && files_ok
-        && citations_ok
-        && uses_ok
-        && mcp_usage_ok
-        && terminal_usage_known;
+    let audit_complete = persistence_complete && uses_ok && mcp_usage_ok && terminal_usage_known;
     let finish_ok = store
         .finish_execution_accounted(execution_id, outcome_label, cost_usd, audit_complete)
         .is_ok();
     let _ = store.materialize_tool_calls(execution_id);
-    // Now that this turn's `bash` receipts are materialized, mine recent
-    // history for a repeated command shape and, if found, surface a *proposed*
-    // tool to `/inbox` (#830, first slice — proposes only, installs nothing).
-    // Best-effort: a mining failure must never fail the turn.
-    let _ = crate::tool_foundry::surface_tool_gaps(store);
     let _ = store.finalize_execution_reflection(execution_id);
     let _ = store.sync_to_usage_default(execution_id);
     let _ = crate::enterprise_telemetry::enqueue_finalized_execution(store, execution_id);
@@ -409,44 +280,6 @@ fn mcp_usage_rows(registry: &ToolRegistry) -> Vec<stella_store::McpUsageRow> {
             tool: u.tool,
             reason: u.reason,
             called_at_ms: u.called_at_ms as i64,
-        })
-        .collect()
-}
-
-fn file_touch_rows(
-    registry: &ToolRegistry,
-    files_before: usize,
-) -> Vec<stella_store::FileTouchRow> {
-    // The ledger is session-cumulative and insertion-ordered by first touch,
-    // so the slice past the pre-execution watermark is exactly what this
-    // execution first touched — the same `split_off` split `record_turn_episode`
-    // takes over the same ledger. A path re-touched in a later execution stays
-    // attributed to the one that first touched it (an accepted approximation).
-    let mut telemetry = registry.file_touch_telemetry();
-    let watermark = files_before.min(telemetry.files_touched.len());
-    telemetry
-        .files_touched
-        .split_off(watermark)
-        .into_iter()
-        .map(|record| stella_store::FileTouchRow {
-            ops: record.crud_events.iter().map(|op| op.letter()).collect(),
-            lines_added: record.lines_added,
-            lines_removed: record.lines_removed,
-            events_json: serde_json::to_string(&record.events).unwrap_or_else(|_| "[]".into()),
-            path: record.path,
-        })
-        .collect()
-}
-
-fn memory_citation_rows(registry: &ToolRegistry) -> Vec<stella_store::MemoryCitationRow> {
-    registry
-        .take_memory_citations()
-        .into_iter()
-        .map(|c| stella_store::MemoryCitationRow {
-            memory_id: c.memory_id,
-            useful_score: c.useful_score,
-            truthful: c.truthful,
-            remark: c.remark,
         })
         .collect()
 }
@@ -993,88 +826,6 @@ mod stream_tests {
                 if model == "worker+reflection"
                     && (*cost_usd - 1.25).abs() < f64::EPSILON
         ));
-    }
-
-    #[tokio::test]
-    async fn files_touched_records_only_the_current_execution_slice() {
-        // A registry reused across turns (REPL, deck) carries a
-        // session-cumulative file-touch ledger. Each turn is its own execution,
-        // so the audit record for execution N must contain only the files that
-        // execution first touched — not everything since turn 1, and its line
-        // deltas must not re-count earlier turns' files.
-        let root = tempfile::tempdir().expect("root");
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-        let store = Store::in_memory().expect("store");
-
-        // Execution 1 touches a.rs (3 new lines). The watermark before it ran
-        // is 0, so its slice is exactly {a.rs}.
-        let files_before_1 = registry.files_touched().len();
-        assert_eq!(files_before_1, 0);
-        registry
-            .execute(
-                "write_file",
-                &serde_json::json!({
-                    "path": "a.rs",
-                    "content": "a1\na2\na3\n",
-                    "reason": "turn 1",
-                }),
-            )
-            .await;
-        let exec1 = store
-            .begin_execution("deck", "turn 1", "anthropic", "claude")
-            .expect("begin 1");
-        assert!(record_execution_end(
-            &store,
-            exec1,
-            &registry,
-            files_before_1,
-            "completed",
-            0.0,
-            true,
-        ));
-
-        // Execution 2 touches only b.rs (1 new line). The ledger now holds both
-        // files, but the watermark captured before turn 2 is 1.
-        let files_before_2 = registry.files_touched().len();
-        assert_eq!(files_before_2, 1);
-        registry
-            .execute(
-                "write_file",
-                &serde_json::json!({
-                    "path": "b.rs",
-                    "content": "b1\n",
-                    "reason": "turn 2",
-                }),
-            )
-            .await;
-        let exec2 = store
-            .begin_execution("deck", "turn 2", "anthropic", "claude")
-            .expect("begin 2");
-
-        // The slice recorded for turn 2 is exactly {b.rs} — a.rs (turn 1) is not
-        // re-claimed, and the line delta is b.rs's alone (1, not 3 + 1).
-        let turn2_rows = file_touch_rows(&registry, files_before_2);
-        assert_eq!(turn2_rows.len(), 1, "turn 2 records only its own files");
-        assert_eq!(turn2_rows[0].path, "b.rs");
-        assert_eq!(turn2_rows[0].lines_added, 1);
-        assert!(
-            turn2_rows.iter().all(|row| row.path != "a.rs"),
-            "turn 1's file must not appear in turn 2's audit slice"
-        );
-
-        assert!(record_execution_end(
-            &store,
-            exec2,
-            &registry,
-            files_before_2,
-            "completed",
-            0.0,
-            true,
-        ));
-
-        // One row per (execution, file): two executions each recorded one file.
-        // The cumulative bug would land three (a.rs under both executions).
-        assert_eq!(store.count("files_touched").expect("count"), 2);
     }
 
     #[test]

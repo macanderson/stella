@@ -484,12 +484,9 @@ pub struct Config {
     /// of the settings scope chain with the org-managed ceiling already
     /// folded in. Empty — the shipped default — means every tool is on.
     ///
-    /// This replaces the `tools_bash` / `tools_web` booleans that used to
-    /// live here. They were threaded into `RegistryOptions` at construction,
-    /// which covered built-ins only: an MCP server's tool or a customer's own
-    /// never passed through them. The policy is enforced once, above the
-    /// whole session tool stack (`crate::agent::PolicyToolSet`), so it covers
-    /// all three by name.
+    /// The policy is enforced once, above the whole session tool stack
+    /// (`crate::agent::PolicyToolSet`), so it covers built-ins, MCP tools,
+    /// and custom tools by name.
     pub tool_policy: stella_tools::policy::ToolPolicy,
     /// End-of-run recap in text mode (settings `enable_recap`).
     pub enable_recap: bool,
@@ -702,8 +699,7 @@ impl Config {
         cfg.authority = settings.authority_policy;
         // The managed ceiling is already folded into `settings.tools` by
         // `Settings::load`, so this is a straight read — no second place that
-        // could forget to re-apply authority (which is exactly what the
-        // `&& cfg.authority.bash_allowed` conjunctions here used to be).
+        // could forget to re-apply authority.
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
         cfg.trace_capture = settings.trace_capture_enabled();

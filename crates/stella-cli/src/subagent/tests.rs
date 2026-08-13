@@ -59,17 +59,14 @@ impl Provider for NeverProvider {
 }
 
 fn registry() -> Arc<ToolRegistry> {
-    Arc::new(ToolRegistry::with_issue_backend(
-        std::path::PathBuf::from("."),
-        None,
-    ))
+    Arc::new(ToolRegistry::new(std::path::PathBuf::from(".")))
 }
 
 /// **The decorator-forwarding witness.**
 ///
-/// The deck stacks several executors between the engine and the registry
-/// (`CustomToolSet → InteractiveToolSet → PolicyToolSet → DiscoveryToolSet`,
-/// plus the taps). `drain_sub_agent_spend_usd` has a `0.0` default, so any
+/// The deck stacks executors between the engine and the registry
+/// (`CustomToolSet → PolicyToolSet`, plus the taps).
+/// `drain_sub_agent_spend_usd` has a `0.0` default, so any
 /// one of them forgetting to forward would silently drop a child's cost out
 /// of the parent's budget — and no compiler would say so.
 ///
@@ -84,19 +81,15 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
 
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
-    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
-    let discovery =
-        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
 
     assert!(
-        (discovery.drain_sub_agent_spend_usd() - 0.42).abs() < 1e-9,
+        (permitted.drain_sub_agent_spend_usd() - 0.42).abs() < 1e-9,
         "a child's cost must survive every decorator between the engine and \
          the registry — one that swallows it silently under-bills the turn"
     );
     assert_eq!(
-        discovery.drain_sub_agent_spend_usd(),
+        permitted.drain_sub_agent_spend_usd(),
         0.0,
         "and the drain stays destructive through the stack"
     );
@@ -129,7 +122,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     let request = stella_core::WaitRequest {
         description: "CI for branch main settles".into(),
         probe: stella_core::WaitCall {
-            name: "ci_status".into(),
+            name: "mcp__ci__status".into(),
             input: json!({ "probe": true, "branch": "main" }),
         },
         baseline: "pending".into(),
@@ -141,20 +134,16 @@ async fn the_production_tool_stack_forwards_wait_requests() {
 
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
-    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
-    let discovery =
-        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
 
     assert_eq!(
-        discovery.drain_wait_request(),
+        permitted.drain_wait_request(),
         Some(request),
         "a deposited wait request must survive every decorator between the \
          engine and the registry — one that swallows it re-enables polling"
     );
     assert_eq!(
-        discovery.drain_wait_request(),
+        permitted.drain_wait_request(),
         None,
         "and the drain stays destructive through the stack"
     );
@@ -175,14 +164,10 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
 
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
-    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
-    let discovery =
-        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
 
     assert!(
-        discovery.parallel_safe_names().contains("task"),
+        permitted.parallel_safe_names().contains("task"),
         "the registry's concurrency claim must survive every decorator \
          between the engine and the registry — one that swallows it silently \
          serializes sibling spawns"
@@ -224,13 +209,9 @@ async fn the_production_tool_stack_forwards_live_services() {
     let base = ServingBase;
     let customs =
         stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(&customs, stub_tx);
-    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
-    let discovery =
-        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
 
-    let services = discovery.live_services();
+    let services = permitted.live_services();
     assert_eq!(
         services.len(),
         1,
@@ -244,7 +225,7 @@ async fn the_production_tool_stack_forwards_live_services() {
     // because this reports state that outlives the turn rather than a ledger
     // the first caller settles.
     assert_eq!(
-        discovery.live_services(),
+        permitted.live_services(),
         services,
         "reading must not consume — two callers have to see the same services"
     );

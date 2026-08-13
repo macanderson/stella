@@ -309,7 +309,7 @@ async fn deck_ask_io_strips_the_free_text_option_and_maps_answers_to_indices() {
     let free = format!("{FREE_TEXT_LABEL}…");
     let (result, seen) = run_prompt(&["postgres", "sqlite", free.as_str()], "sqlite").await;
     // The picked option maps to its 1-based index, the shape
-    // execute_ask_user's numeric parser expects.
+    // the numeric quick-pick expects.
     assert_eq!(result.unwrap(), "2");
     match &seen[0] {
         Inbound::Event {
@@ -418,45 +418,6 @@ fn stray_stop_and_hold_is_a_no_op() {
 // ISSUES tab: entity-hit assembly
 
 #[test]
-fn member_and_label_hits_carry_kind_insert_and_description() {
-    let hit = member_hit(MemberInfo {
-        handle: "@octocat".into(),
-        name: Some("Octo Cat".into()),
-        email: None,
-    });
-    assert_eq!(
-        (hit.kind.as_str(), hit.label.as_str()),
-        ("Person", "@octocat")
-    );
-    assert_eq!(hit.insert, "@octocat");
-    assert_eq!(hit.description, "Octo Cat");
-
-    // A Linear member's handle IS the email — never repeated in the
-    // description.
-    let hit = member_hit(MemberInfo {
-        handle: "mona@example.com".into(),
-        name: Some("Mona Lisa".into()),
-        email: Some("mona@example.com".into()),
-    });
-    assert_eq!(hit.description, "Mona Lisa");
-
-    let hit = label_hit(LabelInfo {
-        name: "bug".into(),
-        color: Some("d73a4a".into()),
-        description: Some("Something is broken".into()),
-    });
-    assert_eq!((hit.kind.as_str(), hit.insert.as_str()), ("Label", "bug"));
-    assert_eq!(hit.description, "Something is broken");
-    // No description → the color stands in.
-    let hit = label_hit(LabelInfo {
-        name: "ci".into(),
-        color: Some("00ff00".into()),
-        description: None,
-    });
-    assert_eq!(hit.description, "00ff00");
-}
-
-#[test]
 fn agent_entity_hits_filter_by_name_or_description_case_insensitively() {
     let entries = vec![
         stella_tui::InstalledAgentEntry {
@@ -563,40 +524,22 @@ fn symbol_hits_take_the_bare_name_and_the_file_location() {
 }
 
 #[test]
-fn merge_assignee_hits_orders_tracker_agents_local_and_caps() {
+fn merge_assignee_hits_orders_agents_then_local_and_caps() {
     let person = |l: &str| EntityHit {
         kind: "Person".into(),
         label: l.into(),
         description: String::new(),
         insert: l.into(),
     };
-    let tracker: Vec<EntityHit> = (0..3).map(|i| person(&format!("p{i}"))).collect();
     let agents: Vec<EntityHit> = (0..2).map(|i| person(&format!("a{i}"))).collect();
     let local: Vec<EntityHit> = (0..3).map(|i| person(&format!("m{i}"))).collect();
-    let merged = merge_assignee_hits(tracker, agents, local, 6);
+    let merged = merge_assignee_hits(agents, local, 4);
     let labels: Vec<&str> = merged.iter().map(|h| h.label.as_str()).collect();
     assert_eq!(
         labels,
-        vec!["p0", "p1", "p2", "a0", "a1", "m0"],
-        "tracker first, then agents, then local — capped"
+        vec!["a0", "a1", "m0", "m1"],
+        "agents first, then local — capped"
     );
-}
-
-#[test]
-fn issue_rows_map_field_for_field() {
-    let row = issue_row(IssueSummary {
-        key: "ENG-42".into(),
-        title: "Fix".into(),
-        state: "open".into(),
-        labels: vec!["bug".into()],
-        assignee: Some("mona@example.com".into()),
-        url: "https://linear.app/x/issue/ENG-42".into(),
-        updated_at: Some("2026-07-18T00:00:00Z".into()),
-    });
-    assert_eq!(row.key, "ENG-42");
-    assert_eq!(row.labels, vec!["bug"]);
-    assert_eq!(row.assignee.as_deref(), Some("mona@example.com"));
-    assert_eq!(row.updated_at.as_deref(), Some("2026-07-18T00:00:00Z"));
 }
 
 #[test]

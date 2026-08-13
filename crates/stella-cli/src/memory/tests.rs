@@ -192,7 +192,7 @@ fn contextgraph_frame(
 }
 
 #[test]
-fn recall_section_tags_memory_frames_with_ids_and_asks_for_citations() {
+fn recall_section_tags_memory_frames_with_ids() {
     let frames = vec![
         frame(
             "nod_0123456789abcdef01234567",
@@ -210,36 +210,16 @@ fn recall_section_tags_memory_frames_with_ids_and_asks_for_citations() {
     let section = render_context_section(&frames).unwrap();
     assert!(
         section.contains("- [nod_0123456789abcdef01234567] prefer rg — prefer rg over grep here"),
-        "memory frames carry the citable id: {section}"
+        "memory frames carry their record id: {section}"
     );
     assert!(
         section.contains("- src/lib.rs — fn main"),
         "non-memory frames keep the plain label form: {section}"
     );
-    assert!(
-        section.contains("cite_memory"),
-        "instruction present: {section}"
-    );
-    // #2195: one wording, shared with the pipeline's render of the same
-    // frames. Two copies of this sentence is how the pipeline path came to
-    // have none at all while this one read as evidence the affordance existed.
-    assert!(
-        section.contains(stella_pipeline::CITE_MEMORY_REQUEST),
-        "the ask is the shared constant, verbatim: {section}"
-    );
 }
 
 #[test]
-fn recall_section_without_memories_never_asks_for_citations() {
-    let frames = vec![frame(
-        "nod_ccc",
-        contextgraph_types::FrameKind::Snippet,
-        "src/lib.rs",
-        "fn main",
-    )];
-    let section = render_context_section(&frames).unwrap();
-    assert!(!section.contains("cite_memory"));
-
+fn recall_section_with_no_labeled_frames_renders_nothing() {
     // No labeled frames at all → no section (an empty block only burns
     // cache).
     assert!(render_context_section(&[]).is_none());
@@ -758,7 +738,6 @@ fn an_id_less_memory_frame_still_renders_and_does_not_promise_citability() {
         section.contains("[nod_6428c2bb9b9b7aa1adc457fa]"),
         "{section}"
     );
-    assert!(section.contains("cite_memory"), "{section}");
 }
 
 /// **Witness (#1846).** An A → B → A recall sequence must not re-append A.

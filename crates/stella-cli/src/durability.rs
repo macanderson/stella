@@ -72,12 +72,10 @@ pub struct SessionDurability {
     bound: Arc<RwLock<Option<Bound>>>,
 }
 
-/// What a bound session writes through: its durable record, and the registry
-/// holding the staleness map that rides along with each checkpoint.
-#[derive(Clone)]
+/// What a bound session writes through: its durable record.
+#[derive(Clone, Debug)]
 struct Bound {
     journal: Arc<WorkJournal>,
-    registry: Arc<stella_tools::ToolRegistry>,
     /// The staged-pipeline frame every checkpoint of this session rides with,
     /// or `None` while the session is running plain engine turns.
     ///
@@ -90,26 +88,13 @@ struct Bound {
     pipeline: Arc<RwLock<Option<String>>>,
 }
 
-/// `ToolRegistry` is not `Debug` (it holds trait objects), and
-/// [`CheckpointSink`] requires it of every implementor. The record is the part
-/// worth printing anyway — it names the session and the store — so the registry
-/// is elided rather than the whole handle losing its `Debug`.
-impl std::fmt::Debug for Bound {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Bound")
-            .field("journal", &self.journal)
-            .finish_non_exhaustive()
-    }
-}
-
 impl SessionDurability {
     /// Point this handle at the durable record of the session that is now
-    /// running, and at the registry whose staleness map belongs with it.
-    pub fn bind(&self, journal: WorkJournal, registry: Arc<stella_tools::ToolRegistry>) {
+    /// running.
+    pub fn bind(&self, journal: WorkJournal) {
         let mut slot = self.bound.write().unwrap_or_else(|p| p.into_inner());
         *slot = Some(Bound {
             journal: Arc::new(journal),
-            registry,
             pipeline: Arc::new(RwLock::new(None)),
         });
     }
@@ -252,70 +237,39 @@ struct JournalCheckpointSink {
 }
 
 impl CheckpointSink for JournalCheckpointSink {
-    /// One commit on this session's ref, carrying the resume point and the
-    /// staleness map together. Dearer than an atomic file write and still cheap
-    /// against what a step costs — see [`WorkJournal::record_checkpoint`].
-    ///
-    /// The staleness map is snapshotted *here*, at the step boundary, rather
-    /// than when a file changes: it is updated by reads too, and saving it only
-    /// on mutation would drop every read since the last write. That is the loss
-    /// that matters, because a resumed session's transcript still says the agent
-    /// read those files.
+    /// One commit on this session's ref, carrying the resume point. Dearer
+    /// than an atomic file write and still cheap against what a step costs —
+    /// see [`WorkJournal::record_checkpoint`].
     ///
     /// The error is dropped, not logged: this is called on every step of every
     /// turn, so a failing sink would emit one line per step, and the trait's
     /// contract is that a checkpoint which cannot be written leaves the turn
     /// exactly as recoverable as it was before the sink existed.
     fn persist(&self, json: &str) {
-        let observed = self.bound.registry.observed_snapshot();
         let pipeline = self
             .bound
             .pipeline
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .clone();
-        let _ =
-            self.bound
-                .journal
-                .record_checkpoint(json, observed.as_deref(), pipeline.as_deref());
+        let _ = self
+            .bound
+            .journal
+            .record_checkpoint(json, None, pipeline.as_deref());
     }
 
     /// Idempotent by [`WorkJournal::clear_checkpoint`]'s own contract, and free
     /// when there is nothing to retract — which is what lets every terminal
     /// path discard unconditionally.
-    ///
-    /// The staleness map is deliberately NOT retracted with the checkpoint. It
-    /// describes what this *session* has seen, and the session's next turn is
-    /// exactly as entitled to the no-clobber guarantee as the one that just
-    /// ended.
     fn discard(&self) {
         let _ = self.bound.journal.clear_checkpoint();
     }
 }
 
-/// The label a session's durable commits carry, derived from the workspace.
+/// Bind this session's durability: where its turns write a resume point.
 ///
-/// Not the session id: the id answers *which run*, and the record is already
-/// keyed on it. This answers *whose work*, and a human reading `git log` on the
-/// durable record wants the workspace name.
-pub fn agent_label(workspace_root: &Path) -> String {
-    workspace_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| workspace_root.display().to_string())
-}
-
-/// Bind both halves of this session's durability: where its turns write a
-/// resume point, and where its file mutations commit.
-///
-/// One call, and one opened record shared by both, because the halves answer
-/// one question — *which session owns the work happening now* — and a driver
-/// that re-keyed only one of them would checkpoint into the session it just
-/// left, or commit there. The deck calls this at startup and again on every
-/// in-deck session switch; the one-shot drivers call it once.
-///
-/// Resuming a session also restores its staleness map, which is what carries
-/// the no-clobber guarantee across the interruption.
+/// The deck calls this at startup and again on every in-deck session switch;
+/// the one-shot drivers call it once.
 ///
 /// Returns a message to show the operator when the record could not be opened,
 /// and `None` on success. Best-effort throughout, by the same reasoning as the
@@ -324,50 +278,19 @@ pub fn agent_label(workspace_root: &Path) -> String {
 /// trade a working session for none.
 pub fn bind_session(
     durability: &SessionDurability,
-    registry: &Arc<stella_tools::ToolRegistry>,
     workspace_root: &Path,
     session_id: &str,
 ) -> Option<String> {
     match WorkJournal::open(workspace_root, session_id) {
         Ok(journal) => {
-            bind_opened(durability, registry, journal, workspace_root);
+            durability.bind(journal);
             None
         }
         Err(e) => Some(format!(
-            "durable work record unavailable ({e}) — this session's turns and file changes will \
+            "durable work record unavailable ({e}) — this session's turns will \
              not be recoverable from stella's own history"
         )),
     }
-}
-
-/// [`bind_session`] over an already-opened record.
-///
-/// Split out because [`bind_session`] resolves the record through
-/// [`WorkJournal::open`], which reads `STELLA_HOME` — so a test exercising the
-/// binding itself would have to reach for a process-global and race every
-/// sibling. This half takes the record as a parameter, the same trade
-/// [`WorkJournal::open_in`] makes for the same reason.
-fn bind_opened(
-    durability: &SessionDurability,
-    registry: &Arc<stella_tools::ToolRegistry>,
-    journal: WorkJournal,
-    workspace_root: &Path,
-) {
-    // Before anything else can touch a file: a resumed session that wrote
-    // before restoring would be unguarded for exactly the writes its restored
-    // transcript most encourages it to make.
-    //
-    // A session with no map of its own is restored to an EMPTY one, not left
-    // holding whatever was there. The deck reuses a single registry across an
-    // in-deck session switch, so "nothing to restore, leave it alone" would
-    // hand the arriving session the departing session's belief about the tree
-    // — and it would then refuse the arriving session's writes to files only
-    // the departing one ever read. That is the inherited guard
-    // `restore_observed`'s replace-don't-merge semantics exist to prevent,
-    // arriving through the one door those semantics cannot see.
-    registry.restore_observed(journal.observed().as_deref().unwrap_or("{}"));
-    registry.attach_work_journal(journal.clone(), agent_label(workspace_root));
-    durability.bind(journal, registry.clone());
 }
 
 #[cfg(test)]
@@ -379,14 +302,6 @@ mod tests {
     /// one process-global.
     fn journal(store: &Path, workspace: &Path, session: &str) -> WorkJournal {
         WorkJournal::open_in(store, workspace, session).unwrap()
-    }
-
-    /// A registry over `workspace`, for the staleness map the sink snapshots.
-    fn registry(workspace: &Path) -> Arc<stella_tools::ToolRegistry> {
-        Arc::new(stella_tools::ToolRegistry::new(
-            workspace.to_path_buf(),
-            stella_tools::RegistryOptions::default(),
-        ))
     }
 
     #[test]
@@ -451,7 +366,7 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         let record = journal(store.path(), ws.path(), "ses-round-trip");
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
 
         let sink = durability.sink().expect("bound");
         sink.persist("{\"version\":1}");
@@ -480,7 +395,7 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         let record = journal(store.path(), ws.path(), "ses-frame");
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
         durability.set_pipeline_frame(r#"{"version":1}"#.to_string());
         let sink = durability.sink().expect("bound");
 
@@ -522,7 +437,7 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         let record = journal(store.path(), ws.path(), "ses-bare");
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
 
         durability.sink().expect("bound").persist(r#"{"step":1}"#);
 
@@ -539,7 +454,7 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         let record = journal(store.path(), ws.path(), "ses-supersede");
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
         let sink = durability.sink().expect("bound");
 
         sink.persist("{\"step\":1}");
@@ -553,7 +468,7 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         let record = journal(store.path(), ws.path(), "ses-never");
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
         let sink = durability.sink().expect("bound");
 
         sink.discard();
@@ -575,7 +490,7 @@ mod tests {
         let second = journal(store.path(), ws.path(), "ses-second");
         let durability = SessionDurability::default();
 
-        durability.bind(first.clone(), registry(ws.path()));
+        durability.bind(first.clone());
         durability
             .sink()
             .expect("bound")
@@ -584,7 +499,7 @@ mod tests {
         // The in-deck session switch: the next engine's sink writes to the
         // session that is now running, and the session the user left keeps its
         // resume point exactly as it stood.
-        durability.bind(second.clone(), registry(ws.path()));
+        durability.bind(second.clone());
         durability
             .sink()
             .expect("bound")
@@ -608,121 +523,12 @@ mod tests {
             .unwrap();
 
         let durability = SessionDurability::default();
-        durability.bind(record.clone(), registry(ws.path()));
+        durability.bind(record.clone());
         durability.sink().expect("bound").persist("{\"step\":7}");
 
         let tip = record.session_tip().expect("recorded");
         record.mark_turn(1, &tip).unwrap();
         assert_eq!(record.read_at_turn(1, "work.txt").unwrap(), "half-done\n");
         assert_eq!(record.checkpoint().as_deref(), Some("{\"step\":7}"));
-    }
-
-    #[tokio::test]
-    async fn switching_to_a_session_with_no_map_does_not_inherit_the_last_ones() {
-        // The deck reuses ONE registry across an in-deck session switch. A
-        // session that never observed a file must not arrive holding the
-        // departing session's observations, or it will be refused writes to
-        // files it has never read — a false positive in a guard whose whole
-        // claim is that it has none.
-        let store = tempfile::tempdir().unwrap();
-        let ws = tempfile::tempdir().unwrap();
-        std::fs::write(ws.path().join("shared.txt"), "original\n").unwrap();
-        let registry = registry(ws.path());
-        let durability = SessionDurability::default();
-
-        // Session one reads the file and checkpoints, so its map is durable.
-        let out = registry
-            .execute(
-                "read_file",
-                &serde_json::json!({ "path": "shared.txt", "reason": "planning" }),
-            )
-            .await;
-        assert!(!out.is_error(), "{out:?}");
-        let first = journal(store.path(), ws.path(), "ses-departing");
-        durability.bind(first.clone(), registry.clone());
-        durability.sink().expect("bound").persist("{\"step\":1}");
-        assert!(first.observed().is_some(), "the map was persisted");
-
-        // Something else edits the file, and the user switches to a session
-        // that has never seen it.
-        std::fs::write(ws.path().join("shared.txt"), "somebody else's work\n").unwrap();
-        let second = journal(store.path(), ws.path(), "ses-arriving");
-        assert!(
-            second.observed().is_none(),
-            "the arriving session has no map"
-        );
-        bind_opened(&durability, &registry, second, ws.path());
-
-        let out = registry
-            .execute(
-                "write_file",
-                &serde_json::json!({
-                    "path": "shared.txt",
-                    "content": "the arriving session's work\n",
-                    "reason": "this session never read that file",
-                }),
-            )
-            .await;
-        assert!(
-            !out.is_error(),
-            "a session that never read the file must not be held to the last session's \
-             observation of it: {out:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_no_clobber_guard_survives_a_crash() {
-        // The whole point of persisting the staleness map. Without it a resumed
-        // session is *less* safe than a fresh one is honest: its restored
-        // transcript still says the agent read the file, so the model acts on
-        // content it believes it knows, while a forgetful guard waves the
-        // overwrite through.
-        let store = tempfile::tempdir().unwrap();
-        let ws = tempfile::tempdir().unwrap();
-        std::fs::write(ws.path().join("shared.txt"), "original\n").unwrap();
-
-        // Session one reads the file, then checkpoints — which is where the
-        // map it built gets written down.
-        let first_registry = registry(ws.path());
-        let out = first_registry
-            .execute(
-                "read_file",
-                &serde_json::json!({ "path": "shared.txt", "reason": "planning" }),
-            )
-            .await;
-        assert!(!out.is_error(), "{out:?}");
-        let record = journal(store.path(), ws.path(), "ses-crash");
-        let durability = SessionDurability::default();
-        durability.bind(record.clone(), first_registry);
-        durability.sink().expect("bound").persist("{\"step\":1}");
-
-        // …and dies. Meanwhile something else edits the file.
-        std::fs::write(ws.path().join("shared.txt"), "somebody else's work\n").unwrap();
-
-        // Session two resumes: same durable record, a brand-new registry that
-        // has never seen a thing.
-        let resumed = registry(ws.path());
-        resumed.restore_observed(&record.observed().expect("the map was persisted"));
-
-        let out = resumed
-            .execute(
-                "write_file",
-                &serde_json::json!({
-                    "path": "shared.txt",
-                    "content": "what session one intended\n",
-                    "reason": "acting on what I read before the crash",
-                }),
-            )
-            .await;
-
-        assert!(
-            out.is_error(),
-            "the resumed session must be told the file moved, not silently overwrite it: {out:?}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(ws.path().join("shared.txt")).unwrap(),
-            "somebody else's work\n",
-            "and the other party's work is still there"
-        );
     }
 }

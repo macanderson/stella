@@ -1,10 +1,10 @@
 //! System-prompt assembly and file-tree rendering.
 //!
 //! The base personas plus the workspace context that appends after them —
-//! exploration index, project scripts, memories — under the byte-stable
-//! prefix discipline (L-E8): the stable base is what the prompt cache keys
-//! on, so nothing nondeterministic may enter here (recalled context rides as
-//! a volatile message after the prefix, never interleaved into it).
+//! memories, rules — under the byte-stable prefix discipline (L-E8): the
+//! stable base is what the prompt cache keys on, so nothing nondeterministic
+//! may enter here (recalled context rides as a volatile message after the
+//! prefix, never interleaved into it).
 
 use super::*;
 
@@ -19,11 +19,10 @@ use super::*;
 // compile-time `concat!`, preserving the byte-stable prefix (L-E8).
 //
 // The contracts are written for the weakest capable reader: short imperative
-// sentences, the five shipped tools only (search, read_file, edit_file,
-// write_file, bash), and search advertised first. The long-form contracts
-// this file used to carry (~2,900 tokens) out-lengthed the instruction-
-// following of mid-tier worker models on the bench; the provenance each
-// paragraph cited survives in the doc comment of its macro.
+// sentences. The long-form contracts this file used to carry (~2,900 tokens)
+// out-lengthed the instruction-following of mid-tier worker models on the
+// bench; the provenance each paragraph cited survives in the doc comment of
+// its macro.
 //
 // ADDING A CONTRACT: embed it in BOTH prompts below, and add its row to
 // `SHARED_CONTRACTS` in `prompt/parity.rs`. That module derives the set of
@@ -33,26 +32,25 @@ use super::*;
 // `PIPELINE_SYSTEM_PROMPT` (#2231).
 
 /// The cross-tool steering shared by both static prompts — what the generated
-/// schemas cannot say: search-first discovery (#3172 is what makes that
-/// advertisement honest), the shell as the fallback rather than the default,
-/// batching (#2985), and where scratch belongs. No trailing newline: each
-/// prompt continues with its own blank line.
+/// schemas cannot say: where each capability comes from, batching (#2985),
+/// and where scratch belongs. The built-ins are coordination and session
+/// state; everything that reaches the workspace or the network arrives as an
+/// MCP or custom script tool, so the steering teaches the shape of the
+/// surface rather than a fixed tool list. No trailing newline: each prompt
+/// continues with its own blank line.
 macro_rules! tool_steering {
     () => {
-        r#"Your tools are search, read_file, edit_file, write_file, and bash. The schemas are the reference; this is how they fit together.
+        r#"The schemas are the reference for your tools; this is how they fit together.
 
-search comes first for every code question. Give it plain language, a symbol name, or a pasted error, stack trace, or log excerpt, exactly as you have it. It matches by meaning, falls back to symbol matching, then to keyword matching, and returns the relevant files with the matching code in view. One search replaces a chain of grep and find guesses. Follow with read_file only for context the result did not include. Use grep or find in bash only to list every occurrence of one exact string you already hold; if you are about to grep several spellings of one idea, call search with the idea instead.
+Your built-in tools are coordination and session state: the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) tracks multi-step work, task delegates a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) holds intermediate notes and data between steps, and get_environment reports the platform facts. Every other capability — reading and editing files, running commands, reaching the network — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
 
-Read a file before you edit it. edit_file changes part of an existing file. write_file creates a new file or replaces one whole. bash runs everything else: builds, tests, git, packages, processes.
-
-Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep temporary files in $STELLA_SCRATCH, never in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch."#
+Read a file before you edit it. Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep intermediate notes and working data in the scratch state plane, never as files in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch."#
     };
 }
 
 /// The skill-use contract shared by both static prompts (#2724): the recall
 /// block injects selected skills, and this is the text that binds the model
-/// to them. Named-skill force and the say-why-when-skipped rule survive the
-/// compression; the skill-search clause is gone with the discovery tools.
+/// to them — named-skill force and the say-why-when-skipped rule.
 macro_rules! skill_use {
     () => {
         r#"Skills selected for this task arrive in the recalled-context block. Apply the ones that fit, following their steps. A skill the user names is an instruction to apply it. If a skill does not fit the task, say so and why — a skill skipped silently reads as a skill applied."#
@@ -171,17 +169,15 @@ macro_rules! complexity_discipline {
 /// diagnose-before-switching rule, the same way `faithful_reporting!` leans
 /// on `verification_proportionality!`: a deny that states its reason is the
 /// diagnosis that rule demands, not friction to be routed around (#2690).
-/// The escalation clause names no tool, deliberately: `ask_user` is only
-/// registered when a human is present to answer it
-/// (`crate::interactive::human_can_answer`), and these prompts are static
-/// bytes shared by attended and unattended runs alike, so naming it here
-/// would send an unattended agent looking for a tool absent from its schema.
-/// What survives is the decision the clause was always making — an unclear
+/// The escalation clause names no tool, deliberately: these prompts are
+/// static bytes shared by attended and unattended runs alike, so naming a
+/// surface-specific channel would send an unattended agent looking for a
+/// tool absent from its schema. The decision the clause makes — an unclear
 /// mandate for a hard-to-reverse act means the act does not happen and the
-/// unresolved decision is reported — which is the right answer with or
-/// without a human on the other end. One shared literal, embedded verbatim
-/// by both prompts, same as `tool_steering!` and for the same anti-drift
-/// reason (#450).
+/// unresolved decision is reported — is the right answer with or without a
+/// human on the other end. One shared literal, embedded verbatim by both
+/// prompts, same as `tool_steering!` and for the same anti-drift reason
+/// (#450).
 macro_rules! action_care {
     () => {
         r#"Weigh reversibility before acting. A local edit is cheap to undo. Bulk deletion, `git push --force`, `git reset --hard`, dropping data, killing processes you did not start, and posting to any external service need the task to have asked for them; when the mandate is unclear, stop short of the act, finish the reversible work, and report the open decision. Fix a failing hook, lint, or check at its root — never bypass or silence it. Investigate state you did not create before deleting it. A denied tool call is policy: change approach, never re-attempt the identical call. Approval-pending is not denial: wait, or continue other work — never route around an open gate."#
@@ -262,7 +258,7 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
 
 Rules:
 - When the task text claims something was DONE to this repository — introduced, planted, broke, leaked, removed, changed — read that delta first: `git status` and `git diff` (then `git diff --staged`), and `git log -p` only once the working tree is clean. A task with no claimed change gets no history probe; orient from the task's own subject.
-- After changing behavior, run the relevant test or build in bash and read its output.
+- After changing behavior, run the relevant test or build and read its output.
 - Before finishing, re-read the task and check every requirement it states.
 - Be concise. End with what changed and the evidence it works.
 - When a choice is ambiguous and getting it wrong would be costly, take the reversible option and name the ambiguity in your answer; otherwise proceed with your best judgment."#
@@ -313,7 +309,7 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 Methodology (always follow in order):
 1. ORIENT: list the workspace and read the files the task names before acting.
 2. REPRODUCE: run the failing test or reproduce the bug before touching any file. If nothing captures the task, write the failing test first and watch it fail.
-3. LOCALIZE: feed the raw error to search and read the code path it returns.
+3. LOCALIZE: follow the raw error to the code path that produced it and read that code.
 4. MINIMAL FIX: the smallest change that resolves the issue. No refactoring. No style changes. One logical change.
 5. VERIFY: run the target test, then the proportionate suite. If it fails, read the error and adjust.
 
@@ -327,12 +323,6 @@ Rules:
 /// Cap on memory characters appended to the system prompt — memories ride
 /// the prompt cache on every call, so they must stay dense.
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
-
-/// Cap on the workspace-maps index appended to the system prompt
-/// (`docs/spec/exploration-sharing.md` §4a): metadata only — slice,
-/// title, freshness verdict, age — never map bodies, which stay one cheap
-/// `explorations` tool call away.
-const EXPLORATION_INDEX_BUDGET_CHARS: usize = 2_000;
 
 // The A/B recall measurement rate lived here as a `pub(crate)` constant every
 // driver had to pass by hand, and exactly one of them did. It is now
@@ -362,24 +352,16 @@ pub(crate) fn assemble_system_prompt(
     worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
     let mut prompt = base.to_string();
-    // Package-manager scripts are ordinary task source and remain part of the
-    // evaluated repository. Claim-mode isolation excludes only Stella/agent
-    // state that can carry preinstalled prompt steering across trials.
     // The environment block appends in BOTH branches: it is computed from the
     // live process and workspace, never read from stored Stella state, so
     // claim-mode isolation (which excludes only state that could carry
     // preinstalled steering across trials) has nothing to exclude here.
     append_session_environment(&mut prompt, workspace_root, worker);
     if crate::settings::filesystem_settings_disabled() {
-        append_project_scripts(&mut prompt, workspace_root);
-        append_project_orientation(&mut prompt, workspace_root);
         return prompt;
     }
     if authority.project_prompts_allowed {
-        append_project_scripts(&mut prompt, workspace_root);
-        append_project_orientation(&mut prompt, workspace_root);
         append_workspace_memories(&mut prompt, workspace_root);
-        append_exploration_index(&mut prompt, workspace_root);
     }
     // The cached channel: `must` and `should` records, grouped by force, each
     // carrying its `^handle` so the model can name what it followed. Byte-stable by
@@ -516,68 +498,6 @@ fn knowledge_cutoff_for(worker: &stella_protocol::role::ModelRef) -> Option<Stri
         .ok()?
         .knowledge_cutoff
         .clone()
-}
-
-/// The workspace-maps half of [`assemble_system_prompt`]: the exploration
-/// store's index — every COMPLETED map with its per-file freshness verdict —
-/// so orientation is pushed at turn 1 instead of waiting for the model to
-/// think of pulling it. Computed ONCE per session (freshness verdicts
-/// included) for the same prompt-cache byte-stability reason as memories;
-/// maps saved mid-session by other sessions surface through the registry's
-/// coverage hints instead.
-///
-/// In-progress drafts are deliberately NOT here. Their line names the
-/// producing pid and whether it is still alive, which differs per process
-/// and flips mid-session — inside the cached prefix that is a guaranteed
-/// miss on every call (#639). They ride the volatile recall block instead,
-/// via `stella_tools::exploration::render_draft_claims`.
-fn append_exploration_index(prompt: &mut String, workspace_root: &std::path::Path) {
-    let summaries = stella_tools::exploration::summaries_sync(workspace_root);
-    if let Some(index) =
-        stella_tools::exploration::render_index(&summaries, EXPLORATION_INDEX_BUDGET_CHARS)
-    {
-        prompt.push('\n');
-        prompt.push_str(&index);
-    }
-}
-
-/// The project-scripts section of [`assemble_system_prompt`]: the scripts
-/// index's canonical verb → command bindings, rendered once at session
-/// start right after the base instructions (project ground truth before
-/// recalled lessons). Detection is static manifest parsing
-/// (`stella_tools::scripts`, docs/spec/scripts-index.md) and the section
-/// is byte-stable for the same workspace state, so "install this project"
-/// costs one `run_script` call and zero discovery turns. Empty workspaces
-/// render nothing.
-fn append_project_scripts(prompt: &mut String, workspace_root: &std::path::Path) {
-    let index = stella_tools::scripts::ScriptIndex::detect_blocking(workspace_root);
-    if let Some(section) = index.render_prompt_section() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&section);
-    }
-}
-
-/// The project-map section of [`assemble_system_prompt`]: the graph-derived
-/// languages, top-level layout, entry points, and storage — the complement
-/// of the scripts section above, and bounded by construction so it stays
-/// useful on monorepos far past a few hundred files (issue #328). Read-only
-/// (`stella_tools::overview::render_orientation_block`
-/// opens an existing index and never builds one), so it adds nothing to
-/// first-response latency. It renders the graph-backed map once the session's
-/// background index build has completed (or immediately when the workspace was
-/// pre-indexed, as the benchmark adapter does), and falls back to a bounded
-/// top-level listing whenever the index is absent or empty — a worker is never
-/// left blind on an unindexable tree. Byte-stable for a given index and
-/// top-level tree state, so it keeps the cache-stable system prefix stable
-/// (the prompt is assembled once per session, so mid-session churn cannot
-/// reach the prefix). The point is fewer
-/// grep/glob/read_file discovery turns: the model starts knowing the shape of
-/// the code.
-fn append_project_orientation(prompt: &mut String, workspace_root: &std::path::Path) {
-    if let Some(section) = stella_tools::overview::render_orientation_block(workspace_root) {
-        prompt.push_str("\n\n");
-        prompt.push_str(&section);
-    }
 }
 
 /// This workspace's workspace-memory tombstones, or why they could not be read.

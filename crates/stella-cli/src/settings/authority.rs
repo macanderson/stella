@@ -20,11 +20,9 @@ impl Settings {
 /// `off` denies the corresponding capability. An `on` value permits a later
 /// explicit grant (such as repository trust), but never grants by itself.
 ///
-/// The `bash` and `web` keys predate the general per-tool policy and are kept
-/// because org-managed files in the field carry them; they are folded into the
-/// same ceiling as `"tools": {"bash": "off"}` in the managed scope, which is
-/// the general way to pin ANY tool or group off. The block is
-/// `deny_unknown_fields`, so it cannot itself grow into a second tool table.
+/// The block is `deny_unknown_fields`, so it cannot grow into a second tool
+/// table — `"tools"` in the managed scope is the general way to pin ANY tool
+/// or group off.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedAuthoritySettings {
@@ -32,10 +30,6 @@ pub struct ManagedAuthoritySettings {
     pub project_prompts: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_custom_tools: Option<Toggle>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bash: Option<Toggle>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_requires_host_approval: Option<Toggle>,
 }
@@ -45,8 +39,6 @@ pub struct ManagedAuthoritySettings {
 pub struct AuthorityPolicy {
     pub project_prompts_allowed: bool,
     pub project_custom_tools_allowed: bool,
-    pub bash_allowed: bool,
-    pub web_allowed: bool,
     pub media_requires_host_approval: bool,
 }
 
@@ -55,24 +47,14 @@ impl Default for AuthorityPolicy {
         Self {
             project_prompts_allowed: false,
             project_custom_tools_allowed: false,
-            bash_allowed: true,
-            web_allowed: true,
             media_requires_host_approval: true,
         }
     }
 }
 
 impl AuthorityPolicy {
-    /// `ceiling` is [`managed_tool_ceiling`]'s output — the SAME value that is
-    /// folded into the merged settings by [`apply_tool_ceiling`]. Passing it in
-    /// rather than recomputing from `managed.tools` is what keeps
-    /// `bash_allowed`/`web_allowed` from becoming a second, drifting opinion
-    /// about what the org denied: they are now a *reading* of the ceiling, and
-    /// a managed `{"*": "off"}` narrows them exactly as a literal
-    /// `{"bash": "off"}` does.
     pub(super) fn compute(
         managed: Option<&ManagedAuthoritySettings>,
-        ceiling: &ToolPolicy,
         project_trusted: bool,
     ) -> Self {
         let permits = |toggle: Option<Toggle>| toggle != Some(Toggle::Off);
@@ -81,10 +63,6 @@ impl AuthorityPolicy {
                 && permits(managed.and_then(|policy| policy.project_prompts)),
             project_custom_tools_allowed: project_trusted
                 && permits(managed.and_then(|policy| policy.project_custom_tools)),
-            bash_allowed: ceiling.allows("bash"),
-            web_allowed: stella_tools::catalog::names_in_group("web")
-                .into_iter()
-                .any(|name| ceiling.allows(name)),
             media_requires_host_approval: managed
                 .and_then(|policy| policy.media_requires_host_approval)
                 .is_none_or(Toggle::is_on),
@@ -92,22 +70,15 @@ impl AuthorityPolicy {
     }
 }
 
-/// What the org-managed scope says about tools, as a policy in its own right.
-///
-/// Two sources, one map: the managed scope's own `tools` (any key — a tool
-/// name, a group, `"*"`) and the legacy `authority.bash` / `authority.web`
-/// toggles, which are appended last so an `authority` denial outranks a
-/// `tools` grant in the same file.
+/// What the org-managed scope says about tools, as a policy in its own right:
+/// the managed scope's `tools` map (any key — a tool name, a group, `"*"`).
 ///
 /// Grants are **kept**, not filtered out, and that is load-bearing: a managed
-/// `{"*": "off", "read_file": "on"}` has to resolve `read_file` as permitted
+/// `{"*": "off", "task_list": "on"}` has to resolve `task_list` as permitted
 /// when [`apply_tool_ceiling`] asks whether a merged grant may stand. A
 /// deny-only view would answer "no" and delete the org's own exception.
-pub(super) fn managed_tool_ceiling(
-    managed: Option<&ManagedAuthoritySettings>,
-    managed_tools: Option<&ToolsSettings>,
-) -> ToolPolicy {
-    let mut switches: Vec<(String, bool)> = managed_tools
+pub(super) fn managed_tool_ceiling(managed_tools: Option<&ToolsSettings>) -> ToolPolicy {
+    let switches: Vec<(String, bool)> = managed_tools
         .map(|tools| {
             tools
                 .entries
@@ -116,12 +87,6 @@ pub(super) fn managed_tool_ceiling(
                 .collect()
         })
         .unwrap_or_default();
-    if managed.and_then(|policy| policy.bash) == Some(Toggle::Off) {
-        switches.push(("bash".to_string(), false));
-    }
-    if managed.and_then(|policy| policy.web) == Some(Toggle::Off) {
-        switches.push(("web".to_string(), false));
-    }
     ToolPolicy::from_switches(switches)
 }
 
@@ -131,8 +96,7 @@ pub(super) fn managed_tool_ceiling(
 /// every key the project turned **on** reverts to whatever the user/managed
 /// scopes said about that key (absent = the shipped default), while every key
 /// it turned **off** stands. Generic over the key set: a project cannot grant
-/// `bash`, `mcp`, `"*"`, or a custom tool by name any more than it could grant
-/// the two fields this used to hardcode.
+/// `task`, `mcp`, `"*"`, or a custom tool by name.
 pub(super) fn restore_project_tools(merged: &mut Settings, trusted: &Settings, project: &Settings) {
     let Some(project_tools) = project.tools.as_ref() else {
         return;
@@ -211,8 +175,8 @@ pub(super) fn restore_project_prompts(
 ///    into the merged map. A key the ceiling grants (or never mentions) is
 ///    left exactly as the lower scopes left it.
 /// 2. Every merged **grant** the ceiling would deny is dropped. Without this,
-///    precedence defeats the ceiling: a managed `{"process": "off"}` is a
-///    *group* key, and a project naming `{"start_process": "on"}` is more
+///    precedence defeats the ceiling: a managed `{"scratch": "off"}` is a
+///    *group* key, and a project naming `{"save_state": "on"}` is more
 ///    specific, so step 1 alone would leave the org's denial standing while
 ///    the tool it was meant to withhold ran anyway. Dropping the grant (rather
 ///    than pinning it off) lets it fall back through the ceiling's own key, so
@@ -251,7 +215,7 @@ mod tests {
     fn captured_scope_snapshots_enforce_project_restoration_and_managed_ceiling() {
         let user = parsed(
             r#"{
-              "tools": {"bash": "on", "web": "off"},
+              "tools": {"task_list": "on", "scratch": "off"},
               "agent_engine_config": {
                 "agents": {"verifier": {"prompt": "trusted prompt"}}
               }
@@ -259,7 +223,7 @@ mod tests {
         );
         let managed = parsed(
             r#"{
-              "tools": {"bash": "off"},
+              "tools": {"task_list": "off"},
               "authority": {
                 "project_prompts": "off",
                 "project_custom_tools": "off"
@@ -268,7 +232,7 @@ mod tests {
         );
         let project = parsed(
             r#"{
-              "tools": {"bash": "on", "web": "on"},
+              "tools": {"task_list": "on", "scratch": "on"},
               "agent_engine_config": {
                 "agents": {"verifier": {"prompt": "project prompt"}}
               }
@@ -285,8 +249,11 @@ mod tests {
             },
         );
         let policy = untrusted.tool_policy();
-        assert!(!policy.allows("bash"), "managed bash ceiling");
-        assert!(!policy.allows("web_fetch"), "project web grant restored");
+        assert!(!policy.allows("task_list"), "managed task_list ceiling");
+        assert!(
+            !policy.allows("save_state"),
+            "project scratch grant restored"
+        );
         assert_eq!(
             untrusted
                 .agent_engine_config
@@ -306,8 +273,11 @@ mod tests {
             },
         );
         let policy = trusted.tool_policy();
-        assert!(!policy.allows("bash"), "managed denial survives trust");
-        assert!(policy.allows("web_fetch"), "trusted project may grant web");
+        assert!(!policy.allows("task_list"), "managed denial survives trust");
+        assert!(
+            policy.allows("save_state"),
+            "trusted project may grant scratch"
+        );
         assert_eq!(
             trusted
                 .agent_engine_config

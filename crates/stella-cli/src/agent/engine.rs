@@ -7,13 +7,6 @@
 
 use super::*;
 
-/// Public skill-registry commands are an extension surface omitted from a
-/// filesystem-isolated tool schema; ordinary sessions retain them.
-pub(crate) fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillRegistry> {
-    (!crate::settings::filesystem_settings_disabled())
-        .then(|| SkillRegistry::from_env(workspace_root))
-}
-
 /// EngineConfig for `kind`: defaults + the workspace root as hook `cwd`,
 /// with the agent's `agent_engine_config` tuning applied — temperature and
 /// max_tokens override the engine defaults only when set (the "Include"
@@ -281,9 +274,9 @@ pub(crate) fn approval_gate_for(
 ///
 /// Otherwise the answer is exactly "is a human present to answer?", which is
 /// [`crate::interactive::human_can_answer`]'s — the single derivation this
-/// and the `ask_user` tool both read, so a redirected/piped text-format run
-/// can never leave one layer waiting for a human the other has concluded is
-/// absent.
+/// and the approvals plane's question io both read, so a redirected/piped
+/// text-format run can never leave one layer waiting for a human the other
+/// has concluded is absent.
 pub(crate) fn approval_capability_for(
     supervised: bool,
     is_text: bool,

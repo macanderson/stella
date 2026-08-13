@@ -522,7 +522,7 @@ pub static CAPABILITIES: &[Capability] = &[
                         environment report) plus MCP and custom script tools, under policy \
                         layering — settings scopes plus the `--tools` per-invocation scope \
                         (#1263), which composes by intersection and can only narrow",
-            witness: "a_settings_entry_hides_and_refuses_bash_in_the_real_stack",
+            witness: "a_settings_entry_hides_and_refuses_a_tool_in_the_real_stack",
         },
         api: SurfacePosture::NotApplicable {
             reason: "deliberate bring-your-own-tools posture: serve remotes every tool call to \
