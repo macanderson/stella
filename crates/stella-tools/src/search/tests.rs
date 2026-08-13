@@ -731,3 +731,60 @@ async fn a_file_whose_symbols_collide_on_rendered_text_does_not_spin_the_pass() 
          toward the cap: files_embedded={files_embedded}"
     );
 }
+
+/// The blank-query refusal lives in `report` — one validation both doors
+/// share — and the agent's door still surfaces it. This pins the refusal
+/// from the `execute` side so moving the check cannot silently lose it.
+#[tokio::test]
+async fn a_blank_query_is_refused_through_the_tool_door() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let output = Search::default()
+        .execute(&serde_json::json!({"query": "   "}), workspace.path())
+        .await;
+    let ToolOutput::Error { message } = output else {
+        panic!("a blank query must be an error, got: {output:?}");
+    };
+    assert!(message.contains("`query` is required"), "{message}");
+    assert!(
+        !workspace.path().join(".stella").exists(),
+        "a refused query must not create workspace state as a side effect"
+    );
+}
+
+/// `SearchReport` is the CLI's `--format json` contract: the decided answer
+/// as data beside the rendering. Hit order is rank order, strategies carry
+/// the exact labels the `via:` line prints, and the note survives verbatim.
+#[test]
+fn the_report_preserves_rank_order_and_strategy_labels() {
+    let answer = super::Answer {
+        hits: vec![
+            Hit {
+                path: "src/first.rs".into(),
+                why: "the top hit".into(),
+            },
+            Hit {
+                path: "src/second.rs".into(),
+                why: "the runner-up".into(),
+            },
+        ],
+        strategies: vec![Strategy::Semantic, Strategy::GraphNames],
+        note: Some("degraded: the backend hiccuped".into()),
+    };
+    let rendered = ToolOutput::Ok {
+        content: "the rendered answer".into(),
+    };
+    let report = super::SearchReport::of(&answer, rendered.clone());
+
+    let paths: Vec<&str> = report.hits.iter().map(|hit| hit.path.as_str()).collect();
+    assert_eq!(paths, ["src/first.rs", "src/second.rs"]);
+    assert_eq!(report.hits[0].why, "the top hit");
+    assert_eq!(
+        report.strategies,
+        [Strategy::Semantic.label(), Strategy::GraphNames.label()]
+    );
+    assert_eq!(
+        report.note.as_deref(),
+        Some("degraded: the backend hiccuped")
+    );
+    assert_eq!(report.rendered, rendered);
+}

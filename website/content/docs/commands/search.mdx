@@ -52,7 +52,7 @@ stella search "what calls resolve_provider"
 
 ## `--format json`
 
-For scripted testing — feeding real queries through the exact ranking the agent uses and reading the answer back structurally:
+For scripted testing — feeding real queries through the exact ranking the agent uses and reading the answer back as data:
 
 ```bash
 stella search "the retry/backoff policy for failed HTTP requests" --format json
@@ -63,9 +63,20 @@ stella search "the retry/backoff policy for failed HTTP requests" --format json
   "schema_version": 1,
   "query": "the retry/backoff policy for failed HTTP requests",
   "ok": true,
-  "content": "search `...` — N result(s) at depth 4\nvia: semantic\n...",
-  "error": null
+  "strategies": ["semantic (embedding rank over the code-graph index)"],
+  "note": null,
+  "hits": [
+    {
+      "path": "crates/stella-core/src/retry.rs",
+      "why": "ranked by MEANING against your query — best match is `RetryPolicy` (struct) at line 12 (cosine 0.612)"
+    }
+  ],
+  "content": "search `...` — N result(s) at depth 4\nvia: semantic\n..."
 }
 ```
 
-`content` is the exact text the agent would read; `error` is `null` on success and the failure message otherwise. The command exits non-zero on failure even under `--format json`, so a script can check the exit code without parsing the body — but the JSON envelope on stdout stays valid either way.
+The parts a test script asserts on ride as data, not prose: `hits` is the ranking in rank order (each with the `why` phrase the agent reads), `strategies` lists which rungs of the ladder actually ran — more than one entry means an earlier rung came back empty — and `note` carries the degradation reason verbatim when the semantic rung was skipped or failed. `content` is still the exact rendered text the agent would receive, and `error` is `null` on success.
+
+The command exits non-zero on failure even under `--format json`, so a script can check the exit code without parsing the body — the JSON envelope on stdout stays valid either way, with `ok: false` and `error` set.
+
+Two environment dials tune the rendering, the same ones the agent's registration reads: `STELLA_SEARCH_DEPTH` (how much is said about the top hit) and `STELLA_SEARCH_BUDGET` (the answer's character allowance). They shape `content` only — the `hits` ranking is unaffected.

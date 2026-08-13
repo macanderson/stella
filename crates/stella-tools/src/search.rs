@@ -345,21 +345,95 @@ impl Tool for Search {
         let query = input
             .get("query")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim();
-        if query.is_empty() {
-            return ToolOutput::Error {
-                message: "`query` is required: what you are looking for, as a question, a \
-                          description of the behaviour, or a symbol name — e.g. \"where request \
-                          headers are sanitized\" or \"CredentialStore\""
-                    .into(),
-            };
-        }
+            .unwrap_or_default();
+        // Validation (the blank-query refusal included) lives in [`report`],
+        // so this door and the CLI's `stella search` cannot drift apart.
         search(root, query, self.config).await
     }
 }
 
-/// One `search` end to end.
+/// The refusal both doors return for a blank query. One string, one place:
+/// the tool's `execute` and the CLI's `stella search` reach it through the
+/// same [`report`] path, so the wording cannot fork between them.
+const QUERY_REQUIRED: &str = "`query` is required: what you are looking for, as a question, a \
+                              description of the behaviour, or a symbol name — e.g. \"where \
+                              request headers are sanitized\" or \"CredentialStore\"";
+
+/// One ranked hit, as data — the crate-private `Hit` with its fields public,
+/// for consumers outside this crate ([`SearchReport`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    /// Workspace-relative, forward-slash.
+    pub path: String,
+    /// Why this file ranked, as a phrase — see `Hit::why` for why it is
+    /// words rather than a score column.
+    pub why: String,
+}
+
+/// One search, as data plus the rendered answer — the seam the CLI's
+/// `stella search --format json` consumes.
+///
+/// The agent's door deliberately gets **only** [`Self::rendered`]: the module
+/// docs argue at length that a structured match list invites the model to
+/// reshape it in a shell pipeline and lose the ranking's meaning. A test
+/// script is the opposite consumer — it must assert on hit *order* without
+/// parsing prose — so the decided answer rides beside the rendered one
+/// instead of being thrown away at render time. Same dispatch, same render,
+/// one mechanism; only what survives the call differs.
+#[derive(Debug, Clone)]
+pub struct SearchReport {
+    /// The ranked hits, best first — empty when the search failed.
+    pub hits: Vec<SearchHit>,
+    /// The strategies that ran, in order, as the labels the answer's `via:`
+    /// line prints. More than one means an earlier rung came back empty.
+    pub strategies: Vec<&'static str>,
+    /// Why the semantic strategy did not run, or ran degraded — verbatim.
+    pub note: Option<String>,
+    /// Exactly what the agent's door would have returned.
+    pub rendered: ToolOutput,
+}
+
+impl SearchReport {
+    /// The structured half of an [`Answer`], paired with its rendering.
+    fn of(answer: &Answer, rendered: ToolOutput) -> Self {
+        Self {
+            hits: answer
+                .hits
+                .iter()
+                .map(|hit| SearchHit {
+                    path: hit.path.clone(),
+                    why: hit.why.clone(),
+                })
+                .collect(),
+            strategies: answer.strategies.iter().map(|s| s.label()).collect(),
+            note: answer.note.clone(),
+            rendered,
+        }
+    }
+
+    /// A search that never reached dispatch: no hits, no strategies, just
+    /// the error the caller must surface.
+    fn failed(message: &str) -> Self {
+        Self {
+            hits: Vec::new(),
+            strategies: Vec::new(),
+            note: None,
+            rendered: ToolOutput::Error {
+                message: message.into(),
+            },
+        }
+    }
+}
+
+/// One `search` end to end, rendered — the agent's door.
+pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
+    report(root, query, config).await.rendered
+}
+
+/// One `search` end to end, as a [`SearchReport`] — the CLI's door
+/// (`stella search --format json`), and the single mechanism the tool's own
+/// `search` wraps, so a scripted test and an agent call exercise identical
+/// code.
 ///
 /// `open_or_build` runs a full `index_all` catch-up pass, which its contract
 /// says an async caller must wrap in `spawn_blocking`. The handle is then held
@@ -367,7 +441,12 @@ impl Tool for Search {
 /// reads against a local file, so paying a thread hop for each would cost more
 /// than it saves. This is `semantic_code_search`'s discipline, deliberately
 /// unchanged (`crate::graph::semantic`).
-pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
+pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
+    let query = query.trim();
+    if query.is_empty() {
+        return SearchReport::failed(QUERY_REQUIRED);
+    }
+
     let owned_root = root.to_path_buf();
     let opened =
         tokio::task::spawn_blocking(move || crate::graph::open_or_build(&owned_root)).await;
@@ -378,9 +457,7 @@ pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> To
         // workspace the indexer cannot serve.
         Ok(Err(message)) => (None, Some(message)),
         Err(_) => {
-            return ToolOutput::Error {
-                message: "the search was cancelled".into(),
-            };
+            return SearchReport::failed("the search was cancelled");
         }
     };
 
@@ -410,7 +487,10 @@ pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> To
     if let Some(graph) = graph {
         graph.shutdown();
     }
-    crate::graph::with_index_warning(output, index_warning)
+    SearchReport::of(
+        &answer,
+        crate::graph::with_index_warning(output, index_warning),
+    )
 }
 
 /// Choose and run the ranking strategies, in cost order, stopping at the

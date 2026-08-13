@@ -57,7 +57,6 @@ use stella_context::{
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 use crate::domains::Domains;
-use crate::query_format::{QueryFormat, Versioned};
 use crate::settings::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 mod suppression;
@@ -950,67 +949,6 @@ fn now_rfc3339() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default();
     stella_context::format_rfc3339(secs)
-}
-
-/// One `stella search` answer, machine-readable — the `--format json`
-/// envelope. `content` carries the exact text a human (or the agent) would
-/// read; `error` is `None` on success. Both are always present so a script
-/// parsing this need not branch on which key exists.
-#[derive(Debug, Clone, serde::Serialize)]
-struct SearchAnswer {
-    query: String,
-    ok: bool,
-    content: String,
-    error: Option<String>,
-}
-
-/// `stella search <query>` — the human door to the same `search` tool the
-/// agent calls, run through the real [`stella_tools::registry::Tool`]
-/// interface rather than a reimplementation, so a CLI run and an agent's
-/// call exercise identical code and `--format json` is a faithful fixture
-/// for testing the ranking against real queries.
-pub async fn run_search(query: &str, format: QueryFormat) -> Result<(), String> {
-    use stella_tools::registry::Tool;
-
-    let root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let input = serde_json::json!({ "query": query });
-    let output = stella_tools::search::Search::from_env()
-        .execute(&input, &root)
-        .await;
-
-    let (ok, content, error) = match output {
-        stella_protocol::tool::ToolOutput::Ok { content } => (true, content, None),
-        stella_protocol::tool::ToolOutput::Error { message } => {
-            (false, String::new(), Some(message))
-        }
-    };
-
-    match format {
-        QueryFormat::Text => {
-            if let Some(message) = &error {
-                return Err(message.clone());
-            }
-            println!("{content}");
-        }
-        QueryFormat::Json => {
-            let answer = SearchAnswer {
-                query: query.to_string(),
-                ok,
-                content,
-                error: error.clone(),
-            };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&Versioned::new(answer))
-                    .map_err(|e| format!("serialize: {e}"))?
-            );
-            if let Some(message) = error {
-                return Err(message);
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
