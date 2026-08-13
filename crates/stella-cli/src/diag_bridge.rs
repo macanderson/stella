@@ -985,9 +985,7 @@ mod tests {
         ));
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
-            output: ToolOutput::Error {
-                message: "no such file".into(),
-            },
+            output: ToolOutput::error("no such file"),
             duration_ms: 7,
             speculated: false,
         });

@@ -272,9 +272,7 @@ impl Tool for ReadFile {
         let offset = match crate::input::optional_u64(input, "offset") {
             Ok(offset) => offset.map(|n| n as usize),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         // MAX_LINES is a ceiling, not just the default: the flood protection
@@ -284,9 +282,7 @@ impl Tool for ReadFile {
                 .map(|n| (n as usize).min(MAX_LINES))
                 .unwrap_or(MAX_LINES),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
 
@@ -559,7 +555,7 @@ mod tests {
                 dir.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a mistyped limit must be an error, got: {out:?}");
         };
         assert_eq!(
@@ -573,7 +569,7 @@ mod tests {
                 dir.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a mistyped offset must be an error, got: {out:?}");
         };
         assert_eq!(

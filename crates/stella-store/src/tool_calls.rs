@@ -246,6 +246,46 @@ fn project_tool_start(
     Ok(())
 }
 
+/// The settled outcome of one call — everything a `tool_result` (or its
+/// absence) decides about a row, as one value.
+///
+/// Both writers go through [`SettledOutcome::from_output`]: the live fold
+/// ([`project_event`]) and the repair fold
+/// ([`Store::materialize_tool_calls`]) must read a `ToolOutput` identically,
+/// or a repair would rewrite history the live path had already recorded
+/// differently.
+struct SettledOutcome {
+    state: ToolCallState,
+    error: String,
+    error_class: Option<ErrorClass>,
+    bytes_out: i64,
+    duration_ms: i64,
+}
+
+impl SettledOutcome {
+    /// What one delivered `tool_result` payload settles to. Abandonment never
+    /// comes through here — an abandoned call has no `ToolOutput` to read,
+    /// which is exactly why it carries no class.
+    fn from_output(output: &ToolOutput, duration_ms: i64) -> Self {
+        let (state, error, error_class, bytes_out) = match output {
+            ToolOutput::Ok { content } => {
+                (ToolCallState::Ok, String::new(), None, content.len() as i64)
+            }
+            ToolOutput::Error { message, class } => {
+                let len = message.len() as i64;
+                (ToolCallState::Error, message.clone(), *class, len)
+            }
+        };
+        Self {
+            state,
+            error,
+            error_class,
+            bytes_out,
+            duration_ms,
+        }
+    }
+}
+
 /// Fold one `tool_result` into the projection, inside the caller's
 /// transaction.
 ///
@@ -259,11 +299,7 @@ fn project_tool_result(
     tx: &Connection,
     execution_id: i64,
     call_id: &str,
-    state: ToolCallState,
-    error: &str,
-    error_class: Option<ErrorClass>,
-    bytes_out: i64,
-    duration_ms: i64,
+    settled: &SettledOutcome,
 ) -> rusqlite::Result<()> {
     let updated = tx.execute(
         "UPDATE tool_calls \
@@ -273,12 +309,12 @@ fn project_tool_result(
         params![
             execution_id,
             call_id,
-            i64::from(state.is_ok()),
-            state.as_str(),
-            error,
-            class_token(error_class),
-            bytes_out,
-            duration_ms
+            i64::from(settled.state.is_ok()),
+            settled.state.as_str(),
+            settled.error,
+            class_token(settled.error_class),
+            settled.bytes_out,
+            settled.duration_ms
         ],
     )?;
     if updated > 0 {
@@ -298,12 +334,12 @@ fn project_tool_result(
             execution_id,
             seq,
             call_id,
-            i64::from(state.is_ok()),
-            state.as_str(),
-            error,
-            class_token(error_class),
-            bytes_out,
-            duration_ms
+            i64::from(settled.state.is_ok()),
+            settled.state.as_str(),
+            settled.error,
+            class_token(settled.error_class),
+            settled.bytes_out,
+            settled.duration_ms
         ],
     )?;
     Ok(())
@@ -331,25 +367,8 @@ pub(crate) fn project_event(
             duration_ms,
             ..
         } => {
-            let (state, error, class, bytes) = match output {
-                ToolOutput::Ok { content } => {
-                    (ToolCallState::Ok, String::new(), None, content.len() as i64)
-                }
-                ToolOutput::Error { message, class } => {
-                    let len = message.len() as i64;
-                    (ToolCallState::Error, message.clone(), *class, len)
-                }
-            };
-            project_tool_result(
-                tx,
-                execution_id,
-                call_id,
-                state,
-                &error,
-                class,
-                bytes,
-                *duration_ms as i64,
-            )
+            let settled = SettledOutcome::from_output(output, *duration_ms as i64);
+            project_tool_result(tx, execution_id, call_id, &settled)
         }
         _ => Ok(()),
     }
@@ -431,9 +450,7 @@ impl Store {
         let mut order: Vec<String> = Vec::new();
         // call_id -> (name, surface, args_json)
         let mut starts: HashMap<String, (String, String, String)> = HashMap::new();
-        // call_id -> (state, error, error_class, bytes_out, duration_ms)
-        let mut results: HashMap<String, (ToolCallState, String, Option<ErrorClass>, i64, i64)> =
-            HashMap::new();
+        let mut results: HashMap<String, SettledOutcome> = HashMap::new();
 
         for payload in &payloads {
             let Ok(ev) = serde_json::from_str::<AgentEvent>(payload) else {
@@ -459,16 +476,8 @@ impl Store {
                     duration_ms,
                     ..
                 } => {
-                    let (state, error, class, bytes) = match output {
-                        ToolOutput::Ok { content } => {
-                            (ToolCallState::Ok, String::new(), None, content.len() as i64)
-                        }
-                        ToolOutput::Error { message, class } => {
-                            let len = message.len() as i64;
-                            (ToolCallState::Error, message, class, len)
-                        }
-                    };
-                    results.insert(call_id, (state, error, class, bytes, duration_ms as i64));
+                    let settled = SettledOutcome::from_output(&output, duration_ms as i64);
+                    results.insert(call_id, settled);
                 }
                 _ => {}
             }
@@ -480,16 +489,17 @@ impl Store {
                 continue;
             };
             let digest = fnv_hex(args_json);
-            let (state, error, error_class, bytes_out, duration_ms) = match results.get(call_id) {
-                Some((state, error, class, bytes, dur)) => {
-                    (*state, error.clone(), *class, *bytes, *dur)
-                }
-                // An abandoned call carries no class: it never produced a
-                // `ToolOutput` to classify, and inventing one here would put
-                // "the turn ended first" into the same bucket as a real
-                // failure — the exact conflation #3145 exists to end.
-                None => (ToolCallState::Abandoned, ABANDONED.to_string(), None, 0, 0),
-            };
+            // An abandoned call carries no class: it never produced a
+            // `ToolOutput` to classify, and inventing one here would put
+            // "the turn ended first" into the same bucket as a real
+            // failure — the exact conflation #3145 exists to end.
+            let settled = results.remove(call_id).unwrap_or_else(|| SettledOutcome {
+                state: ToolCallState::Abandoned,
+                error: ABANDONED.to_string(),
+                error_class: None,
+                bytes_out: 0,
+                duration_ms: 0,
+            });
             rows.push(ToolCallRow {
                 call_id: call_id.clone(),
                 name: name.clone(),
@@ -497,11 +507,11 @@ impl Store {
                 args_json: args_json.clone(),
                 args_digest: digest,
                 reason: String::new(),
-                state,
-                error,
-                error_class,
-                bytes_out,
-                duration_ms,
+                state: settled.state,
+                error: settled.error,
+                error_class: settled.error_class,
+                bytes_out: settled.bytes_out,
+                duration_ms: settled.duration_ms,
             });
         }
         let n = rows.len();

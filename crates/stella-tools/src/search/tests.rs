@@ -1256,7 +1256,7 @@ async fn a_mistyped_query_is_refused_as_a_type_mismatch_not_as_missing() {
     let output = Search::default()
         .execute(&serde_json::json!({"query": 42}), workspace.path())
         .await;
-    let ToolOutput::Error { message } = output else {
+    let ToolOutput::Error { message, .. } = output else {
         panic!("a mistyped query must be an error, got: {output:?}");
     };
     assert_eq!(message, "field `query` must be a string, got number");

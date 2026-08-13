@@ -917,7 +917,7 @@ mod tests {
                 root.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("expected a refusal, got {out:?}");
         };
         assert_eq!(
@@ -931,7 +931,7 @@ mod tests {
                 root.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("expected a refusal, got {out:?}");
         };
         assert_eq!(

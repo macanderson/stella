@@ -397,9 +397,7 @@ impl Tool for Bash {
         let trace = match crate::input::optional_bool(input, "trace") {
             Ok(trace) => trace.unwrap_or(false),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let traced;
@@ -572,7 +570,7 @@ mod tests {
                 dir.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a mistyped trace must be an error, got: {out:?}");
         };
         assert_eq!(message, "field `trace` must be a boolean, got string");
