@@ -224,8 +224,8 @@ impl Tool for SpawnSubAgent {
                  same step — they run concurrently, so three parallel investigations cost \
                  the wall-clock of the slowest, not the sum. Not \
                  for work that must edit files (the sub-agent cannot write), and not for a \
-                 single lookup you already know the location of — one read_file is cheaper \
-                 than a sub-agent."
+                 single lookup you already know the location of — one direct read is \
+                 cheaper than a sub-agent."
                 .into(),
             input_schema: json!({
                 "type": "object",

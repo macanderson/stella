@@ -7,33 +7,32 @@
 //!
 //! ```json
 //! "tools": {
-//!   "bash": "off",
-//!   "process": "off",
-//!   "repo_push": "off"
+//!   "task": "off",
+//!   "scratch": "off",
+//!   "task_assign": "off"
 //! }
 //! ```
 //!
-//! This replaces the per-capability booleans (`tools.bash`, `tools.web`) that
-//! used to be the only switches. Those were not really *availability* — they
-//! were policy defaults welded into the tool table, which is why every new
-//! "should this be on?" question needed another enum variant, another
-//! `RegistryOptions` field, and another hand-written branch. Availability is
-//! now only about prerequisites the environment either satisfies or does not
-//! (a media key, an issue backend, a search key); whether a *satisfiable* tool
-//! is allowed is this module's business.
+//! This replaces the per-capability booleans that used to be the only
+//! switches. Those were not really *availability* — they were policy
+//! defaults welded into the tool table, which is why every new "should this
+//! be on?" question needed another enum variant, another construction field,
+//! and another hand-written branch. Availability is only about prerequisites
+//! the environment either satisfies or does not; whether a *satisfiable*
+//! tool is allowed is this module's business.
 //!
 //! # Precedence
 //!
 //! Most specific wins, and there are only three levels:
 //!
-//! 1. the exact tool name — `"repo_push"`
-//! 2. its group — `"repo"`, or `"mcp"` / `"custom"` for tools the catalog does
-//!    not know (see [`crate::catalog::group_for`])
+//! 1. the exact tool name — `"task_assign"`
+//! 2. its group — `"scratch"`, or `"mcp"` / `"custom"` for tools the catalog
+//!    does not know (see [`crate::catalog::group_for`])
 //! 3. `"*"`, every tool
 //!
-//! So `{"*": "off", "read_file": "on"}` is a read-only agent in two lines, and
-//! `{"process": "off", "read_output": "on"}` keeps exactly one of the five
-//! process tools. Anything unmentioned is on.
+//! So `{"*": "off", "task_list": "on"}` is a board-reader in two lines, and
+//! `{"scratch": "off", "get_state": "on"}` keeps exactly one of the four
+//! scratch tools. Anything unmentioned is on.
 //!
 //! # Composing scopes
 //!
@@ -137,12 +136,12 @@ impl ToolPolicy {
     /// scope needs.
     ///
     /// `deny_all_from` folds key by key, so the read-only idiom
-    /// `{"*": off, "read_file": on}` folds in as `{"*": off}` alone: the
-    /// grant is dropped (correctly — grants never transfer), and `read_file`
+    /// `{"*": off, "task_list": on}` folds in as `{"*": off}` alone: the
+    /// grant is dropped (correctly — grants never transfer), and `task_list`
     /// then falls through to the wildcard and is denied. The scope says
-    /// "nothing except read_file" and the fold hears "nothing". Resolving
+    /// "nothing except task_list" and the fold hears "nothing". Resolving
     /// each key through [`allows`](Self::allows) first keeps the exception,
-    /// because `other.allows("read_file")` is `true` while
+    /// because `other.allows("task_list")` is `true` while
     /// `other.allows("*")` is `false`.
     ///
     /// The narrowing guarantee is unchanged and still structural: every entry
@@ -168,8 +167,8 @@ impl ToolPolicy {
     /// Parse a comma-separated switch spec — the CLI spelling of the
     /// `settings.json` `"tools"` table (#1263).
     ///
-    /// `*:off,read_file:on,grep:on` is a read-only agent; `repo_push:off`
-    /// removes one capability. `on`/`off` are the only values, matching the
+    /// `*:off,task_list:on,get_state:on` is a board-and-scratch reader;
+    /// `task_assign:off` removes one capability. `on`/`off` are the only values, matching the
     /// settings file exactly rather than inventing a second vocabulary for
     /// the same concept. Whitespace around either side is ignored so a
     /// quoted, spaced-out spec behaves.
@@ -183,7 +182,7 @@ impl ToolPolicy {
             let Some((key, value)) = entry.rsplit_once(':') else {
                 return Err(format!(
                     "`{entry}` is not a tool switch — write it as `name:on` or `name:off` \
-                     (e.g. `*:off,read_file:on`)"
+                     (e.g. `*:off,task_list:on`)"
                 ));
             };
             let key = key.trim();
@@ -211,19 +210,19 @@ mod narrowing_tests {
     use super::*;
 
     /// The read-only idiom, and the reason `narrow_with` exists at all:
-    /// `deny_all_from` folds key by key, drops the `read_file:on` grant, and
-    /// leaves `read_file` falling through to `*:off` — so the scope that says
-    /// "nothing except read_file" would have been heard as "nothing".
+    /// `deny_all_from` folds key by key, drops the `task_list:on` grant, and
+    /// leaves `task_list` falling through to `*:off` — so the scope that says
+    /// "nothing except task_list" would have been heard as "nothing".
     #[test]
     fn a_wildcard_off_with_an_exception_keeps_the_exception() {
-        let scope = ToolPolicy::parse_spec("*:off,read_file:on,grep:on").unwrap();
+        let scope = ToolPolicy::parse_spec("*:off,task_list:on,get_state:on").unwrap();
         let mut effective = ToolPolicy::allow_all();
         effective.narrow_with(&scope);
 
-        assert!(effective.allows("read_file"), "the exception must survive");
-        assert!(effective.allows("grep"));
-        assert!(!effective.allows("bash"));
-        assert!(!effective.allows("write_file"));
+        assert!(effective.allows("task_list"), "the exception must survive");
+        assert!(effective.allows("get_state"));
+        assert!(!effective.allows("task"));
+        assert!(!effective.allows("save_state"));
 
         // The old fold is what this replaces — pinned so a future
         // simplification back to it fails loudly rather than silently
@@ -231,7 +230,7 @@ mod narrowing_tests {
         let mut folded = ToolPolicy::allow_all();
         folded.deny_all_from(&scope);
         assert!(
-            !folded.allows("read_file"),
+            !folded.allows("task_list"),
             "deny_all_from drops grants — if this ever passes, narrow_with is redundant"
         );
     }
@@ -240,55 +239,29 @@ mod narrowing_tests {
     /// narrow, never widen.
     #[test]
     fn a_cli_scope_cannot_re_enable_what_settings_denied() {
-        let mut effective = ToolPolicy::from_switches([("bash".to_string(), false)]);
-        let scope = ToolPolicy::parse_spec("bash:on").unwrap();
+        let mut effective = ToolPolicy::from_switches([("task".to_string(), false)]);
+        let scope = ToolPolicy::parse_spec("task:on").unwrap();
         effective.narrow_with(&scope);
-        assert!(!effective.allows("bash"), "a grant must never transfer");
-    }
-
-    /// #3120's first family: `search:on` used to resolve as a *group* switch
-    /// too (the group then shared the tool's name), so the read-only idiom
-    /// re-enabled grep, glob, graph_query and semantic_code_search alongside
-    /// the one tool it named. A tool name now addresses exactly that tool;
-    /// the family stays addressable under its own key, `retrieval`.
-    #[test]
-    fn enabling_the_search_tool_does_not_enable_its_family() {
-        let mut effective = ToolPolicy::allow_all();
-        effective.narrow_with(&ToolPolicy::parse_spec("*:off,search:on").unwrap());
-
-        assert!(effective.allows("search"));
-        for sibling in ["grep", "glob", "graph_query", "semantic_code_search"] {
-            assert!(
-                !effective.allows(sibling),
-                "`search:on` names one tool and must not re-enable `{sibling}`"
-            );
-        }
-
-        // The family switch still exists — under the group's own name.
-        let family = ToolPolicy::parse_spec("*:off,retrieval:on").unwrap();
-        for name in catalog::names_in_group("retrieval") {
-            assert!(family.allows(name), "`retrieval:on` must cover `{name}`");
-        }
-        assert!(!family.allows("read_file"));
+        assert!(!effective.allows("task"), "a grant must never transfer");
     }
 
     /// A narrowing scope must not disturb tools neither side mentions.
     #[test]
     fn tools_no_scope_mentions_are_untouched() {
         let mut effective = ToolPolicy::allow_all();
-        effective.narrow_with(&ToolPolicy::parse_spec("repo_push:off").unwrap());
-        assert!(!effective.allows("repo_push"));
-        assert!(effective.allows("read_file"));
-        assert!(effective.allows("bash"));
+        effective.narrow_with(&ToolPolicy::parse_spec("task_assign:off").unwrap());
+        assert!(!effective.allows("task_assign"));
+        assert!(effective.allows("task_list"));
+        assert!(effective.allows("save_state"));
     }
 
     #[test]
     fn a_spec_is_parsed_or_named_as_malformed() {
-        let p = ToolPolicy::parse_spec(" *:off , read_file:on ").unwrap();
-        assert!(p.allows("read_file"));
-        assert!(!p.allows("bash"));
+        let p = ToolPolicy::parse_spec(" *:off , task_list:on ").unwrap();
+        assert!(p.allows("task_list"));
+        assert!(!p.allows("task"));
 
-        for bad in ["read_file", "read_file:yes", ":on", ""] {
+        for bad in ["task_list", "task_list:yes", ":on", ""] {
             assert!(
                 ToolPolicy::parse_spec(bad).is_err(),
                 "`{bad}` must be rejected"
@@ -302,14 +275,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_policy_allows_every_tool_including_bash() {
+    fn the_default_policy_allows_every_tool() {
         let policy = ToolPolicy::allow_all();
-        // The shipped posture. `bash` is the one that used to be off by
-        // default, so it is the one worth naming here.
-        assert!(policy.allows("bash"));
-        assert!(policy.allows("start_process"));
-        assert!(policy.allows("web_fetch"));
-        assert!(policy.allows("read_file"));
+        assert!(policy.allows("task"));
+        assert!(policy.allows("save_state"));
+        assert!(policy.allows("get_environment"));
         assert!(policy.is_default());
         assert!(policy.denied_builtins().is_empty());
     }
@@ -318,25 +288,25 @@ mod tests {
     fn an_exact_name_beats_its_group_which_beats_the_wildcard() {
         let policy = ToolPolicy::from_switches([
             (WILDCARD.into(), false),
-            ("process".into(), true),
-            ("send_stdin".into(), false),
+            ("scratch".into(), true),
+            ("delete_state".into(), false),
         ]);
         // wildcard off → an unmentioned tool is off
-        assert!(!policy.allows("read_file"));
+        assert!(!policy.allows("task_list"));
         // group on → beats the wildcard
-        assert!(policy.allows("start_process"));
-        assert!(policy.allows("read_output"));
+        assert!(policy.allows("save_state"));
+        assert!(policy.allows("get_state"));
         // exact off → beats the group
-        assert!(!policy.allows("send_stdin"));
+        assert!(!policy.allows("delete_state"));
     }
 
     #[test]
     fn a_group_switch_covers_every_tool_in_it() {
-        let policy = ToolPolicy::from_switches([("process".into(), false)]);
-        for name in catalog::names_in_group("process") {
+        let policy = ToolPolicy::from_switches([("scratch".into(), false)]);
+        for name in catalog::names_in_group("scratch") {
             assert!(!policy.allows(name), "{name} should be off");
         }
-        assert!(policy.allows("read_file"), "other groups are untouched");
+        assert!(policy.allows("task_list"), "other groups are untouched");
     }
 
     #[test]
@@ -345,7 +315,7 @@ mod tests {
         assert!(!policy.allows("mcp__github__create_issue"));
         // A customer's own registered tool, which no table lists.
         assert!(!policy.allows("deploy_to_staging"));
-        assert!(policy.allows("read_file"));
+        assert!(policy.allows("task_list"));
 
         // ...and each is individually re-enablable by exact name.
         let policy = ToolPolicy::from_switches([
@@ -357,20 +327,20 @@ mod tests {
 
     #[test]
     fn folding_scopes_unions_denials_and_ignores_grants() {
-        // The org turns the process group off.
-        let managed = ToolPolicy::from_switches([("process".into(), false)]);
-        // The project tries to turn it back on and to turn bash off.
+        // The org turns the scratch group off.
+        let managed = ToolPolicy::from_switches([("scratch".into(), false)]);
+        // The project tries to turn it back on and to turn task_assign off.
         let mut project =
-            ToolPolicy::from_switches([("process".into(), true), ("bash".into(), false)]);
+            ToolPolicy::from_switches([("scratch".into(), true), ("task_assign".into(), false)]);
 
         project.deny_all_from(&managed);
 
         assert!(
-            !project.allows("start_process"),
+            !project.allows("save_state"),
             "a project must not be able to re-enable what the org denied"
         );
         assert!(
-            !project.allows("bash"),
+            !project.allows("task_assign"),
             "a project may still narrow further on its own"
         );
     }

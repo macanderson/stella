@@ -1,6 +1,6 @@
 [package]
 name = "stella-tools"
-description = "Built-in agent tools: file CRUD, grep/glob, build/test/lint/format, project-declared scripts, a long-running process group, vendor-neutral repo tools, and the opt-in bash and web families. Workspace-root-pinned, timeout-backed, size-capped."
+description = "Built-in agent tools — the sub-agent spawn tool, the session task board, the session scratch state plane, and the environment report — plus the tool mechanisms: the registry and its dispatch gates, the custom script-tool loader, the tool foundry, tool policy, skill grants, and the extension hook runner."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,37 +11,19 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
-# `verify_done`'s per-phase wall clock (#2486). The diagnostic plane is the
-# only channel that can carry it: a tool's `ToolOutput` is what the loop
-# detector keys on, so an elapsed time there would blind it. stella-diag is a
-# leaf crate by construction, so this adds no cycle.
-stella-diag = { path = "../stella-diag" }
-stella-graph = { path = "../stella-graph" }
-# The embedding seam plus its HTTP backend — the `semantic_code_search` tool.
-# This crate is where the network is allowed to live: `stella-graph` stores
-# vectors and ranks them, and never learns what produced them (invariant 1).
-stella-embed = { path = "../stella-embed", features = ["http"] }
+# The tool-foundry adoption ledger (`foundry_gate` re-exports
+# `stella_store::AdoptedTool`) — the one persistence type this crate reads.
 stella-store = { path = "../stella-store" }
-stella-media = { path = "../stella-media" }
-# The single implementation of `~/.stella` resolution, so the tracker and
-# web-auth secret files move with `STELLA_HOME` like every other user-tier
+# The single implementation of `~/.stella` resolution, so the user-global
+# custom-tool directory moves with `STELLA_HOME` like every other user-tier
 # file (#2178).
 stella-home = { path = "../stella-home" }
 serde.workspace = true
 serde_json.workspace = true
-# `net` for the tracker-OAuth loopback-redirect listener (127.0.0.1 callback).
-tokio = { workspace = true, features = ["net"] }
+tokio.workspace = true
 async-trait.workspace = true
-futures-util.workspace = true
 libc.workspace = true
-reqwest = { workspace = true }
-# HTML parsing for the opt-in web family (`web_fetch` readable extraction,
-# `web_extract_assets` design-token mining) — the Servo html5ever parser, so
-# real-world tag soup parses the way a browser reads it.
-scraper = { workspace = true }
-# Tracker OAuth (PKCE S256, state) — same vetted crates as stella-mcp.
-base64.workspace = true
-rand.workspace = true
+# Foundry manifest/script digests (`foundry_gate::digest`).
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -49,11 +31,5 @@ toml.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
-# Property tests for foundry authorship: every detector proposal must author
-# and round-trip through the real manifest parser.
+# Property tests for foundry authorship and the approval precedence ladder.
 proptest.workspace = true
-wiremock.workspace = true
-# Tests only: install a trigger in the code-graph index so its next write pass
-# fails while every read still answers — the one way to exercise the non-fatal
-# index-pass warning path (#643) without making the whole store unopenable.
-rusqlite.workspace = true

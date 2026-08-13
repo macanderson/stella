@@ -3,14 +3,12 @@
 //! is applied to a turn and **drained** once per execution into the store's
 //! `agent_uses` table (see `stella-cli`'s `record_execution_end`).
 //!
-//! The shape mirrors the file-touch ledger ([`crate::file_touch`]): the
-//! registry holds one [`AgentUseLedger`] behind a mutex, invocation sites
-//! call `ToolRegistry::record_agent_use`, and the persistence layer takes
-//! everything recorded since the previous drain. Unlike file touches —
-//! which aggregate by path — agent uses are an **event log**: every
-//! invocation is its own row, because the unit of analysis is
-//! "agent-version X was invoked by execution Y at time T", not a per-file
-//! aggregate.
+//! The registry holds one [`AgentUseLedger`] behind a mutex, invocation
+//! sites call `ToolRegistry::record_agent_use`, and the persistence layer
+//! takes everything recorded since the previous drain. Agent uses are an
+//! **event log**: every invocation is its own row, because the unit of
+//! analysis is "agent-version X was invoked by execution Y at time T",
+//! never an aggregate.
 //!
 //! `version` is the agent's *pinned* version at invocation time (see
 //! `stella-cli::agents_installed` for the on-disk versioning scheme), so the

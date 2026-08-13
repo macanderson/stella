@@ -8,18 +8,17 @@
 //! survives the session, and that is the contract, not a limitation —
 //! anything the user should keep belongs in the workspace.
 //!
-//! The same directory is exported to every shell spawn as
-//! `STELLA_SCRATCH`, so a pipeline can produce a large artifact directly
-//! into scratch (`curl … > "$STELLA_SCRATCH/dump.json"`) and the model can
-//! then page through it with `get_state` — the bytes never round-trip
-//! through the transcript.
+//! (The directory used to be exported to every built-in shell spawn as
+//! `STELLA_SCRATCH`; that export left with the shell tools. A host that
+//! runs subprocesses of its own and wants them writing into scratch passes
+//! the path itself — `get_state` pages whatever lands in the directory,
+//! however it got there.)
 //!
 //! Contracts:
 //! - Keys are filenames: `[A-Za-z0-9._-]`, 1–128 chars. Anything else is a
 //!   named error, which is what makes traversal impossible rather than
 //!   filtered.
-//! - `save_state` refuses content over `MAX_SAVE_BYTES` with a named error
-//!   pointing at the shell path for big artifacts.
+//! - `save_state` refuses content over `MAX_SAVE_BYTES` with a named error.
 //! - `get_state` middle-truncates nothing: it pages (`offset`/`limit`
 //!   in bytes, clamped to a `PAGE_CAP` slice) and names the remainder, so
 //!   a partial read is always visibly partial.
@@ -35,8 +34,8 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
-/// Cap on model-authored `save_state` content. Shell-produced files in the
-/// same directory are deliberately uncapped.
+/// Cap on model-authored `save_state` content. Files a host process writes
+/// into the same directory are deliberately uncapped.
 const MAX_SAVE_BYTES: usize = 1024 * 1024;
 
 /// Byte cap on one `get_state` page — mirrors the shared 30 KB page cap
@@ -57,7 +56,8 @@ impl ScratchDir {
         })
     }
 
-    /// The directory path, for the `STELLA_SCRATCH` export.
+    /// The directory path — reported by `get_environment`, and how a host
+    /// aims its own subprocesses at scratch.
     pub fn path(&self) -> &Path {
         self.dir.path()
     }
@@ -97,9 +97,8 @@ impl Tool for SaveState {
             description: "Save intermediate session state under a key so later steps can \
                 reference it instead of re-deriving it (parse results, extracted lists, \
                 computed digests). Scratch is session-private and deleted when the session \
-                ends; anything the user should keep belongs in the workspace instead. For \
-                artifacts too large to write here, have the shell produce the file directly \
-                into $STELLA_SCRATCH and page it with get_state."
+                ends; anything the user should keep belongs in the workspace instead. \
+                Content is capped at 1 MiB per save."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -121,9 +120,9 @@ impl Tool for SaveState {
         };
         if content.len() > MAX_SAVE_BYTES {
             return ToolOutput::error(format!(
-                "content is {} bytes; save_state caps at {MAX_SAVE_BYTES}. Produce large \
-                     artifacts from the shell into $STELLA_SCRATCH/{key} instead, then read \
-                     them with get_state.",
+                "content is {} bytes; save_state caps at {MAX_SAVE_BYTES}. Save the \
+                     artifact in smaller keyed pieces, or keep it in the workspace and \
+                     reference it by path.",
                 content.len()
             ));
         }
@@ -150,10 +149,9 @@ impl Tool for GetState {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "get_state".into(),
-            description: "Read a saved scratch entry by key (including files a shell command \
-                wrote into $STELLA_SCRATCH). Pages by byte offset/limit; a partial read names \
-                the remaining bytes. Prefer this over re-running the command that produced \
-                the state."
+            description: "Read a saved scratch entry by key. Pages by byte offset/limit; a \
+                partial read names the remaining bytes. Prefer this over re-deriving the \
+                state that produced it."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -239,9 +237,8 @@ impl Tool for ListState {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "list_state".into(),
-            description: "List saved scratch entries (key and size in bytes), including files \
-                shell commands wrote into $STELLA_SCRATCH. Check here before re-deriving \
-                anything expensive."
+            description: "List saved scratch entries (key and size in bytes). Check here \
+                before re-deriving anything expensive."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
