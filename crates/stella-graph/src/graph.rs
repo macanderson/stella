@@ -434,6 +434,75 @@ impl CodeGraph {
         vectors::count(&self.inner.read_guard(), fingerprint)
     }
 
+    /// Files whose **chunks** — symbols, markdown sections — are not fully
+    /// embedded under `fingerprint`, rendered and hashed ready to embed
+    /// (#3089).
+    ///
+    /// The embedding itself is deliberately not here, for the reason
+    /// [`files_pending_embedding`] gives: producing a vector is I/O against a
+    /// model, and this crate holds no transport and no key.
+    ///
+    /// [`files_pending_embedding`]: CodeGraph::files_pending_embedding
+    pub fn chunks_pending_embedding(
+        &self,
+        fingerprint: &str,
+        limit: usize,
+    ) -> Result<vectors::chunks::PendingChunkScan, GraphError> {
+        vectors::chunks::pending_chunks(
+            &self.inner.read_guard(),
+            &self.inner.root,
+            fingerprint,
+            limit,
+        )
+    }
+
+    /// Persist one file's chunk vectors and sweep the chunks it no longer has.
+    ///
+    /// **One file per call**, because the sweep keys on `file_sha256`: writing
+    /// half a file's chunks and then the other half would have the second call
+    /// delete the first call's rows.
+    pub fn store_chunk_vectors(
+        &self,
+        fingerprint: &str,
+        path: &str,
+        file_sha256: &str,
+        chunks: &[vectors::chunks::ChunkVector],
+    ) -> Result<usize, GraphError> {
+        vectors::chunks::store_chunk_vectors(
+            &mut self.inner.write_guard(),
+            fingerprint,
+            path,
+            file_sha256,
+            chunks,
+        )
+    }
+
+    /// Rank indexed chunks against a query vector, best first.
+    ///
+    /// Same contract as [`rank_files_by_vector`] — `floor` drops candidates
+    /// below it, and only vectors stamped with `fingerprint` are considered —
+    /// over a corpus roughly twenty times larger and correspondingly sharper.
+    ///
+    /// [`rank_files_by_vector`]: CodeGraph::rank_files_by_vector
+    pub fn rank_chunks_by_vector(
+        &self,
+        fingerprint: &str,
+        query: &[f32],
+        floor: f32,
+        limit: usize,
+    ) -> Result<Vec<vectors::chunks::ScoredChunk>, GraphError> {
+        vectors::chunks::rank_chunks(&self.inner.read_guard(), fingerprint, query, floor, limit)
+    }
+
+    /// How many chunks carry a vector under `fingerprint`. With
+    /// [`symbol_count`] this is the chunk-level answer to "how much of this
+    /// workspace can a semantic query see".
+    ///
+    /// [`symbol_count`]: CodeGraph::symbol_count
+    pub fn embedded_chunk_count(&self, fingerprint: &str) -> Result<usize, GraphError> {
+        vectors::chunks::chunk_count(&self.inner.read_guard(), fingerprint)
+    }
+
     /// The structured neighborhood of `file` — its symbols and import edges
     /// in both directions — for UI consumers (the deck's Graph tab). The
     /// frame methods above render prose for the model; this keeps the shape.

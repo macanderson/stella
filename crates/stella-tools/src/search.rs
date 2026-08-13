@@ -123,9 +123,26 @@ pub(crate) mod scan;
 #[cfg(test)]
 mod tests;
 
-/// Files ranked back to the model. Enough to choose from, few enough that the
-/// answer stays a pointer rather than a paste.
-const MAX_HITS: usize = 10;
+/// The most hits any one strategy will consider, as a **memory and latency
+/// guard — not as the shape of the answer**.
+///
+/// What is relevant is decided by [`stella_embed::rank::relevant_prefix`] plus
+/// the admission floor, and how much of it fits is decided by the budget. A
+/// count decides neither, because a count is wrong in both directions at once:
+/// a query whose answer genuinely spans forty chunks was truncated at ten with
+/// no way for the caller to tell it had been, and a query with two real hits
+/// returned ten, where the eight passengers read as findings.
+///
+/// It stays as a ceiling only because ranking is a full scan over every stored
+/// vector, and a pathological query against a monorepo should not materialise
+/// a hundred thousand scored rows to then throw nearly all of them away.
+/// Reaching it is reported, never silent.
+const RANK_CEILING: usize = 200;
+
+/// The most hits the two index-free strategies return. They have no score to
+/// threshold on — a name match either matched or did not — so a count is the
+/// only bound available to them, and the honest one.
+const MAX_NAME_HITS: usize = 10;
 
 /// Files embedded per backend request — one request stays inside every
 /// documented body limit while still amortising the round trip.
@@ -441,7 +458,7 @@ pub(crate) async fn dispatch(
 
     if let Some(graph) = graph {
         strategies.push(Strategy::GraphNames);
-        let hits = enrich::name_hits(graph, query, MAX_HITS);
+        let hits = enrich::name_hits(graph, query, MAX_NAME_HITS);
         if !hits.is_empty() {
             return Answer {
                 hits,
@@ -453,7 +470,7 @@ pub(crate) async fn dispatch(
 
     strategies.push(Strategy::FileScan);
     Answer {
-        hits: scan::scan_hits(root, query, MAX_HITS),
+        hits: scan::scan_hits(root, query, MAX_NAME_HITS),
         strategies,
         note,
     }
@@ -461,6 +478,14 @@ pub(crate) async fn dispatch(
 
 /// Embed what is pending, embed the query, rank. `Err` carries a reason
 /// already phrased for the answer's note.
+///
+/// **Chunks first, files as the fallback.** A chunk vector names the symbol or
+/// the documentation section that matched, which is both a sharper ranking and
+/// a citation; a file vector answers "what is this module about", which no
+/// chunk can, and is what a workspace whose chunk pass has not run yet still
+/// has. A file whose chunks matched is reported once, at its best chunk's
+/// score, with that chunk named — so the answer keeps the shape callers
+/// already read while the score finally means something specific.
 async fn semantic_hits(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
@@ -468,6 +493,7 @@ async fn semantic_hits(
 ) -> Result<Vec<Hit>, String> {
     let fingerprint = embedder.fingerprint().id();
     catch_up_embeddings(graph, embedder, &fingerprint).await?;
+    catch_up_chunk_embeddings(graph, embedder, &fingerprint).await?;
 
     let query_vector = match embedder.embed(&[query.to_string()]).await {
         Ok(mut vectors) if !vectors.is_empty() => vectors.remove(0).vector,
@@ -482,21 +508,74 @@ async fn semantic_hits(
         SimilarityPosture::Surface => f32::NEG_INFINITY,
     };
 
+    let chunks = graph
+        .rank_chunks_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
+        .map_err(|error| format!("the chunk index could not be read: {error}"))?;
+    if !chunks.is_empty() {
+        return Ok(group_chunks_by_file(&chunks));
+    }
+
     graph
-        .rank_files_by_vector(&fingerprint, &query_vector, floor, MAX_HITS)
+        .rank_files_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
         .map(|ranked| {
+            let cut = stella_embed::rank::relevant_prefix(
+                &ranked,
+                stella_embed::rank::DEFAULT_RELEVANCE_GAP_RATIO,
+                stella_embed::rank::DEFAULT_MIN_BOUNDARY_GAP,
+            );
             ranked
                 .into_iter()
+                .take(cut)
                 .map(|scored| Hit {
                     path: scored.key,
                     why: format!(
-                        "ranked by MEANING against your query (cosine {:.3})",
+                        "ranked by MEANING against your query, over the whole file \
+                         (cosine {:.3})",
                         scored.score
                     ),
                 })
                 .collect()
         })
         .map_err(|error| format!("the vector index could not be read: {error}"))
+}
+
+/// Collapse a chunk ranking to one hit per file, best chunk first.
+///
+/// The relevance cut is applied to the **chunk** ranking rather than to the
+/// grouped one, because the boundary is a property of the scores and grouping
+/// discards scores. Cutting after the grouping would measure gaps between
+/// per-file maxima, which is a different and much sparser distribution than
+/// the one the boundary was defined over.
+fn group_chunks_by_file(chunks: &[stella_graph::ScoredChunk]) -> Vec<Hit> {
+    let cut = stella_embed::rank::relevant_prefix(
+        &chunks
+            .iter()
+            .map(|chunk| stella_embed::rank::Scored {
+                key: format!("{}#{}#{}", chunk.path, chunk.start_line, chunk.name),
+                score: chunk.score,
+            })
+            .collect::<Vec<_>>(),
+        stella_embed::rank::DEFAULT_RELEVANCE_GAP_RATIO,
+        stella_embed::rank::DEFAULT_MIN_BOUNDARY_GAP,
+    );
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut hits: Vec<Hit> = Vec::new();
+    for chunk in chunks.iter().take(cut) {
+        if seen.iter().any(|path| path == &chunk.path) {
+            continue;
+        }
+        seen.push(chunk.path.clone());
+        hits.push(Hit {
+            path: chunk.path.clone(),
+            why: format!(
+                "ranked by MEANING against your query — best match is `{}` ({}) at line {} \
+                 (cosine {:.3})",
+                chunk.name, chunk.kind, chunk.start_line, chunk.score
+            ),
+        });
+    }
+    hits
 }
 
 /// Embed every indexed file still pending under `fingerprint`, up to the
@@ -531,6 +610,70 @@ async fn catch_up_embeddings(
             // into the same broken store and the pass would report success
             // having stored nothing.
             .map_err(|error| format!("the vector index could not be written: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Embed every indexed chunk still pending under `fingerprint`, up to the
+/// per-pass cap.
+///
+/// **One file per store call**, because the store's sweep — the thing that
+/// removes a deleted function's vector — keys on the file's content hash, so
+/// writing half a file's chunks and then the other half would have the second
+/// write delete the first's rows.
+///
+/// A chunk whose rendered text is unchanged arrives with no `text` and costs
+/// no request: it is re-stamped with the file's new hash and keeps its vector.
+/// That is what makes editing one function in a 60-symbol file cost one
+/// embedding rather than sixty.
+async fn catch_up_chunk_embeddings(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+) -> Result<(), String> {
+    let scan = graph
+        .chunks_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_CHUNK_PASS)
+        .map_err(|error| format!("the code graph could not be read: {error}"))?;
+
+    for file in &scan.files {
+        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
+        let needed: Vec<(usize, &str)> = file
+            .chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
+            .collect();
+
+        for batch in needed.chunks(EMBED_BATCH) {
+            let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
+            let embeddings = embedder
+                .embed(&texts)
+                .await
+                .map_err(|error| format!("the embedder failed: {error}"))?;
+            for ((index, _), embedding) in batch.iter().zip(embeddings) {
+                vectors[*index] = Some(embedding.vector);
+            }
+        }
+
+        let rows: Vec<stella_graph::ChunkVector> = file
+            .chunks
+            .iter()
+            .zip(vectors)
+            .map(|(chunk, vector)| stella_graph::ChunkVector {
+                chunk_sha256: chunk.chunk_sha256.clone(),
+                name: chunk.name.clone(),
+                kind: chunk.kind.clone(),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                vector,
+            })
+            .collect();
+        graph
+            .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
+            // Not recoverable by continuing: the next file would be written
+            // into the same broken store and the pass would report success
+            // having stored nothing.
+            .map_err(|error| format!("the chunk index could not be written: {error}"))?;
     }
     Ok(())
 }

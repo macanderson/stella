@@ -40,6 +40,22 @@
 //! opposite of what a one-descriptor handoff is for. Explicit credentials
 //! only; see `bench/harbor_adapter/README.md` for the same list stated from
 //! the launcher's side.
+//!
+//! ## The one target that leaves the seal (`VOYAGE_API_KEY`)
+//!
+//! Every target above stays inside the sealed [`HANDOFF`] map for the rest of
+//! the process's life and is read only through [`key_for`]. The embedding
+//! backend's credential is the deliberate exception (#2995): `stella-embed`'s
+//! `EmbedderEnv::from_process` (`crates/stella-embed/src/http.rs`) reads
+//! `VOYAGE_API_KEY` ambiently — a pre-existing, shipped contract this handoff
+//! does not change — so [`consume_at_startup`] re-exports it into the process
+//! environment once consumed. That is a strictly weaker guarantee than every
+//! other target gets: a spawned bash tool call inherits it, exactly as it
+//! would inherit a developer's own exported `VOYAGE_API_KEY`. What this
+//! handoff still buys for it: it never touches Harbor's environment or
+//! `docker compose exec` argv, and it never enters the model-provider
+//! selection contract. Threading a typed, ambient-env-free path through
+//! `stella-embed`'s call sites is a larger, separate change.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -60,9 +76,9 @@ const HANDOFF_TARGET_ENV: &str = "STELLA_CREDENTIAL_HANDOFF_TARGET";
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
 
 /// How many values one handoff may carry. Bedrock's three (access key id,
-/// secret access key, session token) is the largest real set; the cap exists
-/// so a malformed target list cannot turn a stray multi-line payload into an
-/// unbounded parse.
+/// secret access key, session token) plus the embedding credential is the
+/// largest real set at four; the cap exists so a malformed target list cannot
+/// turn a stray multi-line payload into an unbounded parse.
 const MAX_HANDOFF_VALUES: usize = 8;
 
 /// Only credential slots Stella's built-in providers already recognize may be
@@ -84,7 +100,16 @@ const ALLOWED_TARGETS: &[&str] = &[
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
+    // The embedding backend's credential (#2995) — a second, independent
+    // route, never selected by a model provider spec. See the module doc's
+    // "one target that leaves the seal" section: unlike every name above,
+    // `consume_at_startup` re-exports this one into the process environment.
+    EMBEDDING_CREDENTIAL_TARGET,
 ];
+
+/// The embedding backend credential name this handoff re-exports into the
+/// process environment after consumption. See the module doc.
+const EMBEDDING_CREDENTIAL_TARGET: &str = "VOYAGE_API_KEY";
 
 static HANDOFF: OnceLock<BTreeMap<String, String>> = OnceLock::new();
 
@@ -130,6 +155,13 @@ pub(crate) fn consume_at_startup(phase: &StartupPhase) -> Result<(), String> {
     unsafe {
         std::env::remove_var(HANDOFF_FD_ENV);
         std::env::remove_var(HANDOFF_TARGET_ENV);
+        // The one target that leaves the seal — see the module doc. Every
+        // other credential stays in `HANDOFF` only, read through `key_for`;
+        // this one is re-exported because `stella-embed`'s ambient read is a
+        // pre-existing contract this handoff does not change.
+        if let Some(value) = credentials.get(EMBEDDING_CREDENTIAL_TARGET) {
+            std::env::set_var(EMBEDDING_CREDENTIAL_TARGET, value);
+        }
     }
 
     HANDOFF
@@ -307,6 +339,33 @@ mod tests {
         // close through the same `file` drop at function exit. Re-checking the
         // raw fd number here would be racy under the parallel harness — a
         // sibling test can reuse the freed number immediately.
+    }
+
+    #[test]
+    fn the_embedding_credential_is_an_allowed_target() {
+        // #2995: a second, independent route, not selected by any provider
+        // spec, must still be a valid target on its own.
+        assert!(validate_targets("VOYAGE_API_KEY").is_ok());
+    }
+
+    #[test]
+    fn a_provider_and_the_embedding_credential_pair_independently() {
+        // The shape the adapter actually sends when both routes are
+        // configured: the model provider's own credential first, the
+        // embedding credential appended after (#2995). Proves the two routes
+        // do not collide or reorder on the wire.
+        let targets = validate_targets("OPENROUTER_API_KEY,VOYAGE_API_KEY").unwrap();
+        let paired =
+            pair_targets_with_values(&targets, "openrouter-secret\nvoyage-secret").unwrap();
+        assert_eq!(paired.len(), 2);
+        assert_eq!(
+            paired.get("OPENROUTER_API_KEY").map(String::as_str),
+            Some("openrouter-secret")
+        );
+        assert_eq!(
+            paired.get("VOYAGE_API_KEY").map(String::as_str),
+            Some("voyage-secret")
+        );
     }
 
     #[test]

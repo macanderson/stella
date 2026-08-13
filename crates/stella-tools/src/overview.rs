@@ -559,17 +559,73 @@ fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
     crate::graph::open_or_build(root).ok()
 }
 
+/// Report the index's size, distinguishing "empty" from "could not be
+/// counted".
+///
+/// Every count here used to be `.unwrap_or(0)` beside a flat `"built": true`,
+/// so a workspace whose graph existed but whose counts all failed rendered
+/// **identically** to one that was indexed and genuinely held nothing:
+/// `built: true, files: 0, symbols: 0, imports: 0`. A real bench trial
+/// reported exactly that shape against an `/app` workspace with a committed,
+/// non-empty baseline, and the reading was unfalsifiable from the output
+/// alone — which is the whole defect in #3087, independent of its cause.
+///
+/// A failed count is now `null` with the error named, and `built` says which
+/// of the three states this is rather than asserting the cheerful one.
 fn index_section(graph: &stella_graph::CodeGraph, index_warning: Option<&str>) -> Value {
+    index_json(
+        graph.file_count().map_err(|e| e.to_string()),
+        graph.symbol_count().map_err(|e| e.to_string()),
+        graph.import_count().map_err(|e| e.to_string()),
+        index_warning,
+    )
+}
+
+/// The decision half of [`index_section`], with no database in it.
+///
+/// Split out so the case that matters — a count that *failed* — is reachable
+/// from a test at all. Reproducing it through `CodeGraph` would mean
+/// corrupting a SQLite file mid-flight, which is why the old shape went
+/// unchallenged: nothing could exhibit it.
+fn index_json(
+    files: Result<usize, String>,
+    symbols: Result<usize, String>,
+    imports: Result<usize, String>,
+    index_warning: Option<&str>,
+) -> Value {
+    // Each count reports its own truth — a count that succeeded is a fact and
+    // nulling it would discard one — while a single failure is enough to
+    // retract `built` and name the error. That pairing is what makes the
+    // section unambiguous: a number is real, a `null` is unknown, and
+    // `built: false` says not to read the section as a description of the
+    // workspace.
+    let count_error = files
+        .as_ref()
+        .err()
+        .or(symbols.as_ref().err())
+        .or(imports.as_ref().err())
+        .cloned();
+
     let mut section = json!({
-        "built": true,
-        "files": graph.file_count().unwrap_or(0),
-        "symbols": graph.symbol_count().unwrap_or(0),
-        "imports": graph.import_count().unwrap_or(0),
+        // `true` is now a claim about having *read* the index, not merely
+        // about having opened it.
+        "built": count_error.is_none(),
+        "files": files.ok(),
+        "symbols": symbols.ok(),
+        "imports": imports.ok(),
         // The index is a point-in-time build, so anything written since is
         // invisible here. Saying so is what keeps a stale answer from being
         // mistaken for a current one.
         "freshness": "caught up to the working tree when this call ran",
     });
+    if let Some(error) = count_error {
+        let map = section.as_object_mut().expect("object literal");
+        map.insert(
+            "freshness".into(),
+            json!("UNKNOWN — the index opened but could not be counted"),
+        );
+        map.insert("count_error".into(), json!(error));
+    }
     // A failed catch-up pass makes the freshness claim above a lie, so it is
     // reported here — in the object the model reads — rather than printed over
     // the TUI frame (#643).
@@ -725,6 +781,69 @@ fn language_of(path: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The defect #3087 was reported through: a graph that opens but cannot be
+    /// counted must not render identically to one that is genuinely empty.
+    ///
+    /// Before this, every count was `.unwrap_or(0)` beside a literal
+    /// `"built": true`, so both cases produced
+    /// `built: true, files: 0, symbols: 0, imports: 0` and no reader could
+    /// tell them apart — which is exactly what a real bench trial reported
+    /// against an `/app` workspace that git had a non-empty baseline for.
+    #[test]
+    fn a_countable_and_an_uncountable_index_do_not_render_identically() {
+        let empty = index_json(Ok(0), Ok(0), Ok(0), None);
+        let broken = index_json(
+            Err("no such table: code_graph_files".into()),
+            Ok(0),
+            Ok(0),
+            None,
+        );
+        assert_ne!(
+            empty, broken,
+            "an unreadable index and an empty one must be distinguishable"
+        );
+
+        assert_eq!(empty["built"], serde_json::json!(true));
+        assert_eq!(empty["files"], serde_json::json!(0));
+
+        assert_eq!(
+            broken["built"],
+            serde_json::json!(false),
+            "`built` claims the index was READ, not merely opened"
+        );
+        assert!(
+            broken["files"].is_null(),
+            "a count that failed is null, never a confident zero"
+        );
+        assert_eq!(
+            broken["count_error"],
+            serde_json::json!("no such table: code_graph_files"),
+            "the reason is named, not summarised away"
+        );
+    }
+
+    /// A partial failure reports exactly what it knows: the counts that
+    /// succeeded stay (they are facts, and discarding them would lose real
+    /// information), the one that failed is `null`, and `built: false` plus
+    /// the named error is what stops the section being read as a description
+    /// of the workspace.
+    #[test]
+    fn a_partial_failure_keeps_the_facts_and_retracts_the_claim() {
+        let broken = index_json(Ok(12), Err("disk I/O error".into()), Ok(7), None);
+        assert_eq!(broken["files"], serde_json::json!(12));
+        assert_eq!(broken["imports"], serde_json::json!(7));
+        assert!(
+            broken["symbols"].is_null(),
+            "only the count that failed is unknown"
+        );
+        assert_eq!(
+            broken["built"],
+            serde_json::json!(false),
+            "one failure is still enough to retract the claim that the index was read"
+        );
+        assert_eq!(broken["count_error"], serde_json::json!("disk I/O error"));
+    }
 
     /// A truly empty workspace (no source at all) still answers, with an
     /// index that built but found nothing — never an error that would send

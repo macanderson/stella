@@ -61,6 +61,7 @@ mod graph;
 mod import;
 mod lang;
 pub mod manifest;
+mod markdown;
 mod parse;
 mod queries;
 mod rust_resolve;
@@ -80,6 +81,10 @@ pub use lang::Language;
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};
 pub use store::IndexStats;
 pub use symbol::{CallSite, Symbol, SymbolKind};
+pub use vectors::chunks::{
+    ChunkVector, MAX_FILES_PER_CHUNK_PASS, PendingChunk, PendingChunkFile, PendingChunkScan,
+    ScoredChunk, render_chunk_text,
+};
 pub use vectors::{FileVector, MAX_FILES_PER_PASS, PendingEmbed, PendingScan, render_file_text};
 #[doc(hidden)]
 pub use watch::WatchInjector;
