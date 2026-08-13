@@ -129,7 +129,7 @@ from .turn_budget import (
 from .turn_budget import (
     resolve_turn_budget as _resolve_turn_budget,
 )
-from . import upstream_pin
+from . import tool_set, upstream_pin
 
 try:
     # Harbor renders prompt templates onto the ``instruction`` argument of a
@@ -222,12 +222,15 @@ _LAUNCHER_CONTROLS: dict[str, str] = {
     "base_url_authority": "validated-cli-argument",
     "engine_config_authority": "trusted-launcher-json",
     "upstream_pin_authority": "validated-cli-argument",
+    "tool_set_authority": "validated-container-env",
 }
 
 _CLAIM_CONTAINER_ENV = frozenset(
     {
         "STELLA_BUDGET",
         "STELLA_DISABLE_REFLECTION",
+        # The advertised tool set; :mod:`tool_set` says why the container.
+        tool_set.ENV,
     }
 )
 _HOST_ONLY_STELLA_ENV = frozenset(
@@ -1490,6 +1493,9 @@ class StellaAgent(BaseInstalledAgent):
         )
         if reflection is not None:
             forwarded["STELLA_DISABLE_REFLECTION"] = reflection
+        # Omitted when undeclared: an arm naming no tool set must run the
+        # exact container environment it ran before this knob existed.
+        forwarded.update(tool_set.tool_set_env(self._configured_value))
 
         # Headless benchmark trials are ephemeral and should not spend an
         # unreported post-turn model call. This is a disclosed benchmark
@@ -1656,6 +1662,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_output_format": "stream-json",
             # Which loop ran — not inferable from the posture below (#2134).
             "stella_loop_mode": loop_mode_name(self._configured_value),
+            # Which tools the agent was offered; empty is the full catalog.
+            "stella_tool_set": list(tool_set.declared(self._configured_value)),
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (
                 "disabled_for_ephemeral_benchmark"

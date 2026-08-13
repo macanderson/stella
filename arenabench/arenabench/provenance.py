@@ -97,6 +97,7 @@ a true statement; "0.6.1" would not be.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Iterable
@@ -206,6 +207,20 @@ class Provenance:
     #: than any version string, and recording it twice invites the two copies
     #: to disagree.
     agent_seats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Per-seat **tool set**, keyed by contestant id: the literal list of tools
+    #: that seat's agent was offered, present only for a seat that declared a
+    #: restriction. Absent means the shipping catalog, which is what every
+    #: match before #3032 ran — so a record written before this field existed
+    #: says the true thing by saying nothing.
+    #:
+    #: Recorded at launch from the template, like :attr:`lineage_id` and for
+    #: the same reason: a match killed before its first trial finished must
+    #: still be attributable to the apparatus it declared. This is the field
+    #: that makes a tool-effectiveness experiment interpretable at all — two
+    #: arms that differ only in what the agent was offered are otherwise
+    #: indistinguishable in the archive, and the whole result is the
+    #: difference between them.
+    tool_set_seats: dict[str, list[str]] = field(default_factory=dict)
     #: The lineage this match was seeded from, or ``""`` for a clean match.
     #: Recorded at launch from the template, so a match killed before its first
     #: trial finished is still marked contaminated — the marker must not depend
@@ -271,6 +286,38 @@ class Provenance:
         # collide with a clean one in any grouping built on this string — which
         # is the entire mechanism, see the module docstring.
         return f"{key}/{self.lineage_label}" if self.contaminated else key
+
+    @staticmethod
+    def tool_set_label(names: Iterable[str]) -> str:
+        """One seat's tool set as a key component, e.g. ``tools4@1f3a9c2b``.
+
+        The count is what a reader compares at a glance; the digest is what
+        makes two arms of the same size but different membership refuse to
+        group. Digested over the **sorted** names because the agent advertises
+        a set — two templates listing the same tools in different order ran the
+        same apparatus, and a key that separated them would split one series in
+        half for no measured reason.
+        """
+        ordered = sorted({str(name) for name in names if name})
+        if not ordered:
+            return ""
+        digest = hashlib.sha256(",".join(ordered).encode()).hexdigest()[:8]
+        return f"tools{len(ordered)}@{digest}"
+
+    @property
+    def restricted_tool_sets(self) -> tuple[str, ...]:
+        """Every distinct tool-set label in this match, sorted.
+
+        Several because a match may pit a restricted arm against an
+        unrestricted one — which is the shape of the experiment #3032 asks
+        for, so the match key must name the labels rather than assume one.
+        """
+        labels = {
+            self.tool_set_label(names)
+            for names in self.tool_set_seats.values()
+            if names
+        }
+        return tuple(sorted(label for label in labels if label))
 
     @staticmethod
     def _product_label(seat: dict[str, Any]) -> str:
@@ -386,7 +433,15 @@ class Provenance:
         # opponent is a different apparatus from one that could not, and the
         # longer key says so rather than pretending they are the same.
         products = self.agent_products
-        return f"{key}/{'+'.join(products)}" if products else key
+        key = f"{key}/{'+'.join(products)}" if products else key
+        # Appended only when some seat declared a restriction, so every key
+        # written before tool sets existed keeps its exact spelling and an
+        # unrestricted match today still groups with the whole archive — the
+        # same append-only discipline `lineage_label` takes in `_key`. An arm
+        # offered four tools is not the same apparatus as one offered
+        # seventy-two, and without this they average into one number.
+        restricted = self.restricted_tool_sets
+        return f"{key}/{'+'.join(restricted)}" if restricted else key
 
     def comparability_key_for(self, contestant_id: str) -> str:
         """The key for one arm of the match.
@@ -406,10 +461,17 @@ class Provenance:
         """
         agent_seat = self.agent_seats.get(contestant_id)
         if agent_seat is not None:
-            return self._key(self._product_label(agent_seat))
-        seat = self.sut_seats.get(contestant_id)
-        commit = (seat.get("commit") or "") if seat else self.sut_commit
-        return self._key(f"stella{commit[:8]}" if commit else "stella?")
+            key = self._key(self._product_label(agent_seat))
+        else:
+            seat = self.sut_seats.get(contestant_id)
+            commit = (seat.get("commit") or "") if seat else self.sut_commit
+            key = self._key(f"stella{commit[:8]}" if commit else "stella?")
+        # This arm's own restriction, not the match's — an arm-level key must
+        # separate the restricted seat from the control seat it raced, which
+        # is the entire comparison #3032 asks for. Appended only when declared,
+        # so an unrestricted arm's key is spelled exactly as it always was.
+        label = self.tool_set_label(self.tool_set_seats.get(contestant_id) or ())
+        return f"{key}/{label}" if label else key
 
     @property
     def measured(self) -> bool:
@@ -423,6 +485,16 @@ class Provenance:
         # without having to reimplement how it is built.
         out["comparability_key"] = self.comparability_key
         out["measured"] = self.measured
+        # Present only when some seat declared one, so an unrestricted record
+        # carries no affirmative claim about a feature it never used and a
+        # grep for "tool_set_labels" over an archive returns exactly the
+        # tool-effectiveness arms — the discipline `contaminated` takes below.
+        if self.restricted_tool_sets:
+            out["tool_set_labels"] = {
+                seat_id: self.tool_set_label(names)
+                for seat_id, names in sorted(self.tool_set_seats.items())
+                if names
+            }
         seats = {*self.sut_seats, *self.agent_seats}
         if seats:
             out["comparability_key_by_seat"] = {

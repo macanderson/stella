@@ -223,6 +223,27 @@ export function SeatCard({
               />
             </Field>
           )}
+          {/* The tools this seat is offered. Free text and comma-separated
+              rather than a picker: the list is the independent variable of a
+              tool-effectiveness run, and an operator adding one tool per arm
+              needs to read the whole set at a glance and diff it against the
+              last arm. Blank is the shipping catalog — the reading every
+              match before this field ran. */}
+          <Field label="Tools" className="grow basis-full">
+            <Input
+              type="text"
+              placeholder="all registered tools"
+              value={seat.engine.tool_set.join(", ")}
+              onChange={(e) =>
+                setEngine({
+                  tool_set: e.target.value
+                    .split(",")
+                    .map((name) => name.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
         </div>
 
         {spec?.has_pipeline && (

@@ -816,11 +816,14 @@ class TestForwardedEnv:
         for key in list(os.environ):
             if key.startswith("STELLA_"):
                 monkeypatch.delenv(key, raising=False)
-        monkeypatch.setenv("STELLA_LEAN_TOOLS", "1")
+        # A name nothing can ever register. This used `STELLA_LEAN_TOOLS`
+        # until #3032 registered it — an example stops being one the moment
+        # the feature it names ships.
+        monkeypatch.setenv("STELLA_NOT_A_KNOB", "1")
         with pytest.raises(RuntimeError, match=r"unregistered STELLA_\* knobs"):
             _bare_agent()._forwarded_env()
 
-        monkeypatch.delenv("STELLA_LEAN_TOOLS")
+        monkeypatch.delenv("STELLA_NOT_A_KNOB")
         agent = _bare_agent()
         agent._extra_env = {"HOST_METADATA": "must-not-cross"}
         with pytest.raises(RuntimeError, match="unregistered Harbor agent extras"):
@@ -1561,6 +1564,7 @@ class TestRun:
             "base_url_authority": "validated-cli-argument",
             "engine_config_authority": "trusted-launcher-json",
             "upstream_pin_authority": "validated-cli-argument",
+            "tool_set_authority": "validated-container-env",
         }
 
         assert context.cost_usd == 0.31
