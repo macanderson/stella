@@ -577,7 +577,7 @@ impl Tool for ReadOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         // Deprecation, kept for one release (#2699): a caller still sending
@@ -681,7 +681,7 @@ impl Tool for ClearOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -759,13 +759,13 @@ impl Tool for SendStdin {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let text = match crate::input::required_str(input, "text") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         // Take stdin out under the lock, write outside it (a lock guard
@@ -844,7 +844,7 @@ impl Tool for StopProcess {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());

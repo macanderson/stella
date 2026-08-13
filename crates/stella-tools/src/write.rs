@@ -50,13 +50,13 @@ impl Tool for WriteFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let content = match crate::input::required_str(input, "content") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
 

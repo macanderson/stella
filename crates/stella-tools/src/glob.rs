@@ -63,7 +63,7 @@ impl Tool for Glob {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");

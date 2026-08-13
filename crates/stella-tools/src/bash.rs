@@ -381,7 +381,7 @@ impl Tool for Bash {
         let command = match crate::input::required_str(input, "command") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         // Audited before the spawn, on the text the model wrote: a refusal
@@ -488,7 +488,10 @@ impl Tool for Bash {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
                 guard.kill_now();
-                return ToolOutput::error(format!("command timed out after {timeout_secs}s"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Timeout,
+                    format!("command timed out after {timeout_secs}s"),
+                );
             }
         };
 

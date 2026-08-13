@@ -329,7 +329,7 @@ impl Tool for RestartProcess {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v.to_string(),
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let override_argv: Option<Vec<String>> =

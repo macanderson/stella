@@ -61,7 +61,7 @@ impl Tool for DeleteFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let handle = match RootHandle::open(root) {

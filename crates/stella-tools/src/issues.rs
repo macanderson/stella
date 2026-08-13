@@ -238,7 +238,7 @@ impl Tool for CreateIssue {
         let title = match crate::input::required_str(input, "title") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let params = CreateParams {

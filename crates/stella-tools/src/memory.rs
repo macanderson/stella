@@ -70,13 +70,13 @@ impl Tool for SaveMemory {
         let slug = match crate::input::required_str(input, "slug") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         let memory = match crate::input::required_str(input, "memory") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         if slug.is_empty()
@@ -195,7 +195,7 @@ impl Tool for CiteMemory {
         let memory_id = match crate::input::required_str(input, "memory_id") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         if !is_memory_id(memory_id) && !is_record_handle(memory_id) {

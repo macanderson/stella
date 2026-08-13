@@ -203,6 +203,21 @@ pub fn optional_str_array<'a>(
     Ok(Some(out))
 }
 
+impl From<InputError> for stella_protocol::ToolOutput {
+    /// An unreadable input is the model's mistake, and now says so
+    /// structurally: [`stella_protocol::ErrorClass::InvalidInput`] (#3145),
+    /// so a per-tool error rate can exclude misuse without string matching.
+    /// The message is `Display`, byte-identical to the sites that used to
+    /// spell `err.to_string()` by hand — the class rides beside the prose,
+    /// never in it.
+    fn from(err: InputError) -> Self {
+        stella_protocol::ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
+            err.to_string(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

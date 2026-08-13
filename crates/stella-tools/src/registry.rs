@@ -1142,10 +1142,13 @@ impl ToolRegistry {
 
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
-            None => ToolOutput::error(format!(
-                "unknown tool `{name}` — available: {}",
-                self.available_names()
-            )),
+            None => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::NotFound,
+                format!(
+                    "unknown tool `{name}` — available: {}",
+                    self.available_names()
+                ),
+            ),
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;

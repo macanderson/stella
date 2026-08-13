@@ -262,7 +262,7 @@ impl Tool for ReadFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
 
@@ -466,6 +466,23 @@ impl Tool for ReadFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3145: an input the tool could not read is classified
+    /// [`stella_protocol::ErrorClass::InvalidInput`] — the model's mistake,
+    /// excluded from the tool's own error rate — with the message bytes
+    /// unchanged from the pre-class wording.
+    #[tokio::test]
+    async fn missing_path_is_classified_invalid_input() {
+        use stella_protocol::ErrorClass;
+        let result = ReadFile::default()
+            .execute(&serde_json::json!({}), &std::env::temp_dir())
+            .await;
+        let ToolOutput::Error { message, class } = result else {
+            panic!("expected an error for a missing required field");
+        };
+        assert_eq!(class, Some(ErrorClass::InvalidInput));
+        assert_eq!(message, "missing required field `path`");
+    }
 
     #[tokio::test]
     async fn reads_file_with_line_numbers() {

@@ -647,7 +647,7 @@ impl Tool for SaveExploration {
         let slice = match crate::input::required_str(input, "slice") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::error(err.to_string());
+                return ToolOutput::from(err);
             }
         };
         if !valid_slice(slice) {
