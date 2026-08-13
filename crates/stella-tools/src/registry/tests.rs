@@ -62,24 +62,6 @@ async fn unknown_tool_returns_error_not_panic() {
     assert!(result.is_error());
 }
 
-/// #3145: the unknown-tool refusal carries [`ErrorClass::NotFound`], so an
-/// error-rate reader can exclude "the model asked for a tool that does not
-/// exist" without matching on the message prose.
-#[tokio::test]
-async fn unknown_tool_refusal_is_classified_not_found() {
-    use stella_protocol::ErrorClass;
-    let (_root, reg) = bare_registry(None);
-    let result = reg.execute("nonexistent", &Value::Null).await;
-    let ToolOutput::Error { message, class } = result else {
-        panic!("expected an error for an unknown tool");
-    };
-    assert_eq!(class, Some(ErrorClass::NotFound));
-    assert!(
-        message.starts_with("unknown tool `nonexistent`"),
-        "classification must ride beside the prose, not replace it: {message}"
-    );
-}
-
 /// The measured defect: over a 20-task Terminal-Bench run, 757 of 1,063
 /// tool calls were `bash` and the ledger recorded none of them, because
 /// `classify_file_op` can only read a tool's *input* and a shell command
@@ -870,6 +852,7 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 }
 
 mod chain;
+mod error_class;
 mod fence;
 mod file_change;
 mod gate_batch;

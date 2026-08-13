@@ -1061,9 +1061,7 @@ impl ToolRegistry {
                     };
                     snapshot = match persisted {
                         Ok(persisted) => Some(self.merge_storage_overlay(persisted)),
-                        Err(message) => {
-                            return ToolOutput::error(message);
-                        }
+                        Err(message) => return ToolOutput::error(message),
                     };
                 }
                 let own = current
@@ -1084,9 +1082,7 @@ impl ToolRegistry {
                         declared_intent = intent.map(str::to_string);
                         pending_storage.push(pass);
                     }
-                    Err(message) => {
-                        return ToolOutput::error(message);
-                    }
+                    Err(message) => return ToolOutput::error(message),
                 }
             }
         }

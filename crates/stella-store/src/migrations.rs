@@ -19,8 +19,10 @@ use crate::ddl::{
 };
 use crate::{Result, StoreError};
 
+mod error_class;
 mod token_unit;
 
+use error_class::migrate_v23_to_v24;
 use token_unit::migrate_v18_to_v19;
 
 /// One schema migration: upgrades an existing database exactly one
@@ -33,7 +35,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 23] = [
+pub(crate) const MIGRATIONS: [Migration; 24] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -143,6 +145,13 @@ pub(crate) const MIGRATIONS: [Migration; 23] = [
     // no backfill to do — the fact was only ever printed to stderr before, so
     // it does not exist anywhere to recover.
     migrate_v22_to_v23,
+    // v23 → v24: `tool_calls` grows `error_class` — which kind of failure a
+    // failed call was (#3145), projected from `ToolOutput::Error.class`.
+    // Additive, column-guarded ADD COLUMN, defaulting to `''` = unclassified,
+    // which is what every pre-existing row is. No backfill: the class of an
+    // older failure exists nowhere but its prose, and classifying by string
+    // match is the practice this column replaces.
+    migrate_v23_to_v24,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -173,7 +182,9 @@ pub(crate) const MIGRATIONS: [Migration; 23] = [
     //
     //   v22 → v23: CLAIMED above by the reflection parse-failure record.
     //
-    // Nothing is reserved now: take v23 → v24 and add your own line here.
+    //   v23 → v24: CLAIMED above by `tool_calls.error_class` (#3145).
+    //
+    // Nothing is reserved now: take v24 → v25 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

@@ -28,6 +28,7 @@ fn workspace(commands: &[&str]) -> (tempfile::TempDir, Store) {
         .take(commands.len() * SEEDED_REPEATS)
         .enumerate()
         .map(|(i, command)| ToolCallRow {
+            error_class: None,
             call_id: format!("c{i}"),
             name: "bash".into(),
             surface: "native".into(),

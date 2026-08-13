@@ -322,6 +322,7 @@ mod tests {
 
     fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
         ToolCallRow {
+            error_class: None,
             call_id: call_id.into(),
             name: "bash".into(),
             surface: "native".into(),
@@ -424,6 +425,7 @@ mod tests {
                 id,
                 &[
                     ToolCallRow {
+                        error_class: None,
                         call_id: "c1".into(),
                         name: "bash".into(),
                         surface: "native".into(),

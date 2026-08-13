@@ -319,6 +319,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
             id,
             &[
                 ToolCallRow {
+                    error_class: None,
                     call_id: "c1".into(),
                     name: "grep".into(),
                     surface: "native".into(),
@@ -331,6 +332,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     duration_ms: 14,
                 },
                 ToolCallRow {
+                    error_class: None,
                     call_id: "c2".into(),
                     name: "grep".into(),
                     surface: "native".into(),
@@ -343,6 +345,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     duration_ms: 9,
                 },
                 ToolCallRow {
+                    error_class: None,
                     call_id: "c3".into(),
                     name: "read_file".into(),
                     surface: "native".into(),
@@ -1077,36 +1080,32 @@ fn agent_uses_log_one_row_per_invocation_never_aggregated() {
 fn skill_usage_records_per_execution_version_rows() {
     let store = Store::in_memory().unwrap();
     assert_eq!(user_version(&store), SCHEMA_VERSION);
-    // skill_usage lands at v5; mcp_usage takes v6; the data-plane tables
-    // (tool_calls / execution_reflection / reflections) take v7; the
-    // session plane (executions.session_id / tasks / pull_requests)
-    // takes v8; v9 adds fail-closed call-role/completeness, v10 adds lifecycle
-    // accounting for execution/telemetry rows, v11 adds the context-receipts
-    // plane (context_blocks / step_manifest / step_receipt), v12 adds
-    // reconstruction support (context_blocks.content / step_manifest.message_index),
-    // v13 rekeys both receipt tables on call_seq so the auxiliary calls
-    // sharing a step (overflow summarizer, pipeline management roles) each keep
-    // their own receipt, v14 adds `forgotten` — explicit, reversible human
-    // tombstones over any context surface — and v15 adds
-    // `step_manifest.call_id`, the per-occurrence tool-call attribution that
-    // content-addressed block ids cannot carry (byte-identical blocks share an
-    // id, so only the first minting call was ever recorded). v16 adds the
-    // compiled frame's identity to the receipt header — two nullable columns,
-    // not a table, because the frame IS the manifest (ADR 0006 as amended).
-    // v17 drops the never-wired graph seam and the query-less indexes. v18 turns
-    // `tool_calls` into a LIVE projection — a `state` column ('running' |
-    // 'ok' | 'error') plus the two indexes the live writer reads through, so
-    // an in-flight turn's calls are visible live and recoverable after a
-    // crash. v19 recounts every stored block cost under one
-    // shared token rule, NULL when that block's preimage is gone (#925). v20
-    // adds `foundry_tools` (#830): per self-authored tool, the witness that
-    // proved it, the digests of the bytes it ran against, and the human
-    // `enabled` flag adoption never sets. Additive. v21 adds
-    // `session_turn_diffs` (#1870): the precomputed per-turn workspace diff.
-    // Additive. v22 adds `executions.journal_era` (#1981). v23 adds nullable
-    // `execution_reflection.parse_error` (#2175): the unreadable excerpt a
-    // starved learning loop leaves behind.
-    assert_eq!(SCHEMA_VERSION, 23);
+    // The ladder, one line per step (each migration's own comment in
+    // `migrations.rs` carries the reasoning; this is the index):
+    //   v5  skill_usage. v6 mcp_usage. v7 the data plane (tool_calls /
+    //       execution_reflection / reflections). v8 the session plane
+    //       (executions.session_id / tasks / pull_requests).
+    //   v9  fail-closed call-role/completeness. v10 execution/telemetry
+    //       lifecycle accounting. v11 the context-receipts plane
+    //       (context_blocks / step_manifest / step_receipt).
+    //   v12 reconstruction support (context_blocks.content /
+    //       step_manifest.message_index). v13 rekeys both receipt tables on
+    //       call_seq so an auxiliary call sharing a step keeps its own
+    //       receipt. v14 `forgotten` — reversible human tombstones.
+    //   v15 step_manifest.call_id, the per-occurrence attribution a
+    //       content-addressed block id cannot carry. v16 the compiled
+    //       frame's identity on the receipt header (the frame IS the
+    //       manifest, ADR 0006 as amended). v17 drops the never-wired graph
+    //       seam and the query-less indexes.
+    //   v18 `tool_calls` becomes a LIVE projection (`state`) — in-flight
+    //       calls visible, crashed ones recoverable. v19 recounts stored
+    //       block costs under one token rule (#925). v20 `foundry_tools`
+    //       (#830). v21 `session_turn_diffs` (#1870). v22
+    //       `executions.journal_era` (#1981). v23
+    //       `execution_reflection.parse_error` (#2175). v24
+    //       `tool_calls.error_class` (#3145): which KIND of failure, so an
+    //       error rate can exclude model misuse and policy refusals.
+    assert_eq!(SCHEMA_VERSION, 24);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

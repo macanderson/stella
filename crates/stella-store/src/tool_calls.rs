@@ -45,7 +45,7 @@
 //! reason the log is the source of truth and this is not.
 
 use rusqlite::{Connection, OptionalExtension, params};
-use stella_protocol::{AgentEvent, ToolOutput};
+use stella_protocol::{AgentEvent, ErrorClass, ToolOutput};
 
 use crate::{Result, Store, fnv_hex};
 
@@ -119,6 +119,12 @@ pub struct ToolCallRow {
     pub reason: String,
     pub state: ToolCallState,
     pub error: String,
+    /// Which kind of failure this was (#3145) — the `error_class` column.
+    /// `None` is **unclassified**, not a class: either the call did not fail,
+    /// or the site that produced the failure has not been audited into an
+    /// [`ErrorClass`] yet. A per-tool error-rate ceiling must not read it as
+    /// a defect.
+    pub error_class: Option<ErrorClass>,
     pub bytes_out: i64,
     pub duration_ms: i64,
 }
@@ -144,6 +150,18 @@ impl ToolCallRow {
 /// crashed run's still-`running` rows. A call abandoned by a dead process and
 /// one abandoned by a clean turn end are the same fact.
 pub(crate) const ABANDONED: &str = "no result (turn ended before the tool returned)";
+
+/// The stored spelling of an [`ErrorClass`] — its `snake_case` token, or the
+/// empty string for unclassified. Named because three writers must agree on
+/// it (the live fold, the repair fold's bulk insert, and the interrupted
+/// sweep), and because `''` carries the meaning the column's whole point
+/// rests on: *not audited into a class*, which is not the same as any class.
+fn class_token(class: Option<ErrorClass>) -> &'static str {
+    match class {
+        Some(class) => class.as_str(),
+        None => "",
+    }
+}
 
 /// `'mcp'` for a namespaced MCP tool, `'native'` otherwise — the only two
 /// surfaces either producer emits.
@@ -232,12 +250,14 @@ fn project_tool_result(
     call_id: &str,
     state: ToolCallState,
     error: &str,
+    error_class: Option<ErrorClass>,
     bytes_out: i64,
     duration_ms: i64,
 ) -> rusqlite::Result<()> {
     let updated = tx.execute(
         "UPDATE tool_calls \
-         SET ok = ?3, state = ?4, error = ?5, bytes_out = ?6, duration_ms = ?7 \
+         SET ok = ?3, state = ?4, error = ?5, error_class = ?6, bytes_out = ?7, \
+             duration_ms = ?8 \
          WHERE execution_id = ?1 AND call_id = ?2",
         params![
             execution_id,
@@ -245,6 +265,7 @@ fn project_tool_result(
             i64::from(state.is_ok()),
             state.as_str(),
             error,
+            class_token(error_class),
             bytes_out,
             duration_ms
         ],
@@ -260,8 +281,8 @@ fn project_tool_result(
     tx.execute(
         "INSERT INTO tool_calls \
          (execution_id, seq, call_id, name, surface, args_json, args_digest, reason, \
-          ok, state, error, bytes_out, duration_ms) \
-         VALUES (?1, ?2, ?3, '(unknown)', 'native', '{}', '', '', ?4, ?5, ?6, ?7, ?8)",
+          ok, state, error, error_class, bytes_out, duration_ms) \
+         VALUES (?1, ?2, ?3, '(unknown)', 'native', '{}', '', '', ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             execution_id,
             seq,
@@ -269,6 +290,7 @@ fn project_tool_result(
             i64::from(state.is_ok()),
             state.as_str(),
             error,
+            class_token(error_class),
             bytes_out,
             duration_ms
         ],
@@ -298,13 +320,13 @@ pub(crate) fn project_event(
             duration_ms,
             ..
         } => {
-            let (state, error, bytes) = match output {
+            let (state, error, class, bytes) = match output {
                 ToolOutput::Ok { content } => {
-                    (ToolCallState::Ok, String::new(), content.len() as i64)
+                    (ToolCallState::Ok, String::new(), None, content.len() as i64)
                 }
-                ToolOutput::Error { message, .. } => {
+                ToolOutput::Error { message, class } => {
                     let len = message.len() as i64;
-                    (ToolCallState::Error, message.clone(), len)
+                    (ToolCallState::Error, message.clone(), *class, len)
                 }
             };
             project_tool_result(
@@ -313,6 +335,7 @@ pub(crate) fn project_event(
                 call_id,
                 state,
                 &error,
+                class,
                 bytes,
                 *duration_ms as i64,
             )
@@ -336,8 +359,8 @@ impl Store {
             tx.execute(
                 "INSERT OR REPLACE INTO tool_calls \
                  (execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                  reason, ok, state, error, bytes_out, duration_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  reason, ok, state, error, error_class, bytes_out, duration_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     seq as i64,
@@ -350,6 +373,7 @@ impl Store {
                     row.ok() as i64,
                     row.state.as_str(),
                     row.error,
+                    class_token(row.error_class),
                     row.bytes_out,
                     row.duration_ms,
                 ],
@@ -396,8 +420,9 @@ impl Store {
         let mut order: Vec<String> = Vec::new();
         // call_id -> (name, surface, args_json)
         let mut starts: HashMap<String, (String, String, String)> = HashMap::new();
-        // call_id -> (state, error, bytes_out, duration_ms)
-        let mut results: HashMap<String, (ToolCallState, String, i64, i64)> = HashMap::new();
+        // call_id -> (state, error, error_class, bytes_out, duration_ms)
+        let mut results: HashMap<String, (ToolCallState, String, Option<ErrorClass>, i64, i64)> =
+            HashMap::new();
 
         for payload in &payloads {
             let Ok(ev) = serde_json::from_str::<AgentEvent>(payload) else {
@@ -423,16 +448,16 @@ impl Store {
                     duration_ms,
                     ..
                 } => {
-                    let (state, error, bytes) = match output {
+                    let (state, error, class, bytes) = match output {
                         ToolOutput::Ok { content } => {
-                            (ToolCallState::Ok, String::new(), content.len() as i64)
+                            (ToolCallState::Ok, String::new(), None, content.len() as i64)
                         }
-                        ToolOutput::Error { message, .. } => {
+                        ToolOutput::Error { message, class } => {
                             let len = message.len() as i64;
-                            (ToolCallState::Error, message, len)
+                            (ToolCallState::Error, message, class, len)
                         }
                     };
-                    results.insert(call_id, (state, error, bytes, duration_ms as i64));
+                    results.insert(call_id, (state, error, class, bytes, duration_ms as i64));
                 }
                 _ => {}
             }
@@ -444,9 +469,15 @@ impl Store {
                 continue;
             };
             let digest = fnv_hex(args_json);
-            let (state, error, bytes_out, duration_ms) = match results.get(call_id) {
-                Some((state, error, bytes, dur)) => (*state, error.clone(), *bytes, *dur),
-                None => (ToolCallState::Error, ABANDONED.to_string(), 0, 0),
+            let (state, error, error_class, bytes_out, duration_ms) = match results.get(call_id) {
+                Some((state, error, class, bytes, dur)) => {
+                    (*state, error.clone(), *class, *bytes, *dur)
+                }
+                // An abandoned call carries no class: it never produced a
+                // `ToolOutput` to classify, and inventing one here would put
+                // "the turn ended first" into the same bucket as a real
+                // failure — the exact conflation #3145 exists to end.
+                None => (ToolCallState::Error, ABANDONED.to_string(), None, 0, 0),
             };
             rows.push(ToolCallRow {
                 call_id: call_id.clone(),
@@ -457,6 +488,7 @@ impl Store {
                 reason: String::new(),
                 state,
                 error,
+                error_class,
                 bytes_out,
                 duration_ms,
             });
@@ -562,7 +594,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT call_id, name, surface, args_json, args_digest, reason, \
-                    state, error, bytes_out, duration_ms \
+                    state, error, error_class, bytes_out, duration_ms \
              FROM tool_calls WHERE name = ?1 \
              ORDER BY execution_id DESC, seq DESC LIMIT ?2",
         )?;
@@ -576,8 +608,9 @@ impl Store {
                 reason: r.get(5)?,
                 state: ToolCallState::parse(&r.get::<_, String>(6)?),
                 error: r.get(7)?,
-                bytes_out: r.get(8)?,
-                duration_ms: r.get(9)?,
+                error_class: ErrorClass::parse(&r.get::<_, String>(8)?),
+                bytes_out: r.get(9)?,
+                duration_ms: r.get(10)?,
             })
         })?;
         let mut out = Vec::new();
