@@ -268,17 +268,27 @@ impl Tool for ReadFile {
             }
         };
 
-        let offset = input
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize);
+        // A wrong-typed `offset`/`limit` is refused, never silently
+        // defaulted — `and_then(as_u64)` read `"limit": "200"` as the
+        // default window without a word (#3144). Absent still defaults.
+        let offset = match crate::input::optional_u64(input, "offset") {
+            Ok(offset) => offset.map(|n| n as usize),
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
+        };
         // MAX_LINES is a ceiling, not just the default: the flood protection
         // the module header promises must hold for explicit limits too.
-        let limit = input
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|n| (n as usize).min(MAX_LINES))
-            .unwrap_or(MAX_LINES);
+        let limit = match crate::input::optional_u64(input, "limit") {
+            Ok(limit) => limit.map(|n| (n as usize).min(MAX_LINES)).unwrap_or(MAX_LINES),
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
+        };
 
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
@@ -527,6 +537,50 @@ mod tests {
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_file(&full).await;
+    }
+
+    /// The #3144 witness: a wrong-typed `offset`/`limit` is refused, never
+    /// silently defaulted. On main, `{"limit": "200"}` vanished into the
+    /// default window — no refusal, no note, wrong-sized read.
+    #[tokio::test]
+    async fn a_mistyped_offset_or_limit_is_refused_not_defaulted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
+        let tool = ReadFile::default();
+
+        let out = tool
+            .execute(
+                &serde_json::json!({"path": "f.txt", "limit": "200"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("a mistyped limit must be an error, got: {out:?}");
+        };
+        assert_eq!(
+            message,
+            "field `limit` must be a non-negative integer, got string"
+        );
+
+        let out = tool
+            .execute(
+                &serde_json::json!({"path": "f.txt", "offset": true}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("a mistyped offset must be an error, got: {out:?}");
+        };
+        assert_eq!(
+            message,
+            "field `offset` must be a non-negative integer, got boolean"
+        );
+
+        // Absent still defaults — the fix refuses wrong types, not absence.
+        let out = tool
+            .execute(&serde_json::json!({"path": "f.txt"}), dir.path())
+            .await;
+        assert!(!out.is_error(), "{out:?}");
     }
 
     #[tokio::test]
