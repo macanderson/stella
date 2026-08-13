@@ -37,8 +37,7 @@ tests rely on.
 What must never land here is anything the fold cannot derive. Business
 decisions — what to compact, when a budget trips, whether a loop is detected —
 live in [`stella-core`](../stella-core); this crate renders the *events* those
-decisions emit and never re-decides them. Tool logic — spawning processes,
-reading files, touching the network — belongs in
+decisions emit and never re-decides them. Tool logic belongs in
 [`stella-tools`](../stella-tools) (the one existing exception, env scrubbing
 for `!` commands, is noted above). Provider calls go through
 [`stella-model`](../stella-model), persistence through

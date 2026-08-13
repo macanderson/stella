@@ -750,7 +750,7 @@ mod tests {
              name: review-pr\n\
              description: Review a pull request\n\
              argument-hint: <pr-number>\n\
-             allowed-tools: read_file, grep\n\
+             allowed-tools: task_list, get_state\n\
              model: anthropic/claude-fable-5\n\
              disable-model-invocation: true\n\
              ---\n\
@@ -759,7 +759,7 @@ mod tests {
              name = \"review-pr\"\n\
              description = \"Review a pull request\"\n\
              argument-hint = \"<pr-number>\"\n\
-             allowed-tools = [\"read_file\", \"grep\"]\n\
+             allowed-tools = [\"task_list\", \"get_state\"]\n\
              model = \"anthropic/claude-fable-5\"\n\
              disable-model-invocation = true\n\
              prompt = \"Review PR $1.\"\n";
@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(from_md.body, from_toml.body);
         assert_eq!(
             from_md.allowed_tools,
-            Some(vec!["read_file".to_string(), "grep".to_string()])
+            Some(vec!["task_list".to_string(), "get_state".to_string()])
         );
         assert!(!from_md.model_invocable);
     }

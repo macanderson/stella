@@ -24,10 +24,7 @@ without costing any caller its isolation.
 - **`Diff::minimal`** reports whether the script is the exact minimal one.
   Inputs whose DP table would exceed `LCS_AREA_CAP` cells degrade to a
   correct-but-blunt replace-everything script, flagged `minimal: false` —
-  surfaces are expected to say so rather than present it as precise. (The
-  coarse companion in `stella-tools`, `file_touch::changed_region_diff`, is
-  honest for file edits; it cannot express "one paragraph inserted into four
-  hundred stable lines", which is the case this crate exists for.)
+  surfaces are expected to say so rather than present it as precise.
 - **Empty hunk list = byte-identical** — the honest "no change" answer, not
   an error.
 

@@ -48,7 +48,6 @@ async fn a_foreign_edit_beside_an_idle_lookup_does_not_drag_it_into_verification
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             lint: None,

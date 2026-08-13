@@ -414,8 +414,8 @@ pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
 /// Per lesson L-S3 the tail budget is ≥ the head budget: a tool result's
 /// signal is usually in its tail (the error, the summary, the last row), so a
 /// head-only cut is the one that throws away the answer. The marker text
-/// matches the native tools' (`stella-tools`' `bash`/custom-tool runners) so a
-/// model that has learned to read one reads both.
+/// matches the custom script-tool runner's (`stella-tools`), so a model that
+/// has learned to read one reads both.
 ///
 /// `max_bytes` is a budget for the *kept* text; the marker is added on top, so
 /// the result can exceed it by the marker's own (small, fixed-shape) length.

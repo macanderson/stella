@@ -194,22 +194,23 @@ pub fn goal_round_turn_offset(round: usize) -> u32 {
     u32::try_from(round.saturating_sub(1).saturating_mul(2)).unwrap_or(u32::MAX)
 }
 
-/// Public so the CLI's goal loop can pin its tool allowlist against the six
-/// tools this prompt names (#1783): the prompt and the offered surface must
-/// not drift apart, and the test that enforces that lives beside the
-/// executor it guards.
+/// Public so the CLI's goal loop can pin its tool allowlist against this
+/// prompt (#1783): the prompt and the offered surface must not drift apart,
+/// and the test that enforces that lives beside the executor it guards. The
+/// prompt deliberately names no individual tools: the verifier judges with
+/// whatever read-only tools the host actually offers it, so the offered
+/// surface can vary per host without the prompt drifting.
 pub const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
-     has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only \
-     tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work \
-     directly whenever the transcript alone is not conclusive — read the changed files, check \
-     the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The \
-     strongest completion evidence is a `verify_done` tool result reading WITNESS CONFIRMED \
-     (the change's test fails on the previous code and passes on the new code); a merely \
-     green test suite is weak evidence, since it cannot distinguish real work from vacuous \
-     tests or unwired code. If you need something only the worker can provide (a trace, a \
-     screenshot, a system log, an explanation), set met:false and put the request in \
-     feedback — the worker acts on it next round. When decided, end your reply with ONLY a \
-     JSON object, no prose after it:\n\
+     has fully met a stated goal. Judge from EVIDENCE, never from claims: use whatever \
+     read-only tools you are offered to verify the work directly whenever the transcript \
+     alone is not conclusive — read the changed files, check the tests exist, inspect CI. \
+     Claimed success without supporting evidence is NOT met. The strongest completion \
+     evidence is a witness test observed to fail on the previous code and pass on the new \
+     code; a merely green test suite is weak evidence, since it cannot distinguish real \
+     work from vacuous tests or unwired code. If you need something only the worker can \
+     provide (a trace, a screenshot, a system log, an explanation), set met:false and put \
+     the request in feedback — the worker acts on it next round. When decided, end your \
+     reply with ONLY a JSON object, no prose after it:\n\
      {\"met\": true|false, \"reasoning\": \"why, in one or two sentences\", \
      \"feedback\": \"if not met: the single most useful next action or evidence request\"}";
 
@@ -310,7 +311,7 @@ impl Engine<'_> {
     /// One verifier assessment, run as a **sub-agent** (`crate::subagent`): the
     /// verifier sees the goal + transcript tail in its own private transcript
     /// and may gather its own evidence through a read-only view of the SAME
-    /// tool registry the worker used (read files, grep, check CI) —
+    /// tool registry the worker used —
     /// structurally unable to mutate the workspace it is judging. Spend is
     /// carved from `budget` and settles back into it. `Err` carries the
     /// abort reason (provider failure or budget) after retries were

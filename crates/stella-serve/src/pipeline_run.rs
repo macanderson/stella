@@ -84,8 +84,8 @@ use async_trait::async_trait;
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{BudgetGuard, EngineConfig, RoleTable, Router, TurnOutcome};
 use stella_pipeline::ports::{
-    ApprovalGate, NoContextRecall, NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts,
-    ProviderResolver, ScopeDecision,
+    ApprovalGate, NoContextRecall, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver,
+    ScopeDecision,
 };
 use stella_pipeline::{Pipeline, PipelineConfig};
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Provider, ScopeProposal};
@@ -327,7 +327,6 @@ pub(crate) async fn drive_pipeline(
         recall: &NoContextRecall,
         repo: &NoRepoStructure,
         repo_status: &NoRepoStatus,
-        touches: &NoFileTouches,
         diagnostics: &verify,
         tests: &verify,
         lint: None,

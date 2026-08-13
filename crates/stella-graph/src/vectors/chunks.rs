@@ -515,9 +515,8 @@ pub fn chunk_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphE
 /// `remaining` without paying for a render-and-hash pass over files it is
 /// about to discard the content of.
 ///
-/// Because the predicate is exact, **zero here means done**: a caller may treat
-/// it as the completeness oracle it reads like, which
-/// `stella_tools::search::coverage_note` does (#3124).
+/// Because the predicate is exact, **zero here means done**: a caller may
+/// treat it as the completeness oracle it reads like (#3124).
 pub fn pending_chunk_file_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphError> {
     let count: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM code_graph_files f WHERE {NEEDS_CHUNK_PASS}"),

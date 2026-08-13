@@ -52,9 +52,9 @@ const MAX_TOOL_PAGES: usize = 1000;
 
 /// Byte budget for one rendered `tools/call` result, applied middle-out
 /// (head and tail kept, with an explicit elision marker between them).
-/// Matches the ceiling `stella-tools` already imposes on native
-/// `bash`/custom-tool output, so an MCP tool cannot buy more of the model's
-/// context than a local one.
+/// Matches the ceiling the custom script-tool runner already imposes on its
+/// output, so an MCP tool cannot buy more of the model's context than a
+/// local one.
 pub(crate) const MAX_TOOL_RESULT_BYTES: usize = 100_000;
 
 /// How many tools this client will accept from ONE server. Past this the

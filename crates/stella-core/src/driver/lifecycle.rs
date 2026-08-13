@@ -154,9 +154,6 @@ pub(super) fn working_set_restored_payload(
     restoration: &crate::restore::Restoration,
 ) -> serde_json::Value {
     serde_json::json!({
-        "restored_files": restoration.restored_files.len(),
-        "dropped_files": restoration.dropped_files.len(),
-        "unreadable_files": restoration.unreadable_files.len(),
         "restored_skills": restoration.restored_skills.len(),
         "dropped_skills": restoration.dropped_skills.len(),
         "tokens": restoration.tokens,

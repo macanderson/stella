@@ -29,13 +29,12 @@
 //! byte-heuristic (#925), so this bound and the receipts plane cannot
 //! disagree about what a token is made of.
 //!
-//! Stat lines and the summary header start with `#`, the same inert prefix
-//! the authored-section header chose and for the same reason: no downstream
-//! parser reads a `#` line as a path or a change. It is also not forgeable
-//! from inside the diff: both diff channels are machine-rendered, and
-//! worker-written content always arrives behind a `+`/`-`/space prefix, so a
-//! bare `#` at the start of a line can only have been put there by the
-//! pipeline's own renderers.
+//! Stat lines and the summary header start with `#`, an inert prefix chosen
+//! because no downstream parser reads a `#` line as a path or a change. It
+//! is also not forgeable from inside the diff: the diff text is
+//! machine-rendered, and worker-written content always arrives behind a
+//! `+`/`-`/space prefix, so a bare `#` at the start of a line can only have
+//! been put there by the pipeline's own renderers.
 
 use std::collections::BTreeMap;
 
@@ -86,8 +85,8 @@ pub enum DiffScope {
     EvidenceNamed,
 }
 
-/// One file's slice of the joined diff, or a run of prose between files
-/// (probe-blind markers, the authored-section header) that always renders
+/// One file's slice of the diff, or a run of prose between files
+/// (probe-blind markers, `#`-prefixed joining comments) that always renders
 /// verbatim.
 struct Segment {
     /// The path the headers named — new side preferred, `a/`/`b/` stripped —
@@ -98,8 +97,8 @@ struct Segment {
     removed: u32,
     /// Parser state: this file segment has already consumed its `--- `
     /// old-side header, so another `--- ` line starts the NEXT file. What
-    /// makes the authored channel's header pairs (no `diff --git` line)
-    /// split correctly.
+    /// makes bare `---`/`+++` header pairs (no `diff --git` line) split
+    /// correctly.
     has_old_header: bool,
     /// Prose (always rendered) vs a file segment (subject to the budget).
     is_file: bool,
@@ -129,12 +128,12 @@ impl Segment {
     }
 }
 
-/// Split the joined diff into file segments and interleaved prose.
+/// Split the diff into file segments and interleaved prose.
 ///
 /// A new file segment starts at every `diff --git ` line, and at every
 /// `--- ` old-side header that is not the one its current segment is still
-/// waiting for — which is how the authored channel's bare header pairs are
-/// told apart from the old-side header inside a `diff --git` stanza.
+/// waiting for — which is how bare `---`/`+++` header pairs are told apart
+/// from the old-side header inside a `diff --git` stanza.
 fn split_segments(diff: &str) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut current: Option<Segment> = None;
@@ -190,8 +189,8 @@ fn split_segments(diff: &str) -> Vec<Segment> {
             continue;
         }
         if line.starts_with('#') && current.as_ref().is_none_or(|seg| seg.is_file) {
-            // A joining marker between segments (the authored-section
-            // header). Flush the file it closed; the marker itself is prose.
+            // A `#`-prefixed joining comment between segments. Flush the
+            // file it closed; the marker itself is prose.
             segments.extend(current.take());
             current = Some(Segment::prose(raw));
             continue;
@@ -737,12 +736,12 @@ mod tests {
         assert_eq!(rendered, marker);
     }
 
-    /// The authored-section joining marker (`# --- changes recorded …`)
-    /// survives rendering in place: it labels the half that follows, and the
-    /// halves it separates are still split into their own segments.
+    /// A `#`-prefixed joining comment between segments survives rendering in
+    /// place: it labels the half that follows, and the halves it separates
+    /// are still split into their own segments.
     #[test]
-    fn the_authored_joining_marker_is_preserved_as_prose() {
-        let header = "# --- changes recorded by the file tools at write time (authorship, not tree state) ---";
+    fn a_joining_comment_marker_is_preserved_as_prose() {
+        let header = "# --- further changes, joined by the pipeline ---";
         let diff = format!(
             "{}{header}\n--- /dev/null\n+++ b/solution.py\n@@ -0,0 +1,1 @@\n+print('x')\n",
             file_segment("src/lib.rs", 2)
@@ -766,8 +765,8 @@ mod tests {
         );
     }
 
-    /// Segment splitting handles the authored channel's bare header pairs —
-    /// two files with no `diff --git` stanza between them.
+    /// Segment splitting handles bare `---`/`+++` header pairs — two files
+    /// with no `diff --git` stanza between them.
     #[test]
     fn bare_header_pairs_split_into_two_segments() {
         let diff = "--- /dev/null\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+a\n--- /dev/null\n+++ b/b.py\n@@ -0,0 +1,1 @@\n+b\n";

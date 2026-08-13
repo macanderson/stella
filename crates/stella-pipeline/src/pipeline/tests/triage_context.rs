@@ -50,7 +50,6 @@ async fn the_triage_call_carries_the_workspace_listing_in_its_payload() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             lint: None,

@@ -77,7 +77,6 @@ macro_rules! repair_scenario {
                 recall: &recall,
                 repo: &repo,
                 repo_status: &repo_status,
-                touches: &NoFileTouches,
                 diagnostics: &runner,
                 tests: &runner,
                 lint: None,

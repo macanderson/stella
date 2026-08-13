@@ -17,7 +17,7 @@ serde.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 # The HTTP backend only. Off by default so `stella-context` and `stella-graph`
-# pay nothing for a transport they do not use; `stella-tools` turns it on.
+# pay nothing for a transport they do not use; a host that needs it turns it on.
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 

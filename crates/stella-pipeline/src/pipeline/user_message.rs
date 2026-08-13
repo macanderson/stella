@@ -34,16 +34,11 @@ pub(super) enum VerificationContract<'a> {
     None,
 }
 
-/// Whether a recalled frame can be cited back through `cite_memory` — a
-/// materialized memory, which is the only kind that enters the citation →
-/// selection-health → retirement loop. Everything else (code-graph symbols,
-/// episodes, plain grounding) is context the model reads, not context whose
-/// efficacy is tracked.
-///
-/// The tool's own id grammar is the authority on the second half
-/// (`stella-tools/src/memory.rs`): `nod_` + 24 hex. This does not re-validate
-/// it — a host that projects a differently-shaped id would have the citation
-/// rejected at the tool, loudly, which is the right place to find out.
+/// The stable id handle of a materialized memory frame, or `None` for
+/// everything else (code-graph symbols, episodes, plain grounding). A
+/// materialized memory's id rides beside its citation label so a receipt can
+/// join the rendered block back to the record it came from
+/// (`BlockOrigin::memory_id`).
 fn citable_id(frame: &RecalledFrame) -> Option<&str> {
     (frame.kind == "memory")
         .then_some(frame.id.as_deref())
@@ -93,9 +88,8 @@ pub(super) fn assemble_user_message(
         s.push_str("## Recalled context\n");
         for f in frames {
             // Cite by human label (L-C4); include content as grounding. A
-            // materialized memory ALSO carries its stable id, because that is
-            // the handle `cite_memory` ties feedback to — see the citation ask
-            // below for why its absence was not a cosmetic omission.
+            // materialized memory ALSO carries its stable id, so a receipt
+            // can join the rendered block back to the record it came from.
             s.push_str("- [");
             s.push_str(&f.citation_label);
             s.push_str("] (");
@@ -112,27 +106,6 @@ pub(super) fn assemble_user_message(
                 s.push_str(f.content.trim());
                 s.push('\n');
             }
-        }
-        // #2195: ask for the citation, once, and only when something above can
-        // actually be cited.
-        //
-        // The write path behind `cite_memory` has been fully wired since it
-        // shipped, and the tool has never once been called — measured at zero
-        // rows against 85 executions. It was read as a model-behaviour problem.
-        // It was not: on this path no `nod_…` id reached the model at all (the
-        // render above dropped `RecalledFrame::id`) and nothing asked, so the
-        // model could not have cited if it wanted to. The non-pipeline paths
-        // have carried both since they shipped — `render_context_section` in
-        // `stella-cli`'s memory module — which is why this is a wiring defect
-        // on one surface rather than a missing design.
-        //
-        // Without a citation there is no selection health, and without
-        // selection health efficacy-based retirement can never fire: the
-        // context loop can learn but never unlearn.
-        if frames.iter().any(|f| citable_id(f).is_some()) {
-            s.push('\n');
-            s.push_str(crate::ports::CITE_MEMORY_REQUEST);
-            s.push('\n');
         }
         s.push('\n');
     }
@@ -242,17 +215,10 @@ mod tests {
         }
     }
 
-    /// #2195's witness: a recalled memory reaches the worker with the handle
-    /// `cite_memory` ties feedback to, and with the ask.
-    ///
-    /// `cite_memory` had been registered on every surface and called zero times
-    /// across 85 executions — read as a model-behaviour problem. On this path it
-    /// was not one: the render dropped `RecalledFrame::id`, so no `nod_…` id ever
-    /// entered the prompt, `cite_memory` rejects anything that is not one, and
-    /// nothing asked. With no citation there is no selection health, and with no
-    /// selection health efficacy-based retirement can never fire.
+    /// A recalled memory reaches the worker with its stable id handle, so a
+    /// receipt can join the rendered block back to the record it came from.
     #[test]
-    fn a_recalled_memory_reaches_the_worker_citable() {
+    fn a_recalled_memory_reaches_the_worker_with_its_id_handle() {
         const NOD: &str = "nod_0123456789abcdef01234567";
         let msg = assemble_user_message(
             "fix the cache posture",
@@ -262,45 +228,12 @@ mod tests {
         );
         assert!(
             msg.contains(NOD),
-            "the handle cite_memory ties feedback to must reach the model: {msg}"
-        );
-        assert!(
-            msg.contains("call cite_memory"),
-            "nothing else in the turn asks for the citation: {msg}"
+            "the record's stable handle must reach the model: {msg}"
         );
         assert!(
             msg.contains("prompt caching"),
             "the human label still leads the line (L-C4): {msg}"
         );
-        // The ask rides in the volatile recalled-context block, before the goal —
-        // invariant 7 is untouched because nothing here is in the stable prefix.
-        assert!(
-            msg.find("cite_memory").unwrap() < msg.find("## Task").unwrap(),
-            "the ask belongs to the recall block, not to the task: {msg}"
-        );
-    }
-
-    /// The ask is made exactly when there is something to cite. A code-graph hit
-    /// and an un-materialized memory are both grounding — neither carries a
-    /// citable handle, so asking would spend tokens inviting a fabricated id, and
-    /// `cite_memory` would reject it.
-    #[test]
-    fn nothing_citable_means_nothing_is_asked() {
-        for frames in [
-            vec![RecalledFrame {
-                kind: "symbol".into(),
-                id: Some("nod_0123456789abcdef01234567".into()),
-                ..memory_frame(None)
-            }],
-            vec![memory_frame(None)],
-        ] {
-            let msg =
-                assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
-            assert!(
-                !msg.contains("cite_memory"),
-                "no citable frame, so no ask: {msg}"
-            );
-        }
     }
 
     /// The configured test command is the run's actual oracle, so the worker is

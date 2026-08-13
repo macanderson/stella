@@ -178,15 +178,14 @@ pub(crate) fn untracked_marker_paths(diff: &str) -> Vec<String> {
 /// a signal does not rewrite every literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChangeSignals {
-    /// `FileChange` events the turn emitted, from the registry's
-    /// `FileTouchPort`. Non-zero is positive proof the tree moved even when
-    /// nothing can render *how*.
+    /// `FileChange` events the turn emitted on its own event channel.
+    /// Non-zero is positive proof the tree moved even when nothing can
+    /// render *how*.
     ///
-    /// Read it as a one-way signal only. Inside a best-of-N or witness
-    /// candidate the engine emits no `FileChange` events at all
-    /// (`crate::pipeline::verify_probes` documents why), so a zero here is
-    /// routinely a candidate's silence rather than a quiet workspace — which
-    /// is precisely why it cannot be the sole guard below.
+    /// Read it as a one-way signal only: a tool surface with no
+    /// change-reporting tools emits none, so a zero here is routinely
+    /// silence rather than a quiet workspace — which is precisely why it
+    /// cannot be the sole guard below.
     pub file_changes: u32,
     /// Tool calls this turn that were *capable* of changing the workspace:
     /// every dispatched call except those whose tool the registry advertises
@@ -206,14 +205,6 @@ pub struct ChangeSignals {
     /// the diff fully explains, and an opaque call is by definition something
     /// it does not.
     pub opaque_actions: u32,
-    /// `verify_done` tool runs this turn whose result printed
-    /// `WITNESS CONFIRMED` — a deterministic fail-on-baseline / pass-on-new
-    /// shadow observation made by the worker's own tool call (#2129). Counted
-    /// off the `ToolResult` stream, so like every field here it records what
-    /// the turn *did*; the ladder reads it as a completion receipt the
-    /// pipeline's own oracle (which tracks only its own command) cannot
-    /// produce, and it can carry a deterministic pass alone (#2618).
-    pub verify_done_confirmations: u32,
     /// Command chains this turn that exited 0 while their captured stderr
     /// reported a failed command — the errored-command census
     /// ([`crate::verify::command_errors`], #2125). Counted off the
@@ -225,13 +216,10 @@ pub struct ChangeSignals {
 }
 
 /// Whether a *mutating* tool call's effects are fully accountable to the
-/// diff and untracked-file probes — file CRUD inside the workspace tree,
-/// plus the session-local bookkeeping tools that touch no workspace at all
-/// (the task board, memory and exploration writes under `.stella/`).
+/// diff and untracked-file probes — the session-local bookkeeping tools
+/// (the task board) that touch no workspace at all.
 ///
-/// Everything else — the shell, process control, project-command verbs
-/// (which run arbitrary configured commands), repo mutations, media and
-/// issue tools, MCP servers, custom scripts, and any name this list has
+/// Everything else — MCP servers, custom scripts, and any name this list has
 /// never heard of — is opaque: it can act where no diff probe looks, so a
 /// dispatched call fails closed as [`ChangeSignals::opaque_actions`] and the
 /// warrant buys the test.
@@ -245,18 +233,7 @@ pub struct ChangeSignals {
 pub(crate) fn diff_accountable_mutator(name: &str) -> bool {
     matches!(
         name,
-        "write_file"
-            | "edit_file"
-            | "apply_edits"
-            | "delete_file"
-            | "save_exploration"
-            | "save_memory"
-            | "cite_memory"
-            | "task_create"
-            | "task_start"
-            | "task_complete"
-            | "task_cancel"
-            | "task_assign"
+        "task_create" | "task_start" | "task_complete" | "task_cancel" | "task_assign"
     )
 }
 
@@ -371,12 +348,6 @@ pub fn warrant(diff: &str, signals: ChangeSignals) -> WitnessWarrant {
 /// the verifier-facing diff and into the every-path-must-agree rules below,
 /// where a `.db-wal` is neither docs nor test and so silently defeated a
 /// `DocsOnly`/`TestsOnly` waiver the change had actually earned.
-///
-/// Deliberately spelled twice: `stella_tools::file_touch::is_stella_state_path`
-/// applies the same rule at the `FileChange` emission point, and this crate
-/// does not depend on `stella-tools`. The repo's established answer to a
-/// duplicated spelling is a parity test pinning the two together — see the
-/// note on `SNAPSHOT_IDENT` in `crates/stella-cli/src/candidate_ws.rs`.
 pub(crate) fn is_stella_state_path(path: &str) -> bool {
     path == ".stella" || path.starts_with(".stella/")
 }

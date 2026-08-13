@@ -94,19 +94,12 @@ const MAX_CYCLE_PERIOD: usize = 4;
 /// *before* compaction can hand it in here and keep the evidence.
 /// `None` means "no snapshot available" and falls back to comparing the
 /// outputs themselves.
-/// The output is a [`Cow`] because the caller normalizes it before comparing
-/// (`driver::comparable_output` strips `read_file`'s volatile session-tally
-/// footer) and that normalization changes nothing on the overwhelmingly common
-/// path. Borrowing there is the whole point: this window is rebuilt on EVERY
-/// step, so an owned output meant a full heap copy of every tool result in the
-/// turn — quadratic in steps across a long turn — to compare bytes the
-/// transcript was already holding.
-///
-/// The call is a [`Cow`] for the same quadratic-copy reason: the driver
-/// borrows each call straight out of the transcript it is scanning (an
-/// `edit_file` input carries whole old/new file chunks, so an owned
-/// `ToolCall` re-cloned every step was the same cost the output's `Cow`
-/// was introduced to eliminate), while test fixtures own theirs.
+/// The output and the call are both [`Cow`]s for the same quadratic-copy
+/// reason: this window is rebuilt on EVERY step, so the driver borrows each
+/// call and output straight out of the transcript it is scanning (a mutating
+/// tool's input can carry whole file chunks, so owned copies re-cloned every
+/// step would cost a full heap copy of the turn's tool traffic per step —
+/// quadratic across a long turn), while test fixtures own theirs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallRecord<'a> {
     pub call: Cow<'a, ToolCall>,

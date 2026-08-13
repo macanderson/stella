@@ -38,11 +38,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SNIPPET_MAX_LINES: usize = 60;
 /// Max reference occurrences scanned/returned by [`references`].
 const MAX_REFERENCES: usize = 50;
-/// Max bytes of any single file the reference scan will read. The same order
-/// as `stella-tools`' 400 KiB render cap: a file past this is a vendored blob
-/// or a generated artifact the walk's deny-list missed, and a whole-word scan
-/// over it is disk time spent on line noise. Checked against metadata, so an
-/// oversized file costs a `stat`, not a read.
+/// Max bytes of any single file the reference scan will read. A file past
+/// this is a vendored blob or a generated artifact the walk's deny-list
+/// missed, and a whole-word scan over it is disk time spent on line noise.
+/// Checked against metadata, so an oversized file costs a `stat`, not a
+/// read.
 const REF_FILE_MAX_BYTES: u64 = 400 * 1024;
 /// Max chars of a reference line quoted into a frame.
 const REF_LINE_MAX_CHARS: usize = 200;

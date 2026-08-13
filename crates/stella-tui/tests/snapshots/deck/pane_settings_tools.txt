@@ -8,18 +8,18 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   AGENTS  │  TOOLS   ←/→
 ┌ tools · 1 off · 1 org-locked ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│▸ BASH                      off  1 tools · org-locked                                                                                                         │
-│    bash                    off  locked · "bash" off in org-managed settings                                                                                  │
-│  CUSTOM                    on   1 tools                                                                                                                      │
+│▸ CUSTOM                    on   1 tools                                                                                                                      │
 │    deploy_to_staging       on                                                                                                                                │
-│  FILE                      on   2 tools                                                                                                                      │
-│    read_file               on                                                                                                                                │
-│    write_file              on                                                                                                                                │
+│  ENVIRONMENT               on   1 tools                                                                                                                      │
+│    get_environment         on                                                                                                                                │
 │  MCP                       on   1 tools                                                                                                                      │
 │    mcp__github__create_is… on                                                                                                                                │
-│  PROCESS                   on   1 tools                                                                                                                      │
-│    start_process           on                                                                                                                                │
-│                                                                                                                                                              │
+│  SCRATCH                   on   2 tools                                                                                                                      │
+│    get_state               on                                                                                                                                │
+│    save_state              on                                                                                                                                │
+│  TASK                      on   2 tools                                                                                                                      │
+│    task                    on                                                                                                                                │
+│    task_assign             off  locked · "task_assign" off in org-managed settings                                                                           │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

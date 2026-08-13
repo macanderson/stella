@@ -217,14 +217,12 @@ is different — it travels with the tree and can be *ingested* from another
 machine ([`../../docs/spec/exploration-sharing.md`](../../docs/spec/exploration-sharing.md)
 §3), so its `path → sha256` manifest is untrusted text.
 `fsview::is_workspace_relative` refuses any key that is absolute or contains
-`..` before `/api/explorations` opens it, mirroring the `resolve_within_root`
-guard the producer (`stella_tools::staleness`) already applies: without it, a
-manifest keyed `"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root
-read whose verdict reports whether that file exists and whether its bytes hash
-to a chosen value. The check is lexical, so a
-symlink *inside* the workspace pointing out of it is still followed — a narrower
-guarantee than the producer's canonicalising one, and the reason to keep the
-manifest a list of paths rather than anything more expressive.
+`..` before `/api/explorations` opens it: without it, a manifest keyed
+`"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root read whose
+verdict reports whether that file exists and whether its bytes hash to a
+chosen value. The check is lexical, so a symlink *inside* the workspace
+pointing out of it is still followed — the reason to keep the manifest a
+list of paths rather than anything more expressive.
 
 ### The palette is a mirror, and one data-mark step is deliberately unused
 

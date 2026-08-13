@@ -94,35 +94,6 @@ pub struct RecalledFrame {
     pub content_digest: Option<String>,
 }
 
-/// The one sentence that asks a model to cite the injected context it used —
-/// the `cite_memory` affordance, in the words every surface says it in.
-///
-/// It lives beside [`RecalledFrame`] because injecting one is what creates the
-/// obligation, and it is a shared `const` because it had already drifted into
-/// existing on one surface and not the other. `stella-cli`'s
-/// `render_context_section` (the REPL, `/goal`, the non-pipeline one-shot)
-/// carried both the `nod_…` handles and this ask from the day it shipped; the
-/// pipeline — the default `stella run` path — rendered neither, so
-/// `memory_citations` stayed empty at 85 executions and selection health,
-/// which is the fold over citations, could never populate (#2195). Two copies
-/// of a prompt sentence is how a third surface ships with a fourth wording;
-/// one copy is how "which surfaces ask?" stays answerable by `grep`.
-///
-/// Kept in `stella-pipeline` rather than beside the tool it names because
-/// `stella-tools` sits outside this crate's dependency graph and the sentence
-/// is not worth widening it for; `stella-cli` depends on both and reads it
-/// from here.
-///
-/// Deliberately not a demand. The work standing on its own is the rule
-/// everywhere else in this plane, and a turn is never failed for declining to
-/// cite — an uncited memory is unmeasured, which is exactly what it was
-/// before anyone asked.
-pub const CITE_MEMORY_REQUEST: &str = "When a memory above (a [nod_…]-tagged line) actually informs your work this turn, call \
-     cite_memory with that id once you can judge it: useful_score 1-5 for how much it helped the \
-     actual work, truthful for whether its content still holds (verify against the workspace, \
-     don't assume), and a one-sentence remark. Cite only memories you genuinely used — no \
-     courtesy citations.";
-
 /// Where the pipeline reports the resume-relevant facts it learns mid-run
 /// (#1671) — triage's class, the plan, the execute cursor, the test
 /// baseline — so a host can store them beside the engine checkpoint and hand
@@ -310,126 +281,6 @@ pub trait RepoStatusPort: Send + Sync {
     /// file; callers without filesystem access return `None`.
     async fn artifact_identity(&self, _path: &str) -> Option<ArtifactIdentity> {
         None
-    }
-}
-
-/// The recorder's own tally of mutating file touches — the count behind the
-/// `AgentEvent::FileChange`s a turn emits, read from the object that emitted
-/// them.
-///
-/// The pipeline used to count those events off the sender it hands the engine.
-/// It never saw one: `ToolRegistry::record_touch` sends to the channel the
-/// *host* attached, and the engine's sender is a different wire. So a turn that
-/// created and edited a file, and put six `file_change` events on the stream,
-/// told its verifier the tally was zero — which the verifier reported as "the
-/// file likely does not exist" while the file sat in the container (#973).
-/// That tally was, for a time, also exposed on the wire as
-/// `LadderInputs::file_change_events`; it was removed there in #2934 because
-/// it read as zero in the one place a reader most needed a real answer (any
-/// isolated candidate/witness workspace, #2873).
-///
-/// Reading a counter on the recorder is immune to which channel the events
-/// took, and to there being no channel at all — a candidate registry is
-/// deliberately unattached, and its changes still count here. Implementations
-/// wire it from the same registry they call `attach_events` on, so the count
-/// and the stream have one source by construction.
-///
-/// Monotonic since construction: the pipeline takes a delta across the window
-/// it cares about. Hosts with no registry supply [`NoFileTouches`].
-pub trait FileTouchPort: Send + Sync {
-    /// Mutating touches recorded so far. Reads are excluded — they are
-    /// observability, not change, exactly as `FileChangeKind::is_mutation`
-    /// decides for the event.
-    fn mutations_recorded(&self) -> u64;
-
-    /// The change the agent **authored**, rendered as a unified diff by the
-    /// file tools themselves at the moment they wrote it.
-    ///
-    /// This is the companion channel to the configured diff diagnostic, and it
-    /// exists because that diagnostic is `git diff`, which answers a question
-    /// about *tree state* when verification needs one about *authorship*. Git
-    /// is structurally unable to answer twice over:
-    ///
-    /// * a task directory that is not a repository (every Terminal-Bench
-    ///   image), where the probe can only report that it could not look; and
-    /// * a newly created file, which git cannot see until it is staged — so
-    ///   the commonest shape of agent work reached the verifier as a bare path
-    ///   and a line count, with none of its content.
-    ///
-    /// The recorder holds both images of every write it performed, so it can
-    /// answer both. Default empty, so a host with no recorder — and every test
-    /// double — behaves exactly as it did before this existed.
-    fn authored_diff(&self) -> AuthoredChange {
-        AuthoredChange::default()
-    }
-
-    /// Take a before-image of the workspace for the turn about to run.
-    ///
-    /// The pair with [`Self::settle_workspace_probe`] exists because a tool's
-    /// schema cannot describe what `bash` will touch, so the tree has to be
-    /// asked instead. Bracketing the TURN rather than each call is a measured
-    /// choice: a single walk of a 20,000-entry tree costs ~1s, a turn issues
-    /// hundreds of shell calls, and a trial is killed at 900s — per-call
-    /// probing would spend the whole budget observing.
-    ///
-    /// Calling this commits the host to turn granularity: an implementation
-    /// that also probes per call must turn that off, so the tree is never
-    /// walked twice to learn one fact.
-    ///
-    /// Default no-op, so a host with no recorder (and every test double)
-    /// keeps working: an unprobed turn simply reports what its other channels
-    /// saw, which is the pre-existing behaviour.
-    fn begin_workspace_probe(&self) {}
-
-    /// Attribute anything the turn changed that no tool schema described,
-    /// then re-arm for the next turn.
-    ///
-    /// Re-arming is part of settling rather than a second call, because the
-    /// after-image of one turn is the before-image of the next and both are
-    /// only true at the same instant. Callers bracket a run of turns with one
-    /// [`Self::begin_workspace_probe`] and a settle per turn.
-    ///
-    /// Records through the same emitter as every other touch, so the ledger
-    /// keeps exactly one birthplace for a `FileChange`.
-    fn settle_workspace_probe(&self) {}
-}
-
-/// What the file recorder authored this session, as reported by
-/// [`FileTouchPort::authored_diff`].
-///
-/// Deliberately plain data rather than a borrowed view of the recorder's
-/// ledger: this crate does not depend on the tool crate that owns it, and the
-/// host bridging the two must be free to render once and hand the result over.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AuthoredChange {
-    /// Unified-diff text for changes a file tool declared by path, plus
-    /// bounded marker lines for paths that were merely observed changing.
-    /// Empty when the session authored nothing.
-    pub text: String,
-    /// Net lines changed by **declared** writes only.
-    ///
-    /// Paths that were merely observed (a `tar` extraction, a build) are
-    /// excluded on purpose: this number is compared against a size budget, and
-    /// unpacking a source tree must not be able to spend it.
-    pub lines: u32,
-}
-
-impl AuthoredChange {
-    /// Whether this carries anything a reader could act on.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.text.trim().is_empty()
-    }
-}
-
-/// A [`FileTouchPort`] that never observes anything, for hosts with no file
-/// recorder. Reports a constant `0`, so every delta is `0` — "no touches seen
-/// here", which leaves the ladder's other channels to speak.
-pub struct NoFileTouches;
-
-impl FileTouchPort for NoFileTouches {
-    fn mutations_recorded(&self) -> u64 {
-        0
     }
 }
 
@@ -1024,10 +875,6 @@ pub struct PipelinePorts<'a> {
     /// Untracked-file snapshots for the zero-diff guard (`git diff` can't see
     /// untracked files; this makes new/modified untracked files visible).
     pub repo_status: &'a dyn RepoStatusPort,
-    /// The file recorder's own mutation tally, for the evidence the verifier is
-    /// shown. Wire it from the registry the host attaches its event stream to;
-    /// hosts with no recorder pass [`NoFileTouches`].
-    pub touches: &'a dyn FileTouchPort,
     /// Runs closed, typed diagnostic invocations.
     pub diagnostics: &'a dyn DiagnosticRunner,
     /// Runs validated test invocations directly, without a shell.

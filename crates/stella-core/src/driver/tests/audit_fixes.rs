@@ -990,25 +990,7 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         other => panic!("compaction must not hide an identical-output repeat: {other:?}"),
     }
 
-    // 2. `read_file`'s volatile session-tally footer makes the outputs
-    //    non-identical, so pass 2 (supersession) is what stubs them. The
-    //    preserved identity must be computed over the SAME normalization
-    //    the detector compares (`comparable_output`), or every reread is a
-    //    distinct identity and this regresses to blind again.
-    let mut tallied = history(&fresh_ids, &|n| {
-        format!("{payload}\n\n(1/1 lines shown \u{b7} read {n}\u{d7} this session)")
-    });
-    let identities = compact_as_run_turn_does(&mut tallied);
-    assert!(
-        detect_loop(
-            &recent_call_records(&tallied, &identities),
-            LoopDetectionConfig::default(),
-        )
-        .is_loop(),
-        "compaction must not hide a repeat whose outputs differ only by the tally footer"
-    );
-
-    // 3. The other half of the contract: results that genuinely changed
+    // 2. The other half of the contract: results that genuinely changed
     //    must stay `NoLoop` after compaction collapsed them onto one
     //    another's stubs. A preserved identity must never manufacture a
     //    repeat that the real outputs do not support.
@@ -1023,7 +1005,7 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         "genuinely changing outputs must not become a loop once compaction stubs them"
     );
 
-    // 4. The same call — same id, same name, same arguments — observed with
+    // 3. The same call — same id, same name, same arguments — observed with
     //    two different outputs makes the snapshot ambiguous: the last real
     //    output would otherwise be attributed to all four calls and abort a
     //    healthy polling turn. Such a key is poisoned, and comparison falls

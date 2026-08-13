@@ -41,11 +41,7 @@ stage. Likewise no concrete subsystem: a provider SDK, a shell, a store, a termi
 are all implementations of the traits in [`src/ports.rs`](src/ports.rs) and belong in
 the `stella-cli` glue.
 
-Two look-alikes route elsewhere. The `verify_done` *tool* — the shadow-worktree check
-a model calls to prove its own change, `crates/stella-tools/src/verify.rs` — enforces
-the same witness contract as this crate's witness stage but is a tool implementation,
-so it evolves in [`stella-tools`](../stella-tools); this crate owns the stage that
-authors and scores witnesses during a run, not the tool a worker invokes. And
+One look-alike routes elsewhere:
 fan-out of *many tasks* — a DAG with dependencies, claims, and a durable ledger — is
 [`stella-fleet`](../stella-fleet); best-of-N here is many candidates for *one*
 prompt, selected and discarded within a single run.

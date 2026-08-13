@@ -73,10 +73,9 @@ use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
-    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord,
-    McpPrefetchPort, MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall,
-    RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
-    WorkspaceError,
+    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, LintProbe, LintRecord, McpPrefetchPort,
+    MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
+    RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner, WorkspaceError,
 };
 use crate::research::ResearchFinding;
 use crate::roster::Roster;
@@ -109,9 +108,6 @@ use crate::witness::{
 };
 pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 mod attachments;
-// `pub(crate)` for one constant: `verify`'s instruction block names the
-// authored section's header so the prompt and the header cannot drift apart.
-pub(crate) mod authored;
 mod candidate_result;
 mod delivery;
 mod disclosure;
@@ -797,10 +793,6 @@ struct CandidateState {
     /// Terminal-Bench task directory is not a git repository, so `git diff`
     /// there is permanently `false` (#973).
     diff_available: bool,
-    /// The recorder's mutation tally as it stood before this candidate's first
-    /// turn. Every later reading is a delta from here, which is what makes a
-    /// monotonic session-wide counter usable per candidate.
-    touch_baseline: u64,
     /// Pre-execution lint records for the regression veto (#861). Populated
     /// eagerly only on the in-place path, whose baseline tree is destroyed
     /// by execution; isolated candidates read theirs lazily at audit time
@@ -917,9 +909,6 @@ pub struct Pipeline<'a> {
     recall: &'a dyn ContextRecallPort,
     repo: &'a dyn RepoStructurePort,
     repo_status: &'a dyn RepoStatusPort,
-    /// The file recorder's mutation tally — the evidence channel that answers
-    /// "did this turn touch anything" when the diff probe cannot.
-    touches: &'a dyn FileTouchPort,
     diagnostics: &'a dyn DiagnosticRunner,
     tests: &'a dyn TestRunner,
     lint: Option<&'a dyn LintProbe>,
@@ -998,7 +987,6 @@ impl<'a> Pipeline<'a> {
             recall: ports.recall,
             repo: ports.repo,
             repo_status: ports.repo_status,
-            touches: ports.touches,
             diagnostics: ports.diagnostics,
             tests: ports.tests,
             lint: ports.lint,
@@ -1858,12 +1846,6 @@ impl<'a> Pipeline<'a> {
             diff_lines: 0,
             diff_text: String::new(),
             diff_available: true,
-            touch_baseline: {
-                // Bracket the turn at the same instant the baseline is taken,
-                // so the before-image and the count describe one moment.
-                self.touches.begin_workspace_probe();
-                self.touches.mutations_recorded()
-            },
             lint_baseline,
             witness_mutation: MutationAudit::Unmeasured,
             diff_coverage: DiffCoverage::Unmeasured,

@@ -275,10 +275,9 @@ pub fn memories(workspace_root: &Path) -> Value {
 /// it; a leading `./` is how a model-authored evidence path often arrives and
 /// is harmless, so it stays allowed.
 ///
-/// Lexical on purpose — the observatory does not resolve or `stat` a path it is
-/// refusing, so unlike `stella_tools::resolve_within_root` (the writer-side
-/// twin, which canonicalises) this does not follow a symlink that points out of
-/// the tree. That is the narrower guarantee: no path *spelled* outside the
+/// Lexical on purpose — the observatory does not resolve or `stat` a path it
+/// is refusing, so this does not follow a symlink that points out of the
+/// tree. That is the narrower guarantee: no path *spelled* outside the
 /// workspace is read.
 fn is_workspace_relative(rel: &str) -> bool {
     use std::path::Component;
@@ -329,10 +328,9 @@ pub fn explorations(workspace_root: &Path) -> Value {
             // handed an absolute path, and `..` walks out of the workspace
             // either way: both would turn a freshness poll into an
             // arbitrary-file read whose verdict reports whether that file exists
-            // and whether its bytes hash to an attacker-chosen digest. The
-            // producer already refuses such a key (`stella_tools::staleness`);
-            // this side must too. It reads as missing — the same verdict a
-            // deleted file gets — without being opened.
+            // and whether its bytes hash to an attacker-chosen digest. Such a
+            // key reads as missing — the same verdict a deleted file gets —
+            // without being opened.
             if !is_workspace_relative(rel) {
                 missing.push(rel.clone());
                 continue;
