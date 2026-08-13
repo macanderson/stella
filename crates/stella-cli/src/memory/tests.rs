@@ -274,8 +274,11 @@ fn recall_section_renders_a_content_minted_label_once() {
         1,
         "a >80-char memory keeps its full content exactly once: {section}"
     );
+    // The minted label itself (`…` included) must not render — checked by the
+    // label string, not by the `…` char alone, which the citation ask's own
+    // `[nod_…]` wording legitimately carries.
     assert!(
-        !section.contains('…'),
+        !section.contains(&minted),
         "the minted label's truncated copy must not render at all: {section}"
     );
 }
