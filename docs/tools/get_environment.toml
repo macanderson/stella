@@ -27,7 +27,7 @@ available_for_speculation = true
 risk_level = "undeclared"
 
 description = '''
-Report this session's environment: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, and the scratch directory path. Read this instead of spending calls on pwd, uname, or shell probing.
+Report this session's environment: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, and the scratch directory path. Your system prompt's Session environment block already states everything here except the scratch directory — call this only when you need the scratch directory path, or when no such block is in your prompt. Never spend calls on pwd, uname, or shell probing for these facts.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

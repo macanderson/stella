@@ -337,6 +337,19 @@ pub enum WarmOutcome {
 /// request's worth of pending files, so the blocking file reads stay bounded between awaits and
 /// a pass killed halfway has committed every batch before it.
 pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usize) -> WarmOutcome {
+    warm_file_vectors_with_progress(root, embedder, limit, &mut |_| {}).await
+}
+
+/// [`warm_file_vectors`] with a progress callback (#3102): `progress`
+/// receives the cumulative embedded-file count after each batch commits, so
+/// a long pass can be narrated while it happens instead of summarised after.
+/// Display-only — the callback cannot affect the pass.
+pub async fn warm_file_vectors_with_progress(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+    progress: &mut dyn FnMut(usize),
+) -> WarmOutcome {
     // Deliberately NOT `open_or_build`: the caller has just run `index_all`,
     // and a second catch-up pass would re-walk and re-hash the whole tree for
     // a graph nothing has touched since. This pass embeds what the index
@@ -356,7 +369,7 @@ pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usiz
             };
         }
     };
-    let outcome = warm_opened(&graph, embedder, limit).await;
+    let outcome = warm_opened(&graph, embedder, limit, progress).await;
     graph.shutdown();
     outcome
 }
@@ -365,6 +378,7 @@ async fn warm_opened(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
+    progress: &mut dyn FnMut(usize),
 ) -> WarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut embedded = 0usize;
@@ -395,6 +409,7 @@ async fn warm_opened(
             return WarmOutcome::Failed { embedded, reason };
         }
         embedded += scan.files.len();
+        progress(embedded);
     }
 
     let total = graph.file_count().unwrap_or(0);

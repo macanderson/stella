@@ -45,10 +45,10 @@ async fn build_code_graph_with(
     // so it never pins a runtime worker — the deck driver awaits `/init`
     // inline and must stay responsive to queue edits and cancels meanwhile
     // (the incremental watcher path already does this, stella-graph
-    // watch.rs). `emit` stays on this side of the boundary: the only
-    // pre-completion line is the one above.
+    // watch.rs). Progress crosses back over the boundary as throttled
+    // transcript lines (#3102), so a long pass reads as work, not a wedge.
     let root = workspace_root.to_path_buf();
-    let outcome = tokio::task::spawn_blocking(move || index_workspace_graph_blocking(&root)).await;
+    let outcome = drive_index_blocking(root, INDEX_PROGRESS_INTERVAL, emit).await;
     match outcome {
         Ok(Ok(stats)) => emit(format_graph_stats(&stats)),
         Ok(Err(warning)) => emit(warning),
@@ -57,6 +57,100 @@ async fn build_code_graph_with(
         )),
     }
     warm_semantic_index(workspace_root, embed_env, emit).await;
+}
+
+/// Minimum quiet time between narrated index/embedding progress lines. One
+/// line a second is liveness without spam: a pass shorter than this narrates
+/// nothing (the summary line stands alone), and a pass that looks wedged
+/// proves it is not, once a second, in the transcript (#3102).
+const INDEX_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Time-based progress throttle: [`ready`](Self::ready) answers "is it time
+/// for another line?". The first call arms the clock rather than firing, so
+/// anything faster than the interval stays silent. Pure over the `now` it is
+/// handed — the tests drive it with constructed instants.
+pub(super) struct ProgressTicker {
+    interval: Duration,
+    last: Option<Instant>,
+}
+
+impl ProgressTicker {
+    pub(super) fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            last: None,
+        }
+    }
+
+    /// True when at least `interval` has passed since the last `true` (the
+    /// first call arms and answers `false`).
+    pub(super) fn ready(&mut self, now: Instant) -> bool {
+        match self.last {
+            None => {
+                self.last = Some(now);
+                false
+            }
+            Some(prev) if now.duration_since(prev) >= self.interval => {
+                self.last = Some(now);
+                true
+            }
+            Some(_) => false,
+        }
+    }
+}
+
+/// One narrated line of index progress — the live counts the maintainer
+/// asked to watch increment (#3102). Running totals for THIS pass, straight
+/// from the loop inside the transaction.
+pub(super) fn format_index_progress(stats: &stella_graph::IndexStats) -> String {
+    format!(
+        "· {} files walked — {} parsed, {} unchanged, {} symbols…",
+        stats.files_seen, stats.files_parsed, stats.files_skipped_unchanged, stats.symbols
+    )
+}
+
+/// Run [`index_workspace_graph_blocking`] on the blocking pool while
+/// streaming its throttled progress lines back to `emit` as they happen.
+///
+/// The pass runs inside one SQLite transaction on a blocking thread, and
+/// `emit` lives on the async side (it may be the deck's non-`Send` closure)
+/// — so progress crosses the boundary through a channel: the blocking side
+/// sends already-formatted lines, this side forwards each to `emit` the
+/// moment it arrives, and any lines still queued when the task finishes are
+/// drained before the outcome is returned. Generic over the closure so the
+/// session builder's `Send` closure keeps its task spawnable while `stella
+/// init`'s plain printer needs no such bound.
+async fn drive_index_blocking<F: FnMut(String) + ?Sized>(
+    root: std::path::PathBuf,
+    interval: Duration,
+    emit: &mut F,
+) -> Result<Result<GraphSummary, String>, tokio::task::JoinError> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut handle = tokio::task::spawn_blocking(move || {
+        let mut ticker = ProgressTicker::new(interval);
+        index_workspace_graph_blocking(&root, &mut |stats| {
+            if ticker.ready(Instant::now()) {
+                let _ = tx.send(format_index_progress(stats));
+            }
+        })
+    });
+    loop {
+        tokio::select! {
+            line = rx.recv() => match line {
+                Some(line) => emit(line),
+                // Channel closed: the blocking task dropped its sender, so
+                // nothing more can arrive — await the outcome.
+                None => return handle.await,
+            },
+            outcome = &mut handle => {
+                // The task finished between polls; hand over what it queued.
+                while let Some(line) = rx.recv().await {
+                    emit(line);
+                }
+                return outcome;
+            }
+        }
+    }
 }
 
 /// Embed the files just indexed, so `semantic_code_search` can answer on the
@@ -111,10 +205,16 @@ async fn warm_semantic_index(
     };
 
     emit("◈ embedding files for semantic search…".to_string());
-    let outcome = stella_tools::graph::semantic::warm_file_vectors(
+    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
+    let outcome = stella_tools::graph::semantic::warm_file_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
         MAX_FILES_PER_EAGER_PASS,
+        &mut |embedded| {
+            if ticker.ready(Instant::now()) {
+                emit(format!("· semantic index: {embedded} files embedded…"));
+            }
+        },
     )
     .await;
     emit(format_warm_outcome(
@@ -128,10 +228,16 @@ async fn warm_semantic_index(
     // regardless of which is the true answer. Same reasoning as the pass
     // above, one layer down.
     emit("◈ embedding code chunks for search…".to_string());
-    let chunk_outcome = stella_tools::search::warm_chunk_vectors(
+    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
+    let chunk_outcome = stella_tools::search::warm_chunk_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
         stella_tools::search::MAX_FILES_PER_CHUNK_EAGER_PASS,
+        &mut |embedded| {
+            if ticker.ready(Instant::now()) {
+                emit(format!("· chunk index: {embedded} files embedded…"));
+            }
+        },
     )
     .await;
     emit(format_chunk_warm_outcome(
@@ -228,18 +334,20 @@ fn format_chunk_warm_outcome(
 
 /// Blocking: create `.stella/`, open the store, run one full incremental index
 /// pass (sha-skip makes byte-identical files free, L-C2), and shut down.
-/// Returns the stats or a ready-to-emit human warning. Emits nothing itself —
-/// so it is `Send` and callable from any spawned task; both `stella init`'s
-/// [`build_code_graph`] and the session auto-builder [`spawn_session_graph`]
-/// drive it, then narrate the result on their own side of the async boundary.
+/// Returns the stats or a ready-to-emit human warning. `progress` receives
+/// the running per-file counts from inside the pass (#3102) — callers narrate
+/// through [`drive_index_blocking`], which throttles and ferries the lines
+/// across the async boundary; both `stella init`'s [`build_code_graph`] and
+/// the session auto-builder [`spawn_session_graph`] drive it that way.
 pub(super) fn index_workspace_graph_blocking(
     workspace_root: &std::path::Path,
+    progress: &mut dyn FnMut(&stella_graph::IndexStats),
 ) -> Result<GraphSummary, String> {
     let db_path = stella_store::workspace_private_sqlite_path(workspace_root, "codegraph.db")
         .map_err(|e| format!("! could not prepare private code graph state: {e} — skipped"))?;
     let graph = stella_graph::CodeGraph::open(workspace_root, &db_path)
         .map_err(|e| format!("! code-graph store unavailable: {e} — skipped"))?;
-    let stats = graph.index_all().map_err(|e| {
+    let stats = graph.index_all_with_progress(progress).map_err(|e| {
         format!("! code-graph indexing failed: {e} — run `stella init` again to retry")
     })?;
     // Report the whole-index TOTALS (what the model can actually query), not
@@ -385,14 +493,15 @@ pub(crate) fn spawn_session_graph(
     let root = workspace_root.to_path_buf();
     let handle = tokio::spawn(async move {
         // 1) Build (fresh) or incrementally refresh (existing) the index to
-        //    completion, on the blocking pool. `status` (a `Send` box) is
-        //    called between awaits, never held across one — so this task stays
-        //    `Send`. (We drive the shared blocking helper directly rather than
-        //    `build_code_graph`, whose `&mut dyn FnMut` emit is not `Send`.)
+        //    completion, on the blocking pool, with the same throttled
+        //    progress lines `stella init` prints (#3102) — `status` is a
+        //    `Send` box, so [`drive_index_blocking`]'s future stays `Send`
+        //    and this task stays spawnable. (We drive the shared helper
+        //    rather than `build_code_graph`, whose `&mut dyn FnMut` emit is
+        //    not `Send` and whose embedding pass a session start skips.)
         status("◈ indexing code graph…".to_string());
-        let build_root = root.clone();
         let outcome =
-            tokio::task::spawn_blocking(move || index_workspace_graph_blocking(&build_root)).await;
+            drive_index_blocking(root.clone(), INDEX_PROGRESS_INTERVAL, &mut status).await;
         match outcome {
             Ok(Ok(stats)) => status(format_graph_stats(&stats)),
             Ok(Err(warning)) => status(warning),

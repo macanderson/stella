@@ -92,12 +92,12 @@ impl Progress {
 
 /// Should this process redraw a line in place?
 ///
-/// Delegates to the cinematic's predicate so `NO_COLOR`, `STELLA_NO_ANIM` and a
+/// Delegates to the shared predicate so `NO_COLOR`, `STELLA_NO_ANIM` and a
 /// non-TTY stdout are decided in one place. `stella ingest` carries no
 /// `--no-anim` flag of its own, and `false` says exactly that: the flag was not
 /// given.
 fn drawing() -> bool {
-    crate::init_fx::animation_enabled(false)
+    crate::term_policy::animation_enabled(false)
 }
 
 /// The line's text, without the cursor control that positions it.

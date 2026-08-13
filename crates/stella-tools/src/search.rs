@@ -1136,6 +1136,19 @@ pub async fn warm_chunk_vectors(
     embedder: &dyn Embedder,
     limit: usize,
 ) -> ChunkWarmOutcome {
+    warm_chunk_vectors_with_progress(root, embedder, limit, &mut |_| {}).await
+}
+
+/// [`warm_chunk_vectors`] with a progress callback (#3102): `progress`
+/// receives the cumulative embedded-file count as files commit, so a long
+/// pass can be narrated while it happens instead of summarised after.
+/// Display-only — the callback cannot affect the pass.
+pub async fn warm_chunk_vectors_with_progress(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+    progress: &mut dyn FnMut(usize),
+) -> ChunkWarmOutcome {
     let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
         .map_err(|error| format!("cannot prepare the code graph store: {error}"))
         .and_then(|db_path| {
@@ -1151,7 +1164,7 @@ pub async fn warm_chunk_vectors(
             };
         }
     };
-    let outcome = warm_chunks_opened(&graph, embedder, limit).await;
+    let outcome = warm_chunks_opened(&graph, embedder, limit, progress).await;
     graph.shutdown();
     outcome
 }
@@ -1160,6 +1173,7 @@ async fn warm_chunks_opened(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
+    progress: &mut dyn FnMut(usize),
 ) -> ChunkWarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut files_embedded = 0usize;
@@ -1212,6 +1226,7 @@ async fn warm_chunks_opened(
                 };
             }
             files_embedded += 1;
+            progress(files_embedded);
         }
         if !made_progress {
             break;

@@ -433,6 +433,23 @@ pub(crate) fn index_tree(
     root: &Path,
     grammars: &Grammars,
 ) -> Result<IndexStats, GraphError> {
+    index_tree_with_progress(conn, root, grammars, &mut |_| {})
+}
+
+/// [`index_tree`] with a per-file progress callback (#3102). `progress` is
+/// invoked with the running [`IndexStats`] after each file the walk visits,
+/// so a caller can narrate a long pass while it happens — the whole pass runs
+/// inside one transaction, which is why progress has to be reported from
+/// inside this loop rather than observed from outside. The callback sees
+/// monotonically nondecreasing counts and never affects the pass: it is
+/// display-only, and a caller that wants none passes the no-op (that is what
+/// [`index_tree`] does).
+pub(crate) fn index_tree_with_progress(
+    conn: &mut Connection,
+    root: &Path,
+    grammars: &Grammars,
+    progress: &mut dyn FnMut(&IndexStats),
+) -> Result<IndexStats, GraphError> {
     let files = walk_indexable(root);
     let mut stats = IndexStats::default();
     // Manifest layer mapping and the generated-file filter are each loaded
@@ -458,6 +475,7 @@ pub(crate) fn index_tree(
             abs,
             &mut stats,
         )?;
+        progress(&stats);
     }
     stats.files_pruned += prune_missing(&tx, &current)?;
 

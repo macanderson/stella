@@ -164,6 +164,39 @@ fn byte_identical_content_is_never_reparsed() {
     assert_eq!(third.files_parsed, 1);
 }
 
+/// The witness for #3102 finding 1: an index pass can be narrated while it
+/// runs. The whole pass is one transaction, so the only honest source of
+/// per-file progress is the loop inside it — the callback must fire once per
+/// file with the running stats, ending exactly where the returned stats end.
+#[test]
+fn index_progress_fires_per_file_with_running_counts() {
+    let ws = tempdir().unwrap();
+    let dbdir = tempdir().unwrap();
+    let root = canon(&ws);
+    let db = dbdir.path().join("codegraph.db");
+    fs::write(root.join("a.py"), "def a():\n    pass\n").unwrap();
+    fs::write(root.join("b.py"), "def b():\n    pass\n").unwrap();
+    fs::write(root.join("c.py"), "def c():\n    pass\n").unwrap();
+    let grammars = Grammars::load().unwrap();
+    let mut conn = open(&db).unwrap();
+
+    let mut seen: Vec<usize> = Vec::new();
+    let stats = index_tree_with_progress(&mut conn, &root, &grammars, &mut |s| {
+        seen.push(s.files_seen);
+    })
+    .unwrap();
+
+    assert_eq!(
+        seen,
+        vec![1, 2, 3],
+        "one callback per file, counts incrementing as the pass advances"
+    );
+    assert_eq!(
+        stats.files_seen, 3,
+        "the final callback and the returned stats agree"
+    );
+}
+
 #[test]
 fn busiest_file_picks_the_most_connected_file() {
     let ws = tempdir().unwrap();

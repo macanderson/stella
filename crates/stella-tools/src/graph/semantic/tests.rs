@@ -180,6 +180,45 @@ async fn an_eager_pass_embeds_the_corpus_and_no_query() {
     );
 }
 
+/// The witness for #3102 finding 1, embedding half: an eager pass reports
+/// its cumulative count after every batch it commits, so a long pass can be
+/// narrated while it happens. A batch limit of 1 forces one batch per file,
+/// which pins the whole progression rather than a single final number.
+#[tokio::test]
+async fn an_eager_pass_reports_progress_per_batch() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    index_as_init_does(&root);
+    let server = concept_server().await;
+
+    let mut reported: Vec<usize> = Vec::new();
+    let outcome = warm_file_vectors_with_progress(
+        &root,
+        &embedder(&server),
+        MAX_FILES_PER_EAGER_PASS,
+        &mut |embedded| reported.push(embedded),
+    )
+    .await;
+
+    let WarmOutcome::Warmed { embedded, .. } = outcome else {
+        panic!("the pass must warm: {outcome:?}");
+    };
+    assert_eq!(embedded, FIXTURE.len());
+    assert!(
+        !reported.is_empty(),
+        "progress must be reported while the pass runs"
+    );
+    assert!(
+        reported.windows(2).all(|pair| pair[0] < pair[1]),
+        "cumulative counts must increase: {reported:?}"
+    );
+    assert_eq!(
+        reported.last(),
+        Some(&embedded),
+        "the last report and the outcome agree"
+    );
+}
+
 /// A repository past the cap gets a *stated* partial index — the number left
 /// over is what the caller renders, so it can never be silent.
 #[tokio::test]

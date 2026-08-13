@@ -83,7 +83,8 @@ fn index_workspace_graph_blocking_reports_generated_skips_end_to_end() {
     std::fs::write(ws.path().join("app.min.js"), "function refresh(){}\n").unwrap();
     std::fs::write(ws.path().join("main.rs"), "pub fn run() {}\n").unwrap();
 
-    let summary = index_workspace_graph_blocking(ws.path()).expect("index build succeeds");
+    let summary =
+        index_workspace_graph_blocking(ws.path(), &mut |_| {}).expect("index build succeeds");
     assert_eq!(summary.total_files, 1, "the minified file is never indexed");
     assert_eq!(summary.files_skipped_generated, 1);
 
@@ -141,7 +142,8 @@ fn index_workspace_graph_blocking_reports_size_limit_skips_end_to_end() {
     std::fs::write(ws.path().join("huge.js"), &huge).unwrap();
     std::fs::write(ws.path().join("main.rs"), "pub fn run() {}\n").unwrap();
 
-    let summary = index_workspace_graph_blocking(ws.path()).expect("index build succeeds");
+    let summary =
+        index_workspace_graph_blocking(ws.path(), &mut |_| {}).expect("index build succeeds");
     assert_eq!(summary.files_skipped_too_large, 1);
     assert_eq!(summary.total_files, 1, "the oversize file is never indexed");
 

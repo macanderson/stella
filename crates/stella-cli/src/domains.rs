@@ -20,6 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use stella_protocol::{CompletionMessage, CompletionRequest, ModelCallRole, Provider};
 
 /// One inferred domain: a name, a one-line description, and the path
@@ -42,6 +43,16 @@ pub struct Domains {
     /// How this taxonomy was produced: `"model"` or `"heuristic"`.
     #[serde(default)]
     pub inferred_by: String,
+    /// [`repo_shape_fingerprint`] of the [`summarize_repo`] summary the model
+    /// inferred this taxonomy from (#3102). This is what lets a re-run of
+    /// `stella init` skip the inference call when the repo's shape has not
+    /// changed — the same content-hash skip the code-graph indexer uses,
+    /// keyed on exactly the bytes the inference reads. Absent on heuristic
+    /// taxonomies (so a provider-configured re-run always upgrades them) and
+    /// on documents written before the field existed (which therefore
+    /// re-infer once and gain it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
     #[serde(default, rename = "domain")]
     pub domains: Vec<Domain>,
 }
@@ -161,6 +172,40 @@ pub fn summarize_repo(root: &Path) -> String {
     lines.join("\n\n")
 }
 
+/// `sha256:<hex>` of the repo-shape summary the domain inference reads —
+/// the key of the inference-skip gate (#3102). Hashing the summary rather
+/// than the tree is deliberate: the inference is a function of exactly these
+/// bytes, so any tree change that could change its answer changes the
+/// summary, and any change that cannot (a body edited inside an existing
+/// file) does not force a re-derivation of an unchanged answer.
+pub fn repo_shape_fingerprint(summary: &str) -> String {
+    use std::fmt::Write as _;
+    let mut hasher = Sha256::new();
+    hasher.update(summary.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(71);
+    hex.push_str("sha256:");
+    for byte in digest {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// The inference-skip gate (#3102): the existing `.stella/domains.toml`,
+/// **iff** it can be reused without spending a model call — it was
+/// model-inferred and its recorded [`Domains::source_fingerprint`] matches
+/// the fingerprint of the summary the inference would read now. Everything
+/// else returns `None` and re-infers: a heuristic taxonomy (so a run with a
+/// provider upgrades it), a document from before the fingerprint existed, a
+/// mismatched fingerprint (the repo's shape changed), or a missing/broken
+/// file.
+pub fn cached_taxonomy(root: &Path, summary: &str) -> Option<Domains> {
+    let existing = Domains::load(root).ok().flatten()?;
+    (existing.inferred_by == "model"
+        && existing.source_fingerprint.as_deref() == Some(repo_shape_fingerprint(summary).as_str()))
+    .then_some(existing)
+}
+
 /// Infer domains with the worker model; one bounded repair attempt on
 /// unparseable output; heuristic fallback on any failure.
 pub async fn infer_domains(
@@ -224,6 +269,10 @@ pub async fn infer_domains(
                             Domains {
                                 version: 1,
                                 inferred_by: "model".into(),
+                                // Stamped so the next `stella init` over an
+                                // unchanged repo shape reuses this answer
+                                // instead of re-buying it (#3102).
+                                source_fingerprint: Some(repo_shape_fingerprint(&summary)),
                                 domains,
                             },
                             total_cost_usd,
@@ -304,6 +353,9 @@ pub fn heuristic_domains(root: &Path) -> Domains {
     Domains {
         version: 1,
         inferred_by: "heuristic".into(),
+        // Deliberately unfingerprinted: a heuristic taxonomy must never arm
+        // the inference-skip gate, so a later run with a provider upgrades it.
+        source_fingerprint: None,
         domains,
     }
 }
@@ -361,6 +413,7 @@ mod tests {
         let domains = Domains {
             version: 1,
             inferred_by: "model".into(),
+            source_fingerprint: Some("sha256:abc".into()),
             domains: vec![Domain {
                 name: "llm".into(),
                 description: "provider adapters".into(),
@@ -385,6 +438,7 @@ mod tests {
         let domains = Domains {
             version: 1,
             inferred_by: "model".into(),
+            source_fingerprint: None,
             domains: vec![
                 Domain {
                     name: "llm".into(),
@@ -452,6 +506,71 @@ mod tests {
         assert!(summary.contains("src/routes"));
         assert!(summary.contains("Has manifest: Cargo.toml"));
         assert!(summary.contains("My project"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The witness for #3102 finding 3, decision half: the inference-skip
+    /// gate reuses a model-inferred taxonomy exactly when the repo shape it
+    /// was derived from is unchanged — and in no other case.
+    #[test]
+    fn cached_taxonomy_reuses_only_a_model_taxonomy_with_a_matching_fingerprint() {
+        let root = temp_root("cached");
+        std::fs::create_dir_all(root.join("api")).expect("mkdir");
+        let summary = summarize_repo(&root);
+
+        // Absent file → re-infer.
+        assert!(cached_taxonomy(&root, &summary).is_none());
+
+        // Model-inferred with the matching fingerprint → reused.
+        let mut domains = Domains {
+            version: 1,
+            inferred_by: "model".into(),
+            source_fingerprint: Some(repo_shape_fingerprint(&summary)),
+            domains: vec![Domain {
+                name: "api".into(),
+                description: String::new(),
+                paths: vec!["api".into()],
+            }],
+        };
+        domains.save(&root).expect("save");
+        assert_eq!(cached_taxonomy(&root, &summary).as_ref(), Some(&domains));
+
+        // The repo's shape changes → the fingerprint no longer matches.
+        std::fs::create_dir_all(root.join("billing")).expect("mkdir");
+        let changed = summarize_repo(&root);
+        assert!(cached_taxonomy(&root, &changed).is_none());
+
+        // A heuristic taxonomy never arms the gate, fingerprint or not — a
+        // run with a provider must upgrade it.
+        domains.inferred_by = "heuristic".into();
+        domains.source_fingerprint = Some(repo_shape_fingerprint(&changed));
+        domains.save(&root).expect("save");
+        assert!(cached_taxonomy(&root, &changed).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The witness for #3102 finding 3, stamping half: a successful model
+    /// inference records the fingerprint of the summary it read, which is
+    /// what makes the next run's skip possible at all.
+    #[tokio::test]
+    async fn a_model_inference_stamps_the_repo_shape_fingerprint() {
+        let root = temp_root("stamp");
+        std::fs::create_dir_all(root.join("api")).expect("mkdir");
+        let provider = RepairProvider {
+            responses: tokio::sync::Mutex::new(vec![
+                r#"[{"name":"api","description":"routes","paths":["api"]}]"#.into(),
+            ]),
+        };
+
+        let (domains, _cost) = infer_domains(&provider, &root, "paid-domains-model", None).await;
+
+        assert_eq!(domains.inferred_by, "model");
+        assert_eq!(
+            domains.source_fingerprint,
+            Some(repo_shape_fingerprint(&summarize_repo(&root))),
+            "the stamped fingerprint must be the one the skip gate will compare"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
