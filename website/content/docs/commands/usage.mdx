@@ -9,7 +9,7 @@ description: Report, replicate, and prune the cross-project telemetry hub at ~/.
 
 ```bash
 stella usage
-stella usage report [--format <text|json|csv>] [--org <id>]
+stella usage report [--format <text|json|csv>] [--org <id>] [--tools]
 stella usage sync [--all]
 stella usage prune [--older-than <AGE>] [--max-rows <N>] [--gc-deleted] [--force] [--vacuum] [--dry-run]
 ```
@@ -62,12 +62,20 @@ Group every hub row by org, provider, and model, and total it. Rows are ordered 
     Only rows replicated under this org id. Rows written before you registered carry no
     org and are excluded by any `--org` filter.
   </OptionCard>
+  <OptionCard name="--tools">
+    Per-tool reliability instead of per-model spend: cross-project calls, errors, and the
+    derived error rate per `(tool, surface)`, read from the hub's tool rollup. This is the
+    scriptable surface for a tool-reliability ceiling — the same numbers the Observatory
+    leaderboard draws, unwindowed and pipeable. Cannot combine with `--org` (the rollup is
+    project-keyed, and a silently unhonored filter would misreport).
+  </OptionCard>
 </CardGrid>
 
 ```bash
 stella usage
 stella usage report --format json
 stella usage report --org acme --format csv > acme-spend.csv
+stella usage report --tools --format json | jq '.rows[] | select(.error_rate > 0.03)'
 ```
 
 Representative table output (illustrative):

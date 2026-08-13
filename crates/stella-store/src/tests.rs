@@ -495,10 +495,10 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
     assert_eq!(usage.execution_count(&pid).unwrap(), 1);
     assert_eq!(
         usage
-            .tool_totals()
+            .tool_report()
             .unwrap()
             .iter()
-            .map(|(_, c)| *c)
+            .map(|r| r.calls)
             .sum::<i64>(),
         2,
         "grep + read_file folded into the cross-project histogram"
