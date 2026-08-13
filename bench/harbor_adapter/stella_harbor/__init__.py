@@ -75,6 +75,7 @@ from .credential_bundle import (
     HOST_CREDENTIAL_SOURCE,
     PROVIDER_CREDENTIAL_SPECS,
     SelectedProviderCredentials,
+    optional_embedding_credentials,
     read_bundle_from_environment,
     select_route_credentials,
 )
@@ -1067,10 +1068,12 @@ class StellaAgent(BaseInstalledAgent):
             self._container_credential_absence_verified = True
         else:
             self._container_credential_absence_verified = False
+        # A second, independent route, appended after the provider's own (#2995).
+        embedding = optional_embedding_credentials(self._configured_value)
         env[_HANDOFF_FD_ENV] = "0"
         # One name per value, in the order the values are written to the pipe.
         # Stella pairs them positionally, so this ordering is the contract.
-        env[_HANDOFF_TARGET_ENV] = ",".join(selected.credentials)
+        env[_HANDOFF_TARGET_ENV] = ",".join((*selected.credentials, *embedding))
         # Routing rides as ordinary registered container environment: a region
         # is disclosed in the manifest, not a secret to keep out of `/proc`.
         env.update(selected.routing)
@@ -1086,7 +1089,7 @@ class StellaAgent(BaseInstalledAgent):
             environment,
             command=command,
             env=env,
-            credentials=tuple(selected.credentials.values()),
+            credentials=(*selected.credentials.values(), *embedding.values()),
             verifier=verifier,
             expected_posture_json=self._engine_posture_json,
             posture_builder=self._build_engine_posture,
@@ -1576,6 +1579,10 @@ class StellaAgent(BaseInstalledAgent):
             len(host_credential_name.split(",")) if host_credential_name else 0
         )
         provider_routing = getattr(self, "_provider_routing", None) or None
+        # Recomputed rather than stored: pure given `_configured_value` (#2995).
+        embedding_credential_names = sorted(
+            optional_embedding_credentials(self._configured_value)
+        )
         container_credential_absence_verified = getattr(
             self, "_container_credential_absence_verified", False
         )
@@ -1663,6 +1670,7 @@ class StellaAgent(BaseInstalledAgent):
             # scrubbed: a Bedrock number nobody can attribute to a region is a
             # number nobody can reproduce.
             "stella_provider_routing": provider_routing,
+            "stella_embedding_credential_names": embedding_credential_names,
             "stella_container_credential_absence_verified": (
                 container_credential_absence_verified
             ),

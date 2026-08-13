@@ -83,6 +83,21 @@ PROVIDER_ROUTING_NAMES = frozenset({"AWS_REGION"})
 
 HOST_ONLY_CONTROL_CREDENTIAL_NAMES = frozenset({"OPENROUTER_MANAGEMENT_API_KEY"})
 
+# The semantic-search embedding backend's credential (#2995). A second route,
+# independent of the model provider above: `stella-embed`'s HTTP embedder
+# (`EmbedderEnv::from_process` in crates/stella-embed/src/http.rs) reads it
+# ambiently regardless of which model provider is selected, so modelling it as
+# a per-provider credential — the way `PROVIDER_CREDENTIAL_NAMES` models model
+# auth — would make it unreachable for every arm that does not happen to route
+# its model through the same vendor. Forwarded on the same anonymous-stdin
+# handoff as the provider credential (the wire format was built to generalize
+# to more than one line; see `credential_handoff.rs`'s module doc), one
+# additional optional line appended after the provider's own. Optional and
+# fails open: an arm with none configured still runs, and `search`'s semantic
+# rung degrades to a labelled lexical answer rather than silently claiming to
+# rank by meaning.
+EMBEDDING_CREDENTIAL_NAMES = frozenset({"VOYAGE_API_KEY"})
+
 
 @dataclass(frozen=True)
 class ProviderCredentialSpec:
@@ -211,9 +226,32 @@ def provider_credentials_from_environment(
     return credentials
 
 
+def optional_embedding_credentials(
+    lookup: Callable[[str], str | None],
+) -> dict[str, str]:
+    """Resolve the embedding backend's credential, independent of model route.
+
+    ``lookup`` matches `select_route_credentials`'s parameter so a caller with
+    Harbor per-run overrides (`StellaAgent._configured_value`) resolves this
+    exactly as it resolves the model provider's own credential. Unlike
+    `provider_credentials_from_environment`, an empty result is not a
+    misconfiguration — see `EMBEDDING_CREDENTIAL_NAMES`.
+    """
+    credentials: dict[str, str] = {}
+    for name in sorted(EMBEDDING_CREDENTIAL_NAMES):
+        value = lookup(name)
+        if value:
+            credentials[name] = value
+    return credentials
+
+
 def credential_values_from_environment(environ: Mapping[str, str]) -> tuple[str, ...]:
-    """Collect every provider or host-only control secret for byte scrubbing."""
-    names = PROVIDER_CREDENTIAL_NAMES | HOST_ONLY_CONTROL_CREDENTIAL_NAMES
+    """Collect every provider, embedding, or host-only control secret for scrubbing."""
+    names = (
+        PROVIDER_CREDENTIAL_NAMES
+        | EMBEDDING_CREDENTIAL_NAMES
+        | HOST_ONLY_CONTROL_CREDENTIAL_NAMES
+    )
     return tuple(value for name in sorted(names) if (value := environ.get(name)))
 
 
