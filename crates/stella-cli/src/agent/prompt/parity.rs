@@ -473,6 +473,64 @@ fn both_prompts_batch_independent_tool_calls() {
     }
 }
 
+/// Witness for the ordering gap (#3173): the batching rule taught WHAT to put
+/// in one response and nothing about the order, and order is the one scheduler
+/// lever the model holds. `Engine::execute_tool_calls`
+/// (`stella-core/src/driver/dispatch.rs`) parallelizes only runs of
+/// consecutive read-only calls — every mutating call is its own barrier, in
+/// call order — and `stella-core/src/speculation.rs` starts only the
+/// all-read-only *prefix* of a step's calls while the response is still
+/// streaming: the first mutating call permanently ends the early-start window.
+/// So `read, read, read, edit` and `read, edit, read, read` are the same work
+/// to the model and materially different wall clock to the engine, and until
+/// this clause neither prompt said so — `rg -c "reads first"` over the shared
+/// literal returned 0.
+///
+/// The qualifier halves are pinned for the reason the dependency test above
+/// is: without "changes speed, never meaning" the rule invites reordering as
+/// if it changed semantics (or fearing mutations mid-response, which stay
+/// correct — sequential semantics are preserved by construction), and without
+/// the closing deferral to the dependency rule, reads-first reads as license
+/// to batch a read whose input a mutation in the same response produces.
+///
+/// Phrased by property (read-only), never by tool name, because the registry
+/// varies by assembly and the shared literal must stay honest in all of them —
+/// the same constraint `skill_use!` documents for `skill_search`.
+#[test]
+fn both_prompts_teach_reads_first_ordering() {
+    let shared = tool_steering!();
+    for claim in [
+        // The mechanism, both halves: concurrency is a read-only property...
+        "consecutive read-only calls concurrently",
+        // ...and the early start exists and is worth chasing.
+        "while the response is still streaming",
+        // Mutations stay sequential — the fact that makes ordering safe.
+        "runs alone, in call order",
+        // The fence, stated exactly: early start ends; later reads still group.
+        "no call after it starts early",
+        // The rule itself.
+        "put reads first and mutations last",
+        // Qualifier one: ordering is a speed lever, never a semantic one.
+        "This changes speed, never meaning",
+        // Qualifier two: the dependency test still governs membership.
+        "the dependency rule above still decides",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the ordering claim {claim:?} — dropping \
+             the mechanism leaves a cargo-cult rule, and dropping either qualifier \
+             leaves one that reorders dependent work or fears correct mutations \
+             (#3173)"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
 /// Witness for the shell-routing gap: Stella reached for `bash` when it held a
 /// purpose-built tool, and neither prompt said not to.
 ///
