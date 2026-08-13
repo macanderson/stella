@@ -182,12 +182,10 @@ fn assemble_system_prompt_bakes_a_byte_stable_orientation_map() {
 /// The #336 wave-1 steering-parity witness, re-derived for the five-tool
 /// surface: `search` must be advertised FIRST in BOTH static base personas —
 /// a tool the prompt never mentions loses to shell grep no matter how good
-/// it is, which is exactly what the h2h891 bench measured (1 search call in
-/// 10 trials against a prompt that never named it).
-///
-/// `read_symbol`'s offset-guessing line left with the tool (five-tool
-/// surface); the successor steering — search before any lexical guess — is
-/// the line that must not silently vanish.
+/// it is (h2h891 measured 1 search call in 10 trials against a prompt that
+/// never named it). `read_symbol`'s offset-guessing line left with the tool;
+/// the successor steering — search before any lexical guess — is the line
+/// that must not silently vanish.
 #[test]
 fn both_static_prompts_carry_a_search_first_steering_line() {
     for (name, prompt) in [
