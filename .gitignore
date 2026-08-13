@@ -194,6 +194,8 @@ docs/brand/__pycache__/
 # while the bundle actually sat one directory deeper, so it matched nothing and
 # a rig key reached a public remote. Match the directory wherever it lands.
 stella-bench-handoff/
+# results from aws hosted bench runs get dropped here
+arenabench/arenabench-cloud/
 
 # Private key material, anywhere in the tree. scripts/check-no-secrets.sh
 # enforces the same rule against what is already tracked, since .gitignore has
