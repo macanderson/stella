@@ -44,7 +44,7 @@ const MAX_PATH_CANDIDATES: usize = 5;
 /// The language families the index recognizes, named in the not-indexed miss
 /// so the agent learns the boundary once instead of re-probing it.
 const INDEXED_LANGUAGES: &str =
-    "rust, python, javascript, typescript, tsx, go, java, c, php, sql, prisma";
+    "rust, python, javascript, typescript, tsx, go, java, c, php, sql, markdown, prisma";
 
 // ---------------------------------------------------------------------------
 // Answer classification (#896)
@@ -552,9 +552,11 @@ fn out_of_root_answer(root: &Path, target: &str) -> Option<String> {
 }
 
 /// Distinguish "the code graph does not index this kind of file" from "indexed,
-/// no edges". A `.md`/`.toml`/`.yaml` target is a permanent non-answer; sending
+/// no edges". A `.cfg`/`.toml`/`.yaml` target is a permanent non-answer; sending
 /// the agent to `stella init` for it is the miss that teaches the tool is
-/// unreliable.
+/// unreliable. `.md` was such a target until markdown became an indexed
+/// language — the boundary is read from [`stella_graph::Language::from_path`]
+/// rather than restated here, so it moves whenever the indexer's does.
 fn unindexed_language_answer(root: &Path, target: &str) -> Option<String> {
     let full = crate::resolve_within_root(root, target)?;
     if !full.is_file() {
@@ -987,6 +989,13 @@ mod tests {
         )
         .expect("write source");
         std::fs::write(root.join("packages/core/README.md"), "# core\n").expect("write doc");
+        // A file type nothing in this workspace indexes, for the tests that
+        // need one. It used to be the README, and markdown became an indexed
+        // language (#3089) — so the fixture, not the property, was what went
+        // stale. `.cfg` has no `Language` arm and no storage adapter claims
+        // it, which is what makes it a *permanent* non-answer rather than a
+        // stale index.
+        std::fs::write(root.join("packages/core/app.cfg"), "key = value\n").expect("write cfg");
         // The sibling checkout: real source, real files, and permanently
         // outside the indexed root.
         std::fs::create_dir_all(outer.path().join("sibling/src")).expect("mkdir");
@@ -1129,10 +1138,43 @@ mod tests {
     fn an_unindexed_file_type_is_named_rather_than_sent_to_stella_init() {
         let outer = monorepo_workspace();
         let root = outer.path().join("api");
-        let content = ok_content(run_query(&root, "neighbors", "packages/core/README.md"));
+        let content = ok_content(run_query(&root, "neighbors", "packages/core/app.cfg"));
         assert!(content.contains(NOT_INDEXED_MARKER), "{content}");
         assert!(!content.contains("index may be stale"), "{content}");
         assert_eq!(classify_answer(&content), GraphAnswer::NotIndexed);
+    }
+
+    /// The other side of that boundary, asserted rather than assumed: markdown
+    /// is indexed, so a `.md` target must NOT come back as a permanent
+    /// non-answer. `unindexed_language_answer` reads the boundary from
+    /// `Language::from_path`, and this is what fails if the two disagree —
+    /// the fixture change alone leaves that direction uncovered.
+    #[test]
+    fn an_indexed_markdown_file_is_not_reported_as_an_unindexed_file_type() {
+        let outer = monorepo_workspace();
+        let root = outer.path().join("api");
+        let content = ok_content(run_query(&root, "neighbors", "packages/core/README.md"));
+        assert!(
+            !content.contains(NOT_INDEXED_MARKER),
+            "markdown is an indexed language: {content}"
+        );
+        assert_ne!(classify_answer(&content), GraphAnswer::NotIndexed);
+    }
+
+    /// The not-indexed miss prints `INDEXED_LANGUAGES` so the agent learns the
+    /// boundary once instead of re-probing it — which only helps if the list is
+    /// the real one. It is hand-written and had already fallen a language
+    /// behind, telling the agent that `AGENTS.md`, `CLAUDE.md` and every crate
+    /// README were outside the index while the tool was in fact resolving them.
+    #[test]
+    fn the_named_language_list_matches_what_the_indexer_accepts() {
+        for lang in stella_graph::Language::compiled_in() {
+            assert!(
+                INDEXED_LANGUAGES.contains(lang.tag()),
+                "`{}` is indexed but absent from INDEXED_LANGUAGES: {INDEXED_LANGUAGES}",
+                lang.tag()
+            );
+        }
     }
 
     /// The metric and the prose share one set of literals — this walks every
@@ -1149,10 +1191,12 @@ mod tests {
             ("definitions", "core_util", GraphAnswer::Resolved),
             // Out of root: a sibling checkout.
             ("imports", "../sibling/src/lib.rs", GraphAnswer::OutOfRoot),
-            // Not indexed: a markdown file that really is in the workspace.
+            // Not indexed: a file that really is in the workspace and that
+            // no language or storage adapter claims. Markdown used to serve
+            // here and is an indexed language since #3089.
             (
                 "neighbors",
-                "packages/core/README.md",
+                "packages/core/app.cfg",
                 GraphAnswer::NotIndexed,
             ),
             // Unresolved, ambiguous spelling.

@@ -775,6 +775,77 @@ html[data-home-nav="hidden"] #nd-nav {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Command Deck explorer — a clickable reproduction of the deck's tab strip.
+ * Same ink-terminal treatment as `.term` above; the tab strip is the only
+ * new chrome. There is no timer and nothing animates on its own — a click
+ * swaps the pane instantly — so there is no reduced-motion case to design
+ * around.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.dke {
+  font-family: var(--font-mono);
+  border: 1px solid #232327;
+  border-radius: 0.5rem;
+  background: var(--stella-ink);
+  color: var(--stella-paper);
+  overflow: hidden;
+  box-shadow: var(--stella-shadow-card);
+  margin: 1.5rem 0;
+}
+
+.dke-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem;
+  padding: 0.6rem 0.6rem 0;
+  border-bottom: 1px solid #232327;
+}
+
+.dke-tab {
+  font-family: inherit;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.08em;
+  color: #9b9890; /* muted on ink, regardless of page theme */
+  background: none;
+  border: none;
+  border-radius: 0.35rem 0.35rem 0 0;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+}
+
+.dke-tab:hover {
+  color: var(--stella-paper);
+}
+
+.dke-tab[data-active="true"] {
+  background: #1e1806;
+  color: var(--stella-gold);
+}
+
+.dke-tab:focus-visible {
+  outline: 2px solid var(--stella-gold);
+  outline-offset: -2px;
+}
+
+.dke-pane {
+  padding: 0.9rem 1rem 1.1rem;
+}
+
+.dke-blurb {
+  margin: 0 0 0.75rem;
+  font-size: var(--stella-type-sm);
+  color: #9b9890;
+}
+
+.dke-lines {
+  margin: 0;
+  font-size: var(--stella-type-sm);
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Install block — the one-liner you copy.
  *
  * A real surface, not a sticker: hovering lifts it on a spring (Motion-

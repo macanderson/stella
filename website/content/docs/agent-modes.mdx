@@ -71,9 +71,23 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
 
 ## Interactive: the Command Deck
 
-Running `stella` with no subcommand opens the **Command Deck** — a tabbed
-terminal UI over the same engine. Type to send a prompt; slash commands open
-tabs and overlays:
+Running `stella` with no subcommand opens the **Command Deck** — not a
+generic TUI in the `htop`/`vim` sense, but stella's own tabbed workspace over
+the same engine that drives every other mode on this page. One surface, nine
+tabs, and every tab is a live view over the same session: what a sub-agent is
+doing right now, the code graph, the files this turn touched, your MCP
+servers. Type to send a prompt; slash commands open tabs and overlays.
+
+Click a tab below to see what's actually in it. This isn't an embedded
+terminal or a recording — each pane is trimmed straight from the deck's own
+golden render tests (`crates/stella-tui/tests/snapshots/deck/`), the fixtures
+that gate every pull request touching the TUI, so what you're clicking
+through is the deck's real output, not a redrawn approximation of it.
+
+<CommandDeckExplorer />
+
+The full slash-command set — including `/inspect` and `/context` — is on
+[`stella chat`](/docs/commands/chat); here's what each tab opens:
 
 <CardGrid size="sm">
   <OptionCard name="/help">Show help.</OptionCard>
@@ -96,9 +110,6 @@ tabs and overlays:
   </OptionCard>
   <OptionCard name="/clear">Reset the conversation.</OptionCard>
 </CardGrid>
-
-The full deck command set — including `/inspect` and `/context` — is on
-[`stella chat`](/docs/commands/chat).
 
 **⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
 runs — you never wait for the agent to finish before typing the next thing

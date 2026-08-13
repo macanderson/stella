@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .proof import flip_outcome
+from .toolclass import class_label, classify
 from .toolout import (
     cap_middle,
     decode_tool_output,
@@ -414,7 +415,20 @@ class TranscriptReader:
     appends.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        tool_result_budget: int = TOOL_RESULT_BUDGET,
+        tool_input_budget: int = TOOL_INPUT_BUDGET,
+    ) -> None:
+        #: `cap_middle` treats a non-positive budget as "no cap" — so a caller
+        #: reading a *finished* trial for the "load full transcript" button
+        #: (`ArenaServer.full_transcript`) passes `0` here instead of the SSE
+        #: endpoint's generous-but-still-finite defaults, and gets every byte
+        #: the trial actually wrote rather than the wire-cost compromise a live
+        #: stream has to make.
+        self._tool_result_budget = tool_result_budget
+        self._tool_input_budget = tool_input_budget
         self._states: dict[Path, TranscriptState] = {}
         #: Accumulated bodies for open streaming entries, keyed by
         #: ``(path, seq)``. Per-instance: a class-level dict would be shared by
@@ -593,6 +607,14 @@ class TranscriptReader:
             # the whole object rides as `meta.raw` for the expanded view, so
             # nothing is lost by summarizing here.
             arguments = call.get("input", call.get("arguments"))
+            # The call's CLASS (`crate::tool_class` in the deck, ported at
+            # `arenabench.toolclass`) — a read, a write, a shell, a test, a
+            # push, a hand-off. The page paints the name in this class's hue
+            # rather than the arena's flat accent, the same categorical
+            # colour the deck uses and for the same reason: the class is the
+            # first question a reader asks of any row, and it should answer
+            # from the margin before a single name is read.
+            cls = classify(name)
             return [
                 entry(
                     seq,
@@ -601,11 +623,13 @@ class TranscriptReader:
                     format_tool_input(name, arguments),
                     call_id=call_id,
                     state="running",
+                    tool_class=cls,
+                    tool_class_label=class_label(cls),
                     raw=cap_middle(
                         json.dumps(arguments, indent=2, ensure_ascii=False)
                         if isinstance(arguments, (dict, list))
                         else "",
-                        TOOL_INPUT_BUDGET,
+                        self._tool_input_budget,
                     ),
                 )
             ]
@@ -617,12 +641,14 @@ class TranscriptReader:
             # every failed call rendered as a success, in the success colour,
             # with the failure message presented as ordinary output.
             decoded = decode_tool_output(event.get("output", event.get("result")))
-            body = cap_middle(strip_ansi(decoded.text), TOOL_RESULT_BUDGET)
+            body = cap_middle(strip_ansi(decoded.text), self._tool_result_budget)
+            name = state.tool_names.get(call_id, "tool")
+            cls = classify(name)
             return [
                 entry(
                     self._next_seq(state),
                     "tool_result",
-                    state.tool_names.get(call_id, "tool"),
+                    name,
                     body,
                     call_id=call_id,
                     error=not decoded.ok,
@@ -630,6 +656,8 @@ class TranscriptReader:
                     duration_ms=event.get("duration_ms"),
                     speculated=bool(event.get("speculated")),
                     lines=body.count("\n") + 1 if body else 0,
+                    tool_class=cls,
+                    tool_class_label=class_label(cls),
                 )
             ]
 

@@ -78,7 +78,7 @@ pub(crate) const BREADCRUMB_SEPARATOR: &str = " › ";
 /// Pure: no I/O, no clock, no environment. Setext headings (`===`/`---`
 /// underlines) are **not** recognised — `---` is also a thematic break and
 /// also YAML frontmatter's delimiter, and guessing between them wrong would
-/// invent sections rather than miss them (#TBD-setext).
+/// invent sections rather than miss them (#3103).
 pub(crate) fn sections(source: &str) -> Vec<Symbol> {
     let mut out: Vec<Symbol> = Vec::new();
     // One entry per open heading level, so the breadcrumb of the next heading
