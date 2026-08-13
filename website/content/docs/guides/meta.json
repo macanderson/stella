@@ -4,7 +4,7 @@
     "fix-failing-ci",
     "parallel-fixes",
     "unfamiliar-codebase",
-    "budget",
+    "spend-limit",
     "what-a-run-cost",
     "embed-the-engine",
     "ci-engine-gate",
