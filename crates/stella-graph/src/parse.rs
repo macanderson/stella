@@ -195,7 +195,7 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
         Language::Sql => Vec::new(), // SQL has no imports
         // Unreachable: markdown returned above, before the pack lookup. A
         // link between documents IS an import edge and would be worth
-        // extracting, but it is a separate change (#TBD-md-links).
+        // extracting, but it is a separate change (#3103).
         Language::Markdown => Vec::new(),
         Language::Go => extract_go_imports(&pack.imports, root, src),
         Language::Java => extract_java_imports(&pack.imports, root, src),

@@ -987,6 +987,13 @@ mod tests {
         )
         .expect("write source");
         std::fs::write(root.join("packages/core/README.md"), "# core\n").expect("write doc");
+        // A file type nothing in this workspace indexes, for the tests that
+        // need one. It used to be the README, and markdown became an indexed
+        // language (#3089) — so the fixture, not the property, was what went
+        // stale. `.cfg` has no `Language` arm and no storage adapter claims
+        // it, which is what makes it a *permanent* non-answer rather than a
+        // stale index.
+        std::fs::write(root.join("packages/core/app.cfg"), "key = value\n").expect("write cfg");
         // The sibling checkout: real source, real files, and permanently
         // outside the indexed root.
         std::fs::create_dir_all(outer.path().join("sibling/src")).expect("mkdir");
@@ -1129,7 +1136,7 @@ mod tests {
     fn an_unindexed_file_type_is_named_rather_than_sent_to_stella_init() {
         let outer = monorepo_workspace();
         let root = outer.path().join("api");
-        let content = ok_content(run_query(&root, "neighbors", "packages/core/README.md"));
+        let content = ok_content(run_query(&root, "neighbors", "packages/core/app.cfg"));
         assert!(content.contains(NOT_INDEXED_MARKER), "{content}");
         assert!(!content.contains("index may be stale"), "{content}");
         assert_eq!(classify_answer(&content), GraphAnswer::NotIndexed);
@@ -1149,10 +1156,12 @@ mod tests {
             ("definitions", "core_util", GraphAnswer::Resolved),
             // Out of root: a sibling checkout.
             ("imports", "../sibling/src/lib.rs", GraphAnswer::OutOfRoot),
-            // Not indexed: a markdown file that really is in the workspace.
+            // Not indexed: a file that really is in the workspace and that
+            // no language or storage adapter claims. Markdown used to serve
+            // here and is an indexed language since #3089.
             (
                 "neighbors",
-                "packages/core/README.md",
+                "packages/core/app.cfg",
                 GraphAnswer::NotIndexed,
             ),
             // Unresolved, ambiguous spelling.
