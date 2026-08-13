@@ -121,6 +121,23 @@ async fn warm_semantic_index(
         &outcome,
         &embedder.fingerprint().model_id,
     ));
+
+    // The sharper rung `search` ranks first (#3098): a file-level vector
+    // exists but a query naming one function in a large multi-purpose file
+    // loses to a file that happens to have complete per-symbol coverage,
+    // regardless of which is the true answer. Same reasoning as the pass
+    // above, one layer down.
+    emit("◈ embedding code chunks for search…".to_string());
+    let chunk_outcome = stella_tools::search::warm_chunk_vectors(
+        workspace_root,
+        embedder.as_ref(),
+        stella_tools::search::MAX_FILES_PER_CHUNK_EAGER_PASS,
+    )
+    .await;
+    emit(format_chunk_warm_outcome(
+        &chunk_outcome,
+        &embedder.fingerprint().model_id,
+    ));
 }
 
 /// The one-line report of an eager embedding pass.
@@ -165,6 +182,46 @@ fn format_warm_outcome(
         WarmOutcome::Failed { embedded, reason } => format!(
             "! semantic index: stopped after {embedded} files — {reason} (the rest embed on \
              demand)"
+        ),
+    }
+}
+
+/// The one-line report of an eager chunk-embedding pass. Same shape and the
+/// same reasoning as [`format_warm_outcome`], one rung sharper.
+fn format_chunk_warm_outcome(
+    outcome: &stella_tools::search::ChunkWarmOutcome,
+    model: &str,
+) -> String {
+    use stella_tools::search::ChunkWarmOutcome;
+    match outcome {
+        ChunkWarmOutcome::Warmed {
+            files_embedded,
+            files_remaining: 0,
+            ..
+        } => format!("✓ chunk index: {files_embedded} file(s) embedded by {model}"),
+        ChunkWarmOutcome::Warmed {
+            files_embedded,
+            files_remaining,
+            unreadable,
+        } if *unreadable > 0 => format!(
+            "! chunk index: {files_embedded} file(s) embedded by {model} — {files_remaining} \
+             left unembedded, {unreadable} of them because their content could not be read (the \
+             next `stella init` drops files that have moved or vanished)"
+        ),
+        ChunkWarmOutcome::Warmed {
+            files_embedded,
+            files_remaining,
+            ..
+        } => format!(
+            "✓ chunk index: {files_embedded} file(s) embedded by {model} — {files_remaining} \
+             left unembedded (they embed on demand as searches reach them)"
+        ),
+        ChunkWarmOutcome::Failed {
+            files_embedded,
+            reason,
+        } => format!(
+            "! chunk index: stopped after {files_embedded} file(s) — {reason} (the rest embed \
+             on demand)"
         ),
     }
 }

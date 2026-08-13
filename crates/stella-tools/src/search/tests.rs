@@ -19,7 +19,9 @@ use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, Similar
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 
-use super::{Hit, Search, SearchConfig, Strategy, dispatch, render};
+use super::{
+    ChunkWarmOutcome, Hit, Search, SearchConfig, Strategy, dispatch, render, warm_chunk_vectors,
+};
 use crate::registry::Tool;
 
 /// The question the witness asks. Every word of it is checked against the
@@ -181,6 +183,25 @@ fn indexed_fixture(workspace: &Path) -> (std::path::PathBuf, CodeGraph) {
     let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
     graph.index_all().expect("index");
     (root, graph)
+}
+
+/// Same fixture, indexed at the real `.stella/private/codegraph.db` path
+/// [`crate::graph::open_or_build`] resolves — what `warm_chunk_vectors` and
+/// every production caller actually open, unlike [`indexed_fixture`]'s
+/// `<root>/codegraph.db`, which only the tests calling `dispatch`/`render`
+/// directly ever touch. Closes the graph before returning so the caller's own
+/// connection (opened fresh, matching `stella init`'s real sequencing) is not
+/// racing an already-open one.
+fn write_fixture_at_the_real_workspace_path(workspace: &Path) -> std::path::PathBuf {
+    for (path, body) in FIXTURE {
+        let file = workspace.join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.canonicalize().expect("canonicalize");
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    opened.graph.shutdown();
+    root
 }
 
 fn content_of(output: &ToolOutput) -> String {
@@ -593,4 +614,120 @@ fn the_rendered_hit_count_matches_the_allocation() {
     assert_eq!(shown, allocation.granted.len());
     assert_eq!(allocation.omitted, hits.len() - shown);
     assert!(facets_at(config.depth).len() >= 3);
+}
+
+/// The witness for the eager `stella init` chunk pass (#3098): a fixture
+/// wider than one lazy per-query window (`MAX_FILES_PER_CHUNK_PASS`, 64)
+/// would take several `search` calls to fully cover — this proves one
+/// `warm_chunk_vectors` call finishes it, so `search` can rank by meaning on
+/// its very first invocation rather than the ~25th on a repository this
+/// crate's own size.
+#[tokio::test]
+async fn one_eager_pass_embeds_every_pending_chunk_no_matter_how_many_files() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    let ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        unreadable,
+    } = outcome
+    else {
+        panic!("expected Warmed, got {outcome:?}");
+    };
+    assert_eq!(
+        files_embedded,
+        FIXTURE.len(),
+        "every fixture file has symbols to chunk"
+    );
+    assert_eq!(files_remaining, 0, "nothing left pending after one pass");
+    assert_eq!(unreadable, 0);
+
+    // Idempotent: a second pass over an already-warm index embeds nothing new.
+    let again = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert_eq!(
+        again,
+        ChunkWarmOutcome::Warmed {
+            files_embedded: 0,
+            files_remaining: 0,
+            unreadable: 0,
+        },
+        "re-running against a fully warm index must be a no-op, not a re-embed"
+    );
+}
+
+/// A capped pass says honestly what it left behind, rather than reporting
+/// success over a partial index — the same discipline
+/// `crate::graph::semantic::WarmOutcome` holds for whole-file vectors.
+#[tokio::test]
+async fn a_capped_pass_reports_what_it_left_pending() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    // FIXTURE has 4 files; cap the pass at fewer files than that.
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 2).await;
+    let ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        ..
+    } = outcome
+    else {
+        panic!("expected Warmed, got {outcome:?}");
+    };
+    assert_eq!(files_embedded, 2, "the pass must stop exactly at its cap");
+    assert!(
+        files_remaining > 0,
+        "a capped pass over a wider fixture must say something is still pending"
+    );
+}
+
+/// #3128: two symbols that render byte-identical text collapse to one stored
+/// row, so the pending-files pre-filter's raw symbol-count-vs-stored-count
+/// comparison can never reach equality for that file — without the "no
+/// progress" early exit, `warm_chunk_vectors` would re-select and re-stamp it
+/// on every round until its cap, never returning promptly even once every
+/// real symbol is embedded. This is the witness for that early exit.
+#[tokio::test]
+async fn a_file_whose_symbols_collide_on_rendered_text_does_not_spin_the_pass() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = {
+        let file = workspace.path().join("src/dupes.rs");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        // Two distinct symbols, same name, same kind, byte-identical body —
+        // ordinary trait-stub-across-fixtures shape, not a contrived one.
+        fs::write(
+            &file,
+            "mod a {\n    pub fn execute() { todo!() }\n}\n\
+             mod b {\n    pub fn execute() { todo!() }\n}\n",
+        )
+        .expect("write");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+        opened.graph.shutdown();
+        root
+    };
+
+    // First pass: real embedding work happens (however few distinct chunks
+    // there are), and the pass must still terminate rather than hang.
+    let outcome = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert!(
+        matches!(outcome, ChunkWarmOutcome::Warmed { .. }),
+        "expected Warmed, got {outcome:?}"
+    );
+
+    // Second pass over the now-embedded fixture: with the collision, the
+    // pre-filter still selects `src/dupes.rs` (symbol count 2 > stored rows
+    // 1), so without the early exit this would spend its entire `limit`
+    // re-visiting it. It must instead return quickly, having made no further
+    // progress, and must not report a growing `files_embedded` each time.
+    let again = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    let ChunkWarmOutcome::Warmed { files_embedded, .. } = again else {
+        panic!("expected Warmed, got {again:?}");
+    };
+    assert!(
+        files_embedded <= stella_graph::MAX_FILES_PER_CHUNK_PASS,
+        "a fully-covered fixture must stop after at most one window, not spin \
+         toward the cap: files_embedded={files_embedded}"
+    );
 }

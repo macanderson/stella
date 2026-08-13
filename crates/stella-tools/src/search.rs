@@ -636,46 +636,224 @@ async fn catch_up_chunk_embeddings(
         .map_err(|error| format!("the code graph could not be read: {error}"))?;
 
     for file in &scan.files {
-        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
-        let needed: Vec<(usize, &str)> = file
-            .chunks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
-            .collect();
-
-        for batch in needed.chunks(EMBED_BATCH) {
-            let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
-            let embeddings = embedder
-                .embed(&texts)
-                .await
-                .map_err(|error| format!("the embedder failed: {error}"))?;
-            for ((index, _), embedding) in batch.iter().zip(embeddings) {
-                vectors[*index] = Some(embedding.vector);
-            }
-        }
-
-        let rows: Vec<stella_graph::ChunkVector> = file
-            .chunks
-            .iter()
-            .zip(vectors)
-            .map(|(chunk, vector)| stella_graph::ChunkVector {
-                chunk_sha256: chunk.chunk_sha256.clone(),
-                name: chunk.name.clone(),
-                kind: chunk.kind.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                vector,
-            })
-            .collect();
-        graph
-            .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
-            // Not recoverable by continuing: the next file would be written
-            // into the same broken store and the pass would report success
-            // having stored nothing.
-            .map_err(|error| format!("the chunk index could not be written: {error}"))?;
+        embed_and_store_chunk_file(graph, embedder, fingerprint, file).await?;
     }
     Ok(())
+}
+
+/// Embed one file's pending chunks and store them — the single place a chunk
+/// vector comes into existence, shared by the lazy per-query catch-up above
+/// and the eager `stella init` pass below, so there is one render, one table
+/// and one fingerprint discipline (mirrors `embed_batch` in
+/// `crate::graph::semantic` for whole-file vectors).
+async fn embed_and_store_chunk_file(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    fingerprint: &str,
+    file: &stella_graph::PendingChunkFile,
+) -> Result<(), String> {
+    let mut vectors: Vec<Option<Vec<f32>>> = vec![None; file.chunks.len()];
+    let needed: Vec<(usize, &str)> = file
+        .chunks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, chunk)| chunk.text.as_deref().map(|text| (index, text)))
+        .collect();
+
+    for batch in needed.chunks(EMBED_BATCH) {
+        let texts: Vec<String> = batch.iter().map(|(_, text)| (*text).to_string()).collect();
+        let embeddings = embedder
+            .embed(&texts)
+            .await
+            .map_err(|error| format!("the embedder failed: {error}"))?;
+        for ((index, _), embedding) in batch.iter().zip(embeddings) {
+            vectors[*index] = Some(embedding.vector);
+        }
+    }
+
+    let rows: Vec<stella_graph::ChunkVector> = file
+        .chunks
+        .iter()
+        .zip(vectors)
+        .map(|(chunk, vector)| stella_graph::ChunkVector {
+            chunk_sha256: chunk.chunk_sha256.clone(),
+            name: chunk.name.clone(),
+            kind: chunk.kind.clone(),
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            vector,
+        })
+        .collect();
+    graph
+        .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
+        // Not recoverable by continuing: the next file would be written
+        // into the same broken store and the pass would report success
+        // having stored nothing.
+        .map_err(|error| format!("the chunk index could not be written: {error}"))
+        .map(|_| ())
+}
+
+/// The most files one eager (`stella init`) chunk-embedding pass will
+/// process. Matches `crate::graph::semantic::MAX_FILES_PER_EAGER_PASS`'s cap
+/// and its reasoning: this pass runs before any turn starts, so its budget is
+/// the user's money and patience rather than a round trip, and a workspace
+/// larger than this gets a **stated** partial index rather than a silent one.
+pub const MAX_FILES_PER_CHUNK_EAGER_PASS: usize = 2_000;
+
+/// What an eager chunk-embedding pass did, as data the caller renders. Total
+/// by construction and never a `Result` — `stella init` must succeed with no
+/// embedder, a broken embedder, and a workspace too big to finish in one
+/// pass, and telling those apart is something a human reads, not something a
+/// caller branches on (same contract as
+/// `crate::graph::semantic::WarmOutcome`, kept as its own type because a
+/// chunk pass counts files-with-pending-chunk-work, not files-with-no-vector
+/// — the two are not interchangeable once a file can be partially chunked).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChunkWarmOutcome {
+    /// The pass ran. `files_remaining` is what the cap left for the lazy
+    /// per-query pass (`catch_up_chunk_embeddings`) to pick up on the first
+    /// `search` call.
+    Warmed {
+        /// Files whose chunks this pass embedded or re-stamped.
+        files_embedded: usize,
+        /// Indexed files still carrying a symbol with no chunk vector under
+        /// this fingerprint, per the same pre-filter `chunks_pending_embedding`
+        /// scans with — an upper bound, not an exact count: a file whose
+        /// symbols happen to render byte-identical text to one another can
+        /// read as pending forever even once fully covered (see the "no
+        /// progress" comment in `warm_chunks_opened` — filed as #3128).
+        files_remaining: usize,
+        /// How many of those this pass could not read from disk. Separated
+        /// from `files_remaining` for the reason
+        /// `crate::graph::semantic::WarmOutcome::Warmed::unreadable` gives:
+        /// the cap's leftovers embed themselves on the next query, an
+        /// unreadable file never will.
+        unreadable: usize,
+    },
+    /// The pass stopped early. `reason` is prose meant to be shown verbatim;
+    /// whatever was embedded before the failure is committed and counted.
+    Failed {
+        /// Files whose chunks were embedded before the failure — each file
+        /// commits as it completes.
+        files_embedded: usize,
+        reason: String,
+    },
+}
+
+/// Embed the workspace's indexed chunks — symbols, markdown sections —
+/// **without answering a query**: the `stella init` pass for `search`'s
+/// primary ranking rung (#3098).
+///
+/// The lazy per-query pass above is right for a long session and wrong for a
+/// single-turn run in a fresh checkout: it fires only once `search` has
+/// already been called, capped at `stella_graph::MAX_FILES_PER_CHUNK_PASS`
+/// (64) files, so a workspace this crate's own repository's size needs
+/// roughly 25 calls before its first full pass completes — meaning the first
+/// several searches in a session rank against whichever files happened to be
+/// processed first, not the best answer. Running the same pass here, ahead of
+/// the first turn, makes that work free from the agent's perspective —
+/// mirroring `crate::graph::semantic::warm_file_vectors` one layer down, and
+/// deliberately not `open_or_build`, for the identical reason it gives: the
+/// caller has just run `index_all`, and a second catch-up pass would re-walk
+/// and re-hash a tree nothing has touched since.
+pub async fn warm_chunk_vectors(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> ChunkWarmOutcome {
+    let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot prepare the code graph store: {error}"))
+        .and_then(|db_path| {
+            CodeGraph::open(root, &db_path)
+                .map_err(|error| format!("could not open the code graph: {error}"))
+        });
+    let graph = match graph {
+        Ok(graph) => graph,
+        Err(reason) => {
+            return ChunkWarmOutcome::Failed {
+                files_embedded: 0,
+                reason,
+            };
+        }
+    };
+    let outcome = warm_chunks_opened(&graph, embedder, limit).await;
+    graph.shutdown();
+    outcome
+}
+
+async fn warm_chunks_opened(
+    graph: &CodeGraph,
+    embedder: &dyn Embedder,
+    limit: usize,
+) -> ChunkWarmOutcome {
+    let fingerprint = embedder.fingerprint().id();
+    let mut files_embedded = 0usize;
+    let mut unreadable = 0usize;
+    while files_embedded < limit {
+        let want = stella_graph::MAX_FILES_PER_CHUNK_PASS.min(limit - files_embedded);
+        let scan = match graph.chunks_pending_embedding(&fingerprint, want) {
+            Ok(scan) => scan,
+            Err(error) => {
+                return ChunkWarmOutcome::Failed {
+                    files_embedded,
+                    reason: format!("cannot read the code graph: {error}"),
+                };
+            }
+        };
+        // Overwritten, never summed — same discipline as
+        // `crate::graph::semantic::warm_opened`: each round rescans the
+        // pending set from the start, so an unreadable file is stepped over
+        // again every round and summing would multiply it by the round count.
+        unreadable = unreadable.max(scan.unreadable);
+        // No files means the pending set is exhausted — a window landing on
+        // unreadable rows keeps filling past them, so this is genuinely done
+        // rather than a scan that gave up early (#3016).
+        if scan.files.is_empty() {
+            break;
+        }
+        // The pending-files pre-filter is a cheap, deliberately loose COUNT
+        // comparison (raw symbols vs. stored chunks) — it can select a file
+        // that in fact needs no embedding at all: two symbols whose rendered
+        // text is byte-identical (a common shape for trivial mock/test
+        // boilerplate — `fn execute(&self) { todo!() }` repeated across
+        // several fixtures in one file) collapse to one stored row under the
+        // content-hash key, so the raw symbol count can never equal the
+        // stored count for that file even once every one of its symbols is
+        // correctly embedded. `PendingChunkFile::to_embed()` is the precise,
+        // per-symbol answer the SQL pre-filter cannot give; if an entire
+        // window comes back with nothing left to actually embed, every
+        // further window would just re-select and re-stamp the same
+        // false-positive files forever without buying anything real —
+        // tracked as a pre-filter imprecision rather than reworked into an
+        // exact predicate here (it also affects the lazy per-query pass
+        // above, which is bounded to one window per call and so never pays
+        // more than a single wasted re-scan for it) — filed as #3128.
+        let mut made_progress = false;
+        for file in &scan.files {
+            if file.to_embed() > 0 {
+                made_progress = true;
+            }
+            if let Err(reason) =
+                embed_and_store_chunk_file(graph, embedder, &fingerprint, file).await
+            {
+                return ChunkWarmOutcome::Failed {
+                    files_embedded,
+                    reason,
+                };
+            }
+            files_embedded += 1;
+        }
+        if !made_progress {
+            break;
+        }
+    }
+
+    let files_remaining = graph.pending_chunk_file_count(&fingerprint).unwrap_or(0);
+    ChunkWarmOutcome::Warmed {
+        files_embedded,
+        files_remaining,
+        unreadable,
+    }
 }
 
 /// Render an answer against the allocation the budget allows.
