@@ -333,7 +333,11 @@ mod tests {
     /// reads to the agent as "this file declares nothing".
     #[test]
     fn detection_never_names_a_language_this_build_cannot_parse() {
-        for lang in Language::ALL.iter().copied().filter(|l| l.is_grammar_backed()) {
+        for lang in Language::ALL
+            .iter()
+            .copied()
+            .filter(|l| l.is_grammar_backed())
+        {
             assert_eq!(
                 lang.is_compiled_in(),
                 lang.ts_language().is_some(),

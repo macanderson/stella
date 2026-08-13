@@ -214,7 +214,14 @@ mod tests {
     #[test]
     fn a_cliff_between_relevant_and_irrelevant_is_where_the_cut_lands() {
         let ranked = scores(&[0.91, 0.88, 0.86, 0.42, 0.41, 0.40, 0.39]);
-        assert_eq!(relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 3);
+        assert_eq!(
+            relevant_prefix(
+                &ranked,
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
+            3
+        );
     }
 
     /// A smoothly-decaying ranking has no boundary in it. Inventing one would
@@ -224,7 +231,11 @@ mod tests {
     fn a_smooth_decay_has_no_boundary_and_is_not_cut() {
         let ranked = scores(&[0.90, 0.85, 0.80, 0.75, 0.70, 0.65]);
         assert_eq!(
-            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            relevant_prefix(
+                &ranked,
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
             ranked.len()
         );
     }
@@ -238,7 +249,11 @@ mod tests {
             0.656, 0.641, 0.636, 0.628, 0.621, 0.615, 0.612, 0.607, 0.606, 0.604,
         ]);
         assert_eq!(
-            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            relevant_prefix(
+                &ranked,
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
             ranked.len(),
             "a tie dressed as a ranking must not be cut into a confident answer"
         );
@@ -246,15 +261,29 @@ mod tests {
 
     #[test]
     fn one_hit_and_no_hits_are_both_answered_without_a_gap_to_measure() {
-        assert_eq!(relevant_prefix(&[], DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 0);
-        assert_eq!(relevant_prefix(&scores(&[0.9]), DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 1);
+        assert_eq!(
+            relevant_prefix(&[], DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            0
+        );
+        assert_eq!(
+            relevant_prefix(
+                &scores(&[0.9]),
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
+            1
+        );
     }
 
     #[test]
     fn an_exact_tie_across_the_whole_list_is_never_cut() {
         let ranked = scores(&[0.5, 0.5, 0.5, 0.5]);
         assert_eq!(
-            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            relevant_prefix(
+                &ranked,
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
             ranked.len()
         );
     }
@@ -265,7 +294,14 @@ mod tests {
     #[test]
     fn one_dominant_hit_cuts_to_one() {
         let ranked = scores(&[0.95, 0.31, 0.30, 0.29, 0.28]);
-        assert_eq!(relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 1);
+        assert_eq!(
+            relevant_prefix(
+                &ranked,
+                DEFAULT_RELEVANCE_GAP_RATIO,
+                DEFAULT_MIN_BOUNDARY_GAP
+            ),
+            1
+        );
     }
 
     proptest! {
