@@ -80,6 +80,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "code_graph_calls",
     "code_graph_storage_objects",
     "code_graph_vectors",
+    "code_graph_chunk_vectors",
 ];
 
 /// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
@@ -180,6 +181,57 @@ CREATE TABLE IF NOT EXISTS code_graph_vectors (
 -- Both reads scan one fingerprint's whole vector set: the rank pass, and the
 -- pending pass that finds what still needs embedding.
 CREATE INDEX IF NOT EXISTS code_graph_vectors_fp ON code_graph_vectors(fingerprint);
+-- Semantic vectors for the pieces a file is made of (#3089). One vector per
+-- FILE answers "what is this module about" and nothing sharper: averaging a
+-- 900-line multi-topic file into one 1024-dimension vector produced a measured
+-- 0.05 score spread across ten results — a tie dressed as a ranking — and left
+-- the actual answer out of the top ten entirely.
+--
+-- A "chunk" is a symbol, a markdown section, or anything else with a name, a
+-- kind and a line span. They share one table because they share one vector
+-- space: the same embedder under the same `fingerprint`, so a doc section's
+-- score and a function's score are genuinely comparable, and `kind` is what
+-- later lets an answer be grouped by role rather than truncated down one list.
+--
+-- **Keyed on the chunk's own content hash, not on `code_graph_symbols.id`.**
+-- That is a deliberate departure from #3089's proposed schema, and the reason
+-- is three lines up in this file: `index_one` replaces a changed file's
+-- symbols with `DELETE FROM code_graph_symbols WHERE file_id = ?` followed by
+-- fresh inserts, so symbol ids are not stable across a re-parse. A
+-- `symbol_id REFERENCES code_graph_symbols(id) ON DELETE CASCADE` table would
+-- therefore lose EVERY vector in a file on ANY edit to that file — destroying
+-- exactly the incremental property #3089's own `content_sha256` requirement
+-- exists to protect, and before that hash ever got a chance to save anything.
+-- Content addressing survives the churn: an untouched function in an edited
+-- file renders to the same bytes, so its vector is re-stamped rather than
+-- re-bought.
+--
+-- `file_sha256` is the hash of the file the chunk was last seen in, which is
+-- what makes "is this file fully embedded" a pure SQL question — a count
+-- comparison against `code_graph_symbols` — instead of a re-read of every file
+-- in the workspace on every query. It is also the sweep key: after a file's
+-- chunks are written, rows still carrying an older `file_sha256` are the
+-- chunks that no longer exist, and they are deleted.
+--
+-- A rowid table, for the reason `code_graph_vectors` above is one.
+CREATE TABLE IF NOT EXISTS code_graph_chunk_vectors (
+    file_id      INTEGER NOT NULL REFERENCES code_graph_files(id) ON DELETE CASCADE,
+    chunk_sha256 TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL,
+    file_sha256  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    start_line   INTEGER NOT NULL,
+    end_line     INTEGER NOT NULL,
+    dims         INTEGER NOT NULL,
+    vector       BLOB NOT NULL,
+    embedded_at  INTEGER NOT NULL,
+    PRIMARY KEY (file_id, chunk_sha256, fingerprint)
+);
+-- The rank pass scans one fingerprint's whole set, exactly as the file-vector
+-- pass does.
+CREATE INDEX IF NOT EXISTS code_graph_chunk_vectors_fp
+    ON code_graph_chunk_vectors(fingerprint);
 "#;
 
 /// Largest source file this index will read, in bytes.
