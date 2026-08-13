@@ -968,7 +968,7 @@ export function EventContractDiagram() {
 /**
  * Budget: two ceilings, drawn in the order they fire, because that order is the
  * guide's thesis. The left one costs nothing when it trips, which is why it is
- * the accented node — the reader's instinct is to reach for --budget, and the
+ * the accented node — the reader's instinct is to reach for --spend-limit, and the
  * cheaper stop is the one before it.
  */
 export function BudgetGuardDiagram() {
