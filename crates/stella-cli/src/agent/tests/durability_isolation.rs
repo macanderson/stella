@@ -70,26 +70,46 @@ fn bound_session(
 /// calls are played by hand, in the order `drive` makes them, against the config
 /// the production seam actually builds.
 ///
-/// Before the fix, `subsession::run_worker` called `engine_config_for`, so the
-/// sub-session's sink WAS the lead's: the `persist` below overwrote the lead's
-/// in-flight transcript with the worker's, and the `discard` then deleted it.
-/// A deck killed while its lead turn was running resumed into a conversation
-/// belonging to a different agent, or into nothing at all.
+/// Both arms are asserted, and that is the point. The first reproduces what
+/// the old wiring did — `subsession::run_worker` called `engine_config_for`, so
+/// the worker's sink WAS the lead's — and the second shows the seam closing it.
+/// Without the first arm this test would pass on a build where the damage is
+/// merely unreachable rather than prevented, and could not say what the fence
+/// below is protecting.
 #[test]
 fn a_sub_sessions_turn_cannot_destroy_the_leads_resume_point() {
-    let (cfg, record, _store, _ws) = bound_session("ses-lead-vs-sub");
-
-    // The lead is mid-turn: `drive` has committed a step and written the
-    // resume point that a crash from here on would be recovered from.
+    // ── Arm 1: the old wiring, played out. ──────────────────────────────
+    let (cfg, record, _store, _ws) = bound_session("ses-inherited-sink");
     let lead = crate::agent::engine_config_for(&cfg)
         .checkpoint_sink
         .expect("the lead session is bound");
     lead.persist(r#"{"version":1,"lane":"lead"}"#);
 
-    // Concurrently — this is the whole reason sub-sessions exist — the deck
-    // dispatches a prompt to a worker session, which runs a full turn and
-    // ends. `drive` persists at every committed step boundary and discards on
-    // every terminal path, so both halves are played.
+    // What the sub-session used to be handed: the lead's own sink, because
+    // `Config` is `Clone` over one `Arc` cell. `drive` persists at every
+    // committed step boundary and discards on every terminal path, so a whole
+    // worker turn is those two calls.
+    let inherited = crate::agent::engine_config_for(&cfg)
+        .checkpoint_sink
+        .expect("bound");
+    inherited.persist(r#"{"version":1,"lane":"sub"}"#);
+    inherited.discard();
+
+    assert!(
+        record.checkpoint().is_none(),
+        "the damage this test exists to prevent did not reproduce — an \
+         inherited sink no longer shares the lead's CHECKPOINT_BLOB, so the \
+         second arm below proves nothing. Re-derive what a sub-session is \
+         actually handed before trusting this file.",
+    );
+
+    // ── Arm 2: the seam. ────────────────────────────────────────────────
+    let (cfg, record, _store, _ws) = bound_session("ses-isolated-sink");
+    let lead = crate::agent::engine_config_for(&cfg)
+        .checkpoint_sink
+        .expect("the lead session is bound");
+    lead.persist(r#"{"version":1,"lane":"lead"}"#);
+
     let sub = crate::agent::subsession_engine_config_for(&cfg).checkpoint_sink;
     if let Some(sub) = &sub {
         sub.persist(r#"{"version":1,"lane":"sub"}"#);
