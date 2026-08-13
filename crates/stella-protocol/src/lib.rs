@@ -103,4 +103,4 @@ pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tokens::{
     BYTES_PER_TOKEN, estimate_token_cost, estimate_tokens, estimate_tokens_for_bytes,
 };
-pub use tool::{ToolCall, ToolOutput, ToolResult, ToolSchema};
+pub use tool::{ErrorClass, ToolCall, ToolOutput, ToolResult, ToolSchema};
