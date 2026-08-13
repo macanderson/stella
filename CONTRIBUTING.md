@@ -132,7 +132,7 @@ for the server-side checks.
 
 The hook scopes the three compile tiers — clippy, rustdoc, test — to the crates
 your diff can actually reach, so a change confined to one crate no longer pays
-for all 22 members (#1135). It falls back to the whole workspace for a push to
+for all 23 members (#1135). It falls back to the whole workspace for a push to
 `main`, a tag, a diff touching a workspace-root manifest / `Cargo.lock` / a
 build script / the gate machinery, and for anything it cannot narrow with
 confidence. See what it would choose with `make impacted`. Under time pressure,
