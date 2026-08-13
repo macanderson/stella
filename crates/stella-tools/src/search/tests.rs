@@ -1246,6 +1246,26 @@ async fn a_blank_query_is_refused_through_the_tool_door() {
     );
 }
 
+/// The #3144 witness: a mistyped `query` is a type mismatch, not a missing
+/// field. On main, `{"query": 42}` fell through `as_str().unwrap_or_default()`
+/// into the blank-query refusal — the model was told the field it sent was
+/// missing, and retried against the wrong defect.
+#[tokio::test]
+async fn a_mistyped_query_is_refused_as_a_type_mismatch_not_as_missing() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let output = Search::default()
+        .execute(&serde_json::json!({"query": 42}), workspace.path())
+        .await;
+    let ToolOutput::Error { message } = output else {
+        panic!("a mistyped query must be an error, got: {output:?}");
+    };
+    assert_eq!(message, "field `query` must be a string, got number");
+    assert!(
+        !message.contains("required"),
+        "a present-but-mistyped field is not missing: {message}"
+    );
+}
+
 /// `SearchReport` is the CLI's `--format json` contract: the decided answer
 /// as data beside the rendering. Hit order is rank order, strategies carry
 /// the exact labels the `via:` line prints, and the note survives verbatim.

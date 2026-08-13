@@ -357,10 +357,17 @@ impl Tool for Search {
     }
 
     async fn execute(&self, input: &Value, root: &Path) -> ToolOutput {
-        let query = input
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        // A mistyped `query` must be refused as the type mismatch it is —
+        // collapsing it into the blank-query refusal below told the model
+        // the field was missing when it was present (#3144).
+        let query = match crate::input::optional_str(input, "query") {
+            Ok(query) => query.unwrap_or_default(),
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
+        };
         // Validation (the blank-query refusal included) lives in [`report`],
         // so this door and the CLI's `stella search` cannot drift apart.
         search(root, query, self.config).await

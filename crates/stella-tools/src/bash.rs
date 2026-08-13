@@ -396,12 +396,18 @@ impl Tool for Bash {
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a verifier can demand as evidence.
+        // A wrong-typed `trace` is refused, never silently read as false:
+        // the caller believes it armed the trace (#3144).
+        let trace = match crate::input::optional_bool(input, "trace") {
+            Ok(trace) => trace.unwrap_or(false),
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
+        };
         let traced;
-        let command = if input
-            .get("trace")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
+        let command = if trace {
             traced = format!("set -x\n{command}");
             traced.as_str()
         } else {
@@ -559,6 +565,28 @@ mod tests {
             ToolOutput::Ok { content } => assert!(content.contains("hello_stella")),
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
+    }
+
+    /// The #3144 witness: a wrong-typed `trace` is refused, never silently
+    /// read as `false`. On main, `{"trace": "yes"}` ran the command untraced
+    /// — the caller believed it armed the trace it asked for as evidence.
+    #[tokio::test]
+    async fn a_mistyped_trace_is_refused_not_silently_untraced() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = Bash::new(None)
+            .execute(
+                &serde_json::json!({"command": "echo hi > probe.txt", "trace": "yes"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("a mistyped trace must be an error, got: {out:?}");
+        };
+        assert_eq!(message, "field `trace` must be a boolean, got string");
+        assert!(
+            !dir.path().join("probe.txt").exists(),
+            "the command must not run on refused input"
+        );
     }
 
     #[tokio::test]
