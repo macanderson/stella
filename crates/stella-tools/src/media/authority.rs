@@ -91,9 +91,8 @@ pub(super) fn operation_key(
 }
 
 pub(super) fn open_store(root: &std::path::Path) -> Result<ArtifactStore, ToolOutput> {
-    ArtifactStore::open(root.join(".stella/artifacts")).map_err(|error| ToolOutput::Error { class: None,
-        message: format!("artifact store unavailable: {error}"),
-    })
+    ArtifactStore::open(root.join(".stella/artifacts"))
+        .map_err(|error| ToolOutput::error(format!("artifact store unavailable: {error}")))
 }
 
 pub(super) fn open_jobs(root: &std::path::Path) -> JobStore {
@@ -104,29 +103,25 @@ pub(super) fn spend_denied(request: &MediaSpendRequest) -> ToolOutput {
     let estimate = request
         .estimated_usd
         .map_or_else(|| "unknown cost".to_string(), |usd| format!("${usd:.4}"));
-    ToolOutput::Error { class: None,
-        message: format!(
-            "media spend requires host approval: {} submission to {} ({estimate}; {})",
-            match request.kind {
-                MediaKind::Image => "image",
-                MediaKind::Video => "video",
-                MediaKind::Svg => "SVG",
-            },
-            request.provider_id,
-            request.detail
-        ),
-    }
+    ToolOutput::error(format!(
+        "media spend requires host approval: {} submission to {} ({estimate}; {})",
+        match request.kind {
+            MediaKind::Image => "image",
+            MediaKind::Video => "video",
+            MediaKind::Svg => "SVG",
+        },
+        request.provider_id,
+        request.detail
+    ))
 }
 
 pub(super) fn reconciliation_required(
     operation_id: &str,
     detail: impl std::fmt::Display,
 ) -> ToolOutput {
-    ToolOutput::Error { class: None,
-        message: format!(
-            "reconciliation_required: paid media operation `{operation_id}` may have reached the provider; refusing automatic resubmission ({detail})"
-        ),
-    }
+    ToolOutput::error(format!(
+        "reconciliation_required: paid media operation `{operation_id}` may have reached the provider; refusing automatic resubmission ({detail})"
+    ))
 }
 
 pub(super) fn video_submitted(job: &MediaJob) -> ToolOutput {

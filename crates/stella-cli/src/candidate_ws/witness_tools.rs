@@ -41,9 +41,9 @@ impl WitnessToolExecutor {
     }
 
     fn denied(name: &str, reason: impl std::fmt::Display) -> ToolOutput {
-        ToolOutput::Error { class: None,
-            message: format!("`{name}` is not available to the witness author: {reason}"),
-        }
+        ToolOutput::error(format!(
+            "`{name}` is not available to the witness author: {reason}"
+        ))
     }
 
     fn create_test(&self, input: &serde_json::Value) -> ToolOutput {

@@ -255,9 +255,7 @@ mod tests {
         let req = request(15, 600);
         // An errored probe yields no fingerprint…
         assert_eq!(
-            probe_fingerprint(&ToolOutput::Error { class: None,
-                message: "gh: network unreachable".into()
-            }),
+            probe_fingerprint(&ToolOutput::error("gh: network unreachable")),
             None
         );
         // …and no fingerprint is "keep waiting", never "changed".

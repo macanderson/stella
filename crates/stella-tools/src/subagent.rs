@@ -266,11 +266,10 @@ impl Tool for SpawnSubAgent {
         let prompt = match input.get("prompt").and_then(Value::as_str) {
             Some(prompt) if !prompt.trim().is_empty() => prompt.trim(),
             _ => {
-                return ToolOutput::Error { class: None,
-                    message: "missing required string field `prompt` — the sub-agent cannot \
-                         see this conversation, so the question must be self-contained"
-                        .into(),
-                };
+                return ToolOutput::error(
+                    "missing required string field `prompt` — the sub-agent cannot \
+                         see this conversation, so the question must be self-contained",
+                );
             }
         };
         let description = input
@@ -285,11 +284,10 @@ impl Tool for SpawnSubAgent {
             slot.clone()
         };
         let Some(dispatcher) = dispatcher else {
-            return ToolOutput::Error { class: None,
-                message: "sub-agents are unavailable in this session — do the work directly \
-                     with your own tools"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "sub-agents are unavailable in this session — do the work directly \
+                     with your own tools",
+            );
         };
 
         let spec = SubAgentSpec {
@@ -344,18 +342,14 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                 ),
             }
         }
-        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::Error { class: None,
-            message: format!(
-                "the sub-agent stopped before producing anything: {reason} — do the work \
+        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
+            "the sub-agent stopped before producing anything: {reason} — do the work \
                  directly, or ask a narrower question"
-            ),
-        },
-        SubAgentOutcome::Refused { reason } => ToolOutput::Error { class: None,
-            message: format!(
-                "the sub-agent was not started: {reason} — do the work directly with your \
+        )),
+        SubAgentOutcome::Refused { reason } => ToolOutput::error(format!(
+            "the sub-agent was not started: {reason} — do the work directly with your \
                  own tools"
-            ),
-        },
+        )),
     }
 }
 

@@ -477,9 +477,9 @@ fn auth_note(fetched: &Fetched) -> String {
 }
 
 fn require_auth(state: &WebAuthState) -> Result<&WebAuthConfig, ToolOutput> {
-    state.as_ref().map_err(|e| ToolOutput::Error { class: None,
-        message: format!("web_auth.toml is broken — fix or remove it: {e}"),
-    })
+    state
+        .as_ref()
+        .map_err(|e| ToolOutput::error(format!("web_auth.toml is broken — fix or remove it: {e}")))
 }
 
 fn require_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, ToolOutput> {
@@ -487,9 +487,7 @@ fn require_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, ToolOutput>
         .get(field)
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| ToolOutput::Error { class: None,
-            message: format!("`{field}` is required"),
-        })
+        .ok_or_else(|| ToolOutput::error(format!("`{field}` is required")))
 }
 
 // web_search
@@ -626,7 +624,7 @@ impl Tool for WebSearch {
                 }
                 ToolOutput::Ok { content }
             }
-            Err(message) => ToolOutput::Error { class: None, message },
+            Err(message) => ToolOutput::error(message),
         }
     }
 }
@@ -784,7 +782,9 @@ impl Tool for WebFetch {
 
         let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES, None).await {
             Ok(f) => f,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         if !is_texty(&fetched.content_type, &fetched.bytes) {
             return ToolOutput::Ok {
@@ -904,21 +904,21 @@ impl Tool for WebExtractAssets {
 
         let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES, None).await {
             Ok(f) => f,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         let body = String::from_utf8_lossy(&fetched.bytes);
         if !looks_like_html(&fetched.content_type, &body) {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "{} is not an HTML page ({}) — web_extract_assets needs a page to parse",
-                    fetched.final_url,
-                    if fetched.content_type.is_empty() {
-                        "unknown type"
-                    } else {
-                        &fetched.content_type
-                    },
-                ),
-            };
+            return ToolOutput::error(format!(
+                "{} is not an HTML page ({}) — web_extract_assets needs a page to parse",
+                fetched.final_url,
+                if fetched.content_type.is_empty() {
+                    "unknown type"
+                } else {
+                    &fetched.content_type
+                },
+            ));
         }
         let manifest = web_extract::extract_assets(&body, &fetched.final_url);
 
@@ -1120,9 +1120,7 @@ impl Tool for WebDownload {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
         // Asked early so a download that cannot land is refused before 64 MB
@@ -1130,22 +1128,20 @@ impl Tool for WebDownload {
         // held directory descriptors and is the authority — it is the same
         // question asked at the only point where the answer saves work.
         if let Err(e) = handle.is_confined(path) {
-            return ToolOutput::Error { class: None,
-                message: format!("path `{path}` escapes the workspace root ({e})"),
-            };
+            return ToolOutput::error(format!("path `{path}` escapes the workspace root ({e})"));
         }
         let mut fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES, None).await {
             Ok(f) => f,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         if fetched.truncated {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "{} exceeds the {} MB download cap — nothing was written",
-                    fetched.final_url,
-                    DOWNLOAD_CAP_BYTES / (1024 * 1024)
-                ),
-            };
+            return ToolOutput::error(format!(
+                "{} exceeds the {} MB download cap — nothing was written",
+                fetched.final_url,
+                DOWNLOAD_CAP_BYTES / (1024 * 1024)
+            ));
         }
         // The same durable replacement `write_file`/`edit_file` use, for the
         // same reason ([`crate::durable_write`]): a download lands on the same
@@ -1163,9 +1159,7 @@ impl Tool for WebDownload {
         if let Err(e) =
             crate::durable_write::write_file_durably_at(handle, path.to_string(), bytes, true).await
         {
-            return ToolOutput::Error { class: None,
-                message: format!("cannot write {path}: {e}"),
-            };
+            return ToolOutput::error(format!("cannot write {path}: {e}"));
         }
         ToolOutput::Ok {
             content: format!(

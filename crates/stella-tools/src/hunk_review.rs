@@ -370,12 +370,10 @@ impl ToolExecutor for HunkGate<'_> {
             // Fail closed. An unreachable reviewer is the one case where
             // guessing costs the user their files.
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "`{name}` was not applied: the hunk reviewer could not be reached ({e}) \
+                return ToolOutput::error(format!(
+                    "`{name}` was not applied: the hunk reviewer could not be reached ({e}) \
                          — NOTHING was written"
-                    ),
-                };
+                ));
             }
         };
 
@@ -419,24 +417,20 @@ impl ToolExecutor for HunkGate<'_> {
         );
 
         let Some(rewritten) = self.rewrite(name, input, &changes, &mask) else {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "`{name}` was declined in full by the reviewer — NOTHING was written{report}"
-                ),
-            };
+            return ToolOutput::error(format!(
+                "`{name}` was declined in full by the reviewer — NOTHING was written{report}"
+            ));
         };
         // Fail closed on drift, for the same reason an unreachable reviewer
         // fails closed: the accepted hunks describe bytes that are no longer
         // there, and applying them anyway would overwrite a write nobody
         // reviewed with content nobody proposed.
         if let Some(path) = self.stale(name, &changes) {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "`{name}` was not applied: `{path}` no longer holds the bytes that were \
+            return ToolOutput::error(format!(
+                "`{name}` was not applied: `{path}` no longer holds the bytes that were \
                      reviewed, so the accepted hunk(s) no longer describe it — NOTHING was \
                      written. Re-read it before proposing again.{report}"
-                ),
-            };
+            ));
         }
         match self.inner.execute(name, &rewritten).await {
             ToolOutput::Ok { content } => ToolOutput::Ok {
@@ -445,9 +439,7 @@ impl ToolExecutor for HunkGate<'_> {
             // The inner failure already says nothing was written; the report
             // still rides along so the model does not retry the declined hunks
             // believing the reviewer never saw them.
-            ToolOutput::Error { message, .. } => ToolOutput::Error { class: None,
-                message: format!("{message}{report}"),
-            },
+            ToolOutput::Error { message, .. } => ToolOutput::error(format!("{message}{report}")),
         }
     }
 

@@ -134,12 +134,11 @@ impl Tool for SemanticCodeSearch {
             .unwrap_or("")
             .trim();
         if query.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "`query` is required: a plain-English description of what the code \
+            return ToolOutput::error(
+                "`query` is required: a plain-English description of what the code \
                           does, e.g. \"where request headers are sanitized\". For a symbol or \
-                          file you can already name, use `graph_query`"
-                    .into(),
-            };
+                          file you can already name, use `graph_query`",
+            );
         }
         semantic_query(root, query).await
     }
@@ -160,11 +159,11 @@ pub(crate) async fn semantic_query(root: &Path, query: &str) -> ToolOutput {
         index_warning,
     } = match opened {
         Ok(Ok(opened)) => opened,
-        Ok(Err(message)) => return ToolOutput::Error { class: None, message },
+        Ok(Err(message)) => {
+            return ToolOutput::error(message);
+        }
         Err(_) => {
-            return ToolOutput::Error { class: None,
-                message: "the code-graph query was cancelled".into(),
-            };
+            return ToolOutput::error("the code-graph query was cancelled");
         }
     };
 
@@ -238,9 +237,7 @@ pub(crate) async fn semantic_query_with(
     let ranked = match graph.rank_files_by_vector(&fingerprint, &query_vector, floor, MAX_RESULTS) {
         Ok(ranked) => ranked,
         Err(error) => {
-            return ToolOutput::Error { class: None,
-                message: format!("code-graph query failed: {error}"),
-            };
+            return ToolOutput::error(format!("code-graph query failed: {error}"));
         }
     };
 
@@ -466,9 +463,7 @@ fn lexical_answer(graph: &stella_graph::CodeGraph, query: &str, note: Option<&st
     let files = match graph.all_files() {
         Ok(files) => files,
         Err(error) => {
-            return ToolOutput::Error { class: None,
-                message: format!("code-graph query failed: {error}"),
-            };
+            return ToolOutput::error(format!("code-graph query failed: {error}"));
         }
     };
 

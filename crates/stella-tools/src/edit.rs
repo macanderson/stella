@@ -164,17 +164,13 @@ impl Tool for EditFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let old_string = match crate::input::required_str(input, "old_string") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         // An empty `old_string` is destructive: `"".matches("")` reports
@@ -183,18 +179,15 @@ impl Tool for EditFile {
         // every char boundary — shredding the file (and allocating O(len^2)).
         // On an empty file it would silently overwrite. Refuse it outright.
         if old_string.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "old_string must not be empty — use write_file to create or replace a \
-                          whole file"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "old_string must not be empty — use write_file to create or replace a \
+                          whole file",
+            );
         }
         let new_string = match crate::input::required_str(input, "new_string") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let replace_all = input
@@ -209,23 +202,17 @@ impl Tool for EditFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
         let content = match crate::rootfd::read_to_string_async(&handle, path).await {
             Ok(c) => c,
             Err(e) if e.is_escape() => {
-                return ToolOutput::Error { class: None,
-                    message: format!("path `{path}` escapes workspace root ({e})"),
-                };
+                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
             }
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("failed to read `{path}`: {e}"),
-                };
+                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
             }
         };
 
@@ -255,37 +242,29 @@ impl Tool for EditFile {
                     // more than was shown; the unchanged-file message below
                     // still steers a confused model back to read_file.
                     self.ledger.record_known(root, path, &content);
-                    ToolOutput::Error { class: None,
-                        message: format!(
-                            "old_string not found in `{path}` — the file CHANGED after you last \
+                    ToolOutput::error(format!(
+                        "old_string not found in `{path}` — the file CHANGED after you last \
                              read it (out-of-band modification); the copy in your context is \
                              stale. Current content follows — re-issue the edit against these \
                              bytes.\n\n--- {path} (current) ---\n{}",
-                            drift_echo(&content)
-                        ),
-                    }
+                        drift_echo(&content)
+                    ))
                 }
-                Some(_) => ToolOutput::Error { class: None,
-                    message: format!(
-                        "old_string not found in `{path}` — the file is unchanged since you last \
+                Some(_) => ToolOutput::error(format!(
+                    "old_string not found in `{path}` — the file is unchanged since you last \
                          saw it, so the copy in your context matches disk; check for exact \
                          whitespace/newline differences"
-                    ),
-                },
-                None => ToolOutput::Error { class: None,
-                    message: format!(
-                        "old_string not found in `{path}` — no read of this file is recorded \
+                )),
+                None => ToolOutput::error(format!(
+                    "old_string not found in `{path}` — no read of this file is recorded \
                          this session; read it first and copy old_string byte-exact"
-                    ),
-                },
+                )),
             };
         }
         if count > 1 && !replace_all {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
-                ),
-            };
+            return ToolOutput::error(format!(
+                "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
+            ));
         }
 
         let new_content = if replace_all {
@@ -311,9 +290,7 @@ impl Tool for EditFile {
                     content: format!("replaced {replaced} occurrence(s) in {path}"),
                 }
             }
-            Err(e) => ToolOutput::Error { class: None,
-                message: format!("failed to write `{path}`: {e}"),
-            },
+            Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
         }
     }
 }

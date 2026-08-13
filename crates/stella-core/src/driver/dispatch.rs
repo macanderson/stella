@@ -209,9 +209,7 @@ impl<'a> Engine<'a> {
                 if answered.contains(&index) {
                     continue;
                 }
-                let output = ToolOutput::Error { class: None,
-                    message: HALTED_TOOL_RESULT.to_string(),
-                };
+                let output = ToolOutput::error(HALTED_TOOL_RESULT.to_string());
                 let _ = events.send(AgentEvent::ToolResult {
                     call_id: call.call_id.clone(),
                     output: output.clone(),

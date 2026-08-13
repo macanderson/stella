@@ -25,7 +25,7 @@ fn tool_error_msg(call_id: &str, message: String) -> CompletionMessage {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: call_id.into(),
-            output: ToolOutput::Error { class: None, message },
+            output: ToolOutput::error(message),
         }],
         attachments: Vec::new(),
     }

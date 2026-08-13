@@ -109,15 +109,13 @@ impl Tool for ProbeCapability {
         let name = match input.get("name").and_then(Value::as_str) {
             Some(n) => n,
             None => {
-                return ToolOutput::Error { class: None,
-                    message: "missing required string field \"name\"".to_string(),
-                };
+                return ToolOutput::error("missing required string field \"name\"".to_string());
             }
         };
 
         // Validate the name.
         if let Err(message) = validate_name(name) {
-            return ToolOutput::Error { class: None, message };
+            return ToolOutput::error(message);
         }
 
         // Check memoized result first.
@@ -130,12 +128,10 @@ impl Tool for ProbeCapability {
                 Some(path) => ToolOutput::Ok {
                     content: format!("{}: {}", name, path.display()),
                 },
-                None => ToolOutput::Error { class: None,
-                    message: format!(
-                        "{}: not found on PATH (cached for this session — install mid-session won't be seen until restart)",
-                        name
-                    ),
-                },
+                None => ToolOutput::error(format!(
+                    "{}: not found on PATH (cached for this session — install mid-session won't be seen until restart)",
+                    name
+                )),
             };
         }
         drop(memo);
@@ -150,9 +146,10 @@ impl Tool for ProbeCapability {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 memo.insert(name.to_string(), probe);
-                return ToolOutput::Error { class: None,
-                    message: format!("{}: PATH is not set (cached for this session)", name),
-                };
+                return ToolOutput::error(format!(
+                    "{}: PATH is not set (cached for this session)",
+                    name
+                ));
             }
         };
 
@@ -179,9 +176,7 @@ impl Tool for ProbeCapability {
                 content: result_str,
             }
         } else {
-            ToolOutput::Error { class: None,
-                message: result_str,
-            }
+            ToolOutput::error(result_str)
         }
     }
 }

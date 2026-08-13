@@ -497,9 +497,7 @@ mod tests {
                 Vec::new()
             }
             async fn execute(&self, _: &str, _: &serde_json::Value) -> ToolOutput {
-                ToolOutput::Error { class: None,
-                    message: "no inner".into(),
-                }
+                ToolOutput::error("no inner")
             }
         }
         let inner = NoInner;

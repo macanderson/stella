@@ -70,17 +70,13 @@ impl Tool for SaveMemory {
         let slug = match crate::input::required_str(input, "slug") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let memory = match crate::input::required_str(input, "memory") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         if slug.is_empty()
@@ -89,33 +85,26 @@ impl Tool for SaveMemory {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
         {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "invalid slug `{slug}` — use 1-64 lowercase letters, digits, - or _"
-                ),
-            };
+            return ToolOutput::error(format!(
+                "invalid slug `{slug}` — use 1-64 lowercase letters, digits, - or _"
+            ));
         }
         if memory.trim().is_empty() || memory.chars().count() > 2_000 {
-            return ToolOutput::Error { class: None,
-                message: "memory must be non-empty and at most 2000 characters — memories are \
-                          prompt-resident, keep them dense"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "memory must be non-empty and at most 2000 characters — memories are \
+                          prompt-resident, keep them dense",
+            );
         }
         let dir = root.join(MEMORIES_DIR);
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            return ToolOutput::Error { class: None,
-                message: format!("could not create {}: {e}", dir.display()),
-            };
+            return ToolOutput::error(format!("could not create {}: {e}", dir.display()));
         }
         let path = dir.join(format!("{slug}.md"));
         let existed = path.exists();
         if let Err(e) =
             crate::durable_write::write_file_durably(path.clone(), memory.as_bytes().to_vec()).await
         {
-            return ToolOutput::Error { class: None,
-                message: format!("could not write {}: {e}", path.display()),
-            };
+            return ToolOutput::error(format!("could not write {}: {e}", path.display()));
         }
         ToolOutput::Ok {
             content: format!(
@@ -206,33 +195,23 @@ impl Tool for CiteMemory {
         let memory_id = match crate::input::required_str(input, "memory_id") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         if !is_memory_id(memory_id) && !is_record_handle(memory_id) {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "`{memory_id}` is neither a memory id nor a record handle — cite the \
+            return ToolOutput::error(format!(
+                "`{memory_id}` is neither a memory id nor a record handle — cite the \
                      [nod_…] id or the ^handle exactly as shown in the injected context"
-                ),
-            };
+            ));
         }
         let Some(useful_score) = input.get("useful_score").and_then(|v| v.as_i64()) else {
-            return ToolOutput::Error { class: None,
-                message: "missing required integer field `useful_score`".into(),
-            };
+            return ToolOutput::error("missing required integer field `useful_score`");
         };
         if !(1..=5).contains(&useful_score) {
-            return ToolOutput::Error { class: None,
-                message: format!("useful_score must be 1-5, got {useful_score}"),
-            };
+            return ToolOutput::error(format!("useful_score must be 1-5, got {useful_score}"));
         }
         let Some(truthful) = input.get("truthful").and_then(|v| v.as_bool()) else {
-            return ToolOutput::Error { class: None,
-                message: "missing required boolean field `truthful`".into(),
-            };
+            return ToolOutput::error("missing required boolean field `truthful`");
         };
         let remark = input
             .get("remark")
@@ -240,9 +219,9 @@ impl Tool for CiteMemory {
             .unwrap_or_default()
             .trim();
         if remark.is_empty() || remark.chars().count() > 300 {
-            return ToolOutput::Error { class: None,
-                message: "remark must be a non-empty sentence of at most 300 characters".into(),
-            };
+            return ToolOutput::error(
+                "remark must be a non-empty sentence of at most 300 characters",
+            );
         }
 
         let citation = MemoryCitation {

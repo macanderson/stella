@@ -389,9 +389,7 @@ impl Tool for Grep {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
@@ -399,7 +397,9 @@ impl Tool for Grep {
         let type_filter = input.get("type").and_then(|v| v.as_str());
         let opts = match SearchOptions::parse(input) {
             Ok(o) => o,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         // The `graph_query` pointer rides a footer only when the pattern reads
         // like a definition/reference hunt — the case the graph serves better.
@@ -411,9 +411,7 @@ impl Tool for Grep {
         let search_dir = match crate::resolve_within_root(root, search_path) {
             Some(p) => p,
             None => {
-                return ToolOutput::Error { class: None,
-                    message: format!("path `{search_path}` escapes workspace root"),
-                };
+                return ToolOutput::error(format!("path `{search_path}` escapes workspace root"));
             }
         };
 
@@ -509,12 +507,10 @@ impl Tool for Grep {
         // keep burning IO after the user stopped asking. It also bounds the
         // wait, so a walk that wedges cannot hold the turn open either.
         match crate::exec::run_captured(rg, SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
-                message: format!(
-                    "rg timed out after {SEARCH_TIMEOUT_SECS}s — narrow the search with a \
+            crate::exec::Captured::TimedOut => ToolOutput::error(format!(
+                "rg timed out after {SEARCH_TIMEOUT_SECS}s — narrow the search with a \
                      `path` or `glob` filter"
-                ),
-            },
+            )),
             crate::exec::Captured::Done(output) => {
                 // Byte cap BEFORE the line cap: truncating after `take` would
                 // make the "showing first 200 matches" note below a lie, and
@@ -549,9 +545,7 @@ impl Tool for Grep {
                 // during the walk is benign and stays "(no matches)".
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if output.status.code() == Some(2) && is_pattern_error(&stderr) {
-                    return ToolOutput::Error { class: None,
-                        message: format!("rg error: {}", first_error_line(&stderr)),
-                    };
+                    return ToolOutput::error(format!("rg error: {}", first_error_line(&stderr)));
                 }
                 no_matches(self.footer, show_tip, root)
             }

@@ -1338,9 +1338,7 @@ mod tests {
             m.apply(&AgentEvent::ToolResult {
                 call_id: id,
                 output: if i < failures {
-                    ToolOutput::Error { class: None,
-                        message: "exit status 1".into(),
-                    }
+                    ToolOutput::error("exit status 1")
                 } else {
                     ToolOutput::Ok {
                         content: "folded_away_body".into(),

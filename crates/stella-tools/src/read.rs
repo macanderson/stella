@@ -262,9 +262,7 @@ impl Tool for ReadFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
 
@@ -283,9 +281,7 @@ impl Tool for ReadFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
@@ -320,38 +316,28 @@ impl Tool for ReadFile {
         let bytes = match loaded {
             Ok(Ok(Loaded::Bytes(bytes))) => bytes,
             Ok(Ok(Loaded::Directory)) => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "`{path}` is a directory, not a file — list it with \
+                return ToolOutput::error(format!(
+                    "`{path}` is a directory, not a file — list it with \
                          glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
-                    ),
-                };
+                ));
             }
             Ok(Ok(Loaded::TooLarge { bytes })) => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
+                return ToolOutput::error(format!(
+                    "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
                          with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                        bytes / (1024 * 1024),
-                        MAX_FILE_BYTES / (1024 * 1024)
-                    ),
-                };
+                    bytes / (1024 * 1024),
+                    MAX_FILE_BYTES / (1024 * 1024)
+                ));
             }
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::Error { class: None,
-                    message: format!("path `{path}` escapes workspace root ({e})"),
-                };
+                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
             }
             Ok(Err(e)) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("failed to read `{path}`: {e}"),
-                };
+                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
             }
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("failed to read `{path}`: {e}"),
-                };
+                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
             }
         };
 
@@ -472,7 +458,7 @@ impl Tool for ReadFile {
                 );
                 ToolOutput::Ok { content: numbered }
             }
-            Err(message) => ToolOutput::Error { class: None, message },
+            Err(message) => ToolOutput::error(message),
         }
     }
 }

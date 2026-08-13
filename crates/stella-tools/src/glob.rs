@@ -63,9 +63,7 @@ impl Tool for Glob {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
@@ -76,9 +74,7 @@ impl Tool for Glob {
         let search_dir = match crate::resolve_within_root(root, search_path) {
             Some(p) => p,
             None => {
-                return ToolOutput::Error { class: None,
-                    message: format!("path `{search_path}` escapes workspace root"),
-                };
+                return ToolOutput::error(format!("path `{search_path}` escapes workspace root"));
             }
         };
         // A typo'd `path` is caught here, deterministically, rather than by
@@ -88,9 +84,7 @@ impl Tool for Glob {
         // With existence settled up front, backend_failure can treat every
         // vanished-entry complaint as the race it is.
         if !search_dir.is_dir() {
-            return ToolOutput::Error { class: None,
-                message: format!("search path `{search_path}` is not a directory"),
-            };
+            return ToolOutput::error(format!("search path `{search_path}` is not a directory"));
         }
         // Results are rendered relative to the (canonical) workspace root, per
         // this tool's advertised contract.
@@ -101,12 +95,10 @@ impl Tool for Glob {
         // `run_captured` sets `kill_on_drop` (a cancelled turn must not leave a
         // full-tree walk burning IO) and bounds the wait.
         match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
-                message: format!(
-                    "fd timed out after {}s — narrow the search with a `path` filter",
-                    crate::grep::SEARCH_TIMEOUT_SECS
-                ),
-            },
+            crate::exec::Captured::TimedOut => ToolOutput::error(format!(
+                "fd timed out after {}s — narrow the search with a `path` filter",
+                crate::grep::SEARCH_TIMEOUT_SECS
+            )),
             crate::exec::Captured::Done(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 if text.is_empty() {
@@ -117,7 +109,7 @@ impl Tool for Glob {
                     // as an empty tree sends the agent off recreating files
                     // that exist.
                     if let Some(message) = backend_failure("fd", &output) {
-                        return ToolOutput::Error { class: None, message };
+                        return ToolOutput::error(message);
                     }
                     return ToolOutput::Ok {
                         content: "(no files found)".into(),
@@ -136,18 +128,16 @@ impl Tool for Glob {
                 match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
                     .await
                 {
-                    crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
-                        message: format!(
-                            "find timed out after {}s — narrow the search with a `path` filter",
-                            crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS
-                        ),
-                    },
+                    crate::exec::Captured::TimedOut => ToolOutput::error(format!(
+                        "find timed out after {}s — narrow the search with a `path` filter",
+                        crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS
+                    )),
                     crate::exec::Captured::Done(output) => {
                         let text = String::from_utf8_lossy(&output.stdout);
                         if text.is_empty() {
                             // Same backend-failure guard as the fd arm.
                             if let Some(message) = backend_failure("find", &output) {
-                                return ToolOutput::Error { class: None, message };
+                                return ToolOutput::error(message);
                             }
                             ToolOutput::Ok {
                                 content: "(no files found)".into(),
@@ -159,9 +149,9 @@ impl Tool for Glob {
                             }
                         }
                     }
-                    crate::exec::Captured::Unavailable => ToolOutput::Error { class: None,
-                        message: "find failed: neither `fd` nor `find` is available".into(),
-                    },
+                    crate::exec::Captured::Unavailable => {
+                        ToolOutput::error("find failed: neither `fd` nor `find` is available")
+                    }
                 }
             }
         }

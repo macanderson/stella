@@ -381,17 +381,13 @@ impl Tool for Bash {
         let command = match crate::input::required_str(input, "command") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         // Audited before the spawn, on the text the model wrote: a refusal
         // that arrives after the process has run is a report, not a boundary.
         if let Err(refusal) = self.confinement.audit(command, root) {
-            return ToolOutput::Error { class: None,
-                message: refusal.to_string(),
-            };
+            return ToolOutput::error(refusal.to_string());
         }
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
@@ -454,9 +450,7 @@ impl Tool for Bash {
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("failed to spawn: {e}"),
-                };
+                return ToolOutput::error(format!("failed to spawn: {e}"));
             }
         };
 
@@ -488,17 +482,13 @@ impl Tool for Bash {
             // Wait failure leaves the child's state unknown — the still-armed
             // guard kills the group on return rather than leak it.
             Ok(Err(e)) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("command failed: {e}"),
-                };
+                return ToolOutput::error(format!("command failed: {e}"));
             }
             Err(_) => {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
                 guard.kill_now();
-                return ToolOutput::Error { class: None,
-                    message: format!("command timed out after {timeout_secs}s"),
-                };
+                return ToolOutput::error(format!("command timed out after {timeout_secs}s"));
             }
         };
 
@@ -540,7 +530,7 @@ impl Tool for Bash {
         if output.status.success() {
             ToolOutput::Ok { content: combined }
         } else {
-            ToolOutput::Error { class: None, message: combined }
+            ToolOutput::error(combined)
         }
     }
 }

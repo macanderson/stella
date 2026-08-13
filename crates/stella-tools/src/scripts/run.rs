@@ -18,7 +18,9 @@ pub async fn run_by_name(
     let index = ScriptIndex::detect(root).await;
     let entry = match index.resolve(script, dir) {
         Ok(entry) => entry,
-        Err(message) => return ToolOutput::Error { class: None, message },
+        Err(message) => {
+            return ToolOutput::error(message);
+        }
     };
     let command = compose_command(entry, args);
     let cwd = if entry.dir == "." {

@@ -556,9 +556,7 @@ mod tests {
             Vec::new()
         }
         async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
-            ToolOutput::Error { class: None,
-                message: format!("no tool {name} in this test"),
-            }
+            ToolOutput::error(format!("no tool {name} in this test"))
         }
     }
 

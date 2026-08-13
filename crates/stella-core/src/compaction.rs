@@ -322,9 +322,7 @@ fn age_stale_tool_results(
                 aged_blocks.push(tool_result_block_id(&result.output));
                 let aged_payload = age_content(payload);
                 result.output = if is_error {
-                    ToolOutput::Error { class: None,
-                        message: aged_payload,
-                    }
+                    ToolOutput::error(aged_payload)
                 } else {
                     ToolOutput::Ok {
                         content: aged_payload,
@@ -652,9 +650,7 @@ pub fn compact_measured(
                 if payload.len() > AGE_THRESHOLD_CHARS {
                     let aged_payload = age_content(payload);
                     result.output = if is_error {
-                        ToolOutput::Error { class: None,
-                            message: aged_payload,
-                        }
+                        ToolOutput::error(aged_payload)
                     } else {
                         ToolOutput::Ok {
                             content: aged_payload,
@@ -694,9 +690,7 @@ pub fn compact_measured(
                 if payload_len > 400 {
                     evicted_blocks.push(id_at(idx, ridx));
                     result.output = if is_error {
-                        ToolOutput::Error { class: None,
-                            message: EVICTION_STUB.to_string(),
-                        }
+                        ToolOutput::error(EVICTION_STUB.to_string())
                     } else {
                         ToolOutput::Ok {
                             content: EVICTION_STUB.to_string(),

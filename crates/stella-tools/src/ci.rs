@@ -76,9 +76,9 @@ impl Tool for CiStatus {
             .map(|(c, _)| c)
             != Ok(0)
         {
-            return ToolOutput::Error { class: None,
-                message: "the `gh` CLI is required for ci_status and was not found on PATH".into(),
-            };
+            return ToolOutput::error(
+                "the `gh` CLI is required for ci_status and was not found on PATH",
+            );
         }
 
         // Probe replay for a parked wait (#1471): answer with the single
@@ -102,10 +102,8 @@ impl Tool for CiStatus {
                 Ok((0, out)) => ToolOutput::Ok {
                     content: out.trim().to_string(),
                 },
-                Ok((code, out)) => ToolOutput::Error { class: None,
-                    message: format!("gh failed (exit {code}): {out}"),
-                },
-                Err(message) => ToolOutput::Error { class: None, message },
+                Ok((code, out)) => ToolOutput::error(format!("gh failed (exit {code}): {out}")),
+                Err(message) => ToolOutput::error(message),
             };
         }
 
@@ -113,12 +111,10 @@ impl Tool for CiStatus {
 
         let (code, report) = match exec::run_github(&list_cmd, root, timeout_secs, None).await {
             Ok(pair) => pair,
-            Err(e) => return ToolOutput::Error { class: None, message: e },
+            Err(e) => return ToolOutput::error(e),
         };
         if code != 0 {
-            return ToolOutput::Error { class: None,
-                message: format!("gh failed (exit {code}): {report}"),
-            };
+            return ToolOutput::error(format!("gh failed (exit {code}): {report}"));
         }
 
         // A pr target's head, resolved ONCE per execute (#1526). Before

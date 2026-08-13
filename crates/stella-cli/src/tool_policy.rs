@@ -89,9 +89,7 @@ impl ToolExecutor for PolicyToolSet<'_> {
         if !self.policy.allows(name) {
             // Same wording shape as an unknown tool: a disabled tool must not
             // advertise itself through its own refusal.
-            return ToolOutput::Error { class: None,
-                message: format!("unknown tool: {name}"),
-            };
+            return ToolOutput::error(format!("unknown tool: {name}"));
         }
         self.inner.get().execute(name, input).await
     }

@@ -80,9 +80,7 @@ impl Tool for ReadSymbol {
         {
             Some(n) => n,
             None => {
-                return ToolOutput::Error { class: None,
-                    message: "missing required field `name`".into(),
-                };
+                return ToolOutput::error("missing required field `name`");
             }
         };
 
@@ -112,7 +110,9 @@ impl Tool for ReadSymbol {
         };
         let (spans, index_warning) = match looked_up {
             Ok(found) => found,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         // Every answer below is qualified by a failed catch-up pass — the span
         // it read may be the one the failed pass would have moved.
@@ -132,12 +132,10 @@ impl ReadSymbol {
         mut spans: Vec<stella_graph::SymbolSpan>,
     ) -> ToolOutput {
         if spans.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "no definition of `{name}` in the code graph (index may be \
+            return ToolOutput::error(format!(
+                "no definition of `{name}` in the code graph (index may be \
                      stale — `stella init` re-indexes) — try graph_query references, or grep"
-                ),
-            };
+            ));
         }
 
         // Optional `path` disambiguator. The graph stores normalized
@@ -148,12 +146,10 @@ impl ReadSymbol {
                 .unwrap_or_else(|| raw.to_string());
             let in_file: Vec<_> = spans.iter().filter(|s| s.path == wanted).cloned().collect();
             if in_file.is_empty() {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "`{name}` has no definition in `{wanted}` — it is defined at:\n{}",
-                        listing(&spans)
-                    ),
-                };
+                return ToolOutput::error(format!(
+                    "`{name}` has no definition in `{wanted}` — it is defined at:\n{}",
+                    listing(&spans)
+                ));
             }
             spans = in_file;
         }

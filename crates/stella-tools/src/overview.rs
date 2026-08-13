@@ -79,18 +79,16 @@ impl Tool for ProjectOverview {
         let overview = match overview {
             Ok(overview) => overview,
             Err(_) => {
-                return ToolOutput::Error { class: None,
-                    message: "the project overview was cancelled".into(),
-                };
+                return ToolOutput::error("the project overview was cancelled");
             }
         };
         ToolOutput::Ok {
             content: match serde_json::to_string_pretty(&overview) {
                 Ok(text) => text,
                 Err(error) => {
-                    return ToolOutput::Error { class: None,
-                        message: format!("could not render the project overview: {error}"),
-                    };
+                    return ToolOutput::error(format!(
+                        "could not render the project overview: {error}"
+                    ));
                 }
             },
         }

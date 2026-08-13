@@ -397,14 +397,10 @@ impl<'a> InteractiveToolSet<'a> {
         input: &Value,
     ) -> ToolOutput {
         let Some(query) = input.get("query").and_then(Value::as_str) else {
-            return ToolOutput::Error { class: None,
-                message: "recall_context: missing required string field `query`".into(),
-            };
+            return ToolOutput::error("recall_context: missing required string field `query`");
         };
         if query.trim().is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "recall_context: `query` must say what you want to know".into(),
-            };
+            return ToolOutput::error("recall_context: `query` must say what you want to know");
         }
         let found = recall.recall(query).await;
         if let Some(event) = found.telemetry_event() {
@@ -471,9 +467,7 @@ impl<'a> InteractiveToolSet<'a> {
 
     async fn execute_search_skills(&self, registry: &SkillRegistry, input: &Value) -> ToolOutput {
         let Some(query) = input.get("query").and_then(Value::as_str) else {
-            return ToolOutput::Error { class: None,
-                message: "search_skills: missing required string field `query`".into(),
-            };
+            return ToolOutput::error("search_skills: missing required string field `query`");
         };
         let argv = SkillRegistry::render(&registry.search_cmd, "{query}", query);
         match registry.run(argv, 90).await {
@@ -481,17 +475,13 @@ impl<'a> InteractiveToolSet<'a> {
                 content: "no results".into(),
             },
             Ok(out) => ToolOutput::Ok { content: out },
-            Err(e) => ToolOutput::Error { class: None,
-                message: format!("skills search failed: {e}"),
-            },
+            Err(e) => ToolOutput::error(format!("skills search failed: {e}")),
         }
     }
 
     async fn execute_install_skill(&self, registry: &SkillRegistry, input: &Value) -> ToolOutput {
         let Some(id) = input.get("id").and_then(Value::as_str) else {
-            return ToolOutput::Error { class: None,
-                message: "install_skill: missing required string field `id`".into(),
-            };
+            return ToolOutput::error("install_skill: missing required string field `id`");
         };
         // THE user-confirm workflow: installation never proceeds without an
         // explicit yes through the same io ask_user uses (headless io ->
@@ -510,9 +500,7 @@ impl<'a> InteractiveToolSet<'a> {
         {
             Ok(a) => a,
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("install_skill: confirmation unavailable: {e}"),
-                };
+                return ToolOutput::error(format!("install_skill: confirmation unavailable: {e}"));
             }
         };
         let approved = matches!(answer.trim(), "1")
@@ -532,18 +520,14 @@ impl<'a> InteractiveToolSet<'a> {
         let tmp = match tempfile::Builder::new().prefix("stella-skill-").tempdir() {
             Ok(t) => t,
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("install_skill: could not stage a tempdir: {e}"),
-                };
+                return ToolOutput::error(format!("install_skill: could not stage a tempdir: {e}"));
             }
         };
         let mut staged = registry.clone();
         staged.workspace_root = tmp.path().to_path_buf();
         let argv = SkillRegistry::render(&staged.install_cmd, "{id}", id);
         if let Err(e) = staged.run(argv, 300).await {
-            return ToolOutput::Error { class: None,
-                message: format!("skills install failed: {e}"),
-            };
+            return ToolOutput::error(format!("skills install failed: {e}"));
         }
         match crate::skill_manager::adopt_tree(
             stella_tui::SkillScope::Project,
@@ -557,9 +541,7 @@ impl<'a> InteractiveToolSet<'a> {
                      selection on the next turn."
                 ),
             },
-            Err(e) => ToolOutput::Error { class: None,
-                message: format!("skills install produced nothing usable: {e}"),
-            },
+            Err(e) => ToolOutput::error(format!("skills install produced nothing usable: {e}")),
         }
     }
 
@@ -602,9 +584,7 @@ impl<'a> InteractiveToolSet<'a> {
         input: &Value,
     ) -> ToolOutput {
         let Some(question) = input.get("question").and_then(Value::as_str) else {
-            return ToolOutput::Error { class: None,
-                message: "ask_user: missing required string field `question`".into(),
-            };
+            return ToolOutput::error("ask_user: missing required string field `question`");
         };
         let model_options: Vec<String> = input
             .get("options")
@@ -617,9 +597,7 @@ impl<'a> InteractiveToolSet<'a> {
             })
             .unwrap_or_default();
         if model_options.len() < 2 {
-            return ToolOutput::Error { class: None,
-                message: "ask_user: `options` must contain at least 2 choices".into(),
-            };
+            return ToolOutput::error("ask_user: `options` must contain at least 2 choices");
         }
 
         // The event carries the model's structured options; the free-text
@@ -637,18 +615,15 @@ impl<'a> InteractiveToolSet<'a> {
         let raw = match io.prompt(question, &presented).await {
             Ok(line) => line,
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("ask_user failed: {e}"),
-                };
+                return ToolOutput::error(format!("ask_user failed: {e}"));
             }
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "ask_user: the user gave an empty answer — ask again or proceed with \
-                          your best judgment"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "ask_user: the user gave an empty answer — ask again or proceed with \
+                          your best judgment",
+            );
         }
 
         // A bare number selects that option; picking the free-text slot (or
@@ -661,9 +636,7 @@ impl<'a> InteractiveToolSet<'a> {
                 match io.prompt("Your answer:", &[]).await {
                     Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
                     _ => {
-                        return ToolOutput::Error { class: None,
-                            message: "ask_user: no free-text answer provided".into(),
-                        };
+                        return ToolOutput::error("ask_user: no free-text answer provided");
                     }
                 }
             }

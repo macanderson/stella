@@ -423,22 +423,19 @@ impl Tool for GatherContext {
             .trim()
             .to_string();
         if goal.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "gathering needs a `goal` — one line on what you're trying to learn, \
-                          recorded in the pack for the agents that reuse it"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "gathering needs a `goal` — one line on what you're trying to learn, \
+                          recorded in the pack for the agents that reuse it",
+            );
         }
         inputs.canonicalize();
         let request_key = inputs.request_key();
         let slug = match input.get("save_as").and_then(|v| v.as_str()) {
             Some(s) if valid_slug(s) => s.to_string(),
             Some(s) => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "invalid save_as slug `{s}` — use 1-64 lowercase letters, digits, - or _"
-                    ),
-                };
+                return ToolOutput::error(format!(
+                    "invalid save_as slug `{s}` — use 1-64 lowercase letters, digits, - or _"
+                ));
             }
             None => derive_slug(&goal, &request_key),
         };
@@ -508,9 +505,7 @@ fn symbol_failures(symbols: Vec<String>, message: String) -> SymbolAnswers {
     symbols
         .into_iter()
         .map(|symbol| {
-            let error = || ToolOutput::Error { class: None,
-                message: message.clone(),
-            };
+            let error = || ToolOutput::error(message.clone());
             (symbol, Some((error(), error())))
         })
         .collect()
@@ -558,7 +553,9 @@ async fn gather(
     }));
     let graph_on = match crate::graph::graph_available(root) {
         Ok(available) => available,
-        Err(message) => return ToolOutput::Error { class: None, message },
+        Err(message) => {
+            return ToolOutput::error(message);
+        }
     };
     // One open, one index pass, every symbol answered against that one
     // handle — on the blocking pool (#549). The per-symbol `join_all` this
@@ -683,9 +680,7 @@ async fn gather(
     let handle = match crate::rootfd::RootHandle::open(root) {
         Ok(handle) => std::sync::Arc::new(handle),
         Err(e) => {
-            return ToolOutput::Error { class: None,
-                message: format!("cannot open workspace root: {e}"),
-            };
+            return ToolOutput::error(format!("cannot open workspace root: {e}"));
         }
     };
     for (path, mut lines) in excerpt_targets {
@@ -800,20 +795,16 @@ async fn read_pack(root: &Path, slug: &str) -> ToolOutput {
     // outside the workspace — the confinement break resolve_within_root
     // exists to prevent.
     if !valid_slug(slug) {
-        return ToolOutput::Error { class: None,
-            message: format!(
-                "invalid pack slug `{slug}` — use 1-64 lowercase letters, digits, - or _"
-            ),
-        };
+        return ToolOutput::error(format!(
+            "invalid pack slug `{slug}` — use 1-64 lowercase letters, digits, - or _"
+        ));
     }
     let Some(pack) = load_pack(root, slug).await else {
         let listing = match list_packs(root).await {
             ToolOutput::Ok { content } => content,
             ToolOutput::Error { message, .. } => message,
         };
-        return ToolOutput::Error { class: None,
-            message: format!("no context pack `{slug}`.\n{listing}"),
-        };
+        return ToolOutput::error(format!("no context pack `{slug}`.\n{listing}"));
     };
     let stale = stale_paths(root, &pack.manifest).await;
     let freshness = if stale.is_empty() {
@@ -1026,7 +1017,9 @@ mod tests {
                     "the sweep still answered from the last good index: {content}"
                 );
             }
-            ToolOutput::Error { message, .. } => panic!("a failed index pass is not fatal: {message}"),
+            ToolOutput::Error { message, .. } => {
+                panic!("a failed index pass is not fatal: {message}")
+            }
         }
     }
 

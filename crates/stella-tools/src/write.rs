@@ -50,17 +50,13 @@ impl Tool for WriteFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
         let content = match crate::input::required_str(input, "content") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error { class: None,
-                    message: err.to_string(),
-                };
+                return ToolOutput::error(err.to_string());
             }
         };
 
@@ -72,9 +68,7 @@ impl Tool for WriteFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
@@ -93,12 +87,10 @@ impl Tool for WriteFile {
                     content: format!("wrote {bytes} bytes to {path}"),
                 }
             }
-            Err(e) if e.is_escape() => ToolOutput::Error { class: None,
-                message: format!("path `{path}` escapes workspace root ({e})"),
-            },
-            Err(e) => ToolOutput::Error { class: None,
-                message: format!("failed to write `{path}`: {e}"),
-            },
+            Err(e) if e.is_escape() => {
+                ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"))
+            }
+            Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
         }
     }
 }

@@ -337,9 +337,9 @@ impl ToolRegistry {
     ) -> Result<(), ToolOutput> {
         match self.approval_broker().resolve(Some(bus), &request).await {
             ApprovalOutcome::Approved => Ok(()),
-            ApprovalOutcome::Denied { reason } => Err(ToolOutput::Error { class: None,
-                message: format!("{context} requires approval — {reason}"),
-            }),
+            ApprovalOutcome::Denied { reason } => Err(ToolOutput::error(format!(
+                "{context} requires approval — {reason}"
+            ))),
         }
     }
 
@@ -366,9 +366,9 @@ impl ToolRegistry {
         // withholds the tool) — see [`OperatorPosture`].
         match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
             GateVerdict::Deny { reason } => {
-                return Err(ToolOutput::Error { class: None,
-                    message: format!("`{name}` was denied by an extension policy: {reason}"),
-                });
+                return Err(ToolOutput::error(format!(
+                    "`{name}` was denied by an extension policy: {reason}"
+                )));
             }
             GateVerdict::RequireApproval { reason } => {
                 let request = ApprovalRequest {
@@ -495,12 +495,10 @@ impl ToolRegistry {
                 match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false)
                 {
                     GateVerdict::Deny { reason } => {
-                        return Err(ToolOutput::Error { class: None,
-                            message: format!(
-                                "`{name}` on `{}` was denied by an extension policy: {reason}",
-                                pending.path
-                            ),
-                        });
+                        return Err(ToolOutput::error(format!(
+                            "`{name}` on `{}` was denied by an extension policy: {reason}",
+                            pending.path
+                        )));
                     }
                     GateVerdict::RequireApproval { reason } => {
                         let request = ApprovalRequest {
@@ -529,9 +527,9 @@ impl ToolRegistry {
             ));
             match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
                 GateVerdict::Deny { reason } => {
-                    return Err(ToolOutput::Error { class: None,
-                        message: format!("command was denied by an extension policy: {reason}"),
-                    });
+                    return Err(ToolOutput::error(format!(
+                        "command was denied by an extension policy: {reason}"
+                    )));
                 }
                 GateVerdict::RequireApproval { reason } => {
                     let request = ApprovalRequest {

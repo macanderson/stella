@@ -509,7 +509,7 @@ impl Tool for VerifyDone {
         let mut phases = Phases::default();
         let (output, verdict) = match self.verify(input, root, &mut phases).await {
             Ok(pair) => pair,
-            Err(message) => (ToolOutput::Error { class: None, message }, Verdict::Error),
+            Err(message) => (ToolOutput::error(message), Verdict::Error),
         };
         phases.verdict = verdict;
         // The turn's rejection run (#2863), folded in at the one exit every
@@ -698,21 +698,22 @@ impl VerifyDone {
             // after its own harness for fifteen consecutive calls (#2872).
             if let Some(broken) = instrument::working_tree_failure(new_exit, &new_output) {
                 return Ok((
-                    ToolOutput::Error { class: None,
-                        message: instrument::refusal(broken, test_cmd, new_exit, tail(&new_output)),
-                    },
+                    ToolOutput::error(instrument::refusal(
+                        broken,
+                        test_cmd,
+                        new_exit,
+                        tail(&new_output),
+                    )),
                     Verdict::InstrumentBroken,
                 ));
             }
             return Ok((
-                ToolOutput::Error { class: None,
-                    message: format!(
-                        "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). \
+                ToolOutput::error(format!(
+                    "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). \
                          Fix the implementation (or the test) and retry.\n--- output tail \
                          ---\n{}",
-                        tail(&new_output)
-                    ),
-                },
+                    tail(&new_output)
+                )),
                 Verdict::NotDone,
             ));
         }
@@ -783,7 +784,7 @@ impl VerifyDone {
                 tail(&old_output),
             )
             .await;
-            return Ok((ToolOutput::Error { class: None, message }, Verdict::Vacuous));
+            return Ok((ToolOutput::error(message), Verdict::Vacuous));
         }
 
         // A failure while LOADING the test is not a failure OF the test:
@@ -806,9 +807,8 @@ impl VerifyDone {
                 return Ok((ToolOutput::Ok { content }, Verdict::Confirmed));
             }
             return Ok((
-                ToolOutput::Error { class: None,
-                    message: format!(
-                        "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
+                ToolOutput::error(format!(
+                    "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
                      {label}, so the baseline could not be built or imported and no \
                      behavioural assertion ever ran: this failure is NOT evidence that your \
                      change is what flipped it. Two common causes, each with a fix:\n\
@@ -823,11 +823,10 @@ impl VerifyDone {
                      - previous code: baseline {} ({}) → exit {old_exit}, before any test \
                      ran{reuse_note}\n\
                      --- previous-code output tail ---\n{}",
-                        baseline.short(),
-                        baseline.provenance,
-                        tail(&old_output)
-                    ),
-                },
+                    baseline.short(),
+                    baseline.provenance,
+                    tail(&old_output)
+                )),
                 Verdict::InconclusiveBuildError,
             ));
         }

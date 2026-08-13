@@ -39,9 +39,7 @@ fn tool_call(m: &mut WorkspaceModel, agent: &str, id: &str, body: &str, ok: bool
                     content: body.into(),
                 }
             } else {
-                ToolOutput::Error { class: None,
-                    message: body.into(),
-                }
+                ToolOutput::error(body)
             },
             duration_ms: 20,
             speculated: false,

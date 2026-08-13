@@ -445,9 +445,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
             3,
             &AgentEvent::ToolResult {
                 call_id: "c2".into(),
-                output: ToolOutput::Error { class: None,
-                    message: "not found".into(),
-                },
+                output: ToolOutput::error("not found"),
                 duration_ms: 3,
                 speculated: false,
             },

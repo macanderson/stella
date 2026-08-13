@@ -49,9 +49,7 @@ impl ToolExecutor for Chain {
             Some(content) => ToolOutput::Ok {
                 content: content.clone(),
             },
-            None => ToolOutput::Error { class: None,
-                message: format!("unknown tool `{name}`"),
-            },
+            None => ToolOutput::error(format!("unknown tool `{name}`")),
         }
     }
 }

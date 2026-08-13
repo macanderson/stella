@@ -23,12 +23,11 @@ use crate::scripts::ScriptIndex;
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
 fn no_toolchain_error() -> ToolOutput {
-    ToolOutput::Error { class: None,
-        message: "no recognized toolchain (looked for Cargo.toml, package.json, deno.json, \
+    ToolOutput::error(
+        "no recognized toolchain (looked for Cargo.toml, package.json, deno.json, \
                   pyproject.toml, go.mod, Makefile, justfile, Taskfile.yml, composer.json) — \
-                  pass `command` explicitly"
-            .into(),
-    }
+                  pass `command` explicitly",
+    )
 }
 
 pub struct BuildProject;
@@ -64,11 +63,10 @@ impl Tool for BuildProject {
         }
         match index.verb_entry("build") {
             Some(entry) => run_and_report(&entry.command, root, timeout_secs, None).await,
-            None => ToolOutput::Error { class: None,
-                message: "no `build` script detected in this workspace (see list_scripts) — \
-                          pass `command`"
-                    .into(),
-            },
+            None => ToolOutput::error(
+                "no `build` script detected in this workspace (see list_scripts) — \
+                          pass `command`",
+            ),
         }
     }
 }
@@ -125,20 +123,17 @@ impl Tool for RunTests {
         match scope {
             None | Some("impacted") => {}
             Some(other) => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "unknown scope `{other}` — the only scope is \"impacted\" (omit \
+                return ToolOutput::error(format!(
+                    "unknown scope `{other}` — the only scope is \"impacted\" (omit \
                          `scope` for the full suite)"
-                    ),
-                };
+                ));
             }
         }
         if scope.is_some() && !filter.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "`scope: \"impacted\"` computes its own selection — it cannot be \
-                          combined with `filter`; drop one of them"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "`scope: \"impacted\"` computes its own selection — it cannot be \
+                          combined with `filter`; drop one of them",
+            );
         }
 
         let index = ScriptIndex::detect(root).await;
@@ -224,7 +219,7 @@ impl Tool for RunTests {
                 &note,
                 run_and_report(&command, root, timeout_secs, None).await,
             ),
-            Err(message) => with_note(&note, ToolOutput::Error { class: None, message }),
+            Err(message) => with_note(&note, ToolOutput::error(message)),
         }
     }
 }
@@ -239,9 +234,7 @@ fn with_note(note: &str, out: ToolOutput) -> ToolOutput {
         ToolOutput::Ok { content } => ToolOutput::Ok {
             content: format!("{note}\n{content}"),
         },
-        ToolOutput::Error { message, .. } => ToolOutput::Error { class: None,
-            message: format!("{note}\n{message}"),
-        },
+        ToolOutput::Error { message, .. } => ToolOutput::error(format!("{note}\n{message}")),
     }
 }
 
@@ -556,12 +549,12 @@ async fn run_argv_and_report(
                     content: format!("`{display}` PASSED (exit 0){counts}\n{output}"),
                 }
             } else {
-                ToolOutput::Error { class: None,
-                    message: format!("`{display}` FAILED (exit {code}){counts}\n{output}"),
-                }
+                ToolOutput::error(format!(
+                    "`{display}` FAILED (exit {code}){counts}\n{output}"
+                ))
             }
         }
-        Err(e) => ToolOutput::Error { class: None, message: e },
+        Err(e) => ToolOutput::error(e),
     }
 }
 
@@ -597,7 +590,7 @@ impl Tool for RunLint {
         let fix = input.get("fix").and_then(|v| v.as_bool()).unwrap_or(false);
         match lint_argv(&ScriptIndex::detect(root).await, fix) {
             Ok(argv) => run_argv_and_report(&argv, root, timeout_secs).await,
-            Err(message) => ToolOutput::Error { class: None, message },
+            Err(message) => ToolOutput::error(message),
         }
     }
 
@@ -644,7 +637,7 @@ impl Tool for FormatCode {
             .unwrap_or(false);
         match format_argv(&ScriptIndex::detect(root).await, check) {
             Ok(argv) => run_argv_and_report(&argv, root, timeout_secs).await,
-            Err(message) => ToolOutput::Error { class: None, message },
+            Err(message) => ToolOutput::error(message),
         }
     }
 

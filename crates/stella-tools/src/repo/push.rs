@@ -327,28 +327,23 @@ impl Tool for RepoPush {
         if let Some(branch) = named
             && !valid_branch_name(branch)
         {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "`{branch}` is not a valid branch name (must not start with `-` or \
+            return ToolOutput::error(format!(
+                "`{branch}` is not a valid branch name (must not start with `-` or \
                      contain whitespace)"
-                ),
-            };
+            ));
         }
         let branch = match named {
             Some(b) => b.to_string(),
             None => match self.0.current_branch(root).await {
                 Ok(Some(b)) => b,
                 Ok(None) => {
-                    return ToolOutput::Error { class: None,
-                        message: "the checkout is detached (no current branch) — pass \
-                                  `branch` explicitly"
-                            .into(),
-                    };
+                    return ToolOutput::error(
+                        "the checkout is detached (no current branch) — pass \
+                                  `branch` explicitly",
+                    );
                 }
                 Err(e) => {
-                    return ToolOutput::Error { class: None,
-                        message: e.to_string(),
-                    };
+                    return ToolOutput::error(e.to_string());
                 }
             },
         };
@@ -357,26 +352,21 @@ impl Tool for RepoPush {
         // pushing the default.
         match self.0.default_branch(root).await {
             Ok(Some(default)) if default == branch => {
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "repo_push refuses to push `{branch}`: it is the repository's \
+                return ToolOutput::error(format!(
+                    "repo_push refuses to push `{branch}`: it is the repository's \
                          default branch. Publish work on a feature branch instead — this \
                          rule is structural and has no override"
-                    ),
-                };
+                ));
             }
             Ok(Some(_)) => {}
             Ok(None) => {
-                return ToolOutput::Error { class: None,
-                    message: "cannot determine the repository's default branch (remote \
-                              HEAD) — refusing to push rather than risk pushing it"
-                        .into(),
-                };
+                return ToolOutput::error(
+                    "cannot determine the repository's default branch (remote \
+                              HEAD) — refusing to push rather than risk pushing it",
+                );
             }
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: e.to_string(),
-                };
+                return ToolOutput::error(e.to_string());
             }
         }
 
@@ -395,7 +385,7 @@ impl Tool for RepoPush {
         let skip_hooks = if asked_to_skip {
             match hook_skip_permitted(&plan) {
                 Ok(()) => true,
-                Err(reason) => return ToolOutput::Error { class: None, message: reason },
+                Err(reason) => return ToolOutput::error(reason),
             }
         } else {
             false
@@ -405,9 +395,7 @@ impl Tool for RepoPush {
             Ok(out) => ToolOutput::Ok {
                 content: format!("{}{}", plan.render(&branch, skip_hooks), out.trim()),
             },
-            Err(e) => ToolOutput::Error { class: None,
-                message: push_failure(&e, &plan, skip_hooks),
-            },
+            Err(e) => ToolOutput::error(push_failure(&e, &plan, skip_hooks)),
         }
     }
 

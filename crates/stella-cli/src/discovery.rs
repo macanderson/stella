@@ -330,16 +330,13 @@ impl<'a> DiscoveryToolSet<'a> {
 
     async fn execute_tool_search(&self, input: &Value) -> ToolOutput {
         let Some(query) = input.get("query").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::Error { class: None,
-                message: "tool_search: missing required string field `query`".into(),
-            };
+            return ToolOutput::error("tool_search: missing required string field `query`");
         };
         if query.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "tool_search: `query` is empty — pass keywords, +required terms, or \
-                          select:name1,name2"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "tool_search: `query` is empty — pass keywords, +required terms, or \
+                          select:name1,name2",
+            );
         }
         let limit = clamp_limit(input, TOOL_SEARCH_DEFAULT_LIMIT, TOOL_SEARCH_MAX_LIMIT);
 
@@ -423,19 +420,13 @@ impl<'a> DiscoveryToolSet<'a> {
 
     async fn execute_skill_search(&self, input: &Value) -> ToolOutput {
         if crate::settings::filesystem_settings_disabled() {
-            return ToolOutput::Error { class: None,
-                message: "skill_search is disabled by benchmark filesystem isolation".into(),
-            };
+            return ToolOutput::error("skill_search is disabled by benchmark filesystem isolation");
         }
         let Some(query) = input.get("query").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::Error { class: None,
-                message: "skill_search: missing required string field `query`".into(),
-            };
+            return ToolOutput::error("skill_search: missing required string field `query`");
         };
         if query.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "skill_search: `query` is empty".into(),
-            };
+            return ToolOutput::error("skill_search: `query` is empty");
         }
         let limit = clamp_limit(input, SKILL_SEARCH_DEFAULT_LIMIT, SKILL_SEARCH_MAX_LIMIT);
         let include_body = input
@@ -517,30 +508,22 @@ impl<'a> DiscoveryToolSet<'a> {
 
     async fn execute_mcp_search(&self, input: &Value) -> ToolOutput {
         if crate::settings::filesystem_settings_disabled() {
-            return ToolOutput::Error { class: None,
-                message: "mcp_search is disabled by benchmark filesystem isolation".into(),
-            };
+            return ToolOutput::error("mcp_search is disabled by benchmark filesystem isolation");
         }
         let Some(query) = input.get("query").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::Error { class: None,
-                message: "mcp_search: missing required string field `query`".into(),
-            };
+            return ToolOutput::error("mcp_search: missing required string field `query`");
         };
         if query.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "mcp_search: `query` is empty".into(),
-            };
+            return ToolOutput::error("mcp_search: `query` is empty");
         }
         let scope = input
             .get("scope")
             .and_then(Value::as_str)
             .unwrap_or("workspace");
         if !matches!(scope, "workspace" | "registry" | "all") {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "mcp_search: unknown scope `{scope}` — use workspace, registry, or all"
-                ),
-            };
+            return ToolOutput::error(format!(
+                "mcp_search: unknown scope `{scope}` — use workspace, registry, or all"
+            ));
         }
         let limit = clamp_limit(input, MCP_SEARCH_DEFAULT_LIMIT, MCP_SEARCH_MAX_LIMIT);
 

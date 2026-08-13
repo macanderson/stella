@@ -172,12 +172,11 @@ impl Tool for CodeGraphQuery {
         let op = input.get("op").and_then(|v| v.as_str()).unwrap_or("");
         let target = input.get("target").and_then(|v| v.as_str()).unwrap_or("");
         if target.is_empty() {
-            return ToolOutput::Error { class: None,
-                message: "`target` is required: a symbol name for \
+            return ToolOutput::error(
+                "`target` is required: a symbol name for \
                           definitions/references/callees/callers, a file path for \
-                          imports/importers/neighbors"
-                    .into(),
-            };
+                          imports/importers/neighbors",
+            );
         }
         // `run_query` opens SQLite and runs a full `index_all` catch-up pass,
         // which `stella_graph::CodeGraph::index_all`'s own contract says a
@@ -189,9 +188,7 @@ impl Tool for CodeGraphQuery {
         let target = target.to_string();
         tokio::task::spawn_blocking(move || run_query(&root, &op, &target))
             .await
-            .unwrap_or_else(|_| ToolOutput::Error { class: None,
-                message: "the code-graph query was cancelled".into(),
-            })
+            .unwrap_or_else(|_| ToolOutput::error("the code-graph query was cancelled"))
     }
 }
 
@@ -230,9 +227,7 @@ pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) ->
         ToolOutput::Ok { content } => ToolOutput::Ok {
             content: format!("({warning})\n{content}"),
         },
-        ToolOutput::Error { message, .. } => ToolOutput::Error { class: None,
-            message: format!("{message}\n({warning})"),
-        },
+        ToolOutput::Error { message, .. } => ToolOutput::error(format!("{message}\n({warning})")),
     }
 }
 
@@ -313,7 +308,9 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
         index_warning,
     } = match open_or_build(root) {
         Ok(opened) => opened,
-        Err(message) => return ToolOutput::Error { class: None, message },
+        Err(message) => {
+            return ToolOutput::error(message);
+        }
     };
     let output = run_query_with(&graph, op, target);
     graph.shutdown();
@@ -332,12 +329,10 @@ pub(crate) fn run_query_with(
     match op {
         "definitions" | "references" | "callees" | "callers" => symbol_query(graph, op, target),
         "imports" | "importers" | "neighbors" => path_query(graph, op, target),
-        other => ToolOutput::Error { class: None,
-            message: format!(
-                "unknown op `{other}` — expected definitions, references, callees, callers, \
+        other => ToolOutput::error(format!(
+            "unknown op `{other}` — expected definitions, references, callees, callers, \
                  imports, importers, or neighbors"
-            ),
-        },
+        )),
     }
 }
 
@@ -513,9 +508,7 @@ fn path_op(
 }
 
 fn query_failed(e: stella_graph::GraphError) -> ToolOutput {
-    ToolOutput::Error { class: None,
-        message: format!("code-graph query failed: {e}"),
-    }
+    ToolOutput::error(format!("code-graph query failed: {e}"))
 }
 
 /// The one generic miss — the only branch entitled to blame the index.
@@ -771,7 +764,9 @@ mod tests {
         let output = run_query(dir.path(), "definitions", "legacy_greet");
         match output {
             ToolOutput::Ok { content } => assert!(content.contains("legacy_greet")),
-            ToolOutput::Error { message, .. } => panic!("safe legacy index should migrate: {message}"),
+            ToolOutput::Error { message, .. } => {
+                panic!("safe legacy index should migrate: {message}")
+            }
         }
         assert!(!dir.path().join(".stella/codegraph.db").exists());
         assert!(graph_db_path(dir.path()).exists());
@@ -918,9 +913,7 @@ mod tests {
     #[test]
     fn a_failed_query_keeps_both_its_error_and_the_index_warning() {
         let warned = with_index_warning(
-            ToolOutput::Error { class: None,
-                message: "code-graph query failed: boom".into(),
-            },
+            ToolOutput::error("code-graph query failed: boom"),
             Some(format!("{INDEX_PASS_WARNING}: disk on fire")),
         );
         match warned {

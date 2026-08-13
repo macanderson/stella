@@ -455,9 +455,7 @@ async fn the_launch_path_refuses_a_script_rewritten_mid_session() {
             Vec::new()
         }
         async fn execute(&self, name: &str, _: &serde_json::Value) -> ToolOutput {
-            ToolOutput::Error { class: None,
-                message: format!("no such tool `{name}`"),
-            }
+            ToolOutput::error(format!("no such tool `{name}`"))
         }
     }
 

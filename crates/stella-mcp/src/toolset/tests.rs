@@ -869,11 +869,10 @@ async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
 
     assert_eq!(
         set.execute("mcp__files__boom", &Value::Null).await,
-        ToolOutput::Error { class: None,
-            message: "mcp server `files` failed calling `boom`: json-rpc error -32602: \
+        ToolOutput::error(
+            "mcp server `files` failed calling `boom`: json-rpc error -32602: \
                       unknown argument `pth`"
-                .into()
-        }
+        )
     );
 }
 

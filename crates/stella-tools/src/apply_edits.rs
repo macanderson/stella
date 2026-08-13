@@ -247,7 +247,9 @@ impl Tool for ApplyEdits {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let edits = match parse_edits(input) {
             Ok(edits) => edits,
-            Err(message) => return ToolOutput::Error { class: None, message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         let dry_run = input
             .get("dry_run")
@@ -260,9 +262,7 @@ impl Tool for ApplyEdits {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error { class: None,
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
@@ -381,14 +381,12 @@ impl Tool for ApplyEdits {
         };
 
         if failures > 0 {
-            return ToolOutput::Error { class: None,
-                message: format!(
-                    "{failures} of {} edits failed validation — NOTHING was written \
+            return ToolOutput::error(format!(
+                "{failures} of {} edits failed validation — NOTHING was written \
                      (all-or-nothing):\n{}",
-                    edits.len(),
-                    report(&verdicts)
-                ),
-            };
+                edits.len(),
+                report(&verdicts)
+            ));
         }
 
         if dry_run {
@@ -453,11 +451,9 @@ impl Tool for ApplyEdits {
                         written.len()
                     );
                 }
-                return ToolOutput::Error { class: None,
-                    message: format!(
-                        "failed to write `{path}`: {e} — batch aborted{rollback_note}"
-                    ),
-                };
+                return ToolOutput::error(format!(
+                    "failed to write `{path}`: {e} — batch aborted{rollback_note}"
+                ));
             }
             written.push(key.clone());
         }

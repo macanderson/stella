@@ -1197,9 +1197,7 @@ mod tests {
             tool_calls: vec![],
             tool_results: vec![ToolResult {
                 call_id: "e1".into(),
-                output: ToolOutput::Error { class: None,
-                    message: "file not found".into(),
-                },
+                output: ToolOutput::error("file not found"),
             }],
             attachments: vec![],
         };

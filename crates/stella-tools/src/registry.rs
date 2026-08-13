@@ -938,9 +938,7 @@ impl ToolRegistry {
         // message names the file and the fix, and re-reading is one cheap step
         // where a failed turn would be a whole one.
         if let Some(refusal) = self.refused_mutation(name, &pending_ops) {
-            return ToolOutput::Error { class: None,
-                message: refusal.message(),
-            };
+            return ToolOutput::error(refusal.message());
         }
         // Updates need the pre-write content for the line diff; deletes need
         // it for the pre-deletion line count. Lossy UTF-8 so a binary file
@@ -1063,7 +1061,9 @@ impl ToolRegistry {
                     };
                     snapshot = match persisted {
                         Ok(persisted) => Some(self.merge_storage_overlay(persisted)),
-                        Err(message) => return ToolOutput::Error { class: None, message },
+                        Err(message) => {
+                            return ToolOutput::error(message);
+                        }
                     };
                 }
                 let own = current
@@ -1084,7 +1084,9 @@ impl ToolRegistry {
                         declared_intent = intent.map(str::to_string);
                         pending_storage.push(pass);
                     }
-                    Err(message) => return ToolOutput::Error { class: None, message },
+                    Err(message) => {
+                        return ToolOutput::error(message);
+                    }
                 }
             }
         }
@@ -1140,12 +1142,10 @@ impl ToolRegistry {
 
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
-            None => ToolOutput::Error { class: None,
-                message: format!(
-                    "unknown tool `{name}` — available: {}",
-                    self.available_names()
-                ),
-            },
+            None => ToolOutput::error(format!(
+                "unknown tool `{name}` — available: {}",
+                self.available_names()
+            )),
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;

@@ -1143,9 +1143,7 @@ mod tests {
             tool_calls: vec![],
             tool_results: vec![ToolResult {
                 call_id: "call_1".into(),
-                output: ToolOutput::Error { class: None,
-                    message: "no such file".into(),
-                },
+                output: ToolOutput::error("no such file"),
             }],
             attachments: Vec::new(),
         }];

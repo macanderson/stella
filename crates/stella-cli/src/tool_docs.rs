@@ -335,10 +335,8 @@ fn output_schema() -> Value {
         content: String::new(),
     })
     .expect("ToolOutput is Serialize");
-    let error = serde_json::to_value(ToolOutput::Error { class: None,
-        message: String::new(),
-    })
-    .expect("ToolOutput is Serialize");
+    let error =
+        serde_json::to_value(ToolOutput::error(String::new())).expect("ToolOutput is Serialize");
     let (ok_tag, ok_field) = arm(&ok);
     let (error_tag, error_field) = arm(&error);
 

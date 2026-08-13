@@ -708,11 +708,10 @@ fn colourised_tool_output_folds_to_clean_text() {
     let mut model = SessionModel::new();
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
-        output: ToolOutput::Error { class: None,
-            message: "\u{1b}[0m\u{1b}[1m\u{1b}[38;5;9merror[E0308]\u{1b}[0m\u{1b}[1m: \
-                      mismatched types in [u8; 4]\u{1b}[0m"
-                .into(),
-        },
+        output: ToolOutput::error(
+            "\u{1b}[0m\u{1b}[1m\u{1b}[38;5;9merror[E0308]\u{1b}[0m\u{1b}[1m: \
+                      mismatched types in [u8; 4]\u{1b}[0m",
+        ),
         duration_ms: 5,
         speculated: false,
     });
