@@ -45,7 +45,7 @@ fn store_whole_file(conn: &mut Connection, file: &PendingChunkFile) {
 /// stops being pending once they are, and **becomes pending again when its
 /// content changes**.
 ///
-/// The last leg is the one that keeps [`NEEDS_CHUNK_PASS`] honest. The
+/// The last leg is the one that keeps `NEEDS_CHUNK_PASS` honest. The
 /// predicate is a coverage marker — "does this file carry any chunk vector
 /// stamped with its *current* hash" — so the content-change leg is what proves
 /// the marker is keyed to content and not merely to existence, which is the
