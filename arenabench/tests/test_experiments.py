@@ -83,6 +83,52 @@ def test_reads_tolerate_text_rows(tmp_path: Path) -> None:
     assert experiments.load_results(db) == [document]
 
 
+def test_loading_a_missing_database_returns_empty_and_creates_nothing(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "experiments.db"
+    assert experiments.load_results(db) == []
+    assert not db.exists()
+
+
+def test_payload_summarizes_each_document(tmp_path: Path) -> None:
+    db = tmp_path / "experiments.db"
+    experiments.store_results(
+        {
+            "schema": "arenabench-experiment-document/1",
+            "calculation_version": "calc/1",
+            "experiment": {"id": "exp-001", "title": "A vs B", "status": "open"},
+            "trials": [{"task": "t1"}],
+        },
+        db,
+    )
+    assert experiments.experiments_payload(db) == {
+        "experiments": [
+            {
+                "id": "exp-001",
+                "title": "A vs B",
+                "status": "open",
+                "schema": "arenabench-experiment-document/1",
+                "calculation_version": "calc/1",
+            }
+        ]
+    }
+
+
+def test_document_lookup_finds_by_id_and_latest_wins(tmp_path: Path) -> None:
+    db = tmp_path / "experiments.db"
+    experiments.store_results(
+        {"experiment": {"id": "exp-001"}, "calculation_version": "calc/1"}, db
+    )
+    experiments.store_results(
+        {"experiment": {"id": "exp-001"}, "calculation_version": "calc/2"}, db
+    )
+    document = experiments.experiment_document("exp-001", db)
+    assert document is not None
+    assert document["calculation_version"] == "calc/2"
+    assert experiments.experiment_document("exp-missing", db) is None
+
+
 @pytest.mark.skipif(
     sqlite3.sqlite_version_info < (3, 45, 0),
     reason="linked SQLite predates the jsonb() function family",
