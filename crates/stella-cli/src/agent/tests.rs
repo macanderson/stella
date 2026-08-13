@@ -1451,6 +1451,8 @@ mod usage_completeness;
 
 mod engine_wiring;
 
+mod durability_isolation;
+
 mod code_graph;
 
 /// Issue #644: the machine-readable envelope declares its contract version, and

@@ -47,10 +47,26 @@ fn tuned_engine_config(
         // default. Read here rather than at each receipt site so every engine
         // this session builds — default, worker, verifier — agrees on it.
         lifecycle_enabled: crate::memory::session_lifecycle_enabled(&cfg.workspace_root),
-        // Durability, for every role at once. This is the single place an
-        // engine is tuned in this crate, so attaching the sink here covers the
-        // deck's lead turn and its pipeline, sub-agents, sub-sessions and the
-        // fleet without six chances to forget one.
+        // Durability for every role of the SESSION'S OWN turn — the deck's
+        // lead turn and its pipeline, worker and verifier alike. This is the
+        // single place an engine is tuned in this crate, so attaching it here
+        // is what stops a role being left out.
+        //
+        // It covers the roles that run one at a time, and deliberately not the
+        // lanes that run *beside* the lead turn. `SessionDurability` is one
+        // cell keyed on one session record, so a lane that inherits this sink
+        // is a second writer of one resume point, not a second resume point:
+        // its steps overwrite the lead's transcript and its terminal path
+        // `discard`s the lead's point while the lead still needs it. Two doors
+        // reach that hazard and each is closed at its own end — a dispatched
+        // sub-agent by `stella_core::subagent` (which strips the sink it is
+        // handed), and a deck sub-session by `subsession_engine_config_for`
+        // (which the engine crate cannot see, because a sub-session is built
+        // through `Engine::with_sleeper` rather than `run_sub_agent`).
+        //
+        // It does not reach the fleet at all: a fleet worker never binds this
+        // handle, so `sink()` answers `None` for every worker turn and the
+        // whole fan-out runs without step-level durability (#3232).
         //
         // `None` while the session has not bound its durable location — a
         // command with no turn to checkpoint, or a driver that has not yet
@@ -201,6 +217,35 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
         crate::settings::EngineAgentKind::Default,
         (cfg.provider.id, &cfg.model_id),
     )
+}
+
+/// [`engine_config_for`] for a deck sub-session (`crate::subsession`) — the
+/// session's own tuning, minus the checkpoint sink.
+///
+/// A sub-session is a real engine session dispatched *because* the lead is
+/// mid-turn, so the two run at once. Both are built from the same `Config`, and
+/// [`crate::durability::SessionDurability`] is an `Arc` cell keyed on one
+/// session record — so an inherited sink is not a second resume point, it is the
+/// same one with two writers. `stella_core::subagent` names the damage exactly,
+/// for the same inheritance reached through `run_sub_agent`: every child step
+/// overwrites the parent's resume point with the child's transcript, and the
+/// child's terminal path calls `discard`, retracting the parent's while the
+/// parent still needs it. A deck killed mid-lead-turn then resumes into a
+/// conversation belonging to a different agent, or into nothing.
+///
+/// Stripped rather than re-keyed. A worker lane has no durable identity of its
+/// own today — nothing reads a sub-session's resume point, and `stella resume`
+/// restores the session record's turn — so a second sink would be a write with
+/// no reader, paid for with a whole-transcript serialization per step
+/// ([`stella_core::Engine::persist_checkpoint`] encodes before the sink sees
+/// anything). Giving a lane its own record is the tracked follow-up (#3231),
+/// and `a_sub_session_carries_no_checkpoint_sink` is the assertion that will
+/// fail when someone does it.
+pub(crate) fn subsession_engine_config_for(cfg: &Config) -> EngineConfig {
+    EngineConfig {
+        checkpoint_sink: None,
+        ..engine_config_for(cfg)
+    }
 }
 
 /// [`engine_config_for`], with the prove-it completion gate (#2663) switched
