@@ -17,8 +17,19 @@ use crate::{Result, StoreError};
 pub(crate) use crate::durable::sync_directory;
 
 pub const WORKSPACE_PRIVATE_DIR: &str = "private";
+/// The trailing `/.gitignore` line makes the generated ignore ignore *itself*:
+/// in a repository that never chose to track `.stella/`, a bulk `git add -A`
+/// must sweep up nothing Stella scaffolded — an ignored file is skipped by
+/// `add`, so the whole directory stays invisible to git. Without it, the one
+/// file the other lines cannot cover is the ignore file itself, and a
+/// Terminal-Bench verifier failed a solved task because the agent's
+/// `git add -A && git commit` had captured `.stella/.gitignore` into the
+/// graded repository (run `fivetools2`, `sanitize-git-repo`,
+/// `test_no_other_files_changed`). Repositories that deliberately track the
+/// file (this one does) are unaffected: ignore rules never apply to paths
+/// already in the index.
 pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
-    b"*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\nprivate/\n";
+    b"*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\nprivate/\n/.gitignore\n";
 
 #[cfg(unix)]
 fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
