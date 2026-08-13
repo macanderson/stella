@@ -37,9 +37,12 @@ pub enum UsageCmd {
         org: Option<String>,
 
         /// Per-tool reliability instead: cross-project calls, errors, and
-        /// error rate per (tool, surface), from the hub's rollup
+        /// error rate per (tool, surface), from the hub's rollup.
+        /// (`--by-tool`, not `--tools`: that name is the session-wide
+        /// tool-toggle global, and clap propagates globals into every
+        /// subcommand, so the two would collide at match time.)
         #[arg(long)]
-        tools: bool,
+        by_tool: bool,
     },
     /// Replicate this workspace's telemetry into the hub (cursor-based;
     /// safe to re-run). --all heals every project the hub knows about
@@ -134,24 +137,24 @@ pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
     match cmd.unwrap_or(UsageCmd::Report {
         format: StatsFormat::Text,
         org: None,
-        tools: false,
+        by_tool: false,
     }) {
         UsageCmd::Report {
             format,
             org,
-            tools: false,
+            by_tool: false,
         } => report(format, org.as_deref()),
         UsageCmd::Report {
             format,
             org,
-            tools: true,
+            by_tool: true,
         } => {
             // The rollup is keyed (project, tool, surface, day) and carries
             // no org column, so an org filter here would be silently
             // unhonored — refused instead (#3147).
             if org.is_some() {
                 return Err(
-                    "--tools cannot filter by --org: the tool rollup is project-keyed, \
+                    "--by-tool cannot filter by --org: the tool rollup is project-keyed, \
                      not org-keyed"
                         .into(),
                 );
@@ -280,7 +283,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// `stella usage report --tools` — the scriptable per-tool reliability
+/// `stella usage report --by-tool` — the scriptable per-tool reliability
 /// surface (#3147): cross-project calls, errors, and the derived error rate
 /// per (tool, surface), read from `tool_usage_rollup`, whose `errors` column
 /// previously had no reader anywhere.
