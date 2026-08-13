@@ -4,6 +4,7 @@ import type { MDXComponents } from "mdx/types";
 import type { ComponentProps } from "react";
 
 import { Badge, CardGrid, OptionCard, SpecCard, ToolCard } from "@/components/cards";
+import { CommandDeckExplorer } from "@/components/command-deck-explorer";
 import { DocsCodeBlock } from "@/components/docs-code-block";
 import {
   BudgetGuardDiagram,
@@ -79,6 +80,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     BudgetGuardDiagram,
     CostChainDiagram,
     ClaimLockDiagram,
+    CommandDeckExplorer,
     // Cards — the mobile-first replacement for reference tables
     CardGrid,
     SpecCard,
