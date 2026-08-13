@@ -1991,8 +1991,13 @@ export interface ToolCall {
    */
   call_id: string;
   /**
-   * The arguments, as the model produced them. Runtime data: validate
-   * against [`ToolSchema::input_schema`] rather than trusting the shape.
+   * The arguments, as the model produced them. Runtime data: never trust
+   * the shape. `stella-tools` validates this against
+   * [`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,
+   * #3144) — required fields, declared types, enums, item types, and
+   * `additionalProperties: false` where a schema advertises it — and
+   * refuses a contradicting call before the tool runs. Tools still read
+   * fields defensively: a direct caller may bypass the registry.
    */
   input: unknown;
   /**
@@ -2505,8 +2510,13 @@ export interface ToolCall {
    */
   call_id: string;
   /**
-   * The arguments, as the model produced them. Runtime data: validate
-   * against [`ToolSchema::input_schema`] rather than trusting the shape.
+   * The arguments, as the model produced them. Runtime data: never trust
+   * the shape. `stella-tools` validates this against
+   * [`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,
+   * #3144) — required fields, declared types, enums, item types, and
+   * `additionalProperties: false` where a schema advertises it — and
+   * refuses a contradicting call before the tool runs. Tools still read
+   * fields defensively: a direct caller may bypass the registry.
    */
   input: unknown;
   /**
