@@ -38,9 +38,7 @@ pub enum UsageCmd {
 
         /// Per-tool reliability instead: cross-project calls, errors, and
         /// error rate per (tool, surface), from the hub's rollup.
-        /// (`--by-tool`, not `--tools`: that name is the session-wide
-        /// tool-toggle global, and clap propagates globals into every
-        /// subcommand, so the two would collide at match time.)
+        /// (`--tools` is reserved by the session-wide tool-policy global.)
         #[arg(long)]
         by_tool: bool,
     },

@@ -13,7 +13,7 @@
 //!
 //! This module is the hub-side half of that surface: one reader returning
 //! the unwindowed cross-project totals, consumed by `stella usage report
-//! --tools`. Rates are left to the caller — the hub hands out exact
+//! --by-tool`. Rates are left to the caller — the hub hands out exact
 //! numerators and denominators, not derived percentages.
 //!
 //! Honesty caveat, named rather than silent: rows written by pre-v24 stores
