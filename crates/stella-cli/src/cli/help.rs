@@ -17,6 +17,19 @@
 //! is not assigned one. A command that somehow reaches a release unassigned
 //! still lists — under `Other` — because a help page that silently omits a
 //! command is worse than an ugly one.
+//!
+//! Reordering the index ahead of the flags fixed the *first* screen; it did
+//! not fix the *last* one. Several session flags carry a multi-paragraph
+//! `long_help` (the rationale `--tools` or `--upstream-pin` deserves), and
+//! `--help` used to print every one of them in full — enough text that on a
+//! real terminal the index, printed first, had scrolled off the top by the
+//! time the command finished and the cursor came to rest, so reaching it
+//! meant scrolling back up past the whole flag list. `-h` never had this
+//! problem: clap only ever prints the short `help` line there.
+//! `shorten_root_session_flags` gives `--help` the same one-line-per-flag
+//! budget at the root. The paragraph is not deleted, only relocated to where
+//! a reader who typed `stella <command> --help` is already looking for
+//! depth.
 
 use std::collections::BTreeSet;
 
@@ -118,7 +131,8 @@ fn root_template(cmd: &clap::Command) -> String {
 {{options}}
 
 Run `stella help <command>` for a command's full description.
-Session flags work on either side of it: `stella run … --budget 5`.",
+Session flags work on either side of it: `stella run … --budget 5`.
+Flags are one line here; `stella <command> --help` explains each in full.",
         on = header.render(),
         off = header.render_reset(),
     )
@@ -135,11 +149,48 @@ pub(crate) fn command() -> clap::Command {
     // and the propagated globals, so the index below reads the same tree a
     // user's terminal will.
     cmd.build();
+    // Must run after `build()`, not before: propagation of `global = true`
+    // args into every subcommand (`Command::_propagate_global_args`) already
+    // happened above, as a deep clone per subcommand. Shortening the root's
+    // own copy now touches only what the root page renders — `stella run
+    // --help` and friends keep their subcommand-local clone, long_help intact.
+    cmd = shorten_root_session_flags(cmd);
     let index = render_index(&cmd);
     let template = root_template(&cmd);
     cmd.help_template(template)
         .after_help(index.clone())
         .after_long_help(index)
+}
+
+/// Drop every session flag's `long_help` from the root command's own copy, so
+/// `--help` falls back to the same one-line `help` summary `-h` already used
+/// (clap's long-help renderer tries `long_help` first, then `help` — see
+/// `clap_builder::output::help_template`). Scoped by `is_global_set()` rather
+/// than a hardcoded flag list: every session flag is `global = true` by
+/// `every_root_flag_is_global` (src/tests.rs), so a new flag inherits this
+/// automatically instead of silently reopening the wall of text.
+///
+/// `Command::mut_args` (plural), not `mut_arg`: `build()` above has already
+/// populated clap's internal keymap, which caches each flag's *position* in
+/// the arg vector for fast lookup during parsing. `mut_arg` (singular)
+/// implements one flag by removing it and pushing it back at the *end* of
+/// the vector, which shifts every later flag's position without refreshing
+/// the keymap's cached indices — so after 17 of those, `--help` itself
+/// silently resolved to the wrong `Arg`, and the process fell through to the
+/// default chat REPL instead of printing help and exiting. `mut_args`
+/// rewrites every element via `drain().map(f).extend()`, which preserves
+/// vector order exactly, so the keymap's positions stay valid. No test in
+/// this file's suite would have caught the corrupt-keymap version — they all
+/// inspect the built `Command` tree, never run real parsing — so this was
+/// only found by running `stella --help` end to end.
+fn shorten_root_session_flags(cmd: clap::Command) -> clap::Command {
+    cmd.mut_args(|a| {
+        if a.is_global_set() {
+            a.long_help(None::<&str>)
+        } else {
+            a
+        }
+    })
 }
 
 /// Render the grouped command list.
