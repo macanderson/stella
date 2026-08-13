@@ -64,7 +64,7 @@ impl Language {
             // `.cpp` gets when it maps to no language at all (search then has
             // nothing to rank and falls to a lexical scan). This extends the
             // header-under-C precedent to C++ source; a dedicated
-            // `tree-sitter-cpp` grammar is the sharper fix (#3182).
+            // `tree-sitter-cpp` grammar is the sharper fix (#3184).
             "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Language::C,
             "php" => Language::Php,
             "sql" => Language::Sql,
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(Language::from_path(Path::new("noext")), None);
     }
 
-    /// C++ source and headers index under the C grammar (#3182). Before this
+    /// C++ source and headers index under the C grammar (#3184). Before this
     /// they mapped to `None` — a `.cpp` file declared nothing to the graph, so
     /// `search` had no symbols to rank over a C++ codebase (`build-pov-ray`,
     /// `sqlite`'s amalgamation) and fell to a lexical scan.
