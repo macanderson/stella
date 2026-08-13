@@ -131,7 +131,7 @@ judged rounds until an independent verifier (routed to a different model family
 than the worker whenever possible) confirms the objective is met *from
 evidence*. Each round is a full [staged pipeline](/docs/inference-pipeline)
 run by default (`--no-pipeline` for raw step-loop rounds). Backstops — a
-round cap, `--spend-limit`, worker aborts — end the run honestly as "not met"
+round cap, `--budget`, worker aborts — end the run honestly as "not met"
 rather than optimistically.
 
 ```bash

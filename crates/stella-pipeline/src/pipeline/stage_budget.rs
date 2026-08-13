@@ -127,7 +127,7 @@ impl Pipeline<'_> {
     /// hide a deadline five seconds away — the defect this closes (#2433),
     /// where the repair gate bought a round the raw-call seam then refused
     /// mid-round. The two agree whenever `stella-cli` arms both from one
-    /// `--turn-budget`, so the minimum changes nothing for the surface that
+    /// `--turn-timeout`, so the minimum changes nothing for the surface that
     /// has both today and fixes every surface that arms only one: an embedder
     /// on `stella-engine`/`stella-serve`, a fleet worker, or anything arming a
     /// deadline from another source.

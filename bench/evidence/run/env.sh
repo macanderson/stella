@@ -27,7 +27,7 @@ export STELLA_BINARY="$TB_REPO/target/$STELLA_TARGET_TRIPLE/release/stella"
 # head-to-head against a comparator with no spend ceiling has to be able to
 # say. With `:-` that posture is unreachable — the empty string is substituted
 # away here, and every run silently carries a cap the other side does not.
-export STELLA_BUDGET="${STELLA_BUDGET-0.60}"
+export STELLA_SPEND_LIMIT="${STELLA_SPEND_LIMIT-0.60}"
 export STELLA_DISABLE_REFLECTION=1
 
 # The frozen dataset, pinned by digest. An unversioned name is not a freeze.

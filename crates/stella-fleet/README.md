@@ -4,7 +4,7 @@ The multi-agent fleet layer: it takes a DAG of tasks, dispatches them wave by
 wave to worker agents running in one shared repository tree (a dedicated git
 worktree only where a plan opts in), and records every attempt, commit and
 dollar in an embedded SQLite ledger. It is the engine behind `stella fleet`;
-the command wiring, the real worker, and the `--budget` split live in
+the command wiring, the real worker, and the `--spend-limit` split live in
 [`../stella-cli/src/fleet_cmd.rs`](../stella-cli/src/fleet_cmd.rs).
 
 The boundary *is* the seam: subagent fan-out goes through exactly one API,
@@ -45,7 +45,7 @@ Single-agent orchestration in particular belongs to
 single prompt, which look fleet-shaped — isolated worktrees, parallel workers — but
 are one turn's candidates, selected and discarded, not ledgered tasks with lineage.
 The model-call/tool loop itself stays in [`stella-core`](../stella-core), and the
-real worker, plan parsing and `--budget` split stay in
+real worker, plan parsing and `--spend-limit` split stay in
 `crates/stella-cli/src/fleet_cmd.rs`.
 
 General persistence does not land here either. The ledger deliberately mirrors

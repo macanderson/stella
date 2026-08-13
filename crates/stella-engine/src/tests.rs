@@ -555,7 +555,7 @@ async fn a_checkpoint_taken_between_steps_round_trips_through_the_facade() {
     assert!((restored.budget().spent_usd() - state.budget().spent_usd()).abs() < 1e-12);
     assert!(
         (restored.budget().session_spent_usd() - state.budget().session_spent_usd()).abs() < 1e-12,
-        "session spend survives the hop, so a --budget stays a hard ceiling across processes"
+        "session spend survives the hop, so a --spend-limit stays a hard ceiling across processes"
     );
     assert_eq!(restored.budget().mode(), BudgetMode::Enforced);
 }

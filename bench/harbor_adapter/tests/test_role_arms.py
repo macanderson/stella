@@ -259,7 +259,7 @@ class TestTheArmSurvivesEverySeamItCrosses:
     def test_every_selector_is_registered_host_only(self) -> None:
         """The ambient check fails closed: unregistered is a refused run.
 
-        Not a tidiness assertion — an unlisted `STELLA_TURN_BUDGET` killed all
+        Not a tidiness assertion — an unlisted `STELLA_TURN_TIMEOUT` killed all
         ten trials of a run. `POSTURE_SELECTOR_ENV` exists so the reading list
         and the registration list cannot be two hand-kept copies, and this is
         the check that they are in fact the same list.

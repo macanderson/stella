@@ -13,7 +13,7 @@ honest bucket". A gateway upstream pin decides which vendor's silicon is
 billed — it is a routing control, resolved before the container exists. The
 advertised tool set is the opposite: it configures the very ``stella`` process
 running *inside* the container, exactly like the two names already in
-``_CLAIM_CONTAINER_ENV`` (``STELLA_BUDGET``, ``STELLA_DISABLE_REFLECTION``).
+``_CLAIM_CONTAINER_ENV`` (``STELLA_SPEND_LIMIT``, ``STELLA_DISABLE_REFLECTION``).
 The container is where it means something, so the container environment is the
 honest bucket.
 

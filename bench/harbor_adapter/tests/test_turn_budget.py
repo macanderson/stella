@@ -161,7 +161,7 @@ class TestBothTaskLayoutsArmTheDeadline:
 class TestTurnBudgetReachesTheEngine:
     """The turn deadline must reach the CLI, derived from the real one.
 
-    The engine gained ``turn_budget`` in #1161 and a ``--turn-budget`` flag in
+    The engine gained ``turn_budget`` in #1161 and a ``--turn-timeout`` flag in
     #1170, and #1173 made declining for time complete the turn instead of
     aborting it. None of that could fire in a benchmark trial, because the
     adapter never passed the flag and Harbor 0.6.1 hands ``agent_timeout_sec``
@@ -169,7 +169,7 @@ class TestTurnBudgetReachesTheEngine:
     it was running against. The policy shipped inert in the one place it was
     built for.
 
-    Exporting ``STELLA_TURN_BUDGET`` was not a workaround: the fail-closed
+    Exporting ``STELLA_TURN_TIMEOUT`` was not a workaround: the fail-closed
     ambient check rejects any unrecognized ``STELLA_*`` name, so it refused the
     run rather than enabling the policy.
     """
@@ -181,8 +181,8 @@ class TestTurnBudgetReachesTheEngine:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--turn-budget" in cmd
-        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+        assert "--turn-timeout" in cmd
+        assert cmd[cmd.index("--turn-timeout") + 1] == "840"
 
     def test_a_longer_task_gets_a_longer_budget_not_a_scaled_one(self) -> None:
         """Reserve is subtracted, never multiplied.
@@ -199,7 +199,7 @@ class TestTurnBudgetReachesTheEngine:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "3540"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "3540"
 
     def test_no_known_deadline_omits_the_flag_entirely(self) -> None:
         """Absent is not zero, and it is not a guess.
@@ -213,7 +213,7 @@ class TestTurnBudgetReachesTheEngine:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--turn-budget" not in cmd
+        assert "--turn-timeout" not in cmd
         assert "" not in cmd
 
     def test_a_deadline_under_the_reserve_is_no_deadline_not_a_zero(self) -> None:
@@ -223,30 +223,30 @@ class TestTurnBudgetReachesTheEngine:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--turn-budget" not in cmd
+        assert "--turn-timeout" not in cmd
 
     def test_harbors_deadline_outranks_an_operator_set_variable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_TURN_BUDGET", "120")
+        monkeypatch.setenv("STELLA_TURN_TIMEOUT", "120")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
         agent._agent_timeout_sec = 900.0
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "840"
 
     def test_the_variable_is_the_fallback_when_harbor_cannot_pass_a_kwarg(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_TURN_BUDGET", "900")
+        monkeypatch.setenv("STELLA_TURN_TIMEOUT", "900")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "840"
 
     def test_the_variable_no_longer_refuses_the_run_and_stays_host_only(
         self, monkeypatch: pytest.MonkeyPatch
@@ -255,20 +255,20 @@ class TestTurnBudgetReachesTheEngine:
 
         It is read here and expressed as argv, so forwarding it into the
         container would buy nothing and would re-open the empty-string parse
-        trap that killed six trials on ``--budget``.
+        trap that killed six trials on ``--spend-limit``.
         """
-        monkeypatch.setenv("STELLA_TURN_BUDGET", "900")
+        monkeypatch.setenv("STELLA_TURN_TIMEOUT", "900")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
         forwarded = agent._forwarded_env()  # must not raise
 
-        assert "STELLA_TURN_BUDGET" not in forwarded
+        assert "STELLA_TURN_TIMEOUT" not in forwarded
 
     def test_a_junk_deadline_is_ignored_rather_than_forwarded(self) -> None:
         """A malformed value must never become an argv element.
 
-        ``--turn-budget`` is parsed by clap before the turn starts, so a bad
+        ``--turn-timeout`` is parsed by clap before the turn starts, so a bad
         value exits 2 and Harbor scores it identically to the agent failing
         the task — the #1018 / empty-budget shape, on a third variable.
         """
@@ -279,7 +279,7 @@ class TestTurnBudgetReachesTheEngine:
 
             cmd = agent._build_command("Fix the bug")
 
-            assert "--turn-budget" not in cmd, junk
+            assert "--turn-timeout" not in cmd, junk
 
 
 class TestTheDeadlineArmsWithoutAnybodyPassingIt:
@@ -289,13 +289,13 @@ class TestTheDeadlineArmsWithoutAnybodyPassingIt:
     ``stella-core::driver::settlement`` (#1503) and the CLI's
     ``one_shot_budget_guard`` (#1507) were all built, wired and shipped. They
     were also completely inert on the bench path, because arming them needs a
-    ``--turn-budget`` on argv, that flag needs a deadline, and the only two
+    ``--turn-timeout`` on argv, that flag needs a deadline, and the only two
     channels for one were things a *caller* had to remember:
 
     * ``--agent-kwarg agent_timeout_sec=…`` — every trial in match
       ``cc00894779ff`` records ``agent.kwargs: {}``, and ArenaBench's
       ``harbor run`` command line passes no ``--agent-kwarg`` at all.
-    * ``STELLA_TURN_BUDGET`` — a static value, and wrong by construction for a
+    * ``STELLA_TURN_TIMEOUT`` — a static value, and wrong by construction for a
       dataset whose tasks carry 900s and 1800s deadlines.
 
     So ``resolve_turn_budget(None, None)`` returned ``None``, the flag was
@@ -317,8 +317,8 @@ class TestTheDeadlineArmsWithoutAnybodyPassingIt:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert "--turn-budget" in cmd
-        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+        assert "--turn-timeout" in cmd
+        assert cmd[cmd.index("--turn-timeout") + 1] == "840"
 
     def test_the_deadline_stays_per_task_across_a_mixed_dataset(
         self, tmp_path: Path
@@ -334,7 +334,7 @@ class TestTheDeadlineArmsWithoutAnybodyPassingIt:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "1740"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "1740"
 
     def test_an_explicit_kwarg_still_outranks_what_was_discovered(
         self, tmp_path: Path
@@ -347,20 +347,20 @@ class TestTheDeadlineArmsWithoutAnybodyPassingIt:
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "840"
 
     def test_the_discovered_deadline_outranks_the_static_variable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The variable is the fallback for a host that has no trial to read."""
-        monkeypatch.setenv("STELLA_TURN_BUDGET", "900")
+        monkeypatch.setenv("STELLA_TURN_TIMEOUT", "900")
         agent = _bare_agent()
         agent.model_name = "openrouter/anthropic/claude-sonnet-5"
         agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=1800.0)
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--turn-budget") + 1] == "1740"
+        assert cmd[cmd.index("--turn-timeout") + 1] == "1740"
 
     def test_the_armed_value_is_disclosed_in_the_trials_own_metadata(
         self, tmp_path: Path
