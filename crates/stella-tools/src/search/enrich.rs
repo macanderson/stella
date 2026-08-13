@@ -260,6 +260,58 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
     source.lines().nth(index)
 }
 
+/// The files that define a symbol the query names **exactly** — a lookup, not
+/// a ranking (#3125).
+///
+/// Ranking is the wrong instrument for this question and measurably so: asked
+/// for `ContextFrame`, a name with exactly one definition in its repository,
+/// embedding rank returned that definition at **rank 5 of 139** because a
+/// symbol name is a handful of tokens against whole files of prose. The graph
+/// already holds the answer as a fact.
+///
+/// Consulting it introduces no mode parameter and so does not reopen invariant
+/// 9: nothing about the *call* changes, and nothing is inferred about intent.
+/// Whether the query names an indexed symbol is a property of the index, which
+/// this module is entitled to read — the same standing on which it decides to
+/// rank semantically at all.
+///
+/// A sentence is not a symbol, so a multi-word query is refused before the
+/// query runs rather than after it returns nothing. That is the common case,
+/// and it keeps this free for every search that is a question.
+pub(crate) fn exact_symbol_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
+    let name = query.trim();
+    if name.is_empty() || name.split_whitespace().count() != 1 {
+        return Vec::new();
+    }
+    let Ok(spans) = graph.definition_spans(name) else {
+        return Vec::new();
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut hits = Vec::new();
+    for span in spans {
+        // `definition_spans` is already `WHERE s.name = ?`, so this only guards
+        // the contract rather than filtering: an inexact hit here would be a
+        // ranking wearing a certainty's label, which is the one thing this
+        // strategy must never do.
+        if span.name != name || !seen.insert(span.path.clone()) {
+            continue;
+        }
+        hits.push(Hit {
+            why: format!(
+                "EXACT name match — `{}` ({}) is DEFINED here at line {}. This is a code-graph \
+                 fact, not a similarity score.",
+                span.name, span.kind, span.start_line
+            ),
+            path: span.path,
+        });
+        if hits.len() >= limit {
+            break;
+        }
+    }
+    hits
+}
+
 /// Rank indexed files by how many query terms appear in their path or their
 /// symbol names — the strategy for a workspace with an index but no embedder.
 ///

@@ -339,12 +339,19 @@ async fn a_surface_embedder_cannot_answer_the_same_question() {
 /// With no embedder the answer must still be useful, and must say which
 /// strategy produced it — a name match wearing a meaning match's clothes is
 /// worse than no answer.
+///
+/// The query is a *term*, not a symbol name: `scrub` appears inside
+/// `scrub_record` and `Scrubber` but names neither, so it reaches the
+/// term-matching rung rather than the exact one (#3125). An exact name takes
+/// the shorter route now, which is
+/// [`an_exact_name_without_an_embedder_is_still_a_certainty`]'s subject — this
+/// test is about the rung that guesses.
 #[tokio::test]
 async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let (root, graph) = indexed_fixture(workspace.path());
 
-    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    let answer = dispatch(Some(&graph), &root, "scrub", None).await;
     assert_eq!(answer.strategies, vec![Strategy::GraphNames]);
     assert_eq!(
         answer.hits.first().map(|hit| hit.path.as_str()),
@@ -356,7 +363,7 @@ async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() 
     let content = content_of(&render(
         Some(&graph),
         &root,
-        "scrub_record",
+        "scrub",
         &answer,
         SearchConfig::default(),
     ));
@@ -871,4 +878,135 @@ fn the_report_preserves_rank_order_and_strategy_labels() {
         Some("degraded: the backend hiccuped")
     );
     assert_eq!(report.rendered, rendered);
+}
+
+/// **The witness for #3125.** A query that exactly names an indexed symbol
+/// returns that symbol's defining file first, even when embedding rank puts
+/// something else on top.
+///
+/// The fixture is built so semantic ranking is *wrong on purpose* and provably
+/// so: the decoy's chunk contains only dimension-2 words, so it projects onto
+/// the query's own direction and scores 1.0, while the definition's chunk
+/// carries a dimension-3 word from its body and scores lower. On `main` the
+/// ladder returns at the semantic rung and the decoy is rank 1.
+///
+/// Measured cause: asked for `ContextFrame` — one definition in its repository
+/// — the semantic-only ladder returned it at rank 5 of 139, because the graph's
+/// exact-name rung is unreachable whenever semantic returns anything, and an
+/// admission floor of 0.25 against a corpus whose lowest cosine is 0.418 means
+/// it always does.
+#[tokio::test]
+async fn an_exact_symbol_name_beats_the_ranking_that_would_bury_it() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for (path, body) in [
+        // The definition. Its body pulls it toward another dimension, so it
+        // cannot win the ranking on its own.
+        (
+            "src/holder.rs",
+            "pub fn socket_registry_of(matrix: &Matrix) -> u8 {\n\
+             matrix.rows().sum();\n\
+             0\n\
+             }\n",
+        ),
+        // The decoy: nothing but dimension-2 words, so it scores 1.0 against
+        // this query and outranks the definition every time.
+        (
+            "src/wirehub.rs",
+            "//! socket header request http wire\n\
+             pub fn send_socket_header_request() {\n\
+             socket_header_request_wire();\n\
+             }\n",
+        ),
+    ] {
+        let file = workspace.path().join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    // The premise: the ranking really does prefer the decoy. Without this the
+    // test could pass on `main` by luck and prove nothing.
+    let (ranking, _) = super::semantic_hits(&graph, &ConceptEmbedder, "socket_registry_of")
+        .await
+        .expect("the fixture must rank");
+    assert_eq!(
+        ranking.first().map(|hit| hit.path.as_str()),
+        Some("src/wirehub.rs"),
+        "the decoy must outrank the definition semantically, or this witness proves nothing: {ranking:?}"
+    );
+
+    let answer = dispatch(
+        Some(&graph),
+        &root,
+        "socket_registry_of",
+        Some(&ConceptEmbedder),
+    )
+    .await;
+    graph.shutdown();
+
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/holder.rs"),
+        "the defining file must lead: {:?}",
+        answer.hits
+    );
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol, Strategy::Semantic],
+        "`via:` must name both rungs, never silently skip one"
+    );
+    assert!(
+        answer.hits[0].why.contains("EXACT"),
+        "the leading hit must say it is a fact rather than a score: {:?}",
+        answer.hits[0]
+    );
+    assert!(
+        answer
+            .hits
+            .iter()
+            .filter(|h| h.path == "src/holder.rs")
+            .count()
+            == 1,
+        "a file reached by both rungs must be reported once: {:?}",
+        answer.hits
+    );
+}
+
+/// The exact rung needs no embedder: it reads the graph, not a vector index.
+/// On a workspace with no embedding backend — the common case on
+/// Terminal-Bench — a symbol name should still be answered with a fact rather
+/// than with a term-overlap guess.
+#[tokio::test]
+async fn an_exact_name_without_an_embedder_is_still_a_certainty() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    graph.shutdown();
+    assert_eq!(answer.strategies, vec![Strategy::ExactSymbol]);
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/hkey.rs"),
+        "{:?}",
+        answer.hits
+    );
+}
+
+/// A question is not a symbol, so the exact rung must stay out of the way —
+/// otherwise every sentence-shaped search pays a graph lookup that can only
+/// ever miss, and `via:` starts naming a strategy that did nothing.
+#[tokio::test]
+async fn a_sentence_never_reaches_the_exact_symbol_rung() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    graph.shutdown();
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::Semantic],
+        "a multi-word question must not engage the exact-symbol rung"
+    );
 }
