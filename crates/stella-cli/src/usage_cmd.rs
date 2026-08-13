@@ -35,6 +35,11 @@ pub enum UsageCmd {
         /// Only rows replicated under this org id
         #[arg(long)]
         org: Option<String>,
+
+        /// Per-tool reliability instead: cross-project calls, errors, and
+        /// error rate per (tool, surface), from the hub's rollup
+        #[arg(long)]
+        tools: bool,
     },
     /// Replicate this workspace's telemetry into the hub (cursor-based;
     /// safe to re-run). --all heals every project the hub knows about
@@ -129,8 +134,30 @@ pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
     match cmd.unwrap_or(UsageCmd::Report {
         format: StatsFormat::Text,
         org: None,
+        tools: false,
     }) {
-        UsageCmd::Report { format, org } => report(format, org.as_deref()),
+        UsageCmd::Report {
+            format,
+            org,
+            tools: false,
+        } => report(format, org.as_deref()),
+        UsageCmd::Report {
+            format,
+            org,
+            tools: true,
+        } => {
+            // The rollup is keyed (project, tool, surface, day) and carries
+            // no org column, so an org filter here would be silently
+            // unhonored — refused instead (#3147).
+            if org.is_some() {
+                return Err(
+                    "--tools cannot filter by --org: the tool rollup is project-keyed, \
+                     not org-keyed"
+                        .into(),
+                );
+            }
+            tool_report(format)
+        }
         UsageCmd::Sync { all } => sync(all),
         UsageCmd::Prune {
             older_than,
@@ -247,6 +274,98 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
             println!(
                 "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
                 "TOTAL", "", "", totals.0, totals.1, totals.2, totals.3, totals.4, totals.5, ""
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `stella usage report --tools` — the scriptable per-tool reliability
+/// surface (#3147): cross-project calls, errors, and the derived error rate
+/// per (tool, surface), read from `tool_usage_rollup`, whose `errors` column
+/// previously had no reader anywhere.
+///
+/// The rate divides exact hub counts; rows synced by pre-v24 stores counted
+/// abandoned calls as errors (#3146), so historic rates read conservatively
+/// high until those buckets age out.
+fn tool_report(format: StatsFormat) -> Result<(), String> {
+    let hub = open_hub()?;
+    let rows = hub
+        .tool_report()
+        .map_err(|e| format!("cannot read the usage hub: {e}"))?;
+    let rate = |calls: i64, errors: i64| {
+        if calls > 0 {
+            errors as f64 / calls as f64
+        } else {
+            0.0
+        }
+    };
+    match format {
+        StatsFormat::Json => {
+            let objects: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "tool": r.tool,
+                        "surface": r.surface,
+                        "calls": r.calls,
+                        "errors": r.errors,
+                        "error_rate": rate(r.calls, r.errors),
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Rows::new(&objects)).map_err(|e| e.to_string())?
+            );
+        }
+        StatsFormat::Csv => {
+            println!("tool,surface,calls,errors,error_rate");
+            for r in &rows {
+                // Tool names are model- and MCP-supplied text: same RFC-4180
+                // escape as every other text column on this surface.
+                println!(
+                    "{},{},{},{},{:.4}",
+                    crate::stats::csv_escape(&r.tool),
+                    crate::stats::csv_escape(&r.surface),
+                    r.calls,
+                    r.errors,
+                    rate(r.calls, r.errors),
+                );
+            }
+        }
+        StatsFormat::Text => {
+            if rows.is_empty() {
+                println!(
+                    "usage hub has no tool rollup yet — run `stella usage sync` in a \
+                     workspace (or finish a turn) to replicate telemetry"
+                );
+                return Ok(());
+            }
+            println!(
+                "{:<28} {:<8} {:>8} {:>8} {:>8}",
+                "TOOL", "SURFACE", "CALLS", "ERRORS", "ERR-RATE"
+            );
+            let mut totals = (0i64, 0i64);
+            for r in &rows {
+                println!(
+                    "{:<28} {:<8} {:>8} {:>8} {:>7.2}%",
+                    r.tool,
+                    r.surface,
+                    r.calls,
+                    r.errors,
+                    100.0 * rate(r.calls, r.errors),
+                );
+                totals.0 += r.calls;
+                totals.1 += r.errors;
+            }
+            println!(
+                "{:<28} {:<8} {:>8} {:>8} {:>7.2}%",
+                "TOTAL",
+                "",
+                totals.0,
+                totals.1,
+                100.0 * rate(totals.0, totals.1),
             );
         }
     }
