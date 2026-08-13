@@ -199,7 +199,7 @@ stella --spend-limit 5 fleet --plan release-prep.toml
 ```
 
 It is enforced twice: each child runs under its own guard — the aggregate cap
-divided across the concurrency width (`budget ÷ max-concurrency`), so one
+divided across the concurrency width (`spend limit ÷ max-concurrency`), so one
 wave's in-flight children can't collectively overshoot — and the fleet stops
 launching new waves once total metered spend crosses the cap. In-flight
 siblings settle cleanly — never a mid-tool kill.
@@ -251,7 +251,7 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
   </OptionCard>
 </CardGrid>
 
-The budget flag is **global**, so it goes before the subcommand — the one
+The spend-limit flag is **global**, so it goes before the subcommand — the one
 ordering mistake worth memorizing:
 
 ```bash
