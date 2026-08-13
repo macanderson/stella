@@ -15,9 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_verbs,
-    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd,
-    stats, storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, dataset_cmd, fleet_verbs, ingest_cmd,
+    inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd, stats,
+    storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -794,20 +794,23 @@ pub(crate) enum Command {
         output_format: OutputFormat,
     },
 
-    /// Query the code graph — definitions, references, callers, imports
+    /// Find code — the CLI door to the `search` tool the agent calls
     ///
-    /// Query the code graph built by `stella init` — symbol definitions and
-    /// references, recorded call sites (callees/callers, name-based), a
-    /// file's imports/importers, or its graph neighborhood.
-    /// Offline: reads .stella/private/codegraph.db, needs no API key.
-    Graph {
-        /// What to ask the graph
-        #[arg(value_enum)]
-        op: contextgraph::GraphOp,
+    /// Describe what you are looking for — a question, a behaviour, or a
+    /// symbol/file name — and get back the files that answer it, ranked by
+    /// meaning when an embedder is configured and falling back to graph
+    /// symbol-name matching and then a file scan otherwise. Reads/builds
+    /// .stella/private/codegraph.db; ranking is offline, embedding (when
+    /// configured) is a network write-through into that same index.
+    Search {
+        /// What you are looking for — a question, a description of the
+        /// behaviour, or a symbol/file name
+        query: String,
 
-        /// Symbol name (definitions/references/callees/callers) or
-        /// workspace-relative file path (imports/importers/neighbors)
-        target: String,
+        /// Output format: text (the answer as the agent reads it), or json
+        /// under the versioned query envelope — for scripted testing
+        #[arg(long, value_enum, default_value = "text")]
+        format: query_format::QueryFormat,
     },
 
     /// List or run the project's package-manager scripts

@@ -16,7 +16,7 @@ stella init [global flags]
 `stella init` does the following:
 
 1. **Infers the domain taxonomy** and writes it to `<workspace>/.stella/domains.toml`. This taxonomy is the tagging vocabulary for memories, reflections, and every code-graph node and edge. It is also persisted into the context plane at `<workspace>/.stella/private/context.db`.
-2. **Builds the code-graph index** at `<workspace>/.stella/private/codegraph.db` — the database [`stella graph`](/docs/commands/graph) queries.
+2. **Builds the code-graph index** at `<workspace>/.stella/private/codegraph.db` — the database [`stella search`](/docs/commands/search) queries.
 3. **Syncs extensions** — adopts commands, skills, and agents from other agents' `.claude/` and `.agents/` directories (workspace and user scope) as symlinks under `.stella/`.
 
 It works **offline** using a heuristic fallback, so it never hard-fails on configuration — you can initialize a workspace even without a resolvable provider credential.
@@ -45,7 +45,7 @@ The global `--budget` flag is accepted but not honored by `init` — the analysi
     The inferred domain taxonomy — the tagging vocabulary.
   </OptionCard>
   <OptionCard name="<workspace>/.stella/private/codegraph.db">
-    The code-graph index, queried by [`stella graph`](/docs/commands/graph) and
+    The code-graph index, queried by [`stella search`](/docs/commands/search) and
     [`stella storage`](/docs/commands/storage).
   </OptionCard>
   <OptionCard name="<workspace>/.stella/private/context.db">
@@ -71,7 +71,7 @@ Re-index after a large refactor, then confirm the graph followed the move:
 
 ```bash
 stella init
-stella graph definitions resolve_provider_key
+stella search "where is resolve_provider_key defined"
 ```
 
 Initialize with no credential configured at all — the heuristic fallback still produces a

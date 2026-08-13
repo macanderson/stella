@@ -712,9 +712,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             .map_err(failure::CliFailure::from);
         }
-        Some(Command::Graph { op, target }) => {
-            // Reads the local index only — works with zero API keys.
-            return contextgraph::run_graph(*op, target).map_err(failure::CliFailure::from);
+        Some(Command::Search { query, format }) => {
+            // Ranks semantically when an embedder is configured (a network
+            // write-through into codegraph.db); otherwise reads the local
+            // index only.
+            return signals::block_on_interruptible(
+                rt()?,
+                contextgraph::run_search(query, *format),
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Scripts { cmd }) => {
             // Static manifest parsing plus a local subprocess — works with
@@ -1293,7 +1299,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Command::Init
         | Command::Daemon { .. }
         | Command::Tools { .. }
-        | Command::Graph { .. }
+        | Command::Search { .. }
         | Command::Scripts { .. }
         | Command::Storage { .. }
         | Command::Commands { .. }

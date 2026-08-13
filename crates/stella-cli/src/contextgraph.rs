@@ -41,7 +41,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use clap::ValueEnum;
 use contextgraph_conformance::{ProviderTarget, run_conformance};
 use contextgraph_host::{
     ConsentDecision, ConsentRecord, ContextProvider, Host, HostError, ProviderResult,
@@ -58,6 +57,7 @@ use stella_context::{
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 use crate::domains::Domains;
+use crate::query_format::{QueryFormat, Versioned};
 use crate::settings::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 mod suppression;
@@ -952,54 +952,65 @@ fn now_rfc3339() -> String {
     stella_context::format_rfc3339(secs)
 }
 
-/// The seven code-graph queries, mirroring the `graph_query` agent tool's ops
-/// one-for-one so a human at the CLI and the model inside a turn see the
-/// same frames for the same question.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum GraphOp {
-    /// Where a symbol is defined
-    Definitions,
-    /// Best-effort textual references to a symbol
-    References,
-    /// What a definition calls (recorded call sites inside its span)
-    Callees,
-    /// Call sites naming a symbol (best-effort — matched by name)
-    Callers,
-    /// What a file imports
-    Imports,
-    /// Which files import a file
-    Importers,
-    /// A file's immediate graph neighborhood (symbols + edges)
-    Neighbors,
+/// One `stella search` answer, machine-readable — the `--format json`
+/// envelope. `content` carries the exact text a human (or the agent) would
+/// read; `error` is `None` on success. Both are always present so a script
+/// parsing this need not branch on which key exists.
+#[derive(Debug, Clone, serde::Serialize)]
+struct SearchAnswer {
+    query: String,
+    ok: bool,
+    content: String,
+    error: Option<String>,
 }
 
-impl GraphOp {
-    fn as_str(self) -> &'static str {
-        match self {
-            GraphOp::Definitions => "definitions",
-            GraphOp::References => "references",
-            GraphOp::Callees => "callees",
-            GraphOp::Callers => "callers",
-            GraphOp::Imports => "imports",
-            GraphOp::Importers => "importers",
-            GraphOp::Neighbors => "neighbors",
-        }
-    }
-}
+/// `stella search <query>` — the human door to the same `search` tool the
+/// agent calls, run through the real [`stella_tools::registry::Tool`]
+/// interface rather than a reimplementation, so a CLI run and an agent's
+/// call exercise identical code and `--format json` is a faithful fixture
+/// for testing the ranking against real queries.
+pub async fn run_search(query: &str, format: QueryFormat) -> Result<(), String> {
+    use stella_tools::registry::Tool;
 
-/// `stella graph <op> <target>` — the human door to the same query surface
-/// the `graph_query` tool gives the agent. Frames print exactly as the model
-/// would receive them.
-pub fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    match stella_tools::graph::run_query(&root, op.as_str(), target) {
-        stella_protocol::tool::ToolOutput::Ok { content } => {
-            println!("{content}");
-            Ok(())
+    let input = serde_json::json!({ "query": query });
+    let output = stella_tools::search::Search::from_env()
+        .execute(&input, &root)
+        .await;
+
+    let (ok, content, error) = match output {
+        stella_protocol::tool::ToolOutput::Ok { content } => (true, content, None),
+        stella_protocol::tool::ToolOutput::Error { message } => {
+            (false, String::new(), Some(message))
         }
-        stella_protocol::tool::ToolOutput::Error { message } => Err(message),
+    };
+
+    match format {
+        QueryFormat::Text => {
+            if let Some(message) = &error {
+                return Err(message.clone());
+            }
+            println!("{content}");
+        }
+        QueryFormat::Json => {
+            let answer = SearchAnswer {
+                query: query.to_string(),
+                ok,
+                content,
+                error: error.clone(),
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Versioned::new(answer))
+                    .map_err(|e| format!("serialize: {e}"))?
+            );
+            if let Some(message) = error {
+                return Err(message);
+            }
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]

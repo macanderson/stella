@@ -252,7 +252,7 @@ If you see that, rebuild explicitly:
 
 ```bash
 stella init
-stella graph definitions the_symbol_you_expected
+stella search "where is the_symbol_you_expected defined"
 ```
 
 A symbol that legitimately has two definitions is listed rather than silently
@@ -320,9 +320,12 @@ stella inspect <EXEC> --step 0 --diff --only system
 
 If you are diagnosing on a plane or inside an air gap, this much needs no
 network and no key: `stella config`, `stella doctor`, `stella models` (listing),
-`stella graph`, `stella scripts`, `stella storage`, `stella commands`,
+`stella scripts`, `stella storage`, `stella commands`,
 `stella stats`, `stella usage`, `stella inspect`, `stella context`,
-`stella proposals`, `stella memory`, and `stella observe`.
+`stella proposals`, `stella memory`, and `stella observe`. `stella search` also
+works with no key configured — it degrades to symbol-name matching and a file
+scan instead of ranking by meaning — but with an embedder configured it makes
+network calls to embed the query and any files still pending.
 
 The one remaining automatic outbound call is the model-catalog refresh, at most
 once per 24 hours:
