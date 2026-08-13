@@ -221,7 +221,7 @@ pub(crate) struct Hit {
 #[derive(Debug, Clone)]
 pub(crate) struct Answer {
     pub(crate) hits: Vec<Hit>,
-    /// In the order they ran. [`Strategy::ExactName`] contributes alongside
+    /// In the order they ran. [`Strategy::ExactSymbol`] contributes alongside
     /// the rung that ranked; between the ranking rungs, more than one means
     /// an earlier one came back empty or unavailable and the next was tried.
     pub(crate) strategies: Vec<Strategy>,
