@@ -20,7 +20,16 @@ Two live channels, both Server-Sent Events over a threading HTTP server:
 ``/api/matches/<id>/transcript/<contestant>/<task>``
     One trial's transcript, streamed as it is written. Incremental: the reader
     keeps a byte offset, so a client that connects to a match already an hour
-    deep gets the backlog once and then only deltas.
+    deep gets the backlog once and then only deltas. Every tool call/result
+    body on this channel is character-capped (:data:`.transcript.TOOL_RESULT_BUDGET`,
+    :data:`.transcript.TOOL_INPUT_BUDGET`) so a long-running match stays cheap
+    to stream — a compromise the plain request below does not have to make.
+
+``/api/matches/<id>/transcript-full/<contestant>/<task>``
+    The same trial's transcript, read once from byte zero with both caps
+    disabled — the "load full transcript" button's endpoint. Not a stream: a
+    finished trial's file does not grow while this reads it, so one JSON
+    response is the whole answer.
 
 **The trust boundary is the loopback interface, and it is enforced rather than
 recommended.** ``POST /api/matches`` starts subprocesses with the operator's
@@ -656,6 +665,38 @@ class ArenaServer:
                 last_beat = time.time()
                 yield "ping", {"t": last_beat}
 
+    def full_transcript(self, match_id: str, contestant_id: str, task: str) -> dict:
+        """One trial's transcript, read fresh from byte zero with no caps.
+
+        The live SSE channel (:meth:`stream_transcript`) caps a tool call's
+        argument and a tool result's body at
+        :data:`~.transcript.TOOL_INPUT_BUDGET` /
+        :data:`~.transcript.TOOL_RESULT_BUDGET` characters, middle-elided —
+        the wire-cost compromise a channel that has to stay cheap over a
+        match running for hours has to make. That cap is unrecoverable from
+        the client side: the elided bytes were never sent, so no amount of
+        client-side "show more" can produce them. This is the other half of
+        that trade — a plain, uncapped read of the same file, for a reader who
+        has decided one specific trial is worth the extra bytes.
+
+        A fresh :class:`~.transcript.TranscriptReader` with both budgets set to
+        ``0`` (:func:`~.toolout.cap_middle` treats a non-positive budget as
+        "no cap"), reading the file's entire current contents in one call —
+        the caller is a plain request-response route, not a stream, so there
+        is no cursor to keep between calls.
+        """
+        match = self.runner.matches.get(match_id)
+        if match is None:
+            raise KeyError(match_id)
+        path = match.events_path(contestant_id, task)
+        if path is None or not path.exists():
+            return {"entries": []}
+        reader = TranscriptReader(tool_result_budget=0, tool_input_budget=0)
+        # No trial's transcript approaches a million lines; the limit exists
+        # so `read` has one to check rather than because this one is expected
+        # to bind.
+        return {"entries": reader.read(path, limit=1_000_000)}
+
     def video(self, match_id: str, contestant_id: str, task: str) -> Path | None:
         match = self.runner.matches.get(match_id)
         if match is None:
@@ -1026,6 +1067,8 @@ def _handler_factory(
                     self._sse(
                         lambda: arena.stream_transcript(match_id, contestant, task)
                     )
+                case ["matches", match_id, "transcript-full", contestant, task]:
+                    self._json(arena.full_transcript(match_id, contestant, task))
                 case ["matches", match_id, "template.toml"]:
                     self._toml(arena.template_for(match_id), f"{match_id}.toml")
                 case ["matches", match_id, "video", contestant, task]:

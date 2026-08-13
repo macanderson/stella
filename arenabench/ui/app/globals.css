@@ -102,6 +102,28 @@
   --acc-rose:   #8f8f8f;
   --acc-citron: #c4c4c4;
 
+  /* Tool-class hues — the transcript reader's one deliberate exception to the
+     lightness-only rule above. A tool call's CLASS (read/write/run/verify/
+     repo/delegate — `arenabench.toolclass`, mirrored client-side in
+     `lib/tool-class.ts`) is DATA in exactly the sense a seat colour is: the
+     job of the transcript page is telling calls of one kind from another at a
+     glance, across a scroll of hundreds of rows, and a lightness ramp cannot
+     do that — six steps of grey read as one grey with noise. So this is the
+     one place on the page real hue is spent, and it borrows rather than
+     invents: these are the Command Deck's own six categorical values
+     (`crates/stella-tui/src/tool_class.rs` / `theme.rs`'s `LIGHT_REMAP`),
+     already load-bearing on the same question there, so a reader who has
+     learned "teal reads, rose writes" in the deck does not relearn it here.
+     Never used as a fill or a decoration — always as text colour on a tool's
+     own name, which is unique per row, so identity is never hue-alone even
+     where two classes sit close in lightness. */
+  --tool-inspect:  #0f766e; /* read — teal */
+  --tool-mutate:   #a6185c; /* write — rose */
+  --tool-execute:  #6d28d9; /* run — violet */
+  --tool-verify:   #16744f; /* verify — green */
+  --tool-repo:     #4d6b12; /* repo — citron/olive */
+  --tool-delegate: #8b2ba8; /* delegate — orchid */
+
   /* Seat colours arrive as data (each contestant carries a hex) and stay —
      a seat IS data, and it is the one place on the page where distinguishing
      two things by hue is the job. As fills they work on both schemes; as
@@ -133,6 +155,16 @@
   --acc-rose:   #6e6e6e;
   --acc-citron: #4a4a4a;
 
+  /* The deck's dark-side categorical values (`palette::DATA_1..6` on Ink) —
+     see the `:root` block above for why the transcript reader carries these
+     at all. */
+  --tool-inspect:  #2fd3c6; /* read — teal */
+  --tool-mutate:   #e4408f; /* write — rose */
+  --tool-execute:  #8f70e8; /* run — violet */
+  --tool-verify:   #4ade80; /* verify — green */
+  --tool-repo:     #a3d14b; /* repo — citron */
+  --tool-delegate: #d46fe8; /* delegate — orchid */
+
   --seat-fg: var(--seat, #ededed);
 }
 
@@ -153,6 +185,13 @@
   --color-acc-violet: var(--acc-violet);
   --color-acc-rose: var(--acc-rose);
   --color-acc-citron: var(--acc-citron);
+
+  --color-tool-inspect: var(--tool-inspect);
+  --color-tool-mutate: var(--tool-mutate);
+  --color-tool-execute: var(--tool-execute);
+  --color-tool-verify: var(--tool-verify);
+  --color-tool-repo: var(--tool-repo);
+  --color-tool-delegate: var(--tool-delegate);
 
   /* What sits on a fill. Two tokens because they are two different jobs that
      shared the name `ink` and diverged the moment the accent stopped being a
