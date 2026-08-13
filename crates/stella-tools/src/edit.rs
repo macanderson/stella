@@ -11,6 +11,14 @@
 //! embeds the changed content, a legitimate recovery never produces
 //! byte-identical outputs, so the loop detector (which requires identical
 //! outputs to flag a loop) keeps treating it as progress.
+//!
+//! The success path holds itself to the same contract (#3176): every success
+//! string carries the match's byte offset and a short digest of the resulting
+//! file, so N distinct edits to one file produce N distinct outputs. A
+//! constant `replaced 1 occurrence(s) in {path}` once made seven different,
+//! correct edits look byte-identical to that detector, which killed the run
+//! as stagnant mid-solve. Both stamps are deterministic — identity, never a
+//! timing.
 
 use std::sync::Arc;
 
@@ -224,8 +232,10 @@ impl Tool for EditFile {
             None => (old_string, new_string),
         };
 
-        let count = content.matches(old_string).count();
-        if count == 0 {
+        // The first match's byte offset is half of the success output's
+        // identity stamp (#3176); `find` returning `None` is exactly the
+        // zero-match case the attribution below explains.
+        let Some(offset) = content.find(old_string) else {
             // Attribute the miss (#331): compare current bytes against what
             // the model last saw. Three distinguishable causes, three
             // different recoveries — a generic not-found forces the model to
@@ -260,7 +270,8 @@ impl Tool for EditFile {
                          this session; read it first and copy old_string byte-exact"
                 )),
             };
-        }
+        };
+        let count = content.matches(old_string).count();
         if count > 1 && !replace_all {
             return ToolOutput::error(format!(
                 "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
@@ -286,8 +297,18 @@ impl Tool for EditFile {
                 // its own edit is never later misattributed as drift.
                 self.ledger.record_known(root, path, &new_content);
                 let replaced = if replace_all { count } else { 1 };
+                // The offset and digest are the edit's identity (#3176): the
+                // stagnation detector keys on byte-identical tool output, so
+                // a constant success string made N distinct edits to one file
+                // indistinguishable from a stuck loop. Both stamps are
+                // deterministic — never a timestamp, which broke the detector
+                // in the opposite direction once.
+                let digest = crate::staleness::sha256_8(new_content.as_bytes());
                 ToolOutput::Ok {
-                    content: format!("replaced {replaced} occurrence(s) in {path}"),
+                    content: format!(
+                        "replaced {replaced} occurrence(s) in {path} at byte {offset} \
+                         (file sha256/8 {digest})"
+                    ),
                 }
             }
             Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
@@ -320,6 +341,53 @@ mod tests {
         let after = tokio::fs::read_to_string(&full).await.unwrap();
         assert_eq!(after, "fn main() { new }");
         let _ = tokio::fs::remove_file(&full).await;
+    }
+
+    /// The #3176 witness: the stagnation detector keys on byte-identical
+    /// tool output, and the old constant success string made every edit to
+    /// one file render the same bytes — seven distinct, correct edits were
+    /// killed as a stuck loop mid-solve. Two DIFFERENT edits back-to-back
+    /// must produce two different success outputs.
+    #[tokio::test]
+    async fn distinct_edits_produce_distinct_success_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("input.tex"), "very big and very large\n").unwrap();
+        let edit = EditFile::default();
+
+        let first = edit
+            .execute(
+                &serde_json::json!({"path": "input.tex", "old_string": "big", "new_string": "huge"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content: first } = first else {
+            panic!("expected ok, got: {first:?}");
+        };
+        let second = edit
+            .execute(
+                &serde_json::json!({"path": "input.tex", "old_string": "large", "new_string": "vast"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content: second } = second else {
+            panic!("expected ok, got: {second:?}");
+        };
+
+        assert_ne!(
+            first, second,
+            "two different edits must not render byte-identical output — \
+             the stagnation detector keys on repeated identical tool output"
+        );
+        // The identity is stamped, not incidental: offset and digest are
+        // both present, so the guarantee survives edits that happen to
+        // share one of the two.
+        for output in [&first, &second] {
+            assert!(output.contains("at byte "), "offset missing: {output}");
+            assert!(
+                output.contains("file sha256/8 "),
+                "digest missing: {output}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -37,6 +37,19 @@ pub fn hex_sha256(bytes: &[u8]) -> String {
     out
 }
 
+/// First 8 hex chars of [`hex_sha256`] — the short content identity a
+/// mutating tool stamps into its success output so distinct effects render
+/// distinct bytes. The engine's stagnation detector keys on byte-identical
+/// tool output; a constant success string made seven different edits look
+/// like a stuck loop and killed a correct in-progress solve (#3176). Eight
+/// chars is plenty: the digest only has to separate the handful of outputs a
+/// detector window compares, not resist collision attacks.
+pub(crate) fn sha256_8(bytes: &[u8]) -> String {
+    let mut hex = hex_sha256(bytes);
+    hex.truncate(8);
+    hex
+}
+
 /// Hash every extant path into a manifest, silently skipping paths that do
 /// not exist or cannot be read (they were never evidence). Order and dedup
 /// come from the `BTreeMap`.
