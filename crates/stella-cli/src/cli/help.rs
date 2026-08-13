@@ -56,7 +56,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Ask about this workspace",
-        &["graph", "storage", "scripts", "tools", "commands"],
+        &["search", "storage", "scripts", "tools", "commands"],
     ),
     (
         "Steer what the agent knows",

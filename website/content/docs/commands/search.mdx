@@ -1,0 +1,71 @@
+---
+title: stella search
+description: Find code by meaning or by name — the CLI door to the same `search` tool the agent calls.
+---
+
+Find the files that answer a question you can only describe in words — the same `search` tool the agent reaches for on every turn, run from your shell. Ranks semantically when an embedder is configured, and degrades honestly through graph symbol-name matching and then a file scan when it is not.
+
+## Synopsis
+
+```bash
+stella search "<query>" [--format text|json]
+```
+
+## What it does
+
+`stella search` runs the exact dispatch ladder the agent's `search` tool runs inside a turn:
+
+<CardGrid size="md">
+  <OptionCard name="semantic">
+    Ranked by MEANING against your query, over the code-graph vector index —
+    only when an embedder is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
+    `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`).
+  </OptionCard>
+  <OptionCard name="names">
+    Falls back to matching your query's words against symbol and path names in
+    the code-graph index — no embedder required.
+  </OptionCard>
+  <OptionCard name="scan">
+    Falls back further to a plain file scan when no index is available at
+    all — the normal case for a workspace with no tree-sitter grammar for its
+    language.
+  </OptionCard>
+</CardGrid>
+
+The answer always states which strategies ran (`via: …`), so a result you get from the CLI is never ambiguous about how sharp it is.
+
+`query` takes whatever form you have it in — a sentence, a behaviour description, or a bare symbol/file name — exactly as the agent's tool accepts it.
+
+## Examples
+
+Ask a question in plain English:
+
+```bash
+stella search "where are request headers sanitized before logging"
+```
+
+A symbol name works just as well as a sentence:
+
+```bash
+stella search "what calls resolve_provider"
+```
+
+## `--format json`
+
+For scripted testing — feeding real queries through the exact ranking the agent uses and reading the answer back structurally:
+
+```bash
+stella search "the retry/backoff policy for failed HTTP requests" --format json
+```
+
+```json
+{
+  "schema_version": 1,
+  "query": "the retry/backoff policy for failed HTTP requests",
+  "ok": true,
+  "content": "search `...` — N result(s) at depth 4\nvia: semantic\n...",
+  "error": null
+}
+```
+
+`content` is the exact text the agent would read; `error` is `null` on success and the failure message otherwise. The command exits non-zero on failure even under `--format json`, so a script can check the exit code without parsing the body — but the JSON envelope on stdout stays valid either way.
