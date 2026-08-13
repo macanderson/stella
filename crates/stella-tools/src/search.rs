@@ -171,6 +171,9 @@ const DEFAULT_BUDGET_CHARS: usize = 9_000;
 pub(crate) enum Strategy {
     /// The query named an indexed symbol exactly, and the graph knows where it
     /// is defined. Not a ranking — a lookup that either hit or did not.
+    ///
+    /// Not a ladder rung either: it contributes *alongside* the rung that
+    /// ranks, because an exact answer must never lose to a guessed one.
     ExactSymbol,
     /// The query and the files were embedded and compared by meaning.
     Semantic,
@@ -205,14 +208,22 @@ pub(crate) struct Hit {
     /// is also the one part of the answer a shell pipeline cannot produce, so
     /// it is stated in words and shown first (see the module docs).
     pub(crate) why: String,
+    /// The symbol that matched, when the ranking knows one — a chunk hit
+    /// does, a file hit does not. The renderer leads its detailed facets
+    /// (signature, doc, callers, body) with this symbol instead of whatever
+    /// happens to sit first in the file: quoting the body of a one-line
+    /// struct because it appears above the function the query is actually
+    /// about wastes the answer's most expensive facet.
+    pub(crate) focus: Option<String>,
 }
 
 /// Everything one search decided, before it is rendered.
 #[derive(Debug, Clone)]
 pub(crate) struct Answer {
     pub(crate) hits: Vec<Hit>,
-    /// In the order they ran. More than one means an earlier one came back
-    /// empty or unavailable and the next was tried.
+    /// In the order they ran. [`Strategy::ExactSymbol`] contributes alongside
+    /// the rung that ranked; between the ranking rungs, more than one means
+    /// an earlier one came back empty or unavailable and the next was tried.
     pub(crate) strategies: Vec<Strategy>,
     /// Why the semantic strategy did not run, or ran degraded — shown
     /// verbatim, never summarised away.
@@ -446,6 +457,20 @@ pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> To
 /// than it saves. This is `semantic_code_search`'s discipline, deliberately
 /// unchanged (`crate::graph::semantic`).
 pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
+    report_with(root, query, config, stella_embed::from_env()).await
+}
+
+/// [`report`], with the embedder's resolution passed in rather than read from
+/// the process environment — the pure half of the `resolve`/`from_env` split
+/// `stella_embed` itself uses, and the seam that lets a test drive the
+/// misconfigured-embedder path without mutating the environment under a
+/// parallel suite.
+pub(crate) async fn report_with(
+    root: &Path,
+    query: &str,
+    config: SearchConfig,
+    resolution: Resolution,
+) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
         return SearchReport::failed(QUERY_REQUIRED);
@@ -465,7 +490,7 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
         }
     };
 
-    let embedder = match stella_embed::from_env() {
+    let embedder = match resolution {
         Resolution::Configured(embedder) => Ok(embedder as Box<dyn Embedder>),
         Resolution::Unconfigured => Err(None),
         // A half-configured backend is neither "off" nor "working". Saying so
@@ -480,9 +505,10 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
         (graph, Ok(embedder)) => dispatch(graph, root, query, Some(embedder.as_ref())).await,
         (graph, Err(note)) => {
             let mut answer = dispatch(graph, root, query, None).await;
-            if let Some(note) = note {
-                answer.note = Some(note);
-            }
+            // Merged, never assigned: dispatch's own note carries disclosure
+            // (a capped scan, a cut list) that a misconfigured embedder does
+            // not supersede — the reader needs both caveats, not the newest.
+            answer.note = merge_notes(answer.note.take(), note);
             answer
         }
     };
@@ -585,8 +611,20 @@ pub(crate) async fn dispatch(
 
     if let Some(graph) = graph {
         strategies.push(Strategy::GraphNames);
-        let hits = enrich::name_hits(graph, query, MAX_NAME_HITS);
+        let (hits, matched) = enrich::name_hits(graph, query, MAX_NAME_HITS);
         if !hits.is_empty() {
+            if matched > hits.len() {
+                note = merge_notes(
+                    note,
+                    Some(format!(
+                        "{matched} files matched by name; showing the {} with the most matched \
+                         terms — narrow the query to see the rest",
+                        hits.len()
+                    )),
+                );
+            }
+            // No pinning here: an exact hit returns above, so this rung only
+            // ever runs when the graph knew no symbol by that name.
             return Answer {
                 hits,
                 strategies,
@@ -596,10 +634,42 @@ pub(crate) async fn dispatch(
     }
 
     strategies.push(Strategy::FileScan);
+    let scanned = scan::scan_hits(root, query, MAX_NAME_HITS);
+    if scanned.exhausted {
+        note = merge_notes(
+            note,
+            Some(format!(
+                "PARTIAL SCAN — the walk stopped at the first {} files it reached, so a miss \
+                 here is inconclusive; run `stella init` to build an index, or use `bash` with \
+                 `grep -rn` for an exhaustive pass",
+                scan::MAX_FILES_SCANNED
+            )),
+        );
+    }
+    if scanned.matched > scanned.hits.len() {
+        note = merge_notes(
+            note,
+            Some(format!(
+                "{} files matched by term; showing the {} with the most matched terms — narrow \
+                 the query to see the rest",
+                scanned.matched,
+                scanned.hits.len()
+            )),
+        );
+    }
     Answer {
-        hits: scan::scan_hits(root, query, MAX_NAME_HITS),
+        hits: scanned.hits,
         strategies,
         note,
+    }
+}
+
+/// One note out of up to two, oldest first — the `Answer` carries a single
+/// caveat line, and two truths must not cost one of them.
+fn merge_notes(base: Option<String>, extra: Option<String>) -> Option<String> {
+    match (base, extra) {
+        (Some(base), Some(extra)) => Some(format!("{base}; {extra}")),
+        (base, extra) => base.or(extra),
     }
 }
 
@@ -640,9 +710,11 @@ fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
 /// vector space and their cosines are directly comparable. That is not true
 /// across the strategy ladder, which is why `dispatch` still refuses to fuse.
 ///
-/// A file reached by both rungs is reported once, preferring its chunk hit —
-/// same score meaning, plus the symbol or section that matched, which is a
-/// citation a file vector cannot produce.
+/// A file reached by both rungs is reported once, keeping whichever hit
+/// scored higher — that score is the honest "why it ranked". On a tie the
+/// chunk hit wins (the sort is stable and chunks are listed first), which is
+/// the right tiebreak: same score meaning, plus the symbol or section that
+/// matched, a citation a file vector cannot produce.
 async fn semantic_hits(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
@@ -672,10 +744,24 @@ async fn semantic_hits(
         .rank_files_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
         .map_err(|error| format!("the vector index could not be read: {error}"))?;
 
-    Ok((
-        merge_rungs(&chunks, &files),
+    let note = merge_notes(
         coverage_note(graph, &fingerprint),
-    ))
+        ceiling_note(chunks.len(), files.len()),
+    );
+    Ok((merge_rungs(&chunks, &files), note))
+}
+
+/// The disclosure [`RANK_CEILING`]'s doc promises: a scored list that filled
+/// its memory guard may have dropped better-than-nothing candidates past it,
+/// and a caller reading a miss as absence must be told so.
+fn ceiling_note(chunks: usize, files: usize) -> Option<String> {
+    (chunks >= RANK_CEILING || files >= RANK_CEILING).then(|| {
+        format!(
+            "RANK CEILING — the candidate list filled its {RANK_CEILING}-row guard, so \
+             lower-scoring files beyond it were never considered; narrow the query if the file \
+             you expected is missing"
+        )
+    })
 }
 
 /// One ordering over both rungs, best first, one hit per file.
@@ -686,7 +772,7 @@ fn merge_rungs(
     chunks: &[stella_graph::ScoredChunk],
     files: &[stella_embed::rank::Scored],
 ) -> Vec<Hit> {
-    let mut scored: Vec<(f32, String, String)> = chunks
+    let mut scored: Vec<(f32, String, String, Option<String>)> = chunks
         .iter()
         .map(|chunk| {
             (
@@ -697,6 +783,7 @@ fn merge_rungs(
                      (cosine {:.3})",
                     chunk.name, chunk.kind, chunk.start_line, chunk.score
                 ),
+                Some(chunk.name.clone()),
             )
         })
         .chain(files.iter().map(|file| {
@@ -707,6 +794,7 @@ fn merge_rungs(
                     "ranked by MEANING against your query, over the whole file (cosine {:.3})",
                     file.score
                 ),
+                None,
             )
         }))
         .collect();
@@ -725,7 +813,7 @@ fn merge_rungs(
     let ordered: Vec<stella_embed::rank::Scored> = scored
         .iter()
         .enumerate()
-        .map(|(index, (score, path, _))| stella_embed::rank::Scored {
+        .map(|(index, (score, path, _, _))| stella_embed::rank::Scored {
             key: format!("{index:06}#{path}"),
             score: *score,
         })
@@ -738,12 +826,12 @@ fn merge_rungs(
 
     let mut seen: Vec<String> = Vec::new();
     let mut hits = Vec::new();
-    for (_, path, why) in scored.into_iter().take(cut) {
+    for (_, path, why, focus) in scored.into_iter().take(cut) {
         if seen.iter().any(|p| p == &path) {
             continue;
         }
         seen.push(path.clone());
-        hits.push(Hit { path, why });
+        hits.push(Hit { path, why, focus });
     }
     hits
 }
@@ -779,14 +867,29 @@ fn merge_rungs(
 /// the model making. A disclosure nobody can ever clear is not a disclosure; it
 /// is noise with a suggestion attached.
 ///
-/// Both halves are now like-for-like counts of **files**:
+/// Both halves are like-for-like counts of **files**:
 /// `pending_chunk_file_count` is exact by construction (see
 /// `stella_graph`'s `NEEDS_CHUNK_PASS`), and whole-file vectors are one row per
 /// file, so neither side can dedup out from under the other.
+///
+/// **A counter that cannot be read fails toward disclosure, not toward
+/// silence.** `.ok()?` made a read error indistinguishable from full coverage,
+/// which is the one direction this note must never fail in: the two hazards it
+/// exists for — a partial index that reads as complete, and a complete index
+/// that can never say so — are both cases of the answer misrepresenting what it
+/// saw, and an unreadable counter is a third.
 fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
-    let total_files = graph.file_count().ok()?;
-    let files = graph.embedded_file_count(fingerprint).ok()?;
-    let chunks_pending = graph.pending_chunk_file_count(fingerprint).ok()?;
+    let (Ok(total_files), Ok(files), Ok(chunks_pending)) = (
+        graph.file_count(),
+        graph.embedded_file_count(fingerprint),
+        graph.pending_chunk_file_count(fingerprint),
+    ) else {
+        return Some(
+            "COVERAGE UNKNOWN — the index's coverage counters could not be read, so how much \
+             of the workspace this ranking saw cannot be stated; treat a miss as inconclusive"
+                .to_string(),
+        );
+    };
     if chunks_pending == 0 && files >= total_files {
         return None;
     }
