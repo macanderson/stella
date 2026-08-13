@@ -128,7 +128,7 @@ from .turn_budget import (
 from .turn_budget import (
     resolve_turn_budget as _resolve_turn_budget,
 )
-from . import upstream_pin
+from . import code_graph, upstream_pin
 
 try:
     # Harbor renders prompt templates onto the ``instruction`` argument of a
@@ -829,6 +829,10 @@ class StellaAgent(BaseInstalledAgent):
     _assurance_tiers_json: str
     _assurance_tiers_sha256: str
     _workspace_git_baseline: dict[str, str]
+    #: What ``stella init`` built, per :mod:`code_graph`. Declared, because an
+    #: attribute that exists only when one stdout line matched is one no
+    #: reader trusts — which is how it went unread entirely (#3087).
+    _code_graph_summary: dict[str, str]
 
     def __init__(self, *args: Any, agent_timeout_sec: Any = None, **kwargs: Any):
         """Accept Harbor's per-trial agent deadline, and keep it off the base.
@@ -991,12 +995,9 @@ class StellaAgent(BaseInstalledAgent):
             )
         except Exception as exc:  # noqa: BLE001 - discovery aid, never fatal
             print(f"stella-adapter: code graph unavailable: {exc}", file=sys.stderr)
+            self._code_graph_summary = code_graph.unavailable(exc)
             return
-        summary = getattr(result, "stdout", None) or ""
-        for line in summary.splitlines():
-            if "code graph:" in line:
-                self._code_graph_summary = line.strip()
-                break
+        self._code_graph_summary = code_graph.from_stdout(getattr(result, "stdout", None))
 
     @with_prompt_template
     async def run(
@@ -1623,6 +1624,8 @@ class StellaAgent(BaseInstalledAgent):
         workspace_git_baseline = getattr(
             self, "_workspace_git_baseline", {"state": "not_attempted"}
         )
+        # Same discipline, same reason (:mod:`code_graph`, #3087).
+        graph_state = getattr(self, "_code_graph_summary", code_graph.NOT_ATTEMPTED)
 
         extra: dict[str, Any] = {
             "stella_status": metrics.get("status"),
@@ -1684,6 +1687,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_witness_authored_state": witness_authored_state,
             "stella_self_verdict_state": self_verdict_state,
             "stella_workspace_git_baseline": workspace_git_baseline,
+            # What `stella init` built in this container, per #3087.
+            "stella_code_graph": graph_state,
             # The contamination marker (:mod:`lineage`) — present iff seeded.
             "stella_lineage": disclosed_lineage(getattr(self, "_lineage", None)),
         }
@@ -1744,6 +1749,7 @@ class StellaAgent(BaseInstalledAgent):
                 verifier_model=verifier_model,
                 witness_authored_state=witness_authored_state,
                 workspace_git_baseline=workspace_git_baseline,
+                code_graph=graph_state,
             )
             self._write_log(
                 _TRAJECTORY_NAME,
