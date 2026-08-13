@@ -17,7 +17,7 @@ By default `stella run` sends the prompt through the **staged pipeline** — tri
 
 Pass `--no-pipeline` to fall back to the raw step loop instead: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions.
 
-Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--budget` for a hard spend cap.
+Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--spend-limit` for a hard spend cap.
 
 <Callout type="info">
 `stella run` uses the same tools, providers, and credential chain as every other command. All [global flags](/docs/commands) apply.
@@ -80,7 +80,7 @@ The most relevant global flags here:
     itself (not a global), so it goes after the subcommand token:
     `stella run "…" --output-format json`. Env `STELLA_OUTPUT_FORMAT`.
   </OptionCard>
-  <OptionCard name="--budget <usd>">
+  <OptionCard name="--spend-limit <usd>">
     Cap total spend for the run; work aborts cleanly once the cap is exceeded.
   </OptionCard>
 </CardGrid>
@@ -103,7 +103,7 @@ stella --model anthropic/claude-fable-5 \
 Cap spend at two US dollars and stream events as they happen (useful in CI logs):
 
 ```bash
-stella --budget 2.00 \
+stella --spend-limit 2.00 \
   run --output-format stream-json "Fix the failing unit tests in the payments module"
 ```
 
