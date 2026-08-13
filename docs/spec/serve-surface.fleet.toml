@@ -5,8 +5,8 @@
 # Run from the stella repo root, on a FEATURE BRANCH (shared-tree commits land on
 # the current branch):
 #   git checkout feat/serve-engine
-#   stella fleet --plan docs/design/serve-surface.fleet.toml --max-concurrency 4 --budget <N>
-# Per-child budget = --budget / --max-concurrency. No resume: re-running re-dispatches
+#   stella fleet --plan docs/design/serve-surface.fleet.toml --max-concurrency 4 --spend-limit <N>
+# Per-child budget = --spend-limit / --max-concurrency. No resume: re-running re-dispatches
 # every task; prompts tell workers to reconcile with already-landed work.
 #
 # EVERY task must leave `make gate` green (fmt --check + file-size ratchet +

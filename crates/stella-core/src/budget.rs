@@ -250,7 +250,7 @@ impl BudgetGuard {
     /// This is the resume/switch seam: when the driver reopens a session
     /// (`stella resume` at startup, or an in-deck session switch), it
     /// reseeds the guard from the target session's journaled spend so a
-    /// configured `--budget` always means "this session" — the one on
+    /// configured `--spend-limit` always means "this session" — the one on
     /// screen — never "this process". Within one session spend stays
     /// monotone ([`record_spend`](Self::record_spend) only ever adds);
     /// across sessions monotonicity is deliberately the caller's concern —
@@ -423,7 +423,7 @@ impl BudgetGuard {
     ///
     /// `min(requested, headroom)`. A child can therefore never spend the
     /// parent past a configured cap even if the caller asks for more than is
-    /// left, which is what keeps `--budget` a *hard* ceiling once nested
+    /// left, which is what keeps `--spend-limit` a *hard* ceiling once nested
     /// turns exist. A caller who asks for `None` still inherits the parent's
     /// headroom as its ceiling — "unbounded child" is not expressible while
     /// the parent is bounded, deliberately.

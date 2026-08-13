@@ -16,7 +16,7 @@
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
 //! no custom tools, no ask_user, so a worker can never block on stdin. The
-//! parent `--budget` is enforced twice, per the fleet's contract: each child
+//! parent `--spend-limit` is enforced twice, per the fleet's contract: each child
 //! runs under its own enforced guard, and the fleet stops launching new
 //! waves once the metered total crosses the cap (in-flight siblings settle
 //! first, never a mid-tool kill).
@@ -161,7 +161,7 @@ pub async fn run_fleet(
     let worker = EngineWorker {
         cfg: cfg.clone(),
         // Divide the aggregate cap across the concurrency width so one wave's
-        // in-flight children can't collectively overshoot `--budget`.
+        // in-flight children can't collectively overshoot `--spend-limit`.
         per_child_budget: budget_limit.map(|b| b / max_concurrency.max(1) as f64),
         use_pipeline,
         run_id: run_id.clone(),
@@ -471,8 +471,8 @@ fn render_watch_line(watch: &BranchWatch) {
 /// workspace, with the standard (headless) tool registry.
 struct EngineWorker {
     cfg: Config,
-    /// Per-child spend cap. Derived as `--budget / max_concurrency` (not the
-    /// full `--budget`), so a wave of concurrent children can't each spend the
+    /// Per-child spend cap. Derived as `--spend-limit / max_concurrency` (not
+    /// the full `--spend-limit`), so a wave of concurrent children can't each spend the
     /// whole cap and blow the aggregate — the parent fleet guard then enforces
     /// the true total, stopping further launches once it is crossed.
     per_child_budget: Option<f64>,

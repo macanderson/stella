@@ -807,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_budget_caps_total_spend_across_rounds() {
-        // Issue #360: `--budget` must bound the whole loop, not each round.
+        // Issue #360: `--spend-limit` must bound the whole loop, not each round.
         // A verifier that never passes would otherwise run every round, and
         // each round's spend is individually under the cap — only the sum
         // across rounds crosses it. The session axis (what

@@ -33,7 +33,7 @@ while IFS= read -r t; do
 done < "$TB_ROOT/$KEY.tasks"
 
 echo "phase=$PHASE job=$JOB tasks=$N concurrency=$CONC"
-echo "sut=$STELLA_SOURCE_COMMIT model=$TB_MODEL budget/trial=$STELLA_BUDGET"
+echo "sut=$STELLA_SOURCE_COMMIT model=$TB_MODEL budget/trial=$STELLA_SPEND_LIMIT"
 echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cd "$TB_REPO"

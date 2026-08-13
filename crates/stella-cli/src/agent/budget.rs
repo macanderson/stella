@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Session budget helpers: the `--budget` guard's construction, the
+//! Session budget helpers: the `--spend-limit` guard's construction, the
 //! headroom read the deck and fleet surfaces report, and the post-turn
 //! reflection settlement. Split out of `agent.rs` (the `driver/settlement.rs`
 //! pattern) — the parent is a grandfathered god file closed to growth, and
@@ -12,7 +12,7 @@ use stella_protocol::AgentEvent;
 
 use crate::memory::ReflectionReport;
 
-/// Construct the budget guard from `--budget`. The limit lands on the
+/// Construct the budget guard from `--spend-limit`. The limit lands on the
 /// session axis, capping cumulative spend across every turn and goal round
 /// of the run — `begin_turn` resets only the turn-scoped counter. The turn
 /// axis is left unset on purpose: turn spend is a reset-to-zero subset of

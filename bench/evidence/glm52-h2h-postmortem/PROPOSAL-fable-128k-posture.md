@@ -11,7 +11,7 @@ What shipped:
 |---|---|---|
 | `params.max_tokens` (default/worker/judge) | **128,000** | `posture.py::_OUTPUT_CAP_BY_SLUG`, pinned to `catalog.rs` by `TestOutputCeilingParity` |
 | `model_timeout` | **1,572s** | `posture.py::_MODEL_TIMEOUT_BY_SLUG`, emitted as the `model_timeout_secs` posture key |
-| `--turn-budget` | unchanged | adapter, per trial |
+| `--turn-timeout` | unchanged | adapter, per trial |
 
 **Only the Fable arm moved.** Sonnet 5 keeps 64,000 and no timeout key, so its
 registered digest `3c428a22…` is bit-identical — its comparator stops at
@@ -49,7 +49,7 @@ Same one-budget coupling as §8.4.3 — moving one alone relocates the cliff:
 |---|---|---|---|---|
 | `params.max_tokens` (default/worker/judge) | 64,000 | **128,000** (the model ceiling) | `posture.py::_OUTPUT_CAP_BY_SLUG` | the hashed posture → the Fable digests |
 | `model_timeout` | engine default (816s), key omitted | **1,572s** | `posture.py::_MODEL_TIMEOUT_BY_SLUG` → `model_timeout_secs` | the hashed posture → the Fable digests |
-| `--turn-budget` | per-trial, Harbor agent timeout − 60s | unchanged | adapter, per trial | nothing |
+| `--turn-timeout` | per-trial, Harbor agent timeout − 60s | unchanged | adapter, per trial | nothing |
 
 > **Amended.** When this memo was written `model_timeout` was an `EngineConfig`
 > constant with no configuration path, so this row read "the SUT binary →

@@ -98,7 +98,7 @@ own repo CI defaults to `env: modal`.
 74 tasks × 5 trials = 370 trials, against declared agent timeouts averaging
 around two hours. At this lane's $2.50/trial default that is roughly $925 in
 model spend before Modal compute, and the budget cap would truncate the longer
-tasks — for a leaderboard run you would want `STELLA_BUDGET=` (uncapped), which
+tasks — for a leaderboard run you would want `STELLA_SPEND_LIMIT=` (uncapped), which
 removes the ceiling on that estimate. This is a four-figure decision, not a
 weekend experiment, and it should be preregistered like the Terminal-Bench claim
 was.
@@ -118,7 +118,7 @@ Step 3 is now a matter of setting variables rather than writing code:
 
 ```bash
 export FB_ENV=modal FB_ATTEMPTS=5 FB_CONCURRENCY=32
-export STELLA_BUDGET=            # explicitly empty = no per-trial cap
+export STELLA_SPEND_LIMIT=            # explicitly empty = no per-trial cap
 export FB_UPLOAD=1 FB_UPLOAD_VISIBILITY=public
 bench/evidence/frontier/fetch_dataset.sh
 bench/evidence/frontier/primary.sh all fb-submission-01

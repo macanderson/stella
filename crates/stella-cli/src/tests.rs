@@ -1,6 +1,6 @@
 //! CLI argument-surface tests: the everything-global invariant on
 //! [`GlobalArgs`](super::GlobalArgs) and the parse positions it exists to
-//! guarantee. These are the regression fence for "`--budget` is an
+//! guarantee. These are the regression fence for "`--spend-limit` is an
 //! unexpected argument after `stella fleet`" — the flag was defined at the
 //! root without `global = true`, so clap only accepted it *before* the
 //! subcommand while README and muscle memory put it after.
@@ -368,7 +368,7 @@ fn doctor_parses_bare_and_with_repair() {
 
 /// The load-bearing invariant: every flag defined at the root MUST be
 /// `global = true`, or it is silently unaccepted after a subcommand token
-/// (`stella fleet … --budget 5` → "unexpected argument"). Introspects the
+/// (`stella fleet … --spend-limit 5` → "unexpected argument"). Introspects the
 /// built command rather than the source so any future root flag — added to
 /// `GlobalArgs` or straight onto `Cli` — is covered without editing this
 /// test. `help`/`version` are clap built-ins with their own propagation.
@@ -399,13 +399,13 @@ fn session_flags_parse_after_subcommand() {
         "fix the flaky auth test",
         "--max-concurrency",
         "2",
-        "--budget",
+        "--spend-limit",
         "5.0",
         "--model",
         "zai/glm-5.2",
     ])
     .expect("session flags after `fleet` must parse");
-    assert_eq!(cli.globals.budget, Some(5.0));
+    assert_eq!(cli.globals.spend_limit, Some(5.0));
     assert_eq!(cli.globals.model.as_deref(), Some("zai/glm-5.2"));
     match cli.command {
         Some(Command::Fleet {
@@ -505,9 +505,9 @@ fn fleet_claims_parses_as_a_verb_and_defaults_to_the_live_listing() {
 /// both positions, not moved.
 #[test]
 fn session_flags_parse_before_subcommand() {
-    let cli = Cli::try_parse_from(["stella", "--budget", "2.5", "run", "hi"])
+    let cli = Cli::try_parse_from(["stella", "--spend-limit", "2.5", "run", "hi"])
         .expect("session flags before the subcommand must keep parsing");
-    assert_eq!(cli.globals.budget, Some(2.5));
+    assert_eq!(cli.globals.spend_limit, Some(2.5));
 }
 
 /// **Witness (#2142).** The supervised child's env telegram parses.
@@ -688,14 +688,14 @@ fn arena_is_stream_json_by_contract_not_by_flag() {
     assert_eq!(arena.output_format(), OutputFormat::StreamJson);
 }
 
-/// `--budget`'s value parser still guards after a subcommand: a
+/// `--spend-limit`'s value parser still guards after a subcommand: a
 /// non-positive limit would silently disarm the hard spend cap, so it must
 /// be a parse error in every position.
 #[test]
-fn budget_validation_applies_after_subcommand() {
-    let err = Cli::try_parse_from(["stella", "fleet", "task", "--budget", "0"])
+fn spend_limit_validation_applies_after_subcommand() {
+    let err = Cli::try_parse_from(["stella", "fleet", "task", "--spend-limit", "0"])
         .err()
-        .expect("a zero budget must be rejected");
+        .expect("a zero spend limit must be rejected");
     assert!(
         err.to_string().contains("positive dollar amount"),
         "unexpected error: {err}"

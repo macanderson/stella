@@ -29,7 +29,7 @@ cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   #
 ```
 
 Defaults: 4 tasks from `DEFAULT_POOL`, `openrouter/z-ai/glm-4.7-flash`,
-`--budget 0.20` USD/task (passed on as `STELLA_BUDGET`), `--concurrent 4`,
+`--budget 0.20` USD/task (passed on as `STELLA_SPEND_LIMIT`), `--concurrent 4`,
 `--dataset terminal-bench`, output under `loop-bench-jobs/loop-bench/`.
 `--stella-binary` / `$STELLA_BINARY` names the uploaded binary; `--json` emits
 the report for CI instead of the table, and `--json-out <path>` writes that same
@@ -80,7 +80,7 @@ harbor knew something the harness did not (#1299) — see
 | `NOT-RUN` | requested, but harbor produced no trial dir for it | **yes** |
 | `UNREADABLE` | the stream had lines, none of them an event — plumbing, not loop evidence | no |
 | `STUCK-LOOP` | the engine's own `loop_detected` fired on a non-pass | **yes** |
-| `BUDGET-CAP` | `STELLA_BUDGET` denied the turn — a cost decision, not a loop defect | no |
+| `BUDGET-CAP` | `STELLA_SPEND_LIMIT` denied the turn — a cost decision, not a loop defect | no |
 | `SILENT-DEATH` | zero tool calls *and* no terminal event — it vanished with no explanation, the worst mode | **yes** |
 | `ZERO-WORK` | zero tool calls, but it said why | **yes** |
 | `CRASHED` | real work happened, then harbor recorded the trial as having raised | no |

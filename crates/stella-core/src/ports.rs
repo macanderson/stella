@@ -31,7 +31,7 @@ pub trait ToolExecutor: Send + Sync {
     /// drained by another" seam [`crate::mcp_usage`] uses, and the executor
     /// that dispatched the child is exactly the thing that knows what it
     /// cost. Draining at the *step boundary* (rather than after the turn) is
-    /// what keeps `--budget` a hard ceiling once turns nest: the parent's
+    /// what keeps `--spend-limit` a hard ceiling once turns nest: the parent's
     /// `evaluate()` always sees child spend to date.
     ///
     /// # Decorators MUST forward this

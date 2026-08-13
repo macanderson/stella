@@ -169,7 +169,7 @@ isolation = "isolated"
 ```
 
 ```bash
-stella --budget 6 fleet --plan feature-buildout.toml
+stella --spend-limit 6 fleet --plan feature-buildout.toml
 ```
 
 `schema` runs alone in wave one; `reader` and `writer` run together in wave two
@@ -188,14 +188,14 @@ file. The locks live in the `file_locks` table of `.stella/private/store.db`,
 separate from the fleet ledger, so they coordinate across concurrent fleet
 runs too.
 
-## Budget across a fleet
+## Spend limit across a fleet
 
-Budget comes from the **global** `--budget` flag (or `STELLA_BUDGET`), which
+The spend limit comes from the **global** `--spend-limit` flag (or `STELLA_SPEND_LIMIT`), which
 goes *before* the subcommand:
 
 ```bash
-stella --budget 5 fleet --plan release-prep.toml
-# equivalently: STELLA_BUDGET=5 stella fleet --plan release-prep.toml
+stella --spend-limit 5 fleet --plan release-prep.toml
+# equivalently: STELLA_SPEND_LIMIT=5 stella fleet --plan release-prep.toml
 ```
 
 It is enforced twice: each child runs under its own guard — the aggregate cap
@@ -255,7 +255,7 @@ The budget flag is **global**, so it goes before the subcommand — the one
 ordering mistake worth memorizing:
 
 ```bash
-stella --budget 8 fleet --plan release-prep.toml --max-concurrency 3 --watch
+stella --spend-limit 8 fleet --plan release-prep.toml --max-concurrency 3 --watch
 ```
 
 ## Cleaning up

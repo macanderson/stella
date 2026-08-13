@@ -120,7 +120,7 @@ CONC="${TB_CONCURRENCY:-3}"
 echo "arm=$ARM job=$JOB tasks=$N taskset_sha256=$TASKSET_SHA"
 echo "sut=$STELLA_SOURCE_COMMIT worker=$TB_MODEL"
 echo "witness_author=${STELLA_WITNESS_AUTHOR_MODEL:-<none: control arm>}"
-echo "budget/trial=${STELLA_BUDGET:-<uncapped>} concurrency=$CONC"
+echo "budget/trial=${STELLA_SPEND_LIMIT:-<uncapped>} concurrency=$CONC"
 echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cd "$TB_REPO" || exit 1

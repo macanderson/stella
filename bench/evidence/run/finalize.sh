@@ -62,7 +62,7 @@ python3 "$TB_REPO/bench/evidence/make_manifest.py" \
   --dataset "$TB_DATASET" \
   --tasks "$TASKS" --attempts 1 \
   --concurrency "${TB_CONCURRENCY_A:-3}" \
-  --budget-per-trial "$STELLA_BUDGET" \
+  --budget-per-trial "$STELLA_SPEND_LIMIT" \
   --witness-author "${STELLA_WITNESS_AUTHOR_MODEL:-}" \
   --prereg-url "${TB_PREREG_URL:-}"
 echo "evidence written to $OUT"

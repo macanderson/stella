@@ -69,9 +69,9 @@ impl Sleeper for TokioSleeper {
 /// The budget guard for a one-shot invocation, with its wall-clock task
 /// deadline armed (#1503).
 ///
-/// A one-shot run is one task, so the `--turn-budget` allowance the caller
+/// A one-shot run is one task, so the `--turn-timeout` allowance the caller
 /// resolved — for the bench adapters, Harbor's own per-task timeout minus a
-/// teardown reserve (`bench/harbor_adapter`'s `turn_budget.py`) — IS the
+/// teardown reserve (`bench/harbor_adapter`'s `turn_timeout.py`) — IS the
 /// task's ceiling, and this is the one place the shipping binary computes
 /// `Instant::now() + allowance`, the absolute point
 /// `BudgetGuard::set_task_deadline` documents. #1481 built and proved the

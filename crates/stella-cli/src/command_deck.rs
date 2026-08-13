@@ -468,7 +468,7 @@ pub async fn run_deck_session(
             std::mem::take(&mut rs.history).unwrap_or_default(),
             &system_prompt,
         );
-        // `--budget` means THIS session on every resume path: the guard's
+        // `--spend-limit` means THIS session on every resume path: the guard's
         // session accumulator reseeds to exactly what the session had
         // already spent (its journal's last `BudgetTick`), so spend stays
         // monotone across interruptions. Same seam as the in-deck session
@@ -536,7 +536,7 @@ pub async fn run_deck_session(
         );
         messages = restored.messages;
         resume_note = Some(restored.note);
-        // `--budget` means THIS session on every resume path: the guard's
+        // `--spend-limit` means THIS session on every resume path: the guard's
         // session accumulator reseeds to exactly what the session had
         // already spent, so spend stays monotone across interruptions. Same
         // seam as the in-deck session switch (`SessionResume` in the driver
@@ -1277,7 +1277,7 @@ pub async fn run_deck_session(
                                 queue.adopt(sidecar_dir.clone(), restored);
                                 pipeline_on = rs.pipeline.unwrap_or(true);
                                 let _ = in_tx.send(Inbound::Pipeline(pipeline_on));
-                                // `--budget` means THIS session, decided and
+                                // `--spend-limit` means THIS session, decided and
                                 // implemented on both resume paths: reseed
                                 // the guard's session accumulator to what
                                 // the adopted session had journaled

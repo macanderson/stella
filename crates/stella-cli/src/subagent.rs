@@ -36,7 +36,7 @@
 //!
 //! Each child is carved from a session-scoped pool
 //! ([`SessionSubAgents::with_pool_limit`]), which bounds what sub-agents may
-//! cost in total. That pool is **not** what enforces `--budget`: every child's
+//! cost in total. That pool is **not** what enforces `--spend-limit`: every child's
 //! cost is also pushed onto the registry's spend ledger, and the engine folds
 //! it into the *parent's* guard at the next step-boundary check
 //! (`ToolExecutor::drain_sub_agent_spend_usd`). The parent's guard stays the
@@ -176,7 +176,7 @@ use crate::runtime::TokioSleeper;
 ///
 /// Generous enough that ordinary delegation never trips it, small enough
 /// that a model looping on `task` cannot quietly spend a session's budget on
-/// research. Callers with a real `--budget` get a tighter bound anyway: the
+/// research. Callers with a real `--spend-limit` get a tighter bound anyway: the
 /// parent's guard is the hard ceiling.
 pub const DEFAULT_POOL_LIMIT_USD: f64 = 2.0;
 
@@ -316,7 +316,7 @@ impl SessionSubAgents {
 /// The dispatcher gets a provider of its own rather than sharing the turn's:
 /// the turn holds its own by reference for the whole turn, and a child needs
 /// one that outlives any single turn. Metering is `Observed` on the pool —
-/// the *parent's* guard is what enforces `--budget`, via the spend ledger the
+/// the *parent's* guard is what enforces `--spend-limit`, via the spend ledger the
 /// engine drains at each step boundary.
 pub fn install_for_session(
     cfg: &crate::config::Config,
@@ -338,7 +338,7 @@ pub fn install_for_session(
 /// — which [`SessionSubAgents::with_pool_limit`] reads as *unlimited*, not as
 /// "keep the default" — so [`DEFAULT_POOL_LIMIT_USD`] was documented as the
 /// bound that stops "a model looping on `task`" while binding nothing. A
-/// session without `--budget` whose model wedged on delegation ran every child
+/// session without `--spend-limit` whose model wedged on delegation ran every child
 /// to `max_steps` with no dollar bound at any layer (#1849).
 ///
 /// # Why it warns rather than stops
@@ -348,7 +348,7 @@ pub fn install_for_session(
 /// degradation warns, never disables — and the enforcing bound is elsewhere
 /// and unchanged: the *parent's* guard is the hard ceiling, via the spend
 /// ledger the engine drains at each step boundary, so a session that passed
-/// `--budget` already stops. Making the pool itself enforcing would add a
+/// `--spend-limit` already stops. Making the pool itself enforcing would add a
 /// second wall that a caller never asked for and that no flag can raise.
 ///
 /// The alternative — enforce at the pool — is a maintainer's call, not this
