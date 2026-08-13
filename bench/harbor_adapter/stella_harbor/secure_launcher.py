@@ -113,6 +113,7 @@ _FIXED_PROTOCOL_PATH = "bench/terminal-bench-2.1-protocol.md"
 _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/__init__.py",
     "bench/harbor_adapter/stella_harbor/atif.py",
+    "bench/harbor_adapter/stella_harbor/code_graph.py",
     "bench/harbor_adapter/stella_harbor/credential_bundle.py",
     "bench/harbor_adapter/stella_harbor/exit_cause.py",
     "bench/harbor_adapter/stella_harbor/exit_status.py",

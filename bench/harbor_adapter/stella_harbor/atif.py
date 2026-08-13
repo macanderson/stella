@@ -481,6 +481,7 @@ def envelope_to_trajectory(
     verifier_model: str | None = None,
     witness_authored_state: str | None = None,
     workspace_git_baseline: dict[str, str] | None = None,
+    code_graph: dict[str, str] | None = None,
 ) -> Trajectory:
     """Build and validate an ATIF-v1.7 trajectory from a Stella envelope."""
     events = envelope.get("events")
@@ -660,6 +661,12 @@ def envelope_to_trajectory(
     agent_extra["workspace_git_baseline"] = dict(
         workspace_git_baseline or {"state": "not_attempted"}
     )
+    # Unconditional for the same reason. `_build_code_graph` has always
+    # computed this line and nothing has ever read it, so every container's
+    # answer to "was this workspace actually indexed" was produced and dropped
+    # — the one question a trial reporting `files: 0` against a non-empty
+    # checkout needs answered (#3087).
+    agent_extra["code_graph"] = dict(code_graph or {"state": "not_attempted"})
 
     return Trajectory(
         schema_version="ATIF-v1.7",

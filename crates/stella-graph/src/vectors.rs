@@ -33,10 +33,14 @@
 //!   what a later pass would index degrades ranking silently, with no error to
 //!   catch it, so there is exactly one function and its output is what the
 //!   stored `content_sha256` refers to.
-//! - **Files are the ranking unit.** Symbols and edges come in afterwards
-//!   through the traversal that already exists (`neighbors`, `definitions`).
-//!   Ranking symbols directly would multiply the corpus by twenty for an
-//!   answer the caller then has to re-aggregate to a file anyway.
+//! - **A file is one ranking unit, and no longer the only one.** This module
+//!   held that ranking symbols directly "would multiply the corpus by twenty
+//!   for an answer the caller then has to re-aggregate to a file anyway".
+//!   Measurement refuted it: one vector per file returned a **0.05 score
+//!   spread across ten results** on a real query, with the answer absent
+//!   entirely (#3089). Multiplying the corpus by twenty is exactly what buys
+//!   the resolution, and [`chunks`] does it. A file vector still answers
+//!   "what is this module about", which no symbol can, so both rungs stay.
 //! - **The fingerprint is the invalidation.** A vector is keyed
 //!   `(file_id, fingerprint)` and carries the content hash it was computed
 //!   from, so changing the embedder or the file content makes the old vector
@@ -350,6 +354,8 @@ fn decode(bytes: &[u8]) -> Vec<f32> {
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
 }
+
+pub mod chunks;
 
 #[cfg(test)]
 mod tests;
