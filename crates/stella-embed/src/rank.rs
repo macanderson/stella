@@ -92,8 +92,223 @@ pub fn top_k(query: &[f32], candidates: &[Candidate<'_>], floor: f32, limit: usi
     scored
 }
 
+/// How much larger than the average gap a gap must be to count as the edge of
+/// relevance rather than ordinary spacing.
+///
+/// Provisional, and **scale-free by construction**, which is the whole reason
+/// it is defensible without a per-model measurement: it compares gaps in a
+/// ranking against other gaps in the same ranking, so it carries no assumption
+/// about where a given embedder's cosines sit. An absolute cutoff does — and
+/// `DEFAULT_ADMISSION_FLOOR` is the cautionary case, sitting at 0.25 while
+/// `voyage-code-3` scores unrelated files at 0.604, dropping nothing.
+pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
+
+/// The smallest drop in cosine that may be called a boundary at all.
+///
+/// **This exists because the ratio alone is not enough, and the number that
+/// proves it is the one #3089 measured.** On that real ten-result ranking
+/// (0.656 down to 0.604) the widest gap is 0.015 — which is *2.6x the mean
+/// gap*, comfortably past [`DEFAULT_RELEVANCE_GAP_RATIO`], and would have cut
+/// the list to a single confident result. The correct answer was not in the
+/// list at all. A ratio is scale-free about the *level* of a score and says
+/// nothing about its *resolution*: 0.015 is both 2.6x the mean and 1.5% of a
+/// cosine, and the second reading is the true one.
+///
+/// So a boundary must be two independent things at once — wide relative to
+/// the ranking's other gaps, and wide enough absolutely that it is not
+/// measurement noise. This constant is the second test.
+///
+/// Provisional like [`DEFAULT_RELEVANCE_GAP_RATIO`], but far less fragile than
+/// an absolute *floor*: gaps between scores are much more comparable across
+/// models than the scores themselves, which is exactly why
+/// `DEFAULT_ADMISSION_FLOOR` sits at 0.25 while a real backend scores
+/// unrelated files at 0.604. It still wants measuring per model.
+pub const DEFAULT_MIN_BOUNDARY_GAP: f32 = 0.05;
+
+/// How many of a ranked list are relevant — the answer to "where does this
+/// result set stop being about the query".
+///
+/// # Why a count is the wrong way to shape an answer
+///
+/// A fixed `limit` is wrong in both directions at once. A query whose answer
+/// genuinely spans forty chunks is truncated at ten and the caller cannot tell;
+/// a query with two real hits returns ten and the eight passengers read as
+/// findings. Neither failure is visible in the output, which is what makes it
+/// worse than a wrong answer.
+///
+/// # The mechanism
+///
+/// `scored` is assumed sorted descending — [`top_k`]'s output. The largest
+/// **drop** between adjacent scores is the candidate boundary, and it is
+/// accepted only when it passes **both** tests: at least `gap_ratio` times the
+/// mean gap across the list, *and* at least `min_gap` in absolute cosine.
+///
+/// Both, because either alone is wrong in a way that has already been
+/// observed. Without the ratio, an evenly-spaced ranking gets cut at whichever
+/// gap rounding made widest. Without `min_gap`, the ranking #3089 measured —
+/// ten results spanning 0.05 — cuts to a single confident answer on a gap of
+/// 0.015, and the correct answer was not in that list at all
+/// ([`DEFAULT_MIN_BOUNDARY_GAP`] carries the full argument).
+///
+/// When no gap passes both, the honest report is that this ranking does not
+/// resolve: the whole list is returned, and something downstream — a context
+/// budget — has to be the one to say it could not show all of it.
+///
+/// Never returns zero for a non-empty list: admission is the absolute floor's
+/// job ([`crate::SimilarityPosture`]), and this function's job is only to find
+/// the edge *within* what was already admitted. Returning zero here would
+/// silently overrule a floor that had already said yes.
+///
+/// Pure and total: no I/O, no clock, no panic on `NaN`, empty or single-item
+/// input.
+#[must_use]
+pub fn relevant_prefix(scored: &[Scored], gap_ratio: f32, min_gap: f32) -> usize {
+    if scored.len() <= 1 {
+        return scored.len();
+    }
+    let gaps: Vec<f32> = scored
+        .windows(2)
+        .map(|pair| (pair[0].score - pair[1].score).max(0.0))
+        .collect();
+    let total: f32 = gaps.iter().sum();
+    // Every score identical: no boundary exists anywhere, and dividing by a
+    // zero mean below would produce one out of a rounding artefact.
+    if total <= 0.0 {
+        return scored.len();
+    }
+    let mean = total / gaps.len() as f32;
+
+    let (index, widest) = gaps
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(Ordering::Equal))
+        .map(|(index, gap)| (index, *gap))
+        .unwrap_or((0, 0.0));
+
+    if widest >= mean * gap_ratio && widest >= min_gap {
+        index + 1
+    } else {
+        scored.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn scores(values: &[f32]) -> Vec<Scored> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, score)| Scored {
+                key: format!("k{index}"),
+                score: *score,
+            })
+            .collect()
+    }
+
+    /// The shape the whole function exists for: three real hits, then a cliff,
+    /// then noise. The cut lands at the cliff regardless of how much noise
+    /// follows it.
+    #[test]
+    fn a_cliff_between_relevant_and_irrelevant_is_where_the_cut_lands() {
+        let ranked = scores(&[0.91, 0.88, 0.86, 0.42, 0.41, 0.40, 0.39]);
+        assert_eq!(relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 3);
+    }
+
+    /// A smoothly-decaying ranking has no boundary in it. Inventing one would
+    /// be an arbitrary cut wearing a threshold's authority, so the whole list
+    /// is returned and the budget is left to say what it could not show.
+    #[test]
+    fn a_smooth_decay_has_no_boundary_and_is_not_cut() {
+        let ranked = scores(&[0.90, 0.85, 0.80, 0.75, 0.70, 0.65]);
+        assert_eq!(
+            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            ranked.len()
+        );
+    }
+
+    /// The exact distribution #3089 measured — ten results spanning 0.05.
+    /// Nothing in it separates, and the honest answer is that this ranking
+    /// does not resolve, not that the top three are the answer.
+    #[test]
+    fn the_file_level_ranking_that_motivated_this_does_not_resolve() {
+        let ranked = scores(&[
+            0.656, 0.641, 0.636, 0.628, 0.621, 0.615, 0.612, 0.607, 0.606, 0.604,
+        ]);
+        assert_eq!(
+            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            ranked.len(),
+            "a tie dressed as a ranking must not be cut into a confident answer"
+        );
+    }
+
+    #[test]
+    fn one_hit_and_no_hits_are_both_answered_without_a_gap_to_measure() {
+        assert_eq!(relevant_prefix(&[], DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 0);
+        assert_eq!(relevant_prefix(&scores(&[0.9]), DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 1);
+    }
+
+    #[test]
+    fn an_exact_tie_across_the_whole_list_is_never_cut() {
+        let ranked = scores(&[0.5, 0.5, 0.5, 0.5]);
+        assert_eq!(
+            relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP),
+            ranked.len()
+        );
+    }
+
+    /// A single dominant hit is the other end of the same shape, and the one
+    /// most easily got wrong: the cut must keep it rather than reading "one
+    /// item" as "no boundary".
+    #[test]
+    fn one_dominant_hit_cuts_to_one() {
+        let ranked = scores(&[0.95, 0.31, 0.30, 0.29, 0.28]);
+        assert_eq!(relevant_prefix(&ranked, DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP), 1);
+    }
+
+    proptest! {
+        /// Never zero, never past the end. A zero would silently overrule the
+        /// admission floor, which has already said these are relevant.
+        #[test]
+        fn the_cut_is_always_a_non_empty_prefix(
+            mut values in proptest::collection::vec(0.0f32..1.0, 1..40),
+            ratio in 0.1f32..8.0,
+        ) {
+            values.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            let ranked = scores(&values);
+            let cut = relevant_prefix(&ranked, ratio, DEFAULT_MIN_BOUNDARY_GAP);
+            prop_assert!(cut >= 1);
+            prop_assert!(cut <= ranked.len());
+        }
+
+        /// Appending more noise below an existing cliff can never move the cut
+        /// deeper — the answer to "what is relevant" must not grow because
+        /// irrelevant things were added.
+        #[test]
+        fn extra_noise_below_the_cliff_never_widens_the_answer(
+            tail_len in 1usize..20,
+        ) {
+            let head = vec![0.95f32, 0.93, 0.92];
+            let base: Vec<f32> = head.iter().copied().chain([0.20]).collect();
+            let longer: Vec<f32> = head
+                .iter()
+                .copied()
+                .chain((0..=tail_len).map(|i| 0.20 - i as f32 * 0.001))
+                .collect();
+            let short_cut = relevant_prefix(&scores(&base), DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP);
+            let long_cut = relevant_prefix(&scores(&longer), DEFAULT_RELEVANCE_GAP_RATIO, DEFAULT_MIN_BOUNDARY_GAP);
+            prop_assert!(
+                long_cut <= short_cut,
+                "cut widened from {short_cut} to {long_cut} when only noise was added"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod top_k_tests {
     use super::*;
     use proptest::prelude::*;
 
