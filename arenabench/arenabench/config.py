@@ -48,6 +48,7 @@ from .model import (
     declared_cap_keys,
     declared_flag,
     is_credential_name,
+    is_tool_name,
 )
 
 __all__ = [
@@ -234,9 +235,54 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         effort=str(raw.get("effort") or "high"),
         base_url=(str(raw["base_url"]).strip() or None) if raw.get("base_url") else None,
         bare_loop=bare_loop,
+        tool_set=_tool_set_from_toml(raw.get("tool_set"), problems, where),
         roles=roles,
         responsibilities=responsibilities,
     )
+
+
+def _tool_set_from_toml(
+    raw: Any, problems: list[str], where: str
+) -> tuple[str, ...]:
+    """Read ``engine.tool_set`` — the exact tools this seat is offered.
+
+    Absent means the shipping catalog, which is what every match before #3032
+    ran and the one reading that must stay byte-identical to it.
+
+    A list of names, never a preset alias, and refused rather than coerced for
+    the reason ``bare_loop`` is: a template that spelled a restriction and got
+    a full catalog would publish a tool-effectiveness number for an arm that
+    never ran restricted, which is the single failure this field exists to
+    make impossible. An empty list is refused too — it reads as "no tools",
+    which is not a runnable arm, and omitting the key is how a match declines
+    the field.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        problems.append(
+            f"{where}: engine.tool_set must be a list of tool names — "
+            f"{raw!r} names no set (a preset word is not a tool set: the "
+            "arm's provenance must record which tools ran, not a word that "
+            "resolves to some)"
+        )
+        return ()
+    names = tuple(dict.fromkeys(item.strip() for item in raw))
+    bad = [name for name in names if not is_tool_name(name)]
+    if bad:
+        problems.append(
+            f"{where}: engine.tool_set names {', '.join(map(repr, bad))}, "
+            "which are not tool-shaped and would advertise a different set "
+            "than the one declared (see is_tool_name)"
+        )
+        return ()
+    if not names:
+        problems.append(
+            f"{where}: engine.tool_set is empty — omit the key to run the "
+            "shipping catalog; an arm advertising no tools cannot work"
+        )
+        return ()
+    return names
 
 
 def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> MatchSpec:
@@ -289,6 +335,16 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             problems.append(
                 f"{where}: bare_loop applies only to a stella seat — "
                 f"{agent!r} has no staged pipeline to switch off"
+            )
+        if engine.tool_set and agent and agent != "stella":
+            # The same refusal, for the same reason, on the knob that arrived
+            # after them (#3032). Only the Stella adapter forwards a declared
+            # tool set; on any other seat the declaration reaches nothing, and
+            # a template that says it restricted an arm it ran whole describes
+            # a measurement nobody made.
+            problems.append(
+                f"{where}: tool_set applies only to a stella seat — "
+                f"{agent!r} advertises its own tools"
             )
         if engine.responsibilities and agent and agent != "stella":
             # The same refusal, for the same reason, on the knob that arrived
@@ -492,6 +548,12 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
                         for k, v in c.engine.to_json().items()
                         if k not in ("roles", "responsibilities", "qualified_model")
                         and v is not None
+                        # An undeclared tool set has no TOML spelling: `[]`
+                        # reads as "no tools", which is a different arm from
+                        # "the shipping catalog" and is refused on the way
+                        # back in. Dropping it is what keeps every template
+                        # written before #3032 rendering back byte-identical.
+                        and not (k == "tool_set" and not v)
                     },
                     "roles": {
                         name: {
@@ -607,6 +669,11 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             # Emitted only when true, so every existing template renders back
             # byte-identical and a saved match cannot gain an arm it never had.
             out.append("  " + _line("bare_loop", engine.bare_loop))
+        if engine.tool_set:
+            # Emitted only when declared, for `bare_loop`'s reason above, and
+            # as the literal list so a reader of the template knows what the
+            # arm was offered without resolving anything (#3032).
+            out.append("  " + _line("tool_set", list(engine.tool_set)))
 
         if engine.roles:
             out.append("")

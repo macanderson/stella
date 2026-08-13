@@ -47,6 +47,7 @@ function defaultSeat(catalog: Catalog, agentSlug: string, index: number, id: str
       effort: "high",
       base_url: "",
       bare_loop: false,
+      tool_set: [],
       roles: {},
       responsibilities: {},
     },
@@ -110,6 +111,7 @@ function matchPayload(args: {
           effort: seat.engine.effort,
           base_url: seat.engine.base_url,
           bare_loop: seat.engine.bare_loop,
+          tool_set: seat.engine.tool_set,
           roles,
           responsibilities,
         },
@@ -312,6 +314,11 @@ export function SetupView({
             // told the ablation had loaded, and a number measuring the arm they
             // did not configure.
             bare_loop: !!c.engine.bare_loop,
+            // Read for `bare_loop`'s reason above: a template that restricted
+            // the tool set, loaded into the wizard and launched, must run the
+            // arm it declared rather than the full catalog it would silently
+            // fall back to.
+            tool_set: c.engine.tool_set ?? [],
             roles: Object.fromEntries(
               Object.entries(c.engine.roles || {}).map(([name, cfg]) => [
                 name,

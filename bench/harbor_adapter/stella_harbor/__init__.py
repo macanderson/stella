@@ -75,6 +75,7 @@ from .credential_bundle import (
     HOST_CREDENTIAL_SOURCE,
     PROVIDER_CREDENTIAL_SPECS,
     SelectedProviderCredentials,
+    optional_embedding_credentials,
     read_bundle_from_environment,
     select_route_credentials,
 )
@@ -128,7 +129,8 @@ from .turn_budget import (
 from .turn_budget import (
     resolve_turn_budget as _resolve_turn_budget,
 )
-from . import code_graph, upstream_pin
+from . import tool_set, code_graph, upstream_pin
+
 
 try:
     # Harbor renders prompt templates onto the ``instruction`` argument of a
@@ -221,12 +223,15 @@ _LAUNCHER_CONTROLS: dict[str, str] = {
     "base_url_authority": "validated-cli-argument",
     "engine_config_authority": "trusted-launcher-json",
     "upstream_pin_authority": "validated-cli-argument",
+    "tool_set_authority": "validated-container-env",
 }
 
 _CLAIM_CONTAINER_ENV = frozenset(
     {
         "STELLA_BUDGET",
         "STELLA_DISABLE_REFLECTION",
+        # The advertised tool set; :mod:`tool_set` says why the container.
+        tool_set.ENV,
     }
 )
 _HOST_ONLY_STELLA_ENV = frozenset(
@@ -1068,10 +1073,12 @@ class StellaAgent(BaseInstalledAgent):
             self._container_credential_absence_verified = True
         else:
             self._container_credential_absence_verified = False
+        # A second, independent route, appended after the provider's own (#2995).
+        embedding = optional_embedding_credentials(self._configured_value)
         env[_HANDOFF_FD_ENV] = "0"
         # One name per value, in the order the values are written to the pipe.
         # Stella pairs them positionally, so this ordering is the contract.
-        env[_HANDOFF_TARGET_ENV] = ",".join(selected.credentials)
+        env[_HANDOFF_TARGET_ENV] = ",".join((*selected.credentials, *embedding))
         # Routing rides as ordinary registered container environment: a region
         # is disclosed in the manifest, not a secret to keep out of `/proc`.
         env.update(selected.routing)
@@ -1087,7 +1094,7 @@ class StellaAgent(BaseInstalledAgent):
             environment,
             command=command,
             env=env,
-            credentials=tuple(selected.credentials.values()),
+            credentials=(*selected.credentials.values(), *embedding.values()),
             verifier=verifier,
             expected_posture_json=self._engine_posture_json,
             posture_builder=self._build_engine_posture,
@@ -1488,6 +1495,9 @@ class StellaAgent(BaseInstalledAgent):
         )
         if reflection is not None:
             forwarded["STELLA_DISABLE_REFLECTION"] = reflection
+        # Omitted when undeclared: an arm naming no tool set must run the
+        # exact container environment it ran before this knob existed.
+        forwarded.update(tool_set.tool_set_env(self._configured_value))
 
         # Headless benchmark trials are ephemeral and should not spend an
         # unreported post-turn model call. This is a disclosed benchmark
@@ -1577,6 +1587,10 @@ class StellaAgent(BaseInstalledAgent):
             len(host_credential_name.split(",")) if host_credential_name else 0
         )
         provider_routing = getattr(self, "_provider_routing", None) or None
+        # Recomputed rather than stored: pure given `_configured_value` (#2995).
+        embedding_credential_names = sorted(
+            optional_embedding_credentials(self._configured_value)
+        )
         container_credential_absence_verified = getattr(
             self, "_container_credential_absence_verified", False
         )
@@ -1652,6 +1666,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_output_format": "stream-json",
             # Which loop ran — not inferable from the posture below (#2134).
             "stella_loop_mode": loop_mode_name(self._configured_value),
+            # Which tools the agent was offered; empty is the full catalog.
+            "stella_tool_set": list(tool_set.declared(self._configured_value)),
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (
                 "disabled_for_ephemeral_benchmark"
@@ -1666,6 +1682,7 @@ class StellaAgent(BaseInstalledAgent):
             # scrubbed: a Bedrock number nobody can attribute to a region is a
             # number nobody can reproduce.
             "stella_provider_routing": provider_routing,
+            "stella_embedding_credential_names": embedding_credential_names,
             "stella_container_credential_absence_verified": (
                 container_credential_absence_verified
             ),
