@@ -53,6 +53,9 @@ use stella_embed::rank::{Candidate, Scored};
 use crate::error::GraphError;
 use crate::store;
 
+#[cfg(test)]
+mod tests;
+
 /// How many *files* one pass will chunk-embed. Files rather than chunks
 /// because a file's chunks are written as one unit: the sweep that deletes
 /// vanished chunks keys on the file hash, so a file split across two passes
@@ -471,6 +474,24 @@ fn candidate_key(chunk: &ScoredChunk) -> String {
 pub fn chunk_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM code_graph_chunk_vectors WHERE fingerprint = ?1",
+        params![fingerprint],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as usize)
+}
+
+/// How many indexed files still have a symbol with no chunk vector under
+/// `fingerprint` — the same WHERE clause [`pending_chunks`] scans, as a count
+/// rather than a page of rendered work. An eager pass reports this as
+/// `remaining` without paying for a render-and-hash pass over files it is
+/// about to discard the content of.
+pub fn pending_chunk_file_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM code_graph_files f \
+         WHERE (SELECT COUNT(*) FROM code_graph_symbols s WHERE s.file_id = f.id) > \
+               (SELECT COUNT(*) FROM code_graph_chunk_vectors v \
+                WHERE v.file_id = f.id AND v.fingerprint = ?1 \
+                  AND v.file_sha256 = f.content_sha256)",
         params![fingerprint],
         |row| row.get(0),
     )?;

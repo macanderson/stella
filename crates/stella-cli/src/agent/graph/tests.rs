@@ -121,13 +121,17 @@ async fn init_embeds_the_index_without_any_semantic_query_being_issued() {
 
     // The half that makes this a witness for EAGER embedding rather than for
     // embedding at all: a query would have been sent as a bare sentence, and
-    // every text here is a file render (`render_file_text` opens with `file: `).
+    // every text here is either a file render (`render_file_text` opens with
+    // `file: `) or a chunk render (`render_chunk_text`'s `path :: name (kind)`
+    // header) — the chunk pass runs against this same mock server (#3098), so
+    // both shapes are expected traffic now, and neither is a bare query.
     let texts = sent_texts(&server).await;
     assert!(!texts.is_empty(), "the pass sent nothing");
     for text in &texts {
         assert!(
-            text.starts_with("file: "),
-            "only file renders may be embedded by init — this looks like a query: {text:?}"
+            text.starts_with("file: ") || (text.contains(" :: ") && text.contains(")\n\n")),
+            "only file or chunk renders may be embedded by init — this looks like a query: \
+             {text:?}"
         );
     }
     assert!(
@@ -255,5 +259,71 @@ fn an_unreadable_file_is_named_as_a_problem_not_as_the_cap() {
     assert!(
         !rendered.contains("embed on demand"),
         "an unreadable file will not embed on demand — do not promise it: {rendered}"
+    );
+}
+
+/// THE WITNESS for #3098's fix: on `main` the chunk vector table is empty
+/// until `search` has already been called several times (each call capped at
+/// `MAX_FILES_PER_CHUNK_PASS`, 64 files); here `stella init` alone leaves
+/// every symbol in the fixture chunk-embedded, with no semantic query issued.
+#[tokio::test]
+async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
+    use stella_embed::Embedder;
+
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+    let server = embeddings_server().await;
+
+    let mut lines: Vec<String> = Vec::new();
+    build_code_graph_with(&root, &env_for(&server), &mut |line| lines.push(line)).await;
+
+    let fingerprint = stella_embed::HttpEmbedder::new(
+        &format!("{}/v1", server.uri()),
+        "concept-2",
+        None,
+        2,
+        0.25,
+    )
+    .fingerprint()
+    .id();
+    let graph = open_graph(&root);
+    let chunks_remaining = graph
+        .pending_chunk_file_count(&fingerprint)
+        .expect("pending count");
+    let chunks_embedded = graph.embedded_chunk_count(&fingerprint).expect("count");
+    graph.shutdown();
+
+    assert_eq!(
+        chunks_remaining, 0,
+        "`stella init` must leave no file with an un-chunked symbol; lines were {lines:?}"
+    );
+    assert_eq!(
+        chunks_embedded,
+        FIXTURE.len(),
+        "one function per fixture file"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("chunk index")),
+        "the pass must report what it did: {lines:?}"
+    );
+}
+
+/// Same discipline as `a_capped_pass_names_what_it_left_unembedded`, one rung
+/// sharper.
+#[test]
+fn a_capped_chunk_pass_names_what_it_left_unembedded() {
+    let rendered = format_chunk_warm_outcome(
+        &stella_tools::search::ChunkWarmOutcome::Warmed {
+            files_embedded: 2_000,
+            files_remaining: 1_231,
+            unreadable: 0,
+        },
+        "voyage-code-3",
+    );
+    assert!(rendered.contains("2000 file(s) embedded"), "{rendered}");
+    assert!(rendered.contains("1231 left unembedded"), "{rendered}");
+    assert!(
+        rendered.contains("embed on demand"),
+        "the cap's leftovers are picked up by the lazy pass: {rendered}"
     );
 }
