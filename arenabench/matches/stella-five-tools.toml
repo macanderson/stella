@@ -31,6 +31,18 @@
 # first reached at call 27.9, so its absence may help. That is worth knowing
 # too, and it is a different question from this one.)
 #
+# TWO KNOWN LEAKS IN THE VARIABLE, both tracked, neither fixed at this SUT:
+# the system prompt still steers by name to tools this arm withholds
+# (graph_query, semantic_code_search, project_overview, apply_edits,
+# read_symbol, run_tests, verify_done) and never names `search` (#3031, #3079)
+# — so the one tool under test runs on its own description against a prompt
+# advertising its absent rivals; and lean-mode execution is deliberately
+# permissive in every form, so a withheld tool the prompt talked the model
+# into calling still RUNS (#3100). Reading the run therefore requires a
+# per-tool call census from stella-events.jsonl: any call outside the five
+# advertised names means the arm was not the arm, and the census must say so
+# before the solve rate is quoted.
+#
 # No secrets in this file. In the cloud every credential is read from SSM under
 # /arenabench/ and a seat whose credential is absent is refused at submit time
 # rather than scored as a loss.
@@ -43,7 +55,14 @@ dataset = "terminal-bench-2.1"
 # through `binaries/<ref>/latest.json` and only builds on a MISS, so a moving
 # ref silently reuses whatever artifact is already in the bucket — "some
 # earlier main", not this tree. Override per-run with `--ref`.
-sut_ref = "af6552a944ddba27f726631d0c9421f377b1dc4b"
+#
+# This SHA is main after the whole search series landed: the fused `search`
+# tool (#3076), chunk ranking + markdown indexing (#3095), the coverage-honesty
+# fix (#3117), eager chunk embedding at `stella init` (#3130), and the
+# `stella search` CLI with JSON ranking (#3126/#3131). An older pin would run
+# the arm against a `search` that ranks over a fraction of the workspace and
+# cannot rank by meaning on query one — measuring a tool that no longer exists.
+sut_ref = "009ba97daacf46119d611f98c965bba4549eeb72"
 
 # The diagnostic panel, not the house panel. These ten are the set run `post1`
 # and run `s5b2` used, so this arm is comparable against a real control instead
