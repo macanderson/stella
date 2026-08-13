@@ -12,7 +12,7 @@
 //! | `NOT-RUN` | the task (or one of its trials) was requested but harbor never produced a trial dir | **yes** |
 //! | `UNREADABLE` | the stream had lines but not one parsed as an event — schema drift or plumbing, not loop evidence | no |
 //! | `STUCK-LOOP` | the engine's own `loop_detected` fired and the task did not pass | **yes** |
-//! | `BUDGET-CAP` | the harness's `STELLA_BUDGET` denied the turn — a cost decision, not a loop defect | no |
+//! | `BUDGET-CAP` | the harness's `STELLA_SPEND_LIMIT` denied the turn — a cost decision, not a loop defect | no |
 //! | `SILENT-DEATH` | zero tool calls and no terminal event: the loop vanished | **yes** |
 //! | `ZERO-WORK` | zero tool calls with a stated terminal event | **yes** |
 //! | `CRASHED` | work happened, then harbor recorded the trial as having raised | no |
@@ -124,7 +124,7 @@ pub struct TrialReport {
     /// verdict and gates red (#611).
     pub loop_detected: u32,
     /// A `budget_denied` event reached the stream: the harness's own
-    /// `STELLA_BUDGET` cap stopped the turn. `BUDGET-CAP` verdict, excluded
+    /// `STELLA_SPEND_LIMIT` cap stopped the turn. `BUDGET-CAP` verdict, excluded
     /// from the gate — a cost decision is not a loop defect (#611).
     pub budget_capped: bool,
     /// Sum of `step_usage.cost_usd` — what the trial actually spent, so an

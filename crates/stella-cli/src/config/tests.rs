@@ -235,7 +235,7 @@ fn config_debug_never_leaks_the_api_key() {
     let cfg = Config {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
-        turn_budget: None,
+        turn_timeout: None,
         max_output_tokens: None,
         plan_mode: false,
         model_pinned_by_flag: false,
@@ -313,7 +313,7 @@ fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuar
     let cfg = Config {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
-        turn_budget: None,
+        turn_timeout: None,
         max_output_tokens: None,
         plan_mode: false,
         model_pinned_by_flag: false,

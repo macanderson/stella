@@ -267,7 +267,7 @@ impl Store {
     /// carry spend the caller's aggregate saw and no receipt records. Callers
     /// that must answer "what did this run's durable receipts prove?" — a
     /// dead fleet worker's attempt reporting settled spend instead of `$0`,
-    /// which is the direction that under-counts a `--budget` gate (#1216) —
+    /// which is the direction that under-counts a `--spend-limit` gate (#1216) —
     /// ask here. An execution with no landed model call settles at `0.0`,
     /// which is the truth and not a fallback.
     pub fn execution_settled_cost_usd(&self, execution_id: i64) -> Result<f64> {

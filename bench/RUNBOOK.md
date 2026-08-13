@@ -216,7 +216,7 @@ host report has a **15-minute freshness window**:
 ```bash
 export STELLA_JOBS_DIR="/srv/stella-tb21-jobs"      # absolute, private, not a symlink
 mkdir -p "$STELLA_JOBS_DIR"; chmod 700 "$STELLA_JOBS_DIR"
-export STELLA_BUDGET=0.17
+export STELLA_SPEND_LIMIT=0.17
 export STELLA_DISABLE_REFLECTION=1
 # OPENROUTER_API_KEY + OPENROUTER_MANAGEMENT_API_KEY already loaded (distinct).
 

@@ -254,7 +254,7 @@ pub struct ToolRegistry {
     /// Spend by sub-agents the `task` tool dispatched, drained by the engine
     /// at each step-boundary budget check. A tool cannot charge the turn's
     /// guard directly (the engine holds it mutably), so this ledger is how
-    /// `--budget` stays a hard ceiling once turns nest.
+    /// `--spend-limit` stays a hard ceiling once turns nest.
     sub_agent_spend: stella_core::subagent::SubAgentSpendLedger,
     /// The pause gate and steering tap of the turn currently running, in the
     /// owned form a session-scoped dispatcher can hold — published by the

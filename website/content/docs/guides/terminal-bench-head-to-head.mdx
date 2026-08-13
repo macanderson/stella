@@ -248,12 +248,12 @@ spend ceiling. Leaving stella's default cap in place therefore hands the
 comparator an advantage that will not appear anywhere in the output — stella's
 capped trials simply abort and score 0.
 
-Setting `STELLA_BUDGET` to the empty string means *no per-trial cap*, and that
+Setting `STELLA_SPEND_LIMIT` to the empty string means *no per-trial cap*, and that
 posture is reachable on purpose. Choose it explicitly, and record which you
 chose.
 
 ```bash
-export STELLA_BUDGET=          # empty: no per-trial cap, matching the comparator
+export STELLA_SPEND_LIMIT=          # empty: no per-trial cap, matching the comparator
 ```
 
 ## 5. Run both arms

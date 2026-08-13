@@ -144,7 +144,7 @@ session state is a deck feature.
 
 Every field of `GlobalArgs` must carry `global = true`. clap accepts a plain
 root-level flag only *before* the subcommand token, so a non-global field is
-silently unreachable where users actually type it — `stella fleet … --budget 5`
+silently unreachable where users actually type it — `stella fleet … --spend-limit 5`
 died with "unexpected argument". `every_root_flag_is_global` in
 [`src/tests.rs`](src/tests.rs) fails the suite instead, and its
 corollary `no_subcommand_flag_reuses_a_global_name` reserves those names

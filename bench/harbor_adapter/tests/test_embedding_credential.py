@@ -65,7 +65,7 @@ class TestHandoffCarriesBothRoutes:
         the trial's `search` has nothing to embed with even when the host has
         a valid key.
         """
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.setenv("VOYAGE_API_KEY", "pa-test-voyage-secret")
         source_envelope = _trajectory_envelope()
@@ -107,7 +107,7 @@ class TestHandoffCarriesBothRoutes:
         """Optional and fails open (#2995): no `VOYAGE_API_KEY` on the host,
         no change to the pre-existing single-credential wire shape.
         """
-        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        monkeypatch.delenv("STELLA_SPEND_LIMIT", raising=False)
         monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         source_envelope = _trajectory_envelope()

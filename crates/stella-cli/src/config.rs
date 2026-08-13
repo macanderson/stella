@@ -414,7 +414,7 @@ pub struct Config {
     /// must not override (see `crate::agent::resolve_engine_wiring`).
     pub model_pinned_by_flag: bool,
     pub api_key: ApiKey,
-    /// `--turn-budget`: the wall clock one turn may spend, used only to decide
+    /// `--turn-timeout`: the wall clock one turn may spend, used only to decide
     /// whether an output-limit continuation is affordable
     /// (`EngineConfig::turn_budget`). `None` leaves that a pure count.
     ///
@@ -423,12 +423,12 @@ pub struct Config {
     /// (a benchmark harness that kills the process on elapsed time) can let
     /// the engine decline to start a continuation it cannot finish, ending
     /// with a truthful partial instead of being destroyed mid-flight.
-    pub turn_budget: Option<std::time::Duration>,
+    pub turn_timeout: Option<std::time::Duration>,
     /// `--max-output-tokens`: a per-invocation ceiling on what one step may
     /// write, always BELOW what the model can (#1290). `None` — the normal
     /// case — leaves every role asking for the model's own maximum.
     ///
-    /// Stamped from the flag in `main` like [`Self::turn_budget`], for the
+    /// Stamped from the flag in `main` like [`Self::turn_timeout`], for the
     /// same reason: `Config::load` never consults it, and threading a
     /// straight-through value into that signature would widen it for nothing.
     ///
@@ -439,7 +439,7 @@ pub struct Config {
     pub max_output_tokens: Option<u32>,
     /// User-invoked plan mode (#1264): force the scope-review gate for this
     /// run whatever the plan's size. Stamped from `--plan` in `main`, like
-    /// [`Self::turn_budget`], because `Config::load` has no view of the
+    /// [`Self::turn_timeout`], because `Config::load` has no view of the
     /// parsed CLI and giving it one for a value it never consults would widen
     /// its signature to carry something straight through.
     pub plan_mode: bool,
@@ -846,7 +846,7 @@ impl Config {
                     model_pinned_by_flag: false,
                     // Stamped by the caller that holds the parsed CLI; see the
                     // field's doc comment.
-                    turn_budget: None,
+                    turn_timeout: None,
                     max_output_tokens: None,
                     plan_mode: false,
                     // Unbound: the session whose sidecar this points at is
@@ -1060,7 +1060,7 @@ impl Config {
             // Stamped by `load_with_settings` — see the field's doc comment.
             model_pinned_by_flag: false,
             // Likewise stamped by the caller that holds the parsed CLI.
-            turn_budget: None,
+            turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
             // Unbound until a driver resolves this run's session record — see
@@ -1417,7 +1417,7 @@ impl Config {
         Config {
             provider,
             model_id,
-            turn_budget: None,
+            turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
             model_pinned_by_flag: false,

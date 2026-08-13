@@ -102,7 +102,7 @@ stella stats
 5. **Prompt-cache-native memory.** Durable knowledge loads once into a
    byte-stable prefix and rides the cache at ~0.1× — see
    ["invalidation doesn't happen"](/docs/context-engine#invalidation-doesnt-happen--and-why-that-matters).
-6. **Budgets enforced at safe boundaries.** `--budget` is a hard cap checked
+6. **Spend limits enforced at safe boundaries.** `--spend-limit` is a hard cap checked
    between steps — an abort is always clean, never a half-applied edit.
 7. **An open retrieval standard.** Context recall speaks the
    [Context Graph Protocol](/docs/context-engine#the-context-graph-protocol) —

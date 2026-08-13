@@ -89,7 +89,7 @@ impl Cli {
 // Every field here MUST carry `global = true`. clap accepts a plain
 // root-level flag only *before* the subcommand token, so a non-global
 // field in this struct is silently unreachable in the position users
-// naturally type it (`stella fleet … --budget 5` dies with "unexpected
+// naturally type it (`stella fleet … --spend-limit 5` dies with "unexpected
 // argument"). `global = true` registers the flag with every subcommand,
 // making both positions valid. The invariant is machine-enforced by
 // `every_root_flag_is_global` in src/tests.rs — a new field without the
@@ -165,23 +165,23 @@ pub(crate) struct GlobalArgs {
     /// (never mid-tool) once cumulative spend across every turn and goal round
     /// exceeds this. Omit to meter spend for the cost summary without ever
     /// blocking (observed mode).
-    #[arg(long, global = true, env = "STELLA_BUDGET", value_parser = parse_budget)]
-    pub(crate) budget: Option<f64>,
+    #[arg(long, global = true, env = "STELLA_SPEND_LIMIT", value_parser = parse_spend_limit)]
+    pub(crate) spend_limit: Option<f64>,
 
     /// Wall-clock seconds one turn may spend before it wraps up
     ///
-    /// The time twin of `--budget`, for callers running under an EXTERNAL
-    /// deadline — a benchmark harness that kills the process on elapsed
-    /// time. Two mechanisms arm from it: the engine declines to start an
-    /// output-limit continuation it cannot finish (ending with a truthful
-    /// partial instead of being destroyed mid-flight), and a one-shot
-    /// `run` also stops at the next safe boundary once the allowance is
-    /// spent, so the work on disk is scored rather than discarded with the
-    /// kill (#1503). Interactive sessions (chat, the deck) treat it as
-    /// advisory only. Set it slightly below the real deadline. Omit for no
-    /// time-based limit. Env: STELLA_TURN_BUDGET.
-    #[arg(long, global = true, env = "STELLA_TURN_BUDGET", value_parser = parse_turn_budget)]
-    pub(crate) turn_budget: Option<std::time::Duration>,
+    /// The time twin of `--spend-limit`, for callers running under an
+    /// EXTERNAL deadline — a benchmark harness that kills the process on
+    /// elapsed time. Two mechanisms arm from it: the engine declines to
+    /// start an output-limit continuation it cannot finish (ending with a
+    /// truthful partial instead of being destroyed mid-flight), and a
+    /// one-shot `run` also stops at the next safe boundary once the
+    /// allowance is spent, so the work on disk is scored rather than
+    /// discarded with the kill (#1503). Interactive sessions (chat, the
+    /// deck) treat it as advisory only. Set it slightly below the real
+    /// deadline. Omit for no time-based limit. Env: STELLA_TURN_TIMEOUT.
+    #[arg(long, global = true, env = "STELLA_TURN_TIMEOUT", value_parser = parse_turn_timeout)]
+    pub(crate) turn_timeout: Option<std::time::Duration>,
 
     /// Cap output tokens per step, below what the model can write
     ///
@@ -1346,35 +1346,35 @@ fn parse_env_flag(raw: &str) -> Result<bool, String> {
     }
 }
 
-/// `--budget` must be a positive, finite dollar amount — a NaN or negative
-/// limit would make every comparison silently false and turn the "hard
-/// cap" into a no-op, the worst failure mode for a money control.
-fn parse_budget(raw: &str) -> Result<f64, String> {
+/// `--spend-limit` must be a positive, finite dollar amount — a NaN or
+/// negative limit would make every comparison silently false and turn the
+/// "hard cap" into a no-op, the worst failure mode for a money control.
+fn parse_spend_limit(raw: &str) -> Result<f64, String> {
     let value: f64 = raw
         .parse()
         .map_err(|_| format!("`{raw}` is not a number"))?;
     if !value.is_finite() || value <= 0.0 {
         return Err(format!(
-            "budget must be a positive dollar amount, got `{raw}`"
+            "spend limit must be a positive dollar amount, got `{raw}`"
         ));
     }
     Ok(value)
 }
 
-/// `--turn-budget` must be a positive, finite number of seconds.
+/// `--turn-timeout` must be a positive, finite number of seconds.
 ///
-/// Same reasoning as `parse_budget`, one step stronger: a zero or negative
-/// budget would make every continuation unaffordable and silently disable the
-/// recovery path entirely, which looks exactly like the truncation bug it
-/// exists to mitigate. Refusing at parse is the only place that is cheap to
-/// notice.
-fn parse_turn_budget(raw: &str) -> Result<std::time::Duration, String> {
+/// Same reasoning as `parse_spend_limit`, one step stronger: a zero or
+/// negative timeout would make every continuation unaffordable and silently
+/// disable the recovery path entirely, which looks exactly like the
+/// truncation bug it exists to mitigate. Refusing at parse is the only place
+/// that is cheap to notice.
+fn parse_turn_timeout(raw: &str) -> Result<std::time::Duration, String> {
     let value: f64 = raw
         .parse()
         .map_err(|_| format!("`{raw}` is not a number"))?;
     if !value.is_finite() || value <= 0.0 {
         return Err(format!(
-            "turn budget must be a positive number of seconds, got `{raw}`"
+            "turn timeout must be a positive number of seconds, got `{raw}`"
         ));
     }
     Ok(std::time::Duration::from_secs_f64(value))

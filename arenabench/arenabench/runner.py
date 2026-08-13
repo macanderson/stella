@@ -1209,7 +1209,7 @@ class MatchRunner:
         # The engine config the ArenaBench Stella adapter reads back.
         env[ARENA_ENGINE_ENV] = json.dumps(contestant.engine.to_json())
         engine = contestant.engine
-        # `STELLA_BUDGET` is deliberately never exported. `_base_environment`
+        # `STELLA_SPEND_LIMIT` is deliberately never exported. `_base_environment`
         # scrubs every ambient `STELLA_*`, so not setting it here is the whole
         # guarantee: no path reaches the agent with a session cap, and a trial
         # ends because the work finished or the clock ran out — the two reasons

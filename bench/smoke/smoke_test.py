@@ -171,7 +171,7 @@ def check_models(stella: Path) -> Check:
 def check_graceful_no_key(stella: Path) -> Check:
     """The adapter's exact one-shot shape must degrade gracefully with no key.
 
-    Runs ``stella --model <m> --budget 5.0 run --output-format json "<p>"``
+    Runs ``stella --model <m> --spend-limit 5.0 run --output-format json "<p>"``
     (``--output-format`` is a flag of ``run`` since stella#1493) in a
     scrubbed environment. Classifies the result:
 
@@ -184,7 +184,7 @@ def check_graceful_no_key(stella: Path) -> Check:
         str(stella),
         "--model",
         "anthropic/claude-fable-5",
-        "--budget",
+        "--spend-limit",
         "5.0",
         "run",
         "--output-format",

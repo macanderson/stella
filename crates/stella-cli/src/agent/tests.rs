@@ -1382,8 +1382,8 @@ fn reflection_budget_tick_is_rebased_to_the_caller_session() {
 }
 
 #[test]
-fn budget_flag_configures_the_session_axis_not_the_turn_axis() {
-    // `--budget` must cap the whole run, so its limit lives on the session
+fn spend_limit_flag_configures_the_session_axis_not_the_turn_axis() {
+    // `--spend-limit` must cap the whole run, so its limit lives on the session
     // axis (which `begin_turn` never resets) and the turn axis stays unset.
     let guard = build_budget_guard(Some(5.0));
     assert_eq!(guard.mode(), BudgetMode::Enforced);
@@ -1402,7 +1402,7 @@ fn budget_flag_configures_the_session_axis_not_the_turn_axis() {
 }
 
 #[test]
-fn budget_cap_holds_across_turns_rather_than_resetting_each_one() {
+fn spend_limit_cap_holds_across_turns_rather_than_resetting_each_one() {
     use stella_core::BudgetOutcome;
     use stella_core::budget::BudgetAxis;
 

@@ -136,7 +136,7 @@ All [global flags](/docs/commands) apply, in either position — `stella --model
   <OptionCard name="--model <provider/model_id>">
     Pin the worker model for the session.
   </OptionCard>
-  <OptionCard name="--budget <usd>">
+  <OptionCard name="--spend-limit <usd>">
     Apply a hard spend cap across the entire session.
   </OptionCard>
   <OptionCard name="--base-url <url>">
@@ -343,7 +343,7 @@ stella
 Pin a model and cap session spend:
 
 ```bash
-stella --model zai/glm-5.2 --budget 5.00 chat
+stella --model zai/glm-5.2 --spend-limit 5.00 chat
 ```
 
 Run the deck with a screen reader:

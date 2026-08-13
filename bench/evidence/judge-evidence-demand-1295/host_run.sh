@@ -100,7 +100,7 @@ run_arm() {
       STELLA_PROJECT_HOOKS=0 STELLA_CATALOG_AUTO_REFRESH=0 \
       ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
       timeout 1800 "$STELLA_BINARY" \
-        --model "$WORKER" --budget "$BUDGET" --turn-budget "$TURN_BUDGET" \
+        --model "$WORKER" --spend-limit "$BUDGET" --turn-timeout "$TURN_BUDGET" \
         --output-format stream-json \
         run -- "$(cat "$DATASET_DIR/$task/instruction.md")" \
         > "$dir/stella-events.jsonl" 2> "$dir/stderr.txt" )

@@ -485,7 +485,7 @@ def resolve_triage_model(value: str | None) -> str | None:
 #: The adapter registers these as host-only environment (`_HOST_ONLY_STELLA_ENV`)
 #: and its ambient check fails **closed**, so a selector this module reads and
 #: that list does not name refuses the run instead of enabling the arm — an
-#: unregistered `STELLA_TURN_BUDGET` once killed all ten trials of a run. One
+#: unregistered `STELLA_TURN_TIMEOUT` once killed all ten trials of a run. One
 #: tuple, unpacked there, is what keeps the two lists from being two lists.
 #: The witness author is deliberately absent: it reaches the builder as
 #: ``verifier=``, resolved by `StellaAgent._verifier_model`, not through here.

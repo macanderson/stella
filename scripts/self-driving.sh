@@ -343,7 +343,7 @@ cycle_command() {
   #
   # The budget is per-cycle and enforced by the engine, aborting only at a safe
   # boundary between model calls (invariant 6) — never mid-tool.
-  printf 'cat %s/scripts/self-driving/commands/self-driving.md | stella run --budget %s' \
+  printf 'cat %s/scripts/self-driving/commands/self-driving.md | stella run --spend-limit %s' \
     "$REPO_ROOT" "${SELF_DRIVING_BUDGET_USD:-10}"
 }
 

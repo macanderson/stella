@@ -72,7 +72,7 @@ esac
 # for the same reason as the Terminal-Bench lane: an explicitly empty value
 # stays empty and means *no cap*, which is the posture a leaderboard-facing run
 # has to be able to take.
-export STELLA_BUDGET="${STELLA_BUDGET-2.50}"
+export STELLA_SPEND_LIMIT="${STELLA_SPEND_LIMIT-2.50}"
 
 # What the sourced Terminal-Bench env would otherwise default. Set before the
 # source so its `${TB_DATASET:-...}` sees a value and leaves it alone; nothing

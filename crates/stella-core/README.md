@@ -169,7 +169,7 @@ context economy, not parallelism (`stella fleet` already has that): work the
 parent would otherwise carry — and re-send on every later step for the rest of
 the session — is absorbed by a transcript that goes out of scope. The budget is
 **carved**, `min(requested, parent headroom)` via `BudgetGuard::carve`, so
-`--budget` stays a hard ceiling once turns nest, and the child's spend settles
+`--spend-limit` stays a hard ceiling once turns nest, and the child's spend settles
 back into the parent exactly once on every path (`settle_child`) — including a
 failure, because a child that aborted still spent what it spent. Failure is a
 typed `SubAgentOutcome`, never an `Err` that kills the parent turn, and an

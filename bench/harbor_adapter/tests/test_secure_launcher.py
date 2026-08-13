@@ -187,7 +187,7 @@ def _claim_environment(binary: Path, **overrides: str) -> dict[str, str]:
         "OPENROUTER_MANAGEMENT_API_KEY": _TEST_MANAGEMENT_CREDENTIAL,
         "STELLA_BINARY": str(binary),
         "STELLA_SOURCE_COMMIT": _TEST_SOURCE_COMMIT,
-        # No `STELLA_BUDGET`. A claim run carries no per-trial spend cap, and
+        # No `STELLA_SPEND_LIMIT`. A claim run carries no per-trial spend cap, and
         # the launcher refuses one rather than pinning it (#2411).
         "STELLA_DISABLE_REFLECTION": "1",
     }
@@ -1933,7 +1933,7 @@ def test_claim_environment_rejects_runtime_assembled_version_literals(
         # Inverted by #2411: the drift that matters is a cap being present at
         # all, not one differing from a frozen value. `0.17` was that frozen
         # value and is now refused like any other.
-        ("STELLA_BUDGET", "0.17", "STELLA_BUDGET to be unset"),
+        ("STELLA_SPEND_LIMIT", "0.17", "STELLA_SPEND_LIMIT to be unset"),
         (
             "STELLA_DISABLE_REFLECTION",
             "true",
@@ -2108,8 +2108,8 @@ def test_failed_preflight_never_reserves_job_directory(
     binary = _write_claim_elf(tmp_path / "stella")
     command = _confirmatory_command(tmp_path, "preflight-failed")
 
-    invalid_environment = _claim_environment(binary, STELLA_BUDGET="0.18")
-    with pytest.raises(RuntimeError, match="STELLA_BUDGET"):
+    invalid_environment = _claim_environment(binary, STELLA_SPEND_LIMIT="0.18")
+    with pytest.raises(RuntimeError, match="STELLA_SPEND_LIMIT"):
         exec_harbor_securely(command, environ=invalid_environment)
     assert not (tmp_path / "preflight-failed").exists()
 

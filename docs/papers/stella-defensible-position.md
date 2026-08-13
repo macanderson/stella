@@ -401,7 +401,7 @@ prompt-cache locality is not just a performance optimization — it is a
 
 ### The invariant
 
-Stella enforces a hard `--budget` (in USD) that aborts the agent cleanly. The
+Stella enforces a hard `--spend-limit` (in USD) that aborts the agent cleanly. The
 critical constraint: **the budget guard consults only between model calls,
 never interrupts a tool in flight.** A tool that is executing when the budget
 is exhausted completes normally; the abort is acted on before the next model
