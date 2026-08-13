@@ -284,8 +284,8 @@ form of its output — `--output-format` is a flag of `run` and `fleet`, and
     `agent_engine_config.headless_scope_bypass: "on"`, it **ends the run** rather than
     auto-approving. Deliberate: a gate that approves itself in CI is not a gate.
   </SpecCard>
-  <SpecCard title="The budget tripped">
-    `--budget` aborts cleanly between steps. Exit code `1`; already-committed work
+  <SpecCard title="The spend limit tripped">
+    `--spend-limit` aborts cleanly between steps. Exit code `1`; already-committed work
     stays. Read `cost_usd` from `--output-format json` to confirm.
   </SpecCard>
   <SpecCard title="Verification found nothing to verify">
