@@ -159,8 +159,8 @@ fn the_lead_session_still_checkpoints_and_still_discards() {
 /// record's own turn — so a second sink would be a write with no reader, and
 /// `Engine::persist_checkpoint` serializes the whole transcript before the sink
 /// ever sees it. Giving a worker lane its own durable identity is the tracked
-/// follow-up, and this assertion is what will fail when someone does it, which
-/// is the right place for that conversation to happen.
+/// follow-up (#3233), and this assertion is what will fail when someone does
+/// it, which is the right place for that conversation to happen.
 #[test]
 fn a_sub_session_carries_no_checkpoint_sink() {
     let (cfg, _record, _store, _ws) = bound_session("ses-sub-none");

@@ -238,7 +238,7 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
 /// restores the session record's turn — so a second sink would be a write with
 /// no reader, paid for with a whole-transcript serialization per step
 /// ([`stella_core::Engine::persist_checkpoint`] encodes before the sink sees
-/// anything). Giving a lane its own record is the tracked follow-up (#3231),
+/// anything). Giving a lane its own record is the tracked follow-up (#3233),
 /// and `a_sub_session_carries_no_checkpoint_sink` is the assertion that will
 /// fail when someone does it.
 pub(crate) fn subsession_engine_config_for(cfg: &Config) -> EngineConfig {
