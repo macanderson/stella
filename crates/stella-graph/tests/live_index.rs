@@ -295,9 +295,11 @@ async fn irrelevant_paths_are_filtered_at_injection() {
 
     // Same filter as the real notify callback: non-source extensions,
     // ignored directories, and paths outside the workspace root never enter
-    // the pipeline.
-    let readme = fx.write("README.md", "# not source\n");
-    assert!(!fx.injector.inject(&readme));
+    // the pipeline. `.md` is deliberately NOT the example any more — markdown
+    // became a source extension in #3095, and its relevance is asserted
+    // positively by `markdown_is_a_source_extension_at_injection` below.
+    let asset = fx.write("logo.png", "not source\n");
+    assert!(!fx.injector.inject(&asset));
 
     fs::create_dir_all(fx.abs("node_modules")).unwrap();
     let vendored = fx.write("node_modules/dep.js", "export const x = 1;\n");
@@ -308,6 +310,27 @@ async fn irrelevant_paths_are_filtered_at_injection() {
 
     assert_eq!(fx.injector.batches_applied(), 0, "nothing was enqueued");
     assert_eq!(fx.graph.file_count().unwrap(), 1);
+
+    fx.graph.shutdown();
+}
+
+/// Markdown is source to this crate (#3095): `AGENTS.md`, `CLAUDE.md` and
+/// every crate README are documents the agent has to be able to search. Live
+/// indexing has to agree with `Language::from_path`, so this asserts the flip
+/// end to end — through the filter *and* into an applied batch — rather than
+/// leaving it to be inferred from an absent negative assertion.
+#[tokio::test(start_paused = true)]
+async fn markdown_is_a_source_extension_at_injection() {
+    let mut fx = Live::build(&[("a.rs", "pub fn alpha() {}\n")]);
+    assert_eq!(fx.graph.file_count().unwrap(), 1);
+
+    let readme = fx.write("README.md", "# Heading\n\nprose\n");
+    assert!(fx.injector.inject(&readme), "markdown must pass the filter");
+
+    let (seq, stats) = fx.injector.applied_past(0).await.unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(stats.files_parsed, 1);
+    assert_eq!(fx.graph.file_count().unwrap(), 2, "markdown was indexed");
 
     fx.graph.shutdown();
 }

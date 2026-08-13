@@ -464,10 +464,7 @@ pub fn rank_chunks(
 /// rebuilds of it. Zero-padded so the ordering the key imposes on a tie is the
 /// document order a reader expects rather than a lexical one.
 fn candidate_key(chunk: &ScoredChunk) -> String {
-    format!(
-        "{}#{:08}#{}",
-        chunk.path, chunk.start_line, chunk.name
-    )
+    format!("{}#{:08}#{}", chunk.path, chunk.start_line, chunk.name)
 }
 
 /// How many chunks carry a vector under `fingerprint`.
