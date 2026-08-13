@@ -488,8 +488,11 @@ pub(crate) async fn report_with(
         // file scan needs no index and is exactly the strategy for a
         // workspace the indexer cannot serve.
         Ok(Err(message)) => (None, Some(message)),
-        Err(_) => {
-            return SearchReport::failed("the search was cancelled");
+        Err(join_error) => {
+            return SearchReport::failed(&crate::blocking::worker_failure(
+                "the search",
+                join_error,
+            ));
         }
     };
 
