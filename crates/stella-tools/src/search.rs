@@ -707,20 +707,35 @@ fn merge_rungs(
 ///
 /// `None` when both rungs are complete, so a healthy workspace pays no tokens
 /// for the disclosure.
+///
+/// **And a complete workspace must be able to reach `None`** (#3124). This
+/// asked `embedded_chunk_count >= symbol_count` until chunk coverage was
+/// measured on a corpus small enough to finish: chunk rows are keyed on the
+/// hash of the rendered chunk, so two byte-identical bodies in one file store
+/// one row for two symbols and that comparison is unsatisfiable forever. A
+/// 158-file workspace froze at 1,810 of 1,814 across thirty passes and warned
+/// on every search — and the warning's own advice is "use `bash` with `grep -n`
+/// for anything exact", which is precisely the call this module exists to stop
+/// the model making. A disclosure nobody can ever clear is not a disclosure; it
+/// is noise with a suggestion attached.
+///
+/// Both halves are now like-for-like counts of **files**:
+/// `pending_chunk_file_count` is exact by construction (see
+/// `stella_graph`'s `NEEDS_CHUNK_PASS`), and whole-file vectors are one row per
+/// file, so neither side can dedup out from under the other.
 fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
-    let symbols = graph.symbol_count().ok()?;
-    let chunks = graph.embedded_chunk_count(fingerprint).ok()?;
     let total_files = graph.file_count().ok()?;
     let files = graph.embedded_file_count(fingerprint).ok()?;
-    if chunks >= symbols && files >= total_files {
+    let chunks_pending = graph.pending_chunk_file_count(fingerprint).ok()?;
+    if chunks_pending == 0 && files >= total_files {
         return None;
     }
     Some(format!(
-        "PARTIAL INDEX — this ranking saw {chunks} of {symbols} symbols/sections and {files} \
-         of {total_files} files. Embedding fills in path order a batch per call, so the \
-         remainder is NOT a random sample: it is the tail of the tree alphabetically. Run \
-         `stella init` to finish it; until then treat a miss as inconclusive and use `bash` \
-         with `grep -n` for anything exact."
+        "PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
+         indexed file(s) still have symbols with no vector. Embedding fills in path order a \
+         batch per call, so the remainder is NOT a random sample: it is the tail of the tree \
+         alphabetically. Run `stella init` to finish it; until then treat a miss as \
+         inconclusive and use `bash` with `grep -n` for anything exact."
     ))
 }
 
@@ -957,23 +972,18 @@ async fn warm_chunks_opened(
         if scan.files.is_empty() {
             break;
         }
-        // The pending-files pre-filter is a cheap, deliberately loose COUNT
-        // comparison (raw symbols vs. stored chunks) — it can select a file
-        // that in fact needs no embedding at all: two symbols whose rendered
-        // text is byte-identical (a common shape for trivial mock/test
-        // boilerplate — `fn execute(&self) { todo!() }` repeated across
-        // several fixtures in one file) collapse to one stored row under the
-        // content-hash key, so the raw symbol count can never equal the
-        // stored count for that file even once every one of its symbols is
-        // correctly embedded. `PendingChunkFile::to_embed()` is the precise,
-        // per-symbol answer the SQL pre-filter cannot give; if an entire
-        // window comes back with nothing left to actually embed, every
-        // further window would just re-select and re-stamp the same
-        // false-positive files forever without buying anything real —
-        // tracked as a pre-filter imprecision rather than reworked into an
-        // exact predicate here (it also affects the lazy per-query pass
-        // above, which is bounded to one window per call and so never pays
-        // more than a single wasted re-scan for it) — filed as #3128.
+        // The pre-filter is exact since #3128: it reads a per-file coverage
+        // marker rather than comparing a raw symbol count against stored rows,
+        // so a file whose symbols render byte-identical text is no longer
+        // selected forever after being fully embedded.
+        //
+        // This guard stays anyway, and is not redundant belt-and-braces. It
+        // asserts the loop's own termination condition — a window that embeds
+        // nothing cannot be made progress by another window — which holds
+        // whatever the pre-filter's precision happens to be. Deleting it would
+        // make the loop's boundedness depend on a SQL predicate in another
+        // crate being right, which is exactly the coupling that produced
+        // #3128. `PendingChunkFile::to_embed()` is the per-symbol truth.
         let mut made_progress = false;
         for file in &scan.files {
             if file.to_embed() > 0 {

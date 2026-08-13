@@ -732,6 +732,90 @@ async fn a_file_whose_symbols_collide_on_rendered_text_does_not_spin_the_pass() 
     );
 }
 
+/// **The witness for #3124.** A workspace with nothing left to embed must stop
+/// describing itself as partial.
+///
+/// It is the same collision as #3128, read by a different consumer: the note
+/// compared `embedded_chunk_count` against `symbol_count`, and chunk rows are
+/// keyed on the hash of the rendered chunk, so the two byte-identical bodies
+/// below store one row for two symbols and that comparison can never hold
+/// again. Measured on a 158-file workspace, coverage froze at 1,810 of 1,814
+/// and every search carried the warning — whose own advice is to go back to
+/// `grep`, the call this module exists to remove.
+///
+/// The premise is asserted first, so this cannot pass vacuously: if the fixture
+/// ever stops colliding, the old comparison would have succeeded too and the
+/// test would be proving nothing.
+#[tokio::test]
+async fn a_fully_embedded_workspace_stops_calling_itself_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let file = workspace.path().join("src/accessors.rs");
+    fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+    // Two distinct symbols, byte-identical rendered text — the ordinary
+    // trait-accessor shape, not a contrived one.
+    fs::write(
+        &file,
+        "mod a {\n    pub fn id() -> u8 { 0 }\n}\n\
+         mod b {\n    pub fn id() -> u8 { 0 }\n}\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    crate::graph::open_or_build(&root)
+        .expect("open_or_build")
+        .graph
+        .shutdown();
+
+    let fingerprint = ConceptEmbedder.fingerprint().id();
+    let warmed = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert!(
+        matches!(warmed, ChunkWarmOutcome::Warmed { .. }),
+        "expected Warmed, got {warmed:?}"
+    );
+
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    super::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
+        .await
+        .expect("whole-file vectors");
+
+    // The premise: the collision really happened, so the count comparison this
+    // note used to make is unsatisfiable for this workspace.
+    let symbols = opened.graph.symbol_count().expect("symbol_count");
+    let chunks = opened
+        .graph
+        .embedded_chunk_count(&fingerprint)
+        .expect("embedded_chunk_count");
+    assert!(
+        chunks < symbols,
+        "fixture no longer collides ({chunks} chunk rows for {symbols} symbols) — the old \
+         `chunks >= symbols` test would have passed and this witness proves nothing"
+    );
+
+    let note = super::coverage_note(&opened.graph, &fingerprint);
+    opened.graph.shutdown();
+    assert!(
+        note.is_none(),
+        "a workspace with nothing left to embed still calls itself partial: {note:?}"
+    );
+}
+
+/// The other half of the same contract: a workspace that genuinely has work
+/// left must still say so. Without this, #3124 could be "fixed" by never
+/// warning at all, which loses the disclosure #3117 added.
+#[tokio::test]
+async fn a_workspace_with_work_left_still_says_it_is_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    // Indexed, nothing embedded at all — the state right after `stella init`
+    // on a build with no embedder configured.
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    let note = super::coverage_note(&opened.graph, &ConceptEmbedder.fingerprint().id());
+    opened.graph.shutdown();
+
+    let note = note.expect("an unembedded workspace must disclose that it is partial");
+    assert!(note.contains("PARTIAL INDEX"), "{note}");
+}
+
 /// The blank-query refusal lives in `report` — one validation both doors
 /// share — and the agent's door still surfaces it. This pins the refusal
 /// from the `execute` side so moving the check cannot silently lose it.
