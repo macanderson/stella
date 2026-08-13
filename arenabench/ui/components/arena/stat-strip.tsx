@@ -1,255 +1,343 @@
 "use client";
 
 import * as React from "react";
-import type { Snapshot } from "@/lib/types";
-import { fmtClock, fmtMoney, fmtPct, fmtTokens } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import type { ContestantSnap, Snapshot } from "@/lib/types";
+import { fmtClock, fmtCount, fmtMoney, fmtPct, fmtTokens } from "@/lib/format";
+import { seatStyle } from "@/lib/utils";
 import { Tip } from "@/components/ui/tooltip";
 
 /**
- * The match at a glance, across the full width: the numbers someone asks for
- * before they ask anything else.
+ * The match at a glance: five cards, one per question — tool calls, clock,
+ * tokens, tasks, cost — each holding one column **per arm**, so the header
+ * answers "who did what" without a trip to the task table. The old strip
+ * summed every seat into match-level figures, which answered "how did this
+ * run go" while hiding the comparison the page exists to draw.
  *
- * These are **match-level** figures — every contestant summed — deliberately
- * separate from the per-seat comparison beside the task table. A stat here
- * answers "how did this run go"; the race answers "who is ahead". Conflating
- * them is what made the old header a wall of per-seat cards you had to read
- * twice to total in your head.
+ * Two honesty rules survive from that strip, because a header number hides
+ * its provenance:
  *
- * Two honesty rules survive from the seat cards and matter more here, because
- * a summed number hides its provenance:
- *
- * - **Cost is the priced figure**, every seat's tokens through one price
- *   table. The agents' self-reported spend is not comparable across seats and
- *   is shown separately, never added to this one.
+ * - **Cost is the priced figure**, every arm's tokens through one price
+ *   table — the only money comparable across seats. The agents' self-reported
+ *   tallies are not, and are not shown here at all.
  * - **An unmeasured quantity renders as `—`, never as zero.** Zero is a
- *   score; absence is not. `priced_cost` is null for an unpriced model, and
- *   wasted time is null until some trial has actually been replayed.
+ *   score; absence is not. `priced_cost` is null for an unpriced model, an
+ *   average over zero attempted trials has no value, and a cache ratio with
+ *   no prompt tokens behind it is silence rather than 0%.
  *
- * A `—` still has to say *why*, though, or the honesty rule turns into
- * invisibility: an entire kimi arm rendered no cost for weeks because the
- * dash looked like every other dash (#2108). When the cost is unknown the
- * tile's sub-line names the model with no price row, which is the one fact
- * that turns a blank cell into a one-line fix.
+ * A `—` still has to say *why* (#2108): when an arm's cost is unknown the
+ * cost card's sub-line names the models with no price row.
  */
-function Stat({
+
+/** Per-arm figures the wire totals do not reliably carry, summed from the
+ *  per-task cells instead. Native snapshots do publish `tools`/`steps` in
+ *  `totals` (telemetry.py `aggregate`), but a cloud-merged match rebuilds its
+ *  totals through `cloud_merge._totals`, which carries neither — the cells
+ *  are the one shape every payload agrees on. */
+interface CellSums {
+  /** Trials that actually started — status `running` or `done`. A queued
+   *  trial has not been attempted, and dividing by it would report averages
+   *  that improve as the match drains its queue. */
+  attempted: number;
+  tools: number;
+  steps: number;
+}
+
+function useCellSums(snapshot: Snapshot): Record<string, CellSums> {
+  return React.useMemo(() => {
+    const sums: Record<string, CellSums> = {};
+    for (const seat of snapshot.contestants) {
+      sums[seat.id] = { attempted: 0, tools: 0, steps: 0 };
+    }
+    for (const row of snapshot.rows) {
+      for (const seat of snapshot.contestants) {
+        const cell = row.cells[seat.id];
+        if (!cell) continue;
+        const sum = sums[seat.id];
+        if (cell.status === "running" || cell.status === "done") sum.attempted += 1;
+        sum.tools += cell.tools || 0;
+        sum.steps += cell.steps || 0;
+      }
+    }
+    return sums;
+  }, [snapshot.rows, snapshot.contestants]);
+}
+
+/**
+ * Whether ANY trial of this arm published usage at all (#2132).
+ *
+ * `false` means every token figure below is the absence of a measurement
+ * rather than a measurement of zero, and rendering it as `0` states a fact
+ * nobody observed — a real arm reads `tokens_in: 0, unmeasured_trials: 3 of 3`
+ * on match `feebd80ba873`, where `0/0` would claim it sent no prompt.
+ *
+ * Prefers the wire's own declaration and falls back to the same test the
+ * server applies per trial (`TrialMetrics.usage_measured`), because
+ * `unmeasured_trials` is absent from payloads recorded before the field
+ * existed. No real model call reports zero of everything, so "every counter
+ * zero" is "unknown", never "free".
+ */
+function usageMeasured(seat: ContestantSnap): boolean {
+  const t = seat.totals;
+  const trials = t.trials || 0;
+  const unmeasured = t.unmeasured_trials;
+  if (typeof unmeasured === "number" && trials > 0) return unmeasured < trials;
+  return Boolean(
+    t.tokens_in || t.tokens_out || t.cache_read || t.cache_write || t.total_cost,
+  );
+}
+
+/** Share of prompt tokens served from cache, 0–100, or null when nothing was
+ *  measured. The same definition as the server's `TrialMetrics.cache_hit_rate`
+ *  (telemetry.py) — one definition, not a second one that drifts. */
+function cacheHitRate(seat: ContestantSnap): number | null {
+  const tokensIn = seat.totals.tokens_in || 0;
+  if (tokensIn <= 0) return null;
+  return Math.min(100, ((seat.totals.cache_read || 0) / tokensIn) * 100);
+}
+
+/** A mean with an honest denominator: `—` when nothing was attempted. */
+function avg(numer: number, denom: number): number | null {
+  return denom > 0 ? numer / denom : null;
+}
+
+/**
+ * One card: a label, then a small table — the arms across the top, one row
+ * per metric. The first column is the metric's own label, so a card with
+ * three rows (tokens) and a card with two (cost) read the same way.
+ */
+function CompareCard({
   label,
-  value,
-  sub,
-  tone,
   blurb,
+  seats,
+  rows,
+  sub,
 }: {
   label: string;
-  value: React.ReactNode;
+  blurb: string;
+  seats: ContestantSnap[];
+  rows: Array<{ label: string; values: React.ReactNode[] }>;
   sub?: React.ReactNode;
-  tone?: "ok" | "warn" | "accent";
-  blurb?: string;
 }) {
   const body = (
     <div className="min-w-0 border border-line bg-panel px-3.5 py-2.5">
       <div className="text-[10px] tracking-[0.1em] text-dim">{label}</div>
       <div
-        className={cn(
-          "mt-1 truncate font-mono text-[19px] leading-none tracking-[-0.02em]",
-          tone === "ok" && "text-ok",
-          tone === "warn" && "text-warn",
-          tone === "accent" && "text-accent",
-        )}
+        className="mt-1.5 grid items-baseline gap-x-3 gap-y-[3px]"
+        style={{
+          gridTemplateColumns: `minmax(0,auto) repeat(${seats.length}, minmax(0,1fr))`,
+        }}
       >
-        {value}
+        <span />
+        {seats.map((seat) => (
+          /* The arm is identified by its COLOUR CHIP, not by tinted text.
+             Five cards across a 1600px page leave each name ~90px, so every
+             name here truncates — and `text-(--seat-fg)` cannot rescue it:
+             that token is declared on `:root`, where `var(--seat, …)` is
+             substituted against a `--seat` that does not exist yet, so every
+             seat inherits the same paper fallback. Measured, not assumed
+             (see the PR). The chip reads `--seat` on the element that sets
+             it, which is the same shape `task-table.tsx`'s legend uses. */
+          <div
+            key={seat.id}
+            style={seatStyle(seat.color)}
+            title={seat.name}
+            className="flex min-w-0 items-center justify-end gap-1.5"
+          >
+            <span className="size-[7px] flex-none bg-(--seat)" />
+            <span className="truncate font-mono text-[10.5px] text-muted">{seat.name}</span>
+          </div>
+        ))}
+        {rows.map((row) => (
+          <React.Fragment key={row.label}>
+            <div className="whitespace-nowrap text-[10px] text-muted">{row.label}</div>
+            {row.values.map((value, index) => (
+              <div
+                key={seats[index]?.id ?? index}
+                className="truncate text-right font-mono text-[12.5px] tracking-[-0.02em]"
+              >
+                {value}
+              </div>
+            ))}
+          </React.Fragment>
+        ))}
       </div>
-      {sub ? <div className="mt-1 truncate text-[10.5px] text-muted">{sub}</div> : null}
+      {sub ? <div className="mt-1.5 truncate text-[10.5px] text-warn">{sub}</div> : null}
     </div>
   );
-  return blurb ? <Tip content={blurb}>{body}</Tip> : body;
+  return <Tip content={blurb}>{body}</Tip>;
 }
 
 export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
   const seats = snapshot.contestants;
-
-  // Summed across seats. `priced_cost` is the only cross-seat-comparable
-  // money, and it stays null-poisoned: if any seat is unpriced the total is
-  // unknown, not a smaller number.
-  const totals = React.useMemo(() => {
-    let trials = 0;
-    let judged = 0;
-    let passed = 0;
-    let running = 0;
-    let tokensIn = 0;
-    let tokensOut = 0;
-    let selfReported = 0;
-    let priced: number | null = 0;
-    const unpriced = new Set<string>();
-    for (const seat of seats) {
-      const t = seat.totals;
-      for (const slug of t.unpriced_models || []) unpriced.add(slug);
-      trials += t.trials || 0;
-      judged += t.judged || 0;
-      passed += t.passed || 0;
-      running += t.running || 0;
-      tokensIn += t.tokens_in || 0;
-      tokensOut += t.tokens_out || 0;
-      selfReported += t.total_cost || 0;
-      if (priced !== null) {
-        priced = t.priced_cost == null ? null : priced + t.priced_cost;
-      }
-    }
-    return {
-      trials,
-      judged,
-      passed,
-      running,
-      tokensIn,
-      tokensOut,
-      selfReported,
-      priced,
-      unpriced: [...unpriced].sort(),
-    };
-  }, [seats]);
-
-  // Solve rate over *judged* trials, not over every trial that exists: a
-  // queued trial is not a failure, and dividing by it reports a rate that
-  // climbs as the match runs for no reason but arithmetic. Scaled to 0–100
-  // here because `fmtPct` renders, never rescales — 3/6 judged fed to it as
-  // a fraction printed "1%".
-  const solveRate = totals.judged > 0 ? (totals.passed / totals.judged) * 100 : 0;
-
-  // Incidents, counted from the cells because seat totals do not carry them.
-  // Kept strictly apart from the solve rate in BOTH directions (#2066): a
-  // trial can score the reward and then raise, and folding either number
-  // into the other hides exactly the trials most flattered by a headline
-  // rate. Timeouts split by whether the solve had already happened — the
-  // two mean opposite things (did not stop after success vs. ran out of
-  // time before it) and a merged count cannot be acted on.
-  const incidents = React.useMemo(() => {
-    let onSolved = 0;
-    let onFailed = 0;
-    let timeoutAfterSolve = 0;
-    let timeoutBeforeSolve = 0;
-    for (const row of snapshot.rows) {
-      for (const seat of seats) {
-        const cell = row.cells[seat.id];
-        if (!cell || cell.status !== "done" || !cell.failure) continue;
-        // The taxonomy label (#2076) is authoritative — only the exception
-        // the agent-budget machinery actually raises counts as a timeout.
-        // The substring test survives solely for payloads recorded before
-        // the field existed.
-        const isTimeout =
-          cell.outcome_reason != null
-            ? cell.outcome_reason === "solved_then_timeout" ||
-              cell.outcome_reason === "timeout_before_solve"
-            : /timeout/i.test(cell.failure);
-        if (cell.resolved === true) {
-          onSolved += 1;
-          if (isTimeout) timeoutAfterSolve += 1;
-        } else {
-          onFailed += 1;
-          if (isTimeout) timeoutBeforeSolve += 1;
-        }
-      }
-    }
-    return {
-      onSolved,
-      onFailed,
-      timeoutAfterSolve,
-      timeoutBeforeSolve,
-      total: onSolved + onFailed,
-    };
-  }, [snapshot.rows, seats]);
-
-  // The leader line, stated only when there is a strict winner on solve rate.
-  const ranked = [...seats].sort(
-    (a, b) => (Number(b.totals.solve_rate) || 0) - (Number(a.totals.solve_rate) || 0),
-  );
-  const leader =
-    ranked.length >= 2 &&
-    (Number(ranked[0].totals.solve_rate) || 0) > (Number(ranked[1].totals.solve_rate) || 0)
-      ? ranked[0]
-      : null;
+  const cellSums = useCellSums(snapshot);
 
   const critical = (snapshot.detections || []).filter((d) => d.severity === "critical").length;
 
+  // Models with no row in the shared price table, across every arm — the
+  // reason a cost cell reads `—`, named so the dash is actionable (#2108).
+  const unpriced = [
+    ...new Set(seats.flatMap((seat) => seat.totals.unpriced_models || [])),
+  ].sort();
+
+  // The same discipline for the token dashes: how many of each arm's trials
+  // published no usage, which is both why a figure is missing and the
+  // denominator the figures that ARE shown were summed over. A dash that
+  // cannot say why is how a whole arm's cost went unnoticed for weeks.
+  const unmeasured = seats.flatMap((seat) => {
+    const count = seat.totals.unmeasured_trials;
+    if (typeof count !== "number" || count <= 0) return [];
+    return [`${seat.name}: ${count}/${seat.totals.trials || 0} trials unmeasured`];
+  });
+
   return (
-    <section className="mb-4 grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
-      <Stat
-        label="solve rate"
-        value={fmtPct(solveRate)}
-        sub={`${totals.passed} / ${totals.judged} judged`}
-        tone="accent"
-        blurb="Passed trials over judged trials, every seat combined. Queued and running trials are excluded — an unjudged trial is not a failure."
-      />
-      <Stat
-        label="leader"
-        value={leader ? leader.name : "tied"}
-        sub={leader ? fmtPct(Number(leader.totals.solve_rate) || 0) : "no strict winner yet"}
-        tone={leader ? "ok" : undefined}
-        blurb="The seat strictly ahead on solve rate. Reads 'tied' rather than picking one when the top two are level."
-      />
-      <Stat
-        label="cost"
-        value={fmtMoney(totals.priced)}
-        sub={
-          totals.unpriced.length > 0
-            ? `no price for ${totals.unpriced.join(", ")}`
-            : "one price table, all seats"
-        }
-        tone={totals.unpriced.length > 0 ? "warn" : undefined}
-        blurb={
-          "Every seat's tokens priced through a single table, which is the only cost figure " +
-          "comparable across contestants. '—' means some model in this match is unpriced, so " +
-          "the total is unknown rather than lower" +
-          (totals.unpriced.length > 0
-            ? ` — no row in the shared price table for ${totals.unpriced.join(", ")}.`
-            : ".")
-        }
-      />
-      <Stat
-        label="self-reported"
-        value={fmtMoney(totals.selfReported)}
-        sub="each agent's own tally"
-        blurb="What the agents said they spent, each on its own price table. Shown because it is what the agent believes, never added to the priced figure."
-      />
-      <Stat
-        label="elapsed"
-        value={fmtClock(snapshot.elapsed)}
-        sub={totals.running > 0 ? `${totals.running} running` : snapshot.status}
-        blurb="Wall-clock time since the match started."
-      />
-      <Stat
-        label="trials"
-        value={`${totals.judged}/${totals.trials}`}
-        sub={`${snapshot.rows.length} tasks × ${seats.length} seats`}
-        blurb="Judged trials over total trials."
-      />
-      <Stat
-        label="tokens"
-        value={`${fmtTokens(totals.tokensIn)}/${fmtTokens(totals.tokensOut)}`}
-        sub="in / out"
-        blurb="Input and output tokens summed across every seat."
-      />
-      <Stat
-        label="incidents"
-        value={String(incidents.total)}
-        sub={`${incidents.onSolved} on solved · ${incidents.onFailed} on failed`}
-        tone={incidents.onSolved > 0 ? "warn" : undefined}
-        blurb={
-          "Trials that raised an exception, counted apart from the solve rate in both " +
-          "directions — a trial can score the reward and then raise, and the tick alone " +
-          "hides it. An incident on a SOLVED trial means the agent kept burning budget " +
-          "after succeeding; on a failed trial it is the ordinary kind. Timeouts here: " +
-          `${incidents.timeoutAfterSolve} after the solve (did not stop when done), ` +
-          `${incidents.timeoutBeforeSolve} before it (ran out of time).`
-        }
-      />
-      {critical > 0 ? (
-        <Stat
-          label="integrity"
-          value={`${critical} critical`}
-          sub="numbers are not publishable"
-          tone="warn"
-          blurb="The agent monitor fired a critical rule. A critical detection means this match's numbers are invalid and must not be published."
+    <>
+      <section className="mb-4 grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(250px,1fr))]">
+        <CompareCard
+          label="tool calls"
+          blurb={
+            "Every tool invocation the arm made, and the mean per attempted task. " +
+            "Summed from the per-task cells, so a running trial's calls count as they happen."
+          }
+          seats={seats}
+          rows={[
+            {
+              label: "total",
+              values: seats.map((seat) => fmtCount(cellSums[seat.id]?.tools ?? 0)),
+            },
+            {
+              label: "avg / task",
+              values: seats.map((seat) => {
+                const sums = cellSums[seat.id];
+                const perTask = sums ? avg(sums.tools, sums.attempted) : null;
+                return perTask == null ? "—" : perTask.toFixed(1);
+              }),
+            },
+          ]}
         />
+        <CompareCard
+          label="clock"
+          blurb={
+            "Wall clock inside the trials: the mean per attempted task, and the sum over " +
+            "every trial. This is the agents' working time, not the match's elapsed time — " +
+            "trials run concurrently, so the total can exceed the clock at the top of the page."
+          }
+          seats={seats}
+          rows={[
+            {
+              label: "per task",
+              values: seats.map((seat) => {
+                const perTask = avg(
+                  seat.totals.clock_time || 0,
+                  cellSums[seat.id]?.attempted ?? 0,
+                );
+                return fmtClock(perTask);
+              }),
+            },
+            {
+              label: "total",
+              values: seats.map((seat) => fmtClock(seat.totals.clock_time || 0)),
+            },
+          ]}
+        />
+        <CompareCard
+          label="tokens"
+          blurb={
+            "Prompt and completion tokens, the mean per model call (step), and the share of " +
+            "prompt tokens served from cache — the rate, not the count, because the count " +
+            "rewards sending more context. `—` means nothing was measured, never zero."
+          }
+          seats={seats}
+          rows={[
+            {
+              label: "in / out",
+              values: seats.map((seat) =>
+                usageMeasured(seat)
+                  ? `${fmtTokens(seat.totals.tokens_in)}/${fmtTokens(seat.totals.tokens_out)}`
+                  : "—",
+              ),
+            },
+            {
+              label: "per step",
+              values: seats.map((seat) => {
+                const steps = cellSums[seat.id]?.steps ?? 0;
+                // Steps can be nonzero on an arm that published no usage at
+                // all, so the step count alone is not enough of a guard: the
+                // division would then report a measured-looking `0/0`.
+                if (steps <= 0 || !usageMeasured(seat)) return "—";
+                return `${fmtTokens((seat.totals.tokens_in || 0) / steps)}/${fmtTokens(
+                  (seat.totals.tokens_out || 0) / steps,
+                )}`;
+              }),
+            },
+            {
+              label: "cache hit",
+              values: seats.map((seat) => {
+                const rate = cacheHitRate(seat);
+                return rate == null ? "—" : fmtPct(rate);
+              }),
+            },
+          ]}
+          sub={unmeasured.length > 0 ? unmeasured.join(" · ") : undefined}
+        />
+        <CompareCard
+          label="tasks"
+          blurb={
+            "Attempted counts every trial that started (running or done). Solved is trials " +
+            "the verifier passed. The success rate is over judged trials only — a queued or " +
+            "running trial is not a failure, and an infrastructure void is outside the rate."
+          }
+          seats={seats}
+          rows={[
+            {
+              label: "attempted",
+              values: seats.map((seat) => fmtCount(cellSums[seat.id]?.attempted ?? 0)),
+            },
+            {
+              label: "solved",
+              values: seats.map((seat) => fmtCount(seat.totals.passed || 0)),
+            },
+            {
+              label: "success",
+              values: seats.map((seat) => fmtPct(seat.totals.solve_rate)),
+            },
+          ]}
+        />
+        <CompareCard
+          label="cost"
+          blurb={
+            "Each arm's tokens priced through a single shared table — the only cost figure " +
+            "comparable across arms; self-reported spend is not and is not shown. `—` means " +
+            "some model is unpriced, so the figure is unknown rather than lower."
+          }
+          seats={seats}
+          rows={[
+            {
+              label: "per task",
+              values: seats.map((seat) => {
+                const priced = seat.totals.priced_cost;
+                const attempted = cellSums[seat.id]?.attempted ?? 0;
+                if (priced == null || attempted <= 0) return "—";
+                return fmtMoney(priced / attempted);
+              }),
+            },
+            {
+              label: "total",
+              values: seats.map((seat) => fmtMoney(seat.totals.priced_cost)),
+            },
+          ]}
+          sub={unpriced.length > 0 ? `no price for ${unpriced.join(", ")}` : undefined}
+        />
+      </section>
+      {critical > 0 ? (
+        <section className="mb-4 border border-warn/40 bg-warn/7 px-3.5 py-2.5">
+          <div className="text-[10px] tracking-[0.1em] text-warn">integrity</div>
+          <div className="mt-1 font-mono text-[15px] text-warn">{critical} critical</div>
+          <div className="mt-0.5 text-[10.5px] text-muted">
+            The agent monitor fired a critical rule — this match&apos;s numbers are invalid
+            and must not be published.
+          </div>
+        </section>
       ) : null}
-    </section>
+    </>
   );
 }
