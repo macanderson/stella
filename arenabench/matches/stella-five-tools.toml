@@ -140,5 +140,10 @@ color = "#FFB000"
   # that as the other arm being better.
 
   [contestant.env]
-  # Names only — never values.
-  required = ["OPENROUTER_API_KEY"]
+  # Names only — never values. VOYAGE_API_KEY is required because the arm's
+  # headline tool ranks by MEANING: the Harbor adapter runs `stella init`
+  # before the first turn, and without an embedding credential the semantic
+  # index does not build — `search` degrades to lexical and the arm silently
+  # measures a different tool. Refusing at submit is cheaper than discovering
+  # that in the trace.
+  required = ["OPENROUTER_API_KEY", "VOYAGE_API_KEY"]
