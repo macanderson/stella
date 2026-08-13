@@ -1,0 +1,149 @@
+# arenabench match — Stella with FIVE tools, bare loop
+#
+#   cloud:  arenabench cloud run matches/stella-five-tools.toml
+#
+# The variable under test is the SIZE AND SHAPE OF THE TOOL MENU, nothing else.
+# Stella advertises 72 tool schemas today — 11,797 tokens, 71% of the opening
+# context, re-read on every turn — against Claude Code's 25, of which five are
+# coding tools. Across 408 recorded trials `bash` took 10,835 calls while
+# `graph_query` took 3 and `semantic_code_search` took 0, so the specialised
+# tools are offered and not chosen (#3032).
+#
+# This arm offers five: `search`, `read_file`, `edit_file`, `write_file`,
+# `bash`. `search` is the fused entry point (#3063/#3076) that replaces
+# grep/glob/graph_query/semantic_code_search with one call ranked by meaning.
+#
+# ONE SEAT, deliberately. Claude Code is the recorded bar (20/20, $0.370/trial,
+# 12.4 tool calls) and re-running it buys nothing — its arm is a constant, and
+# spending half the budget re-measuring a constant is how a 10-trial run
+# becomes a 20-trial one that answers the same question.
+#
+# The control is run `post1`: the same panel, the same model, the same bare
+# loop, the full 72-tool catalog — 16/20 solved, 30.0 tool calls per trial,
+# 1.01 tools per turn, 11,797 menu tokens. Every number below is read against
+# those.
+#
+# WHAT THIS ARM DOES NOT MEASURE: there is no `verify_done` in the set, so the
+# witness contract does not run and this is RAW completion, not VERIFIED
+# completion. It is not comparable to any figure quoted as "verified done".
+# Stated here because the number will outlive the context that produced it.
+# (`verify_done` currently fails 92.5% of the time — 419 of 453 calls — and is
+# first reached at call 27.9, so its absence may help. That is worth knowing
+# too, and it is a different question from this one.)
+#
+# TWO KNOWN LEAKS IN THE VARIABLE, both tracked, neither fixed at this SUT:
+# the system prompt still steers by name to tools this arm withholds
+# (graph_query, semantic_code_search, project_overview, apply_edits,
+# read_symbol, run_tests, verify_done) and never names `search` (#3031, #3079)
+# — so the one tool under test runs on its own description against a prompt
+# advertising its absent rivals; and lean-mode execution is deliberately
+# permissive in every form, so a withheld tool the prompt talked the model
+# into calling still RUNS (#3100). Reading the run therefore requires a
+# per-tool call census from stella-events.jsonl: any call outside the five
+# advertised names means the arm was not the arm, and the census must say so
+# before the solve rate is quoted.
+#
+# No secrets in this file. In the cloud every credential is read from SSM under
+# /arenabench/ and a seat whose credential is absent is refused at submit time
+# rather than scored as a loss.
+
+[match]
+name = "stella: five tools, bare loop"
+dataset = "terminal-bench-2.1"
+
+# Pinned as a full SHA, never a branch: `arenabench cloud run` resolves a ref
+# through `binaries/<ref>/latest.json` and only builds on a MISS, so a moving
+# ref silently reuses whatever artifact is already in the bucket — "some
+# earlier main", not this tree. Override per-run with `--ref`.
+#
+# This SHA is main after the whole search series landed: the fused `search`
+# tool (#3076), chunk ranking + markdown indexing (#3095), the coverage-honesty
+# fix (#3117), eager chunk embedding at `stella init` (#3130), and the
+# `stella search` CLI with JSON ranking (#3126/#3131). An older pin would run
+# the arm against a `search` that ranks over a fraction of the workspace and
+# cannot rank by meaning on query one — measuring a tool that no longer exists.
+sut_ref = "009ba97daacf46119d611f98c965bba4549eeb72"
+
+# The diagnostic panel, not the house panel. These ten are the set run `post1`
+# and run `s5b2` used, so this arm is comparable against a real control instead
+# of only against itself. Chosen originally because the bare loop solved all
+# ten somewhere in an 89-task panel — they are within reach, so a failure here
+# means something rather than measuring difficulty.
+#
+# Two of them carry most of the mean: `sanitize-git-repo` and
+# `password-recovery` account for most of the spread, and six of the ten are
+# already competitive. Anyone quoting a ten-task mean is quoting two tasks.
+tasks = [
+  "nginx-request-logging",
+  "sanitize-git-repo",
+  "fix-code-vulnerability",
+  "prove-plus-comm",
+  "password-recovery",
+  "git-leak-recovery",
+  "count-dataset-tokens",
+  "kv-store-grpc",
+  "git-multibranch",
+  "vulnerable-secret",
+]
+
+# One attempt per task, against the control's two. A single attempt cannot
+# resolve a one-trial difference and is not meant to: the headline here is menu
+# tokens and tool-call composition, which are per-trial measurements that ten
+# trials establish perfectly well. Solve rate is a guardrail, and it is read as
+# a guardrail — the budget bought breadth over repeats on purpose.
+attempts = 1
+
+# Cloud-only setting in practice: `arenabench cloud run` slices the match into
+# one (task, seat) trial per Batch container and pins each slice to 1, because
+# there the container is the unit of isolation.
+concurrency = 1
+
+# The Batch runner image ships no recorder build context, so a supervisor would
+# start, find no image, and record nothing.
+record_video = false
+
+[[contestant]]
+id = "stella"
+name = "Stella (Sonnet 5, five tools, bare loop)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "anthropic/claude-sonnet-5"
+  reasoning = true
+  # `medium` because the control ran medium. Effort is a confound and this arm
+  # changes exactly one thing.
+  effort = "medium"
+
+  # Raw step loop: no triage, no witness, no verify, no second model anywhere
+  # in the run. The standing instruction is that the basics have to work before
+  # the staged pipeline is worth measuring again.
+  bare_loop = true
+
+  # THE VARIABLE. An explicit list, never a preset alias — the config layer
+  # refuses an alias rather than coercing one, so a template that spelled a
+  # restriction cannot silently run unrestricted (#3081).
+  #
+  # `search` first because it is the tool under test; the other four are the
+  # irreducible floor: read a file, change part of one, write a whole one, run
+  # a command. Notably absent and deliberate: `grep`, `glob`, `graph_query`,
+  # `semantic_code_search`, `gather_context`, `project_overview` — every one of
+  # which `search` is meant to subsume — and `verify_done`, per the note above.
+  tool_set = ["search", "read_file", "edit_file", "write_file", "bash"]
+
+  # No output ceiling and no spend ceiling. Omitting the first asks for the
+  # model's own, which the engine seeds from the catalog; naming a number could
+  # only match it or sit under it, and the second is a handicap. ArenaBench
+  # drops `budget_usd`/`max_tokens` wherever they are written (#2411), because
+  # the arm carrying one stops where the work finishes and the scoreboard reads
+  # that as the other arm being better.
+
+  [contestant.env]
+  # Names only — never values. VOYAGE_API_KEY is required because the arm's
+  # headline tool ranks by MEANING: the Harbor adapter runs `stella init`
+  # before the first turn, and without an embedding credential the semantic
+  # index does not build — `search` degrades to lexical and the arm silently
+  # measures a different tool. Refusing at submit is cheaper than discovering
+  # that in the trace.
+  required = ["OPENROUTER_API_KEY", "VOYAGE_API_KEY"]
