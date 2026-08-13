@@ -1,5 +1,5 @@
 ---
-title: Work within a budget
+title: Work within a spend limit
 description: A hard dollar ceiling, and what stella does as it approaches one — where the abort lands and what the scope gate stops before you spend anything.
 ---
 
@@ -12,20 +12,20 @@ they fire — one of them before any money is spent at all.
 ## The flag
 
 ```bash
-stella --budget 2.00 run "port the utils module to the new API"
+stella --spend-limit 2.00 run "port the utils module to the new API"
 ```
 
-`--budget` is a [global flag](/docs/commands#global-flags), so it can go on
+`--spend-limit` is a [global flag](/docs/commands#global-flags), so it can go on
 either side of the subcommand — but the habit of putting it first is a good one,
 because it reads as a property of the whole invocation, which is what it is.
 
 <CardGrid size="md">
-  <SpecCard title="Observed — no --budget">
+  <SpecCard title="Observed — no --spend-limit">
     The default. Spend is metered for the end-of-run cost summary and the local store,
     but never blocks. Use it to find out what a class of task actually costs before
     picking a ceiling for it.
   </SpecCard>
-  <SpecCard title="Enforced — --budget <usd>">
+  <SpecCard title="Enforced — --spend-limit <usd>">
     A hard cap on the **whole run or session** — not per turn, not per round. Must be
     positive and finite.
   </SpecCard>
@@ -34,12 +34,12 @@ because it reads as a property of the whole invocation, which is what it is.
 Set it once for a shell or a CI job instead:
 
 ```bash
-export STELLA_BUDGET=5
+export STELLA_SPEND_LIMIT=5
 ```
 
 ## Where the abort lands
 
-This is the part worth trusting, because it determines whether a tripped budget
+This is the part worth trusting, because it determines whether a tripped spend limit
 leaves you with work or with wreckage.
 
 The meter is checked **between steps and stages** — never in the middle of a
@@ -49,22 +49,22 @@ back into the transcript. Work already committed to disk stays; nothing is
 rolled back.
 
 The exit code is `1`, the same as any other failure. If you need to distinguish
-*budget stopped this* from *this failed*, read the JSON:
+*the spend limit stopped this* from *this failed*, read the JSON:
 
 ```bash
-stella --budget 2.00 run --output-format json "…" | jq '{status, cost_usd, verdict}'
+stella --spend-limit 2.00 run --output-format json "…" | jq '{status, cost_usd, verdict}'
 ```
 
 <Callout type="info">
-`--budget` is metered against **catalog prices**. Local and air-gapped models
-have no catalog price, so the dollar columns read zero and a budget has nothing
+`--spend-limit` is metered against **catalog prices**. Local and air-gapped models
+have no catalog price, so the dollar columns read zero and a spend limit has nothing
 to meter against. Bound those runs with `--test-command` and goal-mode round caps
 instead — see [Local and air-gapped](/docs/examples#local-and-air-gapped).
 </Callout>
 
 ## The gate that fires *before* you spend
 
-A budget stops a run partway. The [scope review](/docs/inference-pipeline#3-scope-review)
+A spend limit stops a run partway. The [scope review](/docs/inference-pipeline#3-scope-review)
 stops it *before the first edit*, which is usually the outcome you actually
 wanted.
 
@@ -123,7 +123,7 @@ Three consequences follow, and they are most of what you need:
 
 ```bash
 # Cheapest correct shape: deterministic oracle armed, hard ceiling on top.
-stella --budget 1.50 run --test-command "cargo test -p api" \
+stella --spend-limit 1.50 run --test-command "cargo test -p api" \
   "add cursor pagination to /orders"
 ```
 
@@ -137,8 +137,8 @@ A ceiling only helps if you know what is pushing against it.
     full working turn. `stella monitor` is goal mode, so it has the same shape.
   </OptionCard>
   <OptionCard name="Fleets">
-    One pipeline per task. Worker spend meters into the **parent** budget, so
-    `--budget` is a single shared ceiling across the whole fan-out rather than a
+    One pipeline per task. Worker spend meters into the **parent** spend limit, so
+    `--spend-limit` is a single shared ceiling across the whole fan-out rather than a
     per-worker allowance — and the run stops early once it trips.
   </OptionCard>
   <OptionCard name="Best-of-N">
@@ -189,13 +189,13 @@ run's transcript, not its work, is what got expensive.
 
 ## Picking the number
 
-Budget by observation, not by intuition. Run the class of task once unbounded,
-read what it cost, then set a ceiling with headroom:
+Set the spend limit by observation, not by intuition. Run the class of task once
+unbounded, read what it cost, then set a ceiling with headroom:
 
 ```bash
-stella run "the representative task"      # observed mode
-stella stats --format text               # what it actually cost
-stella --budget 2.00 run "the next one"   # now with a ceiling
+stella run "the representative task"           # observed mode
+stella stats --format text                    # what it actually cost
+stella --spend-limit 2.00 run "the next one"   # now with a ceiling
 ```
 
 The number to steer on over time is **$/resolved**, not sticker price — a cheap
