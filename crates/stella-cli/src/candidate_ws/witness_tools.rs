@@ -41,9 +41,9 @@ impl WitnessToolExecutor {
     }
 
     fn denied(name: &str, reason: impl std::fmt::Display) -> ToolOutput {
-        ToolOutput::Error {
-            message: format!("`{name}` is not available to the witness author: {reason}"),
-        }
+        ToolOutput::error(format!(
+            "`{name}` is not available to the witness author: {reason}"
+        ))
     }
 
     fn create_test(&self, input: &serde_json::Value) -> ToolOutput {
@@ -696,7 +696,7 @@ mod tests {
                 )
                 .await;
             match &output {
-                ToolOutput::Error { message } => assert!(
+                ToolOutput::Error { message, .. } => assert!(
                     message.contains(expected),
                     "{name} must name its vacuous shape, got: {message}"
                 ),
@@ -756,7 +756,7 @@ mod tests {
             )
             .await;
         match &output {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("/app/ssl"),
                     "the refusal must quote what was written: {message}"

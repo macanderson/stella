@@ -403,7 +403,7 @@ async fn the_transcript_handed_to_the_fallback_is_well_paired() {
             result.call_id == "call_orphan"
                 && matches!(
                     &result.output,
-                    ToolOutput::Error { message }
+                    ToolOutput::Error { message, .. }
                         if message.contains("switched to a fallback provider")
                 )
         })

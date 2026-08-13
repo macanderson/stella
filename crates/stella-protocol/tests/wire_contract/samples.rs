@@ -22,8 +22,8 @@ use stella_protocol::receipt::{
     ManifestEntry, ProviderShare,
 };
 use stella_protocol::{
-    AgentEvent, CompiledContextFrameBuilt, MediaArtifactRef, SubAgentPhase, SubAgentStatus,
-    ToolCall, ToolOutput, VerdictEvidence,
+    AgentEvent, CompiledContextFrameBuilt, ErrorClass, MediaArtifactRef, SubAgentPhase,
+    SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
 };
 
 pub(crate) fn all_stage_kinds() -> Vec<StageKind> {
@@ -224,9 +224,25 @@ pub(crate) fn all_tool_outputs() -> Vec<ToolOutput> {
         ToolOutput::Ok {
             content: "hello".into(),
         },
-        ToolOutput::Error {
-            message: "boom".into(),
-        },
+        // The unclassified error — the shape every payload written before
+        // #3145 has, and the one whose `class` key must stay absent.
+        ToolOutput::error("boom"),
+    ]
+}
+
+/// Every [`ErrorClass`] arm, sampled through the `Error` output that carries
+/// it (#3145). Separate from [`all_tool_outputs`] because `ToolOutput` has
+/// two arms whatever the class vocabulary grows to.
+pub(crate) fn all_error_classes() -> Vec<ErrorClass> {
+    vec![
+        ErrorClass::InvalidInput,
+        ErrorClass::NotFound,
+        ErrorClass::PermissionDenied,
+        ErrorClass::RefusedByPolicy,
+        ErrorClass::Timeout,
+        ErrorClass::Environment,
+        ErrorClass::Internal,
+        ErrorClass::Other,
     ]
 }
 
@@ -622,6 +638,16 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 output,
                 duration_ms: 12,
                 speculated: true,
+            }),
+    );
+    events.extend(
+        all_error_classes()
+            .into_iter()
+            .map(|class| AgentEvent::ToolResult {
+                call_id: "call_1".into(),
+                output: ToolOutput::classified_error(class, "boom"),
+                duration_ms: 12,
+                speculated: false,
             }),
     );
     events.extend(

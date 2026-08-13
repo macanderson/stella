@@ -870,7 +870,7 @@ pub(crate) fn message_body(message: &CompletionMessage) -> String {
         out.push('\n');
         match &result.output {
             ToolOutput::Ok { content } => out.push_str(content),
-            ToolOutput::Error { message } => out.push_str(&format!("error: {message}")),
+            ToolOutput::Error { message, .. } => out.push_str(&format!("error: {message}")),
         }
     }
     out
@@ -1197,9 +1197,7 @@ mod tests {
             tool_calls: vec![],
             tool_results: vec![ToolResult {
                 call_id: "e1".into(),
-                output: ToolOutput::Error {
-                    message: "file not found".into(),
-                },
+                output: ToolOutput::error("file not found"),
             }],
             attachments: vec![],
         };

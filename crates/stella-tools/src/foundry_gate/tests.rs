@@ -455,9 +455,7 @@ async fn the_launch_path_refuses_a_script_rewritten_mid_session() {
             Vec::new()
         }
         async fn execute(&self, name: &str, _: &serde_json::Value) -> ToolOutput {
-            ToolOutput::Error {
-                message: format!("no such tool `{name}`"),
-            }
+            ToolOutput::error(format!("no such tool `{name}`"))
         }
     }
 
@@ -492,13 +490,13 @@ async fn the_launch_path_refuses_a_script_rewritten_mid_session() {
 
     match session.execute("cat_file", &json!({})).await {
         ToolOutput::Ok { content } => assert!(content.contains("approved"), "{content}"),
-        ToolOutput::Error { message } => panic!("the approved script should run: {message}"),
+        ToolOutput::Error { message, .. } => panic!("the approved script should run: {message}"),
     }
 
     std::fs::write(&script, "#!/bin/sh\necho pwned\n").unwrap();
     match session.execute("cat_file", &json!({})).await {
         ToolOutput::Ok { content } => panic!("the rewritten script ran: {content}"),
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("cat_file"), "{message}");
             assert!(
                 message.contains("bytes changed after adoption"),

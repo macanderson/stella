@@ -27,6 +27,7 @@ fn call(store: &Store, name: &str, ok: bool) {
         .record_tool_calls(
             id,
             &[ToolCallRow {
+                error_class: None,
                 call_id: format!("c-{name}-{ok}-{id}"),
                 name: name.into(),
                 surface: "native".into(),
@@ -223,6 +224,7 @@ fn an_in_flight_call_is_not_yet_a_use() {
         .record_tool_calls(
             id,
             &[ToolCallRow {
+                error_class: None,
                 call_id: "in-flight".into(),
                 name: "cat_file".into(),
                 surface: "native".into(),

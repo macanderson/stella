@@ -462,6 +462,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         ("ProofStep", all_proof_steps().len()),
         ("MediaJobState", all_media_job_states().len()),
         ("ToolOutput", all_tool_outputs().len()),
+        ("ErrorClass", all_error_classes().len()),
         ("SubAgentPhase", all_subagent_phases().len()),
         ("DeliveryDecline", all_delivery_declines().len()),
         // Two arms, and both are sampled directly rather than through an
@@ -509,6 +510,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "ProofStep",
         "MediaJobState",
         "ToolOutput",
+        "ErrorClass",
         "SubAgentPhase",
         "DeliveryDecline",
         "DeliveryOutcome",

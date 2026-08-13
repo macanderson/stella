@@ -86,9 +86,7 @@ use crate::input::{InputError, present, type_name};
 /// the unknown-name arm downstream owns that refusal).
 pub(super) fn refusal(tool: Option<&dyn Tool>, input: &Value) -> Option<ToolOutput> {
     let schema = tool?.schema();
-    check(&schema.input_schema, input).map(|err| ToolOutput::Error {
-        message: err.to_string(),
-    })
+    check(&schema.input_schema, input).map(ToolOutput::from)
 }
 
 /// Validate `input` against `schema` over the enforced subset. Returns the
@@ -299,7 +297,7 @@ mod tests {
 
     fn error_message(output: &ToolOutput) -> &str {
         match output {
-            ToolOutput::Error { message } => message,
+            ToolOutput::Error { message, .. } => message,
             other => panic!("expected a refusal, got {other:?}"),
         }
     }

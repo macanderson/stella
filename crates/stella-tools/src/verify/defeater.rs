@@ -515,7 +515,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("WITNESS COMMAND ESCAPES THE TEST TREE"),
                     "{message}"
@@ -569,7 +569,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("VACUOUS TEST"), "{message}");
                 assert!(message.contains("THE BASELINE TREE IS EMPTY"), "{message}");
                 assert!(message.contains("what now EXISTS"), "{message}");
@@ -633,7 +633,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("VACUOUS TEST"), "{message}");
                 assert!(message.contains("LAYERING DEFEATER"), "{message}");
                 assert!(message.contains("`impl.txt`"), "{message}");

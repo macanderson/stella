@@ -412,7 +412,7 @@ impl DomainBridge {
                 let tool = self.take_in_flight(call_id);
                 let (ok, bytes) = match output {
                     ToolOutput::Ok { content } => (true, content.len()),
-                    ToolOutput::Error { message } => (false, message.len()),
+                    ToolOutput::Error { message, .. } => (false, message.len()),
                 };
                 self.emit(
                     if ok { Level::Debug } else { Level::Warn },
@@ -958,9 +958,7 @@ mod tests {
         let (mut bridge, records) = bridge();
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
-            output: ToolOutput::Error {
-                message: "/home/ada/secret.rs:12: permission denied".into(),
-            },
+            output: ToolOutput::error("/home/ada/secret.rs:12: permission denied"),
             duration_ms: 1234,
             speculated: false,
         });
@@ -987,9 +985,7 @@ mod tests {
         ));
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
-            output: ToolOutput::Error {
-                message: "no such file".into(),
-            },
+            output: ToolOutput::error("no such file"),
             duration_ms: 7,
             speculated: false,
         });

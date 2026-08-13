@@ -219,7 +219,7 @@ fn a_cancel_closes_every_open_tool_use_so_the_history_stays_reusable() {
         .collect();
     assert_eq!(ids, ["c1", "c2"], "every open call is closed, in order");
     assert!(closing.tool_results.iter().all(
-        |r| matches!(&r.output, ToolOutput::Error { message } if message == CANCELLED_TOOL_RESULT)
+        |r| matches!(&r.output, ToolOutput::Error { message, .. } if message == CANCELLED_TOOL_RESULT)
     ));
 
     // Mirrored onto the event stream, so an events-only reconstruction of

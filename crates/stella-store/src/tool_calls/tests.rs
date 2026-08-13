@@ -35,9 +35,7 @@ fn ok_result(call_id: &str, content: &str, duration_ms: u64) -> AgentEvent {
 fn err_result(call_id: &str, message: &str) -> AgentEvent {
     AgentEvent::ToolResult {
         call_id: call_id.into(),
-        output: ToolOutput::Error {
-            message: message.into(),
-        },
+        output: ToolOutput::error(message),
         duration_ms: 1,
         speculated: false,
     }
@@ -336,6 +334,7 @@ fn state_round_trips_and_degrades_safely() {
 /// Helper: a minimal successful `ToolCallRow` for the reader tests.
 fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
     ToolCallRow {
+        error_class: None,
         call_id: call_id.into(),
         name: "bash".into(),
         surface: "native".into(),
@@ -366,6 +365,7 @@ fn recent_tool_calls_filters_by_name_and_returns_newest_first() {
             &[
                 bash_row("c1", "jq '.a' a.json", true),
                 ToolCallRow {
+                    error_class: None,
                     call_id: "c2".into(),
                     name: "read_file".into(),
                     surface: "native".into(),
@@ -527,6 +527,89 @@ fn tool_call_counts_group_every_call_by_name() {
         "busiest first: {counts:?}"
     );
     assert!(counts.contains(&("graph_query".to_string(), 1)));
+}
+
+/// #3145, end to end through the live writer: a classified failure lands its
+/// class in `tool_calls.error_class`, so "bash's error rate excluding model
+/// misuse" is an index seek over a token rather than a match on prose.
+///
+/// The three rows are the three facts the column has to keep apart: a
+/// classified failure, an unclassified one (a site not yet audited — which
+/// must NOT read as any class), and a success.
+#[test]
+fn a_classified_error_lands_its_class_in_the_projection() {
+    use stella_protocol::ErrorClass;
+    let (store, id) = fixture();
+    store
+        .record_event(id, 0, &start("c1", "read_file"))
+        .unwrap();
+    store
+        .record_event(
+            id,
+            1,
+            &AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::classified_error(
+                    ErrorClass::InvalidInput,
+                    "missing required field `path`",
+                ),
+                duration_ms: 1,
+                speculated: false,
+            },
+        )
+        .unwrap();
+    store.record_event(id, 2, &start("c2", "bash")).unwrap();
+    store
+        .record_event(id, 3, &err_result("c2", "boom"))
+        .unwrap();
+    store.record_event(id, 4, &start("c3", "grep")).unwrap();
+    store
+        .record_event(id, 5, &ok_result("c3", "hit", 1))
+        .unwrap();
+
+    let classes = |store: &Store| -> Vec<(String, String)> {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, error_class FROM tool_calls \
+                 WHERE execution_id = ?1 ORDER BY seq ASC",
+            )
+            .expect("prepare");
+        let mapped = stmt
+            .query_map(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .expect("query");
+        mapped.map(|r| r.expect("row")).collect()
+    };
+
+    // An unaudited site is unclassified, NOT `internal` — an error-rate
+    // ceiling must not read our unfinished audit as our defects.
+    let expected = vec![
+        ("read_file".to_string(), "invalid_input".to_string()),
+        ("bash".to_string(), String::new()),
+        ("grep".to_string(), String::new()),
+    ];
+    assert_eq!(
+        classes(&store),
+        expected,
+        "the live writer projects the class from the event's ToolOutput"
+    );
+
+    // The repair fold re-derives the same answer from the log — the whole
+    // reason the log is the source of truth and this table is not.
+    store.materialize_tool_calls(id).expect("re-fold");
+    assert_eq!(
+        classes(&store),
+        expected,
+        "the repair fold agrees with the live writer"
+    );
+
+    // And the typed reader parses the stored token back to the class.
+    let read_calls = store.recent_tool_calls("read_file", 1).expect("read back");
+    assert_eq!(read_calls[0].error_class, Some(ErrorClass::InvalidInput));
+    let bash_calls = store.recent_tool_calls("bash", 1).expect("read back");
+    assert_eq!(bash_calls[0].error_class, None);
 }
 
 /// A finished turn can still hold calls that never returned (the turn-end

@@ -424,12 +424,12 @@ impl RemoteToolExecutor {
             serde_json::json!({ "tool": name, "input": input }),
         ));
         match outcome.decision {
-            HookDecision::Deny { reason } => Err(ToolOutput::Error {
-                message: format!("`{name}` was denied by an extension policy: {reason}"),
-            }),
-            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error {
-                message: format!("`{name}` requires approval before it can run: {reason}"),
-            }),
+            HookDecision::Deny { reason } => Err(ToolOutput::error(format!(
+                "`{name}` was denied by an extension policy: {reason}"
+            ))),
+            HookDecision::RequireApproval { reason } => Err(ToolOutput::error(format!(
+                "`{name}` requires approval before it can run: {reason}"
+            ))),
             _ => {
                 if !outcome.modified {
                     return Ok(None);
@@ -457,7 +457,7 @@ impl RemoteToolExecutor {
     /// Announce how the host answered, on the observable channel.
     fn report_tool_outcome(bus: &HookBus, name: &str, output: &ToolOutput, duration_ms: u64) {
         match output {
-            ToolOutput::Error { message } => bus.emit_named(
+            ToolOutput::Error { message, .. } => bus.emit_named(
                 hook_names::TOOL_CALL_FAILED,
                 serde_json::json!({
                     "tool": name, "error": message, "duration_ms": duration_ms,
@@ -493,9 +493,9 @@ impl ToolExecutor for RemoteToolExecutor {
         // data. Cancellation therefore ends the turn one step later, at the
         // provider port, which *can* report `ProviderError::Cancelled`.
         if self.pending.is_cancelled() {
-            return ToolOutput::Error {
-                message: "turn cancelled before the tool call could be dispatched".to_string(),
-            };
+            return ToolOutput::error(
+                "turn cancelled before the tool call could be dispatched".to_string(),
+            );
         }
         let Some(bus) = &self.bus else {
             return self.dispatch(name, input).await;
@@ -549,9 +549,9 @@ impl RemoteToolExecutor {
         // landing between the check above and this call must not park the step
         // until its deadline.
         if !self.pending.register_tool(request_id.clone(), tx) {
-            return ToolOutput::Error {
-                message: "turn cancelled before the tool call could be dispatched".to_string(),
-            };
+            return ToolOutput::error(
+                "turn cancelled before the tool call could be dispatched".to_string(),
+            );
         }
         if self
             .frames
@@ -563,10 +563,9 @@ impl RemoteToolExecutor {
             .is_err()
         {
             self.pending.abandon(&request_id);
-            return ToolOutput::Error {
-                message: "serve host disconnected before the tool call could be dispatched"
-                    .to_string(),
-            };
+            return ToolOutput::error(
+                "serve host disconnected before the tool call could be dispatched".to_string(),
+            );
         }
         let started = dispatched(&self.pending, &request_id, ReverseKind::Tool);
         match tokio::time::timeout(self.timeout, rx).await {
@@ -574,22 +573,20 @@ impl RemoteToolExecutor {
                 answered(&self.pending, &request_id, ReverseKind::Tool, started);
                 output
             }
-            Ok(Err(_)) if self.pending.is_cancelled() => ToolOutput::Error {
-                message: "turn cancelled while the tool call was in flight".to_string(),
-            },
-            Ok(Err(_)) => ToolOutput::Error {
-                message: "serve host dropped the tool call without answering".to_string(),
-            },
+            Ok(Err(_)) if self.pending.is_cancelled() => {
+                ToolOutput::error("turn cancelled while the tool call was in flight".to_string())
+            }
+            Ok(Err(_)) => {
+                ToolOutput::error("serve host dropped the tool call without answering".to_string())
+            }
             Err(_) => {
                 self.pending.abandon(&request_id);
                 timed_out(&self.pending, &request_id, ReverseKind::Tool, started);
-                ToolOutput::Error {
-                    message: format!(
-                        "serve host did not answer the `{name}` tool call within {:?} \
+                ToolOutput::error(format!(
+                    "serve host did not answer the `{name}` tool call within {:?} \
                          (reverse-request deadline)",
-                        self.timeout
-                    ),
-                }
+                    self.timeout
+                ))
             }
         }
     }
@@ -1024,7 +1021,7 @@ mod tests {
             .execute("echo", &serde_json::json!({ "text": "hi" }))
             .await;
         assert!(
-            matches!(&output, ToolOutput::Error { message } if message.contains("disconnected")),
+            matches!(&output, ToolOutput::Error { message, .. } if message.contains("disconnected")),
             "expected the host-disconnected error, got {output:?}"
         );
         assert_eq!(
@@ -1071,7 +1068,7 @@ mod tests {
         );
         let output = port.execute("echo", &serde_json::json!({})).await;
         assert!(
-            matches!(&output, ToolOutput::Error { message } if message.contains("deadline")),
+            matches!(&output, ToolOutput::Error { message, .. } if message.contains("deadline")),
             "expected the reverse-request deadline error, got {output:?}"
         );
         assert_eq!(
@@ -1302,12 +1299,7 @@ mod tests {
         assert_eq!(name, PIPELINE_DIAGNOSTIC_TOOL);
         assert!(
             pending
-                .resolve_tool(
-                    &request_id,
-                    ToolOutput::Error {
-                        message: "unknown tool".to_string(),
-                    },
-                )
+                .resolve_tool(&request_id, ToolOutput::error("unknown tool".to_string()),)
                 .is_ok()
         );
 

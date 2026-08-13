@@ -272,13 +272,11 @@ impl ToolExecutor for ClaimTap<'_> {
                         .ok()
                         .flatten()
                         .unwrap_or_else(|| "(released meanwhile)".to_string());
-                    return ToolOutput::Error {
-                        message: format!(
-                            "`{path}` is currently claimed by `{rival}` — another agent is \
+                    return ToolOutput::error(format!(
+                        "`{path}` is currently claimed by `{rival}` — another agent is \
                              editing it right now. Work on a different file, or retry in a \
                              moment; the claim releases when that agent's turn ends."
-                        ),
-                    };
+                    ));
                 }
                 // Store trouble is observability loss, never a work
                 // stoppage — proceed uncoordinated.
@@ -319,14 +317,12 @@ impl ToolExecutor for ClaimTap<'_> {
                             .ok()
                             .flatten()
                             .unwrap_or_else(|| "(released meanwhile)".to_string());
-                        return ToolOutput::Error {
-                            message: format!(
-                                "the {} lane has been held by `{rival}` for over {}s — retry \
+                        return ToolOutput::error(format!(
+                            "the {} lane has been held by `{rival}` for over {}s — retry \
                                  shortly",
-                                lane_label(lane),
-                                LANE_WAIT_MS / 1000
-                            ),
-                        };
+                            lane_label(lane),
+                            LANE_WAIT_MS / 1000
+                        ));
                     }
                     // Degrade to an unserialized run rather than blocking
                     // real work on a broken store.
@@ -429,7 +425,7 @@ mod tests {
         assert!(!a.execute("write_file", &input).await.is_error());
         let refusal = b.execute("edit_file", &input).await;
         match refusal {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("ses-1/lead"), "{message}");
                 assert!(message.contains("src/lib.rs"), "{message}");
             }
@@ -613,7 +609,9 @@ mod tests {
         let input = serde_json::json!({ "path": "src/lib.rs", "content": "x" });
 
         match tap.execute("write_file", &input).await {
-            ToolOutput::Error { message } => assert!(message.contains(&live_holder), "{message}"),
+            ToolOutput::Error { message, .. } => {
+                assert!(message.contains(&live_holder), "{message}")
+            }
             other => panic!("a live holder's claim must refuse, got {other:?}"),
         }
     }

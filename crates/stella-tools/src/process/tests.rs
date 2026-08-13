@@ -35,7 +35,7 @@ async fn start_with_scratch(
             .find(|w| w.starts_with("proc-"))
             .expect("handle in start output")
             .to_string(),
-        ToolOutput::Error { message } => panic!("start failed: {message}"),
+        ToolOutput::Error { message, .. } => panic!("start failed: {message}"),
     }
 }
 
@@ -75,7 +75,7 @@ async fn empty_argv_is_a_named_error() {
     .execute(&serde_json::json!({"argv": []}), &root)
     .await;
     match out {
-        ToolOutput::Error { message } => assert!(message.contains("argv"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("argv"), "{message}"),
         other => panic!("{other:?}"),
     }
 }
@@ -167,7 +167,7 @@ async fn read_output_clear_true_is_a_named_deprecation_error() {
         .execute(&serde_json::json!({"handle": handle, "clear": true}), &root)
         .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("clear_output"), "{message}");
             assert!(message.contains("removed"), "{message}");
         }
@@ -245,7 +245,7 @@ async fn unknown_handles_are_named_errors_on_every_tool() {
         .await,
     ] {
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("unknown process handle `proc-9`"),
                     "{message}"
@@ -291,7 +291,7 @@ async fn cat_echoes_stdin_and_the_lifecycle_is_reported_after_it_ends() {
         .execute(&serde_json::json!({"handle": handle, "text": "x"}), &root)
         .await;
     match after {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("exited") || message.contains("stdin is closed"),
                 "{message}"
@@ -395,7 +395,7 @@ async fn the_live_process_cap_refuses_a_runaway_and_an_exit_frees_a_slot() {
     .execute(&serde_json::json!({"argv": ["cat"]}), &root)
     .await;
     match over {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains(&MAX_LIVE_PROCESSES.to_string()),
                 "{message}"
@@ -823,7 +823,7 @@ async fn stopping_a_live_service_is_refused_and_leaves_it_running() {
     let refused = StopProcess(table.clone())
         .execute(&serde_json::json!({"handle": handle}), &root)
         .await;
-    let ToolOutput::Error { message } = refused else {
+    let ToolOutput::Error { message, .. } = refused else {
         panic!("stopping a live service must be refused: {refused:?}");
     };
     // The refusal has to teach the substitute, or the model finds another

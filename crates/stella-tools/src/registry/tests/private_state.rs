@@ -24,7 +24,7 @@ async fn schema_gate_rejects_write_when_legacy_codegraph_is_unsafe() {
         )
         .await;
     match result {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("legacy") && message.contains("private"),
                 "{message}"

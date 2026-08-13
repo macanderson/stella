@@ -425,12 +425,10 @@ impl ProcessTable {
 }
 
 fn unknown_handle_error(table: &ProcessTable, handle: &str) -> ToolOutput {
-    ToolOutput::Error {
-        message: format!(
-            "unknown process handle `{handle}` — known handles: {}",
-            table.known_handles()
-        ),
-    }
+    ToolOutput::error(format!(
+        "unknown process handle `{handle}` — known handles: {}",
+        table.known_handles()
+    ))
 }
 
 /// `start_process` — see the module doc.
@@ -487,10 +485,9 @@ impl Tool for StartProcess {
             })
             .unwrap_or_default();
         if argv.is_empty() {
-            return ToolOutput::Error {
-                message: "`argv` must be a non-empty array of strings (argv[0] is the program)"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "`argv` must be a non-empty array of strings (argv[0] is the program)",
+            );
         }
         let name = input
             .get("name")
@@ -507,15 +504,13 @@ impl Tool for StartProcess {
             table.enforce_exited_cap();
             let live = table.live_count();
             if live >= MAX_LIVE_PROCESSES {
-                return ToolOutput::Error {
-                    message: format!(
-                        "{live} processes are already running and the limit is \
+                return ToolOutput::error(format!(
+                    "{live} processes are already running and the limit is \
                          {MAX_LIVE_PROCESSES} — replace one with restart_process (known \
                          handles: {}), \
                          or use run_tests/build_project/run_script for one-shot work",
-                        table.known_handles()
-                    ),
-                };
+                    table.known_handles()
+                ));
             }
         }
 
@@ -524,9 +519,7 @@ impl Tool for StartProcess {
         let entry = match service::spawn_entry(&argv, name.clone(), root, self.scratch.as_deref()) {
             Ok(entry) => entry,
             Err(failure) => {
-                return ToolOutput::Error {
-                    message: failure.to_string(),
-                };
+                return ToolOutput::error(failure.to_string());
             }
         };
         let display = entry.display.clone();
@@ -549,11 +542,10 @@ impl Tool for StartProcess {
 /// The named error `read_output` returns for its deprecated `clear: true`
 /// arm — see the module doc and #2699.
 fn clear_removed_from_read_output_error() -> ToolOutput {
-    ToolOutput::Error {
-        message: "`read_output`'s `clear` field was removed — call `clear_output(handle)` \
-                  instead to discard buffered output without reading it."
-            .into(),
-    }
+    ToolOutput::error(
+        "`read_output`'s `clear` field was removed — call `clear_output(handle)` \
+                  instead to discard buffered output without reading it.",
+    )
 }
 
 /// `read_output` — see the module doc.
@@ -585,9 +577,7 @@ impl Tool for ReadOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         // Deprecation, kept for one release (#2699): a caller still sending
@@ -691,9 +681,7 @@ impl Tool for ClearOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -771,17 +759,13 @@ impl Tool for SendStdin {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let text = match crate::input::required_str(input, "text") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         // Take stdin out under the lock, write outside it (a lock guard
@@ -789,24 +773,21 @@ impl Tool for SendStdin {
         let mut stdin = {
             let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(tomb) = table.tombstones.get(handle) {
-                return ToolOutput::Error {
-                    message: format!("{handle} has already exited (code {})", tomb.exit_code),
-                };
+                return ToolOutput::error(format!(
+                    "{handle} has already exited (code {})",
+                    tomb.exit_code
+                ));
             }
             let Some(entry) = table.entries.get_mut(handle) else {
                 return unknown_handle_error(&table, handle);
             };
             if let Some(code) = entry.poll_exit() {
-                return ToolOutput::Error {
-                    message: format!("{handle} has already exited (code {code})"),
-                };
+                return ToolOutput::error(format!("{handle} has already exited (code {code})"));
             }
             match entry.stdin.take() {
                 Some(stdin) => stdin,
                 None => {
-                    return ToolOutput::Error {
-                        message: format!("{handle}'s stdin is closed"),
-                    };
+                    return ToolOutput::error(format!("{handle}'s stdin is closed"));
                 }
             }
         };
@@ -819,9 +800,7 @@ impl Tool for SendStdin {
             Ok(()) => ToolOutput::Ok {
                 content: format!("wrote {} bytes to {handle}", text.len()),
             },
-            Err(e) => ToolOutput::Error {
-                message: format!("write to {handle} stdin failed: {e}"),
-            },
+            Err(e) => ToolOutput::error(format!("write to {handle} stdin failed: {e}")),
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
         // Put the handle back ONLY if no stop_process closed stdin while the
@@ -865,9 +844,7 @@ impl Tool for StopProcess {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -890,14 +867,14 @@ impl Tool for StopProcess {
                 content: format!("{handle} had already exited (code {code})"),
             };
         }
-        ToolOutput::Error {
-            message: service::StopRefusal::LiveService {
+        ToolOutput::error(
+            service::StopRefusal::LiveService {
                 handle: handle.to_string(),
                 display: entry.display.clone(),
                 name: entry.name.clone(),
             }
             .to_string(),
-        }
+        )
     }
 }
 

@@ -209,9 +209,7 @@ impl<'a> Engine<'a> {
                 if answered.contains(&index) {
                     continue;
                 }
-                let output = ToolOutput::Error {
-                    message: HALTED_TOOL_RESULT.to_string(),
-                };
+                let output = ToolOutput::error(HALTED_TOOL_RESULT.to_string());
                 let _ = events.send(AgentEvent::ToolResult {
                     call_id: call.call_id.clone(),
                     output: output.clone(),
@@ -455,7 +453,7 @@ mod tests {
             }
         }
         match eternal_result {
-            Some(ToolOutput::Error { message }) => assert!(
+            Some(ToolOutput::Error { message, .. }) => assert!(
                 message.contains("turn halt fired"),
                 "the killed sibling's synthetic answer names the halt: {message}"
             ),

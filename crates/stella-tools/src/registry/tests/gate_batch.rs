@@ -34,7 +34,7 @@ async fn a_batch_landing_a_duplicate_table_is_blocked_by_the_gate() {
         )
         .await;
     match result {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("users"),
                 "the gate names the duplicate: {message}"

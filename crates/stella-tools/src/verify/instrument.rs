@@ -372,7 +372,7 @@ mod tests {
             )
             .await;
         let broken = match &broken {
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
             other => panic!("expected a refusal, got {other:?}"),
         };
         assert!(
@@ -409,7 +409,7 @@ mod tests {
             )
             .await;
         let genuine = match &genuine {
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
             other => panic!("expected a refusal, got {other:?}"),
         };
         assert!(

@@ -473,7 +473,7 @@ fn render_transcript_tail(messages: &[CompletionMessage], max_chars: usize) -> S
         for result in &message.tool_results {
             let (status, body) = match &result.output {
                 stella_protocol::ToolOutput::Ok { content } => ("ok", content),
-                stella_protocol::ToolOutput::Error { message } => ("error", message),
+                stella_protocol::ToolOutput::Error { message, .. } => ("error", message),
             };
             block.push_str(&format!(
                 "\n  [{} {}: {}]",

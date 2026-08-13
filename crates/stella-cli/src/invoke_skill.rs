@@ -204,12 +204,10 @@ impl InvokeSkillTools {
     #[must_use]
     pub fn grant_refusal(&self, name: &str) -> Option<ToolOutput> {
         let slug = self.denying_slug(name)?;
-        Some(ToolOutput::Error {
-            message: format!(
-                "`{name}` is unavailable while skill `{slug}` is active — its allowed-tools \
+        Some(ToolOutput::error(format!(
+            "`{name}` is unavailable while skill `{slug}` is active — its allowed-tools \
                  grant scopes this turn to a narrower tool set"
-            ),
-        })
+        )))
     }
 
     /// Drop every schema a live grant withholds.
@@ -262,25 +260,22 @@ impl InvokeSkillTools {
         include_workspace: bool,
     ) -> ToolOutput {
         if crate::settings::filesystem_settings_disabled() {
-            return ToolOutput::Error {
-                message: "invoke_skill is disabled by benchmark filesystem isolation".into(),
-            };
+            return ToolOutput::error("invoke_skill is disabled by benchmark filesystem isolation");
         }
         let Some(name) = input.get("skill").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::Error {
-                message: "invoke_skill: missing required string field `skill` — find names \
-                     with skill_search"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "invoke_skill: missing required string field `skill` — find names \
+                     with skill_search",
+            );
         };
         if name.is_empty() {
-            return ToolOutput::Error {
-                message: "invoke_skill: `skill` is empty".into(),
-            };
+            return ToolOutput::error("invoke_skill: `skill` is empty");
         }
         let arguments = match render_arguments(input.get("arguments")) {
             Ok(arguments) => arguments,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
 
         // Fresh load, same as skill_search: a skill installed seconds ago is
@@ -309,12 +304,10 @@ impl InvokeSkillTools {
         .unwrap_or_default();
 
         let Some((skill, directives)) = loaded else {
-            return ToolOutput::Error {
-                message: format!(
-                    "no installed skill named `{name}` — use skill_search to find the \
+            return ToolOutput::error(format!(
+                "no installed skill named `{name}` — use skill_search to find the \
                      right name, or search_skills for the public registry"
-                ),
-            };
+            ));
         };
 
         match directives.mode {
@@ -402,14 +395,12 @@ impl InvokeSkillTools {
             slot.clone()
         };
         let Some(dispatcher) = dispatcher else {
-            return ToolOutput::Error {
-                message: format!(
-                    "skill `{}` is fork-mode (context: fork) but no sub-agent runner is \
+            return ToolOutput::error(format!(
+                "skill `{}` is fork-mode (context: fork) but no sub-agent runner is \
                      attached in this session — do the work directly, using the skill's \
                      guidance from skill_search",
-                    skill.name
-                ),
-            };
+                skill.name
+            ));
         };
 
         let mut notes = directive_notes(directives);
@@ -532,12 +523,12 @@ fn render_fork_outcome(skill: &str, outcome: &SubAgentOutcome, notes: &str) -> T
                 ),
             }
         }
-        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::Error {
-            message: format!("skill `{skill}` stopped before producing anything: {reason}"),
-        },
-        SubAgentOutcome::Refused { reason } => ToolOutput::Error {
-            message: format!("skill `{skill}` was not started: {reason}"),
-        },
+        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
+            "skill `{skill}` stopped before producing anything: {reason}"
+        )),
+        SubAgentOutcome::Refused { reason } => {
+            ToolOutput::error(format!("skill `{skill}` was not started: {reason}"))
+        }
     }
 }
 
@@ -838,7 +829,7 @@ mod tests {
         let out =
             invoke_with_isolated_home(ws.path(), &tools, serde_json::json!({"skill": "fork-only"}));
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("fork-only"), "{message}");
                 assert!(message.contains("no sub-agent runner"), "{message}");
             }
@@ -854,7 +845,7 @@ mod tests {
         let out =
             invoke_with_isolated_home(ws.path(), &tools, serde_json::json!({"skill": "nope"}));
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("skill_search"), "{message}")
             }
             other => panic!("expected an error, got {other:?}"),

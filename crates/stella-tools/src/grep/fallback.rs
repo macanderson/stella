@@ -248,28 +248,24 @@ impl Fallback<'_> {
     /// Run the search, or say why it could not be run.
     pub(super) async fn run(&self) -> ToolOutput {
         if let Some(gap) = ere_gap(self.pattern) {
-            return ToolOutput::Error {
-                message: format!(
-                    "grep: ripgrep is not installed, so this search runs POSIX `grep -E`, which \
+            return ToolOutput::error(format!(
+                "grep: ripgrep is not installed, so this search runs POSIX `grep -E`, which \
                      cannot execute {} in pattern `{}`. Rewrite it in POSIX ERE — alternation \
                      `|`, groups, `+`, `?` and `{{n,m}}` all work — and search again ({}).",
-                    gap.construct(),
-                    crate::exec::truncate_preview(self.pattern, 120),
-                    gap.alternative(),
-                ),
-            };
+                gap.construct(),
+                crate::exec::truncate_preview(self.pattern, 120),
+                gap.alternative(),
+            ));
         }
         // Same cancellation backstop as the rg arm: `run_captured` sets
         // `kill_on_drop`, so a cancelled turn does not leave a recursive walk
         // burning IO, and bounds the wait so a wedged walk cannot hold the
         // turn open.
         match crate::exec::run_captured(self.command(), FALLBACK_SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error {
-                message: format!(
-                    "grep timed out after {FALLBACK_SEARCH_TIMEOUT_SECS}s — narrow the \
+            crate::exec::Captured::TimedOut => ToolOutput::error(format!(
+                "grep timed out after {FALLBACK_SEARCH_TIMEOUT_SECS}s — narrow the \
                      search with a `path` or `glob` filter"
-                ),
-            },
+            )),
             crate::exec::Captured::Done(output) => {
                 // `grep` has no `--max-columns`, so the column cap is applied
                 // here; then the same byte-then-line order as the rg arm.
@@ -311,9 +307,7 @@ impl Fallback<'_> {
                 }
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if output.status.code() == Some(2) && is_pattern_error(&stderr) {
-                    return ToolOutput::Error {
-                        message: format!("grep error: {}", first_error_line(&stderr)),
-                    };
+                    return ToolOutput::error(format!("grep error: {}", first_error_line(&stderr)));
                 }
                 let mut empty = no_matches(self.footer, self.show_tip, self.root);
                 if let ToolOutput::Ok { content } = &mut empty {
@@ -321,9 +315,9 @@ impl Fallback<'_> {
                 }
                 empty
             }
-            crate::exec::Captured::Unavailable => ToolOutput::Error {
-                message: "grep failed: neither `rg` nor `grep` is available".into(),
-            },
+            crate::exec::Captured::Unavailable => {
+                ToolOutput::error("grep failed: neither `rg` nor `grep` is available")
+            }
         }
     }
 }
@@ -458,7 +452,7 @@ mod tests {
     async fn a_pattern_the_backend_cannot_execute_is_refused_not_answered() {
         let dir = fixture();
         let out = search(dir.path(), "AKIA\\d{16}").await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a Rust-only escape must be refused, got {out:?}");
         };
         assert!(message.contains("\\d"), "names the construct: {message}");

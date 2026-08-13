@@ -25,7 +25,7 @@ fn tool_error_msg(call_id: &str, message: String) -> CompletionMessage {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: call_id.into(),
-            output: ToolOutput::Error { message },
+            output: ToolOutput::error(message),
         }],
         attachments: Vec::new(),
     }
@@ -762,7 +762,7 @@ fn small_error_output_is_left_intact() {
     ];
     compact(&mut messages, 200);
     match &messages[2].tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert_eq!(message, "diagnostic that matters")
         }
         _ => panic!("small error diagnostics must survive compaction"),
@@ -786,7 +786,7 @@ fn aging_shrinks_old_error_outputs_keeping_head_and_tail_before_eviction() {
     assert!(report.aged >= 1, "{report:?}");
     assert_eq!(report.evicted, 0, "aging must run before eviction");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.starts_with("HEADLINE"), "head lost: {message:.40}");
             assert!(message.ends_with("TAILLINE"), "tail lost");
             assert!(message.contains("middle elided"));
@@ -810,7 +810,7 @@ fn large_error_output_is_evicted_like_large_ok() {
     let report = compact(&mut messages, 200).expect("should compact");
     assert!(report.evicted >= 1, "{report:?}");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Error { message } => assert!(message.contains("evicted")),
+        ToolOutput::Error { message, .. } => assert!(message.contains("evicted")),
         _ => panic!("expected an eviction stub that keeps the error variant"),
     }
 }
@@ -847,7 +847,7 @@ fn red_loop_of_large_errors_is_reclaimable() {
     );
     // The most recent failure — the one the agent is acting on — survives.
     match &messages[8].tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.starts_with("failure 4"),
                 "latest error must survive whole"

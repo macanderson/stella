@@ -102,9 +102,7 @@ impl ToolExecutor for NoTools {
     }
 
     async fn execute(&self, _name: &str, _input: &serde_json::Value) -> ToolOutput {
-        ToolOutput::Error {
-            message: "no tools".to_string(),
-        }
+        ToolOutput::error("no tools".to_string())
     }
 }
 

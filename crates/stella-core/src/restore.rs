@@ -613,12 +613,7 @@ mod tests {
     fn failed_reads_and_tail_reread_paths_are_not_working_set() {
         let span = vec![
             read_call("c1", "gone.rs"),
-            read_result(
-                "c1",
-                ToolOutput::Error {
-                    message: "no such file".into(),
-                },
-            ),
+            read_result("c1", ToolOutput::error("no such file")),
             read_call("c2", "kept.rs"),
             read_result("c2", ok("kept content")),
             read_call("c3", "lost.rs"),

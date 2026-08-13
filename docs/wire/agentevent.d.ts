@@ -371,6 +371,29 @@ export type DeliveryOutcome = {
 };
 
 /**
+ * Why a tool call failed, as a closed machine-readable set (#3145).
+ *
+ * [`ToolOutput::Error`]'s `message` is prose written for the model to retry
+ * against; this is the axis a *measurement* needs, because a per-tool error
+ * rate cannot mean anything while a tool defect, model misuse, and a policy
+ * refusal all count as the same failure. The variants partition failures by
+ * **whose problem they are**: the model's ([`Self::InvalidInput`],
+ * [`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],
+ * [`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],
+ * [`Self::Environment`]), or ours ([`Self::Internal`]).
+ *
+ * Deliberately **not** here: an `abandoned` class. A call whose turn ended
+ * before it returned never produced a `ToolOutput` at all — abandonment is a
+ * store-side lifecycle fact, not an error a tool can report.
+ *
+ * Forward-compat matches [`crate::receipt::BlockKind`]: an unknown token
+ * written by a newer emitter deserializes to [`Self::Other`] rather than
+ * failing the whole event. Lossy on the way out for the same reason —
+ * re-serializing writes `"other"`, not the original token.
+ */
+export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
+
+/**
  * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
  * by the tool that touched it, which is why [`Self::is_mutation`] answers
  * "was this call a write" and never "did the tree change". See the variant's
@@ -1196,6 +1219,17 @@ export type ToolOutput = {
   };
 } | {
   error: {
+    /**
+     * Which [`ErrorClass`] this failure falls in (#3145). `None` is a
+     * declared default meaning "unclassified" — the site that built
+     * this error has not been audited into a class yet, which is
+     * distinct from any class it could be assigned. Optional and
+     * absent-when-`None` so every payload written before the field
+     * existed round-trips byte-identically (invariant #4), and so the
+     * message bytes the model sees are never perturbed by
+     * classification.
+     */
+    class?: ErrorClass | null;
     /**
      * Why it failed, phrased so the model can act on it — the model
      * sees this text and retries against it.

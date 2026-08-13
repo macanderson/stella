@@ -50,17 +50,13 @@ impl Tool for WriteFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let content = match crate::input::required_str(input, "content") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
 
@@ -72,9 +68,7 @@ impl Tool for WriteFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
@@ -93,12 +87,10 @@ impl Tool for WriteFile {
                     content: format!("wrote {bytes} bytes to {path}"),
                 }
             }
-            Err(e) if e.is_escape() => ToolOutput::Error {
-                message: format!("path `{path}` escapes workspace root ({e})"),
-            },
-            Err(e) => ToolOutput::Error {
-                message: format!("failed to write `{path}`: {e}"),
-            },
+            Err(e) if e.is_escape() => {
+                ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"))
+            }
+            Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
         }
     }
 }
@@ -119,7 +111,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("wrote 12 bytes")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let written = tokio::fs::read_to_string(dir.join(&path)).await.unwrap();
         assert_eq!(written, "hello stella");

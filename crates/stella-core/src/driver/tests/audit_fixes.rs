@@ -137,7 +137,7 @@ async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
             AgentEvent::ToolResult {
                 call_id,
                 speculated: false,
-                output: ToolOutput::Error { message },
+                output: ToolOutput::Error { message, .. },
                 ..
             } if call_id == "call_1" && message.contains("not executed")
         )),

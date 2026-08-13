@@ -109,15 +109,13 @@ impl Tool for ProbeCapability {
         let name = match input.get("name").and_then(Value::as_str) {
             Some(n) => n,
             None => {
-                return ToolOutput::Error {
-                    message: "missing required string field \"name\"".to_string(),
-                };
+                return ToolOutput::error("missing required string field \"name\"".to_string());
             }
         };
 
         // Validate the name.
         if let Err(message) = validate_name(name) {
-            return ToolOutput::Error { message };
+            return ToolOutput::error(message);
         }
 
         // Check memoized result first.
@@ -130,12 +128,10 @@ impl Tool for ProbeCapability {
                 Some(path) => ToolOutput::Ok {
                     content: format!("{}: {}", name, path.display()),
                 },
-                None => ToolOutput::Error {
-                    message: format!(
-                        "{}: not found on PATH (cached for this session — install mid-session won't be seen until restart)",
-                        name
-                    ),
-                },
+                None => ToolOutput::error(format!(
+                    "{}: not found on PATH (cached for this session — install mid-session won't be seen until restart)",
+                    name
+                )),
             };
         }
         drop(memo);
@@ -150,9 +146,10 @@ impl Tool for ProbeCapability {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 memo.insert(name.to_string(), probe);
-                return ToolOutput::Error {
-                    message: format!("{}: PATH is not set (cached for this session)", name),
-                };
+                return ToolOutput::error(format!(
+                    "{}: PATH is not set (cached for this session)",
+                    name
+                ));
             }
         };
 
@@ -179,9 +176,7 @@ impl Tool for ProbeCapability {
                 content: result_str,
             }
         } else {
-            ToolOutput::Error {
-                message: result_str,
-            }
+            ToolOutput::error(result_str)
         }
     }
 }
@@ -204,7 +199,7 @@ mod tests {
                     content
                 );
             }
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 panic!("sh should resolve on test system; got error: {}", message);
             }
         }
@@ -220,7 +215,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 panic!("Expected error for absent tool; got: {}", content);
             }
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("not found on PATH"),
                     "Expected not-found message, got: {}",
@@ -243,7 +238,7 @@ mod tests {
         // First call — memo miss, PATH walk happens.
         let output1 = tool.execute(&input, std::path::Path::new("/")).await;
         match output1 {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("not found on PATH"));
             }
             ToolOutput::Ok { .. } => panic!("Expected error for absent tool"),
@@ -252,7 +247,7 @@ mod tests {
         // Second call — should hit memo without walking PATH.
         let output2 = tool.execute(&input, std::path::Path::new("/")).await;
         match output2 {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("not found on PATH"));
                 assert!(message.contains("cached for this session"));
             }
@@ -282,7 +277,7 @@ mod tests {
             let output = tool.execute(&input, std::path::Path::new("/")).await;
 
             match output {
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     assert!(
                         message.contains("invalid capability name"),
                         "Expected validation error for {} ({}); got: {}",
@@ -314,7 +309,7 @@ mod tests {
             // We don't assert Success here (the binary may not exist), just that
             // validation passed (either Ok or "not found").
             match output {
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     assert!(
                         message.contains("not found on PATH")
                             || message.contains("PATH is not set"),
@@ -338,7 +333,7 @@ mod tests {
         let output = tool.execute(&input, std::path::Path::new("/")).await;
 
         match output {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("missing required string field"));
             }
             ToolOutput::Ok { .. } => panic!("Expected error for missing field"),

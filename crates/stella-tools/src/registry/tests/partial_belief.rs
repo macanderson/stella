@@ -66,7 +66,7 @@ async fn a_partial_read_cannot_authorize_a_blind_whole_file_overwrite() {
         .await;
 
     match &wrote {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("notes.txt"),
                 "the refusal names the file so the model can act on it: {message}"

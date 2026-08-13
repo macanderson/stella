@@ -363,9 +363,7 @@ impl Tool for Search {
         let query = match crate::input::optional_str(input, "query") {
             Ok(query) => query.unwrap_or_default(),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         // Validation (the blank-query refusal included) lives in [`report`],
@@ -440,9 +438,7 @@ impl SearchReport {
             hits: Vec::new(),
             strategies: Vec::new(),
             note: None,
-            rendered: ToolOutput::Error {
-                message: message.into(),
-            },
+            rendered: ToolOutput::error(message),
         }
     }
 }

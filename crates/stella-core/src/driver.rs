@@ -1860,17 +1860,15 @@ impl<'a> Engine<'a> {
         };
         match tokio::time::timeout(limit, self.dispatch_tool_call(call, read_only, events)).await {
             Ok(output) => output,
-            Err(_) => ToolOutput::Error {
-                message: format!(
-                    "tool `{}` exceeded the engine's {}s dispatch ceiling and was abandoned \
+            Err(_) => ToolOutput::error(format!(
+                "tool `{}` exceeded the engine's {}s dispatch ceiling and was abandoned \
                      before it returned — it produced no result, and any work it had already \
                      done outside this process may or may not have landed. This backstop fires \
                      only when a tool overruns its own timeout, so an identical retry will \
                      likely hang the same way: narrow the input, or reach the goal another way.",
-                    call.name,
-                    limit.as_secs()
-                ),
-            },
+                call.name,
+                limit.as_secs()
+            )),
         }
     }
 }

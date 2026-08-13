@@ -167,9 +167,7 @@ fn failed_tool_results_carry_error_status_not_a_text_prefix() {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: "tooluse_1".into(),
-            output: ToolOutput::Error {
-                message: "no such file".into(),
-            },
+            output: ToolOutput::error("no such file"),
         }],
         attachments: Vec::new(),
     }];

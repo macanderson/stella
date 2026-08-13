@@ -504,7 +504,7 @@ async fn bash_is_registered_with_no_options_at_all() {
         .await;
     match out {
         ToolOutput::Ok { content } => assert!(content.contains("bash_default_on")),
-        ToolOutput::Error { message } => panic!("default bash must run: {message}"),
+        ToolOutput::Error { message, .. } => panic!("default bash must run: {message}"),
     }
     // The default options carry no policy at all any more — the only
     // switch left is the host attestation.
@@ -852,6 +852,7 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 }
 
 mod chain;
+mod error_class;
 mod fence;
 mod file_change;
 mod gate_batch;
@@ -913,7 +914,7 @@ async fn one_agent_cannot_clobber_another_agents_edit() {
         )
         .await;
     match &a_wrote {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("shared.txt"),
                 "the refusal names the file so the model can act on it: {message}"
@@ -1033,7 +1034,7 @@ async fn a_ranged_read_does_not_launder_an_unseen_edit_into_belief() {
         )
         .await;
     match &a_wrote {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("shared.txt"),
             "the refusal names the file so the model can act on it: {message}"
         ),
@@ -1222,7 +1223,7 @@ async fn a_windowed_read_still_guards_against_a_concurrent_edit() {
         )
         .await;
     match &a_wrote {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("big.txt"),
             "the refusal names the file: {message}"
         ),
@@ -1371,7 +1372,7 @@ async fn a_windowed_re_read_recovers_a_file_too_big_to_read_whole() {
         )
         .await;
     match &still_refused {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("only seen part of"),
             "B's edit is no longer the objection; the unseen tail is: {message}"
         ),

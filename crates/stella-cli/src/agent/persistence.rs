@@ -280,7 +280,7 @@ pub(crate) fn spawn_renderer(
                             .unwrap_or("tool");
                         let content = match output {
                             ToolOutput::Ok { content } => content.clone(),
-                            ToolOutput::Error { message } => message.clone(),
+                            ToolOutput::Error { message, .. } => message.clone(),
                         };
                         plain::tool_result_card(
                             name,

@@ -204,7 +204,7 @@ impl TurnFriction {
                 let pass = &mut self.tools[index];
                 pass.duration_ms = *duration_ms;
                 pass.error = match output {
-                    ToolOutput::Error { message } => Some(message.clone()),
+                    ToolOutput::Error { message, .. } => Some(message.clone()),
                     ToolOutput::Ok { .. } => None,
                 };
             }
@@ -659,7 +659,7 @@ fn render(message: &CompletionMessage, names: &HashMap<&str, &str>, cap: usize) 
             .copied()
             .unwrap_or("tool");
         parts.push(match &result.output {
-            ToolOutput::Error { message } => format!("{name} FAILED: {}", clip(message, share)),
+            ToolOutput::Error { message, .. } => format!("{name} FAILED: {}", clip(message, share)),
             ToolOutput::Ok { content } => format!("{name} ok: {}", clip(content, share)),
         });
     }

@@ -389,9 +389,7 @@ impl Tool for Grep {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
@@ -399,7 +397,9 @@ impl Tool for Grep {
         let type_filter = input.get("type").and_then(|v| v.as_str());
         let opts = match SearchOptions::parse(input) {
             Ok(o) => o,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         // The `graph_query` pointer rides a footer only when the pattern reads
         // like a definition/reference hunt — the case the graph serves better.
@@ -411,9 +411,7 @@ impl Tool for Grep {
         let search_dir = match crate::resolve_within_root(root, search_path) {
             Some(p) => p,
             None => {
-                return ToolOutput::Error {
-                    message: format!("path `{search_path}` escapes workspace root"),
-                };
+                return ToolOutput::error(format!("path `{search_path}` escapes workspace root"));
             }
         };
 
@@ -509,12 +507,10 @@ impl Tool for Grep {
         // keep burning IO after the user stopped asking. It also bounds the
         // wait, so a walk that wedges cannot hold the turn open either.
         match crate::exec::run_captured(rg, SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error {
-                message: format!(
-                    "rg timed out after {SEARCH_TIMEOUT_SECS}s — narrow the search with a \
+            crate::exec::Captured::TimedOut => ToolOutput::error(format!(
+                "rg timed out after {SEARCH_TIMEOUT_SECS}s — narrow the search with a \
                      `path` or `glob` filter"
-                ),
-            },
+            )),
             crate::exec::Captured::Done(output) => {
                 // Byte cap BEFORE the line cap: truncating after `take` would
                 // make the "showing first 200 matches" note below a lie, and
@@ -549,9 +545,7 @@ impl Tool for Grep {
                 // during the walk is benign and stays "(no matches)".
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if output.status.code() == Some(2) && is_pattern_error(&stderr) {
-                    return ToolOutput::Error {
-                        message: format!("rg error: {}", first_error_line(&stderr)),
-                    };
+                    return ToolOutput::error(format!("rg error: {}", first_error_line(&stderr)));
                 }
                 no_matches(self.footer, show_tip, root)
             }
@@ -695,7 +689,7 @@ mod tests {
         let out = Grep::bare()
             .execute(&serde_json::json!({"pattern": 42}), dir.path())
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("expected Error, got {out:?}");
         };
         assert!(message.contains("must be a string"), "got {message}");
@@ -706,7 +700,7 @@ mod tests {
         let out = Grep::bare()
             .execute(&serde_json::json!({}), dir.path())
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("expected Error");
         };
         assert_eq!(message, "missing required field `pattern`");
@@ -832,7 +826,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("hello world") || content.contains("hello"));
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -857,7 +851,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("no matches"), "{content}")
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -880,7 +874,7 @@ mod tests {
                 content.contains("->"),
                 "the arrow pattern should match the fixture, got: {content}"
             ),
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 panic!("a `->` search should succeed, got error: {message}")
             }
         }
@@ -917,7 +911,7 @@ mod tests {
                     "`.git` must stay out of the results: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 
@@ -964,7 +958,7 @@ mod tests {
                     content.len()
                 );
             }
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 
@@ -1022,7 +1016,7 @@ mod tests {
                     "maps the matched file's symbols: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 
@@ -1044,7 +1038,7 @@ mod tests {
                     "single-file searches map the target: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 
@@ -1061,7 +1055,7 @@ mod tests {
                 content.contains("graph_query"),
                 "a bare-identifier search nudges: {content}"
             ),
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
 
         // A regex text pattern that still matches the file but isn't a symbol
@@ -1080,7 +1074,7 @@ mod tests {
                     "no nudge on a text scan: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 
@@ -1106,7 +1100,7 @@ mod tests {
                     "an empty symbol hunt steers at the graph: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
 
         // A free-text scan that finds nothing stays bare — the nudge must not
@@ -1122,7 +1116,7 @@ mod tests {
                 !content.contains("graph_query"),
                 "no nudge on an empty text scan: {content}"
             ),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -1138,7 +1132,7 @@ mod tests {
                 !content.contains("code map"),
                 "no index → the result is exactly the matches: {content}"
             ),
-            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected matches, got: {message}"),
         }
     }
 }

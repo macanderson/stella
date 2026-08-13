@@ -337,9 +337,10 @@ impl ToolRegistry {
     ) -> Result<(), ToolOutput> {
         match self.approval_broker().resolve(Some(bus), &request).await {
             ApprovalOutcome::Approved => Ok(()),
-            ApprovalOutcome::Denied { reason } => Err(ToolOutput::Error {
-                message: format!("{context} requires approval — {reason}"),
-            }),
+            ApprovalOutcome::Denied { reason } => Err(ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!("{context} requires approval — {reason}"),
+            )),
         }
     }
 
@@ -366,9 +367,10 @@ impl ToolRegistry {
         // withholds the tool) — see [`OperatorPosture`].
         match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
             GateVerdict::Deny { reason } => {
-                return Err(ToolOutput::Error {
-                    message: format!("`{name}` was denied by an extension policy: {reason}"),
-                });
+                return Err(ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!("`{name}` was denied by an extension policy: {reason}"),
+                ));
             }
             GateVerdict::RequireApproval { reason } => {
                 let request = ApprovalRequest {
@@ -495,12 +497,13 @@ impl ToolRegistry {
                 match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false)
                 {
                     GateVerdict::Deny { reason } => {
-                        return Err(ToolOutput::Error {
-                            message: format!(
+                        return Err(ToolOutput::classified_error(
+                            stella_protocol::ErrorClass::RefusedByPolicy,
+                            format!(
                                 "`{name}` on `{}` was denied by an extension policy: {reason}",
                                 pending.path
                             ),
-                        });
+                        ));
                     }
                     GateVerdict::RequireApproval { reason } => {
                         let request = ApprovalRequest {
@@ -529,9 +532,10 @@ impl ToolRegistry {
             ));
             match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
                 GateVerdict::Deny { reason } => {
-                    return Err(ToolOutput::Error {
-                        message: format!("command was denied by an extension policy: {reason}"),
-                    });
+                    return Err(ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::RefusedByPolicy,
+                        format!("command was denied by an extension policy: {reason}"),
+                    ));
                 }
                 GateVerdict::RequireApproval { reason } => {
                     let request = ApprovalRequest {
@@ -665,7 +669,7 @@ mod tests {
         reg.attach_approval_responder(Scripted::denying("not on my watch"), Duration::from_secs(5));
 
         match reg.execute("task_list", &serde_json::json!({})).await {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("not on my watch"),
                     "the human's words reach the model: {message}"
@@ -694,7 +698,7 @@ mod tests {
         reg.attach_approval_responder(Arc::new(NeverAnswers), Duration::from_millis(30));
 
         match reg.execute("task_list", &serde_json::json!({})).await {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains(APPROVAL_TIMED_OUT),
                     "the timeout is named: {message}"
@@ -797,7 +801,7 @@ mod tests {
         let (_dir, reg, _bus) = fixture(hook_names::TOOL_CALL_REQUESTED, "policy wants a human");
         // No responder attached: the headless default.
         match reg.execute("task_list", &serde_json::json!({})).await {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("no interactive surface"),
                     "the missing surface is named: {message}"
@@ -833,7 +837,7 @@ mod tests {
         );
         let out = reg.execute("write_file", &input).await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("notes.txt"),
                     "the path is named: {message}"
@@ -863,7 +867,7 @@ mod tests {
             .execute("bash", &serde_json::json!({ "command": "true" }))
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("not that host"), "{message}");
             }
             other => panic!("denied command must not run: {other:?}"),

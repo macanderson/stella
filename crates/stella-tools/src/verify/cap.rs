@@ -267,7 +267,7 @@ mod tests {
         for call in 1..=2 {
             let out = tool.execute(&vacuous_input(), &root).await;
             let message = match &out {
-                ToolOutput::Error { message } => message.clone(),
+                ToolOutput::Error { message, .. } => message.clone(),
                 other => panic!("call {call} should be VACUOUS, got {other:?}"),
             };
             assert!(message.contains("VACUOUS"), "call {call}: {message}");
@@ -279,7 +279,7 @@ mod tests {
 
         let out = tool.execute(&vacuous_input(), &root).await;
         let message = match &out {
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
             other => panic!("the capped call must be a refusal, not a pass: {other:?}"),
         };
         assert!(
@@ -315,7 +315,7 @@ mod tests {
         for call in 1..=3 {
             let out = tool.execute(&vacuous_input(), &root).await;
             match &out {
-                ToolOutput::Error { message } => assert!(
+                ToolOutput::Error { message, .. } => assert!(
                     message.contains("VACUOUS"),
                     "call {call} was capped without a turn bracket: {message}"
                 ),

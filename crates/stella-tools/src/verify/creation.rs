@@ -450,7 +450,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("WITNESS_INCONCLUSIVE_BUILD_ERROR"),
                     "{message}"

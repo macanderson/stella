@@ -143,9 +143,7 @@ mod tests {
         });
         fold.observe(&AgentEvent::ToolResult {
             call_id: "a".to_string(),
-            output: ToolOutput::Error {
-                message: "nope".to_string(),
-            },
+            output: ToolOutput::error("nope".to_string()),
             duration_ms: 3,
             speculated: false,
         });

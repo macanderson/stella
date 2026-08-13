@@ -360,6 +360,16 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// reader groups on this column, and an interrupt charging an "error" to
 /// whatever tool was in flight made those rates dishonest.
 ///
+/// `error_class` (v25, #3145) is the machine-readable half of `error`: the
+/// `snake_case` [`ErrorClass`](stella_protocol::ErrorClass) token projected
+/// from the failing `ToolOutput`, or `''` for unclassified. It exists because
+/// a per-tool error *rate* means nothing while a tool defect, model misuse,
+/// and a policy refusal all count the same — and `error` is prose written for
+/// the model, so the only way to separate them was to match on that prose.
+/// `''` is not a class: it says the site that produced this failure has not
+/// been audited into one yet, which an error-rate ceiling must not read as
+/// "our bug".
+///
 /// `ts` is now the moment the call was **announced** rather than the moment
 /// the turn ended, so per-day rollups bucket a call on the day it ran.
 ///
@@ -391,6 +401,7 @@ pub(crate) fn tool_calls_ddl(table: &str) -> String {
        state TEXT NOT NULL DEFAULT 'ok'
          CHECK(state IN ('running', 'ok', 'error', 'abandoned')),
        error TEXT NOT NULL DEFAULT '',
+       error_class TEXT NOT NULL DEFAULT '',
        bytes_out INTEGER NOT NULL DEFAULT 0,
        duration_ms INTEGER NOT NULL DEFAULT 0,
        ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

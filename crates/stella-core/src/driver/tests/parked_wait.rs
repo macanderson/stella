@@ -175,7 +175,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
             std::iter::once(m.content.trim().to_string()).chain(m.tool_results.iter().map(|r| {
                 match &r.output {
                     ToolOutput::Ok { content } => content.trim().to_string(),
-                    ToolOutput::Error { message } => message.trim().to_string(),
+                    ToolOutput::Error { message, .. } => message.trim().to_string(),
                 }
             }))
         })

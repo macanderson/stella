@@ -49,9 +49,7 @@ impl ToolExecutor for Chain {
             Some(content) => ToolOutput::Ok {
                 content: content.clone(),
             },
-            None => ToolOutput::Error {
-                message: format!("unknown tool `{name}`"),
-            },
+            None => ToolOutput::error(format!("unknown tool `{name}`")),
         }
     }
 }
@@ -149,7 +147,7 @@ async fn the_witness_fails_without_the_tool_and_passes_with_it() {
             content.contains("alpha-contents"),
             "the tool must produce the capability's answer: {content}"
         ),
-        ToolOutput::Error { message } => panic!("the tool must answer: {message}"),
+        ToolOutput::Error { message, .. } => panic!("the tool must answer: {message}"),
     }
 
     // And that is exactly what `prove` reports, end to end.

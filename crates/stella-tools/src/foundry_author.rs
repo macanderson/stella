@@ -497,9 +497,7 @@ mod tests {
                 Vec::new()
             }
             async fn execute(&self, _: &str, _: &serde_json::Value) -> ToolOutput {
-                ToolOutput::Error {
-                    message: "no inner".into(),
-                }
+                ToolOutput::error("no inner")
             }
         }
         let inner = NoInner;
@@ -512,7 +510,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("built delivered.txt"), "{content}")
             }
-            ToolOutput::Error { message } => panic!("expected ok: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
         }
     }
 

@@ -54,9 +54,7 @@ fn ok(content: &str) -> ToolOutput {
 }
 
 fn failed(message: &str) -> ToolOutput {
-    ToolOutput::Error {
-        message: message.into(),
-    }
+    ToolOutput::error(message)
 }
 
 /// `steps` routine tool exchanges around one that failed at `at`.

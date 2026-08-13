@@ -111,9 +111,7 @@ fn error_results_are_framed_as_error_objects() {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: "call_1".into(),
-            output: ToolOutput::Error {
-                message: "no such file".into(),
-            },
+            output: ToolOutput::error("no such file"),
         }],
         attachments: Vec::new(),
     }];

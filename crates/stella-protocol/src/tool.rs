@@ -62,6 +62,97 @@ pub struct ToolCall {
     pub input: serde_json::Value,
 }
 
+/// Why a tool call failed, as a closed machine-readable set (#3145).
+///
+/// [`ToolOutput::Error`]'s `message` is prose written for the model to retry
+/// against; this is the axis a *measurement* needs, because a per-tool error
+/// rate cannot mean anything while a tool defect, model misuse, and a policy
+/// refusal all count as the same failure. The variants partition failures by
+/// **whose problem they are**: the model's ([`Self::InvalidInput`],
+/// [`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],
+/// [`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],
+/// [`Self::Environment`]), or ours ([`Self::Internal`]).
+///
+/// Deliberately **not** here: an `abandoned` class. A call whose turn ended
+/// before it returned never produced a `ToolOutput` at all — abandonment is a
+/// store-side lifecycle fact, not an error a tool can report.
+///
+/// Forward-compat matches [`crate::receipt::BlockKind`]: an unknown token
+/// written by a newer emitter deserializes to [`Self::Other`] rather than
+/// failing the whole event. Lossy on the way out for the same reason —
+/// re-serializing writes `"other"`, not the original token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorClass {
+    /// The call's arguments could not be read as the tool's schema — a
+    /// missing required field, a wrong type. The model's mistake: it counts
+    /// against the prompt/tool menu, never against the tool.
+    InvalidInput,
+    /// The named subject does not exist — an unknown tool, a path or symbol
+    /// that is not there to operate on.
+    NotFound,
+    /// The operating environment refused the operation (filesystem
+    /// permissions, containment) — distinct from a *policy* refusal, which
+    /// is [`Self::RefusedByPolicy`].
+    PermissionDenied,
+    /// A policy plane declined the call — an extension deny, a human "no",
+    /// an approval that could not be asked. Working as designed, never a
+    /// tool defect.
+    RefusedByPolicy,
+    /// The operation ran out of its time budget.
+    Timeout,
+    /// The world outside the tool failed it — a network error, a missing
+    /// binary, a full disk.
+    Environment,
+    /// The tool's own defect — our bug, and the class an error-rate ceiling
+    /// is actually about.
+    Internal,
+    /// A class this reader does not recognize (written by a newer emitter).
+    /// Never constructed by this build's classifiers.
+    #[serde(other)]
+    Other,
+}
+
+impl ErrorClass {
+    /// The wire/storage token — byte-identical to the serde `snake_case`
+    /// spelling (pinned by test), so a store column and the JSON wire never
+    /// disagree about what a class is called.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInput => "invalid_input",
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::RefusedByPolicy => "refused_by_policy",
+            Self::Timeout => "timeout",
+            Self::Environment => "environment",
+            Self::Internal => "internal",
+            Self::Other => "other",
+        }
+    }
+
+    /// Parse a stored token. `None` for the empty string (the store's
+    /// "unclassified" spelling); an unrecognized non-empty token reads as
+    /// [`Self::Other`] rather than erroring, because this parses bytes a
+    /// newer build may have written — the same tolerance
+    /// `ToolCallState::parse` extends in `stella-store`.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "" => None,
+            "invalid_input" => Some(Self::InvalidInput),
+            "not_found" => Some(Self::NotFound),
+            "permission_denied" => Some(Self::PermissionDenied),
+            "refused_by_policy" => Some(Self::RefusedByPolicy),
+            "timeout" => Some(Self::Timeout),
+            "environment" => Some(Self::Environment),
+            "internal" => Some(Self::Internal),
+            _ => Some(Self::Other),
+        }
+    }
+}
+
 /// The output of running a tool — success or a typed, named failure. Never a
 /// bare string: every tool result is inspectable without string-sniffing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,6 +169,16 @@ pub enum ToolOutput {
         /// Why it failed, phrased so the model can act on it — the model
         /// sees this text and retries against it.
         message: String,
+        /// Which [`ErrorClass`] this failure falls in (#3145). `None` is a
+        /// declared default meaning "unclassified" — the site that built
+        /// this error has not been audited into a class yet, which is
+        /// distinct from any class it could be assigned. Optional and
+        /// absent-when-`None` so every payload written before the field
+        /// existed round-trips byte-identically (invariant #4), and so the
+        /// message bytes the model sees are never perturbed by
+        /// classification.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<ErrorClass>,
     },
 }
 
@@ -87,6 +188,29 @@ impl ToolOutput {
     #[must_use]
     pub fn is_error(&self) -> bool {
         matches!(self, ToolOutput::Error { .. })
+    }
+
+    /// An unclassified failure — [`ToolOutput::Error`] with `class: None`.
+    ///
+    /// The migration-friendly constructor: a call site that has not been
+    /// audited into an [`ErrorClass`] uses this and stays exactly as
+    /// classified as it was before the field existed.
+    #[must_use]
+    pub fn error(message: impl Into<String>) -> Self {
+        ToolOutput::Error {
+            message: message.into(),
+            class: None,
+        }
+    }
+
+    /// A classified failure — [`ToolOutput::Error`] carrying the
+    /// [`ErrorClass`] the site has been audited into (#3145).
+    #[must_use]
+    pub fn classified_error(class: ErrorClass, message: impl Into<String>) -> Self {
+        ToolOutput::Error {
+            message: message.into(),
+            class: Some(class),
+        }
     }
 }
 
@@ -109,14 +233,69 @@ mod tests {
         let ok = ToolOutput::Ok {
             content: "hi".into(),
         };
-        let err = ToolOutput::Error {
-            message: "boom".into(),
-        };
-        for variant in [ok, err] {
+        let err = ToolOutput::error("boom");
+        let classified = ToolOutput::classified_error(ErrorClass::NotFound, "no such tool");
+        for variant in [ok, err, classified] {
             let json = serde_json::to_string(&variant).unwrap();
             let back: ToolOutput = serde_json::from_str(&json).unwrap();
             assert_eq!(back, variant);
         }
+    }
+
+    #[test]
+    fn unclassified_error_serializes_byte_identically_to_the_pre_class_shape() {
+        // Invariant #4 for #3145: `class: None` must be absent on the wire,
+        // so every payload written before the field existed — and every
+        // unclassified one written after — is the same bytes.
+        let json = serde_json::to_string(&ToolOutput::error("boom")).unwrap();
+        assert_eq!(json, r#"{"error":{"message":"boom"}}"#);
+    }
+
+    #[test]
+    fn old_error_payload_without_class_decodes_as_unclassified() {
+        // A journal written before #3145 carries no `class` key at all.
+        let json = r#"{"error":{"message":"boom"}}"#;
+        let back: ToolOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(back, ToolOutput::error("boom"));
+    }
+
+    #[test]
+    fn unknown_error_class_token_degrades_to_other_not_a_decode_failure() {
+        // Forward-compat, the BlockKind discipline: a class minted by a
+        // newer build must not make an older reader drop the whole event.
+        let json = r#"{"error":{"message":"boom","class":"quota_exceeded"}}"#;
+        let back: ToolOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            back,
+            ToolOutput::classified_error(ErrorClass::Other, "boom")
+        );
+    }
+
+    #[test]
+    fn error_class_token_and_serde_spelling_agree() {
+        // `as_str`/`parse` are the store's spelling of the class; the serde
+        // token is the wire's. They are pinned to each other so a stored
+        // token and a wire token can never diverge.
+        for class in [
+            ErrorClass::InvalidInput,
+            ErrorClass::NotFound,
+            ErrorClass::PermissionDenied,
+            ErrorClass::RefusedByPolicy,
+            ErrorClass::Timeout,
+            ErrorClass::Environment,
+            ErrorClass::Internal,
+            ErrorClass::Other,
+        ] {
+            let wire = serde_json::to_value(class).unwrap();
+            assert_eq!(wire, serde_json::Value::String(class.as_str().into()));
+            assert_eq!(ErrorClass::parse(class.as_str()), Some(class));
+        }
+        assert_eq!(ErrorClass::parse(""), None, "empty is unclassified");
+        assert_eq!(
+            ErrorClass::parse("quota_exceeded"),
+            Some(ErrorClass::Other),
+            "an unknown stored token is surfaced, not dropped"
+        );
     }
 
     #[test]
@@ -127,12 +306,7 @@ mod tests {
             }
             .is_error()
         );
-        assert!(
-            ToolOutput::Error {
-                message: String::new()
-            }
-            .is_error()
-        );
+        assert!(ToolOutput::error("").is_error());
     }
 
     #[test]

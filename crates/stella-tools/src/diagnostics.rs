@@ -566,7 +566,9 @@ impl Tool for Diagnostics {
         };
         let plan = match plan {
             Ok(plan) => plan,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => {
+                return ToolOutput::error(message);
+            }
         };
         let display = plan.argv.join(" ");
         match exec::run_argv_untruncated(&plan.argv[0], &plan.argv[1..], root, timeout_secs).await {
@@ -577,22 +579,20 @@ impl Tool for Diagnostics {
                     // A failing run with nothing parseable (broken manifest,
                     // missing binary shim, tool crash) must not report an
                     // empty success-shaped frame — surface the raw evidence.
-                    return ToolOutput::Error {
-                        message: format!(
-                            "`{display}` FAILED (exit {code}) — no structured diagnostics \
+                    return ToolOutput::error(format!(
+                        "`{display}` FAILED (exit {code}) — no structured diagnostics \
                              parsed; raw output:\n{}",
-                            exec::truncate_middle(raw)
-                        ),
-                    };
+                        exec::truncate_middle(raw)
+                    ));
                 }
                 let report = render_report(&display, code, &diags);
                 if code == 0 {
                     ToolOutput::Ok { content: report }
                 } else {
-                    ToolOutput::Error { message: report }
+                    ToolOutput::error(report)
                 }
             }
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::error(e),
         }
     }
 
@@ -637,7 +637,7 @@ mod tests {
             .execute(&serde_json::json!({}), dir.path())
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("FAILED"), "{message}");
                 assert!(message.contains("src/lib.rs"), "{message}");
                 assert!(
@@ -682,7 +682,7 @@ mod tests {
             .execute(&serde_json::json!({}), dir.path())
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("no diagnostics toolchain detected"),
                     "{message}"

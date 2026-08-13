@@ -93,7 +93,7 @@ fn obfuscated_write(graded: &Path, leaf: &str) -> String {
 async fn run(bash: &Bash, command: &str, root: &Path) -> String {
     match bash.execute(&json!({ "command": command }), root).await {
         stella_protocol::tool::ToolOutput::Ok { content, .. } => content,
-        stella_protocol::tool::ToolOutput::Error { message } => message,
+        stella_protocol::tool::ToolOutput::Error { message, .. } => message,
     }
 }
 

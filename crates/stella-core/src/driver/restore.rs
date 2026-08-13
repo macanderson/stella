@@ -365,7 +365,7 @@ impl<'a> Engine<'a> {
                 // hook payloads).
                 let content = match self.execute_with_repair(&call, true, Some(events)).await {
                     ToolOutput::Ok { content } => FreshContent::Current(content),
-                    ToolOutput::Error { message } => FreshContent::Unreadable(message),
+                    ToolOutput::Error { message, .. } => FreshContent::Unreadable(message),
                 };
                 fresh.push(FreshRead {
                     path: read.path.clone(),
@@ -471,18 +471,14 @@ mod tests {
         }
         async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
             if name != "read_file" {
-                return ToolOutput::Error {
-                    message: format!("unknown tool `{name}`"),
-                };
+                return ToolOutput::error(format!("unknown tool `{name}`"));
             }
             let path = input.get("path").and_then(Value::as_str).unwrap_or("");
             match self.files.lock().unwrap().get(path) {
                 Some(content) => ToolOutput::Ok {
                     content: content.clone(),
                 },
-                None => ToolOutput::Error {
-                    message: format!("no such file: {path}"),
-                },
+                None => ToolOutput::error(format!("no such file: {path}")),
             }
         }
         fn active_skill_slugs(&self) -> Vec<String> {

@@ -305,7 +305,7 @@ async fn hung_server_times_out_naming_it_without_poisoning_the_set() {
     )
     .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("hangsrv"), "names the server: {message}");
             assert!(message.contains("timed out"), "got {message}");
         }
@@ -333,7 +333,7 @@ async fn server_death_mid_call_errors_naming_it() {
     )
     .await;
     match out {
-        ToolOutput::Error { message } => assert!(message.contains("diesrv"), "got {message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("diesrv"), "got {message}"),
         other => panic!("expected an error naming the dead server, got {other:?}"),
     }
     set.close_all().await;
@@ -369,7 +369,7 @@ async fn a_dead_server_surfaces_its_stderr_tail_in_the_error() {
     )
     .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("diesrv"), "names the server: {message}");
             assert!(
                 message.contains("fatal: DATABASE_URL is unset"),

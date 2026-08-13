@@ -1419,9 +1419,7 @@ fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
             1,
             &AgentEvent::ToolResult {
                 call_id: "c1".into(),
-                output: ToolOutput::Error {
-                    message: "exit status 1".into(),
-                },
+                output: ToolOutput::error("exit status 1"),
                 duration_ms: 3,
                 speculated: false,
             },

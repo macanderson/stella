@@ -67,38 +67,30 @@ impl Tool for PollVideo {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(job_id) = input.get("job_id").and_then(|value| value.as_str()) else {
-            return ToolOutput::Error {
-                message: "`job_id` is required".into(),
-            };
+            return ToolOutput::error("`job_id` is required");
         };
         let jobs = open_jobs(root);
         let job = match jobs.get(job_id) {
             Ok(Some(job)) => job,
             Ok(None) => {
-                return ToolOutput::Error {
-                    message: format!("no persisted video job `{job_id}`"),
-                };
+                return ToolOutput::error(format!("no persisted video job `{job_id}`"));
             }
             Err(error) => {
-                return ToolOutput::Error {
-                    message: format!("video job store unavailable: {error}"),
-                };
+                return ToolOutput::error(format!("video job store unavailable: {error}"));
             }
         };
         let status = match stella_media::resume(&jobs, self.provider.as_ref(), job_id).await {
             Ok(status) => status,
             Err(error) => {
-                return ToolOutput::Error {
-                    message: format!("video poll failed: {error}"),
-                };
+                return ToolOutput::error(format!("video poll failed: {error}"));
             }
         };
         match status.state {
             MediaJobState::Succeeded => {
                 let Some(artifact) = status.artifact else {
-                    return ToolOutput::Error {
-                        message: format!("video job `{job_id}` succeeded without an artifact"),
-                    };
+                    return ToolOutput::error(format!(
+                        "video job `{job_id}` succeeded without an artifact"
+                    ));
                 };
                 let store = match open_store(root) {
                     Ok(store) => store,
@@ -127,18 +119,16 @@ impl Tool for PollVideo {
                             ),
                         }
                     }
-                    Err(error) => ToolOutput::Error {
-                        message: format!("could not persist the video: {error}"),
-                    },
+                    Err(error) => {
+                        ToolOutput::error(format!("could not persist the video: {error}"))
+                    }
                 }
             }
             MediaJobState::Failed { reason } => {
                 if let Err(error) = jobs.remove(job_id) {
                     return reconciliation_required(job_id, error);
                 }
-                ToolOutput::Error {
-                    message: format!("video job `{job_id}` failed: {reason}"),
-                }
+                ToolOutput::error(format!("video job `{job_id}` failed: {reason}"))
             }
             MediaJobState::Queued | MediaJobState::Running => {
                 // The deadline for a provider that never reports a terminal
@@ -158,14 +148,12 @@ impl Tool for PollVideo {
                     if let Err(error) = jobs.remove(job_id) {
                         return reconciliation_required(job_id, error);
                     }
-                    return ToolOutput::Error {
-                        message: format!(
-                            "video job `{job_id}` never reached a terminal status within \
+                    return ToolOutput::error(format!(
+                        "video job `{job_id}` never reached a terminal status within \
                              {} minutes — abandoning the poll (the provider may still \
                              complete it; re-submit if the video is still wanted)",
-                            VIDEO_TERMINAL_DEADLINE_SECS / 60
-                        ),
-                    };
+                        VIDEO_TERMINAL_DEADLINE_SECS / 60
+                    ));
                 }
                 let state = match status.state {
                     MediaJobState::Queued => "queued",

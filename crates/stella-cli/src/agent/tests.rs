@@ -1606,7 +1606,7 @@ async fn the_session_stack_ships_with_bash_available() {
     );
     match output {
         ToolOutput::Ok { content } => assert!(content.contains("hi"), "{content}"),
-        ToolOutput::Error { message } => panic!("default bash must run: {message}"),
+        ToolOutput::Error { message, .. } => panic!("default bash must run: {message}"),
     }
 }
 
@@ -1630,7 +1630,7 @@ async fn a_settings_entry_hides_and_refuses_bash_in_the_real_stack() {
         "and nothing else is withheld"
     );
     match output {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("unknown tool"),
             "a disabled tool must not announce itself: {message}"
         ),
@@ -1704,7 +1704,7 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
         "a custom tool named in settings must be withheld: {names:?}"
     );
     match output {
-        ToolOutput::Error { message } => assert!(message.contains("unknown tool"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("unknown tool"), "{message}"),
         other => panic!("a disabled custom tool must be refused, got {other:?}"),
     }
 }

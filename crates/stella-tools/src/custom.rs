@@ -511,7 +511,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     // and this is the point of use, so the approval is checked against what is
     // about to be spawned rather than against what was scanned.
     if let Err(message) = crate::foundry_gate::recheck_before_launch(tool, workspace_root) {
-        return ToolOutput::Error { message };
+        return ToolOutput::error(message);
     }
 
     let mut cmd = Command::new(&tool.command[0]);
@@ -565,14 +565,12 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let mut child = match spawn_retrying_etxtbsy(&mut cmd).await {
         Ok(c) => c,
         Err(e) => {
-            return ToolOutput::Error {
-                message: format!(
-                    "custom tool `{}` failed to spawn `{}` (cwd {}): {e}",
-                    tool.name,
-                    tool.command[0],
-                    workspace_root.display()
-                ),
-            };
+            return ToolOutput::error(format!(
+                "custom tool `{}` failed to spawn `{}` (cwd {}): {e}",
+                tool.name,
+                tool.command[0],
+                workspace_root.display()
+            ));
         }
     };
 
@@ -613,19 +611,15 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         // Wait failure leaves the child's state unknown — the still-armed
         // guard kills the group on return rather than leak it.
         Ok(Err(e)) => {
-            return ToolOutput::Error {
-                message: format!("custom tool `{}` failed: {e}", tool.name),
-            };
+            return ToolOutput::error(format!("custom tool `{}` failed: {e}", tool.name));
         }
         Err(_) => {
             #[cfg(unix)]
             guard.kill_now();
-            return ToolOutput::Error {
-                message: format!(
-                    "custom tool `{}` timed out after {}ms",
-                    tool.name, tool.timeout_ms
-                ),
-            };
+            return ToolOutput::error(format!(
+                "custom tool `{}` timed out after {}ms",
+                tool.name, tool.timeout_ms
+            ));
         }
     };
 
@@ -642,12 +636,10 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".to_string());
         let tail = crate::exec::truncate_middle_capped(&stderr, MAX_OUTPUT_BYTES);
-        ToolOutput::Error {
-            message: format!(
-                "custom tool `{}` exited with code {code}\n[stderr]\n{tail}",
-                tool.name
-            ),
-        }
+        ToolOutput::error(format!(
+            "custom tool `{}` exited with code {code}\n[stderr]\n{tail}",
+            tool.name
+        ))
     }
 }
 

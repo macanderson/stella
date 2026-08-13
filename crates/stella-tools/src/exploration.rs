@@ -495,12 +495,10 @@ impl Tool for Explorations {
         if let Some(slice) = input.get("slice").and_then(|v| v.as_str()) {
             let Some(record) = records.iter().find(|r| r.slice == slice) else {
                 let available: Vec<&str> = records.iter().map(|r| r.slice.as_str()).collect();
-                return ToolOutput::Error {
-                    message: format!(
-                        "no exploration saved for slice `{slice}` — available: [{}]",
-                        available.join(", ")
-                    ),
-                };
+                return ToolOutput::error(format!(
+                    "no exploration saved for slice `{slice}` — available: [{}]",
+                    available.join(", ")
+                ));
             };
             let freshness = staleness::freshness(
                 root,
@@ -682,28 +680,23 @@ impl Tool for SaveExploration {
         let slice = match crate::input::required_str(input, "slice") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         if !valid_slice(slice) {
-            return ToolOutput::Error {
-                message: format!(
-                    "invalid slice slug `{slice}` — use 1-64 lowercase letters, digits, - or _"
-                ),
-            };
+            return ToolOutput::error(format!(
+                "invalid slice slug `{slice}` — use 1-64 lowercase letters, digits, - or _"
+            ));
         }
         let (Some(title), Some(summary), Some(content)) = (
             input.get("title").and_then(|v| v.as_str()),
             input.get("summary").and_then(|v| v.as_str()),
             input.get("content").and_then(|v| v.as_str()),
         ) else {
-            return ToolOutput::Error {
-                message: "missing required field(s): `title`, `summary`, and `content` are all \
-                          required"
-                    .into(),
-            };
+            return ToolOutput::error(
+                "missing required field(s): `title`, `summary`, and `content` are all \
+                          required",
+            );
         };
         let str_list = |key: &str| -> Vec<String> {
             input
@@ -751,22 +744,18 @@ impl Tool for SaveExploration {
 
         let dir = root.join(EXPLORATIONS_DIR);
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            return ToolOutput::Error {
-                message: format!("could not create {}: {e}", dir.display()),
-            };
+            return ToolOutput::error(format!("could not create {}: {e}", dir.display()));
         }
         let path = dir.join(format!("{slice}.json"));
         let existed = path.exists();
         let json = match serde_json::to_string_pretty(&record) {
             Ok(json) => json,
             Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("could not serialize exploration record: {e}"),
-                };
+                return ToolOutput::error(format!("could not serialize exploration record: {e}"));
             }
         };
         if let Err(message) = write_atomically(&path, json.as_bytes()).await {
-            return ToolOutput::Error { message };
+            return ToolOutput::error(message);
         }
         let mut note = format!(
             "{} exploration `{slice}` ({} chars, {} files tracked for staleness) — other \

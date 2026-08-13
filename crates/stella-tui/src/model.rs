@@ -644,7 +644,7 @@ impl SessionModel {
                             cap_middle(&content, OUTPUT_BUDGET),
                         )
                     }
-                    ToolOutput::Error { message } => {
+                    ToolOutput::Error { message, .. } => {
                         let message = strip_ansi(message);
                         (
                             false,

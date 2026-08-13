@@ -156,7 +156,7 @@ async fn run_script_executes_exactly_the_line_the_fence_approved() {
     // The approved line ran — `make greet` against the rewritten Makefile
     // fails with make's own error, NOT with a resolution refusal (the old
     // double-resolution shape), and the swapped-in target never executed.
-    if let ToolOutput::Error { message } = &out {
+    if let ToolOutput::Error { message, .. } = &out {
         assert!(
             !message.contains("unknown script") && !message.contains("no project scripts"),
             "execute must not re-resolve the index: {message}"

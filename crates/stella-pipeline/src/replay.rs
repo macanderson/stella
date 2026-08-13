@@ -1133,9 +1133,7 @@ mod tests {
         AgentEvent::ToolResult {
             call_id: id.into(),
             output: if err {
-                ToolOutput::Error {
-                    message: "boom".into(),
-                }
+                ToolOutput::error("boom")
             } else {
                 ToolOutput::Ok {
                     content: "ok".into(),

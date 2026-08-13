@@ -125,7 +125,9 @@ impl<'a> Engine<'a> {
                 ToolOutput::Ok { content } => Some(content),
                 // The wake call failing must not hide that the wait ended —
                 // surface the error as the detail and let the model re-query.
-                ToolOutput::Error { message } => Some(format!("(wake query failed: {message})")),
+                ToolOutput::Error { message, .. } => {
+                    Some(format!("(wake query failed: {message})"))
+                }
             },
             _ => last_observed,
         };

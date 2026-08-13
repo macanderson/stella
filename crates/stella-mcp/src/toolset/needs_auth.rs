@@ -60,11 +60,9 @@ pub(super) fn route(set: &super::McpToolSet, name: &str) -> Option<ToolOutput> {
         .iter()
         .find(|(server, _)| name == login_required_tool_name(server))?;
     if set.is_disabled(server) {
-        return Some(ToolOutput::Error {
-            message: format!(
-                "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
-            ),
-        });
+        return Some(ToolOutput::error(format!(
+            "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
+        )));
     }
     Some(login_required_output(server))
 }
@@ -229,7 +227,7 @@ mod tests {
             .execute("mcp__github__login_required", &serde_json::Value::Null)
             .await
         {
-            ToolOutput::Error { message } => assert!(message.contains("disabled"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("disabled"), "{message}"),
             other => panic!("expected the disabled error, got {other:?}"),
         }
 

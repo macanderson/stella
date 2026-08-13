@@ -262,9 +262,7 @@ impl Tool for ReadFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
 
@@ -274,9 +272,7 @@ impl Tool for ReadFile {
         let offset = match crate::input::optional_u64(input, "offset") {
             Ok(offset) => offset.map(|n| n as usize),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
         // MAX_LINES is a ceiling, not just the default: the flood protection
@@ -286,18 +282,14 @@ impl Tool for ReadFile {
                 .map(|n| (n as usize).min(MAX_LINES))
                 .unwrap_or(MAX_LINES),
             Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
+                return ToolOutput::from(err);
             }
         };
 
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("cannot open workspace root: {e}"),
-                };
+                return ToolOutput::error(format!("cannot open workspace root: {e}"));
             }
         };
 
@@ -332,38 +324,28 @@ impl Tool for ReadFile {
         let bytes = match loaded {
             Ok(Ok(Loaded::Bytes(bytes))) => bytes,
             Ok(Ok(Loaded::Directory)) => {
-                return ToolOutput::Error {
-                    message: format!(
-                        "`{path}` is a directory, not a file — list it with \
+                return ToolOutput::error(format!(
+                    "`{path}` is a directory, not a file — list it with \
                          glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
-                    ),
-                };
+                ));
             }
             Ok(Ok(Loaded::TooLarge { bytes })) => {
-                return ToolOutput::Error {
-                    message: format!(
-                        "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
+                return ToolOutput::error(format!(
+                    "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
                          with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                        bytes / (1024 * 1024),
-                        MAX_FILE_BYTES / (1024 * 1024)
-                    ),
-                };
+                    bytes / (1024 * 1024),
+                    MAX_FILE_BYTES / (1024 * 1024)
+                ));
             }
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::Error {
-                    message: format!("path `{path}` escapes workspace root ({e})"),
-                };
+                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
             }
             Ok(Err(e)) => {
-                return ToolOutput::Error {
-                    message: format!("failed to read `{path}`: {e}"),
-                };
+                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
             }
             Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("failed to read `{path}`: {e}"),
-                };
+                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
             }
         };
 
@@ -484,7 +466,7 @@ impl Tool for ReadFile {
                 );
                 ToolOutput::Ok { content: numbered }
             }
-            Err(message) => ToolOutput::Error { message },
+            Err(message) => ToolOutput::error(message),
         }
     }
 }
@@ -492,6 +474,23 @@ impl Tool for ReadFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3145: an input the tool could not read is classified
+    /// [`stella_protocol::ErrorClass::InvalidInput`] — the model's mistake,
+    /// excluded from the tool's own error rate — with the message bytes
+    /// unchanged from the pre-class wording.
+    #[tokio::test]
+    async fn missing_path_is_classified_invalid_input() {
+        use stella_protocol::ErrorClass;
+        let result = ReadFile::default()
+            .execute(&serde_json::json!({}), &std::env::temp_dir())
+            .await;
+        let ToolOutput::Error { message, class } = result else {
+            panic!("expected an error for a missing required field");
+        };
+        assert_eq!(class, Some(ErrorClass::InvalidInput));
+        assert_eq!(message, "missing required field `path`");
+    }
 
     #[tokio::test]
     async fn reads_file_with_line_numbers() {
@@ -511,7 +510,7 @@ mod tests {
                 assert!(content.contains("2\tline two"));
                 assert!(content.contains("3/3 lines shown"));
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_file(&full).await;
     }
@@ -536,7 +535,7 @@ mod tests {
                 assert!(!content.contains("4\td"));
                 assert!(content.contains("2/5 lines shown"));
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_file(&full).await;
     }
@@ -556,7 +555,7 @@ mod tests {
                 dir.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a mistyped limit must be an error, got: {out:?}");
         };
         assert_eq!(
@@ -570,7 +569,7 @@ mod tests {
                 dir.path(),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a mistyped offset must be an error, got: {out:?}");
         };
         assert_eq!(
@@ -610,7 +609,7 @@ mod tests {
                     "third read reports its count: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert_eq!(tool.read_count(dir.path(), "src/a.rs"), 3);
         assert_eq!(tool.read_count(dir.path(), "src/./a.rs"), 3);
@@ -893,7 +892,7 @@ mod tests {
             .execute(&serde_json::json!({"path": "blob.bin"}), dir.path())
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("binary"), "{message}");
                 assert!(message.contains("not UTF-8"), "{message}");
             }
@@ -911,7 +910,7 @@ mod tests {
             .execute(&serde_json::json!({"path": "src"}), dir.path())
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("is a directory"), "{message}");
                 assert!(message.contains("glob("), "names the tool: {message}");
             }
@@ -939,7 +938,7 @@ mod tests {
             )
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("ceiling"), "{message}");
                 assert!(message.contains("grep"), "points somewhere: {message}");
             }

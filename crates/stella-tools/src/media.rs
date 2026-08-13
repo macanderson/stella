@@ -121,19 +121,15 @@ impl Tool for GenerateImage {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "`prompt` is required".into(),
-            };
+            return ToolOutput::error("`prompt` is required");
         };
         let size = match input.get("size").and_then(|v| v.as_str()) {
             Some(raw) => match raw.parse::<ImageSize>() {
                 Ok(s) => s,
                 Err(_) => {
-                    return ToolOutput::Error {
-                        message: format!(
-                            "`size` must be WIDTHxHEIGHT (e.g. 1024x1024), got `{raw}`"
-                        ),
-                    };
+                    return ToolOutput::error(format!(
+                        "`size` must be WIDTHxHEIGHT (e.g. 1024x1024), got `{raw}`"
+                    ));
                 }
             },
             None => ImageSize::square(1024),
@@ -151,9 +147,9 @@ impl Tool for GenerateImage {
         );
         request.operation_id = Some(operation_id.clone());
         let Some(journal) = &self.operation_journal else {
-            return ToolOutput::Error {
-                message: "media spend requires host approval and a host operation journal".into(),
-            };
+            return ToolOutput::error(
+                "media spend requires host approval and a host operation journal",
+            );
         };
         match journal.claim(
             &operation_id,
@@ -176,9 +172,7 @@ impl Tool for GenerateImage {
                 return reconciliation_required(&operation_id, "operation identity expired");
             }
             Err(error) => {
-                return ToolOutput::Error {
-                    message: format!("media_operation_journal_unavailable: {error}"),
-                };
+                return ToolOutput::error(format!("media_operation_journal_unavailable: {error}"));
             }
         }
         let capabilities = self.provider.capabilities();
@@ -307,18 +301,14 @@ impl Tool for GenerateVideo {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "`prompt` is required".into(),
-            };
+            return ToolOutput::error("`prompt` is required");
         };
         let duration_secs = match input.get("duration_secs") {
             None => DEFAULT_VIDEO_DURATION_SECS,
             Some(v) => match v.as_u64().and_then(|secs| u32::try_from(secs).ok()) {
                 Some(secs) if secs >= 1 => secs,
                 _ => {
-                    return ToolOutput::Error {
-                        message: "`duration_secs` must be a positive integer".into(),
-                    };
+                    return ToolOutput::error("`duration_secs` must be a positive integer");
                 }
             },
         };
@@ -334,9 +324,9 @@ impl Tool for GenerateVideo {
         );
         request.operation_id = Some(operation_id.clone());
         let Some(journal) = &self.operation_journal else {
-            return ToolOutput::Error {
-                message: "media spend requires host approval and a host operation journal".into(),
-            };
+            return ToolOutput::error(
+                "media spend requires host approval and a host operation journal",
+            );
         };
         match journal.claim(
             &operation_id,
@@ -368,9 +358,7 @@ impl Tool for GenerateVideo {
                 return reconciliation_required(&operation_id, "operation identity expired");
             }
             Err(error) => {
-                return ToolOutput::Error {
-                    message: format!("media_operation_journal_unavailable: {error}"),
-                };
+                return ToolOutput::error(format!("media_operation_journal_unavailable: {error}"));
             }
         }
         let estimate = self.provider.capabilities().estimate_video(duration_secs);
@@ -448,9 +436,7 @@ impl Tool for GenerateSvg {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(svg) = input.get("svg").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "`svg` is required".into(),
-            };
+            return ToolOutput::error("`svg` is required");
         };
         // The bounded repair loop maps onto the agent
         // loop here: a failed attempt returns the parse error for the model
@@ -459,9 +445,7 @@ impl Tool for GenerateSvg {
         let processed = match SvgPipeline::process(svg) {
             Ok(p) => p,
             Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("invalid SVG: {e}"),
-                };
+                return ToolOutput::error(format!("invalid SVG: {e}"));
             }
         };
         let label = input.get("label").and_then(|v| v.as_str()).unwrap_or("svg");
@@ -480,9 +464,7 @@ impl Tool for GenerateSvg {
                     content: format!("svg \"{}\" → {}{sanitized}", saved.label, saved.path),
                 }
             }
-            Err(e) => ToolOutput::Error {
-                message: format!("could not persist the SVG: {e}"),
-            },
+            Err(e) => ToolOutput::error(format!("could not persist the SVG: {e}")),
         }
     }
 }

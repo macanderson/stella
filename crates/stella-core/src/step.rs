@@ -673,9 +673,7 @@ pub(crate) fn close_open_tool_calls(
             .into_iter()
             .map(|call| ToolResult {
                 call_id: call.call_id.clone(),
-                output: ToolOutput::Error {
-                    message: message.to_string(),
-                },
+                output: ToolOutput::error(message.to_string()),
             })
             .collect()
     };

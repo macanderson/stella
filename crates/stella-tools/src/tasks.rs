@@ -36,12 +36,12 @@ pub type SpawnQueue = Arc<Mutex<Vec<SpawnRequest>>>;
 fn require_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, ToolOutput> {
     match input.get(field).and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => Ok(s),
-        Some(_) => Err(ToolOutput::Error {
-            message: format!("field `{field}` must be a non-empty string"),
-        }),
-        None => Err(ToolOutput::Error {
-            message: format!("missing required string field `{field}`"),
-        }),
+        Some(_) => Err(ToolOutput::error(format!(
+            "field `{field}` must be a non-empty string"
+        ))),
+        None => Err(ToolOutput::error(format!(
+            "missing required string field `{field}`"
+        ))),
     }
 }
 
@@ -129,9 +129,7 @@ impl Tool for TaskCreate {
         // to write four lines that changed no file and read nothing.
         if let Some(entries) = input.get("tasks").and_then(Value::as_array) {
             if entries.is_empty() {
-                return ToolOutput::Error {
-                    message: "field `tasks` was empty — pass at least one task".into(),
-                };
+                return ToolOutput::error("field `tasks` was empty — pass at least one task");
             }
             let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
             let mut created = Vec::with_capacity(entries.len());
@@ -145,11 +143,9 @@ impl Tool for TaskCreate {
                         Err(e) => return e,
                     },
                     _ => {
-                        return ToolOutput::Error {
-                            message: format!(
-                                "tasks[{i}] must be a non-empty string or an object with `subject`"
-                            ),
-                        };
+                        return ToolOutput::error(format!(
+                            "tasks[{i}] must be a non-empty string or an object with `subject`"
+                        ));
                     }
                 };
                 let item = board.create(subject, description);
@@ -264,9 +260,7 @@ impl Tool for TaskStart {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` is now in_progress", item.id, item.subject),
             },
-            Err(e) => ToolOutput::Error {
-                message: e.to_string(),
-            },
+            Err(e) => ToolOutput::error(e.to_string()),
         }
     }
 }
@@ -308,9 +302,7 @@ impl Tool for TaskComplete {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` completed", item.id, item.subject),
             },
-            Err(e) => ToolOutput::Error {
-                message: e.to_string(),
-            },
+            Err(e) => ToolOutput::error(e.to_string()),
         }
     }
 }
@@ -355,9 +347,7 @@ impl Tool for TaskCancel {
                 }
                 ToolOutput::Ok { content }
             }
-            Err(e) => ToolOutput::Error {
-                message: e.to_string(),
-            },
+            Err(e) => ToolOutput::error(e.to_string()),
         }
     }
 }
@@ -410,9 +400,7 @@ impl Tool for TaskAssign {
             match board.assign(id, owner.clone()) {
                 Ok(item) => (item.subject.clone(), item.description.clone()),
                 Err(e) => {
-                    return ToolOutput::Error {
-                        message: e.to_string(),
-                    };
+                    return ToolOutput::error(e.to_string());
                 }
             }
         };
@@ -454,13 +442,13 @@ mod tests {
     fn content(output: ToolOutput) -> String {
         match output {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => panic!("expected ok, got error: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got error: {message}"),
         }
     }
 
     fn error(output: ToolOutput) -> String {
         match output {
-            ToolOutput::Error { message } => message,
+            ToolOutput::Error { message, .. } => message,
             ToolOutput::Ok { content } => panic!("expected error, got ok: {content}"),
         }
     }

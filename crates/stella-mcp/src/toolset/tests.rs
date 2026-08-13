@@ -308,7 +308,7 @@ async fn unknown_mcp_tool_is_an_error_not_a_fallthrough() {
     let set = McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative));
     let out = set.execute("mcp__files__missing", &Value::Null).await;
     match out {
-        ToolOutput::Error { message } => assert!(message.contains("unknown MCP tool")),
+        ToolOutput::Error { message, .. } => assert!(message.contains("unknown MCP tool")),
         other => panic!("expected an error, got {other:?}"),
     }
 }
@@ -332,7 +332,7 @@ async fn a_hung_server_times_out_naming_the_server_without_poisoning_native() {
     // The hung MCP call times out with a server-named error…
     let hung = set.execute("mcp__slowsrv__slow", &Value::Null).await;
     match hung {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("slowsrv"), "names the server: {message}");
             assert!(message.contains("timed out"));
         }
@@ -511,7 +511,7 @@ async fn colliding_wire_names_drop_every_claimant_and_are_reported() {
     );
     // …and neither is callable: the contested name routes nowhere.
     match set.execute("mcp__acme___status", &Value::Null).await {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("unknown MCP tool"), "{message}")
         }
         other => panic!("expected the contested name to route nowhere, got {other:?}"),
@@ -577,7 +577,7 @@ async fn disabled_server_is_hidden_from_schemas_and_errors_on_execute() {
     );
     // And a direct call errors, naming the disabled server.
     match set.execute("mcp__files__read", &Value::Null).await {
-        ToolOutput::Error { message } => assert!(message.contains("disabled")),
+        ToolOutput::Error { message, .. } => assert!(message.contains("disabled")),
         other => panic!("expected a disabled error, got {other:?}"),
     }
 
@@ -640,7 +640,7 @@ async fn candidate_view_denies_a_non_allowlisted_mcp_tool_with_a_named_error() {
     let view = set.for_candidates(Arc::new(FakeNative));
 
     match view.execute("mcp__fs__write", &Value::Null).await {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("mcp__fs__write"), "{message}");
             assert!(message.contains("candidate_safe"), "{message}");
         }
@@ -782,7 +782,7 @@ async fn an_oversized_error_result_is_capped_too() {
     let set = McpToolSet::from_clients(vec![client]);
 
     match set.execute("mcp__flood__boom", &Value::Null).await {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.len() < MAX_TOOL_RESULT_BYTES + 128,
             "an error message is model context too: {} bytes",
             message.len()
@@ -823,7 +823,7 @@ async fn an_oversized_json_rpc_error_message_is_capped_before_the_model() {
     let set = McpToolSet::from_clients(vec![client]);
 
     match set.execute("mcp__flood__boom", &Value::Null).await {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.len() < MAX_TOOL_RESULT_BYTES + 256,
                 "a {}-byte server-chosen error message must not reach the model whole \
@@ -869,11 +869,10 @@ async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
 
     assert_eq!(
         set.execute("mcp__files__boom", &Value::Null).await,
-        ToolOutput::Error {
-            message: "mcp server `files` failed calling `boom`: json-rpc error -32602: \
+        ToolOutput::error(
+            "mcp server `files` failed calling `boom`: json-rpc error -32602: \
                       unknown argument `pth`"
-                .into()
-        }
+        )
     );
 }
 

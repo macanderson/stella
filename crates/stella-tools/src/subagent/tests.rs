@@ -179,7 +179,7 @@ async fn an_unattached_dispatcher_tells_the_model_to_do_the_work_itself() {
         .execute(&call("x", "y"), std::path::Path::new("."))
         .await;
     match out {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("unavailable") && message.contains("directly"),
             "the model needs a next action, not just a failure: {message}"
         ),
@@ -229,7 +229,7 @@ async fn a_child_structurally_cannot_spawn_a_grandchild() {
     );
     let refused = child_view.execute("task", &call("x", "y")).await;
     match refused {
-        ToolOutput::Error { message } => assert!(
+        ToolOutput::Error { message, .. } => assert!(
             message.contains("read-only"),
             "and guessing the name must be refused at execution time: {message}"
         ),

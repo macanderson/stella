@@ -90,7 +90,7 @@ async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("a tool message was appended");
     match &tool_message.tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("blocked by a PreToolUse hook"));
             assert!(
                 message.contains("blocked by policy"),
@@ -660,7 +660,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("a tool message was appended");
     match &tool_message.tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("requires approval"), "{message}");
             assert!(
                 message.contains("not on my watch"),
@@ -708,7 +708,7 @@ async fn require_approval_without_a_route_refuses_with_the_grant_path() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("a tool message was appended");
     match &tool_message.tool_results[0].output {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("no interactive surface"), "{message}");
         }
         other => panic!("expected the headless refusal, got {other:?}"),
