@@ -137,20 +137,27 @@ catalog! {
     "edit_file"           => (false, false, Always, "file"),
     "apply_edits"         => (false, false, Always, "file"),
     "delete_file"         => (false, false, Always, "file"),
-    // Search
+    // Search. The family is grouped as `retrieval`, not `search`, because a
+    // policy key must be unambiguous: this group used to share its name with
+    // the `search` tool below, which made `--tools "*:off,search:on"` resolve
+    // `search` as a *group* switch and re-enable all four siblings the
+    // wildcard had just turned off (#3120). A group may only carry a tool's
+    // name when it holds exactly that tool — pinned by
+    // `a_group_key_never_doubles_as_another_tools_switch` below.
+    //
     // The fused entry point (#3076), registered beside the four it subsumes
     // rather than instead of them. Not speculation-safe, and for the union of
     // its parts' reasons: a query can reach the graph and the embedding pass,
     // so it inherits the "read that writes" posture from the strictest branch
     // it can take, never the cheapest.
-    "search"              => (true, false, Always, "search"),
-    "grep"                => (true, true, Always, "search"),
-    "glob"                => (true, true, Always, "search"),
+    "search"              => (true, false, Always, "retrieval"),
+    "grep"                => (true, true, Always, "retrieval"),
+    "glob"                => (true, true, Always, "retrieval"),
     // The read that writes: graph queries bootstrap/catch up codegraph.db.
-    "graph_query"         => (true, false, Always, "search"),
+    "graph_query"         => (true, false, Always, "retrieval"),
     // Same store, same "read that writes" posture, and one more write besides:
     // the pass stores the vectors it embeds on the way to answering.
-    "semantic_code_search" => (true, false, Always, "search"),
+    "semantic_code_search" => (true, false, Always, "retrieval"),
     // Context & memory. The overview and gather ride the same graph
     // substrate as graph_query; explorations is pure file reads.
     "project_overview"    => (true, false, Always, "context"),
@@ -458,6 +465,35 @@ mod tests {
             "every read-only row claims speculation_safe — the two flags \
              must be able to diverge (#923)"
         );
+    }
+
+    /// A policy switch key resolves exact-name-first, then by group
+    /// (`ToolPolicy::allows`), so a group that shares its name with a tool
+    /// while holding *other* tools makes one key address two surfaces: #3120
+    /// measured `--tools "*:off,search:on"` re-enabling grep, glob,
+    /// graph_query and semantic_code_search through the then-`search` group.
+    /// A single-member group named after its only tool (`bash`) is harmless —
+    /// both readings resolve identically.
+    ///
+    /// `task` is the one declared exemption: the delegation tool `task` still
+    /// shares its name with the task-board group, and untangling that is a
+    /// vocabulary decision tracked in #3192, not a silence.
+    #[test]
+    fn a_group_key_never_doubles_as_another_tools_switch() {
+        for entry in CATALOG {
+            if entry.group == "task" {
+                continue; // declared gap: #3192
+            }
+            if get(entry.group).is_some() {
+                assert_eq!(
+                    names_in_group(entry.group),
+                    vec![entry.group],
+                    "group `{}` shares its name with a tool but holds other tools — \
+                     one policy key would address both surfaces (#3120)",
+                    entry.group
+                );
+            }
+        }
     }
 
     #[test]

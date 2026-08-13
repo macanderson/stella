@@ -177,13 +177,28 @@ mod tests {
     /// selects its family, and everything unnamed is off.
     #[test]
     fn a_grant_is_the_read_only_idiom_over_the_named_tools() {
-        let grant = grant_policy(&["read_file".to_string(), "search".to_string()]);
+        let grant = grant_policy(&["read_file".to_string(), "retrieval".to_string()]);
         assert!(grant.allows("read_file"));
         assert!(grant.allows("grep"), "group entries cover their family");
         assert!(grant.allows("glob"));
         assert!(!grant.allows("bash"));
         assert!(!grant.allows("write_file"));
         assert!(!grant.allows("mcp__github__create_issue"));
+    }
+
+    /// #3120: a granted *tool* name selects that tool alone — `search` no
+    /// longer doubles as its family's group key, so a skill that asks for the
+    /// fused entry point does not silently receive grep and glob too.
+    #[test]
+    fn a_granted_tool_name_does_not_expand_to_its_family() {
+        let grant = grant_policy(&["search".to_string()]);
+        assert!(grant.allows("search"));
+        for sibling in ["grep", "glob", "graph_query", "semantic_code_search"] {
+            assert!(
+                !grant.allows(sibling),
+                "`search` must not grant `{sibling}`"
+            );
+        }
     }
 
     /// An empty grant list denies everything — `allowed-tools` with names is

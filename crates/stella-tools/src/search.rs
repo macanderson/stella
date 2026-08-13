@@ -107,6 +107,7 @@
 //! (#3032) is about what is *sent* in the schema menu, not about what exists.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -117,8 +118,11 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+pub(crate) mod cache;
 pub(crate) mod enrich;
 pub(crate) mod scan;
+
+use cache::GatherCache;
 
 #[cfg(test)]
 mod tests;
@@ -273,22 +277,44 @@ impl SearchConfig {
 }
 
 /// The one way to find code.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default)]
 pub struct Search {
     config: SearchConfig,
+    /// The session's gathered-context cache (#3163). It lives on the tool
+    /// instance because the registry holds one `Search` for the whole
+    /// session, which is exactly the lifetime the cache wants — and a
+    /// `Mutex` because `execute` takes `&self`; the lock is only ever held
+    /// across the synchronous render, never an await.
+    cache: Mutex<GatherCache>,
 }
 
 impl Search {
     /// A `search` running at an explicit depth and budget.
     #[must_use]
     pub fn with_config(config: SearchConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            cache: Mutex::new(GatherCache::default()),
+        }
     }
 
     /// A `search` running at the configured depth ([`SearchConfig::from_env`]).
     #[must_use]
     pub fn from_env() -> Self {
         Self::with_config(SearchConfig::from_env())
+    }
+
+    /// One search through this instance's session cache — the exact
+    /// mechanism `execute` runs, split out so a test can drive the same
+    /// instance twice with a pinned [`Resolution`] instead of reading the
+    /// process environment under a parallel suite.
+    pub(crate) async fn report_cached(
+        &self,
+        root: &Path,
+        query: &str,
+        resolution: Resolution,
+    ) -> SearchReport {
+        report_with(root, query, self.config, resolution, &self.cache).await
     }
 }
 
@@ -366,15 +392,18 @@ impl Tool for Search {
                 return ToolOutput::from(err);
             }
         };
-        // Validation (the blank-query refusal included) lives in [`report`],
-        // so this door and the CLI's `stella search` cannot drift apart.
-        search(root, query, self.config).await
+        // Validation (the blank-query refusal included) lives in
+        // [`report_with`], so this door and the CLI's `stella search` cannot
+        // drift apart.
+        self.report_cached(root, query, stella_embed::from_env())
+            .await
+            .rendered
     }
 }
 
 /// The refusal both doors return for a blank query. One string, one place:
 /// the tool's `execute` and the CLI's `stella search` reach it through the
-/// same [`report`] path, so the wording cannot fork between them.
+/// same [`report_with`] path, so the wording cannot fork between them.
 const QUERY_REQUIRED: &str = "`query` is required: what you are looking for, as a question, a \
                               description of the behaviour, or a symbol name — e.g. \"where \
                               request headers are sanitized\" or \"CredentialStore\"";
@@ -443,15 +472,13 @@ impl SearchReport {
     }
 }
 
-/// One `search` end to end, rendered — the agent's door.
-pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
-    report(root, query, config).await.rendered
-}
-
 /// One `search` end to end, as a [`SearchReport`] — the CLI's door
-/// (`stella search --format json`), and the single mechanism the tool's own
-/// `search` wraps, so a scripted test and an agent call exercise identical
-/// code.
+/// (`stella search --format json`), and the same mechanism the tool's
+/// `execute` wraps through `Search::report_cached`, so a scripted test and
+/// an agent call exercise identical code. The one difference is deliberate:
+/// this door gathers into a cache that dies with the call, because the CLI
+/// process runs one search and exits — session-lifetime reuse belongs to the
+/// tool instance that has a session.
 ///
 /// `open_or_build` runs a full `index_all` catch-up pass, which its contract
 /// says an async caller must wrap in `spawn_blocking`. The handle is then held
@@ -460,19 +487,28 @@ pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> To
 /// than it saves. This is `semantic_code_search`'s discipline, deliberately
 /// unchanged (`crate::graph::semantic`).
 pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
-    report_with(root, query, config, stella_embed::from_env()).await
+    report_with(
+        root,
+        query,
+        config,
+        stella_embed::from_env(),
+        &Mutex::new(GatherCache::default()),
+    )
+    .await
 }
 
 /// [`report`], with the embedder's resolution passed in rather than read from
 /// the process environment — the pure half of the `resolve`/`from_env` split
 /// `stella_embed` itself uses, and the seam that lets a test drive the
 /// misconfigured-embedder path without mutating the environment under a
-/// parallel suite.
+/// parallel suite — and with the gathered-context cache the rendering may
+/// serve repeat hits from (#3163).
 pub(crate) async fn report_with(
     root: &Path,
     query: &str,
     config: SearchConfig,
     resolution: Resolution,
+    cache: &Mutex<GatherCache>,
 ) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
@@ -488,8 +524,11 @@ pub(crate) async fn report_with(
         // file scan needs no index and is exactly the strategy for a
         // workspace the indexer cannot serve.
         Ok(Err(message)) => (None, Some(message)),
-        Err(_) => {
-            return SearchReport::failed("the search was cancelled");
+        Err(join_error) => {
+            return SearchReport::failed(&crate::blocking::worker_failure(
+                "the search",
+                join_error,
+            ));
         }
     };
 
@@ -516,7 +555,16 @@ pub(crate) async fn report_with(
         }
     };
 
-    let output = render(graph.as_ref(), root, query, &answer, config);
+    let output = {
+        // Poisoning here means a peer search panicked mid-render. Every cache
+        // mutation is a single `Vec` operation, so the state a panic leaves
+        // is still coherent — recovering it beats losing the session's cache
+        // (the discipline `crate::process` already applies to its table).
+        let mut cache = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        render(graph.as_ref(), root, query, &answer, config, &mut cache)
+    };
     if let Some(graph) = graph {
         graph.shutdown();
     }
@@ -1088,6 +1136,19 @@ pub async fn warm_chunk_vectors(
     embedder: &dyn Embedder,
     limit: usize,
 ) -> ChunkWarmOutcome {
+    warm_chunk_vectors_with_progress(root, embedder, limit, &mut |_| {}).await
+}
+
+/// [`warm_chunk_vectors`] with a progress callback (#3102): `progress`
+/// receives the cumulative embedded-file count as files commit, so a long
+/// pass can be narrated while it happens instead of summarised after.
+/// Display-only — the callback cannot affect the pass.
+pub async fn warm_chunk_vectors_with_progress(
+    root: &Path,
+    embedder: &dyn Embedder,
+    limit: usize,
+    progress: &mut dyn FnMut(usize),
+) -> ChunkWarmOutcome {
     let graph = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
         .map_err(|error| format!("cannot prepare the code graph store: {error}"))
         .and_then(|db_path| {
@@ -1103,7 +1164,7 @@ pub async fn warm_chunk_vectors(
             };
         }
     };
-    let outcome = warm_chunks_opened(&graph, embedder, limit).await;
+    let outcome = warm_chunks_opened(&graph, embedder, limit, progress).await;
     graph.shutdown();
     outcome
 }
@@ -1112,6 +1173,7 @@ async fn warm_chunks_opened(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     limit: usize,
+    progress: &mut dyn FnMut(usize),
 ) -> ChunkWarmOutcome {
     let fingerprint = embedder.fingerprint().id();
     let mut files_embedded = 0usize;
@@ -1164,6 +1226,7 @@ async fn warm_chunks_opened(
                 };
             }
             files_embedded += 1;
+            progress(files_embedded);
         }
         if !made_progress {
             break;
@@ -1190,6 +1253,7 @@ pub(crate) fn render(
     query: &str,
     answer: &Answer,
     config: SearchConfig,
+    cache: &mut GatherCache,
 ) -> ToolOutput {
     let allocation: Allocation = allocate(answer.hits.len(), config.depth, config.budget);
 
@@ -1219,7 +1283,7 @@ pub(crate) fn render(
 
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
         content.push('\n');
-        content.push_str(&enrich::render_hit(graph, root, hit, *depth));
+        content.push_str(&enrich::render_hit(graph, root, hit, *depth, cache));
     }
 
     if allocation.truncated() {

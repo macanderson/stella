@@ -139,7 +139,7 @@ pub fn classify(name: &str) -> ToolClass {
                 ToolClass::Mutate
             }
         }
-        "search" | "environment" | "web" => ToolClass::Inspect,
+        "retrieval" | "environment" | "web" => ToolClass::Inspect,
         "media" => ToolClass::Mutate,
         "bash" | "process" | "scripts" => ToolClass::Execute,
         "build" | "ci" => ToolClass::Verify,
@@ -229,7 +229,7 @@ mod tests {
                 "file"
                     | "context"
                     | "scratch"
-                    | "search"
+                    | "retrieval"
                     | "environment"
                     | "web"
                     | "media"

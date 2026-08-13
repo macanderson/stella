@@ -94,7 +94,7 @@ impl Tool for ReadSymbol {
         let looked_up = {
             let root = root.to_path_buf();
             let name = name.to_string();
-            tokio::task::spawn_blocking(move || {
+            let joined = tokio::task::spawn_blocking(move || {
                 let crate::graph::OpenedGraph {
                     graph,
                     index_warning,
@@ -105,8 +105,8 @@ impl Tool for ReadSymbol {
                     .map(|spans| (spans, index_warning))
                     .map_err(|e| format!("code-graph lookup failed: {e}"))
             })
-            .await
-            .unwrap_or_else(|_| Err("the code-graph symbol lookup was cancelled".into()))
+            .await;
+            crate::blocking::flatten("the code-graph symbol lookup", joined)
         };
         let (spans, index_warning) = match looked_up {
             Ok(found) => found,

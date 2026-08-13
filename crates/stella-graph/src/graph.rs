@@ -236,8 +236,20 @@ impl CodeGraph {
     /// files, prune deleted). One transaction (L-L1). Synchronous — callers
     /// in an async context should wrap it in `spawn_blocking`.
     pub fn index_all(&self) -> Result<IndexStats, GraphError> {
+        self.index_all_with_progress(&mut |_| {})
+    }
+
+    /// [`index_all`](Self::index_all) with a per-file progress callback
+    /// (#3102): `progress` receives the running [`IndexStats`] after each
+    /// file the pass visits, so a long build can be narrated while it
+    /// happens instead of summarised after. The pass still runs as one
+    /// transaction; the callback is display-only and cannot affect it.
+    pub fn index_all_with_progress(
+        &self,
+        progress: &mut dyn FnMut(&IndexStats),
+    ) -> Result<IndexStats, GraphError> {
         let mut conn = self.inner.write_guard();
-        store::index_tree(&mut conn, &self.inner.root, &self.inner.grammars)
+        store::index_tree_with_progress(&mut conn, &self.inner.root, &self.inner.grammars, progress)
     }
 
     /// Number of files currently in the index.

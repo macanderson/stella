@@ -48,6 +48,36 @@ TOOL_RESULT_BUDGET = 8000
 #: label as ``meta.raw`` for the page's expanded view.
 TOOL_INPUT_BUDGET = 4000
 
+#: The file-*mutating* built-ins — the only calls whose result entry carries an
+#: inline diff (reads must not). A port of ``is_file_mutation`` in
+#: ``crates/stella-tui/src/model/summarize.rs``, which itself must stay in
+#: lockstep with the ``FileChange`` emitter that owns the list.
+_FILE_MUTATIONS = frozenset({"write_file", "edit_file", "apply_edits", "delete_file"})
+
+
+def _tool_input_path(arguments: Any) -> str | None:
+    """The workspace-relative path a file tool targets — the join key between
+    a tool result and the ``file_change`` diff its call produced.
+
+    A port of ``tool_input_path`` (beside ``is_file_mutation``, above): every
+    built-in file tool takes its path under the ``path`` key, and the engine
+    emits ``file_change`` for that same path. ``apply_edits`` carries its
+    paths in a batch rather than at the top level; the first edit's path
+    stands in, so a single-file batch still renders an inline diff under its
+    result row.
+    """
+    if not isinstance(arguments, dict):
+        return None
+    path = arguments.get("path")
+    if isinstance(path, str):
+        return path
+    edits = arguments.get("edits")
+    if isinstance(edits, list) and edits and isinstance(edits[0], dict):
+        first = edits[0].get("path")
+        if isinstance(first, str):
+            return first
+    return None
+
 
 def _proof_line(step: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     """One ``proof`` step as a transcript line: title, body, metadata.
@@ -392,6 +422,23 @@ class TranscriptState:
     #: (``crates/stella-tui/src/model.rs``) and this reader never did, which is
     #: why every result in every arena transcript read "result".
     tool_names: dict[str, str] = field(default_factory=dict)
+    #: ``call_id`` -> ``(path, change_seq when the call opened)`` for a
+    #: *mutating* file tool (:data:`_FILE_MUTATIONS`). The path is the join
+    #: key to the ``file_change`` the call will emit; the mark is what makes
+    #: the join honest: only a mutation recorded *after* the call opened may
+    #: ride its result, so a no-op edit — which emits no ``file_change`` —
+    #: cannot inherit the path's previous diff. The deck keeps the same
+    #: discipline with ``FileState::changes`` as its freshness tag
+    #: (``crates/stella-tui/src/render/entry.rs``).
+    tool_paths: dict[str, tuple[str, int]] = field(default_factory=dict)
+    #: Mutations folded so far — the clock :attr:`tool_paths` marks are read
+    #: against.
+    change_seq: int = 0
+    #: path -> the latest mutation recorded for it: ``{diff, added, removed,
+    #: at}``. ``diff`` is ``None`` for a mutation that carried none — recorded
+    #: anyway, so it *supersedes* an older diff rather than exposing it to the
+    #: next result on the same path.
+    file_diffs: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: The last fragment-built text entry not yet superseded by its
     #: consolidated ``text`` event. Outlives ``open_entries`` on purpose:
     #: ``step_usage`` routinely closes the run *before* the consolidated
@@ -607,6 +654,14 @@ class TranscriptReader:
             # the whole object rides as `meta.raw` for the expanded view, so
             # nothing is lost by summarizing here.
             arguments = call.get("input", call.get("arguments"))
+            # A mutating file tool's target, kept so the *result* entry can
+            # carry the diff of the change this very call made — the same
+            # correlate-through-state move `tool_names` makes for the name,
+            # keyed the same way.
+            if call_id and name in _FILE_MUTATIONS:
+                path = _tool_input_path(arguments)
+                if path is not None:
+                    state.tool_paths[call_id] = (path, state.change_seq)
             # The call's CLASS (`crate::tool_class` in the deck, ported at
             # `arenabench.toolclass`) — a read, a write, a shell, a test, a
             # push, a hand-off. The page paints the name in this class's hue
@@ -644,6 +699,34 @@ class TranscriptReader:
             body = cap_middle(strip_ansi(decoded.text), self._tool_result_budget)
             name = state.tool_names.get(call_id, "tool")
             cls = classify(name)
+            # The mutation's diff, correlated onto the result the same way the
+            # name is: through state recorded at `tool_start`. The
+            # `file_change` event precedes its `tool_result` on the wire
+            # (`ToolRegistry::record_touch` emits mid-execution), so by the
+            # time this result folds, the path's latest recorded mutation is
+            # this very call's — and the `at > seen` mark guards the one case
+            # where it is not: a call that emitted no `file_change` must not
+            # inherit an older call's diff. Gated to successful calls, like
+            # the deck (`crates/stella-tui/src/model.rs`): a failed call
+            # produced no `FileChange`, and rendering the path's previous diff
+            # under its ✗ would attribute a change the call never made.
+            #
+            # The diff is carried whole, never `cap_middle`d: a mid-hunk
+            # elision garbles the render, and the emitter already bounds it
+            # (`crates/stella-tools/src/file_touch.rs::changed_region_diff`
+            # caps each side of the changed region).
+            mutation: dict[str, Any] = {}
+            marked = state.tool_paths.get(call_id)
+            if decoded.ok and marked is not None:
+                path, seen = marked
+                change = state.file_diffs.get(path)
+                if change is not None and change["at"] > seen and change["diff"]:
+                    mutation = {
+                        "diff": change["diff"],
+                        "diff_path": path,
+                        "diff_added": change["added"],
+                        "diff_removed": change["removed"],
+                    }
             return [
                 entry(
                     self._next_seq(state),
@@ -658,6 +741,7 @@ class TranscriptReader:
                     lines=body.count("\n") + 1 if body else 0,
                     tool_class=cls,
                     tool_class_label=class_label(cls),
+                    **mutation,
                 )
             ]
 
@@ -753,6 +837,30 @@ class TranscriptReader:
                     cost_usd=event.get("cost_usd"),
                 )
             ]
+
+        if kind == "file_change":
+            # Not (only) a row: the correlation state the *result* entry needs
+            # to render this mutation's diff inline (see the `tool_result`
+            # arm). `added`/`removed` are the emitter's own counts and are
+            # carried rather than recounted from the diff — the diff is a
+            # bounded, deliberately coarse rendering of the changed region,
+            # and re-deriving the delta from it is the exact disagreement the
+            # event's contract warns against
+            # (`crates/stella-protocol/src/event.rs::FileChange`). A mutation
+            # with no diff is recorded too, so it supersedes the path's
+            # previous diff instead of leaving it to be misattributed. Reads
+            # carry `0/0` and no diff, and record nothing.
+            path = event.get("path")
+            diff = event.get("diff")
+            if isinstance(path, str) and path and str(event.get("kind") or "") != "read":
+                state.change_seq += 1
+                state.file_diffs[path] = {
+                    "diff": diff if isinstance(diff, str) and diff else None,
+                    "added": event.get("added") or 0,
+                    "removed": event.get("removed") or 0,
+                    "at": state.change_seq,
+                }
+            # ...and then the compact row below, unchanged.
 
         if kind in ("file_change", "commit", "task_update", "loop_detected"):
             return [

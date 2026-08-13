@@ -43,9 +43,9 @@ Two fields are stated absences rather than values, because inventing them would 
 | [`get_environment`](get_environment.toml) | environment | always | yes | yes | yes |
 | [`get_issue`](get_issue.toml) | issue | requires-issue-backend | yes | no | none observed |
 | [`get_state`](get_state.toml) | scratch | always | yes | yes | none observed |
-| [`glob`](glob.toml) | search | always | yes | yes | yes |
-| [`graph_query`](graph_query.toml) | search | always | yes | no | none observed |
-| [`grep`](grep.toml) | search | always | yes | yes | none observed |
+| [`glob`](glob.toml) | retrieval | always | yes | yes | yes |
+| [`graph_query`](graph_query.toml) | retrieval | always | yes | no | none observed |
+| [`grep`](grep.toml) | retrieval | always | yes | yes | none observed |
 | [`install_skill`](install_skill.toml) | session | cli-session-layer | no | no | none observed |
 | [`invoke_skill`](invoke_skill.toml) | session | cli-session-layer | no | no | none observed |
 | [`list_labels`](list_labels.toml) | issue | requires-issue-backend | yes | no | none observed |
@@ -76,10 +76,10 @@ Two fields are stated absences rather than values, because inventing them would 
 | [`save_memory`](save_memory.toml) | context | always | no | no | yes |
 | [`save_state`](save_state.toml) | scratch | always | no | no | none observed |
 | [`screenshot`](screenshot.toml) | ci | always | no | no | yes |
-| [`search`](search.toml) | search | always | yes | no | none observed |
+| [`search`](search.toml) | retrieval | always | yes | no | none observed |
 | [`search_issues`](search_issues.toml) | issue | requires-issue-backend | yes | no | none observed |
 | [`search_skills`](search_skills.toml) | session | cli-session-layer | yes | no | none observed |
-| [`semantic_code_search`](semantic_code_search.toml) | search | always | yes | no | none observed |
+| [`semantic_code_search`](semantic_code_search.toml) | retrieval | always | yes | no | none observed |
 | [`send_stdin`](send_stdin.toml) | process | always | no | no | none observed |
 | [`skill_search`](skill_search.toml) | session | cli-session-layer | yes | yes | none observed |
 | [`start_process`](start_process.toml) | process | always | no | no | yes |

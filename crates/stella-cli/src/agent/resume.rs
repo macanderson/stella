@@ -218,7 +218,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             .with_ask_user(tty_ask_io(human_is_present(true)))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
         let hook_runner = ShellHookRunner;
         match restored {

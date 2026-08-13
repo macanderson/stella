@@ -320,4 +320,141 @@ mod tests {
         );
         assert_eq!(names(&set), vec!["read_file".to_string()]);
     }
+
+    // -----------------------------------------------------------------------
+    // #3120 witnesses: the assembled session surface, not the policy
+    // arithmetic. That issue shipped precisely because the policy's own unit
+    // tests were green while the layers above and beside it leaked — so these
+    // build the real stack the way every session driver does and census what
+    // it advertises, which is the exact `tools` array the provider serializes.
+    // -----------------------------------------------------------------------
+
+    /// The real session chain — native registry, customs, interactive, the
+    /// policy filter, discovery on top — with the discovery layer carrying
+    /// the same policy `for_session` gives it, and lean pinned explicitly so
+    /// an ambient `STELLA_LEAN_TOOLS` cannot wobble the census.
+    async fn wire_surface(
+        root: &std::path::Path,
+        policy: ToolPolicy,
+        lean: Option<crate::discovery::LeanConfig>,
+        call: Option<(&str, Value)>,
+    ) -> (Vec<ToolSchema>, Option<ToolOutput>) {
+        let registry = stella_tools::ToolRegistry::with_backends_and_options(
+            root.to_path_buf(),
+            None,
+            None,
+            Default::default(),
+        );
+        let customs =
+            stella_tools::custom::CustomToolSet::new(&registry, vec![], root.to_path_buf());
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let interactive = crate::interactive::InteractiveToolSet::new(&customs, event_tx);
+        let permitted = PolicyToolSet::new(&interactive, policy.clone());
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, root.to_path_buf())
+            .with_policy(policy)
+            .with_lean(lean);
+        let schemas = tools.schemas();
+        let output = match call {
+            Some((name, input)) => Some(tools.execute(name, &input).await),
+            None => None,
+        };
+        (schemas, output)
+    }
+
+    /// **The #3120 witness.** `--tools
+    /// "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on"`
+    /// puts exactly the five requested names on the wire. The old stack
+    /// advertised thirteen, through two independent defects asserted here by
+    /// name: the catalog group then called `search` made `search:on` resolve
+    /// as a family switch for grep/glob/graph_query/semantic_code_search, and
+    /// the discovery layer appended its four tools above the policy filter.
+    #[tokio::test]
+    async fn a_tools_spec_advertises_exactly_the_requested_set() {
+        let root = tempfile::tempdir().unwrap();
+        let spec = "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on";
+        let mut policy = ToolPolicy::allow_all();
+        policy.narrow_with(&ToolPolicy::parse_spec(spec).unwrap());
+
+        let (schemas, _) = wire_surface(root.path(), policy, None, None).await;
+        let mut advertised: Vec<String> = schemas.into_iter().map(|s| s.name).collect();
+
+        // Each family explicitly, so a partial regression names itself.
+        for leak in ["grep", "glob", "graph_query", "semantic_code_search"] {
+            assert!(
+                !advertised.contains(&leak.to_string()),
+                "`{leak}` leaked through the `search` group key: {advertised:?}"
+            );
+        }
+        for leak in ["tool_search", "skill_search", "mcp_search", "invoke_skill"] {
+            assert!(
+                !advertised.contains(&leak.to_string()),
+                "`{leak}` was re-added above the policy filter: {advertised:?}"
+            );
+        }
+        advertised.sort_unstable();
+        assert_eq!(
+            advertised,
+            ["bash", "edit_file", "read_file", "search", "write_file"].map(String::from),
+            "five requested, exactly five on the wire"
+        );
+    }
+
+    /// The issue's closing demand: `--tools X` and `STELLA_LEAN_TOOLS=only:X`
+    /// are one intent and must be one wire result — byte-identical `tools`
+    /// arrays. The lean arm uses [`crate::discovery::LeanConfig::closed`],
+    /// the parsed form of `only:` pinned by
+    /// `lean_env_parsing_covers_all_forms`.
+    #[tokio::test]
+    async fn a_tools_spec_and_a_closed_lean_set_are_byte_identical_on_the_wire() {
+        let root = tempfile::tempdir().unwrap();
+        let five = ["search", "read_file", "edit_file", "write_file", "bash"];
+
+        let mut policy = ToolPolicy::allow_all();
+        let spec = "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on";
+        policy.narrow_with(&ToolPolicy::parse_spec(spec).unwrap());
+        let (via_policy, _) = wire_surface(root.path(), policy, None, None).await;
+
+        let lean = crate::discovery::LeanConfig::closed(five.map(String::from));
+        let (via_lean, _) =
+            wire_surface(root.path(), ToolPolicy::allow_all(), Some(lean), None).await;
+
+        assert_eq!(
+            serde_json::to_string(&via_policy).unwrap(),
+            serde_json::to_string(&via_lean).unwrap(),
+            "two mechanisms, one intent, one wire result"
+        );
+    }
+
+    /// The discovery layer's four tools never reach `PolicyToolSet`, so the
+    /// operator's two-sided contract — withheld from `schemas` AND refused by
+    /// `execute`, in the unknown-tool wording — has to hold at that layer
+    /// too. Exact-name deny: the rest of the layer stays advertised.
+    #[tokio::test]
+    async fn a_policy_denied_discovery_tool_is_hidden_and_refused() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Anti-vacuity: with no switches at all, the tool is advertised.
+        let (schemas, _) = wire_surface(root.path(), ToolPolicy::allow_all(), None, None).await;
+        assert!(schemas.iter().any(|s| s.name == "tool_search"));
+
+        let policy = ToolPolicy::from_switches([("tool_search".into(), false)]);
+        let (schemas, output) = wire_surface(
+            root.path(),
+            policy,
+            None,
+            Some(("tool_search", serde_json::json!({"query": "anything"}))),
+        )
+        .await;
+        assert!(
+            schemas.iter().all(|s| s.name != "tool_search"),
+            "a denied discovery tool must be withheld"
+        );
+        match output.expect("a call was made") {
+            ToolOutput::Error { message, .. } => assert!(
+                message.contains("unknown tool"),
+                "a denied tool must not announce itself: {message}"
+            ),
+            other => panic!("a denied discovery tool must be refused, got {other:?}"),
+        }
+    }
 }

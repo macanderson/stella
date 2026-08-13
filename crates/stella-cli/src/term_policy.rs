@@ -55,12 +55,13 @@ pub(crate) fn dumb_terminal(
 /// Whether deck animation is off for this invocation: the `--no-anim` flag,
 /// or either environment signal its own help text promises.
 ///
-/// The promise was only half kept. `init_fx::animation_enabled` folded
-/// `STELLA_NO_ANIM` and `NO_COLOR` in for the `stella init` cinematic, but the
-/// Command Deck — the surface with the shimmering progress bar and the
-/// blinking caret, and the one an asciinema recording or a CI log actually
-/// captures — was handed the bare flag. So `NO_COLOR=1 stella chat` kept
-/// animating, and the flag's documentation was simply wrong about it.
+/// The promise was only half kept. The retired `stella init` cinematic
+/// (#3102 replaced it with real progress lines) folded `STELLA_NO_ANIM` and
+/// `NO_COLOR` in, but the Command Deck — the surface with the shimmering
+/// progress bar and the blinking caret, and the one an asciinema recording
+/// or a CI log actually captures — was handed the bare flag. So
+/// `NO_COLOR=1 stella chat` kept animating, and the flag's documentation was
+/// simply wrong about it.
 ///
 /// `NO_COLOR` follows its published rule (present and non-empty);
 /// `STELLA_NO_ANIM` follows this CLI's own house convention for boolean env
@@ -70,6 +71,18 @@ pub(crate) fn animation_disabled(no_anim_flag: bool) -> bool {
     let stella = std::env::var_os("STELLA_NO_ANIM").is_some_and(|v| !v.is_empty() && v != "0");
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     no_anim_flag || stella || no_color
+}
+
+/// Should this process redraw a line in place — animate at all?
+///
+/// [`animation_disabled`]'s three signals plus the one they cannot answer:
+/// a non-TTY stdout (pipes, CI) never animates. This was the `stella init`
+/// cinematic's predicate until #3102 retired the cinematic; the in-place
+/// ingest progress line still decides here so `NO_COLOR`, `STELLA_NO_ANIM`,
+/// and the TTY test stay one decision.
+pub(crate) fn animation_enabled(no_anim_flag: bool) -> bool {
+    use std::io::IsTerminal;
+    !animation_disabled(no_anim_flag) && std::io::stdout().is_terminal()
 }
 
 /// How the deck presents itself, as distinct from what it runs.

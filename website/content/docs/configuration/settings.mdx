@@ -383,10 +383,12 @@ A key is one of three things, and the most specific one wins:
 
 1. an exact **tool name** — `repo_push`, `mcp__github__create_issue`, your own
    `deploy_to_staging`;
-2. a **group** — the families in [Built-in tools](/docs/agent-tools): `file`, `search`,
-   `context`, `build`, `scripts`, `process`, `bash`, `web`, `repo`, `ci`, `media`,
-   `task`, `issue`, `session`, plus `mcp` and `custom` for anything the built-in catalog
-   has never heard of;
+2. a **group** — the families in [Built-in tools](/docs/agent-tools): `file`,
+   `retrieval` (the Search family: `search`, `grep`, `glob`, `graph_query`,
+   `semantic_code_search` — deliberately not keyed `search`, so that key addresses the
+   `search` tool alone), `context`, `build`, `scripts`, `process`, `bash`, `web`,
+   `repo`, `ci`, `media`, `task`, `issue`, `session`, `environment`, `scratch`, plus
+   `mcp` and `custom` for anything the built-in catalog has never heard of;
 3. `"*"`, every tool.
 
 Anything unmentioned is on. So `{"*": "off", "read_file": "on"}` is a read-only agent in

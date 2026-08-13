@@ -229,6 +229,7 @@ impl<'a> Replayer<'a> {
             let domains = crate::domains::Domains {
                 version: 1,
                 inferred_by: "replay".to_string(),
+                source_fingerprint: None,
                 domains: trace
                     .workspace
                     .domains

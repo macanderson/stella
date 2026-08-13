@@ -560,9 +560,8 @@ impl Tool for Diagnostics {
         let plan = {
             // Manifest reads on the blocking pool, like `ScriptIndex::detect`.
             let root = root.to_path_buf();
-            tokio::task::spawn_blocking(move || resolve_plan(&root))
-                .await
-                .unwrap_or_else(|_| Err("diagnostics detection was cancelled".into()))
+            let joined = tokio::task::spawn_blocking(move || resolve_plan(&root)).await;
+            crate::blocking::flatten("diagnostics detection", joined)
         };
         let plan = match plan {
             Ok(plan) => plan,

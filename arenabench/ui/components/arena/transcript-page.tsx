@@ -47,6 +47,14 @@ import { ProofPanel } from "@/components/arena/proof-panel";
  * - **The rails are the deck's**: `●` opens a call, `⎿` its result, `✗` a
  *   failed one — a distinct glyph *and* column, so a failure is findable by
  *   margin-scan alone (`crates/stella-tui/src/render/row.rs::Rail`).
+ * - **A mutation's diff rides its result row.** A successful `write_file`/
+ *   `edit_file`/`apply_edits`/`delete_file` result carries the `file_change`
+ *   diff its call produced (`meta.diff`, correlated server-side by
+ *   `arenabench.transcript`), rendered GitHub-PR style under the row with
+ *   the emitter's own `+N −M` in the metric column — at most
+ *   `INLINE_DIFF_CAP` lines until disclosed, the fold the deck gives the
+ *   same diff (`crates/stella-tui/src/render/entry.rs`, the `ToolResult`
+ *   arm).
  *
  * Two deliberate departures. The deck renders a call and its result as one
  * tight block that nothing can split, so the result row need not repeat the
@@ -259,6 +267,138 @@ function salientLine(text: string): number {
   }
   return firstNonBlank;
 }
+
+/** Collapsed inline-diff line budget, matching the deck's
+ * `crates/stella-tui/src/render.rs::INLINE_DIFF_CAP` exactly. */
+const INLINE_DIFF_CAP = 20;
+
+type DiffTone = "add" | "remove" | "hunk" | "meta" | "context";
+
+type DiffRow = {
+  /** The raw diff line, `+`/`-` marker included. */
+  text: string;
+  tone: DiffTone;
+  /** The PR-style gutter number — added and context lines numbered on the
+   * new side, removed lines on the old side — or `null` for hunk headers,
+   * file metadata, and lines outside any hunk. */
+  no: number | null;
+};
+
+/** Diff metadata rather than source content (`crates/stella-tui/src/diff.rs::is_meta`). */
+function isDiffMeta(line: string): boolean {
+  return (
+    line.startsWith("+++ ") ||
+    line.startsWith("--- ") ||
+    line.startsWith("diff ") ||
+    line.startsWith("index ")
+  );
+}
+
+/**
+ * One `DiffRow` per diff line, with the gutter tracked from the
+ * `@@ -a,b +c,d @@` hunk headers the way a PR view numbers them — a port of
+ * `crates/stella-tui/src/diff.rs::body_lines`' numbering walk. Tones do not
+ * depend on hunk state (the event path can emit a headerless pseudo-diff of
+ * bare `+`/`-` lines); only the numbers do, so malformed input degrades to
+ * unnumbered coloured text, never a crash. Deliberately *not* ported: the
+ * deck's syntax colouring and intra-line word emphasis, which lean on its
+ * terminal theme machinery.
+ */
+function parseDiff(diff: string): DiffRow[] {
+  let oldNo: number | null = null;
+  let newNo: number | null = null;
+  return splitLines(diff).map((text): DiffRow => {
+    if (text.startsWith("@@")) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+      oldNo = m ? parseInt(m[1], 10) : null;
+      newNo = m ? parseInt(m[2], 10) : null;
+      return { text, tone: "hunk", no: null };
+    }
+    if (isDiffMeta(text)) return { text, tone: "meta", no: null };
+    const head = text.charAt(0);
+    if (head === "+") {
+      const no = newNo;
+      if (newNo !== null) newNo += 1;
+      return { text, tone: "add", no };
+    }
+    if (head === "-") {
+      const no = oldNo;
+      if (oldNo !== null) oldNo += 1;
+      return { text, tone: "remove", no };
+    }
+    if (head === " ") {
+      const no = newNo;
+      if (oldNo !== null) oldNo += 1;
+      if (newNo !== null) newNo += 1;
+      return { text, tone: "context", no };
+    }
+    // An elision marker (`… (25 more lines)`) or anything else the emitter
+    // interleaves: rendered plain and unnumbered.
+    return { text, tone: "context", no: null };
+  });
+}
+
+/**
+ * Which diff lines a cap-limited render keeps — the deck's hunk-aware cap
+ * (`crates/stella-tui/src/diff.rs::select_lines`). Whole hunks are emitted
+ * while they fit and the rest dropped, rather than slicing at line `cap`: a
+ * flat cut lands wherever it lands — routinely between a `-` line and the
+ * `+` line replacing it — leaving a change that reads as a pure deletion.
+ * Only when the first hunk alone overruns the budget does this fall back to
+ * a window: the `@@` header (the line that says *where* in the file this
+ * is), then the body from two context lines above the first real change.
+ */
+function selectDiffLines(raw: string[], cap: number): boolean[] {
+  const n = raw.length;
+  if (n <= cap) return raw.map(() => true);
+  const keep = raw.map(() => false);
+  const bounds: number[] = [];
+  raw.forEach((line, i) => {
+    if (line.startsWith("@@")) bounds.push(i);
+  });
+  if ((bounds[0] ?? 1) !== 0) bounds.unshift(0);
+  bounds.push(n);
+
+  let used = 0;
+  for (let w = 0; w + 1 < bounds.length; w++) {
+    const [start, end] = [bounds[w], bounds[w + 1]];
+    if (used + (end - start) > cap) break;
+    keep.fill(true, start, end);
+    used += end - start;
+  }
+  if (used > 0) return keep;
+
+  const end = bounds[1];
+  let firstChange = 0;
+  for (let i = 0; i < end; i++) {
+    if ((raw[i].startsWith("+") || raw[i].startsWith("-")) && !isDiffMeta(raw[i])) {
+      firstChange = i;
+      break;
+    }
+  }
+  const header = raw.slice(0, end).findIndex((line) => line.startsWith("@@"));
+  let budget = cap;
+  if (header !== -1) {
+    keep[header] = true;
+    budget -= 1;
+  }
+  const start = Math.max(firstChange - 2, header === -1 ? 0 : header + 1);
+  for (let i = start; i < end && budget > 0; i++) {
+    if (!keep[i]) {
+      keep[i] = true;
+      budget -= 1;
+    }
+  }
+  return keep;
+}
+
+const DIFF_TONE_TEXT: Record<DiffTone, string> = {
+  add: "text-ok",
+  remove: "text-bad",
+  hunk: "text-dim",
+  meta: "text-dim",
+  context: "text-muted",
+};
 
 /** Frames shown before the fold, matching the deck's `RECALL_PREVIEW`. */
 const RECALL_PREVIEW_FRAMES = 3;
@@ -596,17 +736,47 @@ function Entry({
     const cls = toolClassOf(meta);
     const lines = body ? splitLines(body) : [];
     const total = lines.length;
+    // The mutation's diff, inline under the result — correlated server-side
+    // (`arenabench.transcript`, the `tool_result` arm) and rendered in the
+    // deck's grammar (`crates/stella-tui/src/render/entry.rs`): the metric
+    // column states the emitter's own `+N −M` instead of a line count, the
+    // collapsed row suppresses the output preview (a prose "Applied edit to
+    // …" would restate the call row above it and the diff under it in the
+    // same breath), and the diff shows at most `INLINE_DIFF_CAP` lines until
+    // disclosed. Only a successful mutation carries one, so `isError` never
+    // coincides with a diff.
+    const diffText = typeof meta.diff === "string" ? meta.diff : "";
+    const hasDiff = diffText.length > 0;
+    const diffAll = hasDiff ? parseDiff(diffText) : [];
+    const diffKeep = resultOpen
+      ? diffAll.map(() => true)
+      : selectDiffLines(
+          diffAll.map((row) => row.text),
+          INLINE_DIFF_CAP,
+        );
+    // A lone hunk header is dropped (`diff.rs::body_lines_inline`): inline
+    // under a call row it restates what the gutter beside it already says,
+    // and a two-line change should not cost three rows. With several hunks
+    // the headers stay — there they are the boundary between two disjoint
+    // regions of the file.
+    const multiHunk = diffAll.filter((row) => row.tone === "hunk").length > 1;
+    const diffShown = diffAll.filter(
+      (row, i) => diffKeep[i] && (multiHunk || row.tone !== "hunk"),
+    );
+    const diffHidden = diffKeep.filter((kept) => !kept).length;
     // The collapsed window anchors on the SALIENT line, not line 1 — see
     // `salientLine`'s doc comment — and its size is the deck's own budget: a
     // success shows a single line, a failure shows six.
     const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
     const anchor = total > 0 ? salientLine(body ?? "") : 0;
-    const collapsedShown = lines.slice(anchor, anchor + budget);
+    const collapsedShown = hasDiff ? [] : lines.slice(anchor, anchor + budget);
     const shown = resultOpen ? lines : collapsedShown;
     const hidden = resultOpen ? 0 : total - collapsedShown.length;
     const metrics = [
       meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
-      total > 1 ? `${total} lines` : null,
+      // A diff states its own size in `+N −M` — the honest unit for an edit;
+      // "12 lines" would describe the tool's chatter, not the change.
+      total > 1 && !hasDiff ? `${total} lines` : null,
       // ⚡ marks a speculated result: its duration overlapped the model's own
       // streaming instead of following it, so the number is not latency the
       // run actually spent waiting.
@@ -614,6 +784,16 @@ function Entry({
       // The protocol grew a `ToolOutput` arm this page predates. Say so
       // rather than presenting the JSON fallback as if it were output.
       meta.unrecognized ? "unrecognized output shape" : null,
+    ].filter(Boolean);
+    const foldParts = [
+      diffHidden > 0
+        ? `${diffHidden} more diff ${diffHidden === 1 ? "line" : "lines"}`
+        : null,
+      hidden > 0
+        ? hasDiff
+          ? `${hidden} output ${hidden === 1 ? "line" : "lines"}`
+          : `${hidden} more ${hidden === 1 ? "line" : "lines"}`
+        : null,
     ].filter(Boolean);
     return (
       <div>
@@ -626,6 +806,16 @@ function Entry({
           >
             <Highlight text={entry.title ?? "tool"} query={query} />
           </span>
+          {/* The deck's `+N −M`, first in the metric column, from the counts
+              the emitter measured (`meta.diff_added`/`diff_removed`) — never
+              a recount of the rendered hunk, which is a bounded view of the
+              changed region and reports a smaller number. */}
+          {hasDiff && (
+            <span className="text-[10.5px] tabular-nums">
+              <span className="text-ok">+{Number(meta.diff_added ?? 0)}</span>{" "}
+              <span className="text-bad">−{Number(meta.diff_removed ?? 0)}</span>
+            </span>
+          )}
           {metrics.length > 0 && (
             <span className="text-[10.5px] text-dim">· {metrics.join(" · ")}</span>
           )}
@@ -640,12 +830,40 @@ function Entry({
             <Highlight text={shown.join("\n")} query={query} />
           </pre>
         )}
+        {diffShown.length > 0 && (
+          <div className="ml-5 overflow-x-auto text-[11px]">
+            {diffShown.map((row, i) => (
+              <div
+                key={i}
+                className={cn(
+                  "flex",
+                  row.tone === "add" && "bg-ok/10",
+                  row.tone === "remove" && "bg-bad/10",
+                )}
+              >
+                <span className="w-[34px] flex-none select-none pr-1.5 text-right text-[10px] tabular-nums text-dim/70">
+                  {row.no ?? ""}
+                </span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 whitespace-pre-wrap break-words",
+                    DIFF_TONE_TEXT[row.tone],
+                  )}
+                >
+                  <Highlight text={row.text} query={query} />
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {/* The deck only earns this row for a failure — a successful result
             already states its size in the metric column above. A mouse-driven
             page has no ctrl+o, though, so a folded SUCCESS still gets a quiet
             way to see the rest; it just does not compete for attention the
-            way the failure's does. */}
-        {!resultOpen && hidden > 0 && (
+            way the failure's does. With a diff, the fold names both of the
+            things it hides: the diff's overflow and the output the collapsed
+            row suppressed entirely. */}
+        {!resultOpen && foldParts.length > 0 && (
           <button
             type="button"
             onClick={toggleResult}
@@ -654,10 +872,10 @@ function Entry({
               isError ? "text-dim" : "text-dim/70",
             )}
           >
-            ⋯ {hidden} more {hidden === 1 ? "line" : "lines"}
+            ⋯ {foldParts.join(" · ")}
           </button>
         )}
-        {resultOpen && total > budget && (
+        {resultOpen && (total > budget || hasDiff) && (
           <button
             type="button"
             onClick={toggleResult}
@@ -932,9 +1150,14 @@ function TranscriptView({
         return false;
       }
       if (!needle) return true;
+      // A result's inline diff is part of what the entry shows, so the
+      // search that promises "every entry" must read it too — it lives in
+      // `meta`, not `body`, precisely so the body cap can never garble it.
+      const diff = entry.meta?.diff;
       return (
         (entry.body ?? "").toLowerCase().includes(needle) ||
         (entry.title ?? "").toLowerCase().includes(needle) ||
+        (typeof diff === "string" && diff.toLowerCase().includes(needle)) ||
         (entry.kind === "usage" && usageLine(entry).toLowerCase().includes(needle))
       );
     });

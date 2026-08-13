@@ -327,3 +327,76 @@ fn a_capped_chunk_pass_names_what_it_left_unembedded() {
         "the cap's leftovers are picked up by the lazy pass: {rendered}"
     );
 }
+
+/// The witness for #3102 finding 1, CLI half: a long index pass narrates
+/// itself into the transcript WHILE it runs. With a zero quiet interval every
+/// per-file callback past the first becomes a line, so a multi-file fixture
+/// must stream walked/parsed counts before the summary — on old code the only
+/// pre-summary line `init` ever printed was the static "indexing…" banner.
+#[tokio::test]
+async fn a_running_index_pass_streams_progress_lines() {
+    let ws = workspace();
+    let root = ws.path().canonicalize().expect("canonicalize");
+
+    let mut lines: Vec<String> = Vec::new();
+    let outcome = drive_index_blocking(root, std::time::Duration::ZERO, &mut |line| {
+        lines.push(line)
+    })
+    .await
+    .expect("task completes")
+    .expect("index succeeds");
+
+    assert_eq!(outcome.total_files, FIXTURE.len());
+    let progress: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("files walked"))
+        .collect();
+    assert!(
+        !progress.is_empty(),
+        "progress must stream during the pass, not only summarise after: {lines:?}"
+    );
+    assert!(
+        progress
+            .iter()
+            .all(|line| line.contains("parsed") && line.contains("unchanged")),
+        "each progress line carries the live counts: {progress:?}"
+    );
+}
+
+/// The throttle is what keeps liveness from becoming spam: the first tick
+/// arms silently, ticks inside the quiet interval stay silent, and the first
+/// tick past it fires.
+#[test]
+fn the_progress_ticker_arms_then_fires_once_per_interval() {
+    let start = std::time::Instant::now();
+    let second = std::time::Duration::from_secs(1);
+    let mut ticker = ProgressTicker::new(second);
+
+    assert!(!ticker.ready(start), "the first tick arms, never fires");
+    assert!(
+        !ticker.ready(start + std::time::Duration::from_millis(400)),
+        "inside the quiet interval"
+    );
+    assert!(ticker.ready(start + second), "the interval has elapsed");
+    assert!(
+        !ticker.ready(start + second + std::time::Duration::from_millis(10)),
+        "firing re-arms the quiet interval"
+    );
+}
+
+/// The narrated line is the live-count sentence the maintainer asked to
+/// watch increment — walked, parsed, unchanged, symbols.
+#[test]
+fn the_progress_line_carries_the_running_counts() {
+    let line = format_index_progress(&stella_graph::IndexStats {
+        files_seen: 1_500,
+        files_parsed: 620,
+        files_skipped_unchanged: 871,
+        symbols: 9_840,
+        ..Default::default()
+    });
+    assert_eq!(
+        line,
+        "· 1500 files walked — 620 parsed, 871 unchanged, 9840 symbols…"
+    );
+}
