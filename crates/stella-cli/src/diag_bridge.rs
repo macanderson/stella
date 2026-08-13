@@ -1011,7 +1011,9 @@ mod tests {
         let (mut bridge, records) = bridge();
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-never-seen".into(),
-            output: ToolOutput::Ok { content: "x".into() },
+            output: ToolOutput::Ok {
+                content: "x".into(),
+            },
             duration_ms: 1,
             speculated: false,
         });
