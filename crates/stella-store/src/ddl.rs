@@ -350,11 +350,15 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// survives as the idempotent *repair* path, not as the only writer.
 ///
 /// `state` is the lifecycle the live write needs and the end-of-turn fold
-/// could not express: `'running'` (announced, no result yet), `'ok'`, or
-/// `'error'`. It is strictly richer than `ok`, which is kept in lockstep
+/// could not express: `'running'` (announced, no result yet), `'ok'`,
+/// `'error'`, or `'abandoned'` (v24 — never returned because its turn ended
+/// first). It is strictly richer than `ok`, which is kept in lockstep
 /// (`ok = 1` iff `state = 'ok'`) so every pre-v18 reader keeps working.
 /// Without it an in-flight call is indistinguishable from a failed one with
 /// an empty error message, and a dashboard cannot honestly draw either.
+/// `'abandoned'` is split from `'error'` (#3146) because every error-rate
+/// reader groups on this column, and an interrupt charging an "error" to
+/// whatever tool was in flight made those rates dishonest.
 ///
 /// `ts` is now the moment the call was **announced** rather than the moment
 /// the turn ended, so per-day rollups bucket a call on the day it ran.
@@ -372,25 +376,33 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// and a total unique index would fail to build on any file holding two of
 /// them, which fails the migration and takes the workspace's whole store with
 /// it. The invariant is only meaningful for real ids anyway.
-pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
+pub(crate) fn tool_calls_ddl(table: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {table} (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,
        call_id TEXT NOT NULL DEFAULT '',
        name TEXT NOT NULL,
        surface TEXT NOT NULL DEFAULT 'native',
-       args_json TEXT NOT NULL DEFAULT '{}',
+       args_json TEXT NOT NULL DEFAULT '{{}}',
        args_digest TEXT NOT NULL DEFAULT '',
        reason TEXT NOT NULL DEFAULT '',
        ok INTEGER NOT NULL DEFAULT 1,
        state TEXT NOT NULL DEFAULT 'ok'
-         CHECK(state IN ('running', 'ok', 'error')),
+         CHECK(state IN ('running', 'ok', 'error', 'abandoned')),
        error TEXT NOT NULL DEFAULT '',
        bytes_out INTEGER NOT NULL DEFAULT 0,
        duration_ms INTEGER NOT NULL DEFAULT 0,
        ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
        UNIQUE (execution_id, seq)
-     );
-     CREATE INDEX IF NOT EXISTS tool_calls_by_name
+     );"
+    )
+}
+
+/// The `tool_calls` indexes, separate from the table shape so the §7 rebuild
+/// path can recreate them *after* renaming the copy into place — an index
+/// created on the staging name would not survive the rename.
+pub(crate) const TOOL_CALLS_INDEXES: &str = "CREATE INDEX IF NOT EXISTS tool_calls_by_name
        ON tool_calls(name, execution_id);
      CREATE INDEX IF NOT EXISTS tool_calls_by_state
        ON tool_calls(state, execution_id, seq);

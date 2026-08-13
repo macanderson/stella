@@ -645,7 +645,7 @@ impl Observatory {
         // the whole history was unbounded, and calls old enough to age out of
         // the window no longer describe how the tools behave today anyway.
         let sql = format!(
-            "SELECT name, ok, duration_ms, bytes_out FROM tool_calls
+            "SELECT name, state, duration_ms, bytes_out FROM tool_calls
              ORDER BY rowid DESC LIMIT {TOOL_CALL_SCAN_WINDOW}"
         );
         let mut stmt = match conn.prepare(&sql) {
@@ -656,7 +656,7 @@ impl Observatory {
         let scanned = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)? != 0,
+                r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
             ))
@@ -664,11 +664,17 @@ impl Observatory {
         let mut by_name: std::collections::BTreeMap<String, ToolAgg> =
             std::collections::BTreeMap::new();
         for call in scanned {
-            let (name, ok, duration_ms, bytes_out) = call?;
+            let (name, state, duration_ms, bytes_out) = call?;
             let entry = by_name.entry(name).or_default();
             entry.calls += 1;
-            if !ok {
-                entry.errors += 1;
+            // An abandoned call is a fact about its turn, not the tool: it
+            // must not count against the tool's error rate (#3146). A store
+            // not yet migrated to v24 still spells abandonment 'error'; its
+            // rates stay conservatively inflated until its next CLI open.
+            match state.as_str() {
+                "error" => entry.errors += 1,
+                "abandoned" => entry.abandoned += 1,
+                _ => {}
             }
             entry.durations.push(duration_ms);
             entry.bytes_out += bytes_out;
@@ -701,6 +707,7 @@ impl Observatory {
                     "name": name,
                     "calls": agg.calls,
                     "errors": agg.errors,
+                    "abandoned": agg.abandoned,
                     "p50_ms": p50,
                     "p90_ms": p90,
                     "p99_ms": p99,
@@ -890,7 +897,7 @@ impl Observatory {
         }
         for row in collect_rows(
             &conn,
-            "SELECT coalesce(date(ts), ''), count(*), count(*) FILTER (WHERE ok = 0)
+            "SELECT coalesce(date(ts), ''), count(*), count(*) FILTER (WHERE state = 'error')
              FROM tool_calls GROUP BY 1",
             |r| {
                 Ok(json!({
@@ -1218,6 +1225,10 @@ fn rules_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
 struct ToolAgg {
     calls: i64,
     errors: i64,
+    /// Calls whose turn ended before they returned — counted apart from
+    /// `errors` because abandonment is a fact about the turn, not the tool
+    /// (#3146).
+    abandoned: i64,
     /// Every call's duration, sorted in place when the p50/max are taken.
     durations: Vec<i64>,
     bytes_out: i64,

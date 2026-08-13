@@ -98,6 +98,8 @@ fn seeded_workspace() -> TempDir {
                args_digest TEXT NOT NULL DEFAULT '',
                reason TEXT NOT NULL DEFAULT '',
                ok INTEGER NOT NULL DEFAULT 1,
+               state TEXT NOT NULL DEFAULT 'ok'
+                 CHECK(state IN ('running', 'ok', 'error', 'abandoned')),
                error TEXT NOT NULL DEFAULT '',
                bytes_out INTEGER NOT NULL DEFAULT 0,
                duration_ms INTEGER NOT NULL DEFAULT 0,
@@ -123,11 +125,11 @@ fn seeded_workspace() -> TempDir {
                (2, 1, CURRENT_TIMESTAMP, 'local', 'llama',
                 2000, 0, 100, 0, 2000, 0, 0.0, 900, 1, 1);
              INSERT INTO tool_calls
-               (execution_id, seq, name, ok, error, bytes_out, duration_ms)
+               (execution_id, seq, name, ok, state, error, bytes_out, duration_ms)
              VALUES
-               (1, 1, 'read_file', 1, '', 2048, 12),
-               (1, 2, 'edit_file', 1, '', 64, 3),
-               (2, 1, 'bash', 0, 'exit 1', 0, 40);
+               (1, 1, 'read_file', 1, 'ok', '', 2048, 12),
+               (1, 2, 'edit_file', 1, 'ok', '', 64, 3),
+               (2, 1, 'bash', 0, 'error', 'exit 1', 0, 40);
              INSERT INTO files_touched VALUES
                (1, 'src/lib.rs', 'RU', 4, 1, '[]');
              CREATE TABLE execution_reflection (
@@ -722,8 +724,8 @@ fn activity_buckets_unparseable_timestamps_instead_of_failing() {
                 retries, tool_calls)
              VALUES (3, 1, 'sometime', 'zai', 'glm-5.2', 7, 0, 9, 0, 0, 0, 0.5, 11, 0, 1);
              INSERT INTO tool_calls
-               (execution_id, seq, name, ok, error, bytes_out, duration_ms, ts)
-             VALUES (3, 1, 'bash', 0, 'boom', 0, 4, 'sometime');",
+               (execution_id, seq, name, ok, state, error, bytes_out, duration_ms, ts)
+             VALUES (3, 1, 'bash', 0, 'error', 'boom', 0, 4, 'sometime');",
     )
     .unwrap();
     let response = respond(ws.path(), "/api/activity");

@@ -162,7 +162,10 @@ fn an_interrupted_execution_recovers_every_call_from_the_log() {
     assert_eq!(repaired, 1);
     let recovered = rows(&store, id);
     assert_eq!(recovered.len(), 3, "every call comes back: {recovered:?}");
-    assert_eq!(recovered[2].2, "error");
+    assert_eq!(
+        recovered[2].2, "abandoned",
+        "a call that never returned is abandoned, not a tool error (#3146)"
+    );
     assert_eq!(
         recovered[2].3, ABANDONED,
         "the call that never returned is honest about why"
@@ -206,7 +209,10 @@ fn marking_interrupted_settles_running_calls_and_dates_from_the_log() {
     store.mark_execution_interrupted(id).unwrap();
 
     let settled = rows(&store, id);
-    assert_eq!(settled[0].2, "error");
+    assert_eq!(
+        settled[0].2, "abandoned",
+        "the interrupt sweep settles to abandoned, never to error (#3146)"
+    );
     assert_eq!(settled[0].3, ABANDONED);
     let (finished, outcome): (Option<String>, Option<String>) = store
         .lock()
@@ -521,4 +527,36 @@ fn tool_call_counts_group_every_call_by_name() {
         "busiest first: {counts:?}"
     );
     assert!(counts.contains(&("graph_query".to_string(), 1)));
+}
+
+/// A finished turn can still hold calls that never returned (the turn-end
+/// fold settles them). The usage rollup's per-tool histogram must charge the
+/// tool for its real failures and NOT for the turn's abandonments — before
+/// #3146 both counted as `errors`, so every interrupt inflated exactly the
+/// per-tool error rate a reliability ceiling reads.
+#[test]
+fn rollup_bucket_counts_errors_but_not_abandonment() {
+    let (store, id) = fixture();
+    store.record_event(id, 0, &start("c1", "bash")).unwrap();
+    store
+        .record_event(id, 1, &err_result("c1", "boom"))
+        .unwrap();
+    store.record_event(id, 2, &start("c2", "bash")).unwrap();
+    store.materialize_tool_calls(id).unwrap();
+    store.finish_execution(id, "completed", 0.0).unwrap();
+
+    let rollup = store
+        .execution_rollup(id, std::path::Path::new("/tmp/workspace"))
+        .unwrap()
+        .expect("a finished, accounted execution rolls up");
+    let bucket = rollup
+        .tool_histogram
+        .iter()
+        .find(|b| b.tool == "bash")
+        .expect("bash bucket");
+    assert_eq!(
+        (bucket.calls, bucket.errors),
+        (2, 1),
+        "abandonment is a fact about the turn, not the tool (#3146)"
+    );
 }
