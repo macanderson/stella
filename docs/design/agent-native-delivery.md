@@ -7,7 +7,10 @@ status: proposed
 # Agent-Native Delivery — the issue tracker as the agent's working memory
 
 Status: proposal, unbuilt. Phases in §11; the Phase-1 Linear extraction is
-filed separately.
+filed separately. Note (2026-08): the issue toolset this proposal extends
+(`create_issue`, `start_work_on_issue`, …) was removed in the 2026-08 tool
+purge — building this design now means reintroducing an issue surface, not
+extending one.
 
 **Companion files:** [`agent-native-delivery/provider.jira.toml`](agent-native-delivery/provider.jira.toml)
 and [`agent-native-delivery/provider.linear.toml`](agent-native-delivery/provider.linear.toml)
@@ -463,7 +466,7 @@ comments do not belong in a gate.
 
 | Artifact | Satisfied by |
 |---|---|
-| `witness` | A `verify_done` fail→pass flip of the same normalized command, bound to this issue's diff. |
+| `witness` | A witness-test fail→pass flip of the same normalized command, bound to this issue's diff. |
 | `regression_witness` | A `witness` whose test additionally fails at the commit the defect was reported against — not merely at `HEAD`. §6.2. |
 | `spec` | A spec artifact resolves for this issue (own or inherited, §5). |
 | `plan` | An implementation plan artifact resolves. |

@@ -1,3 +1,9 @@
+> **Historical plan (2026-08).** Written before the 2026-08 tool purge
+> reduced the built-in surface to 12 tools; the tool names and tool-split
+> tickets below (`read_output`/`clear_output`, `probe_capability`,
+> `run_lint`/`format_code`/`apply_edits`, `verify_done`) describe tools that
+> no longer exist. Kept as the record of the plan and its sequencing logic.
+
 Phase 0 — The prompt batch, shipped as one release
 
 #2688 → #2689 → #2691 → #2690 → #2692 (order within the batch is just review order)

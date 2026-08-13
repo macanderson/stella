@@ -107,7 +107,8 @@ parent      = "parent"
 
 
 # ── BRANCH NAMING ────────────────────────────────────────────────────────────
-# `start_work_on_issue` currently hard-codes "ask Linear for its canonical
+# The pre-purge `start_work_on_issue` tool hard-coded "ask Linear for its
+# canonical
 # branch name, fall back to a derived one". That is a Linear-specific fact
 # living in shared code; here it is one key.
 #

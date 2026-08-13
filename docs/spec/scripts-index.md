@@ -6,14 +6,16 @@ status: implemented
 
 # Project scripts index
 
-**Status:** Implemented — this document is the reference for shipped behaviour,
-not a proposal, and the code cites it as such: `crates/stella-tools/src/scripts.rs`
-(the detection core), `crates/stella-tools/src/catalog.rs` (the `list_scripts` /
-`run_script` declarations), `crates/stella-tools/src/project.rs` (`build_project` /
-`run_tests` as verb shortcuts over the same index), `crates/stella-cli/src/main.rs`
-(the `stella scripts` subcommand), and `crates/stella-cli/src/agent/prompt.rs` (the
-`## Project scripts` prompt section). The future tense below is the original
-drafting voice; read it as a description of what exists.
+**Status:** Implemented, then partially removed. The tool surface this spec
+shipped — `list_scripts`, `run_script`, and the `build_project` / `run_tests`
+verb shortcuts — was deleted in the 2026-08 tool purge
+(`docs/playbooks/tool-removal.md`), which reduced the built-ins to the 12
+task-board / sub-agent / scratch-state / environment tools. The deterministic
+detection core and its non-tool surfaces (the `stella scripts` subcommand and
+the `## Project scripts` prompt section) were not part of that tool delete
+list — check the tree for their current state. The sections below describing
+tools describe removed behaviour; the future tense below is the original
+drafting voice.
 
 Every workspace has the same seven jobs — install, build, check, start,
 test, lint, format — spelled differently by every package manager. Today the agent

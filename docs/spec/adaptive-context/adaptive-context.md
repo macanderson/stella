@@ -89,9 +89,10 @@ clobbering an existing file, and filtered against tombstones from two surfaces.
 Those skills load into later prompts. This is observe → cluster → propose →
 govern → persist → re-inject, already closed.
 
-**Also shipped:** a code graph with a query tool and live re-indexing;
-exploration sharing between sessions in a workspace; a storage map with a
-pre-write schema gate; `gather_context` packs; citation-driven memory
+**Also shipped, then pared back by the 2026-08 tool purge** (which removed
+the graph-query, exploration, `gather_context`, and memory-citation tools):
+a code graph with live re-indexing; exploration sharing between sessions in a
+workspace; a storage map with a pre-write schema gate; citation-driven memory
 quarantine and promotion.
 
 **Shipped but inert:** the `context.*` settings block, and a domain type layer

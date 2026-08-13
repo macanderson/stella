@@ -320,6 +320,7 @@ concept becomes real.
 **The pruning-eligibility tier is now enforced, and it is the load-bearing
 correctness result.** The type layer always said `agent_self_report` is
 recognized but may never drive pruning; nothing implemented it. `cite_memory`
+(a tool since removed in the 2026-08 tool purge)
 is the *agent* judging context the agent was given, so citation-derived
 verdicts are recorded as `agent_self_report` and are deliberately **not**
 pruning-eligible — a self-report that can retire its own subject is

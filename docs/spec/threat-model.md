@@ -14,11 +14,11 @@ Stella's security reasoning has always been written down. It was just never
 written down *together*: the project trust boundary is argued in
 `crates/stella-cli/src/settings/merge.rs`, the authority ceiling in
 `settings/authority.rs`, the subprocess scrub in
-`crates/stella-tools/src/subprocess_env.rs`, the shell tool's scope in
-`crates/stella-tools/src/bash.rs`, the web egress denylist in
-`crates/stella-tools/src/web_egress.rs`, the filesystem identity checks in
+`crates/stella-tools/src/subprocess_env.rs`, the filesystem identity checks in
 `crates/stella-store/src/private.rs`, and the dotenv refusals in
-`crates/stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
+`crates/stella-cli/src/env_files.rs` — and, before the 2026-08 tool purge
+removed those tools, the shell tool's scope in `bash.rs` and the web egress
+denylist in `web_egress.rs`. Each is careful. None of them can tell you
 whether the set is *complete*, because none of them enumerates the assets or
 the adversary.
 
@@ -124,19 +124,19 @@ so managed denial survives explicit repository trust — the witness is
 
 ### B3 — Model output → code execution
 
-The agent's tool surface is the blast radius of a successful A2. Two
-sub-boundaries matter and they are frequently conflated:
+The agent's tool surface is the blast radius of a successful A2. The 2026-08
+tool purge (`docs/playbooks/tool-removal.md`) reduced that surface to the 12
+task-board / sub-agent / scratch-state / environment built-ins, none of which
+runs a shell or spawns a workspace process — the shell, script, process,
+repo, file, and web tools this section previously enumerated no longer
+exist. Two facts still matter:
 
-- **`bash` ships registered** and is withheld with `tools.bash: "off"`. #710
-  moved every built-in to on-by-default with a switch, because the previous
-  posture covered built-ins only and most operators never found the switch.
-  Assume the default surface HAS a shell.
-- **The default surface is nonetheless not execution-free.** `run_script`,
-  `start_process`, `repo_commit`/`repo_push`, and workspace custom tools all
-  execute code without `bash` ever being enabled. `start_process` spawns argv
-  directly — "no shell" is a quoting guarantee, not a power bound, which is
-  why the registry routes its joined argv through the same `command.started`
-  policy chain as `bash`.
+- **Built-ins ship registered.** #710 moved every built-in to on-by-default
+  with a per-tool `tools.<name>: "off"` switch, and that posture is
+  unchanged — it just now covers a far smaller set.
+- **The surface is nonetheless not execution-free.** Workspace custom tools
+  under `.stella/tools/` and hook actions still execute code with the
+  process's own privileges.
 
 See [R2](#r2--the-default-tool-surface-executes-code).
 
@@ -160,8 +160,9 @@ refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 
 ### B5 — Workspace root → filesystem
 
-Every file tool that **opens** — read, write, edit, apply_edits, delete,
-download, and the content hashing behind exploration and context packs — is
+Every file tool of the pre-purge surface that **opened** — read, write, edit,
+apply_edits, delete, download, and the content hashing behind exploration and
+context packs, all removed in the 2026-08 tool purge — was
 confined by `stella_tools::rootfd::RootHandle`, which holds the workspace
 root's directory descriptor and walks each component `openat(dirfd, name,
 O_DIRECTORY | O_NOFOLLOW)` off the one before it. `..` pops the descriptor
@@ -179,13 +180,14 @@ everything downstream re-resolves those names, so a symlink planted in between
 by the model's own `bash` tool or by a `build.rs` under audit was followed.
 `O_NOFOLLOW` on the final component did not close it — the final component is
 not the one that moves. It survives for the callers that need a *name* rather
-than a descriptor: an argument to `rg` or `fd`, a subprocess working
-directory, the shadow worktree in `verify_done`, the file-touch ledger. #695
+than a descriptor — a subprocess working directory, the file-touch ledger
+(pre-purge, also `rg`/`fd` arguments and `verify_done`'s shadow worktree). #695
 extended it to workspace-member patterns read from `Cargo.toml`,
 `package.json`, and `pnpm-workspace.yaml`, and made out-of-root skips counted
 and surfaced rather than silent.
 
-This confines Stella's own tools, not the subprocesses they spawn: `bash` can
+This confines Stella's own tools, not the subprocesses spawned around them: a
+custom manifest tool or a hook action can
 still write anywhere the user's account can, and isolating that is structural
 (a container), not a matter of path resolution. Off Unix there is no `openat`,
 so the descriptor walk degrades to the string resolver — see
@@ -228,9 +230,9 @@ HTTPS endpoint allowlist.
 | P5 | Repo ships `.env` with `GIT_SSH_COMMAND` → RCE on first git subprocess | B4 | Mitigated (refused, never applied) |
 | P6 | Repo sets `GIT_CONFIG_KEY_n` in the environment a tool inherits | B4 | Mitigated (prefix-scrubbed) |
 | P7 | Workspace member pattern escapes root via `../` or glob | B5 | Mitigated (#695) |
-| P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | **Not mitigated in-process** — gated by the `command.started` chain, bounded only by the container Stella runs in; see R3 |
-| P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Not mitigated in-process** — same posture as P8; see R2, R3 |
-| P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | Mitigated (#939 egress denylist, post-DNS and per redirect hop) — proxy residual in R4 |
+| P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | **Retired** — the shell tool was removed in the 2026-08 tool purge; the residual path is a custom tool or hook, see R2, R3 |
+| P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Retired** — both tools removed in the 2026-08 tool purge; same residual as P8, see R2, R3 |
+| P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | **Retired** — the web tools were removed in the 2026-08 tool purge (their #939 egress denylist went with them); see R4 |
 | P11 | Co-tenant plants a symlink at a private-state path | B6 | Mitigated on Unix; not off it |
 | P12 | SVG `data:` URI smuggled past the sanitizer | — | Mitigated (#695 replaced the `//` substring test with a real scheme test) |
 | P13 | Partial-read defeats the MCP OAuth `state` CSRF check | — | Mitigated (#696 read-until-CRLFCRLF) |
@@ -257,23 +259,19 @@ mitigation today is that the *default* is untrusted and the drops are loud
 
 ### R2 — The default tool surface executes code
 
-"`bash` is off by default" is true and is not the same claim as "the agent
-cannot run code by default." `run_script` executes commands sourced from repo
-manifests (`package.json` scripts, `Makefile` targets, `Cargo.toml` aliases);
-`start_process` spawns argv; `repo_commit`/`repo_push` mutate and publish;
-workspace custom tools under `.stella/tools/` are auto-discovered.
-
-Custom tools are gated on `authority.project_custom_tools_allowed`, which
-defaults false. `run_script` and `start_process` are not gated that way — they
-route through the `command.started` policy chain, which is a policy-handler
-seam rather than an interactive confirmation.
+Since the 2026-08 tool purge, no built-in executes workspace code: the shell,
+script, process, and repo tools are gone. What remains of this risk is the
+extension surface — workspace custom tools under `.stella/tools/` are
+auto-discovered, and hook actions run shell commands. Custom tools are gated
+on `authority.project_custom_tools_allowed`, which defaults false; project
+hooks load only under `STELLA_PROJECT_HOOKS=1`.
 
 ### R3 — Nothing confines a spawned command in-process
 
-Every path that starts a process — `bash`, `build_project`/`run_tests`'s
-`command` override, `verify_done`'s `test_cmd`, `run_script`, `start_process`,
-the `repo_*`/`ci_status` `git` and `gh` invocations, custom manifest tools,
-and hook actions — runs with the privileges of the Stella process itself. A
+Every path that starts a process — since the 2026-08 tool purge, that is
+custom manifest tools and hook actions (before it, also the shell, script,
+process, repo, and CI tools) — runs with the privileges of the Stella process
+itself. A
 command the model was injected into writing can reach anything the operator's
 account can reach.
 
@@ -286,13 +284,17 @@ not match the threat it named, and with it the impression that "sandbox: on"
 bounded a session.
 
 What is left in-process is a *gate*, not a boundary: the `command.started`
-policy chain sees every model-authored command line before anything spawns
-(`ToolRegistry::command_line_for` enumerates every member). A boundary has to
+policy chain sees a model-authored command line before anything spawns. A boundary has to
 come from outside the process — run Stella in a container, where no spawn path
 can step around the isolation because the isolation is not on the spawn path.
 See `docs/spec/remote-sandboxes.md` §2.
 
 ### R4 — The web egress guard is bypassed by an HTTP proxy
+
+**Retired with its subject:** the web tools and their egress guard were
+removed in the 2026-08 tool purge — no built-in fetches a URL any more. The
+record below describes the guard as it shipped, kept because the residuals it
+names apply to any future URL-fetching surface.
 
 #615 is ruled (#939, option A): `web_fetch`, `web_extract_assets` and
 `web_download` refuse loopback, RFC1918, link-local (`169.254.0.0/16`), IPv6
@@ -387,7 +389,8 @@ available today is retention — `stella stats prune` — not redaction.
   the direction of record (`docs/spec/remote-sandboxes.md`); the per-command
   sandbox was removed rather than extended precisely because extending it
   would have had to be repeated for every future spawn site.
-- Gating `run_script` behind an authority flag would narrow R2.
+- R2's pre-purge recommendation (gating `run_script` behind an authority
+  flag) was overtaken by the 2026-08 tool purge, which removed the tool.
 - A secret detector — if one could be made accurate enough to not be
   false assurance — would narrow R9.
 

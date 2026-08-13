@@ -7,6 +7,9 @@ status: living
 # Session Telemetry & Context Receipts — Schema Spec
 
 Status: proposed for implementation — extends epic **#364** ("Context receipts").
+Note (2026-08): the `cite_memory` tool this spec's provable-use signals lean
+on was removed in the 2026-08 tool purge; those signal classes describe the
+pre-purge citation loop and would need a replacement source.
 
 ## Purpose
 

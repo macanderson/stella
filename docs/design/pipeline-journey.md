@@ -172,8 +172,8 @@ Each turn is `stella-core::Engine::run_turn` — the full tool loop with
 compaction, loop detection, and hooks — running on the **worker** role's
 model. The pipeline counts two things as the turn runs: `FileChange` events
 (observed file touches) and **mutating actions** (dispatched tool calls whose
-tool is not advertised read-only; unknown tools count as mutating, because
-`bash` is how most real work lands). The budget guard is consulted only at
+tool is not advertised read-only; unknown tools count as mutating — in the
+pre-purge surface, `bash` was how most real work landed). The budget guard is consulted only at
 safe boundaries — between model calls, never mid-tool (invariant 6).
 
 ## 7. The diff probe — engineered to be incapable of lying

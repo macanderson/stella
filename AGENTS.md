@@ -407,12 +407,10 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-The `verify_done` tool (`crates/stella-tools/src/verify.rs`) automates this in a
-detached shadow git worktree at `HEAD` — it copies only the test files from the
-working tree into the shadow, runs the suite, and expects a failure there.
-**The working tree is never mutated** (no stash, no checkout). Path resolution
-is derived from the canonical root-relative path, never the raw model-supplied
-string (an absolute path would make the shadow copy truncate the real file).
+(The standalone `verify_done` tool that automated this in a shadow worktree
+was removed in the 2026-08 tool purge, with the rest of the wide built-in
+surface. The contract did not go with it — it is enforced at the PR level as
+above, and at runtime by the pipeline's witness stage below.)
 
 The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
@@ -511,12 +509,12 @@ the files you must plan around (see below).
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`read_file`, `verify_done`, `bash`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Add/fix a built-in tool (`task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
-| Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s `ask_user`/approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
+| Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
@@ -606,8 +604,8 @@ alone, because a number in two places is how the last limit died.
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
 `stella-context` (recall only) / `stella-mcp`, and the CLI also drives
 `stella-pipeline` (the default `stella run` path), `stella-fleet` (`stella fleet`),
-`stella-tui` (the Command Deck, the default interactive shell on a TTY), and
-`stella-media` (image generation via the `generate_image` tool). The fuller
+and `stella-tui` (the Command Deck, the default interactive shell on a TTY).
+The fuller
 `stella-graph` retrieval + context plane (`stella init` builds the code-graph
 index; recall fans out through the CGP host) is also wired. `stella-serve` is
 the exception: it builds its own binary and nothing in `stella-cli` links it,
@@ -622,11 +620,11 @@ editing Stella's own code should know what lives where:
 
 | Path | Purpose |
 |---|---|
-| `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Write side: the `save_memory` tool.) |
+| `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Written by hand — the `save_memory` write-side tool was removed in the 2026-08 tool purge.) |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
 | `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
-| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "off"` withholds the shell tool — every built-in, the shell included, is registered by default since #710). Merged per-field with org-managed and user scopes. |
+| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.task_assign: "off"` withholds the delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |

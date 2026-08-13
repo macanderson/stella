@@ -77,10 +77,10 @@ it, and `.stella/.gitignore` enforces the line.
     ├── memories/ ............... durable notes the agent wrote
     │
     │   ── Working output. Usually gitignored; delete freely. ──
-    ├── artifacts/ .............. generated media (images, video) from tool calls
+    ├── artifacts/ .............. generated media (pre-purge media tools)
     ├── attachments/ ............ files pasted into the TUI
-    ├── screenshots/ ............ captured page/CI screenshots
-    ├── explorations/ ........... saved exploration bundles
+    ├── screenshots/ ............ page/CI captures (pre-purge screenshot tool)
+    ├── explorations/ ........... bundles from the pre-purge exploration tools
     ├── proposals/ .............. pending context-record proposals awaiting review
     ├── exports/ ................ `stella export` output
     ├── context/packs/ .......... assembled context packs

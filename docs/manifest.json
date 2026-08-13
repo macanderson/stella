@@ -323,7 +323,7 @@
         10,
         11
       ],
-      "status": "implemented",
+      "status": "archived",
       "title": "Design: Session-Shared Exploration Maps"
     },
     "file-budget": {
@@ -652,6 +652,11 @@
       "path": "docs/tools/README.md",
       "status": "living",
       "title": "docs/tools/ \u2014 the generated per-tool reference"
+    },
+    "tool-removal": {
+      "path": "docs/playbooks/tool-removal.md",
+      "status": "living",
+      "title": "Removing a built-in tool \u2014 the repeatable checklist"
     },
     "trace-replay-learning-harness": {
       "path": "docs/spec/trace-replay-learning-harness.md",
