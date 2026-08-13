@@ -12,7 +12,7 @@ Six entry points — five that produce a run, and one that reads one:
 | [`harbor_adapter/`](harbor_adapter/) | A Harbor *installed-agent* adapter — run Stella on Terminal-Bench 2.x / SWE-bench in the same container + verifier as Claude Code, Codex CLI, Terminus, etc. | Docker, `harbor`, a provider key |
 | [`evidence/frontier/`](evidence/frontier/) | **Frontier-Bench** — Harbor's successor to Terminal-Bench, 74 tasks over seven domains. Same adapter, unmodified; a separate Harbor pin, a resource-aware schedule, and GPU tasks excluded by name rather than scored as zeros. | Docker, a provider key (a *submittable* run needs GPUs — see its [SUBMISSION.md](evidence/frontier/SUBMISSION.md)) |
 | [`run_swebench.py`](run_swebench.py) | A standalone SWE-bench *prediction* harness — clone each instance, run Stella, emit the official predictions JSONL. No Harbor. | `git`, a provider key (Docker only for the official scoring step) |
-| [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
+| [`loop-bench/`](loop-bench/) | A cheap **turn-loop correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) plus per-feature attribution — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
 | [`smoke/smoke_test.py`](smoke/smoke_test.py) | An **offline, zero-cost** self-test of the adapter wiring for CI. | just the built `stella` binary |
 | [`trace_triage/`](trace_triage/) | `make triage-bench-traces` — reads a finished run's `stella-events.jsonl` and turns the defects in it into **GitHub issue activity**: a new issue for a new defect, a comment carrying fresh citable evidence onto one that already exists. Dry run by default; de-duplicates on a defect fingerprint, never on prose. | `aws` (to mirror a run), `gh` |
 
@@ -40,12 +40,12 @@ python3 bench/smoke/smoke_test.py                       # auto-locate the binary
 python3 bench/smoke/smoke_test.py --stella-bin ./target/release/stella
 ```
 
-## Loop-bench (cheap loop + context-query correctness)
+## Loop-bench (cheap turn-loop correctness)
 
 The full benchmark measures *pass rate* — expensive, and dominated by model
 quality. `loop-bench` measures the thing the pass rate hides and that a **cheap**
 model exposes just as well: did the loop actually *run*, or abort having done
-nothing? did it die silently? did `project_overview`/`graph_query` get used?
+nothing? did it die silently? was it caught cycling?
 
 ```bash
 cargo run -p loop-bench -- --n 4                     # 4 tasks, flash model, $0.20/task

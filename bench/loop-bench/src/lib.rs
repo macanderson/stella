@@ -97,13 +97,12 @@ pub struct TrialReport {
     /// call died reports zero model calls.
     pub model_calls: u32,
     /// `tool_start` events. Zero is the signal this harness exists for; see
-    /// `zero_work` below.
+    /// `zero_work` below. Per-tool-name counts live in `features` (the
+    /// `tool.<name>` keys); the dedicated file-write and graph-tool columns
+    /// this report once carried died with their subjects in the 2026-08 tool
+    /// purge — no built-in mutates the repo or queries the code graph any
+    /// more.
     pub tool_calls: u32,
-    /// Mutating file tools among `tool_calls` — the cheapest proxy for "the
-    /// agent actually changed the repo" as opposed to reading around it.
-    pub file_writes: u32,
-    pub project_overview_calls: u32,
-    pub graph_query_calls: u32,
     /// Pipeline stages in first-seen order, de-duplicated: this is the set of
     /// stages the turn reached, not a transition log, so a verify → execute
     /// repair loop appears once. For a zero-work stop the pipeline has not
@@ -449,13 +448,6 @@ pub fn fold_steps(steps: &[TrialReport]) -> TrialReport {
     for step in steps {
         folded.model_calls = folded.model_calls.saturating_add(step.model_calls);
         folded.tool_calls = folded.tool_calls.saturating_add(step.tool_calls);
-        folded.file_writes = folded.file_writes.saturating_add(step.file_writes);
-        folded.project_overview_calls = folded
-            .project_overview_calls
-            .saturating_add(step.project_overview_calls);
-        folded.graph_query_calls = folded
-            .graph_query_calls
-            .saturating_add(step.graph_query_calls);
         folded.loop_detected = folded.loop_detected.saturating_add(step.loop_detected);
         folded.retries = folded.retries.saturating_add(step.retries);
         folded.parsed_lines = folded.parsed_lines.saturating_add(step.parsed_lines);
@@ -524,26 +516,9 @@ pub fn distill_events(task: &str, raw: &str) -> TrialReport {
                     .retries
                     .saturating_add(u32::try_from(retries).unwrap_or(u32::MAX));
             }
-            Some("tool_start") => {
-                r.tool_calls += 1;
-                let name = ev
-                    .get("call")
-                    .and_then(|c| c.get("name"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                match name {
-                    "project_overview" => r.project_overview_calls += 1,
-                    "graph_query" => r.graph_query_calls += 1,
-                    // The content-producing file tools in the catalog.
-                    // `apply_edits` is the batch form of `edit_file` and was
-                    // missing here, so a run that edited exclusively in
-                    // batches reported zero writes. `delete_file` is
-                    // deliberately excluded: counting removals as writes would
-                    // let a destructive loop look productive.
-                    "write_file" | "edit_file" | "apply_edits" => r.file_writes += 1,
-                    _ => {}
-                }
-            }
+            // Per-tool-name attribution is `features::record`'s job (the
+            // `tool.<name>` keys above); this fold only needs the count.
+            Some("tool_start") => r.tool_calls += 1,
             Some("stage") => {
                 if let Some(s) = ev.get("name").and_then(Value::as_str)
                     && seen_stage.insert(s.to_string())
@@ -683,7 +658,7 @@ pub fn json_report(analysis: &Analysis) -> JsonReport<'_> {
 /// the six of `reward`. The verdict column is exactly as wide as the longest
 /// verdict string, `ran (unsolved)` — an 8-wide column overflowed it and
 /// shifted every counter on that row.
-const TABLE_WIDTH: usize = 85;
+const TABLE_WIDTH: usize = 69;
 
 pub fn print_analysis(analysis: &Analysis) {
     print_table(&analysis.trials);
@@ -717,24 +692,19 @@ pub fn print_reconciliation(record: &Reconciliation) {
 
 pub fn print_table(reports: &[TrialReport]) {
     println!(
-        "\n{:<24} {:>14} {:>6} {:>6} {:>5} {:>4} {:>4} {:>7}  reward",
-        "task", "verdict", "calls", "tools", "wr", "ov", "gq", "$"
+        "\n{:<24} {:>14} {:>6} {:>6} {:>7}  reward",
+        "task", "verdict", "calls", "tools", "$"
     );
     println!("{}", "─".repeat(TABLE_WIDTH));
-    let mut overview_used = 0usize;
-    let mut graph_used = 0usize;
     let mut spend = 0.0f64;
     for r in reports {
         let reward = r.reward.map(|v| format!("{v:.1}")).unwrap_or("-".into());
         println!(
-            "{:<24} {:>14} {:>6} {:>6} {:>5} {:>4} {:>4} {:>7}  {}",
+            "{:<24} {:>14} {:>6} {:>6} {:>7}  {}",
             truncate(&r.task, 24),
             r.loop_verdict(),
             r.model_calls,
             r.tool_calls,
-            r.file_writes,
-            r.project_overview_calls,
-            r.graph_query_calls,
             format!("{:.2}", r.spend_usd),
             reward,
         );
@@ -774,12 +744,6 @@ pub fn print_table(reports: &[TrialReport]) {
                 r.step_names.join(" → ")
             );
         }
-        if r.project_overview_calls > 0 {
-            overview_used += 1;
-        }
-        if r.graph_query_calls > 0 {
-            graph_used += 1;
-        }
         spend += r.spend_usd;
     }
     // One definition of "solved" and "broken" for the table, the JSON header,
@@ -794,7 +758,6 @@ pub fn print_table(reports: &[TrialReport]) {
     println!("{}", "─".repeat(TABLE_WIDTH));
     println!(
         "LOOP: {loop_broken}/{n} broken (silent-death, zero-work, stuck-loop, or not-run)   \
-         CONTEXT: project_overview {overview_used}/{n}, graph_query {graph_used}/{n}   \
          REWARD: {solved}/{n} solved   SPEND: ${spend:.2}"
     );
     if loop_broken > 0 {

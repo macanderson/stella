@@ -10,12 +10,17 @@ transcript rendered by the arena and the same trial replayed in the Command
 Deck are describing the same run, and a tool that shows as a "write" in one
 and a "run" in the other is a rendering bug, not a difference of opinion.
 
-``_CATALOG`` is copied, not derived: Python has no route to the Rust crate
-this data actually lives in. It was generated from the `catalog!` table in
-``crates/stella-tools/src/catalog.rs`` with::
+``_CURRENT`` is copied, not derived: Python has no route to the Rust crate
+this data actually lives in. It mirrors the `catalog!` table in
+``crates/stella-tools/src/catalog.rs`` — since the 2026-08 tool purge, the
+task board, the scratch state plane, and ``get_environment``.
 
-    rg -o '"\\w+"\\s*=>\\s*\\((true|false), (true|false), \\w+, "\\w+"\\)' \\
-        crates/stella-tools/src/catalog.rs
+``_LEGACY`` carries every dispatch name that table held **before** the purge.
+The arena's subject is recorded matches, and the archived pre-purge trials
+state exactly these names; classifying them off the table they ran under is
+what keeps an archived transcript rendering with the classes it had when it
+was recorded, instead of repainting every ``read_file`` as an unknown
+``execute``.
 
 ``tests/test_toolclass.py`` pins the deck's own classification examples
 (``crates/stella-tui/src/tool_class.rs``'s ``each_family_lands_in_its_own_class``
@@ -29,11 +34,30 @@ from __future__ import annotations
 __all__ = ["CLASSES", "classify", "class_label"]
 
 #: `(read_only, group)` per dispatch name — copied verbatim from the
-#: `catalog!` table in `crates/stella-tools/src/catalog.rs`. `speculation_safe`
-#: and `availability` are that table's other two columns; neither one bears on
-#: which of the six visual classes a call renders as, so only the two that do
-#: are carried over.
-_CATALOG: dict[str, tuple[bool, str]] = {
+#: `catalog!` table in `crates/stella-tools/src/catalog.rs` as of the 2026-08
+#: tool purge. `speculation_safe` and `availability` are that table's other
+#: two columns; neither one bears on which of the six visual classes a call
+#: renders as, so only the two that do are carried over.
+_CURRENT: dict[str, tuple[bool, str]] = {
+    "task_create": (False, "task"),
+    "task_list": (True, "task"),
+    "task_start": (False, "task"),
+    "task_complete": (False, "task"),
+    "task_cancel": (False, "task"),
+    "task_assign": (False, "task"),
+    "task": (False, "task"),
+    "save_state": (False, "scratch"),
+    "get_state": (True, "scratch"),
+    "list_state": (True, "scratch"),
+    "delete_state": (False, "scratch"),
+    "get_environment": (True, "environment"),
+}
+
+#: Every dispatch name the catalog held before the 2026-08 tool purge, with
+#: the `(read_only, group)` it ran under. Recorded-trace vocabulary only: no
+#: shipping Stella advertises these, but the archived matches were played on
+#: them and their transcripts still have to render true.
+_LEGACY: dict[str, tuple[bool, str]] = {
     "read_file": (True, "file"),
     "read_symbol": (True, "file"),
     "write_file": (False, "file"),
@@ -77,19 +101,7 @@ _CATALOG: dict[str, tuple[bool, str]] = {
     "ci_status": (True, "ci"),
     "screenshot": (False, "ci"),
     "generate_svg": (False, "media"),
-    "task_create": (False, "task"),
-    "task_list": (True, "task"),
-    "task_start": (False, "task"),
-    "task_complete": (False, "task"),
-    "task_cancel": (False, "task"),
-    "task_assign": (False, "task"),
-    "task": (False, "task"),
     "bash": (False, "bash"),
-    "save_state": (False, "scratch"),
-    "get_state": (True, "scratch"),
-    "list_state": (True, "scratch"),
-    "delete_state": (False, "scratch"),
-    "get_environment": (True, "environment"),
     "web_fetch": (True, "web"),
     "web_extract_assets": (True, "web"),
     "web_download": (False, "web"),
@@ -114,6 +126,10 @@ _CATALOG: dict[str, tuple[bool, str]] = {
     "mcp_search": (True, "session"),
     "recall_context": (True, "context"),
 }
+
+#: What `classify` actually reads: the current catalog, with the legacy names
+#: behind it. A name in both (there is none today) would take the current row.
+_CATALOG: dict[str, tuple[bool, str]] = {**_LEGACY, **_CURRENT}
 
 #: Groups that hold both a read and a write, split on the catalog's own
 #: `read_only` bit — `ToolClass::classify`'s first match arm.

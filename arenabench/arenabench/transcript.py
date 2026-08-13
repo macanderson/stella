@@ -51,7 +51,10 @@ TOOL_INPUT_BUDGET = 4000
 #: The file-*mutating* built-ins — the only calls whose result entry carries an
 #: inline diff (reads must not). A port of ``is_file_mutation`` in
 #: ``crates/stella-tui/src/model/summarize.rs``, which itself must stay in
-#: lockstep with the ``FileChange`` emitter that owns the list.
+#: lockstep with the ``FileChange`` emitter that owns the list. All four names
+#: were removed in the 2026-08 tool purge; they stay here because the arena's
+#: subject is recorded matches, and archived pre-purge trials carry exactly
+#: these calls with ``file_change`` diffs to join.
 _FILE_MUTATIONS = frozenset({"write_file", "edit_file", "apply_edits", "delete_file"})
 
 

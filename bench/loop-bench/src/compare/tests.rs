@@ -134,7 +134,7 @@ fn a_task_only_one_arm_ran_is_reported_as_unpaired() {
 fn token_and_retry_counts_come_off_the_event_stream() {
     let raw = r#"{"type":"step_usage","cost_usd":0.25,"input_tokens":120,"output_tokens":30,"retries":2}
 {"type":"step_usage","cost_usd":0.25,"input_tokens":80,"output_tokens":20,"retries":0}
-{"type":"tool_start","call":{"name":"write_file"}}
+{"type":"tool_start","call":{"name":"save_state"}}
 {"type":"complete"}"#;
     let distilled = crate::distill_events("t", raw);
     assert_eq!(distilled.tokens, 250);

@@ -36,8 +36,9 @@ from stella_harbor.tool_set import (  # noqa: E402 - after importorskip by desig
 
 from .test_adapter import _bare_agent  # noqa: E402 - after importorskip by design
 
-#: A plausible baseline arm: the four tools #3032 proposes measuring from.
-_BASELINE = "bash,read_file,write_file,edit_file"
+#: A plausible baseline arm, spelled with surviving catalog names — the
+#: four-tool arm #3032 originally proposed predates the 2026-08 tool purge.
+_BASELINE = "task_list,save_state,get_state,get_environment"
 
 
 def _reader(value: str | None):
@@ -55,7 +56,10 @@ def _agent_with(value: str | None):
 
 class TestParsing:
     def test_a_declared_set_is_order_preserving_and_deduplicated(self) -> None:
-        assert validated_tool_set(" bash, read_file ,bash,") == ("bash", "read_file")
+        assert validated_tool_set(" task_list, save_state ,task_list,") == (
+            "task_list",
+            "save_state",
+        )
 
     def test_absent_and_empty_both_mean_the_shipping_catalog(self) -> None:
         assert validated_tool_set(None) == ()
@@ -90,9 +94,11 @@ class TestForwarding:
         assert ENV not in _agent_with(None)._forwarded_env()
 
     def test_a_declared_set_reaches_the_container_as_a_closed_set(self) -> None:
-        # `only:` and not the bare list: the bare form adds the three
-        # discovery tools on top, so an arm specified as four tools would
-        # advertise seven and stop being the arm anyone reasoned about.
+        # `only:` and not the bare list: the bare form lets the engine's
+        # discovery layer stack its own additions on top (three discovery
+        # tools, before the 2026-08 tool purge), so a declared arm could
+        # advertise more than it names and stop being the arm anyone
+        # reasoned about.
         assert _agent_with(_BASELINE)._forwarded_env()[ENV] == f"only:{_BASELINE}"
 
     def test_an_operator_written_prefix_yields_the_same_set(self) -> None:
@@ -103,9 +109,9 @@ class TestForwarding:
     def test_the_forwarded_value_is_the_normalised_one(self) -> None:
         # Not the raw string: the container must receive the same set the
         # manifest discloses, or the record describes a run that did not happen.
-        agent = _agent_with(" bash , read_file ,bash")
-        assert agent._forwarded_env()[ENV] == "only:bash,read_file"
-        assert list(declared(agent._configured_value)) == ["bash", "read_file"]
+        agent = _agent_with(" task_list , save_state ,task_list")
+        assert agent._forwarded_env()[ENV] == "only:task_list,save_state"
+        assert list(declared(agent._configured_value)) == ["task_list", "save_state"]
 
     def test_a_malformed_set_refuses_the_run_rather_than_dropping_the_arm(
         self,
@@ -114,7 +120,7 @@ class TestForwarding:
         # catalog and score as the restricted arm — a measurement that is
         # wrong rather than missing, which is the worse of the two.
         with pytest.raises(ValueError):
-            _agent_with("bash,read file")._forwarded_env()
+            _agent_with("task_list,save state")._forwarded_env()
 
 
 class TestRegistration:
@@ -148,7 +154,7 @@ class TestClaimPathRefusal:
 
         with pytest.raises(RuntimeError, match=r"ArenaBench"):
             _validate_claim_environment(
-                {"STELLA_DISABLE_REFLECTION": "1", ENV: "bash"}
+                {"STELLA_DISABLE_REFLECTION": "1", ENV: "task_list"}
             )
 
     def test_an_unrestricted_claim_environment_is_unaffected(self) -> None:

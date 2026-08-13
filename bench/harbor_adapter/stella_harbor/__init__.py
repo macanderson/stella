@@ -979,17 +979,19 @@ class StellaAgent(BaseInstalledAgent):
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
         """Index the task workspace, and embed it, before the first turn.
 
-        `graph_query` needs ``.stella/private/codegraph.db``, which a fresh
-        task checkout has never had: without this the agent is offered no code
-        intelligence and greps for every discovery step. Init also embeds what
-        it indexed, so ``semantic_code_search`` answers on the FIRST tool call
-        rather than after the grepping starts — that half needs an embedding
-        backend in the container (``VOYAGE_API_KEY`` / ``OPENAI_API_KEY`` /
-        ``STELLA_EMBED_URL``), which this rig lacks today: the gap #2995
-        measures. Neither half needs a credential otherwise, and best-effort
-        is by construction — a workspace with nothing indexable (or no
-        tree-sitter grammar) is this benchmark's normal case, not a failure,
-        and must never block a run. All of it is off the agent's clock.
+        The index is ``.stella/private/codegraph.db``, which a fresh task
+        checkout has never had. Its original consumers were the ``graph_query``
+        and ``semantic_code_search`` tools, both removed in the 2026-08 tool
+        purge; what still reads it is the engine's own context plane — recall
+        fans out through the CGP host over this index — so the step keeps
+        buying the turn code intelligence it would otherwise lack. The
+        embedding half needs a backend in the container (``VOYAGE_API_KEY`` /
+        ``OPENAI_API_KEY`` / ``STELLA_EMBED_URL``), which this rig lacks
+        today: the gap #2995 measures. Neither half needs a credential
+        otherwise, and best-effort is by construction — a workspace with
+        nothing indexable (or no tree-sitter grammar) is this benchmark's
+        normal case, not a failure, and must never block a run. All of it is
+        off the agent's clock.
         """
         cwd = getattr(environment.task_env_config, "workdir", None)
         command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""

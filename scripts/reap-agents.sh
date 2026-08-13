@@ -22,19 +22,21 @@
 #       with nothing left attached to it. Identified by binary name alone;
 #       no cwd or command-line guessing needed.
 #
-#   (B) An orphaned OS subprocess a *now-dead* stella spawned mid-turn — the
-#       bash tool, a custom tool, the hook runner, contextgraph-host's stdio
-#       provider connections. Each calls setsid() before exec and carries
-#       its own Drop-based "kill_group" backstop (contextgraph-host/src/stdio.rs,
-#       crates/stella-tools/src/bash.rs) — but that backstop is Rust destructor
-#       logic, which a SIGKILL'd parent never runs.
+#   (B) An orphaned OS subprocess a *now-dead* stella spawned mid-turn — a
+#       custom manifest tool, the hook runner, contextgraph-host's stdio
+#       provider connections (and, from builds predating the 2026-08 tool
+#       purge, the removed shell tool). Each calls setsid() before exec and
+#       carries its own Drop-based "kill_group" backstop
+#       (contextgraph-host/src/stdio.rs, crates/stella-tools/src/exec.rs) —
+#       but that backstop is Rust destructor logic, which a SIGKILL'd parent
+#       never runs.
 #
 #       Post-hoc, exact attribution for (B) isn't fully recoverable: a
 #       single simple command (`bash -c "sleep 600"`) gets bash's
 #       exec-optimization and *becomes* `sleep` in place, so matching on
 #       comm/argv is unreliable. What survives is the process's cwd, which
 #       stella always sets to the workspace/worktree root
-#       (crates/stella-tools/src/bash.rs, crates/stella-fleet/src/git.rs). So (B) is
+#       (crates/stella-tools/src/custom.rs, crates/stella-fleet/src/git.rs). So (B) is
 #       identified as: a process-group leader (pid == pgid — true of every
 #       stella-spawned child, though also true of plenty of ordinary
 #       backgrounded daemons, so this narrows but doesn't uniquely

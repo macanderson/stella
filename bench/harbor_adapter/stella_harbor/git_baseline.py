@@ -51,10 +51,14 @@ GIT_BASELINE_IDENT = "stella-harbor"
 GIT_BASELINE_EMAIL = "stella-harbor@bench.invalid"
 
 # The repo-wide ref pinning the baseline commit for Stella's witness
-# machinery: `verify_done` resolves it in preference to HEAD, because the
-# agent's own work is committed on top of the baseline during the trial and
-# a flip measured against HEAD is then structurally impossible (#2067). The
-# spelling is `WITNESS_BASELINE_TASK_REF` in `crates/stella-tools/src/verify.rs`.
+# machinery. Its original consumer was the `verify_done` tool
+# (`WITNESS_BASELINE_TASK_REF` in `crates/stella-tools/src/verify.rs`), which
+# resolved it in preference to HEAD because the agent's own work is committed
+# on top of the baseline during the trial and a flip measured against HEAD is
+# then structurally impossible (#2067). That tool was removed in the 2026-08
+# tool purge; the ref is still written so a trial's provenance stays
+# byte-identical with the published runs, and so a pre-purge SUT run against
+# this adapter still finds its pin.
 GIT_BASELINE_REF = "refs/stella/task-baseline"
 
 
@@ -89,10 +93,11 @@ def git_baseline_script(workdir: str | None) -> str:
       empty task directory, so "repository with no HEAD" is not a state the
       diff probe can encounter.
     - ``update-ref`` pins the baseline commit at ``GIT_BASELINE_REF`` in the
-      same chain, so a ``state=created`` workspace always carries the pin
-      Stella's ``verify_done`` prefers over a HEAD the agent's own commits
-      have advanced (#2067). ``state=preexisting`` deliberately writes no
-      ref: a task-owned repository is left alone.
+      same chain, so a ``state=created`` workspace always carries the pin a
+      pre-purge SUT's ``verify_done`` preferred over a HEAD the agent's own
+      commits have advanced (#2067; the tool itself was removed in the
+      2026-08 tool purge — see ``GIT_BASELINE_REF``). ``state=preexisting``
+      deliberately writes no ref: a task-owned repository is left alone.
 
     The identity is written with a repo-local (never ``--global``)
     ``git config`` before the baseline commit, not just carried on that one

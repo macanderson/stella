@@ -1,5 +1,11 @@
 # arenabench match — Stella with FIVE tools, bare loop
 #
+# HISTORICAL RECORD (2026-08). This arm's `tool_set` predates the 2026-08 tool
+# purge, which removed every one of the five names below from the built-in
+# catalog. The config is kept as the record of the runs it produced; it cannot
+# be re-run as specified against a post-purge SUT, and rewriting the set would
+# make it a different experiment wearing this one's name.
+#
 #   cloud:  arenabench cloud run matches/stella-five-tools.toml
 #
 # The variable under test is the SIZE AND SHAPE OF THE TOOL MENU, nothing else.
