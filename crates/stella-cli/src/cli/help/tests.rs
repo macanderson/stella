@@ -141,6 +141,140 @@ fn the_long_help_opens_with_the_product_not_the_source() {
     );
 }
 
+/// clap word-wraps rendered help at the terminal width, so a raw stored
+/// `long_help` paragraph (one unbroken line per source paragraph) never
+/// appears as a contiguous substring of rendered output — comparing the two
+/// verbatim would make a test pass whether or not the paragraph is actually
+/// there, for the wrong reason. Collapse whitespace on both sides before
+/// comparing so wrapping differences wash out and the comparison is honest.
+fn normalize_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The index printing first (`the_first_screen_shows_the_commands_people_type`)
+/// only fixes the *first* screen. `--help` used to also print every session
+/// flag's full `long_help` paragraph, which pushed total output so far past
+/// terminal height that the (correctly-first) index had scrolled off the top
+/// by the time the command finished — "I have to scroll up for days" to see
+/// it. Assert the general property directly against the source tree, so a
+/// *future* flag's paragraph is covered automatically rather than only the
+/// ones named here.
+#[test]
+fn root_help_does_not_print_a_session_flags_paragraph() {
+    let rendered = normalize_ws(&long_help());
+
+    let mut source = <crate::cli::Cli as clap::CommandFactory>::command();
+    source.build();
+
+    let mut checked = 0;
+    for arg in source.get_arguments().filter(|a| a.is_global_set()) {
+        let Some(paragraph) = arg.get_long_help().map(|h| h.to_string()) else {
+            continue; // this flag never had a long form to begin with
+        };
+        checked += 1;
+        let paragraph = normalize_ws(&paragraph);
+        assert!(
+            !rendered.contains(&paragraph),
+            "`--{}`'s full long_help still renders on the root `stella --help` page; it \
+             should fall back to the one-line summary there, and `stella <command> --help` \
+             is where the paragraph belongs (see `shorten_root_session_flags`).",
+            arg.get_id()
+        );
+    }
+    assert!(
+        checked > 0,
+        "expected at least one session flag with a long_help to exercise this test"
+    );
+}
+
+/// The paragraph above is relocated, not deleted: every subcommand still
+/// carries the full `long_help` for the session flags it inherited, because
+/// `shorten_root_session_flags` runs on the root command's own copy only,
+/// after `build()` has already cloned the pre-shortened text into each
+/// subcommand. Compared at the `Arg` level, not the rendered page, so this
+/// is exact rather than at the mercy of word-wrap.
+#[test]
+fn subcommand_help_still_carries_the_full_session_flag_long_help() {
+    let cmd = command();
+    let run = cmd.find_subcommand("run").expect("`run` exists");
+    let tools = run
+        .get_arguments()
+        .find(|a| a.get_id().as_str() == "tools")
+        .expect("`run` inherited the global --tools flag");
+
+    let mut source = <crate::cli::Cli as clap::CommandFactory>::command();
+    source.build();
+    let expected = source
+        .get_arguments()
+        .find(|a| a.get_id().as_str() == "tools")
+        .and_then(|a| a.get_long_help())
+        .map(|h| h.to_string())
+        .expect("--tools carries a long_help in the source tree");
+
+    assert_eq!(
+        tools.get_long_help().map(|h| h.to_string()),
+        Some(expected),
+        "`stella run`'s inherited --tools flag lost its long_help — the root page's \
+         shortened summary must still be backed by the full explanation somewhere reachable"
+    );
+}
+
+/// Every test above inspects the *built* `Command` tree — `get_arguments()`,
+/// `render_help()` — never real parsing. `shorten_root_session_flags` once
+/// broke real parsing while every one of those still passed: it mutated the
+/// arg list in a way that shifted element positions after clap's keymap (a
+/// position-indexed lookup cache) had already been built, so `--help` itself
+/// silently resolved to the wrong `Arg` and the process fell through to the
+/// default chat REPL instead of printing help and exiting — only caught by
+/// running `stella --help` end to end. This test parses for real, so a
+/// regression here fails in `cargo test`, not just in someone's terminal.
+#[test]
+fn help_flag_still_triggers_claps_help_action() {
+    let err = command()
+        .try_get_matches_from(["stella", "--help"])
+        .expect_err("--help must short-circuit to clap's help action, not reach the app");
+    assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+}
+
+/// The general form of the test above: a spread of session flags, old and
+/// new alike, each still resolves to its *own* value — proof the arg list's
+/// positions were not shuffled — and the subcommand after them still
+/// resolves too.
+#[test]
+fn session_flags_still_parse_to_their_own_values() {
+    let matches = command()
+        .try_get_matches_from([
+            "stella",
+            "--model",
+            "zai/glm-5.2",
+            "--budget",
+            "5",
+            "--plan-mode",
+            "chat",
+        ])
+        .expect("a full spread of session flags plus a subcommand is valid input");
+
+    assert_eq!(
+        matches.get_one::<String>("model").map(String::as_str),
+        Some("zai/glm-5.2"),
+        "--model's value landed on a different flag's slot"
+    );
+    assert_eq!(
+        matches.get_one::<f64>("budget").copied(),
+        Some(5.0),
+        "--budget's value landed on a different flag's slot"
+    );
+    assert!(
+        matches.get_flag("plan_mode"),
+        "--plan-mode did not set its own boolean slot"
+    );
+    assert_eq!(
+        matches.subcommand_name(),
+        Some("chat"),
+        "the subcommand did not resolve correctly alongside session flags"
+    );
+}
+
 /// The reported bug, stated as a property: with thirty-odd commands no help
 /// page fits a 24-line terminal, so the thing that matters is not total
 /// length but *what is above the fold*. It used to be the tail of the global
