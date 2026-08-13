@@ -46,8 +46,9 @@ use serde_json::Value;
 
 /// The JSON type name of `value`, for an error a model can act on. These are
 /// the JSON spelling (`number`, `boolean`) rather than Rust's, because the
-/// caller wrote JSON.
-fn type_name(value: &Value) -> &'static str {
+/// caller wrote JSON. `pub(crate)` for the dispatch-time schema validator
+/// (`crate::registry::validate`), which names types in the same vocabulary.
+pub(crate) fn type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
@@ -60,8 +61,9 @@ fn type_name(value: &Value) -> &'static str {
 
 /// `null` is treated as absence, not as a wrong type: every JSON encoder in
 /// the wild emits `null` for "no value", and failing a call over the
-/// difference would be pedantry the caller cannot act on.
-fn present<'a>(input: &'a Value, field: &str) -> Option<&'a Value> {
+/// difference would be pedantry the caller cannot act on. `pub(crate)` so
+/// the dispatch-time schema validator applies the same convention.
+pub(crate) fn present<'a>(input: &'a Value, field: &str) -> Option<&'a Value> {
     match input.get(field) {
         None | Some(Value::Null) => None,
         Some(v) => Some(v),
@@ -96,21 +98,51 @@ pub enum InputError {
         /// The field that was mistyped.
         field: String,
         /// What the reader wanted, phrased for the message ("a string").
-        want: &'static str,
+        /// A `String` rather than `&'static str` so the dispatch validator
+        /// can phrase a schema's `"type": [..]` alternatives ("a string or
+        /// an integer") — the readers above still pass fixed phrases.
+        want: String,
         /// The JSON type that actually arrived.
         got: &'static str,
     },
 
-    /// One element of an array field was not a string. Carries the index,
-    /// because "one of these is wrong" is not something a caller can act on.
-    #[error("field `{field}`[{index}] must be a string, got {got}")]
+    /// One element of an array field did not carry the type the schema
+    /// declares for its items. Carries the index, because "one of these is
+    /// wrong" is not something a caller can act on.
+    #[error("field `{field}`[{index}] must be {want}, got {got}")]
     WrongElementType {
         /// The array field being read.
         field: String,
         /// The offending element's position.
         index: usize,
+        /// What the items were declared as, phrased for the message.
+        want: String,
         /// The JSON type that actually arrived.
         got: &'static str,
+    },
+
+    /// The field's value is not one of the schema's declared `enum` members.
+    #[error("field `{field}` must be one of {allowed}, got {got}")]
+    NotOneOf {
+        /// The field carrying the out-of-set value.
+        field: String,
+        /// The `enum` members, rendered as JSON and comma-joined in the
+        /// schema's declared order — pre-joined so `Display` stays a plain
+        /// format and the ordering decision lives with the constructor.
+        allowed: String,
+        /// The value that arrived, rendered as JSON (length-capped).
+        got: String,
+    },
+
+    /// The tool declares `additionalProperties: false` and the call carried
+    /// a key its schema does not name.
+    #[error("unknown field `{field}` — this tool accepts only: {allowed}")]
+    UnknownField {
+        /// The first unrecognized key, in lexicographic order.
+        field: String,
+        /// The schema's declared property names, backtick-quoted, sorted,
+        /// and comma-joined.
+        allowed: String,
     },
 }
 
@@ -123,7 +155,7 @@ fn missing(field: &str) -> InputError {
 fn wrong_type(field: &str, want: &'static str, got: &Value) -> InputError {
     InputError::WrongType {
         field: field.to_string(),
-        want,
+        want: want.to_string(),
         got: type_name(got),
     }
 }
@@ -196,6 +228,7 @@ pub fn optional_str_array<'a>(
         let text = item.as_str().ok_or_else(|| InputError::WrongElementType {
             field: field.to_string(),
             index: i,
+            want: "a string".to_string(),
             got: type_name(item),
         })?;
         out.push(text);
@@ -252,9 +285,9 @@ mod tests {
             mistyped,
             InputError::WrongType {
                 ref field,
-                want: "a string",
+                ref want,
                 got: "number",
-            } if field == "pattern"
+            } if field == "pattern" && want == "a string"
         ));
     }
 

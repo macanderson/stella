@@ -69,6 +69,16 @@ log_enum! {
     /// output wearing an identifier's clothes. The built-ins answer the
     /// question a benchmark actually asks (was it shelling out or editing?),
     /// and everything else is [`ToolName::Other`].
+    ///
+    /// The collapse to [`ToolName::Other`] is a **declared gap, not a
+    /// silence** (#3149): every MCP tool, script tool, and foundry tool
+    /// classifies as `other`, so per-tool attribution beyond this closed set
+    /// is deliberately not recoverable from the diagnostic plane — an
+    /// interned-identifier mechanism was considered and rejected as a
+    /// side-channel for model-chosen text. The raw name lives where content
+    /// is allowed to live: `store.db`'s `tool_calls` table records it for
+    /// every call, and a reader who needs to attribute an `other` failure
+    /// joins there.
     pub enum ToolName {
         Bash => "bash",
         ReadFile => "read_file",
@@ -160,6 +170,18 @@ pub(crate) struct DomainBridge {
     cx: Cx,
     tally: Tally,
     paths: PathContext,
+    /// The tool each in-flight call named, keyed by `call_id`, so
+    /// `agent.tool.result` can carry the same closed [`ToolName`] its
+    /// `agent.tool.call` carried without a reader joining the two by `seq`
+    /// (#3149) — the join is impossible at the default warn filter, where the
+    /// call line was emitted at debug and never surfaced.
+    ///
+    /// Bounded by construction: an entry is removed by its `ToolResult` or
+    /// its `SpeculationDiscarded`, and the whole map drains on the turn
+    /// terminators (`Complete` / `Error`), so it can never outgrow one turn's
+    /// in-flight calls. The `call_id` key is an engine-minted correlation id
+    /// held only in memory — it never reaches a record.
+    in_flight: Vec<(String, ToolName)>,
 }
 
 impl DomainBridge {
@@ -170,7 +192,18 @@ impl DomainBridge {
             cx: Cx::EMPTY,
             tally: Tally::default(),
             paths: PathContext::detect(workspace_root),
+            in_flight: Vec::new(),
         }
+    }
+
+    /// Forget `call_id` and return the tool its call named, or
+    /// [`ToolName::Other`] for a result whose call this bridge never saw
+    /// (a stream observed from mid-turn).
+    fn take_in_flight(&mut self, call_id: &str) -> ToolName {
+        self.in_flight
+            .iter()
+            .position(|(id, _)| id == call_id)
+            .map_or(ToolName::Other, |at| self.in_flight.swap_remove(at).1)
     }
 
     fn emit(&self, level: Level, code: &'static str, fields: Fields) {
@@ -351,11 +384,16 @@ impl DomainBridge {
 
             // ---- Tools. -------------------------------------------------
             AgentEvent::ToolStart { call } => {
+                let tool = ToolName::classify(&call.name);
+                // Retained so the matching result can name its tool without a
+                // join (#3149); the result, a discard, or the turn terminator
+                // takes it back out.
+                self.in_flight.push((call.call_id.clone(), tool));
                 self.emit(
                     Level::Debug,
                     "agent.tool.call",
                     self.at_seq()
-                        .with("tool", ToolName::classify(&call.name))
+                        .with("tool", tool)
                         // The design's own example field. `call.input` is
                         // arbitrary model-produced JSON; its size is a useful
                         // signal and its bytes are not ours to record.
@@ -363,11 +401,15 @@ impl DomainBridge {
                 );
             }
             AgentEvent::ToolResult {
+                call_id,
                 output,
                 duration_ms,
                 speculated,
-                ..
             } => {
+                // The failing result is the one line a warn-filtered reader
+                // sees, so it names the tool itself rather than pointing at a
+                // debug-level call record that was filtered out (#3149).
+                let tool = self.take_in_flight(call_id);
                 let (ok, bytes) = match output {
                     ToolOutput::Ok { content } => (true, content.len()),
                     ToolOutput::Error { message, .. } => (false, message.len()),
@@ -376,13 +418,17 @@ impl DomainBridge {
                     if ok { Level::Debug } else { Level::Warn },
                     "agent.tool.result",
                     self.at_seq()
+                        .with("tool", tool)
                         .with("ok", ok)
                         .with("duration_ms", *duration_ms)
                         .with("speculated", *speculated)
                         .with("output_bytes", bytes),
                 );
             }
-            AgentEvent::SpeculationDiscarded { .. } => {
+            AgentEvent::SpeculationDiscarded { call_id, .. } => {
+                // A discarded speculation is a call whose result will never
+                // arrive, so its retention entry drains here.
+                let _ = self.take_in_flight(call_id);
                 self.emit(
                     Level::Debug,
                     "agent.tool.speculation_discarded",
@@ -470,6 +516,10 @@ impl DomainBridge {
                 );
             }
             AgentEvent::Complete { model, cost_usd } => {
+                // A turn terminator: any call still awaiting a result will
+                // never get one, so the retention map drains rather than
+                // carrying stale entries into the next turn.
+                self.in_flight.clear();
                 self.emit(
                     Level::Info,
                     "agent.complete",
@@ -546,6 +596,9 @@ impl DomainBridge {
                 );
             }
             AgentEvent::Error { retryable, .. } => {
+                // The failing turn's terminator (a turn ends on `Complete` or
+                // on this, never both) — same drain as `Complete`.
+                self.in_flight.clear();
                 self.emit(
                     Level::Error,
                     "agent.error",
@@ -917,6 +970,84 @@ mod tests {
         assert!(json.contains(r#""duration_ms":1234"#), "{json}");
         assert!(!json.contains("ada"), "the message leaked: {json}");
         assert!(!json.contains("permission denied"), "{json}");
+    }
+
+    /// The witness for #3149: the failing result is the only line a reader
+    /// sees at the default warn filter (the call was debug), so the record
+    /// itself names the tool — no join back to `agent.tool.call` by `seq`.
+    /// Fails on main, where the result carries no `tool` field.
+    #[test]
+    fn a_failed_tool_result_names_its_tool_without_a_join() {
+        let (mut bridge, records) = bridge();
+        bridge.observe(&tool_call(
+            "read_file",
+            serde_json::json!({ "path": "/w/src/lib.rs" }),
+        ));
+        bridge.observe(&AgentEvent::ToolResult {
+            call_id: "call-1".into(),
+            output: ToolOutput::Error {
+                message: "no such file".into(),
+            },
+            duration_ms: 7,
+            speculated: false,
+        });
+
+        let record = records.find("agent.tool.result").expect("a record");
+        assert_eq!(record.level, Level::Warn);
+        let json = serde_json::to_string(&record).expect("serialize");
+        assert!(
+            json.contains(r#""tool":"read_file""#),
+            "the warn line must name the tool on its own: {json}"
+        );
+        assert!(!json.contains("no such file"), "{json}");
+    }
+
+    /// A result whose call the bridge never saw — a stream observed from
+    /// mid-turn — still carries the field, as the closed fallback.
+    #[test]
+    fn a_result_with_no_observed_call_classifies_as_other() {
+        let (mut bridge, records) = bridge();
+        bridge.observe(&AgentEvent::ToolResult {
+            call_id: "call-never-seen".into(),
+            output: ToolOutput::Ok {
+                content: "x".into(),
+            },
+            duration_ms: 1,
+            speculated: false,
+        });
+        let json = serde_json::to_string(&records.records()[0]).expect("serialize");
+        assert!(json.contains(r#""tool":"other""#), "{json}");
+    }
+
+    /// The retention map is bounded: a result, a discarded speculation, and
+    /// the turn terminator each take entries out, so nothing accrues across
+    /// turns.
+    #[test]
+    fn in_flight_retention_drains_on_result_discard_and_turn_end() {
+        let (mut bridge, _records) = bridge();
+        bridge.observe(&tool_call("grep", serde_json::json!({})));
+        bridge.observe(&AgentEvent::ToolResult {
+            call_id: "call-1".into(),
+            output: ToolOutput::Ok { content: "".into() },
+            duration_ms: 1,
+            speculated: false,
+        });
+        assert!(bridge.in_flight.is_empty(), "the result removes its entry");
+
+        bridge.observe(&tool_call("bash", serde_json::json!({})));
+        bridge.observe(&AgentEvent::SpeculationDiscarded {
+            call_id: "call-1".into(),
+            name: "bash".into(),
+            reason: "attempt_failed".into(),
+        });
+        assert!(bridge.in_flight.is_empty(), "a discard removes its entry");
+
+        bridge.observe(&tool_call("bash", serde_json::json!({})));
+        bridge.observe(&AgentEvent::Complete {
+            model: "claude-fable-5".into(),
+            cost_usd: 0.1,
+        });
+        assert!(bridge.in_flight.is_empty(), "turn end drains the rest");
     }
 
     /// A manifest advances the correlation context, so everything recorded

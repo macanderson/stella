@@ -3492,7 +3492,7 @@
           "type": "string"
         },
         "input": {
-          "description": "The arguments, as the model produced them. Runtime data: validate\nagainst [`ToolSchema::input_schema`] rather than trusting the shape."
+          "description": "The arguments, as the model produced them. Runtime data: never trust\nthe shape. `stella-tools` validates this against\n[`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,\n#3144) — required fields, declared types, enums, item types, and\n`additionalProperties: false` where a schema advertises it — and\nrefuses a contradicting call before the tool runs. Tools still read\nfields defensively: a direct caller may bypass the registry."
         },
         "name": {
           "description": "Which tool to run — matches the [`ToolSchema::name`] it was chosen\nfrom.",

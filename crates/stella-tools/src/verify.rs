@@ -552,14 +552,13 @@ impl VerifyDone {
         if let Some(refusal) = defeater::cwd_refusal(test_cmd) {
             return Err(refusal);
         }
-        let test_files: Vec<String> = input
-            .get("test_files")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
+        // A mistyped `test_files` (a bare string, or an array carrying a
+        // non-string element) must be refused as the type problem it is —
+        // silently emptying it via `filter_map(as_str)` reported the field
+        // as missing when it was present (#3144).
+        let test_files: Vec<String> = crate::input::optional_str_array(input, "test_files")
+            .map_err(|err| err.to_string())?
+            .map(|files| files.into_iter().map(str::to_string).collect())
             .unwrap_or_default();
         if test_files.is_empty() {
             return Err(
@@ -903,6 +902,42 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// The #3144 witness: a mistyped `test_files` names the type problem.
+    /// On main a bare string (or an array of non-strings) was silently
+    /// emptied by `filter_map(as_str)` and refused as "missing required
+    /// field `test_files`" — present, mistyped, and misreported.
+    #[tokio::test]
+    async fn a_mistyped_test_files_is_refused_as_the_type_problem_it_is() {
+        let root = tempfile::tempdir().unwrap();
+        let out = VerifyDone::default()
+            .execute(
+                &serde_json::json!({ "test_cmd": "bash w.sh", "test_files": "w.sh" }),
+                root.path(),
+            )
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected a refusal, got {out:?}");
+        };
+        assert_eq!(
+            message,
+            "field `test_files` must be an array of strings, got string"
+        );
+
+        let out = VerifyDone::default()
+            .execute(
+                &serde_json::json!({ "test_cmd": "bash w.sh", "test_files": [1, "w.sh"] }),
+                root.path(),
+            )
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected a refusal, got {out:?}");
+        };
+        assert_eq!(
+            message,
+            "field `test_files`[0] must be a string, got number"
+        );
     }
 
     #[tokio::test]

@@ -58,6 +58,39 @@ const MAX_MANIFEST_FILES: usize = 200;
 /// advertised in the tool schema — the model never authors it.
 pub const LEDGER_FILES_KEY: &str = "_session_read_files";
 
+/// The registry's dispatch-time augmentation for `save_exploration` (spec
+/// §3d): the staleness manifest is built from the ledger's actual evidence,
+/// passed through the internal [`LEDGER_FILES_KEY`]. The model never authors
+/// that field; a value it did author is replaced — and when the session
+/// recorded no reads, removed, so it cannot flow into the manifest as
+/// fabricated evidence. `files_touched` is the registry ledger's
+/// `(path, op-letters)` rows; only rows recording a read (`R`) count.
+/// Returns `None` when the input is already correct as-is.
+pub(crate) fn ledger_augmented(
+    files_touched: Vec<(String, String)>,
+    input: &Value,
+) -> Option<Value> {
+    let Value::Object(map) = input else {
+        return None;
+    };
+    let read_paths: Vec<String> = files_touched
+        .into_iter()
+        .filter(|(_, letters)| letters.contains('R'))
+        .map(|(path, _)| path)
+        .collect();
+    if !read_paths.is_empty() {
+        let mut map = map.clone();
+        map.insert(LEDGER_FILES_KEY.to_string(), serde_json::json!(read_paths));
+        Some(Value::Object(map))
+    } else if map.contains_key(LEDGER_FILES_KEY) {
+        let mut map = map.clone();
+        map.remove(LEDGER_FILES_KEY);
+        Some(Value::Object(map))
+    } else {
+        None
+    }
+}
+
 /// Lifecycle of a record: a draft is an in-flight claim with partial notes;
 /// complete is a finished map.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

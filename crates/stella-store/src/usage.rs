@@ -341,22 +341,6 @@ impl UsageStore {
             .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))?)
     }
 
-    /// Cross-project per-tool call totals, most-used first — the histogram a
-    /// dashboard/recommender reads to spot "grep a lot, graph_query never".
-    pub fn tool_totals(&self) -> Result<Vec<(String, i64)>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT tool, SUM(calls) AS c FROM tool_usage_rollup \
-             GROUP BY tool ORDER BY c DESC, tool ASC",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
     /// Count of rolled-up executions for a project.
     pub fn execution_count(&self, project_id: &str) -> Result<i64> {
         Ok(self.lock().query_row(
@@ -1150,6 +1134,10 @@ pub struct QuarantinedRow {
 
 // The registration-time scope backfill (#406), in its own module.
 mod backfill;
+
+mod tool_report;
+
+pub use tool_report::ToolReportRow;
 // Drain observability: last-attempt record + cursor/backlog readers (#464).
 pub mod drain_state;
 // Project re-key: merge a forked path-derived identity into the stable one (#408).
@@ -1210,8 +1198,16 @@ mod tests {
             .unwrap();
         assert_eq!(usage.project_count().unwrap(), 1);
         assert_eq!(usage.execution_count("proj_a").unwrap(), 1);
-        let totals = usage.tool_totals().unwrap();
-        assert_eq!(totals[0], ("grep".to_string(), 2));
+        let totals = usage.tool_report().unwrap();
+        assert_eq!(
+            (totals[0].tool.as_str(), totals[0].calls, totals[0].errors),
+            ("grep", 2, 0)
+        );
+        assert_eq!(
+            (totals[1].tool.as_str(), totals[1].calls, totals[1].errors),
+            ("read_file", 1, 1),
+            "the error count survives the sync into the hub (#3147)"
+        );
     }
 
     #[test]
@@ -1229,7 +1225,9 @@ mod tests {
         usage.sync_execution(&r).unwrap();
         usage.sync_execution(&r).unwrap(); // re-sync must not double-count
         assert_eq!(usage.execution_count("proj_a").unwrap(), 1);
-        assert_eq!(usage.tool_totals().unwrap(), vec![("grep".to_string(), 2)]);
+        let totals = usage.tool_report().unwrap();
+        assert_eq!((totals[0].tool.as_str(), totals[0].calls), ("grep", 2));
+        assert_eq!(totals.len(), 1);
     }
 
     #[test]
@@ -1250,7 +1248,9 @@ mod tests {
         a.execution_id = 1;
         usage.sync_execution(&a).unwrap();
         assert_eq!(usage.project_count().unwrap(), 2);
-        assert_eq!(usage.tool_totals().unwrap(), vec![("grep".to_string(), 6)]);
+        let totals = usage.tool_report().unwrap();
+        assert_eq!((totals[0].tool.as_str(), totals[0].calls), ("grep", 6));
+        assert_eq!(totals.len(), 1);
     }
 
     fn scope(org: Option<&str>, workspace: Option<&str>) -> crate::identity::TelemetryScope {

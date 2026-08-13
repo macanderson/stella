@@ -306,3 +306,39 @@ fn generated_ignore_is_created_world_readable_not_owner_only() {
         "the generated ignore must exclude the private dir"
     );
 }
+
+#[test]
+fn bulk_git_add_stages_nothing_stella_scaffolded() {
+    // Witness for the generated ignore's self-ignore line: in a repository
+    // that never chose to track `.stella/`, `git add -A` must sweep up nothing
+    // Stella scaffolded — including the generated `.gitignore` itself, the one
+    // file the other rules cannot cover. A Terminal-Bench verifier failed a
+    // solved `sanitize-git-repo` because the agent's `git add -A && git commit`
+    // captured `.stella/.gitignore` into the graded repository.
+    let root = tempfile::tempdir().unwrap();
+    Store::open(root.path()).expect("open");
+
+    for args in [
+        ["init", "--quiet"].as_slice(),
+        ["config", "user.email", "t@t"].as_slice(),
+        ["config", "user.name", "t"].as_slice(),
+        ["add", "-A"].as_slice(),
+    ] {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+    let staged = std::process::Command::new("git")
+        .args(["ls-files", "--cached"])
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    let staged = String::from_utf8_lossy(&staged.stdout);
+    assert!(
+        !staged.contains(".stella"),
+        "git add -A must stage nothing under .stella/, staged: {staged}"
+    );
+}

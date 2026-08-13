@@ -62,8 +62,17 @@ pub enum ToolCallState {
     Running,
     /// Returned successfully.
     Ok,
-    /// Returned an error, or was abandoned when its turn ended.
+    /// Returned an error.
     Error,
+    /// Never returned — its turn ended (or its process died) first.
+    ///
+    /// Distinct from [`Self::Error`] because the two answer different
+    /// questions: an error is a fact about the *tool*, an abandonment is a
+    /// fact about the *turn*. Folding them together (which is what this
+    /// projection did before v24) charged an "error" to whatever tool
+    /// happened to be in flight at every interrupt, inflating exactly the
+    /// per-tool error rates a reliability ceiling reads (#3146).
+    Abandoned,
 }
 
 impl ToolCallState {
@@ -74,6 +83,7 @@ impl ToolCallState {
             Self::Running => "running",
             Self::Ok => "ok",
             Self::Error => "error",
+            Self::Abandoned => "abandoned",
         }
     }
 
@@ -87,6 +97,7 @@ impl ToolCallState {
         match value {
             "running" => Self::Running,
             "ok" => Self::Ok,
+            "abandoned" => Self::Abandoned,
             _ => Self::Error,
         }
     }
@@ -477,7 +488,7 @@ impl Store {
                 // `ToolOutput` to classify, and inventing one here would put
                 // "the turn ended first" into the same bucket as a real
                 // failure — the exact conflation #3145 exists to end.
-                None => (ToolCallState::Error, ABANDONED.to_string(), None, 0, 0),
+                None => (ToolCallState::Abandoned, ABANDONED.to_string(), None, 0, 0),
             };
             rows.push(ToolCallRow {
                 call_id: call_id.clone(),
@@ -564,7 +575,7 @@ impl Store {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
         tx.execute(
-            "UPDATE tool_calls SET state = 'error', ok = 0, error = ?2 \
+            "UPDATE tool_calls SET state = 'abandoned', ok = 0, error = ?2 \
              WHERE execution_id = ?1 AND state = 'running'",
             params![execution_id, ABANDONED],
         )?;

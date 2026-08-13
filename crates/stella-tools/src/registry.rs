@@ -25,6 +25,7 @@ mod executor;
 mod options;
 mod process_tools;
 mod turn_probe;
+mod validate;
 
 pub use options::RegistryOptions;
 
@@ -852,40 +853,10 @@ impl ToolRegistry {
         }
         let input: &Value = modified_input.as_ref().unwrap_or(input);
 
-        // A save_exploration's staleness manifest is built from the map's
-        // actual evidence: pass the session's read paths from the file-touch
-        // ledger through the internal input key (spec §3d). The model never
-        // authors this field; a value it did author is replaced — and when
-        // the session recorded no reads, removed, or it would flow into the
-        // manifest as fabricated evidence.
-        let mut ledger_augmented: Option<Value> = None;
-        if name == "save_exploration"
-            && let Value::Object(map) = input
-        {
-            let read_paths: Vec<String> = self
-                .files_touched()
-                .into_iter()
-                .filter(|(_, letters)| letters.contains('R'))
-                .map(|(path, _)| path)
-                .collect();
-            if !read_paths.is_empty() {
-                let mut map = map.clone();
-                map.insert(
-                    crate::exploration::LEDGER_FILES_KEY.to_string(),
-                    serde_json::json!(read_paths),
-                );
-                ledger_augmented = Some(Value::Object(map));
-            } else if map.contains_key(crate::exploration::LEDGER_FILES_KEY) {
-                let mut map = map.clone();
-                map.remove(crate::exploration::LEDGER_FILES_KEY);
-                ledger_augmented = Some(Value::Object(map));
-            }
-        }
-        let input: &Value = ledger_augmented.as_ref().unwrap_or(input);
-
-        // Resolve the tool now rather than at dispatch below: the command
-        // fence asks IT for the line it would run. Clone the `Arc` out so
-        // the overlay's read lock is released before any `.await`.
+        // Resolve the tool now rather than at dispatch below: the input gate
+        // directly below needs its advertised schema, and the command fence
+        // asks IT for the line it would run. Clone the `Arc` out so the
+        // overlay's read lock is released before any `.await`.
         let tool = self.tools.get(name).cloned().or_else(|| {
             self.late_tools
                 .read()
@@ -893,6 +864,21 @@ impl ToolRegistry {
                 .get(name)
                 .cloned()
         });
+
+        // Dispatch-time input validation (#3144): a call whose input
+        // contradicts the tool's advertised `input_schema` is refused here,
+        // before anything downstream runs — see `registry/validate.rs`.
+        if let Some(deny) = validate::refusal(tool.as_deref(), input) {
+            return deny;
+        }
+
+        // A save_exploration's staleness manifest is built from the ledger's
+        // actual evidence, threaded through an internal input key (spec §3d)
+        // — see [`crate::exploration::ledger_augmented`].
+        let ledger_augmented = (name == "save_exploration")
+            .then(|| crate::exploration::ledger_augmented(self.files_touched(), input))
+            .flatten();
+        let input: &Value = ledger_augmented.as_ref().unwrap_or(input);
 
         // `run_script` threads its gate resolution into execution through an
         // internal input key, so the line the `command.started` chain

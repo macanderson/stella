@@ -496,10 +496,10 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
     assert_eq!(usage.execution_count(&pid).unwrap(), 1);
     assert_eq!(
         usage
-            .tool_totals()
+            .tool_report()
             .unwrap()
             .iter()
-            .map(|(_, c)| *c)
+            .map(|r| r.calls)
             .sum::<i64>(),
         2,
         "grep + read_file folded into the cross-project histogram"
@@ -1102,10 +1102,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       block costs under one token rule (#925). v20 `foundry_tools`
     //       (#830). v21 `session_turn_diffs` (#1870). v22
     //       `executions.journal_era` (#1981). v23
-    //       `execution_reflection.parse_error` (#2175). v24
+    //       `execution_reflection.parse_error` (#2175). v24 splits
+    //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
     //       `tool_calls.error_class` (#3145): which KIND of failure, so an
     //       error rate can exclude model misuse and policy refusals.
-    assert_eq!(SCHEMA_VERSION, 24);
+    assert_eq!(SCHEMA_VERSION, 25);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
