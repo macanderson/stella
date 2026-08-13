@@ -793,6 +793,51 @@
     },
     "ToolResultIn": {
       "$defs": {
+        "ErrorClass": {
+          "description": "Why a tool call failed, as a closed machine-readable set (#3145).\n\n[`ToolOutput::Error`]'s `message` is prose written for the model to retry\nagainst; this is the axis a *measurement* needs, because a per-tool error\nrate cannot mean anything while a tool defect, model misuse, and a policy\nrefusal all count as the same failure. The variants partition failures by\n**whose problem they are**: the model's ([`Self::InvalidInput`],\n[`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],\n[`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],\n[`Self::Environment`]), or ours ([`Self::Internal`]).\n\nDeliberately **not** here: an `abandoned` class. A call whose turn ended\nbefore it returned never produced a `ToolOutput` at all — abandonment is a\nstore-side lifecycle fact, not an error a tool can report.\n\nForward-compat matches [`crate::receipt::BlockKind`]: an unknown token\nwritten by a newer emitter deserializes to [`Self::Other`] rather than\nfailing the whole event. Lossy on the way out for the same reason —\nre-serializing writes `\"other\"`, not the original token.",
+          "oneOf": [
+            {
+              "const": "invalid_input",
+              "description": "The call's arguments could not be read as the tool's schema — a\nmissing required field, a wrong type. The model's mistake: it counts\nagainst the prompt/tool menu, never against the tool.",
+              "type": "string"
+            },
+            {
+              "const": "not_found",
+              "description": "The named subject does not exist — an unknown tool, a path or symbol\nthat is not there to operate on.",
+              "type": "string"
+            },
+            {
+              "const": "permission_denied",
+              "description": "The operating environment refused the operation (filesystem\npermissions, containment) — distinct from a *policy* refusal, which\nis [`Self::RefusedByPolicy`].",
+              "type": "string"
+            },
+            {
+              "const": "refused_by_policy",
+              "description": "A policy plane declined the call — an extension deny, a human \"no\",\nan approval that could not be asked. Working as designed, never a\ntool defect.",
+              "type": "string"
+            },
+            {
+              "const": "timeout",
+              "description": "The operation ran out of its time budget.",
+              "type": "string"
+            },
+            {
+              "const": "environment",
+              "description": "The world outside the tool failed it — a network error, a missing\nbinary, a full disk.",
+              "type": "string"
+            },
+            {
+              "const": "internal",
+              "description": "The tool's own defect — our bug, and the class an error-rate ceiling\nis actually about.",
+              "type": "string"
+            },
+            {
+              "const": "other",
+              "description": "A class this reader does not recognize (written by a newer emitter).\nNever constructed by this build's classifiers.",
+              "type": "string"
+            }
+          ]
+        },
         "ToolOutput": {
           "description": "The output of running a tool — success or a typed, named failure. Never a\nbare string: every tool result is inspectable without string-sniffing.",
           "oneOf": [
@@ -824,6 +869,17 @@
               "properties": {
                 "error": {
                   "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/ErrorClass"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Which [`ErrorClass`] this failure falls in (#3145). `None` is a\ndeclared default meaning \"unclassified\" — the site that built\nthis error has not been audited into a class yet, which is\ndistinct from any class it could be assigned. Optional and\nabsent-when-`None` so every payload written before the field\nexisted round-trips byte-identically (invariant #4), and so the\nmessage bytes the model sees are never perturbed by\nclassification."
+                    },
                     "message": {
                       "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
                       "type": "string"
