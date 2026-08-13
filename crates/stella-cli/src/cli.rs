@@ -794,6 +794,24 @@ pub(crate) enum Command {
         output_format: OutputFormat,
     },
 
+    /// Find code by meaning — the agent's `search` tool at the CLI
+    ///
+    /// One question in, ranked files out — each carrying its symbols,
+    /// imports, signatures, callers and source, rendered exactly as the
+    /// agent's own `search` tool renders them. Strategies degrade honestly:
+    /// semantic ranking when an embedder is configured
+    /// (STELLA_EMBED_URL/STELLA_EMBED_MODEL), then path/symbol-name terms
+    /// over the code graph, then an index-free file scan — and the answer
+    /// always says which one ran. Depth and budget ride the same dials as
+    /// the tool (STELLA_SEARCH_DEPTH, STELLA_SEARCH_BUDGET). Reads (or
+    /// builds) .stella/private/codegraph.db; needs no model API key.
+    Search {
+        /// What you are looking for — a question, a description of the
+        /// behaviour, or a symbol/file name. Plain words work; you do not
+        /// need to guess how the code spells it.
+        query: String,
+    },
+
     /// Query the code graph — definitions, references, callers, imports
     ///
     /// Query the code graph built by `stella init` — symbol definitions and

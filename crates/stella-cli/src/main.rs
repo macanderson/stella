@@ -97,6 +97,7 @@ mod resume_frame;
 mod rules;
 mod runtime;
 mod scripts_cmd;
+mod search_cmd;
 mod session_persist;
 mod settings;
 mod settings_check;
@@ -716,6 +717,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads the local index only — works with zero API keys.
             return contextgraph::run_graph(*op, target).map_err(failure::CliFailure::from);
         }
+        Some(Command::Search { query }) => {
+            // Reads (or builds) the local index; the only network is an
+            // explicitly configured embedder — no model API key needed.
+            return signals::block_on_interruptible(rt()?, search_cmd::run(query))
+                .map_err(failure::CliFailure::from);
+        }
         Some(Command::Scripts { cmd }) => {
             // Static manifest parsing plus a local subprocess — works with
             // zero API keys.
@@ -1294,6 +1301,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Graph { .. }
+        | Command::Search { .. }
         | Command::Scripts { .. }
         | Command::Storage { .. }
         | Command::Commands { .. }

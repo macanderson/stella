@@ -1,0 +1,56 @@
+---
+title: stella search
+description: Find code by meaning — the agent's search tool at the CLI, with symbols, imports, signatures, callers, and source attached to every hit.
+---
+
+Ask your workspace the question you actually have — a sentence, a behaviour description, or a symbol name — and get back the files that answer it, each already carrying its symbols, imports, signatures, callers, and a source excerpt. It is the same engine behind the agent's [`search` tool](/docs/agent-tools), so what you see here is exactly what the model receives for the same question.
+
+## Synopsis
+
+```bash
+stella search <query>
+```
+
+## What it does
+
+`stella search` ranks the workspace against your query and then spends a fixed context budget enriching the best hits with structure from the code graph. The words you use do not have to appear anywhere in the code:
+
+```bash
+stella search "where are request headers sanitized before logging"
+stella search "the retry/backoff policy for failed HTTP requests"
+stella search CredentialStore
+```
+
+Three strategies run in cost order, stopping at the first that produces hits, and the answer's `via:` line always names which one ran:
+
+<CardGrid size="md">
+  <OptionCard name="semantic">
+    The query and the indexed files are embedded and compared by meaning.
+    Runs whenever an embedder is configured (`STELLA_EMBED_URL` +
+    `STELLA_EMBED_MODEL`).
+  </OptionCard>
+  <OptionCard name="names">
+    Query terms matched against paths and symbol names in the code graph —
+    what a path glob cannot do. The answer labels itself a name match.
+  </OptionCard>
+  <OptionCard name="scan">
+    An index-free walk of the working tree, ranking files by term matches in
+    path and contents. The fallback for a workspace `stella init` cannot
+    index.
+  </OptionCard>
+</CardGrid>
+
+Every answer states what happened: which strategies ran, whether the ranking saw the whole workspace (a partially embedded index is disclosed, never silent), and whether the context budget truncated the result list.
+
+## Dials
+
+Both are environment variables, shared with the agent's tool — they shape the answer, never the schema:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `STELLA_SEARCH_DEPTH` | `10` | How much to say about the top hit, 1 (path only) to 10 (everything, source body included). The tail decays from here and unspent budget deepens it back. |
+| `STELLA_SEARCH_BUDGET` | `9000` | The context allowance one answer may spend, in characters. The hard stop. |
+
+## Offline behaviour
+
+The command reads — and on first use builds — `.stella/private/codegraph.db`, and needs no model API key. The only network it will ever touch is an explicitly configured embedding endpoint; without one it degrades to the name and scan strategies and says so in the answer.

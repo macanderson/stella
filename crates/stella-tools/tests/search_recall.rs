@@ -65,6 +65,14 @@ const PROBES: &[Probe] = &[
         why: "an answer that is PROSE, not code — unanswerable from the code \
               index at all, so a pass cannot be an accident of it",
     },
+    Probe {
+        query: "SearchConfig",
+        expect: "crates/stella-tools/src/search.rs",
+        within: 1,
+        why: "#3125: a bare symbol name is a certainty, not a ranking \
+              problem — the defining file must be rank 1 even when the \
+              semantic rung returns most of the corpus",
+    },
 ];
 
 fn workspace() -> PathBuf {

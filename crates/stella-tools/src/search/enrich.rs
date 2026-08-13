@@ -65,9 +65,23 @@ pub(crate) fn render_hit(
     let Ok(neighborhood) = graph.file_neighborhood(Path::new(&hit.path)) else {
         return block;
     };
-    let leading: Vec<&NeighborhoodSymbol> = neighborhood
-        .symbols
-        .iter()
+    // The matched symbol leads the detailed facets when the ranking named
+    // one: the body and signature the answer pays for must describe what the
+    // query is about, not whatever sits first in the file.
+    let focused: Option<&NeighborhoodSymbol> = hit.focus.as_ref().and_then(|focus| {
+        neighborhood
+            .symbols
+            .iter()
+            .find(|symbol| &symbol.name == focus)
+    });
+    let leading: Vec<&NeighborhoodSymbol> = focused
+        .into_iter()
+        .chain(
+            neighborhood
+                .symbols
+                .iter()
+                .filter(|symbol| focused.is_none_or(|kept| kept.name != symbol.name)),
+        )
         .take(MAX_DETAILED_SYMBOLS)
         .collect();
     let source = std::fs::read_to_string(root.join(&hit.path)).ok();
@@ -114,13 +128,25 @@ pub(crate) fn render_hit(
                 Facet::Callers => list_line(
                     "callers",
                     leading.iter().flat_map(|symbol| {
-                        frame_titles(graph.callers(&symbol.name).unwrap_or_default())
+                        frame_labels(graph.callers(&symbol.name).unwrap_or_default())
                     }),
                 ),
+                // Callee lookup is name-based across the whole index, so a
+                // common leading symbol (`new`, `default`) drags in every
+                // same-named definition's call list. Only the frames about
+                // THIS file describe this hit; the rest are noise about
+                // other files wearing the same name.
                 Facet::Callees => list_line(
                     "callees",
                     leading.iter().flat_map(|symbol| {
-                        frame_titles(graph.callees(&symbol.name).unwrap_or_default())
+                        frame_labels(
+                            graph
+                                .callees(&symbol.name)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|frame| frame_is_about(frame, &hit.path))
+                                .collect(),
+                        )
                     }),
                 ),
                 Facet::Body => body_block(
@@ -157,14 +183,29 @@ fn list_line(label: &str, items: impl Iterator<Item = String>) -> Option<String>
     (!seen.is_empty()).then(|| format!("    {label}: {}", seen.join(", ")))
 }
 
-/// The frames' human labels — `name (path:line)`, already rendered by
+/// The frames' human labels — `fn name (path:line)`, already rendered by
 /// `stella-graph` for citation (L-C4), so this never re-derives a citation.
-fn frame_titles(frames: Vec<stella_graph::ContextFrame>) -> Vec<String> {
+///
+/// `citation_label` first, `title` as the fallback: a caller frame's title
+/// is the generic `caller of {name}`, which deduplicated to a single
+/// site-less entry and told the model nothing — the located label is the
+/// citation, exactly as L-C4 says.
+fn frame_labels(frames: Vec<stella_graph::ContextFrame>) -> Vec<String> {
     frames
         .into_iter()
         .take(MAX_EDGES)
-        .map(|frame| frame.title)
+        .map(|frame| frame.citation_label.unwrap_or(frame.title))
         .collect()
+}
+
+/// Whether a frame describes `path` itself, by its file URI. Suffix-matched
+/// on a `/` boundary because the URI is absolute and the hit path is
+/// workspace-relative.
+fn frame_is_about(frame: &stella_graph::ContextFrame, path: &str) -> bool {
+    frame
+        .uri
+        .as_deref()
+        .is_some_and(|uri| uri.ends_with(&format!("/{path}")))
 }
 
 /// The symbol's declaration line, as written in the file.
@@ -179,7 +220,7 @@ fn declaration_line(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option
 /// openers, which covers every language the indexer parses without a
 /// per-language table — a doc comment recognised loosely is a doc comment
 /// recognised, and the cost of a false positive here is one quoted line.
-fn doc_comment(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option<String> {
+pub(crate) fn doc_comment(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option<String> {
     let lines: Vec<&str> = source?.lines().collect();
     // `start_line` is 1-based, so the declaration sits at index
     // `start_line - 1` and the line above it at `start_line - 2`.
@@ -187,16 +228,22 @@ fn doc_comment(source: Option<&str>, symbol: &NeighborhoodSymbol) -> Option<Stri
     let mut collected: Vec<&str> = Vec::new();
     loop {
         let candidate = lines.get(index)?.trim();
+        // A Rust attribute (`#[test]`, `#![allow]`) sits between a
+        // declaration and its doc comment and is not prose: walk past it
+        // without quoting it, so `#[must_use]` never opens a doc line.
+        let is_attribute = candidate.starts_with("#[") || candidate.starts_with("#!");
         let is_comment = candidate.starts_with("///")
             || candidate.starts_with("//!")
             || candidate.starts_with("//")
             || candidate.starts_with('#')
             || candidate.starts_with('*')
             || candidate.starts_with("/*");
-        if !is_comment {
-            break;
+        if !is_attribute {
+            if !is_comment {
+                break;
+            }
+            collected.push(candidate.trim_start_matches(['/', '!', '#', '*', ' ']));
         }
-        collected.push(candidate.trim_start_matches(['/', '!', '#', '*', ' ']));
         let Some(next) = index.checked_sub(1) else {
             break;
         };
@@ -260,19 +307,60 @@ fn line_at(source: &str, number: u32) -> Option<&str> {
     source.lines().nth(index)
 }
 
+/// Files that **define** a symbol exactly named by the query — the certainty
+/// rung (#3125).
+///
+/// The signal the ladder used to discard: whether the query *is* a symbol the
+/// graph knows is a fact about the index, not a mode the model selects, so
+/// consulting it reintroduces no mode parameter (invariant 9). A ranked
+/// strategy can only guess; a definition lookup is exact, and an exact answer
+/// must never lose to a guess — semantic ranking put the one definition of
+/// `ContextFrame` at rank 5 of 139 on a real corpus.
+///
+/// The matched symbol rides as the hit's focus, so the detailed facets
+/// describe the definition itself. Deterministic: paths ascending, deduped.
+pub(crate) fn exact_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
+    let name = query.trim();
+    // A query with whitespace is a description, not a symbol; skip the read.
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return Vec::new();
+    }
+    let Ok(spans) = graph.definition_spans(name) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<String> = spans.into_iter().map(|span| span.path).collect();
+    paths.sort();
+    paths.dedup();
+    paths.truncate(limit);
+    paths
+        .into_iter()
+        .map(|path| Hit {
+            why: format!(
+                "defines `{name}` — an exact symbol-name match, pinned above the ranked results"
+            ),
+            path,
+            focus: Some(name.to_string()),
+        })
+        .collect()
+}
+
 /// Rank indexed files by how many query terms appear in their path or their
 /// symbol names — the strategy for a workspace with an index but no embedder.
 ///
 /// This is what a path glob cannot do: it searches *symbol* names. It is
 /// still a name match, and every answer carrying it says so.
 /// Deterministic: score descending, then path ascending.
-pub(crate) fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit> {
+///
+/// Returns the ranked hits **and how many files matched at all**, so the
+/// caller can disclose a cut list — `limit` files shown out of a larger match
+/// set must never read as "only `limit` files matched".
+pub(crate) fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> (Vec<Hit>, usize) {
     let terms = terms_of(query);
     if terms.is_empty() {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let Ok(files) = graph.all_files() else {
-        return Vec::new();
+        return (Vec::new(), 0);
     };
 
     let mut scored: Vec<(usize, String)> = files
@@ -295,9 +383,10 @@ pub(crate) fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit
         })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let matched = scored.len();
     scored.truncate(limit);
 
-    scored
+    let hits = scored
         .into_iter()
         .map(|(hits, path)| Hit {
             why: format!(
@@ -305,8 +394,10 @@ pub(crate) fn name_hits(graph: &CodeGraph, query: &str, limit: usize) -> Vec<Hit
                 terms.len()
             ),
             path,
+            focus: None,
         })
-        .collect()
+        .collect();
+    (hits, matched)
 }
 
 /// English function words that carry no signal in a path or a symbol name.

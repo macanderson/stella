@@ -31,12 +31,22 @@
 //! top hit keeps its detail, the tail loses depth first, and the answer says
 //! so.
 //!
-//! # Why the tail decays geometrically
+//! # Why the tail decays geometrically — and why leftover budget undoes it
 //!
 //! [`allocate`] halves the requested depth at each rank. Rank 0 is the answer
 //! often enough to earn the full allowance; by rank 3 the hit is a pointer the
 //! model may never follow, and paying body-excerpt prices for it is how a
 //! one-call search becomes as expensive as the six calls it replaced.
+//!
+//! That argument is about *scarcity* — where money should go when there is
+//! not enough of it. It says nothing about money left on the table, and for a
+//! long time the allocator left most of it there: a three-hit answer at the
+//! old default depth spent under a tenth of the budget, and the agent then
+//! paid a `read_file` for the body the budget had already bought. So after
+//! the decayed pass, [`allocate`] spends what remains **promoting** hits back
+//! toward the requested depth, best-ranked first. The decay decides who eats
+//! first; the budget decides when dinner is over; nothing is thrown away
+//! while anyone is still hungry.
 
 /// How much to say about a single search hit: 1 = just the path,
 /// 10 = every detail the code graph and the file can produce.
@@ -53,9 +63,18 @@ impl Depth {
     pub const MIN: Depth = Depth(1);
     /// Every facet the ladder knows about.
     pub const MAX: Depth = Depth(10);
-    /// Enough structure to skip the follow-up read on an easy hit, cheap
-    /// enough that a ten-hit answer is still a pointer rather than a paste.
-    pub const DEFAULT: Depth = Depth(4);
+    /// Everything, and let the budget govern.
+    ///
+    /// This was 4 — "cheap enough that a ten-hit answer is still a pointer" —
+    /// which quietly made the *dial* the binding constraint instead of the
+    /// budget: signature, doc, callers and body could never render at any
+    /// budget, a three-hit answer spent under a tenth of its allowance, and
+    /// the agent then paid a `read_file` for the body the tool's own default
+    /// budget was explicitly sized to carry (`stella-tools`'
+    /// `DEFAULT_BUDGET_CHARS`). The budget is the honest governor — it
+    /// degrades gracefully and reports what it dropped, where a depth cap is
+    /// silent — so the default intent is "everything affordable".
+    pub const DEFAULT: Depth = Depth::MAX;
 
     /// Clamp `level` into 1..=10. Total by construction: a depth read from
     /// configuration is runtime data, and there is no level at which
@@ -81,6 +100,12 @@ impl Depth {
     #[must_use]
     pub const fn shallower(self) -> Depth {
         Depth::new(self.0.saturating_sub(1))
+    }
+
+    /// One rung up, saturating at [`Depth::MAX`].
+    #[must_use]
+    pub const fn deeper(self) -> Depth {
+        Depth::new(self.0.saturating_add(1))
     }
 }
 
@@ -246,19 +271,34 @@ impl Allocation {
     }
 }
 
-/// Spend `budget` characters across `hits` ranked results, granting the top
+/// Spend `budget` characters across `hits` ranked results, granting every
 /// hit at most `top` depth.
 ///
-/// Greedy in rank order, which is the only order that respects the ranking:
-/// a hit is reduced to fit, and reduced again, down to [`Depth::MIN`]; only a
-/// budget that cannot afford a bare path stops the walk, and everything from
-/// there on is omitted rather than silently rendered thin.
+/// Two passes, both greedy in rank order — the only order that respects the
+/// ranking:
+///
+/// 1. **Decay.** Each hit asks for [`requested_depth`] and is reduced to
+///    fit, and reduced again, down to [`Depth::MIN`]; only a budget that
+///    cannot afford a bare path stops the walk, and everything from there on
+///    is omitted rather than silently rendered thin.
+/// 2. **Promotion.** Whatever the decayed pass did not spend deepens the
+///    granted hits back toward `top`, best-ranked first, one rung at a time.
+///    The decay is a priority order under scarcity, not a verdict that the
+///    tail deserves less when there is budget to spare — leaving most of the
+///    allowance unspent while the caller pays a follow-up read for the body
+///    it would have bought is the failure this pass removes.
+///
+/// Promotion cannot break the decay's shape: a later hit climbs through the
+/// same rung prices an earlier hit already faced, with strictly less budget
+/// left, so the granted depths stay non-increasing by rank (a property test
+/// pins this).
 #[must_use]
 pub fn allocate(hits: usize, top: Depth, budget: usize) -> Allocation {
     let mut granted = Vec::with_capacity(hits);
     let mut spent = 0usize;
+    let mut omitted = 0usize;
 
-    for rank in 0..hits {
+    'ranks: for rank in 0..hits {
         let mut depth = requested_depth(top, rank);
         loop {
             if spent + hit_cost(depth) <= budget {
@@ -267,19 +307,29 @@ pub fn allocate(hits: usize, top: Depth, budget: usize) -> Allocation {
                 break;
             }
             if depth == Depth::MIN {
-                return Allocation {
-                    omitted: hits - granted.len(),
-                    granted,
-                    spent,
-                };
+                omitted = hits - granted.len();
+                break 'ranks;
             }
             depth = depth.shallower();
         }
     }
 
+    for depth in &mut granted {
+        while *depth < top {
+            let step = hit_cost(depth.deeper()) - hit_cost(*depth);
+            if spent + step > budget {
+                // Move on rather than stop: a later, shallower hit's next
+                // rung is cheaper and may still fit.
+                break;
+            }
+            spent += step;
+            *depth = depth.deeper();
+        }
+    }
+
     Allocation {
         granted,
-        omitted: 0,
+        omitted,
         spent,
     }
 }
@@ -310,14 +360,51 @@ mod tests {
         assert!(allocation.truncated());
     }
 
+    /// Under scarcity the decay is visible: the top hit keeps its depth and
+    /// the tail thins. The budget here affords the decayed pass exactly
+    /// (1620 + 560 + 200 + 3x60) plus one spare rung for rank 1.
     #[test]
     fn the_top_hit_can_be_deep_while_the_tail_is_shallow() {
-        let allocation = allocate(6, Depth::new(8), usize::MAX);
+        let budget = hit_cost(Depth::new(8))
+            + hit_cost(Depth::new(4))
+            + hit_cost(Depth::new(2))
+            + 3 * hit_cost(Depth::MIN)
+            + (hit_cost(Depth::new(5)) - hit_cost(Depth::new(4)));
+        let allocation = allocate(6, Depth::new(8), budget);
         assert_eq!(allocation.granted[0], Depth::new(8));
-        assert_eq!(allocation.granted[1], Depth::new(4));
+        assert_eq!(
+            allocation.granted[1],
+            Depth::new(5),
+            "the spare rung promotes rank 1"
+        );
         assert_eq!(allocation.granted[2], Depth::new(2));
         assert_eq!(allocation.granted[3], Depth::MIN);
         assert!(!allocation.truncated());
+    }
+
+    /// **The promotion witness.** A budget that affords every hit at full
+    /// depth grants every hit full depth — before the promotion pass, this
+    /// allocation left the tail at [1, 5, 2, 1, 1, 1] with most of the
+    /// budget unspent, and the caller paid follow-up reads for bodies the
+    /// budget could already have carried.
+    #[test]
+    fn leftover_budget_deepens_the_tail_instead_of_going_unspent() {
+        let allocation = allocate(6, Depth::MAX, 6 * hit_cost(Depth::MAX));
+        assert_eq!(allocation.granted, vec![Depth::MAX; 6]);
+        assert_eq!(allocation.spent, 6 * hit_cost(Depth::MAX));
+        assert!(!allocation.truncated());
+    }
+
+    /// A budget one rung short of everything: the shortfall lands on the
+    /// worst-ranked hit, never the best.
+    #[test]
+    fn promotion_spends_on_the_best_ranked_hits_first() {
+        let step = hit_cost(Depth::MAX) - hit_cost(Depth::new(9));
+        let allocation = allocate(3, Depth::MAX, 3 * hit_cost(Depth::MAX) - step);
+        assert_eq!(
+            allocation.granted,
+            vec![Depth::MAX, Depth::MAX, Depth::new(9)]
+        );
     }
 
     proptest! {
@@ -350,15 +437,21 @@ mod tests {
             prop_assert_eq!(recomputed, allocation.spent);
         }
 
+        /// `top` is a ceiling on every hit, and the ranking's shape survives
+        /// promotion: depths never increase with rank, so a worse-ranked hit
+        /// is never told more about than a better-ranked one.
         #[test]
-        fn no_hit_is_granted_more_than_it_asked_for(
+        fn grants_respect_the_ceiling_and_never_rise_with_rank(
             hits in 0usize..24,
             top in 1u8..=10,
             budget in 0usize..40_000,
         ) {
             let allocation = allocate(hits, Depth::new(top), budget);
             for (rank, granted) in allocation.granted.iter().enumerate() {
-                prop_assert!(*granted <= requested_depth(Depth::new(top), rank));
+                prop_assert!(*granted <= Depth::new(top));
+                if rank > 0 {
+                    prop_assert!(*granted <= allocation.granted[rank - 1]);
+                }
             }
         }
 
