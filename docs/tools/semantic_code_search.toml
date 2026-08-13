@@ -11,7 +11,7 @@
 #   risk_level                             nothing declares it (see below)
 
 name = "semantic_code_search"
-category = "search"
+category = "retrieval"
 availability = "always"
 read_only = true
 available_for_speculation = false

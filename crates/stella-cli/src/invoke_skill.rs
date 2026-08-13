@@ -779,7 +779,7 @@ mod tests {
         write_skill(
             ws.path(),
             "deep-audit",
-            "context: fork\nallowed-tools: read_file, search\neffort: high\n",
+            "context: fork\nallowed-tools: read_file, retrieval\neffort: high\n",
             "SECRET-PROCEDURE: audit $ARGUMENTS thoroughly.",
         );
         let tools = InvokeSkillTools::new(ws.path().to_path_buf());
@@ -811,8 +811,10 @@ mod tests {
         assert!(charter.contains("audit src/lib.rs thoroughly"), "{charter}");
         assert_eq!(spec.effort, Some(stella_protocol::ReasoningEffort::High));
         assert!(!spec.write_access, "forked skills never get write access");
-        // `read_file` granted by name; `search` is a catalog group — it
+        // `read_file` granted by name; `retrieval` is a catalog group — it
         // resolves to whichever of its tools the surface advertises (grep).
+        // (`search` would grant only the tool of that name since #3120: a
+        // tool name never doubles as its family's key.)
         assert_eq!(
             spec.allowed_tools,
             Some(vec!["read_file".to_string(), "grep".to_string()])
