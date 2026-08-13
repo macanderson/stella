@@ -457,6 +457,20 @@ pub(crate) async fn search(root: &Path, query: &str, config: SearchConfig) -> To
 /// than it saves. This is `semantic_code_search`'s discipline, deliberately
 /// unchanged (`crate::graph::semantic`).
 pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
+    report_with(root, query, config, stella_embed::from_env()).await
+}
+
+/// [`report`], with the embedder's resolution passed in rather than read from
+/// the process environment — the pure half of the `resolve`/`from_env` split
+/// `stella_embed` itself uses, and the seam that lets a test drive the
+/// misconfigured-embedder path without mutating the environment under a
+/// parallel suite.
+pub(crate) async fn report_with(
+    root: &Path,
+    query: &str,
+    config: SearchConfig,
+    resolution: Resolution,
+) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
         return SearchReport::failed(QUERY_REQUIRED);
@@ -476,7 +490,7 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
         }
     };
 
-    let embedder = match stella_embed::from_env() {
+    let embedder = match resolution {
         Resolution::Configured(embedder) => Ok(embedder as Box<dyn Embedder>),
         Resolution::Unconfigured => Err(None),
         // A half-configured backend is neither "off" nor "working". Saying so
@@ -491,9 +505,10 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
         (graph, Ok(embedder)) => dispatch(graph, root, query, Some(embedder.as_ref())).await,
         (graph, Err(note)) => {
             let mut answer = dispatch(graph, root, query, None).await;
-            if let Some(note) = note {
-                answer.note = Some(note);
-            }
+            // Merged, never assigned: dispatch's own note carries disclosure
+            // (a capped scan, a cut list) that a misconfigured embedder does
+            // not supersede — the reader needs both caveats, not the newest.
+            answer.note = merge_notes(answer.note.take(), note);
             answer
         }
     };

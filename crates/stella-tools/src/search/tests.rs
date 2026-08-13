@@ -594,6 +594,39 @@ async fn a_cut_name_match_list_discloses_how_many_matched() {
     graph.shutdown();
 }
 
+/// A misconfigured embedder must not eat the dispatch's own disclosure: over
+/// a 14-match corpus whose name rung cuts its list, the one note line carries
+/// **both** the cut ("14 files matched") and the misconfiguration — the
+/// assignment this replaces kept only the newest caveat.
+#[tokio::test]
+async fn a_misconfigured_embedder_note_joins_the_cut_list_note_instead_of_replacing_it() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for index in 0..14 {
+        let file = workspace.path().join(format!("src/widget_{index:02}.rs"));
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, format!("pub fn widget_{index:02}() {{}}\n")).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+
+    let report = super::report_with(
+        &root,
+        "widget",
+        SearchConfig::default(),
+        stella_embed::Resolution::Incomplete("STELLA_EMBED_MODEL is unset".into()),
+    )
+    .await;
+
+    let note = report.note.expect("both caveats need a note to live in");
+    assert!(
+        note.contains("14 files matched"),
+        "the cut-list disclosure must survive the misconfig note: {note}"
+    );
+    assert!(
+        note.contains("misconfigured"),
+        "the misconfiguration must still be said: {note}"
+    );
+}
+
 /// The ranking's memory guard is disclosed when it fills — the promise
 /// `RANK_CEILING`'s doc makes ("reported, never silent") held nowhere in the
 /// code before this test existed.
