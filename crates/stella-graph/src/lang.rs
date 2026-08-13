@@ -109,6 +109,11 @@ impl Language {
 
     /// Whether this language is parsed by a tree-sitter grammar rather than
     /// by this crate's own reader. Only [`Language::Markdown`] answers `false`.
+    ///
+    /// Test-only: production code has no reason to distinguish "compiled in"
+    /// from "conceptually grammar-backed" ([`Language::is_compiled_in`]
+    /// already answers the question anything else would ask).
+    #[cfg(test)]
     pub(crate) fn is_grammar_backed(self) -> bool {
         !matches!(self, Language::Markdown)
     }
