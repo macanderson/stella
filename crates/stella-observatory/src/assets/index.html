@@ -1986,15 +1986,17 @@ function sentContextMessageHtml(m) {
 /* Load one call's reconstruction into the call inspector. On demand rather
    than with the page: this is a whole prompt — the largest payload the
    dashboard can ask for — and a run has one per model call. */
-async function loadSentContext(id, turn, step, callSeq, full = false) {
+async function loadSentContext(id, turn, step, callSeq, full = false, token) {
   const body = $("ctxBody");
   if (!body) return;
+  if (token === undefined) token = ++ctxRenderToken;
   let cx = null;
   try {
     cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`
       + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
       + `&call_seq=${encodeURIComponent(callSeq)}${full ? "&full=1" : ""}`);
   } catch { cx = null; }
+  if (token !== ctxRenderToken) return; // a later step/view superseded this fetch
   const c = cx && cx.context;
   if (!c || !c.found) {
     body.innerHTML = `<div class="empty">${
@@ -2034,15 +2036,17 @@ function diffHunksHtml(d) {
    `stella inspect --diff`. The resolved base is reported, not the requested
    one — `prev` on a role's first call resolves to `prompt` — and a coarse
    (non-minimal) diff says so instead of posing as a precise answer. */
-async function loadContextDiff(id, turn, step, callSeq, only = "all") {
+async function loadContextDiff(id, turn, step, callSeq, only = "all", token) {
   const body = $("ctxBody");
   if (!body) return;
+  if (token === undefined) token = ++ctxRenderToken;
   let d = null;
   try {
     d = await api(`/api/execution-context-diff?id=${encodeURIComponent(id)}`
       + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
       + `&call_seq=${encodeURIComponent(callSeq)}&base=prev&only=${encodeURIComponent(only)}`);
   } catch { d = null; }
+  if (token !== ctxRenderToken) return; // a later step/view superseded this fetch
   if (!d || !d.found) {
     body.innerHTML = `<div class="empty">${
       esc((d && d.note) || "That call has no recorded receipt to diff.")}</div>`;
@@ -2074,6 +2078,10 @@ async function loadContextDiff(id, turn, step, callSeq, only = "all") {
    and its children) is rebuilt fresh each time too, as part of
    main.innerHTML, so nothing here holds a reference across a navigation. */
 let ctxInspect = null;   // { id, calls, idx, view: "diff" | "full" } | null
+/* Monotonic render token: each ctxRenderBody bumps it so that a still-in-flight
+   fetch from an earlier ← / → step (or view toggle) drops its response instead
+   of writing a stale call into #ctxBody after a newer one already resolved. */
+let ctxRenderToken = 0;
 
 const ctxInspectCall = () => (ctxInspect ? ctxInspect.calls[ctxInspect.idx] : null);
 
@@ -2095,9 +2103,10 @@ async function ctxRenderBody() {
   const c = ctxInspectCall();
   const body = $("ctxBody");
   if (!c || !body) return;
+  const token = ++ctxRenderToken;
   body.innerHTML = `<div class="empty">Loading…</div>`;
-  if (ctxInspect.view === "diff") await loadContextDiff(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq));
-  else await loadSentContext(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq));
+  if (ctxInspect.view === "diff") await loadContextDiff(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), "all", token);
+  else await loadSentContext(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), false, token);
 }
 /* `calls` is the page's already-fetched `cx.calls` — focusing or stepping
    never re-fetches the list itself, only the one call's diff or
