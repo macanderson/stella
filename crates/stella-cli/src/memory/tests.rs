@@ -229,6 +229,57 @@ fn recall_section_tags_memory_frames_with_ids_and_asks_for_citations() {
     );
 }
 
+/// #2476's witness: memory labels are minted FROM the content
+/// (`stella-context`'s `truncate_label` — the content verbatim at ≤80 chars,
+/// its first 79 chars plus `…` above), so every rendered memory frame carried
+/// its own sentence twice, on every turn that recalled anything, inside a
+/// budget the packer had already spent on the content alone. The renderer now
+/// ships the content once; the `[nod_…]` id stays as the citation handle.
+/// `recall_section_tags_memory_frames_with_ids_and_asks_for_citations` is the
+/// control: its hand-chosen label differs from the content and still renders.
+#[test]
+fn recall_section_renders_a_content_minted_label_once() {
+    // ≤80 chars: the mint copies the content verbatim, so label == content.
+    let lesson = "the spend ledger is append-only, and a resize never rewrites a row";
+    let short = frame(
+        "nod_aaa",
+        contextgraph_types::FrameKind::Memory,
+        lesson,
+        lesson,
+    );
+    // >80 chars: the mint keeps the first 79 chars plus `…`.
+    let long_content = format!("{} and the tail only the content carries", "y".repeat(80));
+    let minted: String = {
+        let head: String = long_content.chars().take(79).collect();
+        format!("{head}…")
+    };
+    let long = frame(
+        "nod_bbb",
+        contextgraph_types::FrameKind::Memory,
+        &minted,
+        &long_content,
+    );
+    let section = render_context_section(&[short, long]).unwrap();
+    assert!(
+        section.contains(&format!("- [nod_aaa] {lesson}")),
+        "the id stays the citation handle and the content ships once: {section}"
+    );
+    assert_eq!(
+        section.matches(lesson).count(),
+        1,
+        "an ≤80-char memory must not print its sentence twice: {section}"
+    );
+    assert_eq!(
+        section.matches(&long_content).count(),
+        1,
+        "a >80-char memory keeps its full content exactly once: {section}"
+    );
+    assert!(
+        !section.contains('…'),
+        "the minted label's truncated copy must not render at all: {section}"
+    );
+}
+
 #[test]
 fn recall_section_without_memories_never_asks_for_citations() {
     let frames = vec![frame(

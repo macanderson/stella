@@ -559,13 +559,20 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut citable = false;
     for f in frames {
-        let label = &f.citation_label;
+        // Only a label that says something the content does not earns its
+        // bytes: memory (and episode) nodes mint theirs FROM the content, so
+        // rendering both shipped the same sentence twice into a recall budget
+        // the packer had already spent on the content alone (#2476).
+        let body = match f.distinct_label() {
+            Some(label) => format!("{label} — {}", f.content.trim()),
+            None => f.content.trim().to_string(),
+        };
         match (f.kind.as_str(), &f.id) {
             // A memory with an id: citable, and the id is what the model
             // hands back to `cite_memory`.
             ("memory", Some(id)) => {
                 citable = true;
-                lines.push(format!("- [{id}] {label} — {}", f.content.trim()));
+                lines.push(format!("- [{id}] {body}"));
             }
             // A memory WITHOUT an id still has content worth recalling, and
             // the recall budget has already been spent fetching it.
@@ -579,8 +586,8 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
             // contract even though the only production projection happens to
             // always set `Some`. Render it as grounding — it cannot be cited,
             // so it must not claim to be.
-            ("memory", None) => lines.push(format!("- {label} — {}", f.content.trim())),
-            _ => lines.push(format!("- {label} — {}", f.content.trim())),
+            ("memory", None) => lines.push(format!("- {body}")),
+            _ => lines.push(format!("- {body}")),
         }
     }
     if lines.is_empty() {

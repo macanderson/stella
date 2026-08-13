@@ -286,9 +286,15 @@ pub fn build_planner_prompt(
         prompt.push_str("## Recalled context\n");
         for frame in recall {
             // Cite by human label (L-C4); include the content as grounding.
-            prompt.push_str("- [");
-            prompt.push_str(&frame.citation_label);
-            prompt.push_str("] (");
+            // A memory-minted label duplicates the content it was cut from,
+            // so it renders only when it adds information (#2476).
+            prompt.push_str("- ");
+            if let Some(label) = frame.distinct_label() {
+                prompt.push('[');
+                prompt.push_str(label);
+                prompt.push_str("] ");
+            }
+            prompt.push('(');
             prompt.push_str(&frame.source);
             prompt.push_str(")\n");
             if !frame.content.trim().is_empty() {
@@ -553,6 +559,22 @@ mod tests {
         assert!(prompt.contains("run_turn drives steps"));
         assert!(prompt.contains("stella-core/src/budget.rs"));
         assert!(prompt.contains("JSON array"));
+    }
+
+    /// #2476's witness for this surface: a label the memory mint copied from
+    /// the content renders once, not twice — the distinct-label frame in
+    /// `planner_prompt_includes_goal_recall_and_structure_but_not_transcript`
+    /// is the control.
+    #[test]
+    fn planner_prompt_renders_a_content_minted_label_once() {
+        let lesson = "run_turn drives steps";
+        let recall = vec![frame(lesson, lesson)];
+        let prompt = build_planner_prompt("goal", &recall, &[], "", None).rendered();
+        assert_eq!(
+            prompt.matches(lesson).count(),
+            1,
+            "a content-minted label must not re-ship the content: {prompt}"
+        );
     }
 
     #[test]
