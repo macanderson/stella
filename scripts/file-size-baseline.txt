@@ -8,8 +8,8 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 1503 arenabench/arenabench/runner.py
-1847 bench/harbor_adapter/stella_harbor/__init__.py
-4380 bench/harbor_adapter/stella_harbor/secure_launcher.py
+1862 bench/harbor_adapter/stella_harbor/__init__.py
+4381 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2356 bench/harbor_adapter/tests/test_adapter.py
 3368 bench/harbor_adapter/tests/test_secure_launcher.py
 8298 bench/terminal_bench_analysis/tb21_analysis.py
