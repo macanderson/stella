@@ -56,10 +56,16 @@ impl Language {
             "tsx" => Language::Tsx,
             "go" => Language::Go,
             "java" => Language::Java,
-            // Headers index as C. A C++ project's `.h` still yields useful
-            // struct/function symbols under the C grammar, and misreading a
-            // header beats skipping every declaration in the tree.
-            "c" | "h" => Language::C,
+            // C and C++ both index under the C grammar. A C++ file still
+            // yields its free functions, structs, and many declarations under
+            // it — tree-sitter is error-tolerant, so the class/template/
+            // namespace syntax it cannot parse degrades to error nodes around
+            // the symbols it can, and partial symbols beat the zero a
+            // `.cpp` gets when it maps to no language at all (search then has
+            // nothing to rank and falls to a lexical scan). This extends the
+            // header-under-C precedent to C++ source; a dedicated
+            // `tree-sitter-cpp` grammar is the sharper fix (#3184).
+            "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Language::C,
             "php" => Language::Php,
             "sql" => Language::Sql,
             "md" | "markdown" => Language::Markdown,
@@ -289,6 +295,24 @@ mod tests {
              search the agent had until they became indexable (#3089)"
         );
         assert_eq!(Language::from_path(Path::new("noext")), None);
+    }
+
+    /// C++ source and headers index under the C grammar (#3184). Before this
+    /// they mapped to `None` — a `.cpp` file declared nothing to the graph, so
+    /// `search` had no symbols to rank over a C++ codebase (`build-pov-ray`,
+    /// `sqlite`'s amalgamation) and fell to a lexical scan.
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn cpp_source_and_headers_index_under_the_c_grammar() {
+        for probe in [
+            "ray.cpp", "scene.cc", "mesh.cxx", "vec.c++", "vec.hpp", "vec.hh", "vec.hxx",
+        ] {
+            assert_eq!(
+                Language::from_path(Path::new(probe)),
+                Some(Language::C),
+                "`{probe}` must index (as C) so search has C++ symbols to rank"
+            );
+        }
     }
 
     /// Markdown carries no grammar and is still always indexable — the one
