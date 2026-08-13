@@ -241,6 +241,83 @@ class TestTranscriptToolRows:
         assert meta["speculated"] is True
         assert meta["lines"] == 3
 
+    def test_a_call_and_its_result_both_carry_the_tool_class(self, tmp_path: Path):
+        """The page paints a tool's name by its CLASS (read/write/run/verify/
+        repo/delegate — `arenabench.toolclass`, ported from the deck's
+        `tool_class.rs`), not the arena's flat accent. Both the call row and
+        the result row need it: the result row can be scrolled to with its
+        call folded out of view by the kind filters, and it must still say
+        what kind of thing produced it without the reader scrolling back up."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            start("c1", "write_file", {"path": "a.rs", "content": "x"}),
+            ok_result("c1", "wrote 1 line"),
+        ])
+        call, result = TranscriptReader().read(path)
+        assert call["meta"]["tool_class"] == "mutate"
+        assert call["meta"]["tool_class_label"] == "write"
+        assert result["meta"]["tool_class"] == "mutate"
+        assert result["meta"]["tool_class_label"] == "write"
+
+    def test_a_results_tool_class_is_recovered_from_its_call(self, tmp_path: Path):
+        """`tool_result` carries only `call_id` on the wire — the same
+        correlation problem the row's *name* already has, solved the same
+        way: through the `tool_start` that opened the call, not by guessing
+        from the result's own shape."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            start("c1", "repo_push", {}),
+            ok_result("c1", "pushed"),
+        ])
+        result = TranscriptReader().read(path)[-1]
+        assert result["meta"]["tool_class"] == "repo"
+
+    def test_an_orphan_result_with_no_recorded_call_still_classifies(
+        self, tmp_path: Path
+    ):
+        """A reader joining mid-stream has no `tool_start` to correlate, so
+        the name falls back to the generic `"tool"` label — which is not in
+        the catalog, and so classifies the same way any unrecognized name
+        does rather than raising."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [ok_result("orphan", "x")])
+        result = TranscriptReader().read(path)[-1]
+        assert result["meta"]["tool_class"] == "execute"
+
+
+class TestFullTranscriptDisablesTheCap:
+    """`ArenaServer.full_transcript`'s "load full transcript" reader passes
+    budget `0` for both caps — the knob `TestTranscriptToolRows` above never
+    touches, and the one place a defect here would hide, since every other
+    test in this file reads through the SSE channel's generous-but-finite
+    defaults."""
+
+    def test_a_budget_of_zero_returns_the_whole_body_uncapped(self, tmp_path: Path):
+        path = tmp_path / "e.jsonl"
+        long_output = "line\n" * 5000  # ~25,000 chars, well past both caps
+        write_events(path, [
+            start("c1", "bash", {"cmd": "yes line | head -5000"}),
+            ok_result("c1", long_output),
+        ])
+        reader = TranscriptReader(tool_result_budget=0, tool_input_budget=0)
+        result = reader.read(path)[-1]
+        assert result["body"] == long_output
+        assert "truncated" not in result["body"]
+
+    def test_the_default_reader_still_caps_the_same_body(self, tmp_path: Path):
+        """The control: the same payload through the ordinary (SSE-facing)
+        reader still elides, so the difference above is the budget argument
+        and not something else about the fixture."""
+        path = tmp_path / "e.jsonl"
+        long_output = "line\n" * 5000
+        write_events(path, [
+            start("c1", "bash", {"cmd": "yes line | head -5000"}),
+            ok_result("c1", long_output),
+        ])
+        result = TranscriptReader().read(path)[-1]
+        assert result["body"] != long_output
+        assert "truncated" in result["body"]
+
 
 class TestRecorderCopyStaysHonest:
     """`recorder/render.py` ships into a Docker image whose build context is

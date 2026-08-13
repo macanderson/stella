@@ -15,7 +15,7 @@ This guide is about doing that part with the code graph instead.
 ```bash
 cd the-repo
 stella init                                         # index the codebase
-stella graph importers src/db/schema.ts             # what am I about to break?
+stella search "what imports src/db/schema.ts"       # what am I about to break?
 stella run --test-command "pnpm test orders" \
   "add a nullable `archived_at` column to orders and thread it through the API"
 ```
@@ -37,11 +37,11 @@ provider credential resolved — useful on a machine where you have not set up
 keys yet.
 
 <Callout type="info">
-`init` is a head start, not a prerequisite. Both `stella graph` and the agent's
-`graph_query` tool **bootstrap the index on first use** if it isn't there, and
-each query runs a catch-up pass over changed files. Running `init` up front just
-means the first query isn't the one that pays for the full index build — and you
-get the domain taxonomy, which querying alone does not produce.
+`init` is a head start, not a prerequisite. Both `stella search` and the agent's
+own tools **bootstrap the index on first use** if it isn't there, and each query
+runs a catch-up pass over changed files. Running `init` up front just means the
+first query isn't the one that pays for the full index build — and you get the
+domain taxonomy, which querying alone does not produce.
 </Callout>
 
 ## 2. Ask the questions you would otherwise guess at
@@ -51,32 +51,32 @@ to make a change, find out what depends on the thing you are about to touch.
 
 ```bash
 # Where is this defined — and is it defined exactly once?
-stella graph definitions resolveOrderTotal
+stella search "where is resolveOrderTotal defined"
 
 # Who calls it? This is the review surface for a signature change.
-stella graph references resolveOrderTotal
+stella search "what calls resolveOrderTotal"
 
 # Blast radius: who imports the file I am about to edit?
-stella graph importers src/db/schema.ts
+stella search "what imports src/db/schema.ts"
 
 # What does this file depend on — what do I need to understand first?
-stella graph imports src/api/orders.ts
+stella search "what does src/api/orders.ts import"
 
 # The neighborhood, both directions at once.
-stella graph neighbors src/api/orders.ts
+stella search "the graph neighborhood of src/api/orders.ts"
 ```
 
-Every one of these is **offline and instant**. It reads the local index, makes
-no model calls, and needs no API key — so it costs nothing and you can afford to
-be thorough. Ask five questions before you write a prompt.
+Every one of these reads the local index and, with no embedder configured,
+makes no model calls and needs no API key — so it costs nothing and you can
+afford to be thorough. Ask five questions before you write a prompt.
 
 Two of them are worth calling out as habits:
 
 <CardGrid size="md">
   <SpecCard title="definitions, before a rename">
-    A symbol with two definitions is a rename that silently half-lands. `stella graph
-    definitions` lists every site rather than picking one, so you find that out
-    before the edit and not during review.
+    A symbol with two definitions is a rename that silently half-lands. Search
+    surfaces every site rather than picking one, so you find that out before
+    the edit and not during review.
   </SpecCard>
   <SpecCard title="importers, before an edit">
     The honest answer to "is this change small?" Twelve importers of a schema file
@@ -160,7 +160,7 @@ stella run --keep-witness "make Plan::validate reject a self-dependency by name"
 ## 5. Review what actually changed
 
 ```bash
-stella graph importers src/db/schema.ts   # re-ask: did the blast radius move?
+stella search "what imports src/db/schema.ts"   # re-ask: did the blast radius move?
 git diff
 ```
 
@@ -205,8 +205,8 @@ the review surface.
 ## Next
 
 <CardGrid size="sm">
-  <SpecCard title="stella graph" href="/docs/commands/graph">
-    The five operations and what each `target` means.
+  <SpecCard title="stella search" href="/docs/commands/search">
+    The ranking ladder, and how `--format json` reads for scripting.
   </SpecCard>
   <SpecCard title="Context engine" href="/docs/context-engine">
     How the graph, memories, and rules become recall — and why it stays cheap.

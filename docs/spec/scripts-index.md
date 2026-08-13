@@ -26,7 +26,7 @@ them.
 
 Three surfaces share one detection function, the same way the code graph
 shares `stella_tools::graph::run_query` between the `graph_query` tool and
-the `stella graph` subcommand:
+`gather_context`:
 
 1. **Prompt section** — a compact `## Project scripts` block appended by
    `assemble_system_prompt` (`crates/stella-cli/src/agent.rs:141`), computed once at

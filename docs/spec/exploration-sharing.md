@@ -398,8 +398,8 @@ design explicitly invites).
 ### 6a. Coverage answers "is there a map for this?" at the moment it matters
 
 The graph is where agents (are supposed to) start: `neighbors` is the
-documented orientation op with no grep equivalent
-(`website/content/docs/commands/graph.mdx`). Surface coverage there:
+documented orientation op with no grep equivalent (`docs/tools/graph_query.toml`).
+Surface coverage there:
 
 - `graph_query {op: neighbors, target: <file>}` appends, when the file
   appears in any exploration manifest:

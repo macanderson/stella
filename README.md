@@ -47,7 +47,7 @@ in Rust as a workspace of focused crates.
 - **Prompt-cache-native memory** — Lessons saved with `save_memory` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by the agent and the `stella graph` command
+  Go, Java, C, PHP, SQL) queried by the agent and the `stella search` command
   instead of grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and the
   files-touched ledger stay canonical in `.stella/private/store.db`.
@@ -363,7 +363,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)  | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
 | [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)      | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
 | [`init`](https://stella.oxagen.sh/docs/commands/init)                 | Infer this workspace's domain taxonomy and build the code-graph index                                             |
-| [`graph <op> <target>`](https://stella.oxagen.sh/docs/commands/graph) | Query the code graph — definitions, references, callees/callers, imports, neighbors (offline)                     |
+| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)     | Find code by meaning or by name — the CLI door to the agent's `search` tool                                       |
 | [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)     | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
 | [`scripts <cmd>`](https://stella.oxagen.sh/docs/commands/scripts)     | List and run the project's package-manager scripts by canonical verb (offline)                                    |
 | [`tools`](https://stella.oxagen.sh/docs/commands/tools)               | List every tool available this session; `--validate` checks custom manifests                                      |
@@ -446,11 +446,12 @@ the serde form of the fleet DAG: `[[tasks]]` entries with `id`, `title`,
 ### Code graph queries
 
 ```bash
-stella graph definitions run_turn     # where is this symbol defined?
-stella graph importers src/auth.rs    # which files import it?
+stella search "where is run_turn defined"    # a symbol name works as well as a sentence
+stella search "what imports src/auth.rs"     # blast radius before you edit it
 ```
 
-Built by `stella init`, answered offline, no API key needed.
+Built by `stella init`, ranked offline by name/graph match when no embedder is
+configured, and by meaning when one is.
 
 ### Project setup & introspection
 
@@ -694,7 +695,7 @@ flowchart TD
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
     CORE -->|emits AgentEvent stream| STORE["stella-store<br/>SQLite: executions · events · telemetry"]
     U -->|"recall · episodes · bi-temporal facts"| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
-    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `graph_query` + `stella graph`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
+    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `graph_query` + `stella search`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
     MODEL -.->|versioned serde| PROTO["stella-protocol — shared types + Provider/tool ports"]
     TOOLS -.-> PROTO
     STORE -.-> PROTO

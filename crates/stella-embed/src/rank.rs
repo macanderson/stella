@@ -326,7 +326,7 @@ mod tests {
         fn extra_noise_below_the_cliff_never_widens_the_answer(
             tail_len in 1usize..20,
         ) {
-            let head = vec![0.95f32, 0.93, 0.92];
+            let head = [0.95f32, 0.93, 0.92];
             let base: Vec<f32> = head.iter().copied().chain([0.20]).collect();
             let longer: Vec<f32> = head
                 .iter()

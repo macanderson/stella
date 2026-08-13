@@ -274,8 +274,10 @@ backed by a native **tree-sitter** index of your code:
   *name* at each call — unresolved by design).
 - **Queries:** `definitions`, `references`, `callees`, and `callers`
   (by symbol name — `callers` is a best-effort name match and says so);
-  `imports`, `importers`, and `neighbors` (by file path). The same seven
-  operations back the offline [`stella graph`](/docs/commands/graph) CLI.
+  `imports`, `importers`, and `neighbors` (by file path) — the agent's
+  `graph_query` tool. [`stella search`](/docs/commands/search) is the human
+  door onto the same index: a single ranked query rather than the seven
+  individual operations.
 
 The index builds automatically: [`stella init`](/docs/getting-started/initialization)
 builds it eagerly, and every session also builds/refreshes it in the

@@ -24,9 +24,10 @@ pub enum Language {
     Java,
     C,
     Php,
-    /// Prose, split on its heading hierarchy by [`crate::markdown`] rather
-    /// than by a grammar — the one language here whose parser is this crate's
-    /// own, and so the one that is present in every build.
+    /// Prose, split on its heading hierarchy by this crate's private
+    /// `markdown` module rather than by a grammar — the one language here
+    /// whose parser is this crate's own, and so the one that is present in
+    /// every build.
     Markdown,
 }
 
@@ -96,10 +97,10 @@ impl Language {
     /// Whether this build can parse this language.
     ///
     /// For every grammar-backed language that is "did this build compile the
-    /// grammar in" (#1268). [`Language::Markdown`] is parsed by
-    /// [`crate::markdown`], a line scan in this crate with no feature gate and
-    /// nothing to link, so it is always available — which is why this is not
-    /// simply `ts_language().is_some()`.
+    /// grammar in" (#1268). [`Language::Markdown`] is parsed by this crate's
+    /// private `markdown` module, a line scan with no feature gate and nothing
+    /// to link, so it is always available — which is why this is not simply
+    /// `ts_language().is_some()`.
     pub fn is_compiled_in(self) -> bool {
         match self {
             Language::Markdown => true,
@@ -109,6 +110,11 @@ impl Language {
 
     /// Whether this language is parsed by a tree-sitter grammar rather than
     /// by this crate's own reader. Only [`Language::Markdown`] answers `false`.
+    ///
+    /// Test-only: production code has no reason to distinguish "compiled in"
+    /// from "conceptually grammar-backed" ([`Language::is_compiled_in`]
+    /// already answers the question anything else would ask).
+    #[cfg(test)]
     pub(crate) fn is_grammar_backed(self) -> bool {
         !matches!(self, Language::Markdown)
     }

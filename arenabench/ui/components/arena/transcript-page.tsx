@@ -5,6 +5,12 @@ import { api } from "@/lib/api";
 import type { Cell, Snapshot, TranscriptEntry } from "@/lib/types";
 import { fmtClock, fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
+import {
+  TOOL_CLASSES,
+  TOOL_CLASS_LABEL,
+  TOOL_CLASS_TEXT,
+  toolClassOf,
+} from "@/lib/tool-class";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProofPanel } from "@/components/arena/proof-panel";
@@ -24,17 +30,33 @@ import { ProofPanel } from "@/components/arena/proof-panel";
  * - **Reasoning is quiet.** Dim, italic, collapsed to a short preview with
  *   its line count in the header; the least load-bearing text on screen
  *   never outshouts the response.
- * - **The label is coloured, the value is read.** Tool names take the
- *   accent; bodies stay plain. A colour earns its place by being rare.
+ * - **The label is coloured, the value is read.** A tool's name takes its
+ *   CLASS's hue — read/write/run/verify/repo/delegate
+ *   (`crates/stella-tui/src/tool_class.rs`, mirrored server-side by
+ *   `arenabench.toolclass` and surfaced as `meta.tool_class`) — never the
+ *   brand accent; bodies stay plain. A colour earns its place by being rare,
+ *   and here it answers the first question a reader asks of any row before a
+ *   single name is read: was that a look, a change, a shell, a test, a push,
+ *   a hand-off?
+ * - **A collapsed result shows the line that matters, not the first one.**
+ *   `salient_line` (ported below) anchors the preview at the first line
+ *   carrying an error/warning/failure marker rather than line 1 — a build's
+ *   first line is `Checking foo v0.1.0`, and the line a reader came for is
+ *   twenty lines down. A success shows one line from there; a failure shows
+ *   six (`crates/stella-tui/src/render/row.rs::{salient_line,FAIL_PREVIEW}`).
  * - **The rails are the deck's**: `●` opens a call, `⎿` its result, `✗` a
  *   failed one — a distinct glyph *and* column, so a failure is findable by
  *   margin-scan alone (`crates/stella-tui/src/render/row.rs::Rail`).
  *
- * One deliberate departure: the deck renders a call and its result as one
+ * Two deliberate departures. The deck renders a call and its result as one
  * tight block that nothing can split, so the result row need not repeat the
  * tool's name. Here the kind filters can hide every call row, which would
  * leave a column of results naming nothing — so a result row carries its
- * tool's name, subordinate to the call's.
+ * tool's name (and its class colour), subordinate to the call's. And every
+ * body on the wire here is character-capped for the live stream's sake
+ * (`arenabench.transcript.TOOL_RESULT_BUDGET`) in a way the deck, reading a
+ * session in memory, never has to be — the "load full transcript" button
+ * fetches the same trial uncapped for the one reader who needs every byte.
  *
  * Playback matches the drawer it replaced: a finished trial replays paced by
  * each entry's own elapsed stamp, a live one streams. Search and filters are
@@ -173,8 +195,70 @@ function usageLine(entry: TranscriptEntry): string {
   );
 }
 
-const RESULT_PREVIEW_LINES = 12;
 const THINKING_PREVIEW_LINES = 5;
+
+/** Collapsed-result line budgets, matching the deck's `row.rs` exactly: a
+ * successful call shows one line from the salient point, a failed one shows
+ * six — enough for a compiler error with its location and caret line, or the
+ * top of a panic backtrace. */
+const OK_PREVIEW_LINES = 1;
+const FAIL_PREVIEW_LINES = 6;
+
+/** Split on `\n` the way Rust's `str::lines()` does: no trailing empty
+ * element for text ending in a newline. Every result body downstream of
+ * `salientLine` goes through this rather than a bare `.split("\n")`, so an
+ * index computed on one agrees with a slice taken from the other. */
+function splitLines(text: string): string[] {
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  return lines;
+}
+
+/** Markers that make a line of tool output worth anchoring a collapsed
+ * preview on, ported verbatim from `crates/stella-tui/src/render/row.rs::SALIENT`. */
+const SALIENT_MARKERS = [
+  "error",
+  "warning",
+  "failed",
+  "failure",
+  "panic",
+  "assert",
+  "fatal",
+  "exception",
+];
+
+/**
+ * The line index a collapsed result should start its preview from.
+ *
+ * A direct port of `row.rs::salient_line`: showing line 1 is the obvious
+ * choice and the wrong one — a build's first line is `Checking foo v0.1.0`
+ * while the line that matters is twenty lines down — so this finds the first
+ * line carrying a failure marker (`error:`, `warning:`, `panic: …`, matched
+ * case-insensitively at the start of the trimmed line or as `marker:` within
+ * its first 12 characters, so a log line that merely *mentions* an error
+ * later on does not hijack the row) and falls back to the first non-blank
+ * line when nothing stands out.
+ */
+function salientLine(text: string): number {
+  const lines = splitLines(text);
+  let firstNonBlank = 0;
+  let seenNonBlank = false;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].replace(/^\s+/, "");
+    if (!seenNonBlank && trimmed !== "") {
+      firstNonBlank = i;
+      seenNonBlank = true;
+    }
+    const lower = trimmed.toLowerCase();
+    const hit = SALIENT_MARKERS.some((marker) => {
+      if (lower.startsWith(marker)) return true;
+      const at = lower.indexOf(`${marker}:`);
+      return at !== -1 && at <= 12;
+    });
+    if (hit) return i;
+  }
+  return firstNonBlank;
+}
 
 /** Frames shown before the fold, matching the deck's `RECALL_PREVIEW`. */
 const RECALL_PREVIEW_FRAMES = 3;
@@ -446,11 +530,26 @@ function Entry({
     const meta = (entry.meta || {}) as Record<string, unknown>;
     const raw = typeof meta.raw === "string" ? meta.raw : "";
     const expandable = Boolean(raw) && raw !== "{}";
+    // The name's colour is the call's CLASS — read/write/run/verify/repo/
+    // delegate — never the arena's flat `--accent`: the class answers "what
+    // kind of thing was that" from the margin before a single name is read.
+    // The `●` glyph itself stays neutral: arenabench carries no brand/identity
+    // hue at all (the arena scores stella as one seat among several, so its
+    // gold does not belong in chrome every seat is judged under), so unlike
+    // the deck's `Rail::Call` — which paints the glyph `ACCENT_DEEP` — the
+    // rail here is undyed and the class colour is spent on the one place a
+    // reader actually scans: the tool's own name.
+    const cls = toolClassOf(meta);
     return (
       <div>
         <div className="flex items-baseline gap-2">
           <span className="select-none text-dim">●</span>
-          <span className="min-w-[8.5rem] shrink-0 font-semibold text-accent">
+          <span
+            className={cn(
+              "min-w-[8.5rem] shrink-0 font-semibold",
+              TOOL_CLASS_TEXT[cls],
+            )}
+          >
             <Highlight text={entry.title ?? "tool"} query={query} />
           </span>
           {body && (
@@ -481,21 +580,33 @@ function Entry({
   if (entry.kind === "tool_result") {
     // `⎿ name · 141ms · 12 lines`, then the body — the deck's result rail,
     // subordinate to the call above it. A failure takes `✗` and its own
-    // colour so it is findable by margin-scan alone.
+    // colour so it is findable by margin-scan alone, overriding the class
+    // colour below: an outcome always outranks a category, the same
+    // precedence the deck gives a stage rule over its own hue.
     //
     // The name is on the row rather than left implicit in the call above,
     // which is where this page departs from the deck on purpose: the deck
     // renders a call and its result as one tight block that cannot be split,
     // while here the kind filters can hide every call row and leave a column
-    // of results naming nothing.
+    // of results naming nothing. It carries the same class colour as its
+    // call for the same reason — a reader who has filtered down to "results"
+    // alone should not lose which kind of call produced each one.
     const meta = (entry.meta || {}) as Record<string, unknown>;
     const isError = Boolean(meta.error);
-    const lines = body ? body.split("\n") : [];
-    const folded = !resultOpen && lines.length > RESULT_PREVIEW_LINES;
-    const shown = resultOpen ? lines : lines.slice(0, RESULT_PREVIEW_LINES);
+    const cls = toolClassOf(meta);
+    const lines = body ? splitLines(body) : [];
+    const total = lines.length;
+    // The collapsed window anchors on the SALIENT line, not line 1 — see
+    // `salientLine`'s doc comment — and its size is the deck's own budget: a
+    // success shows a single line, a failure shows six.
+    const budget = isError ? FAIL_PREVIEW_LINES : OK_PREVIEW_LINES;
+    const anchor = total > 0 ? salientLine(body ?? "") : 0;
+    const collapsedShown = lines.slice(anchor, anchor + budget);
+    const shown = resultOpen ? lines : collapsedShown;
+    const hidden = resultOpen ? 0 : total - collapsedShown.length;
     const metrics = [
       meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
-      lines.length > 1 ? `${lines.length} lines` : null,
+      total > 1 ? `${total} lines` : null,
       // ⚡ marks a speculated result: its duration overlapped the model's own
       // streaming instead of following it, so the number is not latency the
       // run actually spent waiting.
@@ -510,7 +621,9 @@ function Entry({
           <span className={cn("select-none", isError ? "text-bad" : "text-dim")}>
             {isError ? "✗" : "⎿"}
           </span>
-          <span className={cn("font-medium", isError ? "text-bad" : "text-dim")}>
+          <span
+            className={cn("font-medium", isError ? "text-bad" : TOOL_CLASS_TEXT[cls])}
+          >
             <Highlight text={entry.title ?? "tool"} query={query} />
           </span>
           {metrics.length > 0 && (
@@ -527,16 +640,24 @@ function Entry({
             <Highlight text={shown.join("\n")} query={query} />
           </pre>
         )}
-        {folded && (
+        {/* The deck only earns this row for a failure — a successful result
+            already states its size in the metric column above. A mouse-driven
+            page has no ctrl+o, though, so a folded SUCCESS still gets a quiet
+            way to see the rest; it just does not compete for attention the
+            way the failure's does. */}
+        {!resultOpen && hidden > 0 && (
           <button
             type="button"
             onClick={toggleResult}
-            className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            className={cn(
+              "ml-5 cursor-pointer text-[10.5px] hover:text-muted",
+              isError ? "text-dim" : "text-dim/70",
+            )}
           >
-            ⋯ {lines.length - RESULT_PREVIEW_LINES} more lines
+            ⋯ {hidden} more {hidden === 1 ? "line" : "lines"}
           </button>
         )}
-        {resultOpen && lines.length > RESULT_PREVIEW_LINES && (
+        {resultOpen && total > budget && (
           <button
             type="button"
             onClick={toggleResult}
@@ -714,12 +835,69 @@ function TranscriptView({
   }, [task, seatId]);
 
   const live = snapshot?.status === "running";
-  const { entries, waiting, ended } = useTranscript(matchId, seatId, task);
+  const { entries: streamedEntries, waiting, ended } = useTranscript(matchId, seatId, task);
+
+  // -- the full, uncapped transcript, fetched on demand --------------------
+  // The SSE channel above character-caps a tool call/result body
+  // (`arenabench.transcript.TOOL_RESULT_BUDGET`/`TOOL_INPUT_BUDGET`) so a
+  // match running for hours stays cheap to stream. That cap is
+  // unrecoverable client-side — the elided bytes were never sent — so a
+  // reader who has decided this one trial is worth the extra bytes gets a
+  // plain request-response fetch of the same file from byte zero with both
+  // caps disabled, wholesale replacing the capped array rather than
+  // patching it (every field but the body is identical either way).
+  const [fullEntries, setFullEntries] = React.useState<TranscriptEntry[] | null>(null);
+  const [loadingFull, setLoadingFull] = React.useState(false);
+  const [fullError, setFullError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setFullEntries(null);
+    setFullError(null);
+  }, [matchId, seatId, task]);
+  const loadFullTranscript = React.useCallback(async () => {
+    setLoadingFull(true);
+    setFullError(null);
+    try {
+      const payload = await api<{ entries: TranscriptEntry[] }>(
+        `/api/matches/${encodeURIComponent(matchId)}/transcript-full/` +
+          `${encodeURIComponent(seatId)}/${encodeURIComponent(task)}`,
+      );
+      setFullEntries(payload.entries);
+    } catch (err) {
+      setFullError(String(err));
+    } finally {
+      setLoadingFull(false);
+    }
+  }, [matchId, seatId, task]);
+  const entries = fullEntries ?? streamedEntries;
 
   // -- reading tools ------------------------------------------------------
   const [enabled, setEnabled] = React.useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUPS.map((group) => [group.key, true])),
   );
+  // Tools explicitly excluded by name — empty means no filter is active.
+  // Unlike `enabled` (whole kind-groups, seeded once), this has to grow with
+  // the transcript: a trial's tool names are not known until entries arrive.
+  const [disabledTools, setDisabledTools] = React.useState<Set<string>>(
+    () => new Set(),
+  );
+  const toolIndex = React.useMemo(() => {
+    const classByName = new Map<string, ReturnType<typeof toolClassOf>>();
+    for (const entry of entries) {
+      if (entry.kind === "tool" && entry.title && !classByName.has(entry.title)) {
+        classByName.set(entry.title, toolClassOf(entry.meta));
+      }
+    }
+    const names = [...classByName.keys()].sort((a, b) => a.localeCompare(b));
+    return { names, classByName };
+  }, [entries]);
+  const toggleTool = React.useCallback((name: string) => {
+    setDisabledTools((state) => {
+      const next = new Set(state);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
   const [query, setQuery] = React.useState("");
   const searching = query.trim().length > 0;
 
@@ -743,6 +921,16 @@ function TranscriptView({
     return entries.filter((entry) => {
       const group = groupOf(entry.kind);
       if (group !== null && !enabled[group]) return false;
+      // A call and its result are both named by the tool's own name — the
+      // one identifier both kinds share — so one filter set hides both
+      // halves of a call the reader asked not to see.
+      if (
+        (entry.kind === "tool" || entry.kind === "tool_result") &&
+        entry.title &&
+        disabledTools.has(entry.title)
+      ) {
+        return false;
+      }
       if (!needle) return true;
       return (
         (entry.body ?? "").toLowerCase().includes(needle) ||
@@ -750,7 +938,7 @@ function TranscriptView({
         (entry.kind === "usage" && usageLine(entry).toLowerCase().includes(needle))
       );
     });
-  }, [entries, enabled, query]);
+  }, [entries, enabled, disabledTools, query]);
 
   // -- playback (paced replay for a finished trial) -----------------------
   const [playing, setPlaying] = React.useState(true);
@@ -901,6 +1089,23 @@ function TranscriptView({
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {/* Every tool call/result body on the streamed channel is
+              character-capped for the live feed's sake; this fetches the same
+              trial from byte zero with the cap disabled. Bytes elided on the
+              wire cannot be recovered by any amount of client-side "show
+              more", so this is the only way back to the whole payload. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={loadingFull || fullEntries !== null}
+            onClick={loadFullTranscript}
+          >
+            {fullEntries !== null
+              ? "full transcript loaded ✓"
+              : loadingFull
+                ? "loading full transcript…"
+                : "load full transcript"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -948,6 +1153,62 @@ function TranscriptView({
           ) : null}
         </div>
       </div>
+
+      {fullError && (
+        <div className="border-b border-line py-1.5 font-mono text-[11px] text-bad">
+          full transcript failed to load: {fullError}
+        </div>
+      )}
+
+      {/* Filter by tool name, and the class legend that explains the colour
+          each name is painted in. One row: the chips are the working filter,
+          the legend on the right is the key a first-time reader needs to
+          learn it. Only rendered once the trial has produced at least one
+          tool call — an empty filter row above an empty transcript answers
+          a question nobody asked yet. */}
+      {toolIndex.names.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line py-2">
+          <div className="flex flex-wrap items-center gap-1">
+            {toolIndex.names.map((name) => {
+              const cls = toolIndex.classByName.get(name) ?? "execute";
+              const off = disabledTools.has(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => toggleTool(name)}
+                  aria-pressed={!off}
+                  className={cn(
+                    "cursor-pointer px-2 py-1 font-mono text-[11px]",
+                    off
+                      ? "text-dim line-through hover:bg-panel"
+                      : ["bg-current/10", TOOL_CLASS_TEXT[cls]],
+                  )}
+                >
+                  {name}
+                </button>
+              );
+            })}
+            {disabledTools.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setDisabledTools(new Set())}
+                className="cursor-pointer px-2 py-1 font-mono text-[11px] text-dim underline hover:text-muted"
+              >
+                reset
+              </button>
+            )}
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[10px] text-dim">
+            {TOOL_CLASSES.map((cls) => (
+              <span key={cls} className="flex items-center gap-1">
+                <span className={TOOL_CLASS_TEXT[cls]}>●</span>
+                {TOOL_CLASS_LABEL[cls]}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* The proof rail, above the transcript it summarises. A verdict says
           whether the trial passed; only this says what claims that. */}
