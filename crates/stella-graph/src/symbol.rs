@@ -20,6 +20,14 @@ pub enum SymbolKind {
     Column,
     SchemaEnum,
     View,
+    /// One heading's section of a markdown document ([`crate::markdown`]).
+    ///
+    /// Not a declaration, and deliberately in this enum anyway: a section has
+    /// a name, a kind and a line span, which is the entire contract the index,
+    /// the vector pass and the citation layer ask of a symbol. A parallel
+    /// "document chunk" type would duplicate all three tables to express the
+    /// same four fields.
+    Section,
 }
 impl SymbolKind {
     /// Map a query kind-capture name (see [`crate::queries`]) to a kind.
@@ -54,6 +62,7 @@ impl SymbolKind {
             SymbolKind::Column => "column",
             SymbolKind::SchemaEnum => "schema_enum",
             SymbolKind::View => "view",
+            SymbolKind::Section => "section",
         }
     }
 
@@ -70,6 +79,10 @@ impl SymbolKind {
             "column" => SymbolKind::Column,
             "schema_enum" => SymbolKind::SchemaEnum,
             "view" => SymbolKind::View,
+            // Markdown sections have no tree-sitter capture to arrive from,
+            // so `from_capture` above deliberately does not know this tag —
+            // only the store round-trip does.
+            "section" => SymbolKind::Section,
             // "function" and any unknown/forward-compat tag read back as a
             // plain function — the least-surprising, never-panicking default.
             _ => SymbolKind::Function,
@@ -91,6 +104,7 @@ impl SymbolKind {
             SymbolKind::Column => "column",
             SymbolKind::SchemaEnum => "enum",
             SymbolKind::View => "view",
+            SymbolKind::Section => "section",
         }
     }
 

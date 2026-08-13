@@ -24,6 +24,10 @@ pub enum Language {
     Java,
     C,
     Php,
+    /// Prose, split on its heading hierarchy by [`crate::markdown`] rather
+    /// than by a grammar — the one language here whose parser is this crate's
+    /// own, and so the one that is present in every build.
+    Markdown,
 }
 
 impl Language {
@@ -57,6 +61,7 @@ impl Language {
             "c" | "h" => Language::C,
             "php" => Language::Php,
             "sql" => Language::Sql,
+            "md" | "markdown" => Language::Markdown,
             _ => return None,
         };
         lang.is_compiled_in().then_some(lang)
@@ -74,7 +79,7 @@ impl Language {
     }
 
     /// Every language the enum knows, compiled in or not.
-    pub const ALL: [Language; 10] = [
+    pub const ALL: [Language; 11] = [
         Language::Rust,
         Language::Python,
         Language::JavaScript,
@@ -85,11 +90,27 @@ impl Language {
         Language::Java,
         Language::C,
         Language::Php,
+        Language::Markdown,
     ];
 
-    /// Whether this build carries this language's grammar.
+    /// Whether this build can parse this language.
+    ///
+    /// For every grammar-backed language that is "did this build compile the
+    /// grammar in" (#1268). [`Language::Markdown`] is parsed by
+    /// [`crate::markdown`], a line scan in this crate with no feature gate and
+    /// nothing to link, so it is always available — which is why this is not
+    /// simply `ts_language().is_some()`.
     pub fn is_compiled_in(self) -> bool {
-        self.ts_language().is_some()
+        match self {
+            Language::Markdown => true,
+            _ => self.ts_language().is_some(),
+        }
+    }
+
+    /// Whether this language is parsed by a tree-sitter grammar rather than
+    /// by this crate's own reader. Only [`Language::Markdown`] answers `false`.
+    pub(crate) fn is_grammar_backed(self) -> bool {
+        !matches!(self, Language::Markdown)
     }
 
     /// Stable lowercase tag stored in `code_graph_files.language` and used in
@@ -106,6 +127,7 @@ impl Language {
             Language::Java => "java",
             Language::C => "c",
             Language::Php => "php",
+            Language::Markdown => "markdown",
         }
     }
 
@@ -142,6 +164,8 @@ impl Language {
             // and the PHP-only grammar cannot parse those at all.
             #[cfg(feature = "lang-php")]
             Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            // Markdown has no grammar by design, not by trimming — see
+            // [`Language::is_compiled_in`].
             #[allow(unreachable_patterns)]
             _ => return None,
         })
@@ -159,6 +183,7 @@ impl Language {
             Language::Java => queries::JAVA_SYMBOLS,
             Language::C => queries::C_SYMBOLS,
             Language::Php => queries::PHP_SYMBOLS,
+            Language::Markdown => NO_QUERY,
         }
     }
 
@@ -174,6 +199,7 @@ impl Language {
             Language::Java => queries::JAVA_IMPORTS,
             Language::C => queries::C_IMPORTS,
             Language::Php => queries::PHP_IMPORTS,
+            Language::Markdown => NO_QUERY,
         }
     }
 
@@ -189,9 +215,18 @@ impl Language {
             Language::Java => queries::JAVA_CALLS,
             Language::C => queries::C_CALLS,
             Language::Php => queries::PHP_CALLS,
+            Language::Markdown => NO_QUERY,
         }
     }
 }
+
+/// The query source for a language that has no grammar to run one against.
+///
+/// Unreachable in practice — `LangPack::load` returns before it asks a
+/// grammarless language for a query, and `parse_file` answers markdown before
+/// it looks for a pack — but a total match needs an arm, and an empty query is
+/// the honest value rather than a panic on a path no input can reach.
+const NO_QUERY: &str = "";
 
 #[cfg(test)]
 mod tests {
@@ -241,8 +276,23 @@ mod tests {
             Language::from_path(Path::new("migrations/001.sql")),
             Some(Language::Sql)
         );
-        assert_eq!(Language::from_path(Path::new("README.md")), None);
+        assert_eq!(
+            Language::from_path(Path::new("README.md")),
+            Some(Language::Markdown),
+            "165 markdown files in this workspace were invisible to every \
+             search the agent had until they became indexable (#3089)"
+        );
         assert_eq!(Language::from_path(Path::new("noext")), None);
+    }
+
+    /// Markdown carries no grammar and is still always indexable — the one
+    /// language whose reader ships with this crate rather than with a
+    /// `lang-*` feature.
+    #[test]
+    fn markdown_is_indexable_in_every_build() {
+        assert!(Language::Markdown.is_compiled_in());
+        assert!(!Language::Markdown.is_grammar_backed());
+        assert_eq!(Language::Markdown.ts_language(), None);
     }
 
     /// The `default` feature set must reproduce the language coverage that
@@ -278,7 +328,7 @@ mod tests {
     /// reads to the agent as "this file declares nothing".
     #[test]
     fn detection_never_names_a_language_this_build_cannot_parse() {
-        for lang in Language::ALL {
+        for lang in Language::ALL.iter().copied().filter(|l| l.is_grammar_backed()) {
             assert_eq!(
                 lang.is_compiled_in(),
                 lang.ts_language().is_some(),
@@ -287,7 +337,7 @@ mod tests {
             );
         }
         for probe in [
-            "a.rs", "a.py", "a.go", "a.java", "a.c", "a.php", "a.sql", "a.tsx",
+            "a.rs", "a.py", "a.go", "a.java", "a.c", "a.php", "a.sql", "a.tsx", "a.md",
         ] {
             if let Some(lang) = Language::from_path(Path::new(probe)) {
                 assert!(

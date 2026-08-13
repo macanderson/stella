@@ -61,6 +61,7 @@ mod graph;
 mod import;
 mod lang;
 pub mod manifest;
+mod markdown;
 mod parse;
 mod queries;
 mod rust_resolve;
