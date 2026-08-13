@@ -232,7 +232,7 @@ const NEEDS_CHUNK_PASS: &str = "EXISTS (SELECT 1 FROM code_graph_symbols s WHERE
 /// Up to `limit` files whose chunks are not fully embedded under
 /// `fingerprint`, with each chunk rendered and hashed.
 ///
-/// "Not fully embedded" is [`NEEDS_CHUNK_PASS`] — a coverage marker read
+/// "Not fully embedded" is `NEEDS_CHUNK_PASS` — a coverage marker read
 /// straight from the index, which is what keeps a scan over an up-to-date
 /// workspace from re-reading every file on disk to discover there is nothing
 /// to do.
@@ -510,7 +510,7 @@ pub fn chunk_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphE
 }
 
 /// How many indexed files still need a chunk pass under `fingerprint` — the
-/// same [`NEEDS_CHUNK_PASS`] predicate [`pending_chunks`] scans, as a count
+/// same `NEEDS_CHUNK_PASS` predicate [`pending_chunks`] scans, as a count
 /// rather than a page of rendered work. An eager pass reports this as
 /// `remaining` without paying for a render-and-hash pass over files it is
 /// about to discard the content of.
