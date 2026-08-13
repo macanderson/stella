@@ -97,6 +97,7 @@ mod resume_frame;
 mod rules;
 mod runtime;
 mod scripts_cmd;
+mod search_cmd;
 mod session_persist;
 mod settings;
 mod settings_check;
@@ -716,11 +717,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Ranks semantically when an embedder is configured (a network
             // write-through into codegraph.db); otherwise reads the local
             // index only.
-            return signals::block_on_interruptible(
-                rt()?,
-                contextgraph::run_search(query, *format),
-            )
-            .map_err(failure::CliFailure::from);
+            return signals::block_on_interruptible(rt()?, search_cmd::run_search(query, *format))
+                .map_err(failure::CliFailure::from);
         }
         Some(Command::Scripts { cmd }) => {
             // Static manifest parsing plus a local subprocess — works with

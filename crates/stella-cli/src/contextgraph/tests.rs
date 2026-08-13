@@ -1341,28 +1341,3 @@ mod query_domain_scope_derivation {
         assert_eq!(scope, vocabulary, "the scope IS the vocabulary");
     }
 }
-
-/// `stella search` (#3098's follow-up ask): the CLI door onto the same
-/// `search` tool the agent calls, replacing the old `stella graph <op>
-/// <target>` surface. `Search::execute` rejects an empty query before
-/// touching the graph or an embedder, so this needs no fixture — and it
-/// pins that both `--format text` and `--format json` report the same
-/// underlying failure rather than the JSON path swallowing it.
-#[tokio::test]
-async fn run_search_reports_the_missing_query_error_in_both_formats() {
-    let text_err = run_search("", QueryFormat::Text)
-        .await
-        .expect_err("an empty query must fail");
-    assert!(
-        text_err.contains("`query` is required"),
-        "text error: {text_err}"
-    );
-
-    let json_err = run_search("", QueryFormat::Json)
-        .await
-        .expect_err("an empty query must fail under --format json too");
-    assert_eq!(
-        json_err, text_err,
-        "both formats surface the same underlying failure"
-    );
-}
