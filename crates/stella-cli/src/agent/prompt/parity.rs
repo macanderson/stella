@@ -466,6 +466,56 @@ fn both_prompts_batch_independent_tool_calls() {
     }
 }
 
+/// Witness for the ordering gap (#3173): the batching rule taught WHAT to put
+/// in one response and nothing about the order, and order is the one scheduler
+/// lever the model holds. `Engine::execute_tool_calls`
+/// (`stella-core/src/driver/dispatch.rs`) parallelizes only runs of
+/// consecutive read-only calls — every mutating call is its own barrier, in
+/// call order — and `stella-core/src/speculation.rs` starts only the
+/// all-read-only *prefix* of a step's calls while the response is still
+/// streaming: the first mutating call permanently ends the early-start window.
+/// So `read, read, read, edit` and `read, edit, read, read` are the same work
+/// to the model and materially different wall clock to the engine.
+///
+/// Re-expressed on the minimal five-tool steering (#3179): one sentence in
+/// the batching paragraph now carries the rule, the mechanism, and the
+/// speed-never-meaning qualifier; each is pinned so a trim cannot leave a
+/// cargo-cult rule (mechanism dropped) or a semantics-fearing one (qualifier
+/// dropped). Phrased by property (read-only), never by tool name, because the
+/// registry varies by assembly.
+#[test]
+fn both_prompts_teach_reads_first_ordering() {
+    let shared = tool_steering!();
+    for claim in [
+        // The rule itself.
+        "put reads first and mutations last",
+        // The mechanism, both halves: concurrency is a read-only property...
+        "consecutive read-only calls concurrently",
+        // ...and the early start exists and is worth chasing.
+        "while the response is still streaming",
+        // Mutations stay sequential — the fact that makes ordering safe —
+        // and the early-start window ends at the first mutation.
+        "runs alone, in call order",
+        "nothing after it starts early",
+        // The qualifier: ordering is a speed lever, never a semantic one.
+        "Ordering changes speed, never meaning",
+    ] {
+        assert!(
+            shared.contains(claim),
+            "the shared literal must keep the ordering claim {claim:?} — dropping \
+             the mechanism leaves a cargo-cult rule, and dropping the qualifier \
+             leaves one that reorders dependent work or fears correct mutations \
+             (#3173)"
+        );
+    }
+    for (label, prompt) in STATIC_PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared tool-steering block verbatim"
+        );
+    }
+}
+
 /// Witness for search-first discovery, the successor to two retired pins.
 ///
 /// The shell-routing pin (post1: 425 of 600 tool calls were `bash`, 8 shell

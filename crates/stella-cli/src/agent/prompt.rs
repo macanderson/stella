@@ -45,7 +45,7 @@ search comes first for every code question. Give it plain language, a symbol nam
 
 Read a file before you edit it. edit_file changes part of an existing file. write_file creates a new file or replaces one whole. bash runs everything else: builds, tests, git, packages, processes.
 
-Send independent tool calls together in one response; sequence calls only when one needs another's result. Keep temporary files in $STELLA_SCRATCH, never in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch."#
+Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep temporary files in $STELLA_SCRATCH, never in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch."#
     };
 }
 
