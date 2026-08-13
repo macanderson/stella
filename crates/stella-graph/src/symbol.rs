@@ -20,7 +20,8 @@ pub enum SymbolKind {
     Column,
     SchemaEnum,
     View,
-    /// One heading's section of a markdown document ([`crate::markdown`]).
+    /// One heading's section of a markdown document, produced by this crate's
+    /// private `markdown` module.
     ///
     /// Not a declaration, and deliberately in this enum anyway: a section has
     /// a name, a kind and a line span, which is the entire contract the index,
