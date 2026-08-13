@@ -444,14 +444,19 @@ pub(crate) async fn dispatch(
     if let (Some(graph), Some(embedder)) = (graph, embedder) {
         strategies.push(Strategy::Semantic);
         match semantic_hits(graph, embedder, query).await {
-            Ok(hits) if !hits.is_empty() => {
+            Ok((hits, coverage)) if !hits.is_empty() => {
                 return Answer {
                     hits,
                     strategies,
-                    note,
+                    // Coverage rides even on a successful answer: it is
+                    // exactly the successful-looking partial answer that
+                    // needs the caveat.
+                    note: coverage,
                 };
             }
-            Ok(_) => {}
+            // An empty semantic answer over a partial index is the most
+            // misleading outcome of all — "nothing matched" reads as absence.
+            Ok((_, coverage)) => note = coverage,
             Err(reason) => note = Some(reason),
         }
     }
@@ -479,18 +484,30 @@ pub(crate) async fn dispatch(
 /// Embed what is pending, embed the query, rank. `Err` carries a reason
 /// already phrased for the answer's note.
 ///
-/// **Chunks first, files as the fallback.** A chunk vector names the symbol or
-/// the documentation section that matched, which is both a sharper ranking and
-/// a citation; a file vector answers "what is this module about", which no
-/// chunk can, and is what a workspace whose chunk pass has not run yet still
-/// has. A file whose chunks matched is reported once, at its best chunk's
-/// score, with that chunk named — so the answer keeps the shape callers
-/// already read while the score finally means something specific.
+/// **Both rungs, merged — not chunks-then-files.** Ranking chunks and
+/// returning early whenever they produced anything let a *partially filled*
+/// chunk index shadow a better-covered file index, and the failure was total
+/// rather than marginal: the chunk pass fills in `ORDER BY path` at
+/// `MAX_FILES_PER_CHUNK_PASS` files a call, so on this workspace it held
+/// 4,011 of 29,334 chunks, every one under `arenabench/` or `bench/`, with the
+/// frontier sitting alphabetically short of `crates/`. Every Rust file was
+/// invisible to the sharp rung while the file rung already covered 69% of the
+/// tree — so a query about `crates/` got a confident answer assembled entirely
+/// from the bench harness.
+///
+/// Merging is legitimate here and *only* here: chunk and file vectors are
+/// written by the same embedder under the same `fingerprint`, so they are one
+/// vector space and their cosines are directly comparable. That is not true
+/// across the strategy ladder, which is why `dispatch` still refuses to fuse.
+///
+/// A file reached by both rungs is reported once, preferring its chunk hit —
+/// same score meaning, plus the symbol or section that matched, which is a
+/// citation a file vector cannot produce.
 async fn semantic_hits(
     graph: &CodeGraph,
     embedder: &dyn Embedder,
     query: &str,
-) -> Result<Vec<Hit>, String> {
+) -> Result<(Vec<Hit>, Option<String>), String> {
     let fingerprint = embedder.fingerprint().id();
     catch_up_embeddings(graph, embedder, &fingerprint).await?;
     catch_up_chunk_embeddings(graph, embedder, &fingerprint).await?;
@@ -511,72 +528,122 @@ async fn semantic_hits(
     let chunks = graph
         .rank_chunks_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
         .map_err(|error| format!("the chunk index could not be read: {error}"))?;
-    if !chunks.is_empty() {
-        return Ok(group_chunks_by_file(&chunks));
-    }
-
-    graph
+    let files = graph
         .rank_files_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
-        .map(|ranked| {
-            let cut = stella_embed::rank::relevant_prefix(
-                &ranked,
-                stella_embed::rank::DEFAULT_RELEVANCE_GAP_RATIO,
-                stella_embed::rank::DEFAULT_MIN_BOUNDARY_GAP,
-            );
-            ranked
-                .into_iter()
-                .take(cut)
-                .map(|scored| Hit {
-                    path: scored.key,
-                    why: format!(
-                        "ranked by MEANING against your query, over the whole file \
-                         (cosine {:.3})",
-                        scored.score
-                    ),
-                })
-                .collect()
-        })
-        .map_err(|error| format!("the vector index could not be read: {error}"))
+        .map_err(|error| format!("the vector index could not be read: {error}"))?;
+
+    Ok((
+        merge_rungs(&chunks, &files),
+        coverage_note(graph, &fingerprint),
+    ))
 }
 
-/// Collapse a chunk ranking to one hit per file, best chunk first.
+/// One ordering over both rungs, best first, one hit per file.
 ///
-/// The relevance cut is applied to the **chunk** ranking rather than to the
-/// grouped one, because the boundary is a property of the scores and grouping
-/// discards scores. Cutting after the grouping would measure gaps between
-/// per-file maxima, which is a different and much sparser distribution than
-/// the one the boundary was defined over.
-fn group_chunks_by_file(chunks: &[stella_graph::ScoredChunk]) -> Vec<Hit> {
+/// See [`semantic_hits`] for why merging is sound: one embedder, one
+/// fingerprint, one vector space.
+fn merge_rungs(
+    chunks: &[stella_graph::ScoredChunk],
+    files: &[stella_embed::rank::Scored],
+) -> Vec<Hit> {
+    let mut scored: Vec<(f32, String, String)> = chunks
+        .iter()
+        .map(|chunk| {
+            (
+                chunk.score,
+                chunk.path.clone(),
+                format!(
+                    "ranked by MEANING against your query — best match is `{}` ({}) at line {} \
+                     (cosine {:.3})",
+                    chunk.name, chunk.kind, chunk.start_line, chunk.score
+                ),
+            )
+        })
+        .chain(files.iter().map(|file| {
+            (
+                file.score,
+                file.key.clone(),
+                format!(
+                    "ranked by MEANING against your query, over the whole file (cosine {:.3})",
+                    file.score
+                ),
+            )
+        }))
+        .collect();
+    // Descending by score, then by path, so the ordering is total and the
+    // answer is byte-stable across runs (invariant 7).
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+
+    // The cut is taken over the merged SCORES, before collapsing to files:
+    // the boundary is a property of the score distribution, and collapsing
+    // discards scores. The synthetic key keeps `relevant_prefix`'s input
+    // unique without reordering it.
+    let ordered: Vec<stella_embed::rank::Scored> = scored
+        .iter()
+        .enumerate()
+        .map(|(index, (score, path, _))| stella_embed::rank::Scored {
+            key: format!("{index:06}#{path}"),
+            score: *score,
+        })
+        .collect();
     let cut = stella_embed::rank::relevant_prefix(
-        &chunks
-            .iter()
-            .map(|chunk| stella_embed::rank::Scored {
-                key: format!("{}#{}#{}", chunk.path, chunk.start_line, chunk.name),
-                score: chunk.score,
-            })
-            .collect::<Vec<_>>(),
+        &ordered,
         stella_embed::rank::DEFAULT_RELEVANCE_GAP_RATIO,
         stella_embed::rank::DEFAULT_MIN_BOUNDARY_GAP,
     );
 
     let mut seen: Vec<String> = Vec::new();
-    let mut hits: Vec<Hit> = Vec::new();
-    for chunk in chunks.iter().take(cut) {
-        if seen.iter().any(|path| path == &chunk.path) {
+    let mut hits = Vec::new();
+    for (_, path, why) in scored.into_iter().take(cut) {
+        if seen.iter().any(|p| p == &path) {
             continue;
         }
-        seen.push(chunk.path.clone());
-        hits.push(Hit {
-            path: chunk.path.clone(),
-            why: format!(
-                "ranked by MEANING against your query — best match is `{}` ({}) at line {} \
-                 (cosine {:.3})",
-                chunk.name, chunk.kind, chunk.start_line, chunk.score
-            ),
-        });
+        seen.push(path.clone());
+        hits.push(Hit { path, why });
     }
     hits
 }
+
+/// How much of the workspace this ranking could actually see, when that is
+/// less than all of it.
+///
+/// **An incomplete index reported as a complete one is worse than an empty
+/// one**, and this tool had no way to say so: it printed `via: semantic` over
+/// a ranking drawn from 14% of the workspace — every one of those chunks in
+/// the same two directories — with nothing in the answer to suggest the other
+/// 86% had never been looked at. The argument the module already makes about
+/// budget truncation, that an agent which cannot tell a complete answer from a
+/// partial one stops looking, applies to coverage exactly as it does to
+/// length. Coverage was the half that was silent.
+///
+/// The "not a random sample" sentence is the load-bearing one. Embedding fills
+/// in path order, so a partial index is not a uniform thinning of the tree; it
+/// is a prefix of it, and a caller who assumes otherwise will read a miss as
+/// evidence of absence.
+///
+/// `None` when both rungs are complete, so a healthy workspace pays no tokens
+/// for the disclosure.
+fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
+    let symbols = graph.symbol_count().ok()?;
+    let chunks = graph.embedded_chunk_count(fingerprint).ok()?;
+    let total_files = graph.file_count().ok()?;
+    let files = graph.embedded_file_count(fingerprint).ok()?;
+    if chunks >= symbols && files >= total_files {
+        return None;
+    }
+    Some(format!(
+        "PARTIAL INDEX — this ranking saw {chunks} of {symbols} symbols/sections and {files} \
+         of {total_files} files. Embedding fills in path order a batch per call, so the \
+         remainder is NOT a random sample: it is the tail of the tree alphabetically. Run \
+         `stella init` to finish it; until then treat a miss as inconclusive and use `bash` \
+         with `grep -n` for anything exact."
+    ))
+}
+
 
 /// Embed every indexed file still pending under `fingerprint`, up to the
 /// per-pass cap. Shares `stella-graph`'s pending-scan cursor with
