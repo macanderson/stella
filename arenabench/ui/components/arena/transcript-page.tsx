@@ -15,6 +15,114 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProofPanel } from "@/components/arena/proof-panel";
 
+/** Tools whose raw input IS a file change, so it reads far better as a
+ *  git-style diff than as a JSON dump — additions green, removals red, the
+ *  path as the hunk header. Every other tool keeps the plain argument view. */
+const FILE_MUTATION_TOOLS = new Set([
+  "write_file",
+  "edit_file",
+  "apply_edits",
+  "delete_file",
+]);
+
+type DiffLine = { sign: "+" | "-"; text: string };
+
+type FileHunk = { path?: string; lines: DiffLine[] };
+
+/** Read a file-mutating tool's raw input into one or more per-file diff hunks,
+ *  or `null` when the tool is not a mutation or its input does not parse — the
+ *  caller then falls back to the plain JSON. A new file is all-additions; an
+ *  edit is its old lines removed then its new lines added; a delete is one
+ *  removal marker (the bytes are not in the call). `apply_edits` carries a
+ *  `path` on each element of its `edits` array (there is no top-level `path`),
+ *  and one call can touch several files — so each edit is grouped under its own
+ *  `e.path`, consecutive edits to the same file sharing a hunk, giving every
+ *  file its own header instead of one anonymous path-less block. Field names
+ *  are the tools' own schemas: write_file `{content,path}`, edit_file
+ *  `{old_string,new_string,path}`, apply_edits `{edits:[{path,old_string,
+ *  new_string}]}`. */
+function fileDiffFromRaw(
+  name: string | undefined,
+  raw: string,
+): FileHunk[] | null {
+  if (!name || !FILE_MUTATION_TOOLS.has(name)) return null;
+  let input: Record<string, unknown>;
+  try {
+    input = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const path = typeof input.path === "string" ? input.path : undefined;
+  const asLines = (v: unknown, sign: DiffLine["sign"]): DiffLine[] =>
+    typeof v === "string" && v.length > 0
+      ? v.replace(/\n$/, "").split("\n").map((text) => ({ sign, text }))
+      : [];
+  const hunks: FileHunk[] = [];
+  if (name === "write_file") {
+    const lines = asLines(input.content, "+");
+    if (lines.length > 0) hunks.push({ path, lines });
+  } else if (name === "edit_file") {
+    const lines = [...asLines(input.old_string, "-"), ...asLines(input.new_string, "+")];
+    if (lines.length > 0) hunks.push({ path, lines });
+  } else if (name === "apply_edits") {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    for (const e of edits as Record<string, unknown>[]) {
+      const editPath = typeof e.path === "string" ? e.path : undefined;
+      const lines = [...asLines(e.old_string, "-"), ...asLines(e.new_string, "+")];
+      if (lines.length === 0) continue;
+      const last = hunks[hunks.length - 1];
+      if (last && last.path === editPath) last.lines.push(...lines);
+      else hunks.push({ path: editPath, lines });
+    }
+  } else if (name === "delete_file") {
+    hunks.push({ path, lines: [{ sign: "-", text: "(file deleted)" }] });
+  }
+  return hunks.length > 0 ? hunks : null;
+}
+
+/** A tool's file change as a git-style diff: each touched file its own hunk
+ *  with its path as the header, additions on a green ground and removals on a
+ *  red one, each with its `+`/`-` sign. Line-level tint (not just glyph colour)
+ *  so a scroll of edits reads at a glance the way `git diff` does. An
+ *  `apply_edits` batch spanning several files renders one hunk per file so a
+ *  multi-file change is never flattened into one anonymous block. */
+function FileDiffBlock({
+  hunks,
+}: {
+  hunks: FileHunk[];
+}) {
+  return (
+    <div className="ml-5 mt-1 space-y-1">
+      {hunks.map((hunk, h) => (
+        <div
+          key={h}
+          className="overflow-x-auto rounded border border-line text-[11px]"
+        >
+          {hunk.path && (
+            <div className="border-b border-line bg-panel-2 px-2 py-1 font-mono text-dim">
+              {hunk.path}
+            </div>
+          )}
+          <div className="font-mono leading-[1.4]">
+            {hunk.lines.map((ln, i) => (
+              <div
+                key={i}
+                className={cn(
+                  "whitespace-pre-wrap break-words px-2",
+                  ln.sign === "+" ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad",
+                )}
+              >
+                <span className="select-none opacity-60">{ln.sign} </span>
+                {ln.text}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * A trial's transcript as its own page: `/transcript?match=…&task=…&seat=…`.
  *
@@ -708,11 +816,20 @@ function Entry({
             </button>
           )}
         </div>
-        {expandable && resultOpen && (
-          <pre className="ml-5 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-dim">
-            <Highlight text={raw} query={query} />
-          </pre>
-        )}
+        {expandable && resultOpen &&
+          (() => {
+            // A file-mutating tool renders as a coloured diff; everything else
+            // keeps the raw argument JSON. The diff is null-safe: a call whose
+            // input does not parse falls back to the plain view.
+            const diff = fileDiffFromRaw(entry.title, raw);
+            return diff ? (
+              <FileDiffBlock hunks={diff} />
+            ) : (
+              <pre className="ml-5 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-dim">
+                <Highlight text={raw} query={query} />
+              </pre>
+            );
+          })()}
       </div>
     );
   }
