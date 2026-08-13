@@ -644,7 +644,6 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
     ))
 }
 
-
 /// Embed every indexed file still pending under `fingerprint`, up to the
 /// per-pass cap. Shares `stella-graph`'s pending-scan cursor with
 /// `semantic_code_search`, so the two tools warm one index rather than two.
