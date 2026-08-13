@@ -1386,3 +1386,79 @@ fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
         assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
     }
 }
+
+/// An interrupted turn's in-flight call must not count against its tool.
+///
+/// The sweep settles a still-`running` call as `'abandoned'` (v24), and the
+/// leaderboard reports it in its own column: before #3146 it landed in
+/// `errors`, so every ctrl-C or SIGKILL charged an "error" to whatever tool
+/// happened to be in flight — usually the slowest, most-watched ones.
+#[test]
+fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "interrupted mid-tool", "anthropic", "opus")
+        .expect("begin");
+    store
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({ "command": "false" }),
+                },
+            },
+        )
+        .expect("start c1");
+    store
+        .record_event(
+            id,
+            1,
+            &AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::Error {
+                    message: "exit status 1".into(),
+                },
+                duration_ms: 3,
+                speculated: false,
+            },
+        )
+        .expect("c1 fails for real");
+    store
+        .record_event(
+            id,
+            2,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c2".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({ "command": "sleep 60" }),
+                },
+            },
+        )
+        .expect("start c2");
+    // The owner is gone: the sweep settles c2 as abandoned, not errored.
+    store.mark_execution_interrupted(id).expect("sweep");
+
+    let tools: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), "/api/tools").body).expect("json");
+    let bash = tools
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|t| t["name"] == "bash")
+        .cloned()
+        .expect("bash row");
+    assert_eq!(bash["calls"], 2, "both calls count: {bash}");
+    assert_eq!(
+        bash["errors"], 1,
+        "only the real failure is an error (#3146): {bash}"
+    );
+    assert_eq!(
+        bash["abandoned"], 1,
+        "the abandonment is visible, apart from the error count: {bash}"
+    );
+}

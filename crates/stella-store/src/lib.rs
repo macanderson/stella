@@ -1258,7 +1258,7 @@ impl Store {
         let tool_histogram = {
             let mut stmt = conn.prepare(
                 "SELECT name, surface, COUNT(*), \
-                        SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) \
+                        SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END) \
                  FROM tool_calls WHERE execution_id = ?1 GROUP BY name, surface",
             )?;
             let rows = stmt.query_map(params![execution_id], |r| {

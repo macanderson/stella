@@ -1106,9 +1106,9 @@ fn skill_usage_records_per_execution_version_rows() {
     // `enabled` flag adoption never sets. Additive. v21 adds
     // `session_turn_diffs` (#1870): the precomputed per-turn workspace diff.
     // Additive. v22 adds `executions.journal_era` (#1981). v23 adds nullable
-    // `execution_reflection.parse_error` (#2175): the unreadable excerpt a
-    // starved learning loop leaves behind.
-    assert_eq!(SCHEMA_VERSION, 23);
+    // `execution_reflection.parse_error` (#2175). v24 splits `'abandoned'`
+    // from `'error'` in `tool_calls.state` (#3146), backfilled by rebuild.
+    assert_eq!(SCHEMA_VERSION, 24);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
