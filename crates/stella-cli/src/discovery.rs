@@ -1428,6 +1428,41 @@ mod tests {
         assert_eq!(lean_from_env(), None);
     }
 
+    /// The witness for `only:` (#3100, restoring the test #3081 deleted): a
+    /// closed set advertises exactly its members — no discovery layer — while
+    /// the plain-list form keeps `tool_search`, and, the load-bearing half,
+    /// execution stays permissive: withholding a schema is a prompt-budget
+    /// measure, never a capability gate, so a closed set cannot wedge a turn
+    /// on a tool the model knows from history but cannot see.
+    #[tokio::test]
+    async fn an_only_set_advertises_exactly_its_members_but_still_executes_a_withheld_tool() {
+        let inner = FakeInner;
+        let arm = || ["read_file", "bash"].map(String::from);
+        let closed =
+            full_set(&inner, std::env::temp_dir()).with_lean(Some(LeanConfig::closed(arm())));
+        let mut names: Vec<String> = closed.schemas().into_iter().map(|s| s.name).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["bash", "read_file"],
+            "an `only:` set must advertise exactly its members — `screenshot` stays hidden"
+        );
+        // The contrast, so the two forms can never quietly converge.
+        let open = full_set(&inner, std::env::temp_dir()).with_lean(Some(LeanConfig {
+            core: arm().into_iter().collect(),
+            discovery: true,
+        }));
+        let open_names: Vec<String> = open.schemas().into_iter().map(|s| s.name).collect();
+        assert!(
+            open_names.contains(&TOOL_SEARCH.to_string()),
+            "the plain-list form must keep the discovery layer: {open_names:?}"
+        );
+        match closed.execute("screenshot", &Value::Null).await {
+            ToolOutput::Ok { content } => assert_eq!(content, "inner ran screenshot"),
+            other => panic!("a closed set must still execute a withheld tool, got {other:?}"),
+        }
+    }
+
     /// The lean core may not withhold a tool the static prompt *commands*.
     ///
     /// Not "every tool the prompt names" — the prompts mention plenty that
