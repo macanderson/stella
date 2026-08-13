@@ -1039,11 +1039,11 @@ impl ToolRegistry {
                 if snapshot.is_none() {
                     let persisted = {
                         let root = self.root.clone();
-                        tokio::task::spawn_blocking(move || {
+                        let joined = tokio::task::spawn_blocking(move || {
                             crate::graph::load_storage_snapshot(&root)
                         })
-                        .await
-                        .unwrap_or_else(|_| Err("the storage map load was cancelled".into()))
+                        .await;
+                        crate::blocking::flatten("the storage map load", joined)
                     };
                     snapshot = match persisted {
                         Ok(persisted) => Some(self.merge_storage_overlay(persisted)),

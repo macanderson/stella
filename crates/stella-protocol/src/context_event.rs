@@ -17,13 +17,14 @@
 //! (as strings), never the `stella-core` record structs: `stella-core` depends on
 //! `stella-protocol`, so importing core types here would be a dependency cycle.
 //!
-//! **Status: schema landed, channel not yet wired.** Nothing in this workspace
-//! constructs or reads a [`LifecycleEventEnvelope`] today — the types and their
-//! golden JCS vectors exist so the wire shape (and therefore the `record_hash`
-//! preimages built from it) is pinned before the first emitter lands. Treat the
-//! bodies below as a published contract regardless: the golden vectors are the
-//! thing that makes a later rename a test failure rather than a silent hash
-//! change across replays.
+//! **Status: schema landed, channel not yet wired — the wiring is tracked in
+//! #3135.** Nothing in this workspace constructs or reads a
+//! [`LifecycleEventEnvelope`] today — the types and their golden JCS vectors
+//! exist so the wire shape (and therefore the `record_hash` preimages built
+//! from it) is pinned before the first emitter lands. Treat the bodies below
+//! as a published contract regardless: the golden vectors are the thing that
+//! makes a later rename a test failure rather than a silent hash change across
+//! replays.
 //!
 //! ## Forward compatibility
 //!

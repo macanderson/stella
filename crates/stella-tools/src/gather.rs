@@ -566,7 +566,7 @@ async fn gather(
     let graph_results = {
         let graph_root = root.to_path_buf();
         let symbols = inputs.symbols.clone();
-        let cancelled = inputs.symbols.clone();
+        let failed = inputs.symbols.clone();
         async move {
             if !graph_on {
                 return (
@@ -576,11 +576,9 @@ async fn gather(
             }
             tokio::task::spawn_blocking(move || graph_sweep(&graph_root, symbols))
                 .await
-                .unwrap_or_else(|_| {
-                    (
-                        symbol_failures(cancelled, "the code-graph sweep was cancelled".into()),
-                        None,
-                    )
+                .unwrap_or_else(|error| {
+                    let failure = crate::blocking::worker_failure("the code-graph sweep", error);
+                    (symbol_failures(failed, failure), None)
                 })
         }
     };

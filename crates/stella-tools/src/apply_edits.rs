@@ -65,9 +65,14 @@ struct ParsedEdit {
 
 /// One edit's validate-phase outcome, rendered into the per-edit report.
 enum EditVerdict {
-    /// Resolves cleanly; `occurrences` will be replaced.
+    /// Resolves cleanly; `occurrences` will be replaced, the first at byte
+    /// `offset` of the content this edit saw. The offset rides into the
+    /// report so distinct batches render distinct output — the stagnation
+    /// detector keys on byte-identical tool output, and occurrence counts
+    /// alone collide across different edits (#3176).
     Ok {
         occurrences: usize,
+        offset: usize,
     },
     Failed {
         reason: String,
@@ -314,8 +319,11 @@ impl Tool for ApplyEdits {
                     Some((old, new)) => (old.as_str(), new.as_str()),
                     None => (edit.old_string.as_str(), edit.new_string.as_str()),
                 };
+                // `find` returning `None` is exactly the zero-match case;
+                // the offset it returns otherwise stamps the report (#3176).
+                let first_match = simulated.find(old_string);
                 let count = simulated.matches(old_string).count();
-                if count == 0 {
+                let Some(offset) = first_match else {
                     // A prior edit in this batch consuming the match is a
                     // composition mistake, not drift — say which it is.
                     let attribution = if original.contains(&edit.old_string) {
@@ -342,7 +350,7 @@ impl Tool for ApplyEdits {
                     break 'verdict EditVerdict::Failed {
                         reason: format!("old_string not found in `{}`{attribution}", edit.path),
                     };
-                }
+                };
                 if count > 1 && !edit.replace_all {
                     break 'verdict EditVerdict::Failed {
                         reason: format!(
@@ -357,7 +365,10 @@ impl Tool for ApplyEdits {
                 } else {
                     simulated.replacen(old_string, new_string, 1)
                 };
-                EditVerdict::Ok { occurrences: count }
+                EditVerdict::Ok {
+                    occurrences: count,
+                    offset,
+                }
             };
             if matches!(verdict, EditVerdict::Failed { .. }) {
                 failures += 1;
@@ -370,8 +381,11 @@ impl Tool for ApplyEdits {
                 .iter()
                 .enumerate()
                 .map(|(i, v)| match v {
-                    EditVerdict::Ok { occurrences } => format!(
-                        "  edit {i} ({}): ok — {occurrences} occurrence(s)",
+                    EditVerdict::Ok {
+                        occurrences,
+                        offset,
+                    } => format!(
+                        "  edit {i} ({}): ok — {occurrences} occurrence(s) at byte {offset}",
                         edits[i].path
                     ),
                     EditVerdict::Failed { reason } => format!("  edit {i}: FAILED — {reason}"),
@@ -464,9 +478,26 @@ impl Tool for ApplyEdits {
             self.ledger.record_known(root, path, simulated);
         }
 
+        // Each touched file's final digest joins the per-edit offsets as the
+        // batch's identity stamp (#3176): the stagnation detector keys on
+        // byte-identical tool output, and without these two distinct batches
+        // with matching occurrence counts rendered the same bytes —
+        // `edit_file`'s constant success string killed a correct run that
+        // way. Deterministic by construction: content hashes, never timings.
+        let digests: String = order
+            .iter()
+            .map(|key| {
+                let (path, _, simulated) = &files[key];
+                format!(
+                    "\n  {path}: file sha256/8 {}",
+                    crate::staleness::sha256_8(simulated.as_bytes())
+                )
+            })
+            .collect();
+
         ToolOutput::Ok {
             content: format!(
-                "applied {} edits across {} file(s):\n{}",
+                "applied {} edits across {} file(s):\n{}{digests}",
                 edits.len(),
                 files.len(),
                 report(&verdicts)
@@ -553,6 +584,49 @@ mod tests {
             std::fs::read_to_string(dir.path().join("b.rs")).unwrap(),
             "fn b() { one }\n"
         );
+    }
+
+    /// The #3176 witness, batch flavor: two DIFFERENT batches against one
+    /// file, each with the same shape (one edit, one occurrence), must not
+    /// render byte-identical success output — the stagnation detector keys
+    /// on repeated identical tool output, and occurrence counts alone
+    /// collide across distinct edits.
+    #[tokio::test]
+    async fn distinct_batches_produce_distinct_success_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("input.tex"), "very big and very large\n").unwrap();
+        let apply = ApplyEdits::default();
+
+        let first = apply
+            .execute(
+                &serde_json::json!({ "edits": [edit("input.tex", "big", "huge")] }),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content: first } = first else {
+            panic!("expected ok, got: {first:?}");
+        };
+        let second = apply
+            .execute(
+                &serde_json::json!({ "edits": [edit("input.tex", "large", "vast")] }),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content: second } = second else {
+            panic!("expected ok, got: {second:?}");
+        };
+
+        assert_ne!(
+            first, second,
+            "two different batches must not render byte-identical output"
+        );
+        for output in [&first, &second] {
+            assert!(output.contains("at byte "), "offset missing: {output}");
+            assert!(
+                output.contains("file sha256/8 "),
+                "digest missing: {output}"
+            );
+        }
     }
 
     #[tokio::test]

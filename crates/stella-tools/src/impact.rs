@@ -358,11 +358,13 @@ pub(crate) async fn select_impacted(root: &Path) -> ImpactSelection {
     .await;
     // A cancelled/panicked blocking task is one more way selection can fail,
     // and it degrades exactly like the others: the full suite, never an
-    // error and never a silent narrowing.
-    selection.unwrap_or_else(|_| ImpactSelection::FullSuite {
-        note: "impact selection unavailable (the code-graph pass was cancelled) — ran the \
-               full suite"
-            .into(),
+    // error and never a silent narrowing — with the note naming which of
+    // the two it was (#3141).
+    selection.unwrap_or_else(|error| ImpactSelection::FullSuite {
+        note: format!(
+            "impact selection unavailable ({}) — ran the full suite",
+            crate::blocking::worker_failure("the code-graph pass", error)
+        ),
     })
 }
 

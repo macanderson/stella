@@ -229,6 +229,7 @@ pub struct NodeRow {
     /// column's NULL for every row. It is kept because the column exists and a
     /// point-in-time node reader would populate it — not because anything
     /// currently sets it. Read it as "not yet wired", never as "unknown".
+    /// Wiring it — or removing it from this projection — is tracked in #3136.
     pub valid_from: Option<String>,
     /// Transaction time the row was **first** written (RFC-3339). `upsert_node`
     /// updates content in place without touching it, so it is a creation time,
