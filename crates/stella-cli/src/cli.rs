@@ -666,9 +666,20 @@ pub(crate) enum Command {
 
     /// Analyze this workspace: domain taxonomy and code graph
     ///
-    /// Analyze this workspace and infer its domain taxonomy
+    /// Analyze this workspace: infer its domain taxonomy
     /// (.stella/domains.toml) — the tagging vocabulary for memories,
-    /// reflections, and every code-graph node/edge
+    /// reflections, and every code-graph node/edge — and build the
+    /// code-graph index (.stella/private/codegraph.db).
+    ///
+    /// Incremental re-runs happen automatically: unchanged files are
+    /// skipped by content hash, every session start catches the index up in
+    /// the background, a live watcher follows edits for the rest of the
+    /// session, and graph-backed tools run the same catch-up when they open
+    /// the index — so you rarely need to re-run this command for the index's
+    /// sake. The domain taxonomy is the part only `stella init` refreshes,
+    /// and it re-infers (a model call) only when the repository's shape has
+    /// changed; otherwise the existing .stella/domains.toml is reused at no
+    /// cost. Delete that file to force re-inference.
     Init,
 
     /// List every tool available to the agent this session

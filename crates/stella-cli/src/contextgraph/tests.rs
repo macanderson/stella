@@ -1234,6 +1234,7 @@ mod query_domain_scope_derivation {
         Domains {
             version: 1,
             inferred_by: "test".to_string(),
+            source_fingerprint: None,
             domains: vec![
                 Domain {
                     name: "retrieval".to_string(),

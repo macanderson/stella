@@ -1068,6 +1068,33 @@ async fn one_eager_pass_embeds_every_pending_chunk_no_matter_how_many_files() {
     );
 }
 
+/// The witness for #3102 finding 1 at the chunk rung: the eager pass reports
+/// its cumulative file count as it commits, one report per file, so a long
+/// pass can be narrated in the transcript while it happens.
+#[tokio::test]
+async fn an_eager_chunk_pass_reports_progress_as_files_commit() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    let mut reported: Vec<usize> = Vec::new();
+    let outcome = crate::search::warm_chunk_vectors_with_progress(
+        &root,
+        &ConceptEmbedder,
+        1_000,
+        &mut |files_embedded| reported.push(files_embedded),
+    )
+    .await;
+
+    let ChunkWarmOutcome::Warmed { files_embedded, .. } = outcome else {
+        panic!("expected Warmed, got {outcome:?}");
+    };
+    assert_eq!(
+        reported,
+        (1..=files_embedded).collect::<Vec<_>>(),
+        "one cumulative report per committed file"
+    );
+}
+
 /// A capped pass says honestly what it left behind, rather than reporting
 /// success over a partial index — the same discipline
 /// `crate::graph::semantic::WarmOutcome` holds for whole-file vectors.

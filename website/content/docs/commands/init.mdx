@@ -21,9 +21,24 @@ stella init [global flags]
 
 It works **offline** using a heuristic fallback, so it never hard-fails on configuration — you can initialize a workspace even without a resolvable provider credential.
 
+While it runs, `init` prints real progress into the transcript — live file counts from inside the index pass (`· 1500 files walked — 620 parsed, 871 unchanged, 9840 symbols…`), embedding counts as batches commit, and a line naming any model call it spends or skips — so a long pass reads as work, not a hang.
+
 <Callout type="info">
 Run `stella init` once per workspace to prime stella's understanding of your codebase. The generated files live under `<workspace>/.stella/`.
 </Callout>
+
+## Incremental behavior — what re-runs automatically
+
+The **code-graph index** stays fresh on its own, in four ways:
+
+1. **Re-running `stella init` is incremental.** A file whose content hash is unchanged is never re-parsed, so a re-run over an unchanged tree costs a walk, not a rebuild.
+2. **Every session start catches the index up automatically**, in the background, without blocking the first prompt.
+3. **A live file watcher follows edits** — the agent's own and external ones — re-indexing incrementally for the rest of the session.
+4. **Graph-backed tools refresh on use**: opening the index for a query runs the same hash-diff catch-up pass, so a query sees files written moments earlier.
+
+You therefore rarely need to re-run `stella init` for the index's sake.
+
+The **domain taxonomy** is the part only `stella init` refreshes — and it re-infers (a model call) only when the repository's shape has changed since the taxonomy was inferred. `.stella/domains.toml` records a fingerprint of exactly what the inference read (the directory structure, manifest set, and README head); when that fingerprint still matches, the existing taxonomy is reused at no cost and the transcript says so. Delete `.stella/domains.toml` to force re-inference, for example after switching to a stronger model.
 
 ## Flags
 

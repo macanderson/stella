@@ -159,6 +159,16 @@ impl EnvironmentIdentity {
 /// workspace root, git/worktree status, platform, OS release, login shell,
 /// and the scratch directory. Zero arguments, single purpose: report
 /// (invariant #9). No model line — see the module doc.
+///
+/// The description tells the model when the call is worth its cost (#3102):
+/// every fact here except the scratch directory is already in the CLI's
+/// byte-stable "Session environment" prompt block
+/// (`append_session_environment` renders from these same functions), so a
+/// model holding that block buys nothing but the scratch path by calling
+/// this. The tool stays because the scratch directory is prompt-unsafe (it
+/// differs per process, and the prompt block must stay byte-stable) and
+/// because hosts that assemble their own prompts (`stella-serve`) may carry
+/// no such block at all.
 pub struct GetEnvironment {
     /// The session scratch directory, mirroring the source
     /// `ToolRegistry::builtins` gives every other scratch-aware tool
@@ -173,8 +183,11 @@ impl Tool for GetEnvironment {
             name: "get_environment".into(),
             description: "Report this session's environment: workspace root, whether it is a \
                 git repository (and whether it is a linked worktree), platform/arch, OS \
-                release, login shell dialect, and the scratch directory path. Read this \
-                instead of spending calls on pwd, uname, or shell probing."
+                release, login shell dialect, and the scratch directory path. Your system \
+                prompt's Session environment block already states everything here except \
+                the scratch directory — call this only when you need the scratch directory \
+                path, or when no such block is in your prompt. Never spend calls on pwd, \
+                uname, or shell probing for these facts."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
@@ -263,6 +276,25 @@ mod tests {
         assert!(
             !content.to_lowercase().contains("model:"),
             "get_environment must never state a model — that is the CLI prompt layer's job: {content}"
+        );
+    }
+
+    /// The witness for #3102 finding 4: the schema description must steer the
+    /// model away from re-buying facts the prompt already carries. The audit
+    /// found the tool is NOT a strict subset of the Session environment block
+    /// — the scratch directory is tool-only (and the model line prompt-only)
+    /// — so the tool survives, but its description has to name that margin or
+    /// every call against a prompt-carrying session is a wasted one.
+    #[test]
+    fn the_description_names_the_scratch_directory_as_the_marginal_fact() {
+        let description = GetEnvironment { scratch_dir: None }.schema().description;
+        assert!(
+            description.contains("except the scratch directory"),
+            "the description must say the prompt already carries everything else: {description}"
+        );
+        assert!(
+            description.contains("call this only when"),
+            "the description must scope when the call is worth making: {description}"
         );
     }
 

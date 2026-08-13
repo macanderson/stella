@@ -68,7 +68,6 @@ mod fleet_spend;
 mod fleet_verbs;
 mod fleet_warmth;
 mod ingest_cmd;
-mod init_fx;
 mod inspect;
 mod interactive;
 mod invoke_skill;
@@ -993,7 +992,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-                term_policy::animation_disabled(cli.globals.no_anim),
             ),
         )
         .map_err(failure::CliFailure::from);
