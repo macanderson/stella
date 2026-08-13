@@ -339,12 +339,21 @@ async fn a_surface_embedder_cannot_answer_the_same_question() {
 /// With no embedder the answer must still be useful, and must say which
 /// strategy produced it — a name match wearing a meaning match's clothes is
 /// worse than no answer.
+///
+/// The query is a *term*, not a symbol name: `scrub` appears inside
+/// `scrub_record` and `Scrubber` but names neither, so it reaches the
+/// term-matching rung rather than the exact one (#3125). An exact name takes
+/// the shorter route now, which is
+/// [`an_exact_name_without_an_embedder_is_still_a_certainty`]'s subject — this
+/// test is about the rung that guesses.
 #[tokio::test]
 async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let (root, graph) = indexed_fixture(workspace.path());
 
-    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    // `scrub` is a fragment of `scrub_record`, not an exact symbol, so the
+    // certainty rung stays out and the name rung is what answers.
+    let answer = dispatch(Some(&graph), &root, "scrub", None).await;
     assert_eq!(answer.strategies, vec![Strategy::GraphNames]);
     assert_eq!(
         answer.hits.first().map(|hit| hit.path.as_str()),
@@ -356,7 +365,7 @@ async fn without_an_embedder_the_answer_is_useful_and_says_it_is_a_name_match() 
     let content = content_of(&render(
         Some(&graph),
         &root,
-        "scrub_record",
+        "scrub",
         &answer,
         SearchConfig::default(),
     ));
@@ -465,6 +474,406 @@ async fn each_depth_renders_a_superset_of_the_one_below() {
     graph.shutdown();
 }
 
+/// **The default-configuration witness.** With no dial turned, the top hit
+/// must arrive carrying its signature and source body — the exact facets
+/// whose absence sends the agent back for the `read_file` this tool exists
+/// to replace. Before the allocator's promotion pass and the depth default
+/// moving to MAX, the default answer stopped at `imports:` and left ninety
+/// percent of the budget unspent while promising "source already attached".
+#[tokio::test]
+async fn the_default_answer_carries_the_body_without_a_follow_up_read() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    let content = content_of(&render(
+        Some(&graph),
+        &root,
+        QUESTION,
+        &answer,
+        SearchConfig::default(),
+    ));
+    assert!(
+        content.contains("signature:"),
+        "the default answer carried no signature — a follow-up call would be needed: {content}"
+    );
+    assert!(
+        content.contains("body of `"),
+        "the default answer carried no source body — the read_file this tool replaces would \
+         still be paid: {content}"
+    );
+    assert!(
+        content.contains("scrub_record"),
+        "the top hit lost its symbols at the default depth: {content}"
+    );
+
+    graph.shutdown();
+}
+
+/// A file-scan that hit its walk cap must say so: on an unindexed tree
+/// bigger than the cap, a silent miss reads as absence — the exact failure
+/// the module docs argue against.
+#[test]
+fn a_capped_scan_discloses_what_it_never_saw() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for index in 0..6 {
+        fs::write(
+            workspace.path().join(format!("file{index}.txt")),
+            "nothing relevant\n",
+        )
+        .expect("write");
+    }
+    fs::write(workspace.path().join("aaa.txt"), "credential rotation\n").expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+
+    let capped = super::scan::scan_hits_bounded(&root, "credential rotation", 10, 3);
+    assert!(
+        capped.exhausted,
+        "a walk over 7 files with a 3-file cap must report exhaustion"
+    );
+
+    let full = super::scan::scan_hits_bounded(&root, "credential rotation", 10, 100);
+    assert!(
+        !full.exhausted,
+        "a walk that saw the whole tree must not claim exhaustion"
+    );
+    assert_eq!(full.matched, 1);
+    assert_eq!(
+        full.hits.first().map(|hit| hit.path.as_str()),
+        Some("aaa.txt")
+    );
+}
+
+/// The capped walk is shallow-first: the files most likely to matter — the
+/// root's own — are inside the cap, not past it. The old stack-based walk
+/// descended the alphabetically last subtree first, so a capped scan kept
+/// exactly the least useful corner of the tree.
+#[test]
+fn a_capped_scan_sees_the_root_before_the_leaves() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let deep = workspace.path().join("zzz").join("deeper");
+    fs::create_dir_all(&deep).expect("mkdir");
+    for index in 0..4 {
+        fs::write(deep.join(format!("noise{index}.txt")), "rotation\n").expect("write");
+    }
+    fs::write(workspace.path().join("rotation.txt"), "rotation\n").expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+
+    let capped = super::scan::scan_hits_bounded(&root, "rotation", 10, 1);
+    assert_eq!(
+        capped.hits.first().map(|hit| hit.path.as_str()),
+        Some("rotation.txt"),
+        "a 1-file cap must spend its budget at the root, not in the deepest subtree: {:?}",
+        capped.hits
+    );
+}
+
+/// A name-match answer wider than the shown list must disclose the cut:
+/// "10 results" over 14 matching files reads as "only 10 matched".
+#[tokio::test]
+async fn a_cut_name_match_list_discloses_how_many_matched() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for index in 0..14 {
+        let file = workspace.path().join(format!("src/widget_{index:02}.rs"));
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, format!("pub fn widget_{index:02}() {{}}\n")).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    let answer = dispatch(Some(&graph), &root, "widget", None).await;
+    assert_eq!(answer.strategies, vec![Strategy::GraphNames]);
+    assert_eq!(answer.hits.len(), 10, "the shown list stays capped");
+    let note = answer.note.expect("a cut list must carry a note");
+    assert!(
+        note.contains("14 files matched"),
+        "the note must say how many matched: {note}"
+    );
+
+    graph.shutdown();
+}
+
+/// A misconfigured embedder must not eat the dispatch's own disclosure: over
+/// a 14-match corpus whose name rung cuts its list, the one note line carries
+/// **both** the cut ("14 files matched") and the misconfiguration — the
+/// assignment this replaces kept only the newest caveat.
+#[tokio::test]
+async fn a_misconfigured_embedder_note_joins_the_cut_list_note_instead_of_replacing_it() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for index in 0..14 {
+        let file = workspace.path().join(format!("src/widget_{index:02}.rs"));
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, format!("pub fn widget_{index:02}() {{}}\n")).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+
+    let report = super::report_with(
+        &root,
+        "widget",
+        SearchConfig::default(),
+        stella_embed::Resolution::Incomplete("STELLA_EMBED_MODEL is unset".into()),
+    )
+    .await;
+
+    let note = report.note.expect("both caveats need a note to live in");
+    assert!(
+        note.contains("14 files matched"),
+        "the cut-list disclosure must survive the misconfig note: {note}"
+    );
+    assert!(
+        note.contains("misconfigured"),
+        "the misconfiguration must still be said: {note}"
+    );
+}
+
+/// The ranking's memory guard is disclosed when it fills — the promise
+/// `RANK_CEILING`'s doc makes ("reported, never silent") held nowhere in the
+/// code before this test existed.
+#[test]
+fn a_full_candidate_list_earns_a_ceiling_note() {
+    assert!(super::ceiling_note(super::RANK_CEILING, 0).is_some());
+    assert!(super::ceiling_note(0, super::RANK_CEILING).is_some());
+    assert_eq!(super::ceiling_note(5, 7), None);
+}
+
+/// Two caveats must both survive into the one note line.
+#[test]
+fn merging_notes_loses_neither() {
+    assert_eq!(
+        super::merge_notes(Some("first".into()), Some("second".into())),
+        Some("first; second".into())
+    );
+    assert_eq!(
+        super::merge_notes(None, Some("only".into())),
+        Some("only".into())
+    );
+    assert_eq!(
+        super::merge_notes(Some("only".into()), None),
+        Some("only".into())
+    );
+    assert_eq!(super::merge_notes(None, None), None);
+}
+
+/// An attribute between a declaration and its doc comment is not prose: the
+/// quoted doc must skip `#[must_use]` and still reach the real comment above
+/// it.
+#[test]
+fn a_doc_comment_walk_skips_attributes_instead_of_quoting_them() {
+    let source = "/// Keeps confidential material out of diagnostics.\n\
+                  #[must_use]\n\
+                  pub fn scrub() {}\n";
+    let symbol = stella_graph::NeighborhoodSymbol {
+        name: "scrub".into(),
+        kind: "function".into(),
+        start_line: 3,
+    };
+    let doc = super::enrich::doc_comment(Some(source), &symbol).expect("a doc line");
+    assert!(
+        !doc.contains("must_use"),
+        "the attribute was quoted as prose: {doc}"
+    );
+    assert!(
+        doc.contains("confidential material"),
+        "the real doc comment above the attribute was lost: {doc}"
+    );
+}
+
+/// **The #3125 witness.** An exact symbol name must not lose to semantic
+/// ranking. The embedder here scores every file identically, so the semantic
+/// rung returns everything with ties broken by path — exactly the shape that
+/// buried the one definition of `ContextFrame` at rank 5 of 139 on a real
+/// corpus. Only the exact rung puts the defining file first, and the `via:`
+/// line must name both contributors.
+#[tokio::test]
+async fn an_exact_symbol_name_outranks_the_semantic_guess() {
+    /// Scores everything at cosine 1.0 — the admission floor rejects
+    /// nothing, so the semantic rung can never come back empty.
+    #[derive(Debug)]
+    struct UniformEmbedder;
+
+    #[async_trait]
+    impl Embedder for UniformEmbedder {
+        fn fingerprint(&self) -> EmbedderFingerprint {
+            EmbedderFingerprint {
+                model_id: "uniform".into(),
+                revision: "1".into(),
+                dims: DIMS,
+                normalization: "l2".into(),
+            }
+        }
+
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+            if texts.is_empty() {
+                return Err(EmbedError::EmptyInput);
+            }
+            let fingerprint = self.fingerprint().id();
+            Ok(texts
+                .iter()
+                .map(|_| Embedding {
+                    fingerprint: fingerprint.clone(),
+                    vector: vec![1.0, 0.0, 0.0, 0.0],
+                })
+                .collect())
+        }
+
+        fn similarity_posture(&self) -> SimilarityPosture {
+            SimilarityPosture::Semantic {
+                admission_floor: 0.2,
+            }
+        }
+    }
+
+    let workspace = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(workspace.path().join("src")).expect("mkdir");
+    // `aaa.rs` sorts first, so the all-tied semantic ranking leads with it;
+    // only the exact rung can put the actual definition first.
+    fs::write(
+        workspace.path().join("src/aaa.rs"),
+        "pub fn unrelated() {}\n",
+    )
+    .expect("write");
+    fs::write(
+        workspace.path().join("src/zzz.rs"),
+        "pub fn uniquely_named_widget() {}\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    let answer = dispatch(
+        Some(&graph),
+        &root,
+        "uniquely_named_widget",
+        Some(&UniformEmbedder),
+    )
+    .await;
+    let top = answer.hits.first().expect("a hit");
+    assert_eq!(
+        top.path, "src/zzz.rs",
+        "the defining file must be rank 1, not wherever the tie-break put it: {:?}",
+        answer.hits
+    );
+    assert!(
+        top.why.contains("EXACT name match"),
+        "the pinned hit must say why it leads: {}",
+        top.why
+    );
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol, Strategy::Semantic],
+        "via: must name both contributors"
+    );
+
+    graph.shutdown();
+}
+
+/// The body and signature the answer pays for must describe the symbol the
+/// query MATCHED, not whatever sits first in the file. Before `Hit::focus`,
+/// a chunk hit on the third function in a file rendered the body of an
+/// unrelated one-line struct above it — the answer's most expensive facet
+/// spent on its least relevant content.
+#[tokio::test]
+async fn the_matched_symbol_leads_the_detailed_facets() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(workspace.path().join("src")).expect("mkdir");
+    // The first symbol shares no concept with the query; the second is the
+    // match. Only a focus-aware renderer quotes the second's body.
+    fs::write(
+        workspace.path().join("src/mixed.rs"),
+        "pub fn matrix_multiply_rows() {\n\
+         let sum = 1;\n\
+         }\n\
+         pub fn scrub_credentials() {\n\
+         let password = ();\n\
+         let secret = ();\n\
+         }\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    let answer = dispatch(
+        Some(&graph),
+        &root,
+        "sensitive credentials",
+        Some(&ConceptEmbedder),
+    )
+    .await;
+    let top = answer.hits.first().expect("a hit");
+    assert_eq!(top.path, "src/mixed.rs");
+    assert_eq!(
+        top.focus.as_deref(),
+        Some("scrub_credentials"),
+        "the chunk that ranked must name the symbol it matched: {:?}",
+        answer.hits
+    );
+
+    let content = content_of(&render(
+        Some(&graph),
+        &root,
+        "sensitive credentials",
+        &answer,
+        SearchConfig::default(),
+    ));
+    assert!(
+        content.contains("body of `scrub_credentials`"),
+        "the body facet quoted the wrong symbol: {content}"
+    );
+
+    graph.shutdown();
+}
+
+/// A caller entry is a located citation (`fn x (path:line)`), never the
+/// site-less `caller of X` placeholder that `ContextFrame::title` carries —
+/// every caller deduplicated into one entry naming no file, which told the
+/// model nothing it could follow.
+#[tokio::test]
+async fn caller_entries_carry_their_site_not_a_placeholder() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(workspace.path().join("src")).expect("mkdir");
+    fs::write(
+        workspace.path().join("src/callee.rs"),
+        "pub fn target_fn() {}\n",
+    )
+    .expect("write");
+    fs::write(
+        workspace.path().join("src/caller.rs"),
+        "pub fn calling_site() {\n    target_fn();\n}\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    let block = super::enrich::render_hit(
+        Some(&graph),
+        &root,
+        &Hit {
+            path: "src/callee.rs".into(),
+            why: "fixture".into(),
+            focus: None,
+        },
+        Depth::new(8),
+    );
+    assert!(
+        block.contains("callers:"),
+        "no callers line rendered: {block}"
+    );
+    assert!(
+        block.contains("src/caller.rs"),
+        "the caller entry must cite its site: {block}"
+    );
+    assert!(
+        !block.contains("caller of "),
+        "the placeholder title leaked into the answer: {block}"
+    );
+
+    graph.shutdown();
+}
+
 /// A budget too small for every hit must say so. An agent that cannot tell a
 /// complete answer from a truncated one stops looking, which is the exact
 /// failure this line prevents.
@@ -474,6 +883,7 @@ fn a_truncated_answer_says_it_was_truncated() {
         .map(|index| Hit {
             path: format!("src/file{index}.rs"),
             why: "ranked by MEANING against your query (cosine 0.900)".into(),
+            focus: None,
         })
         .collect();
     let answer = super::Answer {
@@ -587,6 +997,7 @@ fn the_rendered_hit_count_matches_the_allocation() {
         .map(|index| Hit {
             path: format!("src/file{index}.rs"),
             why: "matched 1 query term(s)".into(),
+            focus: None,
         })
         .collect();
     let answer = super::Answer {
@@ -732,6 +1143,90 @@ async fn a_file_whose_symbols_collide_on_rendered_text_does_not_spin_the_pass() 
     );
 }
 
+/// **The witness for #3124.** A workspace with nothing left to embed must stop
+/// describing itself as partial.
+///
+/// It is the same collision as #3128, read by a different consumer: the note
+/// compared `embedded_chunk_count` against `symbol_count`, and chunk rows are
+/// keyed on the hash of the rendered chunk, so the two byte-identical bodies
+/// below store one row for two symbols and that comparison can never hold
+/// again. Measured on a 158-file workspace, coverage froze at 1,810 of 1,814
+/// and every search carried the warning — whose own advice is to go back to
+/// `grep`, the call this module exists to remove.
+///
+/// The premise is asserted first, so this cannot pass vacuously: if the fixture
+/// ever stops colliding, the old comparison would have succeeded too and the
+/// test would be proving nothing.
+#[tokio::test]
+async fn a_fully_embedded_workspace_stops_calling_itself_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let file = workspace.path().join("src/accessors.rs");
+    fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+    // Two distinct symbols, byte-identical rendered text — the ordinary
+    // trait-accessor shape, not a contrived one.
+    fs::write(
+        &file,
+        "mod a {\n    pub fn id() -> u8 { 0 }\n}\n\
+         mod b {\n    pub fn id() -> u8 { 0 }\n}\n",
+    )
+    .expect("write");
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    crate::graph::open_or_build(&root)
+        .expect("open_or_build")
+        .graph
+        .shutdown();
+
+    let fingerprint = ConceptEmbedder.fingerprint().id();
+    let warmed = warm_chunk_vectors(&root, &ConceptEmbedder, 1_000).await;
+    assert!(
+        matches!(warmed, ChunkWarmOutcome::Warmed { .. }),
+        "expected Warmed, got {warmed:?}"
+    );
+
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    super::catch_up_embeddings(&opened.graph, &ConceptEmbedder, &fingerprint)
+        .await
+        .expect("whole-file vectors");
+
+    // The premise: the collision really happened, so the count comparison this
+    // note used to make is unsatisfiable for this workspace.
+    let symbols = opened.graph.symbol_count().expect("symbol_count");
+    let chunks = opened
+        .graph
+        .embedded_chunk_count(&fingerprint)
+        .expect("embedded_chunk_count");
+    assert!(
+        chunks < symbols,
+        "fixture no longer collides ({chunks} chunk rows for {symbols} symbols) — the old \
+         `chunks >= symbols` test would have passed and this witness proves nothing"
+    );
+
+    let note = super::coverage_note(&opened.graph, &fingerprint);
+    opened.graph.shutdown();
+    assert!(
+        note.is_none(),
+        "a workspace with nothing left to embed still calls itself partial: {note:?}"
+    );
+}
+
+/// The other half of the same contract: a workspace that genuinely has work
+/// left must still say so. Without this, #3124 could be "fixed" by never
+/// warning at all, which loses the disclosure #3117 added.
+#[tokio::test]
+async fn a_workspace_with_work_left_still_says_it_is_partial() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+
+    // Indexed, nothing embedded at all — the state right after `stella init`
+    // on a build with no embedder configured.
+    let opened = crate::graph::open_or_build(&root).expect("open_or_build");
+    let note = super::coverage_note(&opened.graph, &ConceptEmbedder.fingerprint().id());
+    opened.graph.shutdown();
+
+    let note = note.expect("an unembedded workspace must disclose that it is partial");
+    assert!(note.contains("PARTIAL INDEX"), "{note}");
+}
+
 /// The blank-query refusal lives in `report` — one validation both doors
 /// share — and the agent's door still surfaces it. This pins the refusal
 /// from the `execute` side so moving the check cannot silently lose it.
@@ -761,10 +1256,12 @@ fn the_report_preserves_rank_order_and_strategy_labels() {
             Hit {
                 path: "src/first.rs".into(),
                 why: "the top hit".into(),
+                focus: None,
             },
             Hit {
                 path: "src/second.rs".into(),
                 why: "the runner-up".into(),
+                focus: None,
             },
         ],
         strategies: vec![Strategy::Semantic, Strategy::GraphNames],
@@ -787,4 +1284,135 @@ fn the_report_preserves_rank_order_and_strategy_labels() {
         Some("degraded: the backend hiccuped")
     );
     assert_eq!(report.rendered, rendered);
+}
+
+/// **The witness for #3125.** A query that exactly names an indexed symbol
+/// returns that symbol's defining file first, even when embedding rank puts
+/// something else on top.
+///
+/// The fixture is built so semantic ranking is *wrong on purpose* and provably
+/// so: the decoy's chunk contains only dimension-2 words, so it projects onto
+/// the query's own direction and scores 1.0, while the definition's chunk
+/// carries a dimension-3 word from its body and scores lower. On `main` the
+/// ladder returns at the semantic rung and the decoy is rank 1.
+///
+/// Measured cause: asked for `ContextFrame` — one definition in its repository
+/// — the semantic-only ladder returned it at rank 5 of 139, because the graph's
+/// exact-name rung is unreachable whenever semantic returns anything, and an
+/// admission floor of 0.25 against a corpus whose lowest cosine is 0.418 means
+/// it always does.
+#[tokio::test]
+async fn an_exact_symbol_name_beats_the_ranking_that_would_bury_it() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for (path, body) in [
+        // The definition. Its body pulls it toward another dimension, so it
+        // cannot win the ranking on its own.
+        (
+            "src/holder.rs",
+            "pub fn socket_registry_of(matrix: &Matrix) -> u8 {\n\
+             matrix.rows().sum();\n\
+             0\n\
+             }\n",
+        ),
+        // The decoy: nothing but dimension-2 words, so it scores 1.0 against
+        // this query and outranks the definition every time.
+        (
+            "src/wirehub.rs",
+            "//! socket header request http wire\n\
+             pub fn send_socket_header_request() {\n\
+             socket_header_request_wire();\n\
+             }\n",
+        ),
+    ] {
+        let file = workspace.path().join(path);
+        fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        fs::write(&file, body).expect("write");
+    }
+    let root = workspace.path().canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+
+    // The premise: the ranking really does prefer the decoy. Without this the
+    // test could pass on `main` by luck and prove nothing.
+    let (ranking, _) = super::semantic_hits(&graph, &ConceptEmbedder, "socket_registry_of")
+        .await
+        .expect("the fixture must rank");
+    assert_eq!(
+        ranking.first().map(|hit| hit.path.as_str()),
+        Some("src/wirehub.rs"),
+        "the decoy must outrank the definition semantically, or this witness proves nothing: {ranking:?}"
+    );
+
+    let answer = dispatch(
+        Some(&graph),
+        &root,
+        "socket_registry_of",
+        Some(&ConceptEmbedder),
+    )
+    .await;
+    graph.shutdown();
+
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/holder.rs"),
+        "the defining file must lead: {:?}",
+        answer.hits
+    );
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol, Strategy::Semantic],
+        "`via:` must name both rungs, never silently skip one"
+    );
+    assert!(
+        answer.hits[0].why.contains("EXACT"),
+        "the leading hit must say it is a fact rather than a score: {:?}",
+        answer.hits[0]
+    );
+    assert!(
+        answer
+            .hits
+            .iter()
+            .filter(|h| h.path == "src/holder.rs")
+            .count()
+            == 1,
+        "a file reached by both rungs must be reported once: {:?}",
+        answer.hits
+    );
+}
+
+/// The exact rung needs no embedder: it reads the graph, not a vector index.
+/// On a workspace with no embedding backend — the common case on
+/// Terminal-Bench — a symbol name should still be answered with a fact rather
+/// than with a term-overlap guess.
+#[tokio::test]
+async fn an_exact_name_without_an_embedder_is_still_a_certainty() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, "scrub_record", None).await;
+    graph.shutdown();
+    assert_eq!(answer.strategies, vec![Strategy::ExactSymbol]);
+    assert_eq!(
+        answer.hits.first().map(|hit| hit.path.as_str()),
+        Some("src/hkey.rs"),
+        "{:?}",
+        answer.hits
+    );
+}
+
+/// A question is not a symbol, so the exact rung must stay out of the way —
+/// otherwise every sentence-shaped search pays a graph lookup that can only
+/// ever miss, and `via:` starts naming a strategy that did nothing.
+#[tokio::test]
+async fn a_sentence_never_reaches_the_exact_symbol_rung() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_fixture(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, QUESTION, Some(&ConceptEmbedder)).await;
+    graph.shutdown();
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::Semantic],
+        "a multi-word question must not engage the exact-symbol rung"
+    );
 }

@@ -107,6 +107,14 @@ fn builtin_probes() -> Vec<Probe> {
                   so a pass cannot be an accident of it"
                 .into(),
         },
+        Probe {
+            query: "SearchConfig".into(),
+            any_of: vec!["crates/stella-tools/src/search.rs".into()],
+            within: 1,
+            why: "#3125: a bare symbol name is a certainty, not a ranking problem — the defining \
+                  file must be rank 1 even when the semantic rung returns most of the corpus"
+                .into(),
+        },
     ]
 }
 

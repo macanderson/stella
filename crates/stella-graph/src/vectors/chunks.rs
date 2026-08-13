@@ -196,13 +196,46 @@ pub fn line_span(content: &str, start_line: u32, end_line: u32) -> String {
         .join("\n")
 }
 
+/// The one predicate for "this file still needs a chunk pass", shared by
+/// [`pending_chunks`] and [`pending_chunk_file_count`] so the page of work and
+/// the count of it can never disagree. `?1` is the fingerprint.
+///
+/// **It is a coverage marker, not a count comparison** (#3128). The obvious
+/// spelling — raw symbol count against stored chunk-vector rows — is wrong in
+/// one direction and permanently so: rows are keyed
+/// `(file_id, chunk_sha256, fingerprint)`, and `chunk_sha256` hashes the
+/// *rendered* chunk, so two different symbols whose rendered text is
+/// byte-identical collapse to one row. Two trait accessors that both read
+/// `&self.id`, or two `fn execute() { todo!() }` stubs across fixtures in one
+/// test file, are enough. The symbol count then exceeds the row count forever,
+/// and the file is re-selected on every pass no matter how correctly and how
+/// often it has been embedded.
+///
+/// Asking instead whether the file carries **any** chunk vector stamped with
+/// its current content hash is exact here, because a chunk pass is per-file
+/// atomic: `embed_and_store_chunk_file` gathers every vector the file needs
+/// before it writes any of them, and re-stamps `file_sha256` on the rows it
+/// skipped. So a file is either untouched at this content hash or completely
+/// covered at it — there is no partial state for the marker to misread. Edited
+/// files still re-enter: their new `content_sha256` matches no stored row.
+///
+/// The `EXISTS` on symbols is load-bearing rather than tidiness. Without it a
+/// file with no symbols at all — an empty source file, a markdown document with
+/// no headings — matches "carries no chunk vector" trivially and would be
+/// selected on every pass forever, which is the very bug this predicate exists
+/// to remove, merely relocated.
+const NEEDS_CHUNK_PASS: &str = "EXISTS (SELECT 1 FROM code_graph_symbols s WHERE s.file_id = f.id) \
+     AND NOT EXISTS (SELECT 1 FROM code_graph_chunk_vectors v \
+                     WHERE v.file_id = f.id AND v.fingerprint = ?1 \
+                       AND v.file_sha256 = f.content_sha256)";
+
 /// Up to `limit` files whose chunks are not fully embedded under
 /// `fingerprint`, with each chunk rendered and hashed.
 ///
-/// "Not fully embedded" is a pure count comparison — how many symbols the file
-/// has against how many chunk vectors it carries stamped with the file's
-/// *current* hash. That is what keeps a scan over an up-to-date workspace from
-/// re-reading every file on disk to discover there is nothing to do.
+/// "Not fully embedded" is `NEEDS_CHUNK_PASS` — a coverage marker read
+/// straight from the index, which is what keeps a scan over an up-to-date
+/// workspace from re-reading every file on disk to discover there is nothing
+/// to do.
 ///
 /// Ordered by path and resumed through a path cursor, filling **past**
 /// unreadable files rather than spending the window on them — the same
@@ -213,17 +246,13 @@ pub fn pending_chunks(
     fingerprint: &str,
     limit: usize,
 ) -> Result<PendingChunkScan, GraphError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT f.id, f.path, f.content_sha256 \
          FROM code_graph_files f \
-         WHERE f.path > ?2 \
-           AND (SELECT COUNT(*) FROM code_graph_symbols s WHERE s.file_id = f.id) > \
-               (SELECT COUNT(*) FROM code_graph_chunk_vectors v \
-                WHERE v.file_id = f.id AND v.fingerprint = ?1 \
-                  AND v.file_sha256 = f.content_sha256) \
+         WHERE f.path > ?2 AND {NEEDS_CHUNK_PASS} \
          ORDER BY f.path \
-         LIMIT ?3",
-    )?;
+         LIMIT ?3"
+    ))?;
 
     let mut scan = PendingChunkScan::default();
     // The empty string sorts before every non-empty path under SQLite's
@@ -480,18 +509,18 @@ pub fn chunk_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphE
     Ok(count.max(0) as usize)
 }
 
-/// How many indexed files still have a symbol with no chunk vector under
-/// `fingerprint` — the same WHERE clause [`pending_chunks`] scans, as a count
+/// How many indexed files still need a chunk pass under `fingerprint` — the
+/// same `NEEDS_CHUNK_PASS` predicate [`pending_chunks`] scans, as a count
 /// rather than a page of rendered work. An eager pass reports this as
 /// `remaining` without paying for a render-and-hash pass over files it is
 /// about to discard the content of.
+///
+/// Because the predicate is exact, **zero here means done**: a caller may treat
+/// it as the completeness oracle it reads like, which
+/// `stella_tools::search::coverage_note` does (#3124).
 pub fn pending_chunk_file_count(conn: &Connection, fingerprint: &str) -> Result<usize, GraphError> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM code_graph_files f \
-         WHERE (SELECT COUNT(*) FROM code_graph_symbols s WHERE s.file_id = f.id) > \
-               (SELECT COUNT(*) FROM code_graph_chunk_vectors v \
-                WHERE v.file_id = f.id AND v.fingerprint = ?1 \
-                  AND v.file_sha256 = f.content_sha256)",
+        &format!("SELECT COUNT(*) FROM code_graph_files f WHERE {NEEDS_CHUNK_PASS}"),
         params![fingerprint],
         |row| row.get(0),
     )?;
