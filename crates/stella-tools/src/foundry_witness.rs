@@ -253,7 +253,7 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
     let candidate = CustomToolSet::new(inner, vec![tool.clone()], root.to_path_buf());
     let first = match candidate.execute(&tool.name, &input).await {
         ToolOutput::Ok { content } => content,
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             return WitnessVerdict::Refuted {
                 why: one_line(&message),
             };
@@ -268,7 +268,7 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
     // observation, or nothing can ever re-check it.
     let second = match candidate.execute(&tool.name, &input).await {
         ToolOutput::Ok { content } => content,
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             return WitnessVerdict::Unstable {
                 expected: expect,
                 second: format!("error: {}", one_line(&message)),

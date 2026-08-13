@@ -1075,7 +1075,7 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
 
     async fn execute(&self, name: &str, input: &serde_json::Value) -> stella_protocol::ToolOutput {
         if !VERIFIER_TOOL_ALLOWLIST.contains(&name) {
-            return stella_protocol::ToolOutput::Error {
+            return stella_protocol::ToolOutput::Error { class: None,
                 message: format!(
                     "`{name}` is not available to the goal verifier: only the tools its \
                      instructions name ({}) may be called",

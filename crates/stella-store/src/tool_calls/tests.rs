@@ -35,7 +35,7 @@ fn ok_result(call_id: &str, content: &str, duration_ms: u64) -> AgentEvent {
 fn err_result(call_id: &str, message: &str) -> AgentEvent {
     AgentEvent::ToolResult {
         call_id: call_id.into(),
-        output: ToolOutput::Error {
+        output: ToolOutput::Error { class: None,
             message: message.into(),
         },
         duration_ms: 1,

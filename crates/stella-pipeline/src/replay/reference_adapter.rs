@@ -191,7 +191,7 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
                             content: String::new(),
                         }
                     } else {
-                        ToolOutput::Error {
+                        ToolOutput::Error { class: None,
                             message: "reference reported failure".to_string(),
                         }
                     };

@@ -462,7 +462,7 @@ impl Tool for Explorations {
         if let Some(slice) = input.get("slice").and_then(|v| v.as_str()) {
             let Some(record) = records.iter().find(|r| r.slice == slice) else {
                 let available: Vec<&str> = records.iter().map(|r| r.slice.as_str()).collect();
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "no exploration saved for slice `{slice}` — available: [{}]",
                         available.join(", ")
@@ -649,13 +649,13 @@ impl Tool for SaveExploration {
         let slice = match crate::input::required_str(input, "slice") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
         };
         if !valid_slice(slice) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "invalid slice slug `{slice}` — use 1-64 lowercase letters, digits, - or _"
                 ),
@@ -666,7 +666,7 @@ impl Tool for SaveExploration {
             input.get("summary").and_then(|v| v.as_str()),
             input.get("content").and_then(|v| v.as_str()),
         ) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "missing required field(s): `title`, `summary`, and `content` are all \
                           required"
                     .into(),
@@ -718,7 +718,7 @@ impl Tool for SaveExploration {
 
         let dir = root.join(EXPLORATIONS_DIR);
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("could not create {}: {e}", dir.display()),
             };
         }
@@ -727,13 +727,13 @@ impl Tool for SaveExploration {
         let json = match serde_json::to_string_pretty(&record) {
             Ok(json) => json,
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("could not serialize exploration record: {e}"),
                 };
             }
         };
         if let Err(message) = write_atomically(&path, json.as_bytes()).await {
-            return ToolOutput::Error { message };
+            return ToolOutput::Error { class: None, message };
         }
         let mut note = format!(
             "{} exploration `{slice}` ({} chars, {} files tracked for staleness) — other \

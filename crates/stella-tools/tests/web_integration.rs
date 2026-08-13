@@ -44,13 +44,13 @@ fn auth_from(toml_text: &str) -> Arc<WebAuthState> {
 fn expect_ok(output: ToolOutput) -> String {
     match output {
         ToolOutput::Ok { content } => content,
-        ToolOutput::Error { message } => panic!("expected Ok, got error: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected Ok, got error: {message}"),
     }
 }
 
 fn expect_error(output: ToolOutput) -> String {
     match output {
-        ToolOutput::Error { message } => message,
+        ToolOutput::Error { message, .. } => message,
         ToolOutput::Ok { content } => panic!("expected Error, got: {content}"),
     }
 }

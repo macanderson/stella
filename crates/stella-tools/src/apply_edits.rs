@@ -247,7 +247,7 @@ impl Tool for ApplyEdits {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let edits = match parse_edits(input) {
             Ok(edits) => edits,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         let dry_run = input
             .get("dry_run")
@@ -260,7 +260,7 @@ impl Tool for ApplyEdits {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("cannot open workspace root: {e}"),
                 };
             }
@@ -381,7 +381,7 @@ impl Tool for ApplyEdits {
         };
 
         if failures > 0 {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "{failures} of {} edits failed validation — NOTHING was written \
                      (all-or-nothing):\n{}",
@@ -453,7 +453,7 @@ impl Tool for ApplyEdits {
                         written.len()
                     );
                 }
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "failed to write `{path}`: {e} — batch aborted{rollback_note}"
                     ),
@@ -510,7 +510,7 @@ mod tests {
                     "{content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert_eq!(
             std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
@@ -541,7 +541,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("NOTHING was written"), "{message}");
                 assert!(message.contains("edit 0 (a.rs): ok"), "{message}");
                 assert!(message.contains("edit 1: FAILED"), "{message}");
@@ -597,7 +597,7 @@ mod tests {
                 assert!(content.contains("dry run"), "{content}");
                 assert!(content.contains("nothing"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert_eq!(
             std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
@@ -627,7 +627,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("CHANGED after you last read it"),
                     "drift must be attributed in the per-edit report: {message}"
@@ -694,7 +694,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("PRIOR edit in this batch"),
                     "composition mistakes must not be blamed on drift: {message}"
@@ -720,7 +720,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("appears 2 times"), "{message}");
             }
             ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
@@ -744,7 +744,7 @@ mod tests {
             .execute(&serde_json::json!({ "edits": oversized }), dir.path())
             .await;
         match result {
-            ToolOutput::Error { message } => assert!(message.contains("ceiling"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("ceiling"), "{message}"),
             ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
         }
     }
@@ -829,7 +829,7 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         let message = match result {
-            ToolOutput::Error { message } => message,
+            ToolOutput::Error { message, .. } => message,
             ToolOutput::Ok { content } => panic!("expected the batch to abort, got: {content}"),
         };
         assert!(message.contains("batch aborted"), "{message}");

@@ -1692,7 +1692,7 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("a tool message was appended");
     match &tool_message.tool_results[0].output {
-        ToolOutput::Error { message } => assert!(message.contains("malformed")),
+        ToolOutput::Error { message, .. } => assert!(message.contains("malformed")),
         other => panic!("expected a malformed-call error, got {other:?}"),
     }
 }
@@ -2623,7 +2623,7 @@ async fn a_wedged_tool_trips_the_dispatch_ceiling_instead_of_hanging() {
         .flat_map(|m| &m.tool_results)
         .find(|r| r.call_id == "call_1")
         .expect("the abandoned call must still answer the model with a result");
-    let ToolOutput::Error { message } = &result.output else {
+    let ToolOutput::Error { message, .. } = &result.output else {
         panic!("a tripped ceiling is an error the model can react to: {result:?}");
     };
     assert!(

@@ -53,7 +53,7 @@ fn edit(path: &str) -> CallRecord<'static> {
     record(
         "edit_file",
         serde_json::json!({ "path": path, "old": "x", "new": "y" }),
-        Some(ToolOutput::Error {
+        Some(ToolOutput::Error { class: None,
             message: "old text not found".into(),
         }),
     )
@@ -535,7 +535,7 @@ fn drift_attributed_edit_recovery_is_not_a_loop() {
         record(
             "edit_file",
             serde_json::json!({ "path": "a.rs", "old": "x", "new": "y" }),
-            Some(ToolOutput::Error {
+            Some(ToolOutput::Error { class: None,
                 message: format!("old_string not found — the file CHANGED; current: {content}"),
             }),
         )
@@ -936,7 +936,7 @@ fn arb_call_record() -> impl Strategy<Value = CallRecord<'static>> {
             Some(ToolOutput::Ok {
                 content: "ok".into(),
             }),
-            Some(ToolOutput::Error {
+            Some(ToolOutput::Error { class: None,
                 message: "boom".into(),
             }),
             None,
@@ -1029,7 +1029,7 @@ fn an_identical_call_interleaved_with_varying_work_is_a_loop() {
         record(
             "bash",
             serde_json::json!({ "command": "cargo test" }),
-            Some(ToolOutput::Error {
+            Some(ToolOutput::Error { class: None,
                 message: "1 failed".into(),
             }),
         )
@@ -1076,7 +1076,7 @@ fn an_interleave_whose_results_keep_changing_is_not_a_loop() {
         record(
             "bash",
             serde_json::json!({ "command": "cargo test" }),
-            Some(ToolOutput::Error {
+            Some(ToolOutput::Error { class: None,
                 message: format!("{n} failed"),
             }),
         )

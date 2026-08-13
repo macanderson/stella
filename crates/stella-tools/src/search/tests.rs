@@ -207,7 +207,7 @@ fn write_fixture_at_the_real_workspace_path(workspace: &Path) -> std::path::Path
 fn content_of(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Ok { content } => content.clone(),
-        ToolOutput::Error { message } => panic!("expected an answer, got an error: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected an answer, got an error: {message}"),
     }
 }
 
@@ -832,7 +832,7 @@ async fn a_blank_query_is_refused_through_the_tool_door() {
     let output = Search::default()
         .execute(&serde_json::json!({"query": "   "}), workspace.path())
         .await;
-    let ToolOutput::Error { message } = output else {
+    let ToolOutput::Error { message, .. } = output else {
         panic!("a blank query must be an error, got: {output:?}");
     };
     assert!(message.contains("`query` is required"), "{message}");

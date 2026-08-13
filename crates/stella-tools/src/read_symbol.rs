@@ -80,7 +80,7 @@ impl Tool for ReadSymbol {
         {
             Some(n) => n,
             None => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: "missing required field `name`".into(),
                 };
             }
@@ -112,7 +112,7 @@ impl Tool for ReadSymbol {
         };
         let (spans, index_warning) = match looked_up {
             Ok(found) => found,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         // Every answer below is qualified by a failed catch-up pass — the span
         // it read may be the one the failed pass would have moved.
@@ -132,7 +132,7 @@ impl ReadSymbol {
         mut spans: Vec<stella_graph::SymbolSpan>,
     ) -> ToolOutput {
         if spans.is_empty() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "no definition of `{name}` in the code graph (index may be \
                      stale — `stella init` re-indexes) — try graph_query references, or grep"
@@ -148,7 +148,7 @@ impl ReadSymbol {
                 .unwrap_or_else(|| raw.to_string());
             let in_file: Vec<_> = spans.iter().filter(|s| s.path == wanted).cloned().collect();
             if in_file.is_empty() {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "`{name}` has no definition in `{wanted}` — it is defined at:\n{}",
                         listing(&spans)
@@ -286,7 +286,7 @@ mod tests {
                     "read through read_file's rendering: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected the span, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected the span, got: {message}"),
         }
     }
 
@@ -315,7 +315,7 @@ mod tests {
                     "the last good index still resolves the span: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected a warned span, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected a warned span, got: {message}"),
         }
     }
 
@@ -342,7 +342,7 @@ mod tests {
                     "no body was read: {content}"
                 );
             }
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 panic!("ambiguity is a listing, not an error: {message}")
             }
         }
@@ -366,7 +366,7 @@ mod tests {
                 assert!(content.contains("let b = 2"), "{content}");
                 assert!(!content.contains("let a"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("path should disambiguate: {message}"),
+            ToolOutput::Error { message, .. } => panic!("path should disambiguate: {message}"),
         }
 
         // A path with no site for the name errors and lists where it IS.
@@ -377,7 +377,7 @@ mod tests {
             )
             .await;
         match miss {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("no definition in `c.rs`") || message.contains("c.rs"),
                     "{message}"
@@ -401,7 +401,7 @@ mod tests {
             )
             .await;
         match missing {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("no definition of `no_such_symbol_xyz`"),
                     "{message}"

@@ -101,7 +101,7 @@ async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     assert!(
         matches!(
             &closing.tool_results[..],
-            [ToolResult { call_id, output: ToolOutput::Error { message } }]
+            [ToolResult { call_id, output: ToolOutput::Error { message, .. } }]
                 if call_id == "orphan" && message.contains("stopped by user")
         ),
         "the orphan must be closed with the soft-stop wording: {closing:?}"

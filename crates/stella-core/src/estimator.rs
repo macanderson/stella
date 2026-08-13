@@ -79,7 +79,7 @@ pub fn estimate_message_tokens(message: &CompletionMessage) -> u64 {
         bytes += result.call_id.len();
         bytes += match &result.output {
             stella_protocol::ToolOutput::Ok { content } => content.len(),
-            stella_protocol::ToolOutput::Error { message } => message.len(),
+            stella_protocol::ToolOutput::Error { message, .. } => message.len(),
         };
     }
     let bytes = bytes as u64;

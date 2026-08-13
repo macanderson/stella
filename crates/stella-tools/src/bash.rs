@@ -381,7 +381,7 @@ impl Tool for Bash {
         let command = match crate::input::required_str(input, "command") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -389,7 +389,7 @@ impl Tool for Bash {
         // Audited before the spawn, on the text the model wrote: a refusal
         // that arrives after the process has run is a report, not a boundary.
         if let Err(refusal) = self.confinement.audit(command, root) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: refusal.to_string(),
             };
         }
@@ -454,7 +454,7 @@ impl Tool for Bash {
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("failed to spawn: {e}"),
                 };
             }
@@ -488,7 +488,7 @@ impl Tool for Bash {
             // Wait failure leaves the child's state unknown — the still-armed
             // guard kills the group on return rather than leak it.
             Ok(Err(e)) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("command failed: {e}"),
                 };
             }
@@ -496,7 +496,7 @@ impl Tool for Bash {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
                 guard.kill_now();
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("command timed out after {timeout_secs}s"),
                 };
             }
@@ -540,7 +540,7 @@ impl Tool for Bash {
         if output.status.success() {
             ToolOutput::Ok { content: combined }
         } else {
-            ToolOutput::Error { message: combined }
+            ToolOutput::Error { class: None, message: combined }
         }
     }
 }
@@ -557,7 +557,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("hello_stella")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -577,7 +577,7 @@ mod tests {
                 let output = content.lines().next().unwrap_or_default();
                 crate::subprocess_env::test_support::assert_scrubbed(output);
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -600,7 +600,7 @@ mod tests {
                 let output = content.lines().next().unwrap_or_default();
                 crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(output);
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -630,7 +630,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("done_immediately"), "{content}")
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert!(
             elapsed < std::time::Duration::from_secs(2),
@@ -646,7 +646,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("err")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -657,7 +657,7 @@ mod tests {
             .execute(&serde_json::json!({"command": "exit 42"}), &dir)
             .await;
         assert!(result.is_error());
-        if let ToolOutput::Error { message } = result {
+        if let ToolOutput::Error { message, .. } = result {
             assert!(message.contains("42"))
         }
     }
@@ -672,7 +672,7 @@ mod tests {
             )
             .await;
         assert!(result.is_error());
-        if let ToolOutput::Error { message } = result {
+        if let ToolOutput::Error { message, .. } = result {
             assert!(message.contains("timed out"))
         }
     }
@@ -740,7 +740,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("truncated"), "expected truncation marker");
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -762,7 +762,7 @@ mod tests {
             .await;
         let content = match result {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         };
         assert!(
             content.contains("FIRST_SENTINEL_LINE"),
@@ -807,7 +807,7 @@ mod tests {
                     canonical_dir.display()
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -831,7 +831,7 @@ mod tests {
     fn text_of(out: ToolOutput) -> String {
         match out {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => message,
+            ToolOutput::Error { message, .. } => message,
         }
     }
 
@@ -1235,7 +1235,7 @@ mod tests {
             .await;
         let exported = match result {
             ToolOutput::Ok { content } => content.lines().next().unwrap_or_default().to_string(),
-            ToolOutput::Error { message } => panic!("bash: {message}"),
+            ToolOutput::Error { message, .. } => panic!("bash: {message}"),
         };
         assert_eq!(exported, scratch_path.to_string_lossy().to_string());
     }

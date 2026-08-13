@@ -370,7 +370,7 @@ impl ToolExecutor for HunkGate<'_> {
             // Fail closed. An unreachable reviewer is the one case where
             // guessing costs the user their files.
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "`{name}` was not applied: the hunk reviewer could not be reached ({e}) \
                          — NOTHING was written"
@@ -419,7 +419,7 @@ impl ToolExecutor for HunkGate<'_> {
         );
 
         let Some(rewritten) = self.rewrite(name, input, &changes, &mask) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "`{name}` was declined in full by the reviewer — NOTHING was written{report}"
                 ),
@@ -430,7 +430,7 @@ impl ToolExecutor for HunkGate<'_> {
         // there, and applying them anyway would overwrite a write nobody
         // reviewed with content nobody proposed.
         if let Some(path) = self.stale(name, &changes) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "`{name}` was not applied: `{path}` no longer holds the bytes that were \
                      reviewed, so the accepted hunk(s) no longer describe it — NOTHING was \
@@ -445,7 +445,7 @@ impl ToolExecutor for HunkGate<'_> {
             // The inner failure already says nothing was written; the report
             // still rides along so the model does not retry the declined hunks
             // believing the reviewer never saw them.
-            ToolOutput::Error { message } => ToolOutput::Error {
+            ToolOutput::Error { message, .. } => ToolOutput::Error { class: None,
                 message: format!("{message}{report}"),
             },
         }
@@ -652,7 +652,7 @@ mod tests {
                 ]}),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a full refusal must be an error: {out:?}");
         };
         assert!(message.contains("declined in full"), "{message}");
@@ -794,7 +794,7 @@ mod tests {
                 &serde_json::json!({ "edits": [edit("a.rs", "NOT PRESENT", "x")] }),
             )
             .await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("{out:?}");
         };
         assert!(message.contains("old_string not found"), "{message}");
@@ -1027,7 +1027,7 @@ mod tests {
             .await;
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("expected the batch to abort: {out:?}");
         };
         assert!(message.contains("batch aborted"), "{message}");

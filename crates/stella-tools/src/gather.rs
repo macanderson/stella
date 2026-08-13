@@ -423,7 +423,7 @@ impl Tool for GatherContext {
             .trim()
             .to_string();
         if goal.is_empty() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "gathering needs a `goal` — one line on what you're trying to learn, \
                           recorded in the pack for the agents that reuse it"
                     .into(),
@@ -434,7 +434,7 @@ impl Tool for GatherContext {
         let slug = match input.get("save_as").and_then(|v| v.as_str()) {
             Some(s) if valid_slug(s) => s.to_string(),
             Some(s) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "invalid save_as slug `{s}` — use 1-64 lowercase letters, digits, - or _"
                     ),
@@ -508,7 +508,7 @@ fn symbol_failures(symbols: Vec<String>, message: String) -> SymbolAnswers {
     symbols
         .into_iter()
         .map(|symbol| {
-            let error = || ToolOutput::Error {
+            let error = || ToolOutput::Error { class: None,
                 message: message.clone(),
             };
             (symbol, Some((error(), error())))
@@ -558,7 +558,7 @@ async fn gather(
     }));
     let graph_on = match crate::graph::graph_available(root) {
         Ok(available) => available,
-        Err(message) => return ToolOutput::Error { message },
+        Err(message) => return ToolOutput::Error { class: None, message },
     };
     // One open, one index pass, every symbol answered against that one
     // handle — on the blocking pool (#549). The per-symbol `join_all` this
@@ -596,7 +596,7 @@ async fn gather(
     for (pattern, output) in glob_results {
         let body = match output {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => format!("(glob failed: {message})"),
+            ToolOutput::Error { message, .. } => format!("(glob failed: {message})"),
         };
         sections.push(PackSection {
             title: format!("Files matching `{pattern}`"),
@@ -625,7 +625,7 @@ async fn gather(
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            ToolOutput::Error { message } => format!("(grep failed: {message})"),
+            ToolOutput::Error { message, .. } => format!("(grep failed: {message})"),
         };
         sections.push(PackSection {
             title: format!("Matches for `{pattern}`"),
@@ -640,7 +640,7 @@ async fn gather(
             Some((defs, refs)) => {
                 let render = |label: &str, out: ToolOutput| match out {
                     ToolOutput::Ok { content } => format!("### {label}\n{content}"),
-                    ToolOutput::Error { message } => format!("### {label}\n({message})"),
+                    ToolOutput::Error { message, .. } => format!("### {label}\n({message})"),
                 };
                 format!(
                     "{}\n\n{}",
@@ -683,7 +683,7 @@ async fn gather(
     let handle = match crate::rootfd::RootHandle::open(root) {
         Ok(handle) => std::sync::Arc::new(handle),
         Err(e) => {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("cannot open workspace root: {e}"),
             };
         }
@@ -800,7 +800,7 @@ async fn read_pack(root: &Path, slug: &str) -> ToolOutput {
     // outside the workspace — the confinement break resolve_within_root
     // exists to prevent.
     if !valid_slug(slug) {
-        return ToolOutput::Error {
+        return ToolOutput::Error { class: None,
             message: format!(
                 "invalid pack slug `{slug}` — use 1-64 lowercase letters, digits, - or _"
             ),
@@ -809,9 +809,9 @@ async fn read_pack(root: &Path, slug: &str) -> ToolOutput {
     let Some(pack) = load_pack(root, slug).await else {
         let listing = match list_packs(root).await {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => message,
+            ToolOutput::Error { message, .. } => message,
         };
-        return ToolOutput::Error {
+        return ToolOutput::Error { class: None,
             message: format!("no context pack `{slug}`.\n{listing}"),
         };
     };
@@ -922,7 +922,7 @@ mod tests {
                 .execute(&serde_json::json!({ "pack": slug }), dir.path())
                 .await;
             match out {
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     assert!(message.contains("invalid pack slug"), "{slug}: {message}")
                 }
                 other => panic!("slug `{slug}` must be rejected, got {other:?}"),
@@ -966,7 +966,7 @@ mod tests {
         let out = gather_login_pack(dir.path()).await;
         let content = match out {
             ToolOutput::Ok { content } => content,
-            ToolOutput::Error { message } => panic!("gather failed: {message}"),
+            ToolOutput::Error { message, .. } => panic!("gather failed: {message}"),
         };
         assert!(content.contains("Context pack `login-flow`"), "{content}");
         assert!(content.contains("Matches for `login`"), "{content}");
@@ -1026,7 +1026,7 @@ mod tests {
                     "the sweep still answered from the last good index: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("a failed index pass is not fatal: {message}"),
+            ToolOutput::Error { message, .. } => panic!("a failed index pass is not fatal: {message}"),
         }
     }
 
@@ -1041,7 +1041,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("cache hit"), "{content}")
             }
-            ToolOutput::Error { message } => panic!("{message}"),
+            ToolOutput::Error { message, .. } => panic!("{message}"),
         }
     }
 
@@ -1065,7 +1065,7 @@ mod tests {
                 assert!(content.contains("STALE"), "{content}");
                 assert!(content.contains("src/auth.rs"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("{message}"),
+            ToolOutput::Error { message, .. } => panic!("{message}"),
         }
 
         // Re-gathering re-runs (no cache hit) and refreshes the pack.
@@ -1074,7 +1074,7 @@ mod tests {
             ToolOutput::Ok { content } => {
                 assert!(!content.contains("cache hit"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("{message}"),
+            ToolOutput::Error { message, .. } => panic!("{message}"),
         }
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
                 assert!(content.contains("`login-flow`"), "{content}");
                 assert!(content.contains("Map the login flow"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("{message}"),
+            ToolOutput::Error { message, .. } => panic!("{message}"),
         }
 
         let read = GatherContext
@@ -1102,7 +1102,7 @@ mod tests {
                 assert!(content.contains("fresh"), "{content}");
                 assert!(content.contains("Matches for `login`"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("{message}"),
+            ToolOutput::Error { message, .. } => panic!("{message}"),
         }
     }
 

@@ -442,7 +442,7 @@ async fn repo_commit_stages_exactly_the_named_paths_and_refuses_empty() {
         .execute(&serde_json::json!({"message": "nope", "paths": []}), &ws)
         .await;
     match refused {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("non-empty"), "{message}")
         }
         other => panic!("empty paths must be refused: {other:?}"),
@@ -485,7 +485,7 @@ async fn repo_push_refuses_the_default_branch_but_pushes_a_feature_branch() {
         .execute(&serde_json::json!({}), &ws)
         .await;
     match refused {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("default branch"), "{message}");
             assert!(message.contains("`main`"), "{message}");
         }
@@ -497,7 +497,7 @@ async fn repo_push_refuses_the_default_branch_but_pushes_a_feature_branch() {
         .execute(&serde_json::json!({"branch": "--force"}), &ws)
         .await;
     match injected {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("not a valid branch name"), "{message}")
         }
         other => panic!("option-shaped branch must be refused: {other:?}"),
@@ -670,7 +670,7 @@ async fn repo_pull_fast_forwards_and_types_divergence() {
 
     let diverged = RepoPull(backend()).execute(&Value::Null, &ws).await;
     match diverged {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("fast-forward"), "{message}")
         }
         other => panic!("divergence must be a typed error: {other:?}"),
@@ -691,7 +691,7 @@ async fn repo_rollback_restores_named_paths_and_refuses_an_empty_list() {
         .execute(&serde_json::json!({"paths": []}), &ws)
         .await;
     match refused {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("non-empty"), "{message}");
         }
         other => panic!("empty rollback must be refused: {other:?}"),

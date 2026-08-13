@@ -121,7 +121,7 @@ impl Tool for GenerateImage {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`prompt` is required".into(),
             };
         };
@@ -129,7 +129,7 @@ impl Tool for GenerateImage {
             Some(raw) => match raw.parse::<ImageSize>() {
                 Ok(s) => s,
                 Err(_) => {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!(
                             "`size` must be WIDTHxHEIGHT (e.g. 1024x1024), got `{raw}`"
                         ),
@@ -151,7 +151,7 @@ impl Tool for GenerateImage {
         );
         request.operation_id = Some(operation_id.clone());
         let Some(journal) = &self.operation_journal else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "media spend requires host approval and a host operation journal".into(),
             };
         };
@@ -176,7 +176,7 @@ impl Tool for GenerateImage {
                 return reconciliation_required(&operation_id, "operation identity expired");
             }
             Err(error) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("media_operation_journal_unavailable: {error}"),
                 };
             }
@@ -307,7 +307,7 @@ impl Tool for GenerateVideo {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`prompt` is required".into(),
             };
         };
@@ -316,7 +316,7 @@ impl Tool for GenerateVideo {
             Some(v) => match v.as_u64().and_then(|secs| u32::try_from(secs).ok()) {
                 Some(secs) if secs >= 1 => secs,
                 _ => {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: "`duration_secs` must be a positive integer".into(),
                     };
                 }
@@ -334,7 +334,7 @@ impl Tool for GenerateVideo {
         );
         request.operation_id = Some(operation_id.clone());
         let Some(journal) = &self.operation_journal else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "media spend requires host approval and a host operation journal".into(),
             };
         };
@@ -368,7 +368,7 @@ impl Tool for GenerateVideo {
                 return reconciliation_required(&operation_id, "operation identity expired");
             }
             Err(error) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("media_operation_journal_unavailable: {error}"),
                 };
             }
@@ -448,7 +448,7 @@ impl Tool for GenerateSvg {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(svg) = input.get("svg").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`svg` is required".into(),
             };
         };
@@ -459,7 +459,7 @@ impl Tool for GenerateSvg {
         let processed = match SvgPipeline::process(svg) {
             Ok(p) => p,
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("invalid SVG: {e}"),
                 };
             }
@@ -480,7 +480,7 @@ impl Tool for GenerateSvg {
                     content: format!("svg \"{}\" → {}{sanitized}", saved.label, saved.path),
                 }
             }
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: format!("could not persist the SVG: {e}"),
             },
         }

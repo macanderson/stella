@@ -169,7 +169,7 @@ fn require_issue_ref(input: &Value) -> Result<String, ToolOutput> {
             // option. Real refs (123, #123, TEAM-123, full issue URLs)
             // never start with `-`.
             if s.starts_with('-') {
-                return Err(ToolOutput::Error {
+                return Err(ToolOutput::Error { class: None,
                     message: format!(
                         "invalid issue ref `{s}` — expected an issue number, #number, \
                          key, or URL"
@@ -179,7 +179,7 @@ fn require_issue_ref(input: &Value) -> Result<String, ToolOutput> {
             Ok(s.clone())
         }
         Some(Value::Number(n)) => Ok(n.to_string()),
-        _ => Err(ToolOutput::Error {
+        _ => Err(ToolOutput::Error { class: None,
             message: "missing required field `issue`".into(),
         }),
     }
@@ -242,7 +242,7 @@ impl Tool for CreateIssue {
         let title = match crate::input::required_str(input, "title") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -268,7 +268,7 @@ impl Tool for CreateIssue {
             Ok(issue) => ToolOutput::Ok {
                 content: format!("created {} {}", issue.key, issue.url),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -307,7 +307,7 @@ impl Tool for UpdateIssue {
         if let Some(comment) = input.get("comment").and_then(|v| v.as_str())
             && let Err(e) = ops::add_comment(&self.0, root, &issue, comment).await
         {
-            return ToolOutput::Error { message: e };
+            return ToolOutput::Error { class: None, message: e };
         }
         let labels = string_list(input, "labels");
         if let Err(e) = ops::update_issue(
@@ -321,12 +321,12 @@ impl Tool for UpdateIssue {
         )
         .await
         {
-            return ToolOutput::Error { message: e };
+            return ToolOutput::Error { class: None, message: e };
         }
         if let Some(status) = input.get("status").and_then(|v| v.as_str())
             && let Err(e) = ops::set_status(&self.0, root, &issue, status).await
         {
-            return ToolOutput::Error { message: e };
+            return ToolOutput::Error { class: None, message: e };
         }
         ToolOutput::Ok {
             content: format!("updated {issue}"),
@@ -361,13 +361,13 @@ impl Tool for CloseIssue {
         if let Some(comment) = input.get("comment").and_then(|v| v.as_str())
             && let Err(e) = ops::add_comment(&self.0, root, &issue, comment).await
         {
-            return ToolOutput::Error { message: e };
+            return ToolOutput::Error { class: None, message: e };
         }
         match ops::set_status(&self.0, root, &issue, "closed").await {
             Ok(_) => ToolOutput::Ok {
                 content: format!("closed {issue}"),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -427,7 +427,7 @@ impl Tool for SearchIssues {
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -471,7 +471,7 @@ impl Tool for GetIssue {
                 }
                 ToolOutput::Ok { content }
             }
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -513,7 +513,7 @@ impl Tool for ListLabels {
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -555,7 +555,7 @@ impl Tool for ListMembers {
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 }
@@ -589,10 +589,10 @@ impl Tool for StartWorkOnIssue {
                 let cmd = develop_command(&issue, input);
                 match exec::run_github(&cmd, root, 60, None).await {
                     Ok((0, output)) => ToolOutput::Ok { content: output },
-                    Ok((code, output)) => ToolOutput::Error {
+                    Ok((code, output)) => ToolOutput::Error { class: None,
                         message: format!("gh failed (exit {code}): {output}"),
                     },
-                    Err(e) => ToolOutput::Error { message: e },
+                    Err(e) => ToolOutput::Error { class: None, message: e },
                 }
             }
             IssueBackend::GitHubApi { .. } => {
@@ -608,13 +608,13 @@ impl Tool for StartWorkOnIssue {
                     Ok(()) => ToolOutput::Ok {
                         content: format!("started {issue} on branch {branch}"),
                     },
-                    Err(message) => ToolOutput::Error { message },
+                    Err(message) => ToolOutput::Error { class: None, message },
                 }
             }
             IssueBackend::Linear { api_key, api_url } => {
                 let (id, team) = match ops::linear_issue_id(api_url, api_key, &issue).await {
                     Ok(pair) => pair,
-                    Err(e) => return ToolOutput::Error { message: e },
+                    Err(e) => return ToolOutput::Error { class: None, message: e },
                 };
                 // Linear supplies the canonical branch name per issue.
                 let branch = match input.get("branch").and_then(|v| v.as_str()) {
@@ -628,16 +628,16 @@ impl Tool for StartWorkOnIssue {
                     .await
                     {
                         Ok(d) => d["issue"]["branchName"].as_str().unwrap_or("").to_string(),
-                        Err(e) => return ToolOutput::Error { message: e },
+                        Err(e) => return ToolOutput::Error { class: None, message: e },
                     },
                 };
                 if branch.is_empty() {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: "could not determine a branch name — pass `branch`".into(),
                     };
                 }
                 if let Err(message) = checkout_branch(&branch, root).await {
-                    return ToolOutput::Error { message };
+                    return ToolOutput::Error { class: None, message };
                 }
                 let state = match ops::linear_state_id(
                     api_url,
@@ -649,7 +649,7 @@ impl Tool for StartWorkOnIssue {
                 .await
                 {
                     Ok(state) => state,
-                    Err(e) => return ToolOutput::Error { message: e },
+                    Err(e) => return ToolOutput::Error { class: None, message: e },
                 };
                 match ops::linear_graphql(
                     api_url,
@@ -663,7 +663,7 @@ impl Tool for StartWorkOnIssue {
                     Ok(_) => ToolOutput::Ok {
                         content: format!("started {issue} on branch {branch}"),
                     },
-                    Err(e) => ToolOutput::Error { message: e },
+                    Err(e) => ToolOutput::Error { class: None, message: e },
                 }
             }
         }
@@ -762,7 +762,7 @@ mod tests {
             StartWorkOnIssue(backend()).execute(&json!({}), &root).await,
         ] {
             match tool_output {
-                ToolOutput::Error { message } => assert!(message.contains("issue"), "{message}"),
+                ToolOutput::Error { message, .. } => assert!(message.contains("issue"), "{message}"),
                 other => panic!("expected error, got {other:?}"),
             }
         }
@@ -794,7 +794,7 @@ mod tests {
         // argument injection — this pins the `-` guard in require_issue_ref.
         for injected in ["--web", "-R other/repo"] {
             match require_issue_ref(&json!({ "issue": injected })) {
-                Err(ToolOutput::Error { message }) => {
+                Err(ToolOutput::Error { message, .. }) => {
                     assert!(message.contains("invalid issue ref"), "{message}");
                 }
                 other => panic!("expected error for `{injected}`, got {other:?}"),

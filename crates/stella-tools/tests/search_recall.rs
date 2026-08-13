@@ -200,7 +200,7 @@ async fn ask(root: &std::path::Path, query: &str) -> Result<String, String> {
         .await
     {
         stella_protocol::tool::ToolOutput::Ok { content } => Ok(content),
-        stella_protocol::tool::ToolOutput::Error { message } => Err(message),
+        stella_protocol::tool::ToolOutput::Error { message, .. } => Err(message),
     }
 }
 

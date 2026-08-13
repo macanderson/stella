@@ -230,7 +230,7 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
             },
             AgentEvent::ToolResult {
                 call_id: "c".into(),
-                output: ToolOutput::Error {
+                output: ToolOutput::Error { class: None,
                     message: text.clone(),
                 },
                 duration_ms: 5,

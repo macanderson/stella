@@ -161,7 +161,7 @@ fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
             },
             AgentEvent::ToolResult {
                 call_id: "c1".into(),
-                output: ToolOutput::Error {
+                output: ToolOutput::Error { class: None,
                     message: "fatal: not a git repository".into(),
                 },
                 duration_ms: 40,

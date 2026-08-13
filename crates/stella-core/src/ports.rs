@@ -223,7 +223,7 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let allowed = self.read_only_names.contains(name);
         if !allowed {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "`{name}` is not available here: this context is read-only (verification/\
                      judging) and may only use read-only tools"
@@ -312,7 +312,7 @@ impl ToolExecutor for GrantedTools<'_> {
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if !self.granted.contains(name) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "`{name}` is not available here: this context is scoped to an \
                      explicitly granted tool set (a skill's allowed-tools)"

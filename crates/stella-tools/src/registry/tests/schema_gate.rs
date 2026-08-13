@@ -26,7 +26,7 @@ async fn schema_gate_blocks_duplicate_table_on_write() {
         .await;
     assert!(result.is_error());
     match result {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("Table `users` already exists"),
                 "{message}"
@@ -112,7 +112,7 @@ async fn schema_gate_challenge_passes_with_declared_intent_and_records_it() {
     });
     let challenged = reg.execute("write_file", &call).await;
     match &challenged {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("write withheld"), "{message}");
             assert!(message.contains("storage_intent"), "{message}");
         }

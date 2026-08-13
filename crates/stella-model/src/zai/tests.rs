@@ -98,7 +98,7 @@ fn to_zai_messages_marks_error_results_loudly() {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: "call_1".into(),
-            output: ToolOutput::Error {
+            output: ToolOutput::Error { class: None,
                 message: "no such file".into(),
             },
         }],

@@ -430,7 +430,7 @@ impl<'a> Fold<'a> {
         let failed = output.is_error();
         let body = match output {
             ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
         };
         let body = self.clean(&body);
         let name = self

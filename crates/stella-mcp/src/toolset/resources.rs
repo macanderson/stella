@@ -112,7 +112,7 @@ pub(super) async fn route(
             continue;
         }
         if set.is_disabled(server) {
-            return Some(ToolOutput::Error {
+            return Some(ToolOutput::Error { class: None,
                 message: format!(
                     "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
                 ),
@@ -213,7 +213,7 @@ async fn run_list(client: &McpClient, input: &Value) -> ToolOutput {
         None | Some(Value::Null) => None,
         Some(Value::String(cursor)) => Some(cursor.as_str()),
         Some(other) => {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("argument `cursor` must be a string, got: {other}"),
             };
         }
@@ -222,7 +222,7 @@ async fn run_list(client: &McpClient, input: &Value) -> ToolOutput {
         Ok(page) => ToolOutput::Ok {
             content: bounded(render_listing(client.name(), &page)),
         },
-        Err(err) => ToolOutput::Error {
+        Err(err) => ToolOutput::Error { class: None,
             message: format!(
                 "mcp server `{}` failed listing resources: {}",
                 client.name(),
@@ -237,7 +237,7 @@ async fn run_read(client: &McpClient, input: &Value) -> ToolOutput {
     let uri = match input.get("uri") {
         Some(Value::String(uri)) if !uri.is_empty() => uri.as_str(),
         _ => {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "tool `{}` requires a string `uri` argument naming the resource to read",
                     read_resource_tool_name(client.name())
@@ -249,7 +249,7 @@ async fn run_read(client: &McpClient, input: &Value) -> ToolOutput {
         Ok(read) => ToolOutput::Ok {
             content: bounded(render_read(client.name(), uri, &read)),
         },
-        Err(err) => ToolOutput::Error {
+        Err(err) => ToolOutput::Error { class: None,
             message: format!(
                 "mcp server `{}` failed reading resource `{uri}`: {}",
                 client.name(),
@@ -466,7 +466,7 @@ mod tests {
             .execute("mcp__plain__list_resources", &serde_json::Value::Null)
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("not advertised"), "{message}");
             }
             other => panic!("expected the unknown-tool error, got {other:?}"),
@@ -588,7 +588,7 @@ mod tests {
             serde_json::json!({ "uri": "" }),
         ] {
             match set.execute("mcp__docs__read_resource", &input).await {
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     assert!(message.contains("`uri`"), "names the argument: {message}");
                 }
                 other => panic!("expected the missing-uri error for {input}, got {other:?}"),
@@ -611,7 +611,7 @@ mod tests {
             .execute("mcp__docs__list_resources", &serde_json::Value::Null)
             .await
         {
-            ToolOutput::Error { message } => assert!(message.contains("disabled"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("disabled"), "{message}"),
             other => panic!("expected the disabled error, got {other:?}"),
         }
 

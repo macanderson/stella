@@ -450,7 +450,7 @@ pub(crate) fn to_gemini_request_parts(
                             stella_protocol::ToolOutput::Ok { content } => {
                                 serde_json::json!({ "output": content })
                             }
-                            stella_protocol::ToolOutput::Error { message } => {
+                            stella_protocol::ToolOutput::Error { message, .. } => {
                                 serde_json::json!({ "error": message })
                             }
                         };

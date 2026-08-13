@@ -248,7 +248,7 @@ impl Fallback<'_> {
     /// Run the search, or say why it could not be run.
     pub(super) async fn run(&self) -> ToolOutput {
         if let Some(gap) = ere_gap(self.pattern) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "grep: ripgrep is not installed, so this search runs POSIX `grep -E`, which \
                      cannot execute {} in pattern `{}`. Rewrite it in POSIX ERE — alternation \
@@ -264,7 +264,7 @@ impl Fallback<'_> {
         // burning IO, and bounds the wait so a wedged walk cannot hold the
         // turn open.
         match crate::exec::run_captured(self.command(), FALLBACK_SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error {
+            crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
                 message: format!(
                     "grep timed out after {FALLBACK_SEARCH_TIMEOUT_SECS}s — narrow the \
                      search with a `path` or `glob` filter"
@@ -311,7 +311,7 @@ impl Fallback<'_> {
                 }
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if output.status.code() == Some(2) && is_pattern_error(&stderr) {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!("grep error: {}", first_error_line(&stderr)),
                     };
                 }
@@ -321,7 +321,7 @@ impl Fallback<'_> {
                 }
                 empty
             }
-            crate::exec::Captured::Unavailable => ToolOutput::Error {
+            crate::exec::Captured::Unavailable => ToolOutput::Error { class: None,
                 message: "grep failed: neither `rg` nor `grep` is available".into(),
             },
         }
@@ -458,7 +458,7 @@ mod tests {
     async fn a_pattern_the_backend_cannot_execute_is_refused_not_answered() {
         let dir = fixture();
         let out = search(dir.path(), "AKIA\\d{16}").await;
-        let ToolOutput::Error { message } = out else {
+        let ToolOutput::Error { message, .. } = out else {
             panic!("a Rust-only escape must be refused, got {out:?}");
         };
         assert!(message.contains("\\d"), "names the construct: {message}");

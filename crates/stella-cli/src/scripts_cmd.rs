@@ -92,7 +92,7 @@ pub fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
                     println!("{content}");
                     Ok(())
                 }
-                stella_protocol::tool::ToolOutput::Error { message } => Err(message),
+                stella_protocol::tool::ToolOutput::Error { message, .. } => Err(message),
             }
         }
     }

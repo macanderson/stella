@@ -116,7 +116,7 @@ impl ToolExecutor for MixedTools {
                     content: "written".into(),
                 }
             }
-            other => ToolOutput::Error {
+            other => ToolOutput::Error { class: None,
                 message: format!("no such tool {other}"),
             },
         }

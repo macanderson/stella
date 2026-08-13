@@ -164,7 +164,7 @@ impl Tool for EditFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -172,7 +172,7 @@ impl Tool for EditFile {
         let old_string = match crate::input::required_str(input, "old_string") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -183,7 +183,7 @@ impl Tool for EditFile {
         // every char boundary — shredding the file (and allocating O(len^2)).
         // On an empty file it would silently overwrite. Refuse it outright.
         if old_string.is_empty() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "old_string must not be empty — use write_file to create or replace a \
                           whole file"
                     .into(),
@@ -192,7 +192,7 @@ impl Tool for EditFile {
         let new_string = match crate::input::required_str(input, "new_string") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -209,7 +209,7 @@ impl Tool for EditFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("cannot open workspace root: {e}"),
                 };
             }
@@ -218,12 +218,12 @@ impl Tool for EditFile {
         let content = match crate::rootfd::read_to_string_async(&handle, path).await {
             Ok(c) => c,
             Err(e) if e.is_escape() => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("path `{path}` escapes workspace root ({e})"),
                 };
             }
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("failed to read `{path}`: {e}"),
                 };
             }
@@ -255,7 +255,7 @@ impl Tool for EditFile {
                     // more than was shown; the unchanged-file message below
                     // still steers a confused model back to read_file.
                     self.ledger.record_known(root, path, &content);
-                    ToolOutput::Error {
+                    ToolOutput::Error { class: None,
                         message: format!(
                             "old_string not found in `{path}` — the file CHANGED after you last \
                              read it (out-of-band modification); the copy in your context is \
@@ -265,14 +265,14 @@ impl Tool for EditFile {
                         ),
                     }
                 }
-                Some(_) => ToolOutput::Error {
+                Some(_) => ToolOutput::Error { class: None,
                     message: format!(
                         "old_string not found in `{path}` — the file is unchanged since you last \
                          saw it, so the copy in your context matches disk; check for exact \
                          whitespace/newline differences"
                     ),
                 },
-                None => ToolOutput::Error {
+                None => ToolOutput::Error { class: None,
                     message: format!(
                         "old_string not found in `{path}` — no read of this file is recorded \
                          this session; read it first and copy old_string byte-exact"
@@ -281,7 +281,7 @@ impl Tool for EditFile {
             };
         }
         if count > 1 && !replace_all {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
                 ),
@@ -311,7 +311,7 @@ impl Tool for EditFile {
                     content: format!("replaced {replaced} occurrence(s) in {path}"),
                 }
             }
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: format!("failed to write `{path}`: {e}"),
             },
         }
@@ -338,7 +338,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("replaced 1")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let after = tokio::fs::read_to_string(&full).await.unwrap();
         assert_eq!(after, "fn main() { new }");
@@ -377,7 +377,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("replaced 3")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let after = tokio::fs::read_to_string(&full).await.unwrap();
         assert_eq!(after, "b b b");
@@ -398,7 +398,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("old_string not found"), "got: {message}");
                 assert!(
                     message.contains("no read of this file is recorded"),
@@ -437,7 +437,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("CHANGED after you last read it"),
                     "drift must be attributed: {message}"
@@ -459,7 +459,7 @@ mod tests {
             )
             .await;
         match repeat {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("unchanged since you last saw it"),
                     "got: {message}"
@@ -498,7 +498,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("unchanged since you last saw it"),
                     "an unchanged file must not be blamed on drift: {message}"
@@ -542,7 +542,7 @@ mod tests {
             )
             .await;
         match second {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("unchanged since you last saw it"),
                     "own edits must update the seen hash: {message}"
@@ -671,7 +671,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("CHANGED after you last read it"));
                 assert!(message.contains("line 400"), "echo shows the cap window");
                 assert!(

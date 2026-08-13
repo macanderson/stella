@@ -715,7 +715,7 @@ mod tests {
                 &serde_json::json!({"path": "secrets/token.txt", "content": "x\n"}),
             )
             .await;
-        let ToolOutput::Error { message } = denied else {
+        let ToolOutput::Error { message, .. } = denied else {
             panic!("a project rule with the same id must not weaken the user guard");
         };
         assert!(message.contains("protect-secrets"), "{message}");
@@ -828,7 +828,7 @@ mod tests {
                 &serde_json::json!({"path": "secrets/token.txt", "content": "x\n"}),
             )
             .await;
-        let ToolOutput::Error { message } = denied else {
+        let ToolOutput::Error { message, .. } = denied else {
             panic!("a store-published guard must block the write");
         };
         assert!(message.contains("no-secret-writes"), "{message}");
@@ -866,7 +866,7 @@ mod tests {
                 }),
             )
             .await;
-        let ToolOutput::Error { message } = denied else {
+        let ToolOutput::Error { message, .. } = denied else {
             panic!("the guard must block the edit");
         };
         assert!(message.contains("no-applied-migration"), "{message}");
@@ -920,7 +920,7 @@ mod tests {
                 &serde_json::json!({"command": "git push --force origin main"}),
             )
             .await;
-        let ToolOutput::Error { message } = denied else {
+        let ToolOutput::Error { message, .. } = denied else {
             panic!("the command guard must block the call");
         };
         assert!(message.contains("no-force-push"), "{message}");
@@ -967,7 +967,7 @@ mod tests {
             )
             .await;
         let message = match &allowed {
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
             _ => String::new(),
         };
         assert!(
@@ -1017,7 +1017,7 @@ mod tests {
                 &serde_json::json!({"command": "git push --force origin main"}),
             )
             .await;
-        let ToolOutput::Error { message } = denied else {
+        let ToolOutput::Error { message, .. } = denied else {
             panic!("an approved TOML guard must block the call: {denied:?}");
         };
         assert!(
@@ -1075,7 +1075,7 @@ mod tests {
             )
             .await;
         let message = match &allowed {
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
             _ => String::new(),
         };
         assert!(

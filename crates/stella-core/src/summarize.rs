@@ -65,7 +65,7 @@ pub(crate) fn render_span_for_summary(span: &[CompletionMessage]) -> String {
         for result in &message.tool_results {
             let (tag, body) = match &result.output {
                 ToolOutput::Ok { content } => ("ok", content),
-                ToolOutput::Error { message } => ("error", message),
+                ToolOutput::Error { message, .. } => ("error", message),
             };
             out.push_str(&format!(
                 "  ← {tag}: {}\n",

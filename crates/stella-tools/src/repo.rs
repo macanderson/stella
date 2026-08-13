@@ -885,7 +885,7 @@ fn required_paths(input: &Value, tool: &str, verb: &str) -> Result<Vec<String>, 
         })
         .unwrap_or_default();
     if paths.is_empty() {
-        return Err(ToolOutput::Error {
+        return Err(ToolOutput::Error { class: None,
             message: format!(
                 "{tool} {verb} exactly the paths you name — `paths` must be a non-empty \
                  list; a whole-tree operation must be spelled out path by path, never \
@@ -900,7 +900,7 @@ fn required_paths(input: &Value, tool: &str, verb: &str) -> Result<Vec<String>, 
     // and `repo_rollback` would discard every local modification in it.
     // Refuse before the argv is built; `--` only stops OPTION parsing.
     if let Some(magic) = paths.iter().find(|p| p.starts_with(':')) {
-        return Err(ToolOutput::Error {
+        return Err(ToolOutput::Error { class: None,
             message: format!(
                 "`{magic}` is pathspec magic, not a path — {tool} {verb} the literal paths \
                  you name, and a magic pathspec can silently widen that to the whole tree"
@@ -960,11 +960,11 @@ impl Tool for RepoStatusTool {
         match self.0.status(root).await {
             Ok(status) => match serde_json::to_string_pretty(&status) {
                 Ok(json) => ToolOutput::Ok { content: json },
-                Err(e) => ToolOutput::Error {
+                Err(e) => ToolOutput::Error { class: None,
                     message: format!("cannot render repository status: {e}"),
                 },
             },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }
@@ -1080,7 +1080,7 @@ impl Tool for RepoDiffTool {
             Ok(diff) => ToolOutput::Ok {
                 content: render_diff(&diff, staged),
             },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }
@@ -1139,7 +1139,7 @@ impl Tool for RepoCommit {
             .map(str::trim)
             .filter(|m| !m.is_empty())
         else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "missing required field `message`".into(),
             };
         };
@@ -1149,7 +1149,7 @@ impl Tool for RepoCommit {
         };
         match self.0.commit_paths(root, message, &paths).await {
             Ok(summary) => ToolOutput::Ok { content: summary },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }
@@ -1189,7 +1189,7 @@ impl Tool for RepoPull {
     async fn execute(&self, _input: &Value, root: &Path) -> ToolOutput {
         match self.0.pull_ff_only(root).await {
             Ok(out) => ToolOutput::Ok { content: out },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }
@@ -1232,7 +1232,7 @@ impl Tool for RepoRollback {
         };
         match self.0.restore_paths(root, &paths).await {
             Ok(out) => ToolOutput::Ok { content: out },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }

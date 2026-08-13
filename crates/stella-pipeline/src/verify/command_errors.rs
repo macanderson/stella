@@ -123,7 +123,7 @@ fn stderr_reports_a_failed_command(text: &str) -> bool {
 pub fn exited_zero_with_a_failed_command(output: &ToolOutput) -> bool {
     let text = match output {
         ToolOutput::Ok { content } => content,
-        ToolOutput::Error { message } => message,
+        ToolOutput::Error { message, .. } => message,
     };
     exit_status(text) == Some(0) && stderr_reports_a_failed_command(text)
 }
@@ -208,7 +208,7 @@ mod tests {
     /// healthy run.
     #[test]
     fn a_loud_failure_is_not_the_silent_shape() {
-        assert!(!exited_zero_with_a_failed_command(&ToolOutput::Error {
+        assert!(!exited_zero_with_a_failed_command(&ToolOutput::Error { class: None,
             message: "\n[stderr]\nbash: line 1: bc: command not found\n[exit code: 127]".into(),
         }));
     }
@@ -220,7 +220,7 @@ mod tests {
         assert!(!exited_zero_with_a_failed_command(&shell(
             "wrote 3 lines to src/lib.rs"
         )));
-        assert!(!exited_zero_with_a_failed_command(&ToolOutput::Error {
+        assert!(!exited_zero_with_a_failed_command(&ToolOutput::Error { class: None,
             message: "no such file: src/nope.rs".into(),
         }));
     }

@@ -1299,7 +1299,7 @@ impl Tool for RunScript {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(script) = input.get("script").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`script` is required — a canonical verb or qualified id".into(),
             };
         };

@@ -89,7 +89,7 @@ impl ToolExecutor for PolicyToolSet<'_> {
         if !self.policy.allows(name) {
             // Same wording shape as an unknown tool: a disabled tool must not
             // advertise itself through its own refusal.
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("unknown tool: {name}"),
             };
         }
@@ -217,7 +217,7 @@ mod tests {
 
         // The half that matters: calling it by name anyway must not execute.
         match set.execute("bash", &serde_json::json!({})).await {
-            ToolOutput::Error { message } => assert!(
+            ToolOutput::Error { message, .. } => assert!(
                 message.contains("unknown tool"),
                 "a disabled tool must not announce itself: {message}"
             ),

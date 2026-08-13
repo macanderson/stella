@@ -524,7 +524,7 @@ fn to_openai_input(messages: &[CompletionMessage]) -> (Option<String>, Vec<OpenA
                 for result in &message.tool_results {
                     let output = match &result.output {
                         stella_protocol::ToolOutput::Ok { content } => content.clone(),
-                        stella_protocol::ToolOutput::Error { message } => {
+                        stella_protocol::ToolOutput::Error { message, .. } => {
                             format!("ERROR: {message}")
                         }
                     };
@@ -1143,7 +1143,7 @@ mod tests {
             tool_calls: vec![],
             tool_results: vec![ToolResult {
                 call_id: "call_1".into(),
-                output: ToolOutput::Error {
+                output: ToolOutput::Error { class: None,
                     message: "no such file".into(),
                 },
             }],

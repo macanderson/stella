@@ -123,7 +123,7 @@ const AGE_ELISION_MARKER: &str =
 pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
     let payload = match output {
         ToolOutput::Ok { content } => content,
-        ToolOutput::Error { message } => message,
+        ToolOutput::Error { message, .. } => message,
     };
     payload == EVICTION_STUB
         || payload == DEDUP_STUB
@@ -291,7 +291,7 @@ fn age_stale_tool_results(
                 .map(|result| {
                     let payload = match &result.output {
                         ToolOutput::Ok { content } => content,
-                        ToolOutput::Error { message } => message,
+                        ToolOutput::Error { message, .. } => message,
                     };
                     if payload.len() > AGE_THRESHOLD_CHARS {
                         payload.len().saturating_sub(AGE_RETAINED_CHARS)
@@ -316,13 +316,13 @@ fn age_stale_tool_results(
         for result in message.tool_results.iter_mut() {
             let (payload, is_error) = match &result.output {
                 ToolOutput::Ok { content } => (content, false),
-                ToolOutput::Error { message } => (message, true),
+                ToolOutput::Error { message, .. } => (message, true),
             };
             if payload.len() > AGE_THRESHOLD_CHARS {
                 aged_blocks.push(tool_result_block_id(&result.output));
                 let aged_payload = age_content(payload);
                 result.output = if is_error {
-                    ToolOutput::Error {
+                    ToolOutput::Error { class: None,
                         message: aged_payload,
                     }
                 } else {
@@ -647,12 +647,12 @@ pub fn compact_measured(
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload, is_error) = match &result.output {
                     ToolOutput::Ok { content } => (content, false),
-                    ToolOutput::Error { message } => (message, true),
+                    ToolOutput::Error { message, .. } => (message, true),
                 };
                 if payload.len() > AGE_THRESHOLD_CHARS {
                     let aged_payload = age_content(payload);
                     result.output = if is_error {
-                        ToolOutput::Error {
+                        ToolOutput::Error { class: None,
                             message: aged_payload,
                         }
                     } else {
@@ -689,12 +689,12 @@ pub fn compact_measured(
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload_len, is_error) = match &result.output {
                     ToolOutput::Ok { content } => (content.len(), false),
-                    ToolOutput::Error { message } => (message.len(), true),
+                    ToolOutput::Error { message, .. } => (message.len(), true),
                 };
                 if payload_len > 400 {
                     evicted_blocks.push(id_at(idx, ridx));
                     result.output = if is_error {
-                        ToolOutput::Error {
+                        ToolOutput::Error { class: None,
                             message: EVICTION_STUB.to_string(),
                         }
                     } else {

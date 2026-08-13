@@ -23,7 +23,7 @@ use crate::scripts::ScriptIndex;
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
 fn no_toolchain_error() -> ToolOutput {
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: "no recognized toolchain (looked for Cargo.toml, package.json, deno.json, \
                   pyproject.toml, go.mod, Makefile, justfile, Taskfile.yml, composer.json) — \
                   pass `command` explicitly"
@@ -64,7 +64,7 @@ impl Tool for BuildProject {
         }
         match index.verb_entry("build") {
             Some(entry) => run_and_report(&entry.command, root, timeout_secs, None).await,
-            None => ToolOutput::Error {
+            None => ToolOutput::Error { class: None,
                 message: "no `build` script detected in this workspace (see list_scripts) — \
                           pass `command`"
                     .into(),
@@ -125,7 +125,7 @@ impl Tool for RunTests {
         match scope {
             None | Some("impacted") => {}
             Some(other) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "unknown scope `{other}` — the only scope is \"impacted\" (omit \
                          `scope` for the full suite)"
@@ -134,7 +134,7 @@ impl Tool for RunTests {
             }
         }
         if scope.is_some() && !filter.is_empty() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`scope: \"impacted\"` computes its own selection — it cannot be \
                           combined with `filter`; drop one of them"
                     .into(),
@@ -224,7 +224,7 @@ impl Tool for RunTests {
                 &note,
                 run_and_report(&command, root, timeout_secs, None).await,
             ),
-            Err(message) => with_note(&note, ToolOutput::Error { message }),
+            Err(message) => with_note(&note, ToolOutput::Error { class: None, message }),
         }
     }
 }
@@ -239,7 +239,7 @@ fn with_note(note: &str, out: ToolOutput) -> ToolOutput {
         ToolOutput::Ok { content } => ToolOutput::Ok {
             content: format!("{note}\n{content}"),
         },
-        ToolOutput::Error { message } => ToolOutput::Error {
+        ToolOutput::Error { message, .. } => ToolOutput::Error { class: None,
             message: format!("{note}\n{message}"),
         },
     }
@@ -556,12 +556,12 @@ async fn run_argv_and_report(
                     content: format!("`{display}` PASSED (exit 0){counts}\n{output}"),
                 }
             } else {
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!("`{display}` FAILED (exit {code}){counts}\n{output}"),
                 }
             }
         }
-        Err(e) => ToolOutput::Error { message: e },
+        Err(e) => ToolOutput::Error { class: None, message: e },
     }
 }
 
@@ -597,7 +597,7 @@ impl Tool for RunLint {
         let fix = input.get("fix").and_then(|v| v.as_bool()).unwrap_or(false);
         match lint_argv(&ScriptIndex::detect(root).await, fix) {
             Ok(argv) => run_argv_and_report(&argv, root, timeout_secs).await,
-            Err(message) => ToolOutput::Error { message },
+            Err(message) => ToolOutput::Error { class: None, message },
         }
     }
 
@@ -644,7 +644,7 @@ impl Tool for FormatCode {
             .unwrap_or(false);
         match format_argv(&ScriptIndex::detect(root).await, check) {
             Ok(argv) => run_argv_and_report(&argv, root, timeout_secs).await,
-            Err(message) => ToolOutput::Error { message },
+            Err(message) => ToolOutput::Error { class: None, message },
         }
     }
 
@@ -757,7 +757,7 @@ mod tests {
             .execute(&serde_json::json!({"command": "exit 1"}), root.path())
             .await;
         match &out {
-            ToolOutput::Error { message } => assert!(message.contains("FAILED"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("FAILED"), "{message}"),
             other => panic!("{other:?}"),
         }
     }
@@ -780,7 +780,7 @@ mod tests {
             .await;
         let text = match &out {
             ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
         };
         assert!(text.contains("pnpm run test"), "{text}");
 
@@ -961,7 +961,7 @@ mod tests {
             .await;
         let text = match &out {
             ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
         };
         assert!(
             text.contains("a.test.ts"),
@@ -1003,7 +1003,7 @@ mod tests {
             .await;
         let text = match &out {
             ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
         };
         assert!(
             text.contains("selected 1 package(s)"),
@@ -1029,7 +1029,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("cannot be combined"), "{message}")
             }
             other => panic!("scope+filter must be refused: {other:?}"),
@@ -1038,7 +1038,7 @@ mod tests {
             .execute(&serde_json::json!({"scope": "blast"}), root.path())
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("unknown scope"), "{message}")
             }
             other => panic!("unknown scope must be a named error: {other:?}"),
@@ -1058,7 +1058,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let out = RunLint.execute(&serde_json::json!({}), root.path()).await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("no linter configured"), "{message}")
             }
             other => panic!("{other:?}"),

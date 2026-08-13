@@ -870,7 +870,7 @@ mod tests {
         let err = client.call_tool("t", serde_json::json!({})).await.unwrap();
         assert_eq!(
             err,
-            ToolOutput::Error {
+            ToolOutput::Error { class: None,
                 message: "boom".into()
             }
         );

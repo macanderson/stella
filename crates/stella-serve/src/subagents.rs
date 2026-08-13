@@ -403,7 +403,7 @@ impl ToolExecutor for DelegatingTools<'_> {
             .map(str::trim)
             .filter(|prompt| !prompt.is_empty())
         else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "missing required string field `prompt` — the sub-agent cannot see \
                      this conversation, so the question must be self-contained"
                     .into(),
@@ -490,13 +490,13 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                 ),
             }
         }
-        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::Error {
+        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::Error { class: None,
             message: format!(
                 "the sub-agent stopped before producing anything: {reason} — do the work \
                  directly, or ask a narrower question"
             ),
         },
-        SubAgentOutcome::Refused { reason } => ToolOutput::Error {
+        SubAgentOutcome::Refused { reason } => ToolOutput::Error { class: None,
             message: format!(
                 "the sub-agent was not started: {reason} — do the work directly with your \
                  own tools"

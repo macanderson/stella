@@ -439,7 +439,7 @@ async fn a_fact_in_the_middle_of_a_long_turn_reaches_the_reflection_prompt() {
             transcript.extend(tool_exchange(
                 "call_middle",
                 "bash",
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: "migration lock held by another connection".into(),
                 },
             ));
@@ -489,7 +489,7 @@ async fn a_failed_tool_result_reaches_the_reflection_prompt() {
     transcript.extend(tool_exchange(
         "call_1",
         "bash",
-        ToolOutput::Error {
+        ToolOutput::Error { class: None,
             message: THE_ERROR.into(),
         },
     ));

@@ -45,7 +45,7 @@ fn open(root: &Path) -> stella_graph::CodeGraph {
 fn content(output: &ToolOutput) -> String {
     match output {
         ToolOutput::Ok { content } => content.clone(),
-        ToolOutput::Error { message } => panic!("expected Ok, got error: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected Ok, got error: {message}"),
     }
 }
 
@@ -130,7 +130,7 @@ async fn an_empty_query_names_the_tool_that_takes_an_identifier() {
     let output = SemanticCodeSearch
         .execute(&serde_json::json!({ "query": "  " }), ws.path())
         .await;
-    let ToolOutput::Error { message } = output else {
+    let ToolOutput::Error { message, .. } = output else {
         panic!("an empty query must be an error");
     };
     assert!(message.contains("graph_query"), "{message}");

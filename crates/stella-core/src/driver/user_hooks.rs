@@ -121,7 +121,7 @@ impl<'a> Engine<'a> {
         events: Option<&EventSender>,
     ) -> ToolOutput {
         if call.input.is_null() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "malformed tool call: `{}`'s arguments were not valid JSON (the model's \
                      streamed output didn't parse) — retry this call with well-formed JSON \
@@ -177,7 +177,7 @@ impl<'a> Engine<'a> {
         // either feed the same ladder with them.
         match pre.verdict(&OperatorPosture::NoOpinion, false) {
             GateVerdict::Deny { reason } => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "tool `{}` was blocked by a PreToolUse hook: {reason}",
                         call.name
@@ -186,7 +186,7 @@ impl<'a> Engine<'a> {
             }
             GateVerdict::RequireApproval { reason } => {
                 let Some(route) = self.hook_approvals else {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!(
                             "tool `{}` requires approval — a PreToolUse hook asked for a human \
                              decision ({reason}), but no interactive surface is attached to \
@@ -203,7 +203,7 @@ impl<'a> Engine<'a> {
                 match route.resolve(&request).await {
                     HookApprovalResolution::Approved => {}
                     HookApprovalResolution::Denied { reason } => {
-                        return ToolOutput::Error {
+                        return ToolOutput::Error { class: None,
                             message: format!("tool `{}` requires approval — {reason}", call.name),
                         };
                     }
@@ -221,7 +221,7 @@ impl<'a> Engine<'a> {
 
         let result_str = match &output {
             ToolOutput::Ok { content } => content.clone(),
-            ToolOutput::Error { message } => message.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
         };
         // Observation only — a non-zero PostToolUse exit never blocks or
         // rewrites the result; its failures ride `diagnostics` instead.

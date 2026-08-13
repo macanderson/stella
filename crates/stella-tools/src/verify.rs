@@ -509,7 +509,7 @@ impl Tool for VerifyDone {
         let mut phases = Phases::default();
         let (output, verdict) = match self.verify(input, root, &mut phases).await {
             Ok(pair) => pair,
-            Err(message) => (ToolOutput::Error { message }, Verdict::Error),
+            Err(message) => (ToolOutput::Error { class: None, message }, Verdict::Error),
         };
         phases.verdict = verdict;
         // The turn's rejection run (#2863), folded in at the one exit every
@@ -698,14 +698,14 @@ impl VerifyDone {
             // after its own harness for fifteen consecutive calls (#2872).
             if let Some(broken) = instrument::working_tree_failure(new_exit, &new_output) {
                 return Ok((
-                    ToolOutput::Error {
+                    ToolOutput::Error { class: None,
                         message: instrument::refusal(broken, test_cmd, new_exit, tail(&new_output)),
                     },
                     Verdict::InstrumentBroken,
                 ));
             }
             return Ok((
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!(
                         "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). \
                          Fix the implementation (or the test) and retry.\n--- output tail \
@@ -783,7 +783,7 @@ impl VerifyDone {
                 tail(&old_output),
             )
             .await;
-            return Ok((ToolOutput::Error { message }, Verdict::Vacuous));
+            return Ok((ToolOutput::Error { class: None, message }, Verdict::Vacuous));
         }
 
         // A failure while LOADING the test is not a failure OF the test:
@@ -806,7 +806,7 @@ impl VerifyDone {
                 return Ok((ToolOutput::Ok { content }, Verdict::Confirmed));
             }
             return Ok((
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!(
                         "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
                      {label}, so the baseline could not be built or imported and no \
@@ -979,7 +979,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("VACUOUS TEST"), "{message}")
             }
             other => panic!("expected vacuous rejection, got {other:?}"),
@@ -1148,7 +1148,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("WITNESS BASELINE UNRESOLVED"), "{message}");
                 assert!(
                     !message.contains("VACUOUS"),
@@ -1185,7 +1185,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("WITNESS_INCONCLUSIVE_BUILD_ERROR"),
                     "{message}"
@@ -1213,7 +1213,7 @@ mod tests {
             )
             .await;
         match &out {
-            ToolOutput::Error { message } => assert!(message.contains("NOT DONE"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("NOT DONE"), "{message}"),
             other => panic!("expected NOT DONE, got {other:?}"),
         }
         std::fs::remove_dir_all(&root).ok();
@@ -1237,7 +1237,7 @@ mod tests {
             )
             .await;
         match ghost {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("does not exist"), "{message}")
             }
             other => panic!("{other:?}"),
@@ -1320,7 +1320,7 @@ mod tests {
             "timeout_secs": 60
         });
         match VerifyDone::default().execute(&input, &root).await {
-            ToolOutput::Error { message } => assert!(message.contains("NOT DONE"), "{message}"),
+            ToolOutput::Error { message, .. } => assert!(message.contains("NOT DONE"), "{message}"),
             other => panic!("expected NOT DONE, got {other:?}"),
         }
         assert_eq!(
@@ -1447,7 +1447,7 @@ mod tests {
             )
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("requires a git repository"), "{message}")
             }
             other => panic!("{other:?}"),

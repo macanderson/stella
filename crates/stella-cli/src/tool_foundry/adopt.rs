@@ -394,7 +394,7 @@ impl ToolExecutor for Builtins {
     }
 
     async fn execute(&self, name: &str, _: &Value) -> ToolOutput {
-        ToolOutput::Error {
+        ToolOutput::Error { class: None,
             message: format!("no tool named `{name}` is available"),
         }
     }

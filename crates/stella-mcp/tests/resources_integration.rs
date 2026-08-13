@@ -146,7 +146,7 @@ async fn resources_list_and_read_round_trip() {
         )
         .await
     {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("fx"), "names the server: {message}");
             assert!(message.contains("missing.txt"), "names the uri: {message}");
         }
@@ -174,7 +174,7 @@ async fn a_server_without_the_capability_advertises_no_resource_tools() {
         .execute("mcp__fx__list_resources", &serde_json::json!({}))
         .await
     {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("not advertised"), "{message}");
         }
         other => panic!("expected the unknown-tool error, got {other:?}"),

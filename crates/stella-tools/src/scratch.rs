@@ -117,10 +117,10 @@ impl Tool for SaveState {
     async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
         let (key, content) = match (str_field(input, "key"), str_field(input, "content")) {
             (Ok(k), Ok(c)) => (k, c),
-            (Err(m), _) | (_, Err(m)) => return ToolOutput::Error { message: m },
+            (Err(m), _) | (_, Err(m)) => return ToolOutput::Error { class: None, message: m },
         };
         if content.len() > MAX_SAVE_BYTES {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "content is {} bytes; save_state caps at {MAX_SAVE_BYTES}. Produce large \
                      artifacts from the shell into $STELLA_SCRATCH/{key} instead, then read \
@@ -131,13 +131,13 @@ impl Tool for SaveState {
         }
         let path = match self.0.resolve(key) {
             Ok(p) => p,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         match std::fs::write(&path, content) {
             Ok(()) => ToolOutput::Ok {
                 content: format!("saved {key} ({} bytes)", content.len()),
             },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: format!("failed to save {key}: {e}"),
             },
         }
@@ -174,11 +174,11 @@ impl Tool for GetState {
     async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         let path = match self.0.resolve(key) {
             Ok(p) => p,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0);
         let limit = input
@@ -189,14 +189,14 @@ impl Tool for GetState {
         let mut file = match std::fs::File::open(&path) {
             Ok(f) => f,
             Err(_) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("no state saved under {key:?} — list_state shows what exists"),
                 };
             }
         };
         let total = file.metadata().map(|m| m.len()).unwrap_or(0);
         if let Err(e) = file.seek(SeekFrom::Start(offset)) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("seek failed on {key}: {e}"),
             };
         }
@@ -207,7 +207,7 @@ impl Tool for GetState {
                 Ok(0) => break,
                 Ok(n) => read += n,
                 Err(e) => {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!("read failed on {key}: {e}"),
                     };
                 }
@@ -256,7 +256,7 @@ impl Tool for ListState {
         let entries = match std::fs::read_dir(self.0.path()) {
             Ok(e) => e,
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("scratch dir unreadable: {e}"),
                 };
             }
@@ -304,17 +304,17 @@ impl Tool for DeleteState {
     async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         let path = match self.0.resolve(key) {
             Ok(p) => p,
-            Err(message) => return ToolOutput::Error { message },
+            Err(message) => return ToolOutput::Error { class: None, message },
         };
         match std::fs::remove_file(&path) {
             Ok(()) => ToolOutput::Ok {
                 content: format!("deleted {key}"),
             },
-            Err(_) => ToolOutput::Error {
+            Err(_) => ToolOutput::Error { class: None,
                 message: format!("no state saved under {key:?} — nothing deleted"),
             },
         }

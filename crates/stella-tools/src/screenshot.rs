@@ -83,7 +83,7 @@ impl Tool for Screenshot {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_default();
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("could not create {}: {e}", dir.display()),
             };
         }
@@ -100,7 +100,7 @@ impl Tool for Screenshot {
                     .map(|m| m.len())
                     .unwrap_or(0);
                 if size == 0 {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: "capture produced an empty file — is screen recording \
                                   permission granted?"
                             .into(),
@@ -114,10 +114,10 @@ impl Tool for Screenshot {
                     content: format!("captured {rel} ({size} bytes)"),
                 }
             }
-            Ok((code, output)) => ToolOutput::Error {
+            Ok((code, output)) => ToolOutput::Error { class: None,
                 message: format!("screen capture failed (exit {code}): {output}"),
             },
-            Err(e) => ToolOutput::Error { message: e },
+            Err(e) => ToolOutput::Error { class: None, message: e },
         }
     }
 
@@ -153,7 +153,7 @@ mod tests {
             .await;
         match out {
             ToolOutput::Ok { content } => assert!(content.contains("weirdlabel")),
-            ToolOutput::Error { message } => assert!(!message.is_empty()),
+            ToolOutput::Error { message, .. } => assert!(!message.is_empty()),
         }
         std::fs::remove_dir_all(&root).ok();
     }

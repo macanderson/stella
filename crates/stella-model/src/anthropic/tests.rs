@@ -1143,7 +1143,7 @@ fn to_anthropic_messages_frames_tool_results_as_user_blocks() {
             tool_calls: vec![],
             tool_results: vec![ToolResult {
                 call_id: "toolu_9".into(),
-                output: ToolOutput::Error {
+                output: ToolOutput::Error { class: None,
                     message: "command failed".into(),
                 },
             }],

@@ -627,7 +627,7 @@ impl McpToolSet {
                 }
                 output
             }
-            Err(err) => ToolOutput::Error {
+            Err(err) => ToolOutput::Error { class: None,
                 message: format!(
                     "mcp server `{}` failed calling `{raw_tool}`: {}",
                     client.name(),
@@ -827,7 +827,7 @@ impl ToolExecutor for McpToolSet {
         if let Some((idx, raw_tool)) = self.routes.get(name) {
             let client = &self.clients[*idx];
             if self.is_disabled(client.name()) {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
                         client.name()
@@ -849,7 +849,7 @@ impl ToolExecutor for McpToolSet {
         // A namespaced name we don't recognize is an MCP miss, not a native
         // tool — never fall through to native for it.
         if name.starts_with(NS_PREFIX) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "unknown MCP tool `{name}` — not advertised by any connected server"
                 ),
@@ -857,7 +857,7 @@ impl ToolExecutor for McpToolSet {
         }
         match &self.native {
             Some(native) => native.execute(name, input).await,
-            None => ToolOutput::Error {
+            None => ToolOutput::Error { class: None,
                 message: format!("unknown tool `{name}` (no native tools configured)"),
             },
         }
@@ -939,7 +939,7 @@ impl ToolExecutor for CandidateMcpView {
             return if self.inner.is_candidate_safe_tool(name) {
                 self.inner.execute(name, input).await
             } else {
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!(
                         "mcp tool `{name}` is withheld from Best-of-N candidates — its \
                          server is not marked `candidate_safe` in .stella/mcp.toml"

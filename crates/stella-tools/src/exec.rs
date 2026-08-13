@@ -607,10 +607,10 @@ pub(crate) async fn run_and_report(
         Ok((0, output)) => ToolOutput::Ok {
             content: format!("`{command}` PASSED (exit 0)\n{output}"),
         },
-        Ok((code, output)) => ToolOutput::Error {
+        Ok((code, output)) => ToolOutput::Error { class: None,
             message: format!("`{command}` FAILED (exit {code})\n{output}"),
         },
-        Err(e) => ToolOutput::Error { message: e },
+        Err(e) => ToolOutput::Error { class: None, message: e },
     }
 }
 

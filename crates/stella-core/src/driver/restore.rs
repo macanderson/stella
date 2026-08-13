@@ -365,7 +365,7 @@ impl<'a> Engine<'a> {
                 // hook payloads).
                 let content = match self.execute_with_repair(&call, true, Some(events)).await {
                     ToolOutput::Ok { content } => FreshContent::Current(content),
-                    ToolOutput::Error { message } => FreshContent::Unreadable(message),
+                    ToolOutput::Error { message, .. } => FreshContent::Unreadable(message),
                 };
                 fresh.push(FreshRead {
                     path: read.path.clone(),
@@ -471,7 +471,7 @@ mod tests {
         }
         async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
             if name != "read_file" {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("unknown tool `{name}`"),
                 };
             }
@@ -480,7 +480,7 @@ mod tests {
                 Some(content) => ToolOutput::Ok {
                     content: content.clone(),
                 },
-                None => ToolOutput::Error {
+                None => ToolOutput::Error { class: None,
                     message: format!("no such file: {path}"),
                 },
             }

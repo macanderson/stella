@@ -243,7 +243,7 @@ fn spawn_shell_command(
         let output = if ok {
             ToolOutput::Ok { content }
         } else {
-            ToolOutput::Error { message: content }
+            ToolOutput::Error { class: None, message: content }
         };
         let _ = tx.send(envelope(
             agent_id.clone(),

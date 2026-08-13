@@ -302,7 +302,7 @@ pub(crate) fn project_event(
                 ToolOutput::Ok { content } => {
                     (ToolCallState::Ok, String::new(), content.len() as i64)
                 }
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     let len = message.len() as i64;
                     (ToolCallState::Error, message.clone(), len)
                 }
@@ -427,7 +427,7 @@ impl Store {
                         ToolOutput::Ok { content } => {
                             (ToolCallState::Ok, String::new(), content.len() as i64)
                         }
-                        ToolOutput::Error { message } => {
+                        ToolOutput::Error { message, .. } => {
                             let len = message.len() as i64;
                             (ToolCallState::Error, message, len)
                         }
@@ -702,7 +702,7 @@ impl Store {
                 } => {
                     let entry = match output {
                         ToolOutput::Ok { content } => (true, content),
-                        ToolOutput::Error { message } => (false, message),
+                        ToolOutput::Error { message, .. } => (false, message),
                     };
                     results.insert(call_id, entry);
                 }

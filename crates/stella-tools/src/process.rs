@@ -425,7 +425,7 @@ impl ProcessTable {
 }
 
 fn unknown_handle_error(table: &ProcessTable, handle: &str) -> ToolOutput {
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: format!(
             "unknown process handle `{handle}` — known handles: {}",
             table.known_handles()
@@ -487,7 +487,7 @@ impl Tool for StartProcess {
             })
             .unwrap_or_default();
         if argv.is_empty() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`argv` must be a non-empty array of strings (argv[0] is the program)"
                     .into(),
             };
@@ -507,7 +507,7 @@ impl Tool for StartProcess {
             table.enforce_exited_cap();
             let live = table.live_count();
             if live >= MAX_LIVE_PROCESSES {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "{live} processes are already running and the limit is \
                          {MAX_LIVE_PROCESSES} — replace one with restart_process (known \
@@ -524,7 +524,7 @@ impl Tool for StartProcess {
         let entry = match service::spawn_entry(&argv, name.clone(), root, self.scratch.as_deref()) {
             Ok(entry) => entry,
             Err(failure) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: failure.to_string(),
                 };
             }
@@ -549,7 +549,7 @@ impl Tool for StartProcess {
 /// The named error `read_output` returns for its deprecated `clear: true`
 /// arm — see the module doc and #2699.
 fn clear_removed_from_read_output_error() -> ToolOutput {
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: "`read_output`'s `clear` field was removed — call `clear_output(handle)` \
                   instead to discard buffered output without reading it."
             .into(),
@@ -585,7 +585,7 @@ impl Tool for ReadOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -691,7 +691,7 @@ impl Tool for ClearOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -771,7 +771,7 @@ impl Tool for SendStdin {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -779,7 +779,7 @@ impl Tool for SendStdin {
         let text = match crate::input::required_str(input, "text") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -789,7 +789,7 @@ impl Tool for SendStdin {
         let mut stdin = {
             let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(tomb) = table.tombstones.get(handle) {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("{handle} has already exited (code {})", tomb.exit_code),
                 };
             }
@@ -797,14 +797,14 @@ impl Tool for SendStdin {
                 return unknown_handle_error(&table, handle);
             };
             if let Some(code) = entry.poll_exit() {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("{handle} has already exited (code {code})"),
                 };
             }
             match entry.stdin.take() {
                 Some(stdin) => stdin,
                 None => {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!("{handle}'s stdin is closed"),
                     };
                 }
@@ -819,7 +819,7 @@ impl Tool for SendStdin {
             Ok(()) => ToolOutput::Ok {
                 content: format!("wrote {} bytes to {handle}", text.len()),
             },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: format!("write to {handle} stdin failed: {e}"),
             },
         };
@@ -865,7 +865,7 @@ impl Tool for StopProcess {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -890,7 +890,7 @@ impl Tool for StopProcess {
                 content: format!("{handle} had already exited (code {code})"),
             };
         }
-        ToolOutput::Error {
+        ToolOutput::Error { class: None,
             message: service::StopRefusal::LiveService {
                 handle: handle.to_string(),
                 display: entry.display.clone(),

@@ -756,7 +756,7 @@ fn to_anthropic_messages(
                     .map(|result| {
                         let (text, is_error) = match &result.output {
                             stella_protocol::ToolOutput::Ok { content } => (content.clone(), false),
-                            stella_protocol::ToolOutput::Error { message } => {
+                            stella_protocol::ToolOutput::Error { message, .. } => {
                                 (message.clone(), true)
                             }
                         };

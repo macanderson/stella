@@ -525,7 +525,7 @@ impl HistoryBackend for GitCli {
 fn render<T: Serialize>(value: &T, what: &str) -> ToolOutput {
     match serde_json::to_string_pretty(value) {
         Ok(json) => ToolOutput::Ok { content: json },
-        Err(e) => ToolOutput::Error {
+        Err(e) => ToolOutput::Error { class: None,
             message: format!("cannot render {what}: {e}"),
         },
     }
@@ -599,7 +599,7 @@ impl Tool for RepoHistoryTool {
         };
         match self.0.history(root, &request).await {
             Ok(history) => render(&history, "repository history"),
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }
@@ -668,7 +668,7 @@ impl Tool for RepoRecoverTool {
         // Reject anything that is not a plain revision token rather than
         // handing it to the backend.
         if target.starts_with('-') || target.split_whitespace().count() != 1 {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!(
                     "`target` must be a single reference name (got {target:?}) — \
                      options and multi-word revisions are not accepted"
@@ -677,7 +677,7 @@ impl Tool for RepoRecoverTool {
         }
         match self.0.unreferenced(root, target).await {
             Ok(recovery) => render(&recovery, "recovery report"),
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: e.to_string(),
             },
         }

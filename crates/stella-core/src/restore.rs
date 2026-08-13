@@ -615,7 +615,7 @@ mod tests {
             read_call("c1", "gone.rs"),
             read_result(
                 "c1",
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: "no such file".into(),
                 },
             ),

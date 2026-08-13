@@ -224,7 +224,7 @@ pub(crate) fn all_tool_outputs() -> Vec<ToolOutput> {
         ToolOutput::Ok {
             content: "hello".into(),
         },
-        ToolOutput::Error {
+        ToolOutput::Error { class: None,
             message: "boom".into(),
         },
     ]

@@ -424,10 +424,10 @@ impl RemoteToolExecutor {
             serde_json::json!({ "tool": name, "input": input }),
         ));
         match outcome.decision {
-            HookDecision::Deny { reason } => Err(ToolOutput::Error {
+            HookDecision::Deny { reason } => Err(ToolOutput::Error { class: None,
                 message: format!("`{name}` was denied by an extension policy: {reason}"),
             }),
-            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error {
+            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error { class: None,
                 message: format!("`{name}` requires approval before it can run: {reason}"),
             }),
             _ => {
@@ -457,7 +457,7 @@ impl RemoteToolExecutor {
     /// Announce how the host answered, on the observable channel.
     fn report_tool_outcome(bus: &HookBus, name: &str, output: &ToolOutput, duration_ms: u64) {
         match output {
-            ToolOutput::Error { message } => bus.emit_named(
+            ToolOutput::Error { message, .. } => bus.emit_named(
                 hook_names::TOOL_CALL_FAILED,
                 serde_json::json!({
                     "tool": name, "error": message, "duration_ms": duration_ms,
@@ -493,7 +493,7 @@ impl ToolExecutor for RemoteToolExecutor {
         // data. Cancellation therefore ends the turn one step later, at the
         // provider port, which *can* report `ProviderError::Cancelled`.
         if self.pending.is_cancelled() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "turn cancelled before the tool call could be dispatched".to_string(),
             };
         }
@@ -549,7 +549,7 @@ impl RemoteToolExecutor {
         // landing between the check above and this call must not park the step
         // until its deadline.
         if !self.pending.register_tool(request_id.clone(), tx) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "turn cancelled before the tool call could be dispatched".to_string(),
             };
         }
@@ -563,7 +563,7 @@ impl RemoteToolExecutor {
             .is_err()
         {
             self.pending.abandon(&request_id);
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "serve host disconnected before the tool call could be dispatched"
                     .to_string(),
             };
@@ -574,16 +574,16 @@ impl RemoteToolExecutor {
                 answered(&self.pending, &request_id, ReverseKind::Tool, started);
                 output
             }
-            Ok(Err(_)) if self.pending.is_cancelled() => ToolOutput::Error {
+            Ok(Err(_)) if self.pending.is_cancelled() => ToolOutput::Error { class: None,
                 message: "turn cancelled while the tool call was in flight".to_string(),
             },
-            Ok(Err(_)) => ToolOutput::Error {
+            Ok(Err(_)) => ToolOutput::Error { class: None,
                 message: "serve host dropped the tool call without answering".to_string(),
             },
             Err(_) => {
                 self.pending.abandon(&request_id);
                 timed_out(&self.pending, &request_id, ReverseKind::Tool, started);
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!(
                         "serve host did not answer the `{name}` tool call within {:?} \
                          (reverse-request deadline)",
@@ -1024,7 +1024,7 @@ mod tests {
             .execute("echo", &serde_json::json!({ "text": "hi" }))
             .await;
         assert!(
-            matches!(&output, ToolOutput::Error { message } if message.contains("disconnected")),
+            matches!(&output, ToolOutput::Error { message, .. } if message.contains("disconnected")),
             "expected the host-disconnected error, got {output:?}"
         );
         assert_eq!(
@@ -1071,7 +1071,7 @@ mod tests {
         );
         let output = port.execute("echo", &serde_json::json!({})).await;
         assert!(
-            matches!(&output, ToolOutput::Error { message } if message.contains("deadline")),
+            matches!(&output, ToolOutput::Error { message, .. } if message.contains("deadline")),
             "expected the reverse-request deadline error, got {output:?}"
         );
         assert_eq!(
@@ -1304,7 +1304,7 @@ mod tests {
             pending
                 .resolve_tool(
                     &request_id,
-                    ToolOutput::Error {
+                    ToolOutput::Error { class: None,
                         message: "unknown tool".to_string(),
                     },
                 )

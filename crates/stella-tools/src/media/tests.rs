@@ -339,7 +339,7 @@ async fn a_drifting_host_expiry_is_refused_instead_of_replayed() {
     assert!(matches!(first, ToolOutput::Ok { .. }), "{first:?}");
     let second = tool.execute(&args, dir.path()).await;
 
-    let ToolOutput::Error { message } = second else {
+    let ToolOutput::Error { message, .. } = second else {
         panic!("a moved expiry is a different request, not a replay: {second:?}");
     };
     assert!(
@@ -378,7 +378,7 @@ async fn image_without_a_host_gate_is_denied_before_submission() {
         .execute(&serde_json::json!({"prompt": "a star"}), dir.path())
         .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("host approval"), "{message}");
         }
         ToolOutput::Ok { content } => panic!("the host gate must deny: {content}"),
@@ -581,7 +581,7 @@ async fn generates_and_persists_under_stella_artifacts() {
                 .unwrap_or(0);
             assert!(count >= 1, "one artifact on disk");
         }
-        ToolOutput::Error { message } => panic!("expected success: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected success: {message}"),
     }
 }
 
@@ -592,7 +592,7 @@ async fn refusal_and_bad_size_and_missing_prompt_are_named_errors() {
         .execute(&serde_json::json!({"prompt": "refuse me"}), dir.path())
         .await;
     match refused {
-        ToolOutput::Error { message } => assert!(message.contains("content policy")),
+        ToolOutput::Error { message, .. } => assert!(message.contains("content policy")),
         ToolOutput::Ok { .. } => panic!("refusal must surface as an error"),
     }
     let bad_size = tool()
@@ -751,7 +751,7 @@ async fn video_without_a_host_gate_is_denied_before_submission() {
         .execute(&serde_json::json!({"prompt": "a teaser"}), dir.path())
         .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("host approval"), "{message}");
         }
         ToolOutput::Ok { content } => panic!("the gate must deny: {content}"),
@@ -778,7 +778,7 @@ async fn model_controlled_confirm_spend_cannot_authorize_video() {
         )
         .await;
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("host approval"), "{message}");
         }
         ToolOutput::Ok { content } => {
@@ -818,7 +818,7 @@ async fn video_completion_journal_failure_is_reconciliation_required_and_retry_s
     let input = serde_json::json!({"prompt": "a teaser"});
 
     let first = tool.execute(&input, dir.path()).await;
-    let ToolOutput::Error { message } = first else {
+    let ToolOutput::Error { message, .. } = first else {
         panic!("persistence failure must be terminal: {first:?}");
     };
     assert!(message.contains("reconciliation_required"), "{message}");
@@ -827,7 +827,7 @@ async fn video_completion_journal_failure_is_reconciliation_required_and_retry_s
 
     std::fs::remove_dir(&blocker).unwrap();
     let retry = tool.execute(&input, dir.path()).await;
-    let ToolOutput::Error { message } = retry else {
+    let ToolOutput::Error { message, .. } = retry else {
         panic!("an ambiguous pending operation must not resubmit: {retry:?}");
     };
     assert!(message.contains("reconciliation_required"), "{message}");
@@ -859,7 +859,7 @@ async fn image_artifact_failure_is_reconciliation_required_and_retry_safe() {
     let input = serde_json::json!({"prompt": "a star"});
 
     let first = tool.execute(&input, dir.path()).await;
-    let ToolOutput::Error { message } = first else {
+    let ToolOutput::Error { message, .. } = first else {
         panic!("artifact failure must be terminal: {first:?}");
     };
     assert!(message.contains("reconciliation_required"), "{message}");
@@ -901,7 +901,7 @@ async fn poll_running_keeps_the_job_persisted() {
         .await;
     match out {
         ToolOutput::Ok { content } => assert!(content.contains("running"), "{content}"),
-        ToolOutput::Error { message } => panic!("expected running status: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected running status: {message}"),
     }
     assert!(
         job_store(dir.path()).get("vid-1").unwrap().is_some(),
@@ -922,7 +922,7 @@ async fn poll_success_persists_the_video_and_forgets_the_job() {
             // Saved under the artifact id assigned at submit.
             assert!(content.contains("med_fake.mp4"), "{content}");
         }
-        ToolOutput::Error { message } => panic!("expected success: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected success: {message}"),
     }
     let file = dir
         .path()
@@ -969,7 +969,7 @@ async fn poll_does_not_report_success_when_job_cleanup_fails() {
         .await;
 
     match out {
-        ToolOutput::Error { message } => {
+        ToolOutput::Error { message, .. } => {
             assert!(message.contains("reconciliation_required"), "{message}");
         }
         ToolOutput::Ok { content } => panic!("stale handle reported success: {content}"),
@@ -1004,7 +1004,7 @@ async fn poll_failure_reports_the_reason_and_forgets_the_job() {
         .execute(&serde_json::json!({"job_id": "vid-1"}), dir.path())
         .await;
     match out {
-        ToolOutput::Error { message } => assert!(message.contains("purged"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("purged"), "{message}"),
         ToolOutput::Ok { content } => panic!("a failed job must error: {content}"),
     }
     assert!(job_store(dir.path()).get("vid-1").unwrap().is_none());
@@ -1018,7 +1018,7 @@ async fn poll_unknown_job_and_missing_id_are_named_errors() {
         .execute(&serde_json::json!({"job_id": "ghost"}), dir.path())
         .await;
     match unknown {
-        ToolOutput::Error { message } => assert!(message.contains("ghost"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("ghost"), "{message}"),
         ToolOutput::Ok { content } => panic!("unknown job must error: {content}"),
     }
     let no_id = PollVideo::new(fake)
@@ -1057,7 +1057,7 @@ async fn svg_is_sanitized_and_persisted() {
             assert!(!text.contains("script"), "{text}");
             assert!(text.contains("<rect"), "{text}");
         }
-        ToolOutput::Error { message } => panic!("expected success: {message}"),
+        ToolOutput::Error { message, .. } => panic!("expected success: {message}"),
     }
 }
 
@@ -1069,7 +1069,7 @@ async fn malformed_svg_is_a_repairable_named_error() {
         .await;
     match out {
         // The line/col detail is what lets the model repair and retry.
-        ToolOutput::Error { message } => assert!(message.contains("parse error"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("parse error"), "{message}"),
         ToolOutput::Ok { content } => panic!("malformed SVG must error: {content}"),
     }
     let no_svg = GenerateSvg

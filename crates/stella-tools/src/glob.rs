@@ -63,7 +63,7 @@ impl Tool for Glob {
         let pattern = match crate::input::required_str(input, "pattern") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -76,7 +76,7 @@ impl Tool for Glob {
         let search_dir = match crate::resolve_within_root(root, search_path) {
             Some(p) => p,
             None => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("path `{search_path}` escapes workspace root"),
                 };
             }
@@ -88,7 +88,7 @@ impl Tool for Glob {
         // With existence settled up front, backend_failure can treat every
         // vanished-entry complaint as the race it is.
         if !search_dir.is_dir() {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: format!("search path `{search_path}` is not a directory"),
             };
         }
@@ -101,7 +101,7 @@ impl Tool for Glob {
         // `run_captured` sets `kill_on_drop` (a cancelled turn must not leave a
         // full-tree walk burning IO) and bounds the wait.
         match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
-            crate::exec::Captured::TimedOut => ToolOutput::Error {
+            crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
                 message: format!(
                     "fd timed out after {}s — narrow the search with a `path` filter",
                     crate::grep::SEARCH_TIMEOUT_SECS
@@ -117,7 +117,7 @@ impl Tool for Glob {
                     // as an empty tree sends the agent off recreating files
                     // that exist.
                     if let Some(message) = backend_failure("fd", &output) {
-                        return ToolOutput::Error { message };
+                        return ToolOutput::Error { class: None, message };
                     }
                     return ToolOutput::Ok {
                         content: "(no files found)".into(),
@@ -136,7 +136,7 @@ impl Tool for Glob {
                 match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
                     .await
                 {
-                    crate::exec::Captured::TimedOut => ToolOutput::Error {
+                    crate::exec::Captured::TimedOut => ToolOutput::Error { class: None,
                         message: format!(
                             "find timed out after {}s — narrow the search with a `path` filter",
                             crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS
@@ -147,7 +147,7 @@ impl Tool for Glob {
                         if text.is_empty() {
                             // Same backend-failure guard as the fd arm.
                             if let Some(message) = backend_failure("find", &output) {
-                                return ToolOutput::Error { message };
+                                return ToolOutput::Error { class: None, message };
                             }
                             ToolOutput::Ok {
                                 content: "(no files found)".into(),
@@ -159,7 +159,7 @@ impl Tool for Glob {
                             }
                         }
                     }
-                    crate::exec::Captured::Unavailable => ToolOutput::Error {
+                    crate::exec::Captured::Unavailable => ToolOutput::Error { class: None,
                         message: "find failed: neither `fd` nor `find` is available".into(),
                     },
                 }
@@ -446,7 +446,7 @@ mod tests {
                     "should not contain b.txt: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_dir_all(dir.join(&subdir)).await;
     }
@@ -473,7 +473,7 @@ mod tests {
                     "maps the listed file's symbols: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected files, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected files, got: {message}"),
         }
     }
 
@@ -756,7 +756,7 @@ mod tests {
             .await;
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("no files")),
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
     }
 
@@ -823,7 +823,7 @@ mod tests {
             )
             .await;
         match result {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("srcc"), "{message}");
                 assert!(message.contains("not a directory"), "{message}");
             }

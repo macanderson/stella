@@ -558,7 +558,7 @@ fn to_bedrock_messages(
                     .map(|result| {
                         let (text, status) = match &result.output {
                             stella_protocol::ToolOutput::Ok { content } => (content.clone(), None),
-                            stella_protocol::ToolOutput::Error { message } => {
+                            stella_protocol::ToolOutput::Error { message, .. } => {
                                 (message.clone(), Some("error"))
                             }
                         };

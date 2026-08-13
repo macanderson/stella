@@ -91,7 +91,7 @@ pub(super) fn operation_key(
 }
 
 pub(super) fn open_store(root: &std::path::Path) -> Result<ArtifactStore, ToolOutput> {
-    ArtifactStore::open(root.join(".stella/artifacts")).map_err(|error| ToolOutput::Error {
+    ArtifactStore::open(root.join(".stella/artifacts")).map_err(|error| ToolOutput::Error { class: None,
         message: format!("artifact store unavailable: {error}"),
     })
 }
@@ -104,7 +104,7 @@ pub(super) fn spend_denied(request: &MediaSpendRequest) -> ToolOutput {
     let estimate = request
         .estimated_usd
         .map_or_else(|| "unknown cost".to_string(), |usd| format!("${usd:.4}"));
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: format!(
             "media spend requires host approval: {} submission to {} ({estimate}; {})",
             match request.kind {
@@ -122,7 +122,7 @@ pub(super) fn reconciliation_required(
     operation_id: &str,
     detail: impl std::fmt::Display,
 ) -> ToolOutput {
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: format!(
             "reconciliation_required: paid media operation `{operation_id}` may have reached the provider; refusing automatic resubmission ({detail})"
         ),

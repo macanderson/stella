@@ -257,7 +257,7 @@ fn main() {
                     .iter()
                     .map(|r| match &r.output {
                         ToolOutput::Ok { content } => content.len(),
-                        ToolOutput::Error { message } => message.len(),
+                        ToolOutput::Error { message, .. } => message.len(),
                     })
                     .sum::<usize>()
         })

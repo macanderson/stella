@@ -1860,7 +1860,7 @@ impl<'a> Engine<'a> {
         };
         match tokio::time::timeout(limit, self.dispatch_tool_call(call, read_only, events)).await {
             Ok(output) => output,
-            Err(_) => ToolOutput::Error {
+            Err(_) => ToolOutput::Error { class: None,
                 message: format!(
                     "tool `{}` exceeded the engine's {}s dispatch ceiling and was abandoned \
                      before it returned — it produced no result, and any work it had already \

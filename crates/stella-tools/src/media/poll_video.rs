@@ -67,7 +67,7 @@ impl Tool for PollVideo {
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let Some(job_id) = input.get("job_id").and_then(|value| value.as_str()) else {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`job_id` is required".into(),
             };
         };
@@ -75,12 +75,12 @@ impl Tool for PollVideo {
         let job = match jobs.get(job_id) {
             Ok(Some(job)) => job,
             Ok(None) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("no persisted video job `{job_id}`"),
                 };
             }
             Err(error) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("video job store unavailable: {error}"),
                 };
             }
@@ -88,7 +88,7 @@ impl Tool for PollVideo {
         let status = match stella_media::resume(&jobs, self.provider.as_ref(), job_id).await {
             Ok(status) => status,
             Err(error) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("video poll failed: {error}"),
                 };
             }
@@ -96,7 +96,7 @@ impl Tool for PollVideo {
         match status.state {
             MediaJobState::Succeeded => {
                 let Some(artifact) = status.artifact else {
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!("video job `{job_id}` succeeded without an artifact"),
                     };
                 };
@@ -127,7 +127,7 @@ impl Tool for PollVideo {
                             ),
                         }
                     }
-                    Err(error) => ToolOutput::Error {
+                    Err(error) => ToolOutput::Error { class: None,
                         message: format!("could not persist the video: {error}"),
                     },
                 }
@@ -136,7 +136,7 @@ impl Tool for PollVideo {
                 if let Err(error) = jobs.remove(job_id) {
                     return reconciliation_required(job_id, error);
                 }
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!("video job `{job_id}` failed: {reason}"),
                 }
             }
@@ -158,7 +158,7 @@ impl Tool for PollVideo {
                     if let Err(error) = jobs.remove(job_id) {
                         return reconciliation_required(job_id, error);
                     }
-                    return ToolOutput::Error {
+                    return ToolOutput::Error { class: None,
                         message: format!(
                             "video job `{job_id}` never reached a terminal status within \
                              {} minutes — abandoning the poll (the provider may still \

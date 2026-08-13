@@ -329,7 +329,7 @@ impl Tool for RestartProcess {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v.to_string(),
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -341,7 +341,7 @@ impl Tool for RestartProcess {
                     .collect()
             });
         if override_argv.as_ref().is_some_and(Vec::is_empty) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: "`argv`, when given, must be a non-empty array of strings (argv[0] is \
                           the program) — omit it to restart the same command"
                     .into(),
@@ -361,7 +361,7 @@ impl Tool for RestartProcess {
                 ),
                 None => {
                     if table.tombstones.contains_key(&handle) {
-                        return ToolOutput::Error {
+                        return ToolOutput::Error { class: None,
                             message: format!(
                                 "{handle} was reaped and its command is no longer recorded — \
                                  start the replacement with start_process"
@@ -378,7 +378,7 @@ impl Tool for RestartProcess {
             Terminated::Killed(Some(code)) => format!("killed after SIGTERM grace (code {code})"),
             Terminated::Killed(None) => "killed after SIGTERM grace".to_string(),
             Terminated::Vanished => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("{handle} disappeared while restarting"),
                 };
             }
@@ -391,7 +391,7 @@ impl Tool for RestartProcess {
                 // start. Say both halves: a message that reported only the
                 // spawn failure would leave the model believing the service
                 // it asked to restart is still up.
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "{handle} was stopped ({stopped}) but its replacement did not start: \
                          {failure} — nothing is running under {handle} now; fix the command and \

@@ -202,7 +202,7 @@ pub(super) fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, M
         rendered
     };
     if result.is_error {
-        Ok(ToolOutput::Error {
+        Ok(ToolOutput::Error { class: None,
             message: if rendered.is_empty() {
                 format!("tool `{tool}` reported an error with no detail")
             } else {

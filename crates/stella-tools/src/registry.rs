@@ -938,7 +938,7 @@ impl ToolRegistry {
         // message names the file and the fix, and re-reading is one cheap step
         // where a failed turn would be a whole one.
         if let Some(refusal) = self.refused_mutation(name, &pending_ops) {
-            return ToolOutput::Error {
+            return ToolOutput::Error { class: None,
                 message: refusal.message(),
             };
         }
@@ -1063,7 +1063,7 @@ impl ToolRegistry {
                     };
                     snapshot = match persisted {
                         Ok(persisted) => Some(self.merge_storage_overlay(persisted)),
-                        Err(message) => return ToolOutput::Error { message },
+                        Err(message) => return ToolOutput::Error { class: None, message },
                     };
                 }
                 let own = current
@@ -1084,7 +1084,7 @@ impl ToolRegistry {
                         declared_intent = intent.map(str::to_string);
                         pending_storage.push(pass);
                     }
-                    Err(message) => return ToolOutput::Error { message },
+                    Err(message) => return ToolOutput::Error { class: None, message },
                 }
             }
         }
@@ -1140,7 +1140,7 @@ impl ToolRegistry {
 
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
-            None => ToolOutput::Error {
+            None => ToolOutput::Error { class: None,
                 message: format!(
                     "unknown tool `{name}` — available: {}",
                     self.available_names()
@@ -1155,7 +1155,7 @@ impl ToolRegistry {
             // (see [`Self::command_line_for`]).
             let command_line = Self::command_line_for(name, input, resolved_command.as_deref());
             match &output {
-                ToolOutput::Error { message } => {
+                ToolOutput::Error { message, .. } => {
                     bus.emit_named(
                         hook_names::TOOL_CALL_FAILED,
                         serde_json::json!({

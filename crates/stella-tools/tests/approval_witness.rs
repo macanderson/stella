@@ -28,7 +28,7 @@ async fn headless_require_approval_names_the_missing_surface_and_grant_path() {
     reg.attach_bus(bus);
 
     match reg.execute("task_list", &serde_json::json!({})).await {
-        stella_protocol::ToolOutput::Error { message } => {
+        stella_protocol::ToolOutput::Error { message, .. } => {
             assert!(
                 message.contains("no interactive surface"),
                 "the refusal must name the missing surface, got: {message}"

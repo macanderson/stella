@@ -262,7 +262,7 @@ impl Tool for ReadFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -283,7 +283,7 @@ impl Tool for ReadFile {
         let handle = match crate::rootfd::RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("cannot open workspace root: {e}"),
                 };
             }
@@ -320,7 +320,7 @@ impl Tool for ReadFile {
         let bytes = match loaded {
             Ok(Ok(Loaded::Bytes(bytes))) => bytes,
             Ok(Ok(Loaded::Directory)) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "`{path}` is a directory, not a file — list it with \
                          glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
@@ -328,7 +328,7 @@ impl Tool for ReadFile {
                 };
             }
             Ok(Ok(Loaded::TooLarge { bytes })) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!(
                         "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
@@ -339,17 +339,17 @@ impl Tool for ReadFile {
                 };
             }
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("path `{path}` escapes workspace root ({e})"),
                 };
             }
             Ok(Err(e)) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("failed to read `{path}`: {e}"),
                 };
             }
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("failed to read `{path}`: {e}"),
                 };
             }
@@ -472,7 +472,7 @@ impl Tool for ReadFile {
                 );
                 ToolOutput::Ok { content: numbered }
             }
-            Err(message) => ToolOutput::Error { message },
+            Err(message) => ToolOutput::Error { class: None, message },
         }
     }
 }
@@ -499,7 +499,7 @@ mod tests {
                 assert!(content.contains("2\tline two"));
                 assert!(content.contains("3/3 lines shown"));
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_file(&full).await;
     }
@@ -524,7 +524,7 @@ mod tests {
                 assert!(!content.contains("4\td"));
                 assert!(content.contains("2/5 lines shown"));
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         let _ = tokio::fs::remove_file(&full).await;
     }
@@ -554,7 +554,7 @@ mod tests {
                     "third read reports its count: {content}"
                 );
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert_eq!(tool.read_count(dir.path(), "src/a.rs"), 3);
         assert_eq!(tool.read_count(dir.path(), "src/./a.rs"), 3);
@@ -837,7 +837,7 @@ mod tests {
             .execute(&serde_json::json!({"path": "blob.bin"}), dir.path())
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("binary"), "{message}");
                 assert!(message.contains("not UTF-8"), "{message}");
             }
@@ -855,7 +855,7 @@ mod tests {
             .execute(&serde_json::json!({"path": "src"}), dir.path())
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("is a directory"), "{message}");
                 assert!(message.contains("glob("), "names the tool: {message}");
             }
@@ -883,7 +883,7 @@ mod tests {
             )
             .await;
         match out {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(message.contains("ceiling"), "{message}");
                 assert!(message.contains("grep"), "points somewhere: {message}");
             }

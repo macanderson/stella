@@ -1338,7 +1338,7 @@ mod tests {
             m.apply(&AgentEvent::ToolResult {
                 call_id: id,
                 output: if i < failures {
-                    ToolOutput::Error {
+                    ToolOutput::Error { class: None,
                         message: "exit status 1".into(),
                     }
                 } else {

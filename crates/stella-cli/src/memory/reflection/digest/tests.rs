@@ -54,7 +54,7 @@ fn ok(content: &str) -> ToolOutput {
 }
 
 fn failed(message: &str) -> ToolOutput {
-    ToolOutput::Error {
+    ToolOutput::Error { class: None,
         message: message.into(),
     }
 }

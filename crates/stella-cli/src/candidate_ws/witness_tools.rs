@@ -41,7 +41,7 @@ impl WitnessToolExecutor {
     }
 
     fn denied(name: &str, reason: impl std::fmt::Display) -> ToolOutput {
-        ToolOutput::Error {
+        ToolOutput::Error { class: None,
             message: format!("`{name}` is not available to the witness author: {reason}"),
         }
     }
@@ -696,7 +696,7 @@ mod tests {
                 )
                 .await;
             match &output {
-                ToolOutput::Error { message } => assert!(
+                ToolOutput::Error { message, .. } => assert!(
                     message.contains(expected),
                     "{name} must name its vacuous shape, got: {message}"
                 ),
@@ -756,7 +756,7 @@ mod tests {
             )
             .await;
         match &output {
-            ToolOutput::Error { message } => {
+            ToolOutput::Error { message, .. } => {
                 assert!(
                     message.contains("/app/ssl"),
                     "the refusal must quote what was written: {message}"

@@ -422,7 +422,7 @@ impl SearchReport {
             hits: Vec::new(),
             strategies: Vec::new(),
             note: None,
-            rendered: ToolOutput::Error {
+            rendered: ToolOutput::Error { class: None,
                 message: message.into(),
             },
         }

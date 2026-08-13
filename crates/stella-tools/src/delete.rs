@@ -61,7 +61,7 @@ impl Tool for DeleteFile {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
             Err(err) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: err.to_string(),
                 };
             }
@@ -69,7 +69,7 @@ impl Tool for DeleteFile {
         let handle = match RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::Error {
+                return ToolOutput::Error { class: None,
                     message: format!("cannot open workspace root: {e}"),
                 };
             }
@@ -104,13 +104,13 @@ impl Tool for DeleteFile {
                     target.display()
                 ),
             },
-            Ok(Ok(None)) => ToolOutput::Error {
+            Ok(Ok(None)) => ToolOutput::Error { class: None,
                 message: format!(
                     "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"
                 ),
             },
-            Ok(Err(e)) if e.is_escape() => ToolOutput::Error {
+            Ok(Err(e)) if e.is_escape() => ToolOutput::Error { class: None,
                 message: format!("path `{path}` escapes the workspace root ({e})"),
             },
             // A missing path reaches here as the `stat` failing, and must read
@@ -118,17 +118,17 @@ impl Tool for DeleteFile {
             Ok(Err(crate::rootfd::RootError::Io(e)))
                 if e.kind() == std::io::ErrorKind::NotFound =>
             {
-                ToolOutput::Error {
+                ToolOutput::Error { class: None,
                     message: format!(
                         "`{path}` is not a file (directories and missing paths are not deletable \
                          with this tool)"
                     ),
                 }
             }
-            Ok(Err(e)) => ToolOutput::Error {
+            Ok(Err(e)) => ToolOutput::Error { class: None,
                 message: format!("could not delete `{path}`: {e}"),
             },
-            Err(e) => ToolOutput::Error {
+            Err(e) => ToolOutput::Error { class: None,
                 message: format!("could not delete `{path}`: {e}"),
             },
         }
@@ -186,7 +186,7 @@ mod tests {
                 assert!(content.contains("symlink"), "{content}");
                 assert!(content.contains("real.toml"), "{content}");
             }
-            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+            ToolOutput::Error { message, .. } => panic!("expected ok, got: {message}"),
         }
         assert!(
             !dir.path()

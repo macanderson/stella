@@ -45,7 +45,7 @@ async fn a_deny_policy_blocks_the_tool_and_leaves_no_touch() {
         .await;
     assert!(out.is_error(), "deny must surface as a tool error");
     match out {
-        ToolOutput::Error { message } => assert!(message.contains("read-only"), "{message}"),
+        ToolOutput::Error { message, .. } => assert!(message.contains("read-only"), "{message}"),
         _ => unreachable!(),
     }
     assert!(
