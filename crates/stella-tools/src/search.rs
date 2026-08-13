@@ -169,6 +169,9 @@ const DEFAULT_BUDGET_CHARS: usize = 9_000;
 /// name match wearing a semantic answer's clothes is worse than no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Strategy {
+    /// The query named an indexed symbol exactly, and the graph knows where it
+    /// is defined. Not a ranking — a lookup that either hit or did not.
+    ExactSymbol,
     /// The query and the files were embedded and compared by meaning.
     Semantic,
     /// The code graph's paths and symbol names were matched by term.
@@ -182,6 +185,7 @@ impl Strategy {
     /// The word that appears in the answer's `via:` line.
     const fn label(self) -> &'static str {
         match self {
+            Strategy::ExactSymbol => "exact symbol name (code-graph definition sites)",
             Strategy::Semantic => "semantic (embedding rank over the code-graph index)",
             Strategy::GraphNames => "names (path + symbol-name terms over the code-graph index)",
             Strategy::FileScan => "scan (path + content terms over the working tree, no index)",
@@ -498,7 +502,9 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
 ///
 /// The ladder, and why it is a ladder rather than a fusion:
 ///
-/// - **Semantic** first whenever an embedder resolves, so the vector index is
+/// - **Exact symbol** first, and it is not a ranking at all — it is the graph
+///   answering "where is this defined" with a fact. It leads whenever it hits.
+/// - **Semantic** next whenever an embedder resolves, so the vector index is
 ///   exercised on every search rather than only when a model happens to pick
 ///   the semantic tool (#2995). A backend that fails mid-flight degrades to
 ///   the next rung with the failure quoted, never a lost turn.
@@ -510,8 +516,25 @@ pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchRep
 ///   its language is the normal case on Terminal-Bench, where the graph is
 ///   empty and both rungs above return nothing at all.
 ///
-/// Fusing them instead would mix three incomparable scales into one ordering
-/// and make the answer's `via:` line a lie.
+/// Fusing them instead would mix incomparable scales into one ordering and
+/// make the answer's `via:` line a lie.
+///
+/// # Why the top rung is a stack rather than a stop
+///
+/// Every rung below the first was unreachable in practice (#3125). "Stop at
+/// the first that produces hits" plus an admission floor that rejects nothing —
+/// measured: the lowest cosine anywhere in a 158-file corpus was 0.418 against
+/// a floor of 0.25, so 158 of 158 files were admitted — means semantic never
+/// returns empty and nothing after it ever runs. `via: semantic` on 9 of 9
+/// probes. The floor itself is #2993; this is the structural consequence, and
+/// it bites hardest exactly where ranking is weakest, on a bare symbol name.
+///
+/// So the exact rung **prepends** rather than replacing: its hits are
+/// certainties and lead, the semantic ranking follows for context with its
+/// duplicates removed, and `via:` names both. Concatenating is not the fusion
+/// the paragraph above forbids — no score from one rung is ever compared
+/// against a score from another, and each hit still says in its own `why:`
+/// which kind of answer it is.
 pub(crate) async fn dispatch(
     graph: Option<&CodeGraph>,
     root: &Path,
@@ -521,12 +544,19 @@ pub(crate) async fn dispatch(
     let mut strategies = Vec::new();
     let mut note = None;
 
+    let exact = graph.map_or_else(Vec::new, |graph| {
+        enrich::exact_symbol_hits(graph, query, MAX_NAME_HITS)
+    });
+    if !exact.is_empty() {
+        strategies.push(Strategy::ExactSymbol);
+    }
+
     if let (Some(graph), Some(embedder)) = (graph, embedder) {
         strategies.push(Strategy::Semantic);
         match semantic_hits(graph, embedder, query).await {
             Ok((hits, coverage)) if !hits.is_empty() => {
                 return Answer {
-                    hits,
+                    hits: lead_with(exact, hits),
                     strategies,
                     // Coverage rides even on a successful answer: it is
                     // exactly the successful-looking partial answer that
@@ -539,6 +569,18 @@ pub(crate) async fn dispatch(
             Ok((_, coverage)) => note = coverage,
             Err(reason) => note = Some(reason),
         }
+    }
+
+    // A definition site is a complete answer on its own, so it is returned
+    // before the term-matching rungs rather than after them — reaching a name
+    // match having already found the definition would rank the certainty below
+    // the guesses.
+    if !exact.is_empty() {
+        return Answer {
+            hits: exact,
+            strategies,
+            note,
+        };
     }
 
     if let Some(graph) = graph {
@@ -559,6 +601,24 @@ pub(crate) async fn dispatch(
         strategies,
         note,
     }
+}
+
+/// Put the certainties first and let the ranking follow, minus anything the
+/// certainties already named.
+///
+/// Order within each group is preserved, and no score from one group is ever
+/// weighed against a score from the other — the concatenation is the whole
+/// operation. A file reached by both is reported once, as the exact hit,
+/// because "this is where it is defined" is strictly more information than
+/// "this scored 0.61".
+fn lead_with(exact: Vec<Hit>, ranked: Vec<Hit>) -> Vec<Hit> {
+    if exact.is_empty() {
+        return ranked;
+    }
+    let led: std::collections::HashSet<String> = exact.iter().map(|hit| hit.path.clone()).collect();
+    let mut hits = exact;
+    hits.extend(ranked.into_iter().filter(|hit| !led.contains(&hit.path)));
+    hits
 }
 
 /// Embed what is pending, embed the query, rank. `Err` carries a reason
