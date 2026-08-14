@@ -295,7 +295,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
-   in sneaky ways, and this is guarded on **four axes** today in
+   in sneaky ways, and this is guarded on **five axes** today in
    `crates/stella-model/src/provider_parity.rs`:
    - **`CachePosture`** — how the prompt cache is engaged/observed
      (Anthropic's cache is explicit opt-in; DeepSeek spells its cache-hit
@@ -324,6 +324,17 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      classifier, so an overflow phrased in a detected dialect is caught
      opportunistically and anything else degrades to a safe unrecovered
      abort. Verifying the real wire shape upgrades the row.
+   - **`OutputBudgetPosture`** — whether this provider refuses the
+     *requested output ceiling* rather than billing what is spent, and
+     whether that refusal is recognised, so the engine clamps
+     `max_output_tokens` and re-asks instead of aborting the turn. It
+     diverges hardest at the gateways: a gateway prices the request against
+     the ceiling the caller asks for, so OpenRouter refuses a 128K ask
+     (`can only afford M`) against a balance that would fund the real call
+     several times over. `Detected` today for `openrouter` alone, witnessed
+     on its exact recorded body; every direct vendor is a declared
+     `BestEffort` gap. Unrecognised, this failure killed three benchmark
+     runs outright.
 
    Each provider id declares a posture on **every** axis and, for a
    controllable/opt-in/implicit/fallback posture, names the **witness test**

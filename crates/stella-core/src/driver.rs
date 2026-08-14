@@ -131,6 +131,7 @@ mod completion;
 mod dispatch;
 mod drive;
 mod model_fallback;
+pub(crate) mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod restore;
@@ -1105,6 +1106,12 @@ impl<'a> Engine<'a> {
             .run_model_call(
                 state.step,
                 &state.messages,
+                // Narrowed by any standing output-ceiling clamp
+                // (`driver::output_budget_recovery`): a provider that refused
+                // to fund this turn's ask must not be asked for it again.
+                state
+                    .output_budget_recovery
+                    .apply(self.config.max_output_tokens),
                 &mut state.budget,
                 &mut state.memos.receipts,
                 &mut state.memos.warnings,
@@ -1395,6 +1402,11 @@ impl<'a> Engine<'a> {
         &self,
         step: usize,
         messages: &[CompletionMessage],
+        // The output ceiling this call may ask for — `self.config`'s value
+        // narrowed by any standing clamp. Passed rather than read off the
+        // config so the clamp cannot be bypassed by a future call site
+        // (`driver::output_budget_recovery`).
+        max_output_tokens: Option<u32>,
         budget: &mut BudgetGuard,
         receipts: &mut ReceiptLedger,
         warnings: &mut BudgetWarnings,
@@ -1448,7 +1460,7 @@ impl<'a> Engine<'a> {
         // bound used to force on an owning request (#921).
         let req = CompletionRequestRef {
             messages,
-            max_output_tokens: req_config.max_output_tokens,
+            max_output_tokens,
             temperature: req_config.temperature,
             effort: req_config.effort,
             reasoning: req_config.reasoning,

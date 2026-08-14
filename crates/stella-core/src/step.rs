@@ -55,6 +55,7 @@ use stella_protocol::{
 
 use crate::budget::BudgetGuard;
 use crate::driver::loop_escalation::LoopSteerBudget;
+use crate::driver::output_budget_recovery::OutputBudgetRecovery;
 use crate::driver::overflow_recovery::OverflowRecovery;
 use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
@@ -338,6 +339,10 @@ pub struct TurnState {
     /// [`Self::length_continuations`] it is deliberately not checkpointed: a
     /// resumed turn starts the bounded allowance over.
     pub(crate) overflow_recovery: OverflowRecovery,
+    /// The reactive output-ceiling recovery latch and clamp
+    /// (`crate::driver::output_budget_recovery`) — the output-side mirror of
+    /// [`Self::overflow_recovery`], and not checkpointed for the same reason.
+    pub(crate) output_budget_recovery: OutputBudgetRecovery,
     /// The index of the step that will run next. Advanced by a step that
     /// COMMITTED and continued — and by an overflow-recovery retry, whose
     /// re-issued call is a new step so its receipts never collide with the
@@ -393,6 +398,7 @@ impl TurnState {
             effective_budget: None,
             usage_anchor: None,
             overflow_recovery: OverflowRecovery::default(),
+            output_budget_recovery: OutputBudgetRecovery::default(),
             loop_steer: LoopSteerBudget::default(),
             transcript_rewrites: 0,
             step: 0,
@@ -427,6 +433,7 @@ impl TurnState {
             // Not carried either: the bounded recovery allowance starts over,
             // exactly as `length_continuations` does.
             overflow_recovery: OverflowRecovery::default(),
+            output_budget_recovery: OutputBudgetRecovery::default(),
             loop_steer: LoopSteerBudget::resumed(
                 checkpoint.loop_steered.then_some(LoopIdentity {
                     tools: checkpoint.loop_steered_pattern,
