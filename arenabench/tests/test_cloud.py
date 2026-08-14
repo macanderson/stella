@@ -212,12 +212,23 @@ class FakeDynamo:
         return self.pages[min(len(self.calls) - 1, len(self.pages) - 1)]
 
 
-def _executor(ls_remote=None, **clients: object) -> CloudExecutor:
+def _funded_credits(api_key: str) -> dict:
+    """The credits seam's default fake: a balance no projection exceeds.
+
+    Keeps every pre-existing submission test hermetic regardless of whether
+    the developer's shell exports a real ``OPENROUTER_API_KEY`` — with a key
+    present the balance preflight consults this seam, never the network.
+    """
+    return {"data": {"total_credits": 1_000_000.0, "total_usage": 0.0}}
+
+
+def _executor(ls_remote=None, credits=None, **clients: object) -> CloudExecutor:
     defaults: dict[str, object] = {"sts": FakeSts()}
     defaults.update(clients)
     return CloudExecutor(
         clients=defaults,
         ls_remote=ls_remote if ls_remote is not None else _refuse_ls_remote,
+        credits=credits if credits is not None else _funded_credits,
     )
 
 
@@ -1133,6 +1144,8 @@ def _run_args(template, **overrides) -> argparse.Namespace:
         out=None,
         region=None,
         bucket=None,
+        est_per_trial=1.0,
+        skip_balance_check=False,
         # These tests are about submission, not about the banned-behavior
         # gate, so they take the explicit waiver — `_cmd_cloud_run` refuses to
         # start a run that is neither gated nor deliberately ungated, and that
@@ -1208,3 +1221,166 @@ class TestCloudRunCommand:
             "submit-time output must name ref -> commit, so a reader can see "
             "which commit 'main' meant on this run (#2388)"
         )
+
+
+class TestBalancePreflight:
+    """The empty-balance refusal at submit time.
+
+    Three cloud runs were lost whole to an empty OpenRouter balance —
+    h2h891 (16 trials), fivetools5 (30/30), gate89high1 (35/89) — because
+    nothing between `cloud run` and the first 402 ever asked what the key
+    could still spend. These are the submit-side witnesses for the
+    preflight in `arenabench/balance.py`; its pure decisions are pinned in
+    `tests/test_balance.py`.
+    """
+
+    def _fixtures(self, tmp_path):
+        commit = "d" * 40
+        template = tmp_path / "match.toml"
+        template.write_text(TEMPLATE, encoding="utf-8")
+        s3 = FakeS3(
+            {
+                "binaries/main/latest.json": json.dumps(
+                    {"git_ref": "main", "commit": commit}
+                ).encode()
+            }
+        )
+        batch = FakeBatch()
+        return template, s3, batch, commit
+
+    def test_an_underfunded_balance_refuses_before_any_upload_or_submit(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """The refusal half: with the credentials present, a balance the
+        projection exceeds must stop the run before anything is uploaded,
+        resolved, or submitted — naming the balance, the projection, and
+        the override flag."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        template, s3, batch, _ = self._fixtures(tmp_path)
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            credits=lambda key: {"data": {"total_credits": 100.0, "total_usage": 99.9}},
+        )
+
+        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+
+        assert rc == 2
+        assert batch.submitted == [], "an underfunded run must submit nothing"
+        assert s3.calls == [], "an underfunded run must upload (and resolve) nothing"
+        err = capsys.readouterr().err
+        assert "$0.10" in err, err
+        assert "$1.00" in err, err
+        assert "--skip-balance-check" in err, err
+
+    def test_a_funded_balance_submits(self, tmp_path, capsys, monkeypatch) -> None:
+        """The proceed half: a balance covering the projection submits
+        normally and the transcript names what was found."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        template, s3, batch, commit = self._fixtures(tmp_path)
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+            credits=lambda key: {"data": {"total_credits": 50.0, "total_usage": 10.0}},
+        )
+
+        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+
+        assert rc == 0
+        assert len(batch.submitted) == 1
+        out = capsys.readouterr().out
+        assert "balance   : $40.00 available covers $1.00 projected" in out, out
+
+    def test_a_broken_preflight_fails_open_with_a_warning(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """A preflight that cannot learn the balance must not block a
+        funded run: the submission proceeds and the transcript says the
+        check was skipped, and why."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        template, s3, batch, commit = self._fixtures(tmp_path)
+
+        def unreachable(key: str) -> dict:
+            raise OSError("connection refused")
+
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+            credits=unreachable,
+        )
+
+        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+
+        assert rc == 0
+        assert len(batch.submitted) == 1
+        out = capsys.readouterr().out
+        assert "balance   : check skipped" in out, out
+        assert "connection refused" in out, out
+
+    def test_skip_balance_check_never_queries_the_endpoint(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The override is total: with the flag set the credits seam is
+        never consulted, so the flag also works when the endpoint is the
+        thing that is broken."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        template, s3, batch, commit = self._fixtures(tmp_path)
+
+        def must_not_fetch(key: str) -> dict:
+            raise AssertionError("--skip-balance-check must not query the endpoint")
+
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+            credits=must_not_fetch,
+        )
+
+        rc = _cmd_cloud_run(
+            _run_args(template, skip_balance_check=True), executor=executor
+        )
+
+        assert rc == 0
+        assert len(batch.submitted) == 1
+
+    def test_a_missing_key_skips_the_check_and_proceeds(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """No OPENROUTER_API_KEY in the operator's shell (the cloud trials
+        get theirs from SSM): the check has nothing to ask with, says so,
+        and proceeds."""
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        template, s3, batch, commit = self._fixtures(tmp_path)
+
+        def must_not_fetch(key: str) -> dict:
+            raise AssertionError("without a key there is nothing to query with")
+
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+            credits=must_not_fetch,
+        )
+
+        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+
+        assert rc == 0
+        assert len(batch.submitted) == 1
+        out = capsys.readouterr().out
+        assert "balance   : check skipped" in out, out
+        assert "OPENROUTER_API_KEY" in out, out

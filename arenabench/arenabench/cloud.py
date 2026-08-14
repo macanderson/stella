@@ -68,6 +68,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from . import balance
 from .model import MatchSpec, slugify
 from .sut import is_full_sha, is_safe_ref
 
@@ -555,9 +556,10 @@ class CloudExecutor:
     only moves bytes. ``clients`` injects recorded-call fakes in tests — when
     a service is missing from the mapping, a real boto3 client is built
     lazily, so importing and testing this module never requires boto3.
-    ``ls_remote`` is the same seam for the one non-AWS call
-    (:func:`git_ls_remote`), so the freshness tests neither shell out nor
-    reach the network.
+    ``ls_remote`` and ``credits`` are the same seam for the two non-AWS
+    calls (:func:`git_ls_remote`, :func:`.balance.fetch_openrouter_credits`),
+    so the freshness and balance tests neither shell out nor reach the
+    network.
     """
 
     def __init__(
@@ -567,11 +569,16 @@ class CloudExecutor:
         bucket: str | None = None,
         clients: Mapping[str, Any] | None = None,
         ls_remote: Callable[[str, Iterable[str]], str] = git_ls_remote,
+        credits: Callable[[str], Mapping[str, Any]] = balance.fetch_openrouter_credits,
     ) -> None:
         self._region = region
         self._bucket = bucket
         self._clients: dict[str, Any] = dict(clients or {})
         self._ls_remote = ls_remote
+        # Public on purpose: the balance preflight rides through the verb as
+        # ``fetch=executor.openrouter_credits`` — the executor only carries
+        # the seam; the decision lives in :mod:`.balance`.
+        self.openrouter_credits = credits
         self._git_url: str | None = None
 
     def _client(self, service: str) -> Any:
@@ -1096,6 +1103,23 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
         )
         return 2
 
+    # The empty-balance sibling of the credential refusal above: h2h891,
+    # fivetools5 and gate89high1 each submitted a full grid against an
+    # OpenRouter balance that could not fund one trial, and every container
+    # burned compute to score a 0.0. The decisions and the fail-open
+    # contract live in balance.py; the executor only carries the HTTP seam.
+    plans = plan_trials(spec)
+    if not args.skip_balance_check:
+        refusal = balance.preflight(
+            trials=len(plans),
+            est_per_trial=args.est_per_trial,
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+            fetch=executor.openrouter_credits,
+        )
+        if refusal is not None:
+            print(f"error: {refusal}", file=sys.stderr)
+            return 2
+
     ref = args.ref if args.ref is not None else spec.sut_ref
     sut: SutBinary | None = None
     if ref:
@@ -1111,7 +1135,6 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
 
     run_id = args.run_id or _new_run_id()
     queue = select_queue(args.burst)
-    plans = plan_trials(spec)
 
     print(f"run       : {run_id}")
     print(f"match     : {spec.name}")
@@ -1395,6 +1418,15 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument(
         "--memory-mb", type=int, default=TRIAL_MEMORY_MB,
         help=f"memory per trial container in MiB (default: {TRIAL_MEMORY_MB})",
+    )
+    run.add_argument(
+        "--est-per-trial", type=float, default=1.0,
+        help="estimated provider spend per trial in USD, for the OpenRouter "
+             "balance preflight (default: 1.0)",
+    )
+    run.add_argument(
+        "--skip-balance-check", action="store_true",
+        help="submit even when the balance preflight projects a shortfall",
     )
     run.add_argument("--no-wait", action="store_true",
                      help="submit and exit; follow later with `cloud status`")
