@@ -25,24 +25,14 @@
 //! `[p]`/`[r]`/`[x]` keys (#645); controllable *deck* lanes and fleet-worktree
 //! isolation for deck workers remain follow-ups on that seam.
 //!
-//! ## The three engine seams handled here
+//! ## The two engine seams handled here
 //!
-//! - **ask_user** ([`DeckAskUserIo`]): the plain REPL reads stdin, which raw
-//!   mode owns in deck mode. The deck io emits its own `AskUser` card, waits
-//!   for the deck's `AskUserAnswer`, then echoes the answer back as that
-//!   card's `ToolResult` — the documented event-pure path that clears the
-//!   pending gate (`stella_tui::model`).
-//! - **File changes**: `ToolRegistry::record_touch` emits every `FileChange`,
-//!   because it is already the one place that knows what a file tool did — it
-//!   holds the pre- and post-images and writes the session's file-touch ledger
-//!   from them. Each turn points it at that turn's channel
-//!   (`registry.attach_events`), so the Files tab, the diff panel, the audit log
-//!   and the exported telemetry all report the same numbers. This replaced a
-//!   `FileChangeTap` that wrapped the tool stack and re-derived changes from
-//!   tool *inputs*: it knew four tool names (so bulk `apply_edits` and
-//!   `web_download` were invisible), assumed one `path` per call, synthesized
-//!   pseudo-diffs, and sat on only one of three tool stacks — worker lanes
-//!   announced nothing at all.
+//! - **Interactive questions** ([`DeckAskUserIo`]): the plain REPL reads
+//!   stdin, which raw mode owns in deck mode. The deck io emits its own
+//!   `AskUser` card, waits for the deck's `AskUserAnswer`, then echoes the
+//!   answer back as that card's `ToolResult` — the documented event-pure path
+//!   that clears the pending gate (`stella_tui::model`). Its consumer is the
+//!   approvals plane: scope review's confirm question routes through it.
 //! - **Cancel** (`Stop` / `UserInput::Cancel`): the engine has no abort input;
 //!   cancelling drops the in-flight turn future at its next await point and
 //!   truncates the partial turn out of the conversation so the next prompt
@@ -94,23 +84,20 @@ use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::hook_runner::ShellHookRunner;
-use stella_tools::issue_ops::{CreateParams, IssueFilters, IssueSummary, LabelInfo, MemberInfo};
-use stella_tools::issues::IssueBackend;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, IssueAction,
-    IssueRow, ScopeDecision as DeckScopeDecision, SkillOp, SkillScope, SkillSearchHit, SkillsView,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound,
+    ScopeDecision as DeckScopeDecision, SkillOp, SkillScope, SkillSearchHit, SkillsView,
     SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
+use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, SkillRegistry};
 use crate::{agent, rules};
 
 mod authoring;
 mod forwarder;
-mod hunk_gate;
 mod lead_control;
 mod model_cmd;
 mod profile_cmd;
@@ -357,11 +344,7 @@ pub async fn run_deck_session(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
     let provider = agent::build_provider(cfg)?;
-    let registry_options = agent::registry_options(cfg);
-    let registry: Arc<ToolRegistry> = Arc::new(
-        agent::new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
-    );
-    agent::populate_schema_index(&registry, &cfg.workspace_root)?;
+    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
@@ -488,9 +471,6 @@ pub async fn run_deck_session(
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
     // Scope review's answer path — same shape as `ask_tx`/`ask_rx` above.
     let (scope_tx, scope_rx) = mpsc::unbounded_channel::<DeckScopeDecision>();
-    // Per-hunk approval's answer path (#1265) — the same shape again, carrying
-    // the indices of the hunks the reviewer chose to apply.
-    let (hunk_tx, hunk_rx) = mpsc::unbounded_channel::<Vec<usize>>();
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
     // and sub-session endings (worker → driver). See `crate::subsession`.
     let (sup_tx, mut sup_rx) = mpsc::unbounded_channel::<SupervisorMsg>();
@@ -510,12 +490,9 @@ pub async fn run_deck_session(
     // every turn from here checkpoints into this record's sidecar, and every
     // file the agent touches commits to this session's ref in stella's own git
     // store. Re-bound on an in-deck session switch, below.
-    if let Some(warning) = crate::durability::bind_session(
-        &cfg.durability,
-        &registry,
-        &cfg.workspace_root,
-        &session_record.id,
-    ) {
+    if let Some(warning) =
+        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &session_record.id)
+    {
         let _ = deck_tx.send(system_notice(warning));
     }
     // Which of the two durable stores this session's conversation comes back
@@ -701,19 +678,6 @@ pub async fn run_deck_session(
         scope_rx,
         Arc::new(ask_io.clone()),
     );
-    // `None` unless the setting is on, and that is the whole install decision:
-    // an absent io makes `HunkGate` inert rather than present-and-approving.
-    let hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>> = cfg
-        .engine_settings
-        .as_ref()
-        .is_some_and(|engine| engine.hunk_review_on())
-        .then(|| {
-            Arc::new(hunk_gate::DeckHunkReviewIo {
-                agent: LEAD.to_string(),
-                inbound: in_tx.clone(),
-                decisions: Arc::new(tokio::sync::Mutex::new(hunk_rx)),
-            }) as Arc<dyn stella_tools::hunk_review::HunkReviewIo>
-        });
 
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → execute → witness → verify → verdict); `/pipeline`
@@ -760,7 +724,7 @@ pub async fn run_deck_session(
 
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
-    // `graph_query` is available this session — and the Graph tab populates —
+    // `stella search` answers from it — and the Graph tab populates —
     // without a manual `stella init`. Spawned AFTER the deck is up so its
     // `◈ indexing…`/`✓ …` lines render as transcript events; non-blocking, and
     // the watcher stops when `_session_graph` drops at session end. `_graph_build`
@@ -773,7 +737,6 @@ pub async fn run_deck_session(
     let ready_root = cfg.workspace_root.clone();
     let (_session_graph, _graph_build) = agent::spawn_session_graph(
         &cfg.workspace_root,
-        registry.clone(),
         Box::new(move |line| {
             let _ = status_tx.send(system_notice(line));
         }),
@@ -827,10 +790,6 @@ pub async fn run_deck_session(
     // Whether the "still connecting" note has been narrated (once, on the
     // first turn that dispatches before the slot fills).
     let mut mcp_pending_noted = false;
-    // Session-scoped lean-mode activation state (crate::discovery): the tool
-    // stack is rebuilt per turn, but a tool the model surfaced via
-    // tool_search stays advertised for the rest of the deck session.
-    let discovery_activation = crate::discovery::new_activation();
 
     // The registry record and hygiene ran during assembly (the durable
     // session identity block). Claim-on-first-write identity for the lead's
@@ -859,10 +818,6 @@ pub async fn run_deck_session(
             let _ = crate::ingest_cmd::lineage::surface_stale_sources(&sweep_root);
         });
     }
-
-    // The ISSUES tab's lazily-detected tracker backend (see
-    // [`issue_backend`]); shared by every spawned issues task.
-    let issue_backend_cache: IssueBackendCache = Arc::new(tokio::sync::Mutex::new(None));
 
     // ── The driver loop ─────────────────────────────────────────────────────
     // (`queue` — the durable backlog — was constructed with the session
@@ -893,7 +848,7 @@ pub async fn run_deck_session(
     let mut pending_settings_reload = false;
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
-    let mut subs = SubSessions::with_registry_options(registry_options.clone());
+    let mut subs = SubSessions::new();
     let mut pending_spawns: VecDeque<stella_core::tasks::SpawnRequest> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
@@ -1224,7 +1179,6 @@ pub async fn run_deck_session(
                                 // stood.
                                 if let Some(warning) = crate::durability::bind_session(
                                     &cfg.durability,
-                                    &registry,
                                     &cfg.workspace_root,
                                     &session_record.id,
                                 ) {
@@ -1385,7 +1339,7 @@ pub async fn run_deck_session(
                             )
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
-                            && !handle_issues_input(&other, cfg, &issue_backend_cache, &in_tx)
+                            && !handle_issues_input(&other, cfg, &in_tx)
                             && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
                         {
                             // The tool list is enumerated here rather than
@@ -1505,13 +1459,6 @@ pub async fn run_deck_session(
         }
         session_record.summary = prompt_line(&submitted, 240);
         session_record.status = stella_store::SessionStatus::InProgress;
-        // Advertise which slices this session is mid-mapping (its live draft
-        // explorations), so other decks' SESSIONS overlays can warn before a
-        // prompt duplicates the work. Cheap: JSON parse, no hashing.
-        session_record.exploring = stella_tools::exploration::draft_slices_for_pid(
-            &cfg.workspace_root,
-            std::process::id(),
-        );
         let _ = session_registry.upsert(&session_record);
 
         // Per-turn conversation bookkeeping, mirroring `run_interactive`:
@@ -1580,7 +1527,6 @@ pub async fn run_deck_session(
             &prompt,
             &cfg.workspace_root,
         );
-        let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
 
         // Resolve the turn's tool executor from the MCP slot at dispatch:
@@ -1634,16 +1580,11 @@ pub async fn run_deck_session(
                         &mut budget,
                         cfg,
                         &active_rules,
-                        &registry_options,
                         execution.clone(),
-                        files_before,
                         &in_tx,
-                        &ask_io,
-                        hunk_io.clone(),
                         &scope_gate,
                         &sup_tx,
                         &lead_holder,
-                        &discovery_activation,
                         &steering,
                         &lead_pause,
                         mcp.clone(),
@@ -1660,13 +1601,9 @@ pub async fn run_deck_session(
                         &calibration,
                         cfg,
                         execution.clone(),
-                        files_before,
                         &in_tx,
-                        &ask_io,
-                        hunk_io.clone(),
                         &sup_tx,
                         &lead_holder,
-                        &discovery_activation,
                         &steering,
                         &lead_pause,
                         recall_event,
@@ -1773,11 +1710,12 @@ pub async fn run_deck_session(
                         }) => {
                             let _ = ask_tx.send(answer);
                         }
+                        // A hunk decision answers no card this driver raises —
+                        // journal replays can render the card, but nothing
+                        // parks on the answer. Dropped.
                         Some(WorkspaceInput::ToAgent {
-                            input: UserInput::HunkDecision { accepted, .. }, ..
-                        }) => {
-                            let _ = hunk_tx.send(accepted);
-                        }
+                            input: UserInput::HunkDecision { .. }, ..
+                        }) => {}
                         // Stop routes by lane: aimed at the lead it cancels
                         // this turn; aimed at a worker it stops THAT worker
                         // and the lead's turn keeps running.
@@ -2053,7 +1991,7 @@ pub async fn run_deck_session(
                             );
                         }
                         // The ISSUES tab stays live while a turn runs too —
-                        // every op spawns its own task and answers from it,
+                        // real work spawns its own task and answers from it,
                         // so nothing here blocks the event pump.
                         Some(
                             input @ (WorkspaceInput::IssuesRefresh { .. }
@@ -2061,7 +1999,7 @@ pub async fn run_deck_session(
                             | WorkspaceInput::IssueAct { .. }
                             | WorkspaceInput::EntitySearch { .. }),
                         ) => {
-                            handle_issues_input(&input, cfg, &issue_backend_cache, &in_tx);
+                            handle_issues_input(&input, cfg, &in_tx);
                         }
                         // Scope review IS engine-driven now: the pipeline's
                         // `DeckApprovalGate` parks on this channel, so the
@@ -2150,8 +2088,6 @@ pub async fn run_deck_session(
                             &mut memory,
                             &prompt,
                             &outcome,
-                            &registry,
-                            files_before,
                             started_unix,
                             &messages,
                             reflect_start,
@@ -2256,7 +2192,6 @@ pub async fn run_deck_session(
                         store,
                         *id,
                         registry.as_ref(),
-                        files_before,
                         "cancelled",
                         cancelled_cost,
                         false,
@@ -2307,7 +2242,6 @@ pub async fn run_deck_session(
                 session_clear::close_cleared_execution(
                     execution.as_ref(),
                     registry.as_ref(),
-                    files_before,
                     cleared_cost,
                     &in_tx,
                 );
@@ -3194,95 +3128,11 @@ fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
 
 // ── ISSUES tab: tracker-backed operations ───────────────────────────────────
 
-/// The lazily-detected issue-tracker backend shared by every ISSUES-tab
-/// task. `None` inside the mutex means "not detected yet — or nothing was
-/// connected the last time we looked": detection re-runs on the next
-/// request, so a `stella connect …` performed mid-session is picked up
-/// without a restart; once a backend IS found it is cached for the session.
-type IssueBackendCache = Arc<tokio::sync::Mutex<Option<Arc<IssueBackend>>>>;
-
-/// What every ISSUES-tab request answers with while no tracker is connected
-/// — the tab renders it as its empty-state hint.
+/// What every ISSUES-tab request answers with — the tab renders it as its
+/// empty-state hint. Issue trackers reach a session as MCP tools, and the
+/// deck has no tracker transport of its own.
 const NO_TRACKER_HINT: &str =
-    "no tracker connected — run `stella connect github` or `stella connect linear`";
-
-/// The cached backend, detecting on first use (Linear env/connection beats a
-/// GitHub connection beats ambient `gh` auth — `detect_issue_backend_async`).
-async fn issue_backend(cache: &IssueBackendCache) -> Result<Arc<IssueBackend>, String> {
-    let mut guard = cache.lock().await;
-    if let Some(backend) = guard.as_ref() {
-        return Ok(backend.clone());
-    }
-    match stella_tools::issues::detect_issue_backend_async().await {
-        Some(backend) => {
-            let backend = Arc::new(backend);
-            *guard = Some(backend.clone());
-            Ok(backend)
-        }
-        None => Err(NO_TRACKER_HINT.to_string()),
-    }
-}
-
-/// `IssueSummary` → the TUI's `IssueRow` (the deck never links the tools
-/// crate; this driver maps one to the other, field for field).
-fn issue_row(summary: IssueSummary) -> IssueRow {
-    IssueRow {
-        key: summary.key,
-        title: summary.title,
-        state: summary.state,
-        labels: summary.labels,
-        assignee: summary.assignee,
-        url: summary.url,
-        updated_at: summary.updated_at,
-    }
-}
-
-/// List issues via the cached backend, mapped to deck rows.
-async fn list_issue_rows(
-    cache: &IssueBackendCache,
-    root: &std::path::Path,
-    query: Option<String>,
-    state: Option<String>,
-) -> Result<Vec<IssueRow>, String> {
-    let backend = issue_backend(cache).await?;
-    let filters = IssueFilters {
-        query,
-        state,
-        ..IssueFilters::default()
-    };
-    stella_tools::issue_ops::list_issues(&backend, root, &filters)
-        .await
-        .map(|issues| issues.into_iter().map(issue_row).collect())
-}
-
-/// A tracker member as a type-ahead hit (kind "Person"): the label and the
-/// inserted text are the handle (`@login` on GitHub, an email on Linear);
-/// the description carries the human name/email where they add anything.
-fn member_hit(member: MemberInfo) -> EntityHit {
-    let description = match (&member.name, &member.email) {
-        (Some(name), Some(email)) if *email != member.handle => format!("{name} · {email}"),
-        (Some(name), _) => name.clone(),
-        (None, Some(email)) if *email != member.handle => email.clone(),
-        _ => String::new(),
-    };
-    EntityHit {
-        kind: "Person".to_string(),
-        label: member.handle.clone(),
-        description,
-        insert: member.handle,
-    }
-}
-
-/// A tracker label as a type-ahead hit (kind "Label"); the description is
-/// the label's description, falling back to its color swatch value.
-fn label_hit(label: LabelInfo) -> EntityHit {
-    EntityHit {
-        kind: "Label".to_string(),
-        label: label.name.clone(),
-        description: label.description.or(label.color).unwrap_or_default(),
-        insert: label.name,
-    }
-}
+    "no issue tracker backend — tracker workflows ride MCP tools (`stella mcp`)";
 
 /// Installed agents whose name or description contains `query`
 /// (case-insensitive; an empty query matches all) as "Agent" hits.
@@ -3431,7 +3281,7 @@ fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
     // (definitions are an exact-name lookup, so an empty query has nothing
     // to resolve).
     if !needle.is_empty() {
-        let db = stella_tools::graph::graph_db_path(root);
+        let db = crate::search_cmd::codegraph::graph_db_path(root);
         if db.exists()
             && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
             && let Ok(frames) = graph.definitions(query.trim())
@@ -3442,152 +3292,68 @@ fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
     hits
 }
 
-/// Merge the assignee sources in priority order — tracker people first,
-/// then installed agents, then local memories/symbols — capped at `cap`.
+/// Merge the assignee sources in priority order — installed agents first,
+/// then local memories/symbols — capped at `cap`.
 fn merge_assignee_hits(
-    tracker: Vec<EntityHit>,
     agents: Vec<EntityHit>,
     local: Vec<EntityHit>,
     cap: usize,
 ) -> Vec<EntityHit> {
-    let mut merged = tracker;
-    merged.extend(agents);
+    let mut merged = agents;
     merged.extend(local);
     merged.truncate(cap);
     merged
 }
 
-/// Service one ISSUES-tab request. ALWAYS spawns the work and sends the
-/// `Inbound` from the spawned task — the tab is serviced identically idle or
-/// mid-turn, and a tracker round-trip must never stall the driver loop
-/// (the `spawn_mcp_oauth_login` shape). Returns `true` when the input was
-/// one of the tab's.
+/// Service one ISSUES-tab request. The deck carries no tracker transport —
+/// issue trackers reach a session as MCP tools — so the list/mutate requests
+/// answer with the tab's empty-state hint, and entity search serves the
+/// local sources (installed agents, memories, code-graph symbols). Spawned
+/// where work is real (the `spawn_mcp_oauth_login` shape) so a slow SQLite
+/// or grammar load never stalls the driver loop. Returns `true` when the
+/// input was one of the tab's.
 fn handle_issues_input(
     input: &WorkspaceInput,
     cfg: &Config,
-    cache: &IssueBackendCache,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
-    let root = cfg.workspace_root.clone();
     match input {
-        WorkspaceInput::IssuesRefresh { query, state, seq } => {
-            let (cache, in_tx, seq) = (cache.clone(), in_tx.clone(), *seq);
-            let (query, state) = (query.clone(), state.clone());
-            tokio::spawn(async move {
-                let outcome = list_issue_rows(&cache, &root, query, state).await;
-                let _ = in_tx.send(Inbound::IssuesList { seq, outcome });
+        WorkspaceInput::IssuesRefresh { seq, .. } => {
+            let _ = in_tx.send(Inbound::IssuesList {
+                seq: *seq,
+                outcome: Err(NO_TRACKER_HINT.to_string()),
             });
             true
         }
-        WorkspaceInput::IssueCreate {
-            title,
-            body,
-            labels,
-            assignee,
-            seq,
-        } => {
-            let (cache, in_tx, seq) = (cache.clone(), in_tx.clone(), *seq);
-            let params = CreateParams {
-                title: title.clone(),
-                body: body.clone(),
-                labels: labels.clone(),
-                assignee: assignee.clone(),
-                team: None,
-            };
-            tokio::spawn(async move {
-                let created = match issue_backend(&cache).await {
-                    Ok(backend) => {
-                        stella_tools::issue_ops::create_issue(&backend, &root, &params).await
-                    }
-                    Err(e) => Err(e),
-                };
-                match created {
-                    Ok(created) => {
-                        let _ = in_tx.send(Inbound::IssueActDone {
-                            seq,
-                            key: created.key.clone(),
-                            outcome: Ok(format!("created {} — {}", created.key, created.url)),
-                        });
-                        // The list changed — refresh it under the same seq
-                        // (the panel armed its list lane on submit).
-                        let outcome = list_issue_rows(&cache, &root, None, None).await;
-                        let _ = in_tx.send(Inbound::IssuesList { seq, outcome });
-                    }
-                    Err(e) => {
-                        let _ = in_tx.send(Inbound::IssueActDone {
-                            seq,
-                            key: String::new(),
-                            outcome: Err(e),
-                        });
-                    }
-                }
+        WorkspaceInput::IssueCreate { seq, .. } => {
+            let _ = in_tx.send(Inbound::IssueActDone {
+                seq: *seq,
+                key: String::new(),
+                outcome: Err(NO_TRACKER_HINT.to_string()),
             });
             true
         }
-        WorkspaceInput::IssueAct { key, action, seq } => {
-            let (cache, in_tx, seq) = (cache.clone(), in_tx.clone(), *seq);
-            let (key, action) = (key.clone(), action.clone());
-            tokio::spawn(async move {
-                let outcome = match issue_backend(&cache).await {
-                    Ok(backend) => match &action {
-                        IssueAction::Comment(text) => {
-                            stella_tools::issue_ops::add_comment(&backend, &root, &key, text)
-                                .await
-                                .map(|()| format!("comment added to {key}"))
-                        }
-                        IssueAction::SetStatus(status) => {
-                            stella_tools::issue_ops::set_status(&backend, &root, &key, status).await
-                        }
-                        // Start work = move the issue to in-progress. Branch
-                        // creation/checkout stays the `start_work_on_issue`
-                        // tool's job; on GitHub (whose issues know only
-                        // open/closed) this reports the tracker's honest
-                        // "no such state" message.
-                        IssueAction::StartWork => {
-                            stella_tools::issue_ops::set_status(
-                                &backend,
-                                &root,
-                                &key,
-                                "in progress",
-                            )
-                            .await
-                        }
-                    },
-                    Err(e) => Err(e),
-                };
-                let _ = in_tx.send(Inbound::IssueActDone { seq, key, outcome });
+        WorkspaceInput::IssueAct { key, seq, .. } => {
+            let _ = in_tx.send(Inbound::IssueActDone {
+                seq: *seq,
+                key: key.clone(),
+                outcome: Err(NO_TRACKER_HINT.to_string()),
             });
             true
         }
         WorkspaceInput::EntitySearch { field, query, seq } => {
-            let (cache, in_tx, seq, field) = (cache.clone(), in_tx.clone(), *seq, *field);
+            let (in_tx, seq, field) = (in_tx.clone(), *seq, *field);
             let query = query.clone();
+            let root = cfg.workspace_root.clone();
             tokio::spawn(async move {
                 let hits = match field {
-                    EntityField::Label => match issue_backend(&cache).await {
-                        Ok(backend) => {
-                            stella_tools::issue_ops::search_labels(&backend, &root, &query, 20)
-                                .await
-                                .map(|labels| labels.into_iter().map(label_hit).collect())
-                                .unwrap_or_default()
-                        }
-                        // No tracker: no label vocabulary. The popup shows
-                        // "no matches"; the list-level requests carry the
-                        // connect hint.
-                        Err(_) => Vec::new(),
-                    },
+                    // No tracker transport: no label vocabulary. The popup
+                    // shows "no matches"; the list-level requests carry the
+                    // hint.
+                    EntityField::Label => Vec::new(),
                     EntityField::Assignee => {
-                        // Four independent sources — a failure of one must
-                        // not kill the others; collect what succeeds.
-                        let tracker = match issue_backend(&cache).await {
-                            Ok(backend) => {
-                                stella_tools::issue_ops::search_members(&backend, &root, &query, 15)
-                                    .await
-                                    .map(|members| members.into_iter().map(member_hit).collect())
-                                    .unwrap_or_default()
-                            }
-                            Err(_) => Vec::new(),
-                        };
+                        // Independent sources — a failure of one must not
+                        // kill the others; collect what succeeds.
                         let agents = {
                             let project = crate::agents_installed::project_agents_dir(&root);
                             let user = crate::agents_installed::user_agents_dir();
@@ -3605,7 +3371,7 @@ fn handle_issues_input(
                                 .await
                                 .unwrap_or_default()
                         };
-                        merge_assignee_hits(tracker, agents, local, 20)
+                        merge_assignee_hits(agents, local, 20)
                     }
                 };
                 let _ = in_tx.send(Inbound::EntityHits {
@@ -4000,23 +3766,7 @@ async fn run_deck_command(
             .await;
             let _ = in_tx.send(Inbound::Splash(SplashCue::Release));
             match outcome {
-                Ok((_domains, _cost_usd)) => {
-                    // A fresh index may name tables/types the schema gate
-                    // should know about this session, not just the next one.
-                    if let Err(error) = agent::populate_schema_index(registry, &cfg.workspace_root)
-                    {
-                        say(format!("schema governance unavailable: {error}"));
-                        return DeckCommand::Handled;
-                    }
-                    // Expose the `graph_query` tool for the rest of the session
-                    // now that the index exists (it is registered only when an
-                    // index is present at construction).
-                    if let Err(error) = registry.enable_code_graph_if_available(&cfg.workspace_root)
-                    {
-                        say(format!("graph tool unavailable: {error}"));
-                    }
-                    return DeckCommand::InitCompleted;
-                }
+                Ok((_domains, _cost_usd)) => return DeckCommand::InitCompleted,
                 Err(e) => say(format!("init failed: {e}")),
             }
         }
@@ -4146,8 +3896,7 @@ async fn run_deck_command(
 
 /// One engine turn for the lead agent: the deck-mode analogue of
 /// `agent::run_turn` — same engine, same tool stack, same persistence —
-/// with the stdout renderer replaced by [`spawn_forwarder`] and the registry's
-/// file-change recorder pointed at this turn's channel.
+/// with the stdout renderer replaced by [`spawn_forwarder`].
 #[allow(clippy::too_many_arguments)]
 async fn run_lead_turn(
     provider: &dyn Provider,
@@ -4159,15 +3908,9 @@ async fn run_lead_turn(
     calibration: &CalibrationMap,
     cfg: &Config,
     execution: Option<(Arc<Store>, i64)>,
-    files_before: usize,
     in_tx: &UnboundedSender<Inbound>,
-    ask_io: &DeckAskUserIo,
-    // The per-hunk approval reviewer, or `None` when the gate is off — see
-    // `HunkGate::new`, where `None` means inert rather than auto-approving.
-    hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>>,
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
-    activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
     // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
     pause: &lead_control::LeadPause,
@@ -4192,16 +3935,15 @@ async fn run_lead_turn(
     }
 
     // Claim-on-first-write over the shared tree (crate::claims): wraps the
-    // base executor, so a refused write surfaces as the tool's own error —
-    // and the recorder only records SUCCESSFUL touches, so a refused write
-    // leaves no phantom row.
+    // base executor, so a refused write surfaces as the tool's own error.
     // Released after the turn settles, cancel included.
     let claims = ClaimTap::new(
         base_tools,
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
     );
-    // This turn's file changes ride this turn's channel.
+    // Registry-born events (task board, sub-agent lifecycle) ride this
+    // turn's channel.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
     // ...and this turn's stop AND pause reach the sub-agents it dispatches
     // (`lead_control::turn_controls`). The guard takes them down on return.
@@ -4212,30 +3954,11 @@ async fn run_lead_turn(
     let outcome = {
         let customs =
             CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
-        // Stub AskUser channel: the deck paints its own card, so the set's own
-        // emission would double it. A TTY REPL always has its human.
-        let (stub_tx, _) = mpsc::unbounded_channel();
-        let interactive = InteractiveToolSet::new(&customs, stub_tx)
-            .with_ask_user(Some(Box::new(ask_io.clone())))
-            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
-        // Per-hunk approval sits ABOVE the policy filter (#1265) so a call the
-        // policy is going to refuse never raises a card — asking a human to
-        // approve a write that is then denied anyway is how a gate teaches
-        // people to stop reading it.
-        let gated = stella_tools::hunk_review::HunkGate::new(
-            &permitted,
-            hunk_io,
-            cfg.workspace_root.clone(),
-        );
-        // Discovery layer above the policy filter (it must see the full
-        // *permitted* catalog), below the taps (searches are read-only; taps
-        // watch writes).
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&gated, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-            .with_activation(activated.clone());
+        // The operator's switches, applied over the complete surface — MCP
+        // and custom tools included.
+        let permitted = agent::PolicyToolSet::new(&customs, agent::session_tool_policy(cfg));
         let tapped = TaskTap {
-            inner: &tools,
+            inner: &permitted,
             events: tx.clone(),
             registry,
             supervisor: Some(sup_tx.clone()),
@@ -4273,7 +3996,6 @@ async fn run_lead_turn(
             store,
             *id,
             registry,
-            files_before,
             outcome_label,
             cost,
             persistence_complete,
@@ -4298,15 +4020,14 @@ async fn run_lead_turn(
     agent::outcome::turn_outcome_result(&outcome)
 }
 
-// ── ask_user through the deck ───────────────────────────────────────────────
+// ── interactive questions through the deck ──────────────────────────────────
 
-/// [`AskUserIo`] over the deck's channels. `prompt` emits an `AskUser` card,
-/// awaits the user's `AskUserAnswer`, echoes the answer back as the card's
-/// own `ToolResult` (the event-pure clear), and returns the answer in the
-/// shape `interactive::execute_ask_user`'s parser expects: an exact option
-/// match becomes its 1-based index (so `install_skill`'s "1 = yes" check and
-/// ask_user's numeric quick-pick both work), anything else passes verbatim
-/// as free text.
+/// [`AskUserIo`] over the deck's channels — how the approvals plane's
+/// questions (scope review's confirm) reach the human at the deck. `prompt`
+/// emits an `AskUser` card, awaits the user's `AskUserAnswer`, echoes the
+/// answer back as the card's own `ToolResult` (the event-pure clear), and
+/// returns the answer with an exact option match becoming its 1-based index
+/// (the numeric quick-pick), anything else passing verbatim as free text.
 #[derive(Clone)]
 struct DeckAskUserIo {
     agent: String,
@@ -4317,12 +4038,11 @@ struct DeckAskUserIo {
 #[async_trait]
 impl AskUserIo for DeckAskUserIo {
     async fn prompt(&self, question: &str, options: &[String]) -> Result<String, String> {
-        // `execute_ask_user` appends the free-text affordance before calling
-        // us; the deck's card renders its own free-text affordance (Enter
-        // submits the composer), so presenting the label as a pickable
-        // option would double it — and picking it would return the label
-        // itself as an "answer". Strip it; every other caller's options
-        // (e.g. install_skill's yes/no) pass through untouched.
+        // A caller may append the free-text affordance; the deck's card
+        // renders its own (Enter submits the composer), so presenting the
+        // label as a pickable option would double it — and picking it would
+        // return the label itself as an "answer". Strip it; every other
+        // option passes through untouched.
         let mut presented: Vec<String> = options.to_vec();
         if presented
             .last()

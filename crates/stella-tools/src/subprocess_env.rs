@@ -32,8 +32,8 @@
 //!
 //! # Re-admitting one variable: `STELLA_SUBPROCESS_ENV_ALLOW`
 //!
-//! Widening a scrub breaks real workflows — a Django dev server started via
-//! `start_process` needs `DJANGO_SECRET_KEY`, and a deploy-key setup drives
+//! Widening a scrub breaks real workflows — a Django dev server a custom
+//! tool starts needs `DJANGO_SECRET_KEY`, and a deploy-key setup drives
 //! git through `GIT_SSH_COMMAND`. The operator re-admits a variable by naming
 //! it in the `STELLA_SUBPROCESS_ENV_ALLOW` environment variable, a
 //! comma-separated list of **exact** names:
@@ -62,9 +62,9 @@ use std::sync::{OnceLock, RwLock};
 /// subprocesses always run against their explicit working dir; when Stella
 /// itself was spawned from inside a git hook (which exports `GIT_DIR` et
 /// al.), letting them leak through would silently aim every git invocation
-/// at the OUTER repo instead — `git init` in a scratch dir re-initing the
-/// host repo, `verify_done` diffing against the wrong HEAD. Scrub these from
-/// every subprocess that shells out with an explicit dir.
+/// at the OUTER repo instead — a `git init` in a scratch dir re-initing the
+/// host repo. Scrub these from every subprocess that shells out with an
+/// explicit dir.
 pub const GIT_REPO_ENV_VARS: [&str; 8] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -355,28 +355,6 @@ pub fn scrub_spawn_std_env_except(command: &mut std::process::Command, preserved
         command.env_remove(var);
     }
     scrub_sensitive_std_env_except(command, preserved_names);
-}
-
-/// Inject the session scratch directory path into a command's environment.
-/// Called AFTER the scrub, so the scrub cannot remove it. If `scratch` is None,
-/// does nothing.
-pub fn inject_scratch_env(
-    command: &mut tokio::process::Command,
-    scratch: Option<&std::path::Path>,
-) {
-    if let Some(path) = scratch {
-        command.env("STELLA_SCRATCH", path);
-    }
-}
-
-/// Synchronous counterpart of [`inject_scratch_env`].
-pub fn inject_scratch_std_env(
-    command: &mut std::process::Command,
-    scratch: Option<&std::path::Path>,
-) {
-    if let Some(path) = scratch {
-        command.env("STELLA_SCRATCH", path);
-    }
 }
 
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].

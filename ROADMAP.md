@@ -133,12 +133,12 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   the pre-submit audit — lint before the confirmation run, since a veto
   makes the confirmation moot — and degrades open on every unavailable
   path.
-- **Impacted-test scope for Rust.** *Done at the tool level (#443, #862).*
-  `run_tests scope=impacted` resolves Rust `use`/`mod` edges through the
-  workspace module tree — including cross-crate paths — and narrows to the
-  owning cargo packages; an unrelated crate is left out, and a missing or
-  stale index still stands down loudly. What remains is **using** it as
-  ladder evidence, and the constraint that shapes it: the oracle's identity
+- **Impacted-test scope for Rust.** No shipping surface exposes impacted-test
+  selection today. The design (#443, #862) resolves Rust `use`/`mod` edges
+  through the workspace module tree — including cross-crate paths — and
+  narrows to the owning cargo packages; an unrelated crate is left out, and a
+  missing or stale index stands down loudly. What remains is **using** impacted
+  selection as ladder evidence, and the constraint that shapes it: the oracle's identity
   is the *normalized command*, and the impacted selection is derived from
   the diff — which does not exist when the baseline pre-run fires. A
   per-turn narrowed command would differ between baseline and candidate and

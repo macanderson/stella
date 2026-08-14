@@ -24,9 +24,9 @@ use super::{DiagnosticRunner, RepoStatusPort, TestRunner};
 /// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative.
 ///
 /// This is the whole `FileChange` the pipeline emits for adopted work, because
-/// the session's own recorder never saw the winner's edits — they happened
-/// inside a shadow worktree, against a registry deliberately left unattached
-/// (a losing candidate's edits must never be announced as the user's). So the
+/// nothing in the session observed the winner's edits — they happened inside
+/// a shadow worktree, against a registry deliberately left unattached (a
+/// losing candidate's edits must never be announced as the user's). So the
 /// delta has to come from the adoption itself: `git`'s own `--numstat` for the
 /// counts, and its patch text, sliced per file, for `diff`.
 ///
@@ -262,13 +262,12 @@ pub trait CandidateWorkspace: Send + Sync {
     ///
     /// # Why here and nowhere else
     ///
-    /// A candidate's edits land on the *candidate's* recorder, which is rooted
-    /// at a shadow worktree and discarded with it; the session's recorder
-    /// never sees them. Adoption is the first and only moment those edits
-    /// become the user's tree's, and it is also the only seam where the
-    /// isolated case is distinguishable from the shared-tree one — a
-    /// shared-tree run's mutations are recorded by the session recorder as
-    /// they happen and never reach this method, so nothing is counted twice.
+    /// A candidate's edits land in a shadow worktree that is discarded with
+    /// it; the session never sees them. Adoption is the first and only moment
+    /// those edits become the user's tree's, and it is also the only seam
+    /// where the isolated case is distinguishable from the shared-tree one —
+    /// a shared-tree run's mutations happen in the user's own tree as they
+    /// happen and never reach this method, so nothing is counted twice.
     /// Folding at the event forwarder instead would double exactly those.
     ///
     /// This is **observability, not evidence** (#2882). What it records

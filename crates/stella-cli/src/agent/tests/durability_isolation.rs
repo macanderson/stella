@@ -48,13 +48,7 @@ fn bound_session(
     let cfg = cfg_for("zai");
     let record =
         stella_store::work_journal::WorkJournal::open_in(store.path(), ws.path(), session).unwrap();
-    cfg.durability.bind(
-        record.clone(),
-        std::sync::Arc::new(stella_tools::ToolRegistry::new(
-            ws.path().to_path_buf(),
-            stella_tools::RegistryOptions::default(),
-        )),
-    );
+    cfg.durability.bind(record.clone());
     (cfg, record, store, ws)
 }
 

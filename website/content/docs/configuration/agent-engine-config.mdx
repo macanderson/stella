@@ -273,7 +273,7 @@ Set any of the three autos to `"on"` and stop thinking about it:
     the real guard — a benchmark container, CI on a scratch checkout.
   </OptionCard>
   <OptionCard name="hunk_review" defaultValue="off">
-    Every `apply_edits` / `edit_file` / `write_file` call pauses on a per-hunk
+    Every file-writing tool call pauses on a per-hunk
     approval card before it writes, and only the hunks you keep are applied —
     so a turn that produces one wanted and one unwanted change stops being
     all-or-nothing. Declined hunks are reported back to the model, so it knows

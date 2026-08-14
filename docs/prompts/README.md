@@ -26,7 +26,7 @@ exhaustive `match` at compile time. If a role exists, it has a page here.
 | `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
 | `worker` | [worker.md](worker.md) | `doc:prompt-worker` | engine / raw | full registry | the change itself |
 | `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | **none** | — | retired (#2584) — no call, no prompt |
-| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | six read-only | `stella goal`'s outer assessor: is the objective met |
+| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | four read-only | `stella goal`'s outer assessor: is the objective met |
 | `agent_author` | [agent-author.md](agent-author.md) | `doc:prompt-agent-author` | raw | none | a generated agent definition |
 | `skill_author` | [skill-author.md](skill-author.md) | `doc:prompt-skill-author` | raw | none | a generated `SKILL.md` |
 | `domain_inference` | [domain-inference.md](domain-inference.md) | `doc:prompt-domain-inference` | raw | none | the workspace's domain taxonomy |
@@ -112,10 +112,8 @@ fixed order:
 
 ```
 base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.prompt
-+ project scripts       package-manager scripts found at the workspace root
-+ project orientation
++ session environment   working directory, git checkout, platform, shell dialect
 + workspace memories    .stella/memories/*.md, sorted by filename, ≤16,000 chars
-+ exploration index     COMPLETED maps only, metadata only, ≤2,000 chars
 + rules section         .stella/rules/*.toml, Cached channel
 ```
 

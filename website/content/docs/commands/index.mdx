@@ -63,13 +63,10 @@ here and the index your terminal shows can never drift apart.
 
 <CardGrid size="sm">
   <SpecCard title="stella search" href="/docs/commands/search">
-    Find code — the CLI door to the `search` tool the agent calls
+    Find code — semantic and structural search over the workspace
   </SpecCard>
   <SpecCard title="stella storage" href="/docs/commands/storage">
     Inspect the storage map — layers, namespaces, relations
-  </SpecCard>
-  <SpecCard title="stella scripts" href="/docs/commands/scripts">
-    List or run the project's package-manager scripts
   </SpecCard>
   <SpecCard title="stella tools" href="/docs/commands/tools">
     List every tool available to the agent this session
@@ -134,9 +131,6 @@ here and the index your terminal shows can never drift apart.
   <SpecCard title="stella models" href="/docs/commands/models">
     List configured providers and available models
   </SpecCard>
-  <SpecCard title="stella connect" href="/docs/commands/connect">
-    Connect an issue tracker (GitHub or Linear)
-  </SpecCard>
   <SpecCard title="stella mcp" href="/docs/commands/mcp">
     Manage MCP servers: search, install, list, telemetry
   </SpecCard>
@@ -173,7 +167,7 @@ Two of them are specialized rather than day-to-day. `stella arena` is a benchmar
 
 The following flags apply to **every** command. Most have a corresponding environment variable so you can set it once for a shell session or in your CI configuration — the exception is `--api-key`, which is intentionally env-less (use `credentials.toml` or a provider key env var such as `ANTHROPIC_API_KEY` instead).
 
-Every one of them is registered with every subcommand, so **either position parses** — `stella --spend-limit 5 run "…"` and `stella run "…" --spend-limit 5` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
+Every one of them is registered with every subcommand, so **either position parses** — `stella --spend-limit 5 run "…"` and `stella run "…" --spend-limit 5` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them.
 
 The cards below are in `stella --help`'s own order, for the same reason the subcommand index above is: a flag that lands without a card shows up as a gap in a known sequence rather than as an absence nobody can see.
 

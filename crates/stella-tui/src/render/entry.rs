@@ -320,8 +320,8 @@ fn entry_body(
                 pad_name(name),
                 Style::new().fg(class.color()).add_modifier(Modifier::BOLD),
             )];
-            // An argument-less tool (`project_overview`, `repo_status`, a
-            // zero-argument `repo_push`) renders NO argument column at all.
+            // An argument-less tool (`get_environment`, a zero-argument
+            // `task_list`) renders NO argument column at all.
             // The compact-JSON fallback printed a literal `{}` there, which
             // reads as an empty *result* — the deck's own owner read it that
             // way and filed it as a bug. Absence is the honest rendering: the

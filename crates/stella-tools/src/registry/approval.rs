@@ -1,7 +1,6 @@
 //! The approval flow behind `RequireApproval` gate decisions (#2676), plus
-//! the blocking policy chains (`ToolRegistry::gate_tool_call` /
-//! `ToolRegistry::gate_side_effects` — private, so cited as prose) that
-//! produce them.
+//! the blocking policy chain (`ToolRegistry::gate_tool_call` — private, so
+//! cited as prose) that produces them.
 //!
 //! Before this module existed, a `RequireApproval` from a blocking policy
 //! chain dead-ended as a model-visible `ToolOutput::Error` — the human was
@@ -26,7 +25,7 @@
 //! 3. **A human answers through a port.** [`ApprovalResponder`] is injected
 //!    at assembly time ([`ToolRegistry::attach_approval_responder`]) so the
 //!    flow itself does no terminal I/O; the CLI implements the port over
-//!    the same io the `ask_user` tool uses. With no responder attached
+//!    its own interactive prompt io. With no responder attached
 //!    (headless), the refusal names the missing surface and the grant path
 //!    (`tools.<name>` policy, or rerunning interactively), so the model's
 //!    next move is legible instead of a bare wall.
@@ -41,7 +40,7 @@
 //! **operator deny > gate/hook `RequireApproval` > any allow** — a hook or
 //! plugin `Allow` can never override an operator deny — and an *errored*
 //! evaluation is an unconditional deny regardless of any
-//! enforcement-softening flag (the OXA-2056 shape). Both gates here route
+//! enforcement-softening flag (the OXA-2056 shape). The gate here routes
 //! every chain outcome through it.
 //!
 //! # Seams
@@ -65,11 +64,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
+use stella_core::bus::{HookBus, HookDecision, HookEventDraft, names as hook_names};
 use stella_protocol::tool::ToolOutput;
 
-use super::{PendingTouch, ToolRegistry};
-use crate::file_touch::{FileOp, normalize_workspace_path};
+use super::ToolRegistry;
 
 /// How long a parked dispatch waits for a human answer before the flow
 /// resolves to a deny ([`APPROVAL_TIMED_OUT`]). Hosts pass their own TTL to
@@ -115,8 +113,8 @@ pub enum ApprovalResponse {
 }
 
 /// How an approval question reaches a human — the port a surface implements
-/// and injects at assembly time, mirroring the `ask_user` tool's injectable
-/// io. The flow calls it at most once per parked dispatch and bounds the
+/// and injects at assembly time over its own interactive prompt io. The
+/// flow calls it at most once per parked dispatch and bounds the
 /// await with the broker's TTL, so an implementation may block on real
 /// input indefinitely without risking a hang.
 #[async_trait]
@@ -315,13 +313,6 @@ impl ToolRegistry {
         self.tools
             .get(name)
             .map(|t| t.schema().read_only)
-            .or_else(|| {
-                self.late_tools
-                    .read()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .get(name)
-                    .map(|t| t.schema().read_only)
-            })
             .unwrap_or(false)
     }
 
@@ -405,153 +396,6 @@ impl ToolRegistry {
             }
         }
     }
-
-    /// Run the per-side-effect blocking chains and payload-hygiene
-    /// detectors for one already-final input: `sensitive_operation.detected`
-    /// and `secret.detected` observers first (an auditor sees the attempt
-    /// even when a policy then denies it), then the `file.*` chain for a
-    /// classified C/U/D op and the `command.started` chain for every tool
-    /// that runs a command — `bash`, `build_project`, `run_tests`,
-    /// `verify_done`, `run_script`, `start_process`, `send_stdin`, and every
-    /// [`super::Tool::command_for_gate`] implementor: `run_lint`,
-    /// `format_code`, `diagnostics`, `screenshot`, `ci_status`,
-    /// `start_work_on_issue`, and the `repo_*` family (#804; see
-    /// [`ToolRegistry::command_line_for`]). These chains gate — `modify`
-    /// decisions are recorded but not honored here, because the input was
-    /// already final after `tool.call.requested`. Reads are observable but
-    /// never interceptable. A `RequireApproval` from either chain parks on
-    /// the approval flow exactly as `gate_tool_call`'s does.
-    pub(super) async fn gate_side_effects(
-        &self,
-        bus: &HookBus,
-        name: &str,
-        input: &Value,
-        pending_ops: &[PendingTouch],
-        resolved_command: Option<&str>,
-    ) -> Result<(), ToolOutput> {
-        for pending in pending_ops {
-            if bus::is_sensitive_path(&pending.path) {
-                bus.emit_named(
-                    hook_names::SENSITIVE_OPERATION_DETECTED,
-                    serde_json::json!({
-                        "path": pending.path,
-                        "tool": name,
-                        "operation": pending.op.letter().to_string(),
-                    }),
-                );
-            }
-            // The content this call proposes to land in THIS file: write's
-            // whole content, edit's replacement, or — for a batch — the
-            // union of the batch's replacements targeting this path.
-            let proposed: Option<String> = match name {
-                "write_file" => input
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                "edit_file" => input
-                    .get("new_string")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                "apply_edits" => input.get("edits").and_then(|v| v.as_array()).map(|edits| {
-                    edits
-                        .iter()
-                        .filter(|e| {
-                            e.get("path")
-                                .and_then(|v| v.as_str())
-                                .and_then(|p| normalize_workspace_path(&self.root, p))
-                                .is_some_and(|p| p == pending.path)
-                        })
-                        .filter_map(|e| e.get("new_string").and_then(|v| v.as_str()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }),
-                _ => None,
-            };
-            if let Some(proposed) = proposed.as_deref() {
-                let kinds = bus::scan_for_secrets(proposed);
-                if !kinds.is_empty() {
-                    bus.emit_named(
-                        hook_names::SECRET_DETECTED,
-                        serde_json::json!({
-                            "path": pending.path,
-                            "kinds": kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
-                        }),
-                    );
-                }
-            }
-            let event_name = match pending.op {
-                FileOp::Create => Some(hook_names::FILE_CREATED),
-                FileOp::Update => Some(hook_names::FILE_UPDATED),
-                FileOp::Delete => Some(hook_names::FILE_DELETED),
-                FileOp::Read => None,
-            };
-            if let Some(event_name) = event_name {
-                let outcome = bus.emit_blocking(HookEventDraft::new(
-                    event_name,
-                    serde_json::json!({
-                        "path": pending.path,
-                        "tool": name,
-                        "operation": pending.op.letter().to_string(),
-                    }),
-                ));
-                match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false)
-                {
-                    GateVerdict::Deny { reason } => {
-                        return Err(ToolOutput::classified_error(
-                            stella_protocol::ErrorClass::RefusedByPolicy,
-                            format!(
-                                "`{name}` on `{}` was denied by an extension policy: {reason}",
-                                pending.path
-                            ),
-                        ));
-                    }
-                    GateVerdict::RequireApproval { reason } => {
-                        let request = ApprovalRequest {
-                            tool: name.to_string(),
-                            read_only: self.advertised_read_only(name),
-                            reason,
-                            gate: event_name.to_string(),
-                            subject: Some(pending.path.clone()),
-                        };
-                        self.seek_approval(
-                            bus,
-                            request,
-                            &format!("`{name}` on `{}`", pending.path),
-                        )
-                        .await?;
-                    }
-                    GateVerdict::Allow => {}
-                }
-            }
-        }
-        let command_line = Self::command_line_for(name, input, resolved_command);
-        if let Some(command) = command_line.as_deref() {
-            let outcome = bus.emit_blocking(HookEventDraft::new(
-                hook_names::COMMAND_STARTED,
-                serde_json::json!({ "command": command }),
-            ));
-            match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
-                GateVerdict::Deny { reason } => {
-                    return Err(ToolOutput::classified_error(
-                        stella_protocol::ErrorClass::RefusedByPolicy,
-                        format!("command was denied by an extension policy: {reason}"),
-                    ));
-                }
-                GateVerdict::RequireApproval { reason } => {
-                    let request = ApprovalRequest {
-                        tool: name.to_string(),
-                        read_only: self.advertised_read_only(name),
-                        reason,
-                        gate: hook_names::COMMAND_STARTED.to_string(),
-                        subject: Some(command.to_string()),
-                    };
-                    self.seek_approval(bus, request, "command").await?;
-                }
-                GateVerdict::Allow => {}
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -570,7 +414,7 @@ mod tests {
     /// so the root outlives the registry.
     fn fixture(gate_event: &str, reason: &str) -> (tempfile::TempDir, ToolRegistry, HookBus) {
         let dir = tempfile::tempdir().unwrap();
-        let reg = ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
+        let reg = ToolRegistry::new(dir.path().to_path_buf());
         let bus = HookBus::new("approval-test");
         let reason = reason.to_string();
         bus.on_blocking(gate_event, move |_| HookDecision::RequireApproval {
@@ -816,61 +660,6 @@ mod tests {
                 );
             }
             other => panic!("headless approval must refuse: {other:?}"),
-        }
-    }
-
-    // ---- the side-effect chains park on the same flow ------------------
-
-    #[tokio::test]
-    async fn file_chain_approval_gates_the_write_on_a_human_answer() {
-        let (dir, reg, _bus) = fixture(hook_names::FILE_CREATED, "writes need a human");
-        reg.attach_approval_responder(Scripted::approving(), Duration::from_secs(5));
-        let input = serde_json::json!({ "path": "notes.txt", "content": "hi\n" });
-        let out = reg.execute("write_file", &input).await;
-        assert!(!out.is_error(), "approved write lands: {out:?}");
-        assert!(dir.path().join("notes.txt").exists());
-
-        let (dir, reg, _bus) = fixture(hook_names::FILE_CREATED, "writes need a human");
-        reg.attach_approval_responder(
-            Scripted::denying("keep the tree clean"),
-            Duration::from_secs(5),
-        );
-        let out = reg.execute("write_file", &input).await;
-        match out {
-            ToolOutput::Error { message, .. } => {
-                assert!(
-                    message.contains("notes.txt"),
-                    "the path is named: {message}"
-                );
-                assert!(message.contains("keep the tree clean"), "{message}");
-            }
-            other => panic!("denied write must not land: {other:?}"),
-        }
-        assert!(
-            !dir.path().join("notes.txt").exists(),
-            "nothing was written"
-        );
-    }
-
-    #[tokio::test]
-    async fn command_chain_approval_gates_the_command_on_a_human_answer() {
-        let (_dir, reg, _bus) = fixture(hook_names::COMMAND_STARTED, "commands need a human");
-        reg.attach_approval_responder(Scripted::approving(), Duration::from_secs(5));
-        let out = reg
-            .execute("bash", &serde_json::json!({ "command": "true" }))
-            .await;
-        assert!(!out.is_error(), "approved command runs: {out:?}");
-
-        let (_dir, reg, _bus) = fixture(hook_names::COMMAND_STARTED, "commands need a human");
-        reg.attach_approval_responder(Scripted::denying("not that host"), Duration::from_secs(5));
-        let out = reg
-            .execute("bash", &serde_json::json!({ "command": "true" }))
-            .await;
-        match out {
-            ToolOutput::Error { message, .. } => {
-                assert!(message.contains("not that host"), "{message}");
-            }
-            other => panic!("denied command must not run: {other:?}"),
         }
     }
 

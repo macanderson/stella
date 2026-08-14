@@ -43,7 +43,7 @@ use stella_core::{ParamKind, ProposedTool, ToolParameter};
 pub const PROPOSED_DIR: &str = ".stella/tools/proposed";
 
 /// Suffix appended when a synthesized name collides with a reserved built-in
-/// (`grep`, `glob`, …): `grep` → `grep_cmd`.
+/// (`task`, `save_state`, …): `task` → `task_cmd`.
 const DECONFLICT_SUFFIX: &str = "_cmd";
 
 /// A fully authored, self-validated tool definition, rendered as file text.
@@ -371,15 +371,16 @@ mod tests {
 
     #[test]
     fn a_reserved_name_is_deconflicted() {
-        // `grep <str> <path>` synthesizes the name `grep`, which is a
-        // reserved built-in — the authored tool must not shadow it.
+        // A program named `task` (taskwarrior, say) synthesizes the name
+        // `task`, which is a reserved built-in — the authored tool must not
+        // shadow it.
         let authored = author_one(&[
-            "grep 'todo' src/a.rs",
-            "grep 'fixme' src/b.rs",
-            "grep 'hack' src/c.rs",
+            "task 'todo' src/a.rs",
+            "task 'fixme' src/b.rs",
+            "task 'hack' src/c.rs",
         ]);
-        assert_eq!(authored.name, "grep_cmd");
-        assert!(authored.manifest_toml.contains("name = \"grep_cmd\""));
+        assert_eq!(authored.name, "task_cmd");
+        assert!(authored.manifest_toml.contains("name = \"task_cmd\""));
     }
 
     #[test]

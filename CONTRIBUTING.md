@@ -42,9 +42,7 @@ sketch of the idea saves a thousand-line PR that can't merge.
 
 **Prerequisites:** Rust **1.90+** via [rustup](https://rustup.rs) (the toolchain
 is pinned in `rust-toolchain.toml`, so rustup will fetch the right one
-automatically), `git`, and optionally [`ripgrep`](https://github.com/BurntSushi/ripgrep)
-and [`fd`](https://github.com/sharkdp/fd) (the agent's `grep`/`glob` tools shell
-out to them at runtime).
+automatically) and `git`.
 
 ```bash
 git clone https://github.com/macanderson/stella.git
@@ -186,7 +184,7 @@ rule of thumb is one sentence each:
 |---|---|
 | Change how the agent loop plans / retries / compacts / budgets | `stella-core` (**no I/O allowed here** — see ground rules) |
 | Add or fix a model provider (SSE, tool-call dialect, pricing) | `stella-model` |
-| Add or fix a built-in tool (`read_file`, `bash`, `verify_done`, …) | `stella-tools` |
+| Add or fix a built-in tool (`task_create`, `save_state`, `get_environment`, …) | `stella-tools` |
 | Change a CLI command, flag, or the agent wiring | `stella-cli` |
 | Change the REPL rendering / panels / keybindings | `stella-tui` |
 | Touch shared types crossing a crate boundary | `stella-protocol` (zero logic, zero I/O — types only) |
@@ -203,10 +201,9 @@ rule of thumb is one sentence each:
 | The headless engine server a host process drives over the wire | `stella-serve` (its own binary, not linked into the CLI) |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
-Every crate except `stella-serve` ships in the CLI today: `stella-pipeline` drives the default
-`stella run` path, `stella-fleet` powers `stella fleet`, `stella-tui` is the
-Command Deck (the default interactive shell on a TTY), and `stella-media`
-provides image generation via the `generate_image` tool. The context/graph
+`stella-pipeline` drives the default
+`stella run` path, `stella-fleet` powers `stella fleet`, and `stella-tui` is the
+Command Deck (the default interactive shell on a TTY). The context/graph
 plane is wired too — `stella init` builds the code-graph index and recall fans
 out through the CGP host. For what each crate is, see the crate table in the
 [README](README.md#workspace-layout); for what actually reaches a `stella`
@@ -243,8 +240,8 @@ For a behavior change or feature, your PR should include a **witness test**:
 - it **passes** with your change (the feature is genuinely present).
 
 You can check this the artisanal way (`git stash && cargo test -p <crate>`),
-or let Stella verify Stella — build it and run your task through the
-`verify_done` gate, which automates exactly this in a shadow worktree.
+or let Stella verify Stella — run your task through `stella run`, whose
+pipeline witness stage enforces exactly this fail→pass contract.
 
 Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template and move on. If a witness is genuinely impractical (e.g. TUI

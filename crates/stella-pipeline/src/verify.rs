@@ -555,19 +555,20 @@ pub struct LadderInputs {
     /// Carried here so the ladder stays a pure function of one input value,
     /// exactly like [`Self::veto_warnings`].
     pub require_diff_coverage: bool,
-    /// The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
-    /// this candidate (#2129): a deterministic fail-on-baseline / pass-on-new
-    /// shadow run, observed off the turn's `ToolResult` stream. Distinct from
-    /// [`Self::flip`] because the pipeline's oracle tracks only its
-    /// own command; before this field, a confirmed `verify_done` flip and a
-    /// failing "no flip" fallback verdict coexisted in one trace.
+    /// A worker-side deterministic fail-on-baseline / pass-on-new shadow
+    /// confirmation, recorded on the wire as
+    /// [`stella_protocol::LadderSnapshot::verify_done_flip`] (#2129).
+    /// Distinct from [`Self::flip`] because the pipeline's oracle tracks
+    /// only its own command.
     ///
-    /// A completion receipt, not telemetry: [`ladder_decision`] credits it
-    /// through [`Self::has_flip_receipt`], and it can carry `SubmitFast` on
-    /// its own (#2618). It cannot be forged — the harvest is call-id
-    /// correlated to a dispatched `verify_done` call *and* requires the result
-    /// to start with `WITNESS CONFIRMED`, so neither an MCP tool shadowing the
-    /// name nor a shell `echo` reaches this field.
+    /// **Set only by replay of recorded snapshots.** New runs record
+    /// `false`: no tool on the built-in surface produces this confirmation,
+    /// so the live pipeline has no producer for it. The reads stay —
+    /// [`ladder_decision`] credits it through [`Self::has_flip_receipt`],
+    /// and it can carry `SubmitFast` on its own (#2618) — because a recorded
+    /// corpus that carries `true` must replay to the decision it was given
+    /// at the time, and the calibration metrics fold over exactly those
+    /// records (#2194).
     pub verify_done_flip: bool,
     /// Positive claim that this round had NO tracked test command at all —
     /// neither a configured `--test-command` nor an authored witness — so

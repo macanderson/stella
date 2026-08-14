@@ -23,7 +23,7 @@ keeps every recorded model call in every stored session readable.
 | System message | `VERIFIER_SYSTEM_PROMPT`, `crates/stella-core/src/goal.rs` |
 | Payload | the `instruction` field built in `Engine::assess`, same file |
 | Sent from | `crates/stella-core/src/goal.rs::assess` |
-| Tools | six, allowlisted at execution: `read_file`, `grep`, `glob`, `explorations`, `ci_status`, `search_issues` |
+| Tools | four, allowlisted at execution: `task_list`, `get_state`, `list_state`, `get_environment` — the catalog's read-only rows |
 | Output cap | `GoalConfig::verifier_max_output_tokens` (caller-stated; no role default) |
 | Assignable via `responsibilities` | **no** — this is not a pipeline call, so `Roster::apply` rejects the key as `NotAssignable` |
 
@@ -63,23 +63,25 @@ crosses back, which is what lets the assessor be thorough without every later
 worker round paying to re-send what it read.
 
 There is no `agents.verifier.prompt` door here. The system message is the
-contract that makes the child read-only and pins the six tools it names, not a
-preference to override.
+contract that makes the child read-only, not a preference to override.
 
 ## System message (verbatim)
 
 ```text
-You are an impartial verifier assessing whether a coding agent has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work directly whenever the transcript alone is not conclusive — read the changed files, check the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The strongest completion evidence is a `verify_done` tool result reading WITNESS CONFIRMED (the change's test fails on the previous code and passes on the new code); a merely green test suite is weak evidence, since it cannot distinguish real work from vacuous tests or unwired code. If you need something only the worker can provide (a trace, a screenshot, a system log, an explanation), set met:false and put the request in feedback — the worker acts on it next round. When decided, end your reply with ONLY a JSON object, no prose after it:
+You are an impartial verifier assessing whether a coding agent has fully met a stated goal. Judge from EVIDENCE, never from claims: use whatever read-only tools you are offered to verify the work directly whenever the transcript alone is not conclusive — read the changed files, check the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The strongest completion evidence is a witness test observed to fail on the previous code and pass on the new code; a merely green test suite is weak evidence, since it cannot distinguish real work from vacuous tests or unwired code. If you need something only the worker can provide (a trace, a screenshot, a system log, an explanation), set met:false and put the request in feedback — the worker acts on it next round. When decided, end your reply with ONLY a JSON object, no prose after it:
 {"met": true|false, "reasoning": "why, in one or two sentences", "feedback": "if not met: the single most useful next action or evidence request"}
 ```
 
-The six tool names in that first sentence are pinned against
-`VERIFIER_TOOL_ALLOWLIST` (`crates/stella-cli/src/agent/goal.rs`) by a test, so
-the prompt and the offered surface cannot drift apart. The allowlist narrows the
-session stack **before** the read-only view applies: a bare read-only wrap
-admitted every schema self-declaring `read_only: true` — some 25 tools including
-`web_fetch`/`web_search`, outbound HTTP from a role that reads worker-influenced
-content, which is a prompt-injection egress channel (#1783).
+The prompt deliberately names no individual tools: the verifier judges with
+whatever read-only surface the host actually offers, so the offered set can
+vary without the prompt drifting. The offered set is
+`VERIFIER_TOOL_ALLOWLIST` (`crates/stella-cli/src/agent/goal.rs`), pinned by a
+test to exactly the catalog's read-only rows so the allowlist and the catalog
+cannot drift apart. The allowlist narrows the session stack **before** the
+read-only view applies: a bare read-only wrap admits every schema
+self-declaring `read_only: true` — including any MCP or custom tool that says
+so about itself, an outbound egress channel from a role that reads
+worker-influenced content, which is a prompt-injection hazard (#1783).
 
 ## User message (template)
 

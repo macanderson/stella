@@ -297,6 +297,15 @@ impl TurnFriction {
             && self.loops.is_empty()
     }
 
+    /// Whether the turn dispatched any tool call at all — the "did real
+    /// work" signal the one-shot pipeline's episode/reflection gates read.
+    /// The worker's tool-calling turns are deliberately kept out of the
+    /// planner transcript (L-E6), so the event stream is the one witness
+    /// that work happened.
+    pub(crate) fn saw_tool_activity(&self) -> bool {
+        !self.tools.is_empty()
+    }
+
     /// A shared empty ledger, so [`TurnEvidence::from_transcript`] can hand out
     /// a reference without every caller owning a `Default`.
     fn empty() -> &'static Self {

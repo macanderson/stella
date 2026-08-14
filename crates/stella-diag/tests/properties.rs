@@ -39,7 +39,7 @@ const CODES: [&str; 6] = [
 const TARGETS: [&str; 5] = [
     "stella_store::migrate",
     "stella_model::anthropic",
-    "stella_tools::write",
+    "stella_tools::scratch",
     "stella_cli::agent",
     "stella_serve",
 ];

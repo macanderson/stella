@@ -490,23 +490,6 @@ mod tests {
             "an isolated process must read the scratch home's API keys, not \
              the developer's real ones"
         );
-        assert_eq!(
-            stella_tools::tracker_auth::TrackerStore::default_path(),
-            Some(scratch.path().join("integrations.json"))
-        );
-
-        // `load_default` answers with a config, not a path, so the assertion
-        // is made observable: an unparseable file in the scratch home must be
-        // the file it reports on. Under the old resolver it would have read
-        // `$HOME/web_auth.toml`, found nothing, and returned the empty config.
-        std::fs::write(scratch.path().join("web_auth.toml"), "this is not toml\n")
-            .expect("write fixture");
-        let err = stella_tools::web::WebAuthConfig::load_default()
-            .expect_err("an unparseable web_auth.toml is reported, not skipped");
-        assert!(
-            err.contains(&scratch.path().join("web_auth.toml").display().to_string()),
-            "the error must name the scratch home's file: {err}"
-        );
     }
 
     /// The narrower `STELLA_DATA_DIR` keeps winning over the whole-home

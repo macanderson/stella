@@ -46,14 +46,11 @@ crate means keeping that test green without an allowlist entry.
 
 **The rule binds what this crate *builds*, not only what it spells.** A
 textual scan of these sources cannot see a constructor one call below that
-reads the environment for us, and for a long time one did: the tool registry
-probed `gh auth status` and `LINEAR_API_KEY` from inside `new_detected`, so
-building a `SessionRuntime` read ambient state no `RuntimeSpec` field
-mentioned (#1596). That probe is now a port declared on
-`RegistryOptions::issue_backend` and defaults to consulting nothing, which
-makes it one more thing the caller fills in. `tests/registry_probe_is_declared.rs`
-holds the behavioural half — it drives the real construction path and counts
-how many times the host is asked — because the scan is structurally unable to.
+reads the environment for us (#1596 is the recorded instance). The registry
+holds the line structurally: `stella_tools::ToolRegistry::new(root)` is its
+only constructor and consults nothing beyond the root it is handed, so
+building a `SessionRuntime` reads no ambient state that a `RuntimeSpec`
+field does not name.
 
 ## God files — do not add lines
 
@@ -68,7 +65,7 @@ it crosses.
 | File | Owns |
 |---|---|
 | `src/spec.rs` | The inputs, as **values**: `RuntimeSpec`, `ProviderParts`, `Persistence`, `Notice`. Every field is something the CLI used to read ambiently. |
-| `src/parts.rs` | The individual construction steps: `build_provider`, `tool_registry`, `open_store`, `seed_calibration`, `budget_guard`. |
+| `src/parts.rs` | The individual construction steps: `build_provider`, `open_store`, `seed_calibration`, `budget_guard`. (The tool registry needs no step: `ToolRegistry::new` takes only the workspace root, so the builder calls it directly.) |
 | `src/session.rs` | The composite: `RuntimeBuilder` assembling a `SessionRuntime`. Overridable per-step as hosts diverge (today: `with_provider`). |
 | `src/error.rs` | `RuntimeError` — typed construction failures. Degradations are `Notice`s on the built runtime instead, per the warn-never-disable posture. |
 | `tests/no_ambient_reads.rs` | The executable form of the invariant above. |

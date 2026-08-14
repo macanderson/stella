@@ -129,7 +129,7 @@ impl HookAction {
 
 /// Groups hook actions under a tool-name pattern (TS: `HookMatcher`). For
 /// `PreToolUse`/`PostToolUse`, `matcher` is a glob over the tool name
-/// (e.g. `"bash"`, `"write_file"`, `"*"`). The non-tool-scoped events
+/// (e.g. `"task_create"`, `"mcp__*"`, `"*"`). The non-tool-scoped events
 /// (`SessionStart`, `Stop`, `PreCompact`) ignore it — every action runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookMatcher {

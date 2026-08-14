@@ -94,10 +94,13 @@
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
   and the disagreement is itself a bug: fix it in the same PR you noticed it.
-- **The current phase is make-everything-a-tool.** Every new capability ships
-  as a single-purpose tool (see AGENTS.md invariant #9): a parameter may scope
-  an operation, never select one — a mode flag like `update_task(delete=true)`
-  is two tools and gets split.
+- **The built-in tool surface is exactly twelve tools** — sub-agent
+  delegation, the task board, the scratch state plane, and the environment
+  probe. New capabilities ship as MCP servers or workspace custom tools, never
+  as new built-ins. The single-purpose rule (AGENTS.md invariant #9) governs
+  every tool regardless of origin: a parameter may scope an operation, never
+  select one — a mode flag like `update_task(delete=true)` is two tools and
+  gets split.
 - **Nothing left behind.** Every bug, defect, idea, missing test, piece of
   unwired code, or logical next step you notice and do not fix inside your
   current change MUST be filed as a GitHub issue before you finish — written

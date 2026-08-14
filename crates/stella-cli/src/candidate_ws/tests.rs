@@ -1,26 +1,11 @@
 use super::*;
 use stella_protocol::FileChangeKind;
 
-/// #2067: the seal identity is the vocabulary `verify_done`'s baseline
-/// walk skips — the two crates must spell it identically, and a `const`
-/// array cannot embed the other crate's constant, so this test is the
-/// binding.
-#[test]
-fn snapshot_identity_matches_the_verify_done_walk_vocabulary() {
-    assert_eq!(
-        SNAPSHOT_IDENT[3],
-        format!(
-            "user.email={}",
-            stella_tools::verify::CANDIDATE_SNAPSHOT_EMAIL
-        )
-    );
-}
-
-/// The third copy: the witness author is told to exclude commits by this
-/// identity, and a stale spelling there is worse than a missing note — the
-/// author would filter on an address that matches nothing and write exactly
-/// the enumeration that cannot pass. `stella-pipeline` depends on neither of
-/// the other two crates, so this test is the only place all three meet.
+/// The witness author is told to exclude commits by this identity, and a
+/// stale spelling there is worse than a missing note — the author would
+/// filter on an address that matches nothing and write exactly the
+/// enumeration that cannot pass. `stella-pipeline` does not depend on this
+/// crate, so this test is the one place the two spellings meet.
 #[test]
 fn snapshot_identity_matches_what_the_witness_author_is_told_to_exclude() {
     let email_entry = SNAPSHOT_IDENT
@@ -37,34 +22,10 @@ fn snapshot_identity_matches_what_the_witness_author_is_told_to_exclude() {
     );
 }
 
-#[test]
-fn candidate_port_keeps_the_exact_host_operation_journal() {
-    let journal: Arc<dyn stella_media::MediaOperationJournal> = Arc::new(
-        stella_media::SqliteMediaOperationJournal::open_in_memory(Default::default()).unwrap(),
-    );
-    let options = RegistryOptions {
-        media_operation_journal: Some(journal.clone()),
-        ..Default::default()
-    };
-
-    let port = GitCandidateWorkspaces::new(
-        PathBuf::from("unused"),
-        options,
-        Default::default(),
-        Vec::new(),
-        crate::rules::ResolvedRules::default(),
-    );
-
-    assert!(Arc::ptr_eq(
-        &journal,
-        port.options.media_operation_journal.as_ref().unwrap()
-    ));
-}
-
 /// Run `git <args>` in `root` with hook-exported `GIT_*` vars scrubbed
-/// (the verify_done test discipline — without it, running the suite from
-/// inside a git hook re-targets every command at the HOST repo) and
-/// return stdout. Panics on failure: these are test fixtures.
+/// (without it, running the suite from inside a git hook re-targets every
+/// command at the HOST repo) and return stdout. Panics on failure: these
+/// are test fixtures.
 pub(super) fn scratch_git(root: &Path, args: &[&str]) -> String {
     let mut cmd = std::process::Command::new("git");
     stella_tools::exec::scrub_sensitive_std_env(&mut cmd);
@@ -153,7 +114,6 @@ async fn snapshot_mirrors_dirty_staged_and_untracked_state_without_touching_the_
     let before = tree_state(&root);
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -222,7 +182,6 @@ async fn authored_witness_keeps_identity_through_seal_verification_and_exact_ado
     let root = scaffold("witness-seal");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -279,7 +238,6 @@ async fn withholding_the_witness_still_adopts_the_work_it_verified() {
     let root = scaffold("witness-withhold");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -321,7 +279,6 @@ async fn withholding_treats_the_path_literally_not_as_a_glob() {
     let root = scaffold("witness-glob");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -372,7 +329,6 @@ async fn custom_tools_reach_the_candidate_and_run_in_the_snapshot() {
 
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         custom_tools,
         crate::rules::ResolvedRules::default(),
@@ -387,7 +343,7 @@ async fn custom_tools_reach_the_candidate_and_run_in_the_snapshot() {
     );
     // …and it also still sees a built-in (the registry is the inner set).
     assert!(
-        names.iter().any(|n| n == "read_file"),
+        names.iter().any(|n| n == "task_list"),
         "candidate must still have the built-in registry"
     );
 
@@ -464,7 +420,6 @@ async fn candidate_mcp_reaches_the_candidate_when_the_session_shares_it() {
     );
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -478,7 +433,7 @@ async fn candidate_mcp_reaches_the_candidate_when_the_session_shares_it() {
         "the allowlisted server's tool must reach the candidate: {names:?}"
     );
     assert!(
-        names.iter().any(|n| n == "read_file"),
+        names.iter().any(|n| n == "task_list"),
         "the candidate must still have its snapshot-rooted built-ins: {names:?}"
     );
 
@@ -488,117 +443,10 @@ async fn candidate_mcp_reaches_the_candidate_when_the_session_shares_it() {
 }
 
 #[tokio::test]
-async fn store_backed_guard_survives_candidate_snapshot_and_winner_adoption() {
-    let root = scaffold("storeguard");
-    std::fs::write(root.join(".gitignore"), "ignored.txt\n.stella/private/\n").unwrap();
-    {
-        let store = stella_store::Store::open(&root).unwrap();
-        store
-            .upsert_rule(
-                "protect-store-path",
-                "---\nguard-tool: Write\nguard-deny-path: protected/**\n---\nStore guard remains binding in candidates.",
-                "ext:policy",
-            )
-            .unwrap();
-    }
-    let authority = crate::settings::AuthorityPolicy {
-        project_prompts_allowed: true,
-        ..crate::settings::AuthorityPolicy::default()
-    };
-    let active_rules = crate::rules::load_workspace_rules(&root, &authority);
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        active_rules,
-    );
-    let ws = port.create_workspace().await.unwrap();
-
-    let output = ws
-        .tools()
-        .execute(
-            "write_file",
-            &serde_json::json!({"path": "protected/store.txt", "content": "no\n"}),
-        )
-        .await;
-    ws.seal().await.unwrap();
-    let adopted = ws.adopt(&[]).await.unwrap();
-    let landed = root.join("protected/store.txt").exists();
-    ws.remove().await;
-    assert_no_candidate_worktrees(&root);
-    std::fs::remove_dir_all(&root).ok();
-
-    assert!(
-        output.is_error(),
-        "candidate bypassed store guard: {output:?}"
-    );
-    assert!(
-        adopted.is_empty(),
-        "prohibited change was adoptable: {adopted:?}"
-    );
-    assert!(!landed, "winner adopted a store-guarded change");
-}
-
-#[tokio::test]
-async fn ignored_rule_guard_survives_candidate_snapshot_and_winner_adoption() {
-    let root = scaffold("ignoredguard");
-    std::fs::write(
-        root.join(".gitignore"),
-        "ignored.txt\n.stella/rules/protect-ignored.md\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(root.join(".stella/rules")).unwrap();
-    std::fs::write(
-        root.join(".stella/rules/protect-ignored.md"),
-        "---\nguard-tool: Write\nguard-deny-path: protected/**\n---\nIgnored file guard remains binding in candidates.",
-    )
-    .unwrap();
-    let authority = crate::settings::AuthorityPolicy {
-        project_prompts_allowed: true,
-        ..crate::settings::AuthorityPolicy::default()
-    };
-    let active_rules = crate::rules::load_workspace_rules(&root, &authority);
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        active_rules,
-    );
-    let ws = port.create_workspace().await.unwrap();
-
-    let output = ws
-        .tools()
-        .execute(
-            "write_file",
-            &serde_json::json!({"path": "protected/ignored.txt", "content": "no\n"}),
-        )
-        .await;
-    ws.seal().await.unwrap();
-    let adopted = ws.adopt(&[]).await.unwrap();
-    let landed = root.join("protected/ignored.txt").exists();
-    ws.remove().await;
-    assert_no_candidate_worktrees(&root);
-    std::fs::remove_dir_all(&root).ok();
-
-    assert!(
-        output.is_error(),
-        "candidate bypassed ignored guard: {output:?}"
-    );
-    assert!(
-        adopted.is_empty(),
-        "prohibited change was adoptable: {adopted:?}"
-    );
-    assert!(!landed, "winner adopted an ignored-rule-guarded change");
-}
-
-#[tokio::test]
 async fn winner_adoption_lands_only_the_winners_changes() {
     let root = scaffold("adopt");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -663,7 +511,6 @@ async fn incremental_delivery_is_idempotent_and_never_flags_itself_as_an_escape(
     let root = scaffold("checkpoint");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -729,7 +576,6 @@ async fn post_verification_worktree_drift_is_rejected_and_never_adopted() {
     let before = tree_state(&root);
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -777,7 +623,6 @@ async fn scratch_the_verification_run_wrote_does_not_discard_the_work() {
     let root = scaffold("sealed-scratch");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -822,7 +667,6 @@ async fn a_mid_run_user_edit_fails_adoption_atomically_naming_the_path() {
     let root = scaffold("conflict");
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -875,7 +719,6 @@ async fn a_repo_without_commits_is_a_clean_snapshot_error() {
     scratch_git(&root, &["init", "-q"]);
     let port = GitCandidateWorkspaces::new(
         root.clone(),
-        RegistryOptions::default(),
         Default::default(),
         Vec::new(),
         crate::rules::ResolvedRules::default(),
@@ -888,217 +731,5 @@ async fn a_repo_without_commits_is_a_clean_snapshot_error() {
         Ok(_) => panic!("expected a snapshot error, got a workspace"),
     }
     assert_no_candidate_worktrees(&root);
-    std::fs::remove_dir_all(&root).ok();
-}
-
-/// The `log-summary-date-ranges` loss, end to end through the real candidate
-/// tool surface (#2875): a candidate's shell must not be able to write the
-/// graded tree, whatever spelling it uses. That trial's escape was
-/// `write_file` refusing an absolute path and the model reissuing the same
-/// write through `bash`, so this asserts the two now agree — while the
-/// candidate's own tree stays writable, which is why the guard is not a
-/// blanket refusal of everything outside the workspace.
-#[tokio::test]
-async fn a_candidates_shell_cannot_write_the_graded_tree() {
-    let root = scaffold("shell-confinement");
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        crate::rules::ResolvedRules::default(),
-    );
-    let ws = port.create_workspace().await.unwrap();
-    let leaked = root.join("summary.csv");
-
-    let output = ws
-        .tools()
-        .execute(
-            "bash",
-            &serde_json::json!({
-                "command": format!("echo today,ERROR,414 > {}", leaked.display())
-            }),
-        )
-        .await;
-    let inside = ws
-        .tools()
-        .execute(
-            "bash",
-            &serde_json::json!({"command": "echo 370 > summary.csv"}),
-        )
-        .await;
-
-    let landed = leaked.exists();
-    ws.remove().await;
-    assert_no_candidate_worktrees(&root);
-    std::fs::remove_dir_all(&root).ok();
-
-    assert!(
-        !landed,
-        "a candidate's shell wrote the graded tree: {output:?}"
-    );
-    assert!(output.is_error(), "the write was not refused: {output:?}");
-    assert!(!inside.is_error(), "the candidate's own tree: {inside:?}");
-}
-
-/// `f89p3/code-from-image` steps 83–86, end to end: the ref `verify_done`
-/// pins its baseline to is not the candidate's to move (#2875).
-#[tokio::test]
-async fn a_candidates_shell_cannot_move_stellas_witness_baseline_ref() {
-    let root = scaffold("shell-ref-confinement");
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        crate::rules::ResolvedRules::default(),
-    );
-    let ws = port.create_workspace().await.unwrap();
-
-    let output = ws
-        .tools()
-        .execute(
-            "bash",
-            &serde_json::json!({
-                "command": format!(
-                    "git update-ref {} HEAD",
-                    stella_tools::verify::WITNESS_BASELINE_WORKTREE_REF
-                )
-            }),
-        )
-        .await;
-
-    ws.remove().await;
-    assert_no_candidate_worktrees(&root);
-    std::fs::remove_dir_all(&root).ok();
-
-    assert!(
-        output.is_error(),
-        "Stella's own ref was writable from a candidate: {output:?}"
-    );
-}
-
-/// **The #2907 witness.** An isolated candidate's edits must reach the
-/// SESSION registry's file ledger — the one persisted as `files_touched` and
-/// the one `execution_reflection.wrote_files` is derived from — at the moment
-/// adoption makes them the user's tree's.
-///
-/// On `main` this ledger is empty after the adoption below. A candidate runs
-/// against its own registry rooted at the shadow worktree, so every edit lands
-/// there and dies with the workspace; nothing ever folds it back. The durable
-/// record then says the session changed nothing about a session that rewrote a
-/// tracked file and created a new one — while the `FileChange` events for the
-/// very same adoption say otherwise. Two records of one reality, disagreeing.
-///
-/// Asserted through the real git substrate rather than a double, because every
-/// link is a place the wiring could be wrong: the port has to carry the
-/// session handle into each workspace, the workspace has to rejoin adoption's
-/// TOPLEVEL-relative paths against the real tree, and the registry has to
-/// re-normalize them against a root that may be a subdirectory of it.
-#[tokio::test]
-async fn an_isolated_candidates_adopted_edits_reach_the_session_file_ledger() {
-    let root = scaffold("attribute");
-    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
-        root.clone(),
-        None,
-    ));
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        crate::rules::ResolvedRules::default(),
-    )
-    .with_session_registry(session.clone());
-    let ws = port.create_workspace().await.unwrap();
-
-    assert!(
-        session.files_touched().is_empty(),
-        "the session ledger starts empty: nothing outside the candidate has run"
-    );
-
-    // Appended to the dirty state the scaffold left, so the delta below is
-    // unambiguously one added line and nothing removed.
-    std::fs::write(
-        ws.dir().join("tracked.txt"),
-        "base\ndirty\nfrom the candidate\n",
-    )
-    .unwrap();
-    std::fs::write(ws.dir().join("created.txt"), "brand new\n").unwrap();
-    ws.seal().await.unwrap();
-
-    let adopted = ws.adopt(&[]).await.unwrap();
-    ws.attribute_adopted(&adopted);
-
-    let mut touched = session.files_touched();
-    touched.sort();
-    assert_eq!(
-        touched,
-        vec![
-            ("created.txt".to_string(), "C".to_string()),
-            ("tracked.txt".to_string(), "U".to_string()),
-        ],
-        "the session ledger must name what the candidate actually changed, with the op the \
-         adoption measured"
-    );
-    assert_eq!(
-        session.mutations_recorded(),
-        2,
-        "and the mutation count the verification ladder reads must see them too"
-    );
-
-    // The line deltas are git's own numbers, carried through verbatim — a row
-    // recording `+0 -0` for a real edit is the `wrote_files` defect wearing a
-    // different face.
-    let telemetry = session.file_touch_telemetry();
-    let tracked = telemetry
-        .files_touched
-        .iter()
-        .find(|record| record.path == "tracked.txt")
-        .expect("tracked.txt is in the telemetry payload");
-    assert_eq!(
-        (tracked.lines_added, tracked.lines_removed),
-        (1, 0),
-        "git measured one added line; the ledger must not report the change as extentless"
-    );
-
-    ws.remove().await;
-    std::fs::remove_dir_all(&root).ok();
-}
-
-/// The negative control, and the proof the witness above is not asserting
-/// something that would be true anyway: a candidate whose work is never
-/// adopted — a losing best-of-N sibling, an integrity refusal, a run that
-/// died — must leave the session ledger exactly as it found it. Its edits are
-/// not the user's tree's, and a durable record claiming otherwise would be the
-/// same defect pointing the other way.
-#[tokio::test]
-async fn a_candidate_that_never_adopts_attributes_nothing_to_the_session_ledger() {
-    let root = scaffold("attribute_none");
-    let session = Arc::new(stella_tools::ToolRegistry::with_issue_backend(
-        root.clone(),
-        None,
-    ));
-    let port = GitCandidateWorkspaces::new(
-        root.clone(),
-        RegistryOptions::default(),
-        Default::default(),
-        Vec::new(),
-        crate::rules::ResolvedRules::default(),
-    )
-    .with_session_registry(session.clone());
-    let loser = port.create_workspace().await.unwrap();
-
-    std::fs::write(loser.dir().join("tracked.txt"), "base\nloser\n").unwrap();
-    std::fs::write(loser.dir().join("loser.txt"), "residue\n").unwrap();
-    loser.seal().await.unwrap();
-    loser.remove().await;
-
-    assert!(
-        session.files_touched().is_empty(),
-        "a discarded candidate's edits never became the user's tree's, so they are not this \
-         session's changes"
-    );
-    assert_eq!(session.mutations_recorded(), 0);
     std::fs::remove_dir_all(&root).ok();
 }

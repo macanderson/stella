@@ -79,12 +79,11 @@ fn event_and_telemetry_persistence_failure_downgrades_later_successful_closeout(
     );
 
     let root = tempfile::tempdir().expect("root");
-    let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let registry = ToolRegistry::new(root.path().to_path_buf());
     assert!(!record_execution_end(
         &store,
         execution_id,
         &registry,
-        0,
         "completed",
         0.01,
         false,
@@ -113,13 +112,12 @@ fn cancelled_closeout_is_incomplete_even_when_every_write_succeeds() {
         .begin_execution("deck-sub", "prompt", "anthropic", "claude-fable-5")
         .expect("begin");
     let root = tempfile::tempdir().expect("root");
-    let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let registry = ToolRegistry::new(root.path().to_path_buf());
 
     assert!(!record_execution_end(
         &store,
         execution_id,
         &registry,
-        0,
         "cancelled",
         0.0,
         true,

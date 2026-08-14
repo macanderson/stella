@@ -315,7 +315,7 @@ mod tests {
                    name: release-notes\n\
                    description: Write release notes\n\
                    context: fork\n\
-                   allowed-tools: read_file, grep glob\n\
+                   allowed-tools: task_list, get_state list_state\n\
                    model: gpt-5.2\n\
                    effort: High\n\
                    max-risk: high\n\
@@ -327,9 +327,9 @@ mod tests {
             InvokeDirectives {
                 mode: SkillInvocationMode::Fork,
                 allowed_tools: Some(vec![
-                    "read_file".to_string(),
-                    "grep".to_string(),
-                    "glob".to_string(),
+                    "task_list".to_string(),
+                    "get_state".to_string(),
+                    "list_state".to_string(),
                 ]),
                 model: Some("gpt-5.2".to_string()),
                 effort: Some(ReasoningEffort::High),

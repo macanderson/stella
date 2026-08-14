@@ -99,27 +99,23 @@ pub(crate) async fn run_raw_one_shot(
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
     let provider = build_provider(cfg)?;
-    let registry_options = registry_options(cfg);
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
-    // files-touched ledger is reachable after the turn — the trait object
-    // hides it. It still coerces to `&dyn ToolExecutor` for the engine.
-    let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
-    );
-    populate_schema_index(&registry, &cfg.workspace_root)?;
+    // registry's ledgers are reachable after the turn — the trait object
+    // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
+    let registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
 
     crate::subagent::install_for_session(cfg, &registry)?;
-    // The one derivation of "a human is here to answer": `ask_user`'s io and
-    // the #2676 approval responder both read this value.
+    // The one derivation of "a human is here to answer" — the #2676 approval
+    // responder and the rules-enforcement prompt both read this value.
     let ask = human_is_present(format == OutputFormat::Text);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
-    // Auto-build + live-refresh the code graph in the background so a
-    // multi-step one-shot turn can reach for `graph_query` once the index is
-    // ready. Status goes to stderr — stdout may be machine-readable JSON.
+    // Auto-build + live-refresh the code graph in the background so
+    // `stella search` and the deck's Graph tab have a fresh index. Status
+    // goes to stderr — stdout may be machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        registry.clone(),
         Box::new(|line| eprintln!("  {line}")),
         Box::new(|| {}),
     );
@@ -198,22 +194,7 @@ pub(crate) async fn run_raw_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
-    let mut presence = SessionPresence::announce(cfg, prompt, &registry);
-    // Probe the workspace once for this turn instead of twice per shell call.
-    //
-    // This is the bracket the staged pipeline has always armed and the raw
-    // step loop never did (#2337), which left `ToolRegistry::execute` on its
-    // per-call branch — the granularity `turn_probe`'s own doc comment says
-    // "would have spent the entire trial budget watching itself work". It
-    // measurably did: on Terminal-Bench's `sqlite-with-gcov`, one `tar xzf`
-    // of the vendored SQLite tarball cost ~500s of a 900s budget with nothing
-    // but tree walks to show for it.
-    //
-    // Settled in `close_event_stream` rather than after `run_turn` returns,
-    // because the turn's event sender dies inside it: the ledger would still
-    // be written, but every `FileChange` would be born into a closed channel
-    // and the journal would show a turn that touched nothing.
-    registry.begin_workspace_probe();
+    let mut presence = SessionPresence::announce(cfg, prompt);
     let outcome = run_turn(
         &*provider,
         base_tools,
@@ -229,24 +210,22 @@ pub(crate) async fn run_raw_one_shot(
         "run",
         prompt,
         Some(presence.id()),
-        &crate::discovery::new_activation(),
         recall_event,
         memory.as_mut(),
     )
     .await;
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
-    if let Some(m) = &memory {
-        let files = registry.files_touched();
-        if turn_warrants_reflection(&messages) || !files.is_empty() {
-            let episode_outcome = if outcome.is_ok() {
-                EpisodeOutcome::Success
-            } else {
-                EpisodeOutcome::Failure
-            };
-            m.record_episode(prompt, episode_outcome, &files, started_unix, None)
-                .await;
-        }
+    if let Some(m) = &memory
+        && turn_warrants_reflection(&messages)
+    {
+        let episode_outcome = if outcome.is_ok() {
+            EpisodeOutcome::Success
+        } else {
+            EpisodeOutcome::Failure
+        };
+        m.record_episode(prompt, episode_outcome, &[], started_unix, None)
+            .await;
     }
     // …and reflect on the completed turn, recording domain-tagged lessons
     // (recurring ones auto-promote to SKILL.md files). Best-effort: never
@@ -305,8 +284,8 @@ pub(crate) async fn run_raw_one_shot(
 /// role `Router` and resolves `Role::Verifier` to a DIFFERENT family than the
 /// worker for bias-resistant assessment; with a
 /// single family it stays the worker provider, identical to before. The
-/// worker turns get the full tool stack (MCP + custom + interactive +
-/// skills), same as `run_one_shot`.
+/// worker turns get the full tool stack (built-ins + MCP + custom), same as
+/// `run_one_shot`.
 ///
 /// `use_pipeline` (the default) runs each working round through the staged
 /// pipeline (triage → recall → plan → execute → witness → verify → verdict);
@@ -321,24 +300,21 @@ pub async fn run_goal_cmd(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
     let provider = build_provider(cfg)?;
-    let registry_options = registry_options(cfg);
-    let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
-    );
-    populate_schema_index(&registry, &cfg.workspace_root)?;
+    let registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
 
-    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    crate::subagent::install_for_session(cfg, &registry)?;
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build + live-refresh the code-graph index in the background so
-    // `graph_query` is available for the goal loop without a manual `stella
-    // init`. Non-blocking; status to stderr. Kept alive until the goal returns.
+    // `stella search` and the deck's Graph tab stay current without a manual
+    // `stella init`. Non-blocking; status to stderr. Kept alive until the
+    // goal returns.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        registry.clone(),
         Box::new(|line| eprintln!("  {line}")),
         Box::new(|| {}),
     );
@@ -406,7 +382,7 @@ pub async fn run_goal_cmd(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
-    let mut presence = SessionPresence::announce(cfg, goal, &registry);
+    let mut presence = SessionPresence::announce(cfg, goal);
     let outcome = if use_pipeline {
         run_goal_pipeline_turn(
             &*provider,
@@ -420,12 +396,10 @@ pub async fn run_goal_cmd(
             &store,
             goal,
             Some(presence.id()),
-            registry_options.clone(),
             active_rules.clone(),
             mcp.clone(),
             recall_event,
             memory.as_mut(),
-            sub_agents.clone(),
         )
         .await
     } else {
@@ -446,17 +420,16 @@ pub async fn run_goal_cmd(
         )
         .await
     };
-    if let Some(m) = &memory {
-        let files = registry.files_touched();
-        if turn_warrants_reflection(&messages) || !files.is_empty() {
-            let episode_outcome = if outcome.is_ok() {
-                EpisodeOutcome::Success
-            } else {
-                EpisodeOutcome::Failure
-            };
-            m.record_episode(goal, episode_outcome, &files, started_unix, None)
-                .await;
-        }
+    if let Some(m) = &memory
+        && turn_warrants_reflection(&messages)
+    {
+        let episode_outcome = if outcome.is_ok() {
+            EpisodeOutcome::Success
+        } else {
+            EpisodeOutcome::Failure
+        };
+        m.record_episode(goal, episode_outcome, &[], started_unix, None)
+            .await;
     }
     // Reflect on success AND failure, matching the one-shot path above — a
     // failed goal run is a prime learning signal (root-cause prompt via
@@ -542,7 +515,6 @@ pub(crate) async fn run_goal_turn(
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
     stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
-    let files_before = registry.files_touched().len();
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
     // selected AND built; the boxed provider must outlive the `run_goal`
@@ -584,25 +556,11 @@ pub(crate) async fn run_goal_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone())
-            .with_ask_user(tty_ask_io(human_is_present(true)))
-            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
-        // Inline skill invocations (#2682) ride the engine's steering seam:
-        // arm the queue and publish it as this turn's steering, so an
-        // invoked body lands as a tail user-role message at the next step
-        // boundary.
-        let injections = tools.skill_injections();
-        injections.arm();
-        let controls =
-            stella_core::ports::TurnControls::none().with_steering(std::sync::Arc::new(injections));
+        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
         let hook_runner = ShellHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration)
-                .with_turn_controls(&controls);
+                .with_calibration(calibration);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -620,7 +578,6 @@ pub(crate) async fn run_goal_turn(
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
-    let files = registry.files_touched();
     if let Some((store, id)) = &execution {
         let (outcome_label, cost) = match &outcome {
             GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
@@ -630,17 +587,13 @@ pub(crate) async fn run_goal_turn(
             store,
             *id,
             registry,
-            files_before,
             outcome_label,
             cost,
             persistence_complete,
         ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
+            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
         }
     }
-    plain::files_touched_panel(&files);
 
     match outcome {
         GoalOutcome::Met {
@@ -704,7 +657,6 @@ async fn run_goal_pipeline_turn(
     store: &Option<Arc<Store>>,
     goal: &str,
     session: Option<&str>,
-    registry_options: stella_tools::RegistryOptions,
     active_rules: crate::rules::ResolvedRules,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
@@ -713,9 +665,6 @@ async fn run_goal_pipeline_turn(
     // the caller's memory and records this round's skill-version usage before
     // the turn runs, so reflection can name its row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
-    // The session's sub-agent runner (returned by `install_for_session`), so
-    // `context: fork` skills can dispatch children (#2682).
-    sub_agents: Arc<dyn stella_core::subagent::SubAgentDispatcher>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
@@ -728,7 +677,6 @@ async fn run_goal_pipeline_turn(
         goal,
         &cfg.workspace_root,
     );
-    let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
     // Role wiring from `agent_engine_config` — the pinned/auto verifier (when
@@ -800,18 +748,7 @@ async fn run_goal_pipeline_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone())
-            .with_ask_user(tty_ask_io(human_is_present(true)))
-            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-            .with_sub_agent_dispatcher(sub_agents);
-        // Inline skill invocations (#2682): armed here because the ports
-        // below publish the queue as the execute stage's steering, which is
-        // what turns a queued expansion into a tail user-role message.
-        let injections = tools.skill_injections();
-        injections.arm();
+        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
@@ -819,13 +756,9 @@ async fn run_goal_pipeline_turn(
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
             cfg,
-            registry_options,
             active_rules.clone(),
             mcp,
-            SessionPlane::new(
-                stella_core::EventSender::new(tx.clone()),
-                std::sync::Arc::clone(registry),
-            ),
+            SessionPlane::new(stella_core::EventSender::new(tx.clone())),
         )?;
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the recall port (as on the one-shot
@@ -890,10 +823,9 @@ async fn run_goal_pipeline_turn(
                 recall,
                 repo: &ws_ports.repo_structure,
                 repo_status: &ws_ports.repo_status,
-                touches: &crate::agent::RegistryTouches(registry),
                 diagnostics: &ws_ports.diagnostic_runner,
                 tests: &ws_ports.test_runner,
-                lint: Some(&ws_ports.lint_probe),
+                lint: None,
                 mutation: Some(&ws_ports.mutation_probe),
                 coverage: Some(&ws_ports.coverage_probe),
                 approvals: &HEADLESS_APPROVAL_GATE,
@@ -907,10 +839,8 @@ async fn run_goal_pipeline_turn(
                     .mcp_prefetch
                     .as_ref()
                     .map(|p| p as &dyn McpPrefetchPort),
-                // No interactive steer tap on goal rounds — the tap here is
-                // the skill-invocation queue, whose only messages are the
-                // expansions invoke_skill queued this round (#2682).
-                steering: Some(&injections),
+                // No interactive steer tap on goal rounds.
+                steering: None,
             };
             let pipeline =
                 crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), pipeline_config);
@@ -961,7 +891,6 @@ async fn run_goal_pipeline_turn(
             });
 
             if verdict.met {
-                plain::files_touched_panel(&registry.files_touched());
                 println!(
                     "\n  {} goal met after {round} round{}: {}",
                     "✓".green().bold(),
@@ -1007,7 +936,6 @@ async fn run_goal_pipeline_turn(
     // The shared guard is the settled ledger, including a verifier turn that
     // aborted after spending and therefore returned no `verifier_cost` value.
     let total_cost_usd = budget.session_spent_usd();
-    let files = registry.files_touched();
     if let Some((store, id)) = &execution {
         let outcome_label = match &goal_result {
             Ok(()) => "goal_met",
@@ -1017,42 +945,30 @@ async fn run_goal_pipeline_turn(
             store,
             *id,
             registry,
-            files_before,
             outcome_label,
             total_cost_usd,
             persistence_complete,
         ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
+            warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
         }
     }
-    plain::files_touched_panel(&files);
     goal_result
 }
 
-/// The six tools the goal verifier's system prompt promises
-/// (`stella_core::goal::VERIFIER_SYSTEM_PROMPT`), and the only ones it is
-/// offered. Pinned against the prompt by a test below so the two cannot
-/// drift.
-const VERIFIER_TOOL_ALLOWLIST: &[&str] = &[
-    "read_file",
-    "grep",
-    "glob",
-    "explorations",
-    "ci_status",
-    "search_issues",
-];
+/// The tools the goal verifier may call: the catalog's read-only built-ins,
+/// and nothing else. Pinned against the catalog by a test below so the two
+/// cannot drift.
+const VERIFIER_TOOL_ALLOWLIST: &[&str] =
+    &["task_list", "get_state", "list_state", "get_environment"];
 
 /// The goal verifier's tool surface (#1783): the session stack narrowed to
-/// [`VERIFIER_TOOL_ALLOWLIST`] BEFORE the read-only view applies. The bare
-/// `ReadOnlyTools` wrap admitted every schema claiming `read_only: true` —
-/// ~25 tools including `web_fetch`/`web_search` (outbound HTTP from a role
-/// that reads worker-influenced content: a prompt-injection egress channel)
-/// and any MCP/custom tool that self-declares read-only. The pipeline's
-/// verdict call carries zero tools; this is the goal loop's equivalent
-/// posture: exactly what the prompt names, enforced at execution rather
-/// than by prompt.
+/// [`VERIFIER_TOOL_ALLOWLIST`] BEFORE the read-only view applies. A bare
+/// `ReadOnlyTools` wrap admits every schema claiming `read_only: true` —
+/// including any MCP/custom tool that self-declares read-only, an outbound
+/// egress channel from a role that reads worker-influenced content (a
+/// prompt-injection hazard). The pipeline's verdict call carries zero tools;
+/// this is the goal loop's equivalent posture: exactly the catalog's
+/// read-only rows, enforced at execution rather than by prompt.
 struct VerifierScopedTools<'a> {
     inner: &'a dyn stella_core::ToolExecutor,
 }
@@ -1097,9 +1013,9 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
     // Forwarded for the same decorator rule, and NOT filtered by the
     // allowlist: a service the round's worker left running is a fact about
     // the workspace the verifier is judging, not a capability this view
-    // grants. The verifier cannot start or stop one — `start_process` and
-    // `stop_process` are both off the allowlist — so the assertion (#2764)
-    // only tells it what is up, which is exactly what a verifier is for.
+    // grants. The verifier cannot start or stop one — no allowlisted tool
+    // mutates — so the assertion (#2764) only tells it what is up, which is
+    // exactly what a verifier is for.
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.inner.live_services()
     }
@@ -1250,14 +1166,14 @@ mod verifier_tools_tests {
     #[async_trait::async_trait]
     impl stella_core::ToolExecutor for FakeStack {
         fn schemas(&self) -> Vec<ToolSchema> {
-            ["read_file", "grep", "web_fetch", "mcp__srv__read", "bash"]
+            ["task_list", "get_state", "mcp__srv__read", "save_state"]
                 .into_iter()
                 .map(|name| ToolSchema {
                     name: name.into(),
                     description: String::new(),
                     input_schema: serde_json::json!({}),
                     // Everything claims read-only — the exact shape a
-                    // self-declaring MCP tool or the web group presents.
+                    // self-declaring MCP tool presents.
                     read_only: true,
                     speculation_safe: false,
                 })
@@ -1270,12 +1186,11 @@ mod verifier_tools_tests {
         }
     }
 
-    /// #1783's witness: the goal verifier is offered exactly what its
-    /// prompt names — a read-only claim alone (web egress, a self-declared
-    /// MCP read) no longer admits a tool, and execution is enforced, not
-    /// prompted.
+    /// #1783's witness: the goal verifier is offered exactly the allowlist —
+    /// a read-only claim alone (a self-declared MCP read) does not admit a
+    /// tool, and execution is enforced, not prompted.
     #[tokio::test]
-    async fn the_goal_verifier_gets_only_the_tools_its_prompt_names() {
+    async fn the_goal_verifier_gets_only_the_allowlisted_tools() {
         let stack = FakeStack;
         let scoped = VerifierScopedTools::new(&stack);
         let names: Vec<_> = scoped
@@ -1283,8 +1198,8 @@ mod verifier_tools_tests {
             .into_iter()
             .map(|schema| schema.name)
             .collect();
-        assert_eq!(names, vec!["read_file", "grep"]);
-        for denied in ["web_fetch", "mcp__srv__read", "bash", "web_search"] {
+        assert_eq!(names, vec!["task_list", "get_state"]);
+        for denied in ["mcp__srv__read", "save_state", "task"] {
             assert!(
                 scoped
                     .execute(denied, &serde_json::json!({}))
@@ -1294,20 +1209,20 @@ mod verifier_tools_tests {
             );
         }
         assert!(matches!(
-            scoped.execute("read_file", &serde_json::json!({})).await,
+            scoped.execute("task_list", &serde_json::json!({})).await,
             ToolOutput::Ok { .. }
         ));
     }
 
-    /// The allowlist and the prompt must name the same six tools — the
-    /// drift this pins is exactly how the surface grew to ~25 unnoticed.
+    /// The allowlist must be exactly the catalog's read-only rows — the
+    /// drift this pins is exactly how the surface once grew to ~25 unnoticed.
     #[test]
-    fn the_allowlist_matches_what_the_prompt_promises() {
-        for name in VERIFIER_TOOL_ALLOWLIST {
-            assert!(
-                stella_core::goal::VERIFIER_SYSTEM_PROMPT.contains(name),
-                "allowlisted `{name}` is not named by the verifier prompt"
-            );
-        }
+    fn the_allowlist_is_exactly_the_catalogs_read_only_rows() {
+        let expected: Vec<&str> = stella_tools::catalog::CATALOG
+            .iter()
+            .filter(|entry| entry.read_only)
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(VERIFIER_TOOL_ALLOWLIST, expected.as_slice());
     }
 }

@@ -72,7 +72,6 @@ async fn run_with(calibration: Option<&CalibrationMap>) -> Vec<AgentEvent> {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             lint: None,

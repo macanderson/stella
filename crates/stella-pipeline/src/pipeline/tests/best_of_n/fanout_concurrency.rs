@@ -159,7 +159,6 @@ async fn run_probed(
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &diagnostics,
             lint: None,

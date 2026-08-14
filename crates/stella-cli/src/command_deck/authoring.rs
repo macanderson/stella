@@ -3,7 +3,6 @@
 use stella_core::BudgetGuard;
 use stella_model::provider::Provider;
 use stella_protocol::{CompletionMessage, CompletionRequest};
-use stella_tools::ToolRegistry;
 use stella_tui::{AgentScope, Inbound};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -82,8 +81,6 @@ pub(super) async fn record_and_reflect_turn(
     memory: &mut Option<SessionMemory>,
     prompt: &str,
     outcome: &Result<(), crate::failure::CliFailure>,
-    registry: &ToolRegistry,
-    files_before: usize,
     started_unix: i64,
     messages: &[CompletionMessage],
     reflect_start: usize,
@@ -96,8 +93,6 @@ pub(super) async fn record_and_reflect_turn(
         memory,
         prompt,
         outcome,
-        registry,
-        files_before,
         started_unix,
         &messages[reflect_start..],
     )

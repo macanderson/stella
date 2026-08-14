@@ -45,7 +45,10 @@ impl<'a> Pipeline<'a> {
             witness_mutation: MutationAudit::Unmeasured,
             diff_coverage: DiffCoverage::Unmeasured,
             require_diff_coverage: self.config.require_diff_coverage,
-            verify_done_flip: state.signals.verify_done_confirmations > 0,
+            // No live producer: the field is part of the recorded-ladder
+            // vocabulary (`LadderInputs::verify_done_flip` documents its
+            // status), and replayed snapshots are the only place it is set.
+            verify_done_flip: false,
             no_test_surface,
             errored_commands: state.signals.errored_commands,
         }

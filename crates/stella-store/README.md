@@ -22,7 +22,8 @@ A leaf: its only workspace dependency is `stella-protocol` (`AgentEvent`,
 `rand`, and `libc` on unix for the session registry's `kill(pid, 0)` liveness
 check. No binary. `stella-cli` is the main consumer (`Store::open`, the session
 registry, notifications, the journal); `stella-fleet` uses `Store` for its file
-claims; `stella-tools` uses only the private-path helpers, to reach `codegraph.db`.
+claims; `stella-tools` reads only the tool-foundry adoption ledger
+(`AdoptedTool`).
 
 ## Boundary — does this change belong here?
 

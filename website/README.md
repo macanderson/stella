@@ -84,7 +84,7 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   agent-tools/           # built-in tools, skills, permissions, custom, MCP, hooks
   configuration/         # settings.json scopes, agent-engine config, credentials
   examples/              # cost/quality profiles (dirt-cheap → max-quality)
-  telemetry/             # local SQLite metering, Observatory, files-touched
+  telemetry/             # local SQLite metering, Observatory
   principles/            # determinism + the papers
   commands/              # per-command reference (run, chat, goal, fleet, …)
   extensions.mdx         # the extension event bus

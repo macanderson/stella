@@ -375,7 +375,7 @@ fn merge_rule_trust_tiers(mut user_rules: Vec<Rule>, project_rules: Vec<Rule>) -
 
 /// Session wiring shorthand: load the workspace rules and attach their
 /// Tier-2 guards to `registry`. Every session driver calls this right after
-/// constructing its registry (same rhythm as `populate_schema_index`).
+/// constructing its registry.
 ///
 /// `interactive_approvals` declares whether this driver's surface can ask a
 /// human mid-turn: `true` (a TTY REPL/goal surface) attaches the #2676
@@ -664,7 +664,7 @@ mod tests {
             "deny-write.md",
             "---\nguard-tool: Write\nguard-deny-path: blocked/**\n---\nProject guard.",
         );
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         {
             let _home = crate::paths::test_user_home(home.path().to_path_buf());
             enforce_workspace_rules(
@@ -675,18 +675,23 @@ mod tests {
             );
         }
 
+        // The guard gates by NAME at the dispatch hook, ahead of tool
+        // resolution — so an armed guard would answer with its own Blocked
+        // error here. Unarmed, the name simply resolves as unknown.
         let result = registry
             .execute(
                 "write_file",
                 &serde_json::json!({"path": "blocked/allowed.txt", "content": "ok\n"}),
             )
             .await;
-
+        let ToolOutput::Error { message, .. } = result else {
+            panic!("an unknown name answers with the unknown-tool error");
+        };
         assert!(
-            !result.is_error(),
-            "untrusted guard blocked the tool: {result:?}"
+            !message.contains("Project guard"),
+            "untrusted guard was armed at the tool boundary: {message}"
         );
-        assert!(root.path().join("blocked/allowed.txt").exists());
+        assert!(message.contains("unknown tool"), "{message}");
     }
 
     #[tokio::test]
@@ -704,7 +709,7 @@ mod tests {
             "Project text deliberately removes the hard guard.",
         );
 
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         let rules =
             load_rules_from_with_authority(root.path(), Some(user.path().join("rules")), true);
         attach_rule_guards(&registry, &ResolvedRules::from(rules));
@@ -744,7 +749,7 @@ mod tests {
             load_rules_from_with_authority(root.path(), Some(user.path().join("rules")), true);
         assert_eq!(rules.len(), 2, "both trust-tier guards must remain active");
 
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         attach_rule_guards(&registry, &ResolvedRules::from(rules));
         for path in ["user-only/blocked.txt", "project-only/blocked.txt"] {
             let output = registry
@@ -819,7 +824,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
@@ -853,7 +858,7 @@ mod tests {
         let target = root.path().join("migrations/0001-applied/up.sql");
         std::fs::write(&target, "SELECT 1;\n").unwrap();
 
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
@@ -881,13 +886,8 @@ mod tests {
         );
 
         // The same registry still executes calls no guard matches.
-        let allowed = registry
-            .execute(
-                "write_file",
-                &serde_json::json!({"path": "migrations/0002/up.sql", "content": "SELECT 2;\n"}),
-            )
-            .await;
-        assert!(!allowed.is_error(), "an unguarded path must run normally");
+        let allowed = registry.execute("task_list", &serde_json::json!({})).await;
+        assert!(!allowed.is_error(), "an unguarded tool must run normally");
     }
 
     #[tokio::test]
@@ -905,13 +905,10 @@ mod tests {
             "Match the surrounding code style.",
         );
 
-        // Command guards apply to `bash`, which ships registered.
-        let registry = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            stella_tools::RegistryOptions::default(),
-        );
+        // Command guards gate the `bash` NAME at the dispatch hook, ahead of
+        // tool resolution — a shell-shaped custom or MCP tool carrying that
+        // name is denied before it can run.
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         enforce_workspace_rules(&registry, root.path(), &trusted_project_authority(), false);
 
         let denied = registry
@@ -926,10 +923,9 @@ mod tests {
         assert!(message.contains("no-force-push"), "{message}");
         assert!(message.contains("Never force-push."), "{message}");
 
-        let allowed = registry
-            .execute("bash", &serde_json::json!({"command": "echo ok"}))
-            .await;
-        assert!(!allowed.is_error(), "a non-matching command runs normally");
+        // The Tier-1 rule and the guard both leave every other call alone.
+        let allowed = registry.execute("task_list", &serde_json::json!({})).await;
+        assert!(!allowed.is_error(), "a non-matching call runs normally");
     }
 
     /// A repository-published record with impeccable fields, and no local approval.
@@ -948,12 +944,7 @@ mod tests {
             SELF_ATTESTING_GUARD,
         );
 
-        let registry = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            stella_tools::RegistryOptions::default(),
-        );
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         let rules = load_workspace_rules(root.path(), &trusted_project_authority());
         attach_rule_guards(&registry, &rules);
 
@@ -1002,12 +993,7 @@ mod tests {
             &published.join("ctx.acme.web.no-force-push.toml"),
         );
 
-        let registry = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            stella_tools::RegistryOptions::default(),
-        );
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         let rules = load_workspace_rules(root.path(), &trusted_project_authority());
         attach_rule_guards(&registry, &rules);
 
@@ -1029,12 +1015,10 @@ mod tests {
             "and carry the statement so it can self-correct: {message}"
         );
 
-        let allowed = registry
-            .execute("bash", &serde_json::json!({"command": "echo ok"}))
-            .await;
+        let allowed = registry.execute("task_list", &serde_json::json!({})).await;
         assert!(
             !allowed.is_error(),
-            "a non-matching command must run normally: {allowed:?}"
+            "a non-matching call must run normally: {allowed:?}"
         );
     }
 
@@ -1056,12 +1040,7 @@ mod tests {
              \n[record.truth]\nbasis = \"decree\"\nverified_by = \"mac\"\n",
         );
 
-        let registry = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            stella_tools::RegistryOptions::default(),
-        );
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         let rules = load_workspace_rules(root.path(), &trusted_project_authority());
         attach_rule_guards(&registry, &rules);
 

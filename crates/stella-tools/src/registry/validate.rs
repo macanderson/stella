@@ -67,7 +67,7 @@
 //! # Determinism
 //!
 //! Refusal text is model-visible and must be byte-deterministic (the loop
-//! detector compares outputs; see `tests/search_determinism.rs`). One call
+//! detector compares outputs). One call
 //! yields at most one refusal, chosen in a fixed order: `required` fields in
 //! schema order, then per-property checks in the property map's iteration
 //! order (stable for a given build), then unknown keys sorted
@@ -291,7 +291,7 @@ mod tests {
 
     fn registry() -> (tempfile::TempDir, ToolRegistry) {
         let root = tempfile::tempdir().unwrap();
-        let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let reg = ToolRegistry::new(root.path().to_path_buf());
         (root, reg)
     }
 
@@ -304,28 +304,29 @@ mod tests {
 
     /// The seam witness (#3144): a schema-declared type mismatch is refused
     /// at dispatch with the `WrongType` wording, and the tool never runs —
-    /// on main, `trace: "yes"` silently defaulted to false and the shell
-    /// command executed anyway.
+    /// before the seam, a mistyped field silently defaulted and the tool
+    /// executed anyway.
     #[tokio::test]
     async fn a_mistyped_field_is_refused_at_dispatch_and_the_tool_does_not_run() {
-        let (root, reg) = registry();
+        let (_root, reg) = registry();
         let out = reg
             .execute(
-                "bash",
-                &serde_json::json!({
-                    "command": "echo hi > seam_probe.txt",
-                    "trace": "yes"
-                }),
+                "save_state",
+                &serde_json::json!({ "key": "seam_probe", "content": 42 }),
             )
             .await;
         assert_eq!(
             error_message(&out),
-            "field `trace` must be a boolean, got string"
+            "field `content` must be a string, got number"
         );
-        assert!(
-            !root.path().join("seam_probe.txt").exists(),
-            "the tool must not run on refused input — the shell wrote a file"
-        );
+        let listed = reg.execute("list_state", &serde_json::json!({})).await;
+        match listed {
+            ToolOutput::Ok { content } => assert!(
+                !content.contains("seam_probe"),
+                "the tool must not run on refused input — the entry was saved: {content}"
+            ),
+            other => panic!("list_state must succeed: {other:?}"),
+        }
     }
 
     /// A present-but-mistyped required field is a type mismatch, never
@@ -334,11 +335,14 @@ mod tests {
     async fn a_mistyped_required_field_is_not_reported_as_missing() {
         let (_root, reg) = registry();
         let out = reg
-            .execute("read_file", &serde_json::json!({ "path": 42 }))
+            .execute(
+                "save_state",
+                &serde_json::json!({ "key": 42, "content": "x" }),
+            )
             .await;
         assert_eq!(
             error_message(&out),
-            "field `path` must be a string, got number"
+            "field `key` must be a string, got number"
         );
     }
 
@@ -347,8 +351,8 @@ mod tests {
     #[tokio::test]
     async fn an_absent_required_field_keeps_the_original_wording() {
         let (_root, reg) = registry();
-        let out = reg.execute("read_file", &serde_json::json!({})).await;
-        assert_eq!(error_message(&out), "missing required field `path`");
+        let out = reg.execute("get_state", &serde_json::json!({})).await;
+        assert_eq!(error_message(&out), "missing required field `key`");
     }
 
     /// `"type": "integer"` rejects a fractional number; the refusal names
@@ -358,8 +362,8 @@ mod tests {
         let (_root, reg) = registry();
         let out = reg
             .execute(
-                "read_file",
-                &serde_json::json!({ "path": "a.txt", "offset": 2.5 }),
+                "get_state",
+                &serde_json::json!({ "key": "a", "offset": 2.5 }),
             )
             .await;
         assert_eq!(
@@ -397,10 +401,7 @@ mod tests {
     async fn an_unknown_key_passes_where_the_schema_is_open() {
         let (_root, reg) = registry();
         let out = reg
-            .execute(
-                "bash",
-                &serde_json::json!({ "command": "echo ok", "stray_key": 1 }),
-            )
+            .execute("list_state", &serde_json::json!({ "stray_key": 1 }))
             .await;
         assert!(!out.is_error(), "{out:?}");
     }

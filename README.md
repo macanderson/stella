@@ -38,17 +38,19 @@ in Rust as a workspace of focused crates.
 
 - **BYOK, auto-detected** — Set one provider's API key and Stella detects it.
   Pin a specific model per run or shell with `--model`.
-- **Deterministic definition of done** — `verify_done` replays your new test
-  files against the previous code in a shadow worktree at `git HEAD`; the test
-  must fail there and pass on your change. A green suite alone is not accepted.
+- **Deterministic definition of done** — the staged pipeline's witness stage
+  has an independent model author a test that fails on the old code and passes
+  on the new, and tracks that fail→pass flip. A green suite alone is not
+  accepted.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools out
   in parallel, observe, compact if noisy, repeat. No coordinator or multi-agent
   swarm.
-- **Prompt-cache-native memory** — Lessons saved with `save_memory` load once at
-  session start into a byte-stable system prompt (~0.1× input cost).
+- **Prompt-cache-native memory** — Lessons written as markdown in
+  `.stella/memories/` load once at session start into a byte-stable system
+  prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by the agent and the `stella search` command
-  instead of grepping.
+  Go, Java, C, PHP, SQL) queried by the `stella search` command instead of
+  grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and the
   files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only explicitly enrolled Oxagen
@@ -74,9 +76,6 @@ in Rust as a workspace of focused crates.
   the first `cargo build`, so expect a one-time toolchain fetch.
 - An API key for any supported provider, _or_ a local OpenAI-compatible model
   server (Ollama, vLLM, LM Studio, llama.cpp).
-- Optional: [`ripgrep`](https://github.com/BurntSushi/ripgrep) and
-  [`fd`](https://github.com/sharkdp/fd) on `PATH` (used by the `grep`/`glob`
-  tools), and `gh` for the CI/issue tools.
 
 ## Install
 
@@ -363,7 +362,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)  | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
 | [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)      | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
 | [`init`](https://stella.oxagen.sh/docs/commands/init)                 | Infer this workspace's domain taxonomy and build the code-graph index                                             |
-| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)     | Find code by meaning or by name — the CLI door to the agent's `search` tool                                       |
+| [`search <query>`](https://stella.oxagen.sh/docs/commands/search)     | Find code by meaning or by name over the code-graph index                                                         |
 | [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)     | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
 | [`scripts <cmd>`](https://stella.oxagen.sh/docs/commands/scripts)     | List and run the project's package-manager scripts by canonical verb (offline)                                    |
 | [`tools`](https://stella.oxagen.sh/docs/commands/tools)               | List every tool available this session; `--validate` checks custom manifests                                      |
@@ -371,8 +370,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`auth <cmd>`](https://stella.oxagen.sh/docs/commands/auth)           | Manage BYOK provider keys in `~/.stella/credentials.toml` — never prints a secret                                 |
 | [`config`](https://stella.oxagen.sh/docs/commands/config)             | Show the fully resolved configuration                                                                             |
 | [`mcp <cmd>`](https://stella.oxagen.sh/docs/commands/mcp)             | Manage MCP servers: search a registry, install, list, log in, show usage                                          |
-| [`connect <cmd>`](https://stella.oxagen.sh/docs/commands/connect)     | Connect GitHub or Linear so the agent gains the issue toolset                                                     |
-| [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory)       | Inspect memories through the citation loop; promote one to a project rule                                         |
+| [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory)       | Inspect memories; promote one to a project rule                                                                   |
 | [`stats`](https://stella.oxagen.sh/docs/commands/stats)               | Cost, tokens, and $/resolved task for **this** workspace                                                          |
 | [`usage <cmd>`](https://stella.oxagen.sh/docs/commands/usage)         | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
 | [`inspect`](https://stella.oxagen.sh/docs/commands/inspect)           | Replay the exact context a past model call was sent, verified against its digests                                 |
@@ -488,108 +486,33 @@ are also accepted case-insensitively.
 
 ## Built-in tools
 
-| Tool                                                                                                                                     | Description                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `read_file` · `write_file` · `edit_file` · `delete_file`                                                                                 | File CRUD with surgical exact-substring edits                                                                                                                                                                                                                                                    |
-| `apply_edits`                                                                                                                            | One transactional batch of exact-substring edits across many files — every edit validates first, and if any fails nothing is written (`dry_run` validates without writing)                                                                                                                       |
-| `bash`                                                                                                                                   | Run a shell command (timeout kill; `trace: true` echoes each line) — **registered by default**, withheld with `"tools": {"bash": "off"}` in settings (any scope)                                                                                                                                 |
-| `grep` · `glob`                                                                                                                          | Regex content search (ripgrep) · glob file discovery (fd)                                                                                                                                                                                                                                        |
-| `graph_query`                                                                                                                            | Query the indexed code graph: symbol definitions/references, callees/callers (best-effort by name), file imports/importers/neighborhood — auto-built at session start, refreshed live                                                                                                             |
-| `read_symbol`                                                                                                                            | Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing; multiple definitions are listed, never silently picked                                                                                                                                       |
-| `build_project` · `run_tests`                                                                                                            | Build/test with the workspace's toolchain (cargo/npm/go/make)                                                                                                                                                                                                                                    |
-| `diagnostics`                                                                                                                            | Fast typecheck: the toolchain's native machine-readable check (`cargo check` / `tsc` / `eslint` / `ruff`) parsed into structured file:line:col records, grouped by file                                                                                                                          |
-| `run_lint` · `format_code`                                                                                                               | The project's own linter/formatter (cargo clippy/fmt, or package.json `lint`/`format` scripts), spawned argv-style — no shell                                                                                                                                                                    |
-| `run_script`                                                                                                                             | Run a verb the project itself declares (Makefile target, package.json script, cargo alias); unknown names list the discovered vocabulary                                                                                                                                                         |
-| `start_process` · `read_output` · `send_stdin` · `restart_process` · `stop_process`                                                                          | Long-running processes (dev servers, REPLs, watchers) from an argv vector — capped output ring, restart replaces a running service rather than leaving it down (#2864), reaped at session end                                                                                                                                                    |
-| `repo_status` · `repo_diff` · `repo_commit` · `repo_push` · `repo_pull` · `repo_rollback`                                                | Vendor-neutral repository tools: structured status, hunk-level pending-change diffs for pre-commit self-review, pathspec-explicit commits, pushes that structurally refuse the default branch (never forced), fast-forward-only pulls, restore-named-paths rollback                              |
-| `repo_history` · `repo_recover`                                                                                                               | Read-only git history for roles that have no shell: recent commits, branches with ahead/behind, shelved changes, the working-position log, and whether the position is detached · the commits no branch points at, each marked for fast-forwardability                                           |
-| `verify_done`                                                                                                                            | Replay new test files against `git HEAD` to prove the change works                                                                                                                                                                                                                               |
-| `project_overview` · `gather_context`                                                                                                    | Orient in the workspace in one pass · one deterministic context sweep (greps, globs, symbol lookups, bounded excerpts) saved as a reusable pack                                                                                                                                                  |
-| `explorations` · `save_exploration`                                                                                                      | Shared codebase maps — explore once, reuse everywhere                                                                                                                                                                                                                                            |
-| `save_memory` · `cite_memory`                                                                                                            | Persist a lesson into every future session's system prompt · cite a recalled memory so it earns its place                                                                                                                                                                                        |
-| `task_create` · `task_list` · `task_start` · `task_complete` · `task_cancel` · `task_assign`                                             | The session task board — one row per deliverable, exactly one in progress, `task_assign` delegates to a parallel sub-agent                                                                                                                                                                       |
-| `search_skills` · `install_skill` · `skill_search` · `tool_search` · `mcp_search`                                                        | Discovery at the session layer: search the public skills registry and install from it (with confirmation), search the skills already installed, or rank this session's tools / MCP servers instead of carrying all of them in the prompt                                                         |
-| `ci_status`                                                                                                                              | CI runs + failure logs via `gh`                                                                                                                                                                                                                                                                  |
-| `screenshot`                                                                                                                             | Capture the screen as verification evidence                                                                                                                                                                                                                                                      |
-| `web_fetch` · `web_extract_assets` · `web_download` · `web_search`                                                                       | Read a URL as markdown/text/HTML · mine a page's stylesheets, scripts, and design tokens · download an asset into the workspace · ranked search results — **registered by default**, withheld with `"tools": {"web": "off"}` in settings (any scope); `web_search` additionally needs your own `BRAVE_API_KEY` or `TAVILY_API_KEY` |
-| `generate_svg`                                                                                                                           | Validate, sanitize, and save an agent-authored SVG under `.stella/artifacts/` — scripts, handlers, and external references stripped                                                                                                                                                              |
-| `generate_image` · `generate_video` · `poll_video`                                                                                       | Text-to-image/video via your provider key, saved under `.stella/artifacts/` — registered only when a media-capable key is set (video is behind a cost confirmation)                                                                                                                              |
-| `ask_user`                                                                                                                               | Put a 2–6 option multiple-choice question to you when the decision is genuinely yours; a headless run gets a named error instead of a hang                                                                                                                                                       |
-| `create_issue` · `update_issue` · `close_issue` · `search_issues` · `get_issue` · `list_labels` · `list_members` · `start_work_on_issue` | Issue tracking (GitHub/Linear) — registered only when a tracker is connected (`stella connect github\|linear`, `LINEAR_API_KEY`, or `gh` auth)                                                                                                                                                   |
+Twelve built-ins, in four families — the task board, sub-agent delegation,
+scratch state, and the environment probe:
 
-All file tools are workspace-root-pinned, and every read/write/edit/delete is
-recorded in the Files-Touched ledger (shown per turn as `[C·R·U·D] path`, also
-via `/files`).
+| Tool                                                                                         | Description                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task_create` · `task_list` · `task_start` · `task_complete` · `task_cancel` · `task_assign` | The session task board — one row per deliverable, exactly one in progress, `task_assign` delegates a board task to a parallel sub-agent                                                                                                 |
+| `task`                                                                                       | Delegate a self-contained research question to a read-only sub-agent that returns only its findings — bulky evidence stays out of the parent conversation, and independent questions dispatched in one step run concurrently             |
+| `save_state` · `get_state` · `list_state` · `delete_state`                                   | The scratch state plane: session-private key/value state (parse results, extracted lists, computed digests) saved once and referenced later instead of re-derived — paged reads by byte offset, deleted automatically at session end     |
+| `get_environment`                                                                            | Report the session's environment: workspace root, git status, platform/arch, OS release, shell dialect, and the scratch directory path                                                                                                  |
 
-**Bash ships on, and switching it off bounds the shell tool rather than every
-path to a shell.** `bash` is registered like every other built-in; withhold it
-per user, org, or project by adding `"tools": {"bash": "off"}` to the
-corresponding `settings.json` scope (normal per-field merge — project wins).
-Prefer the enumerable-argv tools regardless (build/test/lint/format,
-`run_script`'s project-declared verbs, the process group, the `repo_*` tools) —
-they never interpret a shell string. Note that `"bash": "off"` removes the
-free-form shell _tool_, not the shell _capability_: `build_project` and
-`run_tests` take a `command` override, `verify_done` a `test_cmd`, and
-`run_script` composes from the scripts index, so all four still reach `bash -c`
-behind the `command.started` policy fence.
+Every built-in is registered by default and individually withholdable with a
+`"tools": {"<name>": "off"}` switch in any `settings.json` scope (normal
+per-field merge — project wins). Everything beyond the built-ins reaches the
+registry from outside: MCP servers (`.stella/mcp.toml`) and developer-defined
+custom script tools (`.stella/tools/*.toml`).
 
-Stated precisely, because a security claim that overreaches is worse than none:
-turning `bash` off removes the tool, not every route to a shell.
-`start_process` stays registered by default and takes an argv vector whose
-`argv[0]` may itself be an interpreter (`["bash", "-c", …]`). That is why every
-model-authored command line — `bash`, `start_process`'s joined argv,
-`build_project`/`run_tests`/`verify_done`/`run_script`'s resolved commands —
-rides the same blocking `command.started` policy chain, so a hook on that event
-sees the exact line _before_ anything spawns
-(`crates/stella-tools/src/registry.rs::command_line_for`). Note the scope: the
-`guard-deny-command` workspace rule globs the `bash` tool's own `command`
-string, not `start_process`'s argv. If you need a boundary rather than a gate,
-run Stella inside a container.
-
-**There is no per-command sandbox.** `STELLA_BASH_SANDBOX` — an opt-in
-Seatbelt/`bwrap` wrapper on the `bash` tool — was removed in #1300 and the
-variable now does nothing. It confined one tool while `build_project`,
-`run_tests`, `verify_done`, `run_script`, `start_process`, the `repo_*` and
-`ci_status` invocations, custom manifest tools, and hook actions all spawned
-around it, so it read as a session-wide bound while delivering a single-tool
-one — and a half-boundary people rely on is worse than a clearly absent one.
-For real containment, run the whole Stella process inside a container: that
-boundary sits outside every spawn path, so no tool can step around it. See
+**Containment is the process boundary, not a per-tool sandbox.** None of the
+twelve built-ins runs a shell, but custom manifest tools and hook actions
+still spawn processes. For real containment, run the whole Stella process
+inside a container: that boundary sits outside every spawn path, so nothing
+can step around it. See
 [`docs/spec/remote-sandboxes.md`](docs/spec/remote-sandboxes.md).
-
-**Conditional tools:** issue tools need `LINEAR_API_KEY` or a `gh auth login`;
-`generate_image` needs `ZAI_API_KEY` or `OPENAI_API_KEY`. Without their
-prerequisites, these tools are not registered. `graph_query` is **not**
-conditional despite needing an index — it builds one on first use, and gating
-it on the index existing would hide exactly the tool meant to create it.
-
-**The web tools ship on, and switch off as a family.** `web_fetch`,
-`web_extract_assets`, and `web_download` are registered by default like every
-other built-in; withhold all three with `"tools": {"web": "off"}` in any
-`settings.json` scope. `web_search` additionally needs your own
-`BRAVE_API_KEY` or `TAVILY_API_KEY` — no key, no tool. They are the only
-built-ins that talk to a host other than your model provider — a fetched page
-is untrusted input and an egress channel — which is why the family off-switch
-exists.
-
-**Where they may fetch is bounded by default.** Loopback, private ranges,
-link-local (the cloud metadata endpoints), and the `localhost` / `.internal` /
-`.local` name families are refused — checked on the URL, on the addresses DNS
-returns for it, and on every redirect hop, because a page the agent reads can
-try to steer it at an internal service. Re-open a specific destination in
-`~/.stella/web_auth.toml`:
-
-```toml
-[egress]
-allow = ["localhost:3000", "127.0.0.1:3000"]   # or ["*"] to switch the guard off
-```
-
-See [the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
 
 ## Memory and context
 
-Lessons saved with `save_memory` (or written as markdown in
-`.stella/memories/`) load once at session start into a byte-stable system
+Lessons written as markdown in
+`.stella/memories/` load once at session start into a byte-stable system
 prompt, so every model call considers them at prompt-cache prices. New memories
 take effect the next session — hot-injection would invalidate the cache.
 
@@ -657,8 +580,8 @@ lifecycle events, receiving the event payload as JSON on stdin:
     ],
     "PreToolUse": [
       {
-        "matcher": "bash",
-        "hooks": [{ "command": "./scripts/guard-bash.sh", "timeoutMs": 5000 }],
+        "matcher": "task_assign",
+        "hooks": [{ "command": "./scripts/guard-delegation.sh", "timeoutMs": 5000 }],
       },
     ],
   },
@@ -691,11 +614,11 @@ flowchart TD
       ENG["step driver · goal loop · budget<br/>retry · compaction · loop-detection · router"]
     end
     CORE -->|Provider port| MODEL["stella-model — adapters<br/>anthropic · openai · gemini · vertex · bedrock · zai<br/>(+ any OpenAI-compatible: xai · deepseek · openrouter · local)"]
-    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>CRUD · grep · glob · build · test · lint · scripts · processes · repo · verify_done · issues · CI · bash"]
+    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>task board · sub-agents · scratch state · environment"]
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
     CORE -->|emits AgentEvent stream| STORE["stella-store<br/>SQLite: executions · events · telemetry"]
     U -->|"recall · episodes · bi-temporal facts"| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
-    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `graph_query` + `stella search`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
+    GRAPH["stella-graph — tree-sitter code index"] -->|"auto-indexed at session start · queried via `stella search`"| DB[("SQLite code graph<br/>.stella/private/codegraph.db")]
     MODEL -.->|versioned serde| PROTO["stella-protocol — shared types + Provider/tool ports"]
     TOOLS -.-> PROTO
     STORE -.-> PROTO
@@ -737,7 +660,7 @@ extending it.
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`stella-cli`](crates/stella-cli/README.md)                 | CLI binary — clap surface + agent loop wiring                                                                                                                                                                                          |
 | [`stella-core`](crates/stella-core/README.md)               | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router                                                                                                                          |
-| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (CRUD, `grep`/`glob`, build/test/lint/format, `run_script`, the process group, the `repo_*` tools, `verify_done`, issues, CI, `bash` — every one registered by default, each withholdable via `tools` switches)                                                              |
+| [`stella-tools`](crates/stella-tools/README.md)             | The built-in tools (the task board, the `task` sub-agent, the scratch state plane, `get_environment` — every one registered by default, each withholdable via `tools` switches)                                                              |
 | [`stella-model`](crates/stella-model/README.md)             | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing)                                                                                                              |
 | [`stella-store`](crates/stella-store/README.md)             | SQLite persistence — executions, events, telemetry, files-touched                                                                                                                                                                      |
 | [`stella-mcp`](crates/stella-mcp/README.md)                 | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry                                                                                                                                              |
@@ -746,7 +669,7 @@ extending it.
 | [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
 | [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → verdict ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
-| [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate)                    |
+| [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port                                                                                                                                                                                 |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |
 | [`stella-observatory`](crates/stella-observatory/README.md) | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores                                                                                                                                    |
 | [`stella-serve`](crates/stella-serve/README.md)             | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority                |

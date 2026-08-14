@@ -1,70 +1,53 @@
-//! The canonical tool table — the one place a new built-in is declared.
+//! The canonical tool table — the one place a built-in is declared.
 //!
 //! Adding a tool used to be a ~6-file edit, and several of those edits were
-//! hardcoded counts or duplicated name-lists: two registry count pins, the
-//! read-only partition, [`crate::custom::RESERVED_NAMES`], and two counts in
-//! the docs. Parallel PRs each bumped the same integer off the same base, so
+//! hardcoded counts or duplicated name-lists: registry count pins, the
+//! read-only partition, [`crate::custom::RESERVED_NAMES`], and counts in the
+//! docs. Parallel PRs each bumped the same integer off the same base, so
 //! squash-merging them back-to-back left the count off by N−1 with **no merge
 //! conflict** — a plausible-but-wrong number that only CI (or nothing at all,
 //! on the docs side) caught after the fact.
 //!
-//! This module is the fix. Every built-in — plus the seven the CLI layers on
-//! top — is declared exactly once in the `catalog!` invocation below, with
-//! its read-only flag and what has to be true for it to register. Everything
-//! that used to be duplicated is now derived from it:
+//! This module is the fix. Every built-in is declared exactly once in the
+//! `catalog!` invocation below, with its read-only flag and its policy group.
+//! Everything that used to be duplicated is derived from it:
 //!
-//! - the registry's expected-name sets and their counts (`registry.rs` tests),
+//! - the registry's expected-name set (`registry.rs` tests),
 //! - the read-only partition (same),
 //! - [`crate::custom::RESERVED_NAMES`] (aliased straight to [`ALL_NAMES`]),
-//! - the "N always-on / up to M native" counts and the read-only set listed in
-//!   the docs (`tests/docs_in_sync.rs`).
+//! - the per-tool reference pages under `docs/tools/`.
 //!
 //! **To add a tool:** register it in
-//! [`ToolRegistry::with_backends_and_options`](crate::registry::ToolRegistry),
-//! then add one line here. Nothing else needs a count bumped. Two PRs adding
-//! different tools now merge to the correct union instead of a wrong integer,
-//! and a tool registered but never declared here fails the registry tests by
-//! *name*, not by an off-by-one.
+//! [`ToolRegistry::new`](crate::registry::ToolRegistry), then add one line
+//! here. Nothing else needs a count bumped. Two PRs adding different tools
+//! merge to the correct union instead of a wrong integer, and a tool
+//! registered but never declared here fails the registry tests by *name*,
+//! not by an off-by-one.
 
 /// What has to be true for a tool to be registered.
 ///
-/// Everything but [`Availability::Session`] is registered by
-/// [`crate::registry::ToolRegistry`] itself; the session tools live in the
-/// CLI's interactive and discovery layers and are listed here only so
-/// [`ALL_NAMES`] can back `RESERVED_NAMES` — a custom manifest must not shadow
-/// them either.
 /// **Availability is not policy.** A variant here names something the
-/// *environment* either supplies or does not — a provider key, an issue
-/// backend. Whether a satisfiable tool is *allowed* is
-/// [`crate::policy::ToolPolicy`]'s business, driven by `settings.json`.
+/// *environment* either supplies or does not. Whether a satisfiable tool is
+/// *allowed* is [`crate::policy::ToolPolicy`]'s business, driven by
+/// `settings.json`.
 ///
-/// The `Bash` and `Web` variants that used to live here were the exception
-/// that proved the rule: neither named a prerequisite, only a default. They
-/// are gone — `bash` and the key-free web tools are [`Availability::Always`],
-/// and an operator turns them off with `"tools": {"bash": "off"}`.
+/// Every current row registers unconditionally, so [`Availability::Always`]
+/// is the whole enum today. The type survives (rather than collapsing into a
+/// boolean or vanishing) because it is the declared seam a conditionally
+/// registered tool re-enters through, and because the doc generator
+/// (`stella-cli/src/tool_docs.rs`) renders each row's availability from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Availability {
     /// Registers in every session, with no configuration and no prerequisite.
     Always,
-    /// A BYOK search key (`BRAVE_API_KEY`/`TAVILY_API_KEY`). The other three
-    /// web tools need no key and are [`Availability::Always`].
-    WebSearch,
-    /// An image-capable BYOK media provider key.
-    Media,
-    /// A media provider whose key family also has a video adapter.
-    Video,
-    /// A configured issue backend (Linear/GitHub connection, or ambient `gh`).
-    Issue,
-    /// Layered on by the CLI rather than the native registry — never appears
-    /// in [`crate::registry::ToolRegistry::schemas`].
-    Session,
 }
 
 impl Availability {
     /// Whether the native [`crate::registry::ToolRegistry`] is what registers
-    /// this tool. False only for [`Availability::Session`].
+    /// this tool. True for every current variant; a future CLI-layered
+    /// declaration would answer false.
     pub const fn is_native(self) -> bool {
-        !matches!(self, Availability::Session)
+        matches!(self, Availability::Always)
     }
 }
 
@@ -79,21 +62,17 @@ pub struct ToolEntry {
     /// The schema's `speculation_safe` flag — safe to EXECUTE TWICE, the
     /// extra claim speculative execution needs on top of `read_only`
     /// (#923): a failed stream attempt re-announces its prefix on retry.
-    /// False for anything that leaves the workspace on the read path — a
-    /// metered web call, an issue-tracker API, the code-graph tools whose
-    /// reads write catch-up state to `codegraph.db`. Meaningless (and kept
-    /// false) on mutating rows.
+    /// Meaningless (and kept false) on mutating rows.
     pub speculation_safe: bool,
     /// What has to be true for it to register.
     pub availability: Availability,
     /// The family this tool belongs to, and the name an operator can switch
     /// off to disable the whole family at once
-    /// (`"tools": {"process": "off"}`).
+    /// (`"tools": {"scratch": "off"}`).
     ///
-    /// These were section comments in this table for a long time; they are
-    /// data now because a per-tool policy needs "turn off the process group"
-    /// to be one line rather than four, and because the settings UI groups its
-    /// rows by exactly this.
+    /// Data rather than a section comment, because a per-tool policy needs
+    /// "turn off the whole family" to be one line, and because the settings
+    /// UI groups its rows by exactly this.
     pub group: &'static str,
 }
 
@@ -120,93 +99,12 @@ macro_rules! catalog {
     };
 }
 
-use Availability::{Always, Issue, Media, Session, Video, WebSearch};
+use Availability::Always;
 
 // Column order: (read_only, speculation_safe, availability, group). The
 // second column only ever narrows the first: `true` means the read is pure
-// enough to run twice per step (speculation + a stream retry — #923), which
-// no network-backed or graph-catch-up read can claim.
+// enough to run twice per step (speculation + a stream retry — #923).
 catalog! {
-    // ---- Always-on: registered in every session ----
-    // File CRUD
-    "read_file"           => (true, true, Always, "file"),
-    // Graph-resolved span read: `open_or_build` may write codegraph
-    // catch-up state on the way to answering, so never speculated.
-    "read_symbol"         => (true, false, Always, "file"),
-    "write_file"          => (false, false, Always, "file"),
-    "edit_file"           => (false, false, Always, "file"),
-    "apply_edits"         => (false, false, Always, "file"),
-    "delete_file"         => (false, false, Always, "file"),
-    // Search. The family is grouped as `retrieval`, not `search`, because a
-    // policy key must be unambiguous: this group used to share its name with
-    // the `search` tool below, which made `--tools "*:off,search:on"` resolve
-    // `search` as a *group* switch and re-enable all four siblings the
-    // wildcard had just turned off (#3120). A group may only carry a tool's
-    // name when it holds exactly that tool — pinned by
-    // `a_group_key_never_doubles_as_another_tools_switch` below.
-    //
-    // The fused entry point (#3076), registered beside the four it subsumes
-    // rather than instead of them. Not speculation-safe, and for the union of
-    // its parts' reasons: a query can reach the graph and the embedding pass,
-    // so it inherits the "read that writes" posture from the strictest branch
-    // it can take, never the cheapest.
-    "search"              => (true, false, Always, "retrieval"),
-    "grep"                => (true, true, Always, "retrieval"),
-    "glob"                => (true, true, Always, "retrieval"),
-    // The read that writes: graph queries bootstrap/catch up codegraph.db.
-    "graph_query"         => (true, false, Always, "retrieval"),
-    // Same store, same "read that writes" posture, and one more write besides:
-    // the pass stores the vectors it embeds on the way to answering.
-    "semantic_code_search" => (true, false, Always, "retrieval"),
-    // Context & memory. The overview and gather ride the same graph
-    // substrate as graph_query; explorations is pure file reads.
-    "project_overview"    => (true, false, Always, "context"),
-    "gather_context"      => (true, false, Always, "context"),
-    "explorations"        => (true, true, Always, "context"),
-    "save_exploration"    => (false, false, Always, "context"),
-    "save_memory"         => (false, false, Always, "context"),
-    "cite_memory"         => (false, false, Always, "context"),
-    // The definition of done + build/test
-    "verify_done"         => (false, false, Always, "build"),
-    "build_project"       => (false, false, Always, "build"),
-    "run_tests"           => (false, false, Always, "build"),
-    // Runs the project's own checker — a manifest-resolved command no one
-    // can promise is free to run twice.
-    "diagnostics"         => (true, false, Always, "build"),
-    // Manifest-verb execution (argv, no shell)
-    "run_lint"            => (false, false, Always, "build"),
-    "format_code"         => (false, false, Always, "build"),
-    // Capability probing: check whether a binary exists on PATH without
-    // executing it. Results memoized per session.
-    "probe_capability"    => (true, true, Always, "environment"),
-    // The project scripts index (docs/spec/scripts-index.md) — static
-    // manifest detection, nothing executed.
-    "list_scripts"        => (true, true, Always, "scripts"),
-    "run_script"          => (false, false, Always, "scripts"),
-    // The long-running process group
-    "start_process"       => (false, false, Always, "process"),
-    "read_output"         => (false, false, Always, "process"),
-    "clear_output"        => (false, false, Always, "process"),
-    "send_stdin"          => (false, false, Always, "process"),
-    "restart_process"     => (false, false, Always, "process"),
-    "stop_process"        => (false, false, Always, "process"),
-    // Vendor-neutral repository tools; the two reads are local git queries.
-    "repo_status"         => (true, true, Always, "repo"),
-    "repo_diff"           => (true, true, Always, "repo"),
-    // Read-only by design, which is the point: a role behind `ReadOnlyTools`
-    // has no `bash`, and before these it had no route to git state at all.
-    "repo_history"        => (true, true, Always, "repo"),
-    "repo_recover"        => (true, true, Always, "repo"),
-    "repo_commit"         => (false, false, Always, "repo"),
-    "repo_push"           => (false, false, Always, "repo"),
-    "repo_pull"           => (false, false, Always, "repo"),
-    "repo_rollback"       => (false, false, Always, "repo"),
-    // CI & evidence. ci_status reads through `gh`/the forge API — someone
-    // else's rate limit.
-    "ci_status"           => (true, false, Always, "ci"),
-    "screenshot"          => (false, false, Always, "ci"),
-    // generate_svg is client-side, so it needs no media key
-    "generate_svg"        => (false, false, Always, "media"),
     // The session task board (in-memory)
     "task_create"         => (false, false, Always, "task"),
     "task_list"           => (true, true, Always, "task"),
@@ -218,9 +116,6 @@ catalog! {
     // flag is also what caps nesting: children run behind `ReadOnlyTools`, so
     // a read-only `task` would let them spawn children of their own.
     "task"                => (false, false, Always, "task"),
-    // The shell. No prerequisite — it is on unless `"tools": {"bash": "off"}`
-    // says otherwise, exactly like every other row in this block.
-    "bash"                => (false, false, Always, "bash"),
     // Session scratch state (tempfile::TempDir, self-deleting)
     "save_state"          => (false, false, Always, "scratch"),
     "get_state"           => (true, true, Always, "scratch"),
@@ -229,46 +124,6 @@ catalog! {
     // One-shot environment report: workspace root, git/worktree bit,
     // platform, OS release, shell dialect, scratch dir (#2697).
     "get_environment"     => (true, true, Always, "environment"),
-    // The key-free web tools: read-only for the workspace, but every run is
-    // real traffic against someone's server — never speculated (#923).
-    "web_fetch"           => (true, false, Always, "web"),
-    "web_extract_assets"  => (true, false, Always, "web"),
-    "web_download"        => (false, false, Always, "web"),
-    // ---- Conditionally registered: the environment must supply something ----
-    // A metered BYOK search key: the canonical read-only-but-billed tool.
-    "web_search"          => (true, false, WebSearch, "web"),
-    "generate_image"      => (false, false, Media, "media"),
-    "generate_video"      => (false, false, Video, "media"),
-    "poll_video"          => (false, false, Video, "media"),
-    // Issue tracking — every read goes to Linear/GitHub, a rate-limited API.
-    "create_issue"        => (false, false, Issue, "issue"),
-    "update_issue"        => (false, false, Issue, "issue"),
-    "close_issue"         => (false, false, Issue, "issue"),
-    "search_issues"       => (true, false, Issue, "issue"),
-    "get_issue"           => (true, false, Issue, "issue"),
-    "list_labels"         => (true, false, Issue, "issue"),
-    "list_members"        => (true, false, Issue, "issue"),
-    "start_work_on_issue" => (false, false, Issue, "issue"),
-    // ---- CLI session layer (never in the native registry) ----
-    // search_skills and mcp_search query public internet registries;
-    // tool_search and skill_search read local indexes.
-    "ask_user"            => (false, false, Session, "session"),
-    "search_skills"       => (true, false, Session, "session"),
-    "install_skill"       => (false, false, Session, "session"),
-    "tool_search"         => (true, true, Session, "session"),
-    "skill_search"        => (true, true, Session, "session"),
-    // Not read-only: an inline invocation mutates the turn's transcript and
-    // arms a tool grant; a forked one spends money (#2682).
-    "invoke_skill"        => (false, false, Session, "session"),
-    "mcp_search"          => (true, false, Session, "session"),
-    // Mid-turn context lookup, registered by `stella-cli`'s
-    // `InteractiveToolSet` when a context plane is configured. Filed under
-    // `context`, not `session`: an operator switching `tools.context` off
-    // means "no context plane", and the turn-start recall and this tool are
-    // the same plane reached two ways. Read-only, never speculated — the port
-    // behind it can be a network CGP host, so a duplicate speculative call is
-    // real traffic against someone's server.
-    "recall_context"      => (true, false, Session, "context"),
 }
 
 /// Look up a tool's canonical row by dispatch name.
@@ -337,17 +192,10 @@ pub fn always_on() -> Vec<&'static str> {
     names_where(|a| a == Availability::Always)
 }
 
-/// Every tool the native registry can register, with every opt-in enabled and
-/// every backend configured — the "up to M native" ceiling the docs quote.
-/// Excludes the CLI session layer.
+/// Every tool the native registry can register — the ceiling the docs quote.
+/// Identical to [`always_on`] while every row is unconditional.
 pub fn native() -> Vec<&'static str> {
     names_where(Availability::is_native)
-}
-
-/// The always-on set plus the issue tools — what a registry with a configured
-/// issue backend and no opt-ins advertises.
-pub fn always_on_with_issues() -> Vec<&'static str> {
-    names_where(|a| matches!(a, Availability::Always | Availability::Issue))
 }
 
 /// The read-only partition across the whole catalog, sorted. What dispatch
@@ -364,8 +212,8 @@ pub fn read_only() -> Vec<&'static str> {
 }
 
 /// The tools the engine may run before their step commits, sorted — every
-/// row claiming both `read_only` and `speculation_safe` (#923). Strictly a
-/// subset of [`read_only`]: what a stream retry may execute twice.
+/// row claiming both `read_only` and `speculation_safe` (#923). A subset of
+/// [`read_only`] by construction: what a stream retry may execute twice.
 pub fn speculation_safe() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = CATALOG
         .iter()
@@ -404,36 +252,12 @@ mod tests {
         assert_eq!(from_catalog, ALL_NAMES);
     }
 
-    /// The declaration order is the order a reader scans, and `names_where`
-    /// sorts anyway — but an alphabetized block is where a new tool goes
-    /// without thinking, so keep the availability blocks contiguous.
-    #[test]
-    fn availability_blocks_are_contiguous() {
-        let mut seen_blocks: Vec<Availability> = vec![];
-        for entry in CATALOG {
-            if seen_blocks.last() != Some(&entry.availability) {
-                assert!(
-                    !seen_blocks.contains(&entry.availability),
-                    "`{}` reopens the {:?} block — keep each availability \
-                     contiguous so a new tool has one obvious home",
-                    entry.name,
-                    entry.availability
-                );
-                seen_blocks.push(entry.availability);
-            }
-        }
-    }
-
     #[test]
     fn derived_views_partition_the_catalog() {
         assert_eq!(
             always_on().len() + names_where(|a| a != Availability::Always).len(),
             CATALOG.len()
         );
-        // Native + session is the whole table, with no overlap.
-        let native_count = native().len();
-        let session_count = names_where(|a| a == Availability::Session).len();
-        assert_eq!(native_count + session_count, CATALOG.len());
         // The always-on set is a subset of the native set.
         let native_set: HashSet<&str> = native().into_iter().collect();
         for name in always_on() {
@@ -445,6 +269,12 @@ mod tests {
     /// mutating row claiming it would let a schema drift toward running a
     /// mutation before its step commits, so the table refuses the shape
     /// outright rather than trusting every consumer to intersect.
+    ///
+    /// (Every read-only row in the current 12-tool surface also happens to
+    /// be speculation-safe — the board, scratch and environment reads are
+    /// all pure local reads — so unlike the wider historical surface there
+    /// is no in-catalog row where the two flags diverge. The subset
+    /// direction is the enforced claim.)
     #[test]
     fn speculation_safe_is_a_subset_of_read_only() {
         for entry in CATALOG {
@@ -455,25 +285,13 @@ mod tests {
                 entry.name
             );
         }
-        // And the claim must cost something: at least one read-only row
-        // opts out (the web family), or the flag has collapsed back into
-        // read_only and #923 has regressed.
-        assert!(
-            CATALOG
-                .iter()
-                .any(|entry| entry.read_only && !entry.speculation_safe),
-            "every read-only row claims speculation_safe — the two flags \
-             must be able to diverge (#923)"
-        );
     }
 
     /// A policy switch key resolves exact-name-first, then by group
     /// (`ToolPolicy::allows`), so a group that shares its name with a tool
-    /// while holding *other* tools makes one key address two surfaces: #3120
-    /// measured `--tools "*:off,search:on"` re-enabling grep, glob,
-    /// graph_query and semantic_code_search through the then-`search` group.
-    /// A single-member group named after its only tool (`bash`) is harmless —
-    /// both readings resolve identically.
+    /// while holding *other* tools makes one key address two surfaces (the
+    /// #3120 shape). A single-member group named after its only tool is
+    /// harmless — both readings resolve identically.
     ///
     /// `task` is the one declared exemption: the delegation tool `task` still
     /// shares its name with the task-board group, and untangling that is a
@@ -498,10 +316,10 @@ mod tests {
 
     #[test]
     fn lookup_finds_entries_by_dispatch_name() {
-        assert!(get("read_file").expect("read_file is canonical").read_only);
+        assert!(get("task_list").expect("task_list is canonical").read_only);
         assert!(
-            !get("write_file")
-                .expect("write_file is canonical")
+            !get("save_state")
+                .expect("save_state is canonical")
                 .read_only
         );
         assert!(get("no_such_tool").is_none());

@@ -22,7 +22,6 @@ pub(super) struct TurnTallies {
     file_changes: Arc<AtomicU32>,
     mutating: Arc<AtomicU32>,
     opaque: Arc<AtomicU32>,
-    verify_confirmations: Arc<AtomicU32>,
     errored_commands: Arc<AtomicU32>,
     /// Every `ToolStart` this turn dispatched, read-only calls included —
     /// unlike `mutating`, which excludes them on purpose (#2933). Not folded
@@ -38,7 +37,6 @@ impl TurnTallies {
         signals.file_changes += self.file_changes.load(Ordering::Relaxed);
         signals.mutating_actions += self.mutating.load(Ordering::Relaxed);
         signals.opaque_actions += self.opaque.load(Ordering::Relaxed);
-        signals.verify_done_confirmations += self.verify_confirmations.load(Ordering::Relaxed);
         signals.errored_commands += self.errored_commands.load(Ordering::Relaxed);
     }
 
@@ -47,15 +45,6 @@ impl TurnTallies {
         self.tool_calls.load(Ordering::Relaxed)
     }
 }
-
-/// The built-in verification tool's registered name
-/// (`stella-tools/src/verify.rs`) and the leading marker of its success
-/// output. Name-based like [`crate::witness::warrant::diff_accountable_mutator`],
-/// and both halves must match before a confirmation is tallied: the name
-/// alone could be shadowed by an attached MCP tool, and the marker alone
-/// could be echoed by a shell call's stdout.
-const VERIFY_DONE_TOOL: &str = "verify_done";
-const WITNESS_CONFIRMED_MARKER: &str = "WITNESS CONFIRMED";
 
 /// Which slice of which plan [`Pipeline::run_plan_steps`] is walking, and the
 /// board it reports onto.
@@ -335,10 +324,11 @@ impl<'a> Pipeline<'a> {
     /// `signals.mutating_actions` for the ladder's no-op rung.
     ///
     /// The tallies are deliberately independent. `file_changes` answers
-    /// "did the recorder see the tree change", which a shell redirect defeats;
-    /// `mutating_actions` answers "was anything even asked to change", which
-    /// nothing can defeat, because it is counted off the calls this pipeline
-    /// dispatched rather than off any look at the world.
+    /// "did any event report the tree changing", which a tool surface that
+    /// reports no changes leaves silent; `mutating_actions` answers "was
+    /// anything even asked to change", which nothing can defeat, because it
+    /// is counted off the calls this pipeline dispatched rather than off any
+    /// look at the world.
     /// Returns the turn's outcome alongside its own tool-call count — see
     /// [`TurnTallies::tool_call_count`] — so a caller that needs to tell an
     /// acting turn from a purely narrated one (#2933) does not have to infer
@@ -352,18 +342,25 @@ impl<'a> Pipeline<'a> {
         signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> (TurnOutcome, u32) {
-        // Every execute turn gets a halt now (#2661): armed with the tracked
-        // command when `run_candidate` observed a failing baseline, otherwise
-        // watching only for a confirmed `verify_done` — the deterministic
-        // done-signal that needs no configured command. An unfired latch
-        // answers `None` at every consult, so an ordinary turn still runs
-        // exactly as it always did.
-        let halt = flip_halt.unwrap_or_else(|| Arc::new(FlipHalt::watching_verify_done_only()));
-        let (filtered, tallies) = self.filtered_turn_events(Some(halt.clone()));
-        let halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
-        let outcome = halted
-            .run_turn_with_sender(messages, budget, &filtered)
-            .await;
+        // A halt is armed only when `run_candidate` observed a failing
+        // baseline for a tracked command (#2661). An unfired latch answers
+        // `None` at every consult, so an ordinary turn still runs exactly as
+        // it always did; a turn with no tracked command has no deterministic
+        // done-signal to watch and gets no latch at all.
+        let (filtered, tallies) = self.filtered_turn_events(flip_halt.clone());
+        let outcome = match flip_halt {
+            Some(halt) => {
+                engine
+                    .with_turn_halt(halt as Arc<dyn TurnHalt>)
+                    .run_turn_with_sender(messages, budget, &filtered)
+                    .await
+            }
+            None => {
+                engine
+                    .run_turn_with_sender(messages, budget, &filtered)
+                    .await
+            }
+        };
         let tool_calls = tallies.tool_call_count();
         tallies.fold_into(signals);
         (outcome, tool_calls)
@@ -385,14 +382,20 @@ impl<'a> Pipeline<'a> {
         signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> (TurnOutcome, Vec<CompletionMessage>, BudgetGuard) {
-        // Same always-on halt as `run_engine_turn` (#2661) — the resumed
-        // path must not be the copy that forgot it.
-        let halt = flip_halt.unwrap_or_else(|| Arc::new(FlipHalt::watching_verify_done_only()));
-        let (filtered, tallies) = self.filtered_turn_events(Some(halt.clone()));
-        let halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
+        // Same halt arming as `run_engine_turn` (#2661) — the resumed path
+        // must not be the copy that forgot it.
+        let (filtered, tallies) = self.filtered_turn_events(flip_halt.clone());
         let mut state =
             stella_core::step::TurnState::from_checkpoint(checkpoint, &self.config.engine);
-        let outcome = halted.drive(&mut state, &filtered).await;
+        let outcome = match flip_halt {
+            Some(halt) => {
+                engine
+                    .with_turn_halt(halt as Arc<dyn TurnHalt>)
+                    .drive(&mut state, &filtered)
+                    .await
+            }
+            None => engine.drive(&mut state, &filtered).await,
+        };
         tallies.fold_into(signals);
         let budget = stella_core::step::BudgetSnapshot::of(state.budget()).restore();
         (outcome, state.into_messages(), budget)
@@ -415,22 +418,14 @@ impl<'a> Pipeline<'a> {
         let mutating = seen_mutating.clone();
         let seen_opaque = Arc::new(AtomicU32::new(0));
         let opaque = seen_opaque.clone();
-        let seen_verify = Arc::new(AtomicU32::new(0));
-        let verify = seen_verify.clone();
-        // The errored-command census (#2125): unconditional, like the
-        // `verify_done` tally above, because the fact it records is invisible
-        // to every other channel — a chain that exits 0 with a broken command
-        // inside it leaves no trace in the diff, the touch count or the
-        // oracle.
+        // The errored-command census (#2125): unconditional, because the fact
+        // it records is invisible to every other channel — a chain that exits
+        // 0 with a broken command inside it leaves no trace in the diff or
+        // the oracle.
         let seen_command_errors = Arc::new(AtomicU32::new(0));
         let command_errors = seen_command_errors.clone();
         let seen_tool_calls = Arc::new(AtomicU32::new(0));
         let tool_calls = seen_tool_calls.clone();
-        // The `verify_done` calls in flight, so their results can be scored
-        // (#2129). Correlated by `call_id` for the same reason the command
-        // map below is — a step dispatches calls concurrently.
-        let pending_verify: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-        let verify_calls = pending_verify.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
         // Correlate a shell call's command line (carried on `ToolStart`) with
@@ -491,10 +486,8 @@ impl<'a> Pipeline<'a> {
                         }
                     }
                     // Remember the command line so its result can be scored
-                    // against the tracked test. Only when the halt actually
-                    // watches a command — a verify_done-only latch (#2661)
-                    // has nothing to match, and this map would be pure
-                    // overhead on every turn.
+                    // against the tracked test — only when a halt is armed,
+                    // or this map would be pure overhead on every turn.
                     if halt_for_events
                         .as_ref()
                         .is_some_and(|halt| !halt.tracked().is_empty())
@@ -502,15 +495,6 @@ impl<'a> Pipeline<'a> {
                         && let Ok(mut pending) = commands.lock()
                     {
                         pending.insert(call.call_id.clone(), command.to_string());
-                    }
-                    // Track `verify_done` dispatches unconditionally (#2129):
-                    // its confirmation is flip evidence the fallback verdict
-                    // must be able to read, and the calls are rare enough
-                    // that the set costs nothing on ordinary turns.
-                    if call.name == VERIFY_DONE_TOOL
-                        && let Ok(mut pending) = verify_calls.lock()
-                    {
-                        pending.insert(call.call_id.clone());
                     }
                     consumer.send(event)
                 }
@@ -540,29 +524,6 @@ impl<'a> Pipeline<'a> {
                             halt.observe(&command, content);
                         }
                     }
-                    // A `verify_done` success that opens with the confirmed
-                    // marker is a deterministic flip observation (#2129). The
-                    // marker is the tool's first output byte, so `starts_with`
-                    // cannot be satisfied by a quoted echo in a longer reply.
-                    if verify_calls
-                        .lock()
-                        .ok()
-                        .is_some_and(|mut pending| pending.remove(call_id))
-                        && let ToolOutput::Ok { content } = output
-                        && content.starts_with(WITNESS_CONFIRMED_MARKER)
-                    {
-                        verify.fetch_add(1, Ordering::Relaxed);
-                        // A confirmed verify_done is deterministic proof the
-                        // goal is met (#2129) — the second live done-signal,
-                        // and the only one a turn with no tracked command has
-                        // (#2661). Firing the halt here is what lets the
-                        // engine's mid-dispatch consult kill anything still
-                        // in flight instead of spending the rest of the
-                        // ceiling against a solved task.
-                        if let Some(halt) = halt_for_events.as_ref() {
-                            halt.confirm_verify_done();
-                        }
-                    }
                     // Scored off the result alone (#2125) — no call-id
                     // correlation, because the marker the census reads is the
                     // shell renderer's own and no dispatch record is needed to
@@ -581,7 +542,6 @@ impl<'a> Pipeline<'a> {
                 file_changes: seen_file_changes,
                 mutating: seen_mutating,
                 opaque: seen_opaque,
-                verify_confirmations: seen_verify,
                 errored_commands: seen_command_errors,
                 tool_calls: seen_tool_calls,
             },

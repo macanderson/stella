@@ -4,8 +4,8 @@
 //! measurement — as `macro_rules!` string literals so that **both** static
 //! prompts can embed the same bytes: one literal, two `concat!` sites, no
 //! second copy to drift from. The catalogue this pattern replaced had drifted
-//! in exactly that way (`verify_done` and `ask_user` took comma splices in the
-//! pipeline copy where the base copy took an em dash, #450).
+//! in exactly that way (two contracts took comma splices in the pipeline copy
+//! where the base copy took an em dash, #450).
 //!
 //! Each contract was then pinned by its own hand-written test. That covers the
 //! contracts that exist and says nothing about the next one: a fifth contract
@@ -516,88 +516,30 @@ fn both_prompts_teach_reads_first_ordering() {
     }
 }
 
-/// Witness for search-first discovery, the successor to two retired pins.
+/// Witness for the scratch discipline (#2912, #448): the sanctioned scratch
+/// space is named, and the workspace one stays forbidden.
 ///
-/// The shell-routing pin (post1: 425 of 600 tool calls were `bash`, 8 shell
-/// greps beside 6 `grep`-tool calls in one trial) and the graph/semantic
-/// localization discriminator (#3015: 13 of 58 calls grepping ONE file for
-/// spelling variants of one concept) both steered toward tools the five-tool
-/// product no longer ships. The fused `search` (#3076) replaced that whole
-/// menu — semantic rank, then symbol names, then keyword scan, one call — and
-/// the measured defect both pins guarded against (lexical guessing at a
-/// semantic question) is now guarded by one rule: search first, grep in bash
-/// only for one exact literal you already hold.
+/// The cost of leaving either half out was measured, not theorised: in three
+/// bench trials the worker wrote a rigorous witness test and deleted it ~16s
+/// later, reason "removing scratch file per no-scratch-files rule" — the most
+/// valuable artifact of the run, discarded to satisfy a rule written about
+/// something else.
 ///
-/// The reservation clause is pinned for the same reason the old shell pin
-/// kept one: the shell IS the right answer for builds, tests, git, packages,
-/// and processes, and a rule that reads as "never use bash" fights the task
-/// and gets ignored wholesale (h2h891: bash carried >90% of real work).
-#[test]
-fn both_prompts_route_code_discovery_to_search_first() {
-    let shared = tool_steering!();
-    for claim in [
-        // The rule itself, and the paste-your-evidence contract.
-        "search comes first for every code question",
-        "a pasted error, stack trace, or log excerpt, exactly as you have it",
-        // The degradation ladder the tool actually implements — meaning, then
-        // tree-sitter symbols, then keywords — so the prompt's promise stays
-        // honest about what a degraded call still returns (#3172).
-        "matches by meaning, falls back to symbol matching, then to keyword matching",
-        // The lexical reservation: grep keeps the one job it is right for.
-        "only to list every occurrence of one exact string you already hold",
-        // The tell that routes multi-spelling greps back to search.
-        "call search with the idea instead",
-        // The shell reservation — routing, never a ban.
-        "bash runs everything else: builds, tests, git, packages, processes",
-    ] {
-        assert!(
-            shared.contains(claim),
-            "the shared literal must keep the search-first claim {claim:?} — \
-             dropping the reservation clauses turns steering into a ban, and \
-             dropping the rule reverts to lexical guessing at semantic \
-             questions (#3015)"
-        );
-    }
-    for (label, prompt) in STATIC_PROMPTS {
-        assert!(
-            prompt.contains(shared),
-            "{label} does not embed the shared tool-steering block verbatim"
-        );
-    }
-}
-
-/// Witness for the scratch gap (#2912): the only rule either persona carried on
-/// the subject was `PIPELINE_SYSTEM_PROMPT`'s "Never create backup files,
-/// scratch files, or debug artifacts", and the sanctioned scratch space that
-/// rule appears to ban was named nowhere — `rg -ic save_state` over `prompt.rs`
-/// returned 0, and so did `STELLA_SCRATCH`. `crates/stella-tools/src/scratch.rs`
-/// has provided that space all along: a per-tool-set `TempDir` exported to every
-/// shell spawn as `STELLA_SCRATCH`, with `save_state`/`get_state` over it.
-///
-/// The cost was measured, not theorised: in three bench trials the worker wrote
-/// a rigorous witness test and issued `delete_file` on it ~16s later, reason
-/// "Witness test served its purpose; removing scratch file per no-scratch-files
-/// rule" — the most valuable artifact of the run, discarded to satisfy a rule
-/// written about something else.
-///
-/// Both halves are pinned because either alone is a defect. Drop the permission
-/// and the agent is back to deleting its own evidence; drop the prohibition and
-/// the rule #448 exists for — session scratch must never reach the repository,
-/// which `make gate`'s `no-scratch` step enforces — survives only in the gate,
-/// where the model cannot read it. The environment clause is pinned separately:
-/// `TempDir::with_prefix("stella-scratch-")` is the only source of truth for
-/// that path, so an agent that constructs one writes to a directory that does
-/// not exist.
+/// Both halves are pinned because either alone is a defect. Drop the
+/// permission and the agent is back to deleting its own evidence; drop the
+/// prohibition and the rule #448 exists for — session scratch must never
+/// reach the repository, which `make gate`'s `no-scratch` step enforces —
+/// survives only in the gate, where the model cannot read it. The sanctioned
+/// space is the scratch state plane (`save_state`/`get_state`, backed by
+/// `crates/stella-tools/src/scratch.rs`'s self-deleting `TempDir`).
 #[test]
 fn both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace_one() {
     let shared = tool_steering!();
     for claim in [
-        // The permission: a sanctioned destination, named (#2912). The
-        // save_state/get_state clauses left with those tools; $STELLA_SCRATCH
-        // is the surviving home and bash still exports it.
-        "Keep temporary files in $STELLA_SCRATCH",
+        // The permission: a sanctioned destination, named (#2912).
+        "Keep intermediate notes and working data in the scratch state plane",
         // The prohibition — #448's rule, intact and legible.
-        "never in the workspace",
+        "never as files in the workspace",
         "leave no backups, copies, or debug artifacts behind",
         // The clause the measured deletions turned on: a deliverable is not
         // scratch, so the agent stops deleting its own evidence.
@@ -799,26 +741,24 @@ fn an_omission_from_one_prompt_only_is_caught_and_named() {
     );
 }
 
-/// **Witness: neither static prompt names a tool the session may not have.**
+/// **Witness: the steering teaches exactly the catalog's built-ins.**
 ///
-/// `ask_user` is registered only when a human is present to answer it
-/// ([`crate::interactive::human_can_answer`]), while both prompts are static
-/// bytes shared by attended and unattended runs alike — one `concat!` each,
-/// riding the cache prefix, with no per-mode text. A prompt that recommends a
-/// tool missing from the schema is worse than one that never mentioned it: it
-/// sends the agent looking for something that is not there, which is the
-/// state withholding the tool exists to leave.
-///
-/// Both prompts are checked, and by the same rule, because
-/// `PIPELINE_SYSTEM_PROMPT` is what `stella run` sends and what the bench
-/// harness measures — the copy an omission goes missing from quietly (see
-/// this module's header).
+/// The steering paragraph names every built-in by its dispatch name, so the
+/// prompt and the registry describe the same surface. Asserted against
+/// `stella_tools::catalog::CATALOG` — the one place a built-in is declared —
+/// so a tool added to or removed from the catalog fails here by name until
+/// the steering paragraph is updated. A prompt that recommends a tool
+/// missing from the schema is worse than one that never mentioned it: it
+/// sends the agent looking for something that is not there.
 #[test]
-fn no_static_prompt_names_a_tool_the_session_may_not_offer() {
-    for (name, prompt) in STATIC_PROMPTS {
+fn the_steering_names_every_catalog_tool_and_no_other_surface() {
+    let shared = tool_steering!();
+    for entry in stella_tools::catalog::CATALOG {
         assert!(
-            !prompt.contains("ask_user"),
-            "{name} names `ask_user`, which an unattended session does not register"
+            shared.contains(entry.name),
+            "the tool-steering block does not name the catalog tool `{}` — the prompt \
+             and the registry must describe the same surface",
+            entry.name
         );
     }
 }

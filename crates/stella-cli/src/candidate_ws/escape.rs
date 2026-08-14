@@ -136,7 +136,6 @@ fn status_paths(raw: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use stella_pipeline::ports::CandidateWorkspace;
-    use stella_tools::RegistryOptions;
 
     use super::super::GitCandidateWorkspaces;
     use super::super::tests::{read, scaffold};
@@ -145,7 +144,6 @@ mod tests {
     fn port(root: std::path::PathBuf) -> GitCandidateWorkspaces {
         GitCandidateWorkspaces::new(
             root,
-            RegistryOptions::default(),
             Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),

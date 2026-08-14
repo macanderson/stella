@@ -1,256 +1,171 @@
 # stella-tools
 
-The built-in tool set the agent loop calls. Every tool implements the [`Tool`](src/registry.rs)
-trait, takes model-produced JSON in, and returns a `ToolOutput` — success, or an error whose
-message names the failure. `ToolRegistry` is the crate's public face and the adapter behind
+The built-in tool set the agent loop calls, and the mechanisms every session
+tool — built-in, custom, or MCP — runs through. Every tool implements the
+[`Tool`](src/registry.rs) trait, takes model-produced JSON in, and returns a
+`ToolOutput` — success, or an error whose message names the failure.
+`ToolRegistry` is the crate's public face and the adapter behind
 `stella-core`'s `ToolExecutor` port.
 
-This is the I/O half of the runtime: the complement to `stella-core`'s "no I/O in the engine".
-Process spawning, filesystem access, and network egress belong here — and decision logic that
-needs none of them (what to run, when to compact, whether to retry) does not. Two boundaries run
-the other way. **No tool-specific code lives outside this crate** — the engine only ever sees
-`schemas()` and `execute(name, input)`, so a new tool is never an engine edit. And **no authority
-is ambient**: every tool is workspace-root-pinned, the shell and the web family are off by
-default in every settings scope, and media/issue tools do not register at all without a key or a
-configured backend.
+The dispatchable surface is twelve tools, in three families plus one report:
+
+- **Sub-agent delegation** — `task` ([`src/subagent.rs`](src/subagent.rs)),
+  which spawns read-only child turns through a host-attached dispatcher.
+- **The session task board** — `task_create` / `task_list` / `task_start` /
+  `task_complete` / `task_cancel` / `task_assign`
+  ([`src/tasks.rs`](src/tasks.rs)); `task_assign` additionally queues a
+  sub-agent spawn request the session driver drains.
+- **Session scratch state** — `save_state` / `get_state` / `list_state` /
+  `delete_state` ([`src/scratch.rs`](src/scratch.rs)), backed by a
+  self-deleting `TempDir` the registry owns.
+- **The environment report** — `get_environment`
+  ([`src/environment.rs`](src/environment.rs)).
+
+Everything else the model can call reaches it as a **custom script tool**
+([`src/custom.rs`](src/custom.rs) — a TOML manifest beside a script, no
+registry edit), an **MCP tool** (`stella-mcp`, merged above this registry by
+the CLI), or a CLI session-layer tool. This crate is also where the tool
+*mechanisms* live regardless of which surface a tool arrives on: operator
+tool policy ([`src/policy.rs`](src/policy.rs)), skill `allowed-tools` grants
+([`src/skill_grant.rs`](src/skill_grant.rs)), the tool-foundry
+authorship/adoption plane ([`src/foundry_author.rs`](src/foundry_author.rs),
+[`src/foundry_gate.rs`](src/foundry_gate.rs),
+[`src/foundry_witness.rs`](src/foundry_witness.rs)), the extension hook
+runner and its approval bridge ([`src/hook_runner.rs`](src/hook_runner.rs),
+[`src/hook_bridge.rs`](src/hook_bridge.rs)), and the subprocess hygiene
+every spawn path shares ([`src/subprocess_env.rs`](src/subprocess_env.rs),
+[`src/exec.rs`](src/exec.rs)).
 
 ## Where it sits
 
-Depends on `stella-protocol` (`ToolOutput`/`ToolSchema`), `stella-core` (the `ToolExecutor`
-port, the hook bus, the task board, the MCP-usage ledger), `stella-graph` (code graph and the
-storage snapshot), `stella-store`, and `stella-media`. It builds no binary.
+Depends on `stella-protocol` (`ToolOutput`/`ToolSchema`), `stella-core` (the
+`ToolExecutor` port, the hook bus, the task board, the MCP-usage ledger),
+`stella-store` (the foundry adoption ledger), and `stella-home` (the
+user-global custom-tools directory). It builds no binary.
 
-`stella-cli` is the real consumer: it constructs the registry, layers custom script tools and
-MCP tools around it, and drives `stella connect`. `stella-tui` and `stella-fleet` depend on the
-crate for exactly one thing — `subprocess_env::scrub_sensitive_env`, so their own spawns share
-the single credential deny-list rather than growing a second one that drifts.
+`stella-cli` is the real consumer: it constructs the registry and layers
+custom script tools and MCP tools around it. `stella-tui` and `stella-fleet`
+depend on the crate for exactly one thing —
+`subprocess_env::scrub_sensitive_env`, so their own spawns share the single
+credential deny-list rather than growing a second one that drifts.
 
 ## Boundary — does this change belong here?
 
-This crate owns the built-in tools: everything the model can invoke by name through
-`ToolRegistry::execute`. If a planned change gives the model a new callable capability, changes
-what an existing tool does, or must apply to every tool call (a hook stage, a ledger, a policy
-check on the dispatch path), it lands here. A new tool is a new module in this crate — implement
-`Tool`, register it, add its catalog line (the six-step recipe under Extending it) — never a new
-crate, and never an engine edit, because the engine sees only `schemas()` and
-`execute(name, input)`.
+This crate owns the built-in tools — everything the model can invoke by name
+through `ToolRegistry::execute` — and the mechanisms above. If a planned
+change gives the model a new callable capability, changes what an existing
+tool does, or must apply to every tool call (a hook stage, a policy check on
+the dispatch path), it lands here. A new built-in tool is a new module in
+this crate — implement `Tool`, register it, add its catalog line (the recipe
+under Extending it) — never a new crate, and never an engine edit, because
+the engine sees only `schemas()` and `execute(name, input)`.
 
-Three neighbours take what this crate must not. Deciding *whether* or *when* a tool runs —
-speculation, retry, compaction, budget, hook *matching*, permission policy — is I/O-free engine
-logic and belongs in [`stella-core`](../stella-core) behind a port (AGENTS.md invariant #2):
-this crate implements `ToolExecutor`; it never drives it. A tool whose implementation lives in
-an external server process is an MCP tool, reached through [`stella-mcp`](../stella-mcp)'s
-client (which `stella-cli` layers around this registry) — do not teach this crate a wire
-protocol just to reach a tool. And a generation backend — a new image or video vendor — is a
-`MediaProvider` adapter in [`stella-media`](../stella-media): this crate hosts only the tool
-surface ([`src/media.rs`](src/media.rs)) and the backend selection
-([`src/media/backend.rs`](src/media/backend.rs)) that drive that port. Cheaper than all of
-these, a tool that needs no Rust is a custom script tool and costs no code here (see
-Extending it).
+Two neighbours take what this crate must not. Deciding *whether* or *when* a
+tool runs — speculation, retry, compaction, budget, hook *matching*,
+permission policy evaluation — is I/O-free engine logic and belongs in
+[`stella-core`](../stella-core) behind a port (AGENTS.md invariant #2): this
+crate implements `ToolExecutor`; it never drives it. A tool whose
+implementation lives in an external server process is an MCP tool, reached
+through [`stella-mcp`](../stella-mcp)'s client — do not teach this crate a
+wire protocol just to reach a tool. Cheaper than either, a tool that needs
+no Rust is a custom script tool and costs no code here (see Extending it).
 
-A new crate is the wrong home for a new tool in essentially every case. The workspace justifies
-a crate only when functionality sits behind a port/trait and would drag heavy new dependencies
-into a deliberately light crate (the [`stella-media`](../stella-media) split keeps vendor media
-wire dialects and the SQLite operation journal out of this one), when it needs a dependency
-direction the current graph forbids, or when it is a genuinely separate deliverable with its own
-binary and release cadence — `stella-serve`, not any tool. Otherwise extend this crate: a new
-crate costs a workspace-table row, an impacted-crates scope, CI time, and a README, and a wrong
-split is harder to undo than a wrong merge. If one of the three conditions genuinely holds, the
-same PR must update AGENTS.md's workspace table and the root `Cargo.toml` members.
+## God files
 
-## God files — do not add lines
-
-The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a 1500-line ratchet: a NEW
-file over the limit is a hard failure with no baseline escape, and the three files below are
-grandfathered at a recorded ceiling in `scripts/file-size-baseline.txt`. They are god files —
-already too big, closed to growth. Plan work so no new line lands in them: new logic goes in a
-new submodule, following this crate's own precedent —
-[`src/registry/process_tools.rs`](src/registry/process_tools.rs) split out of `registry.rs`, and
-the [`src/media/`](src/media) modules split out of `media.rs` — including its whole test module
-([`src/media/tests.rs`](src/media/tests.rs)), which is what took `media.rs` off this list
-(#1596). Cross-cutting behaviour still belongs on the one dispatch path (see Key concepts), but
-as a helper module `execute` calls, with only the call site landing in `registry.rs` — and code
-you touch in either is a candidate to extract.
-
-- [`src/registry.rs`](src/registry.rs)
-
-A ceiling can move only via `make file-size-update`, which lands as a reviewable baseline diff
-justified like any other change — treat it as an escape hatch for an irreducible line (a new
-tool's registration line in an already-oversized `registry.rs`), never as a planning assumption.
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it
+before it crosses: new registry logic goes in a sibling submodule
+(`src/registry/approval.rs`, `src/registry/executor.rs`, and
+`src/registry/validate.rs` are the precedent), with only the call site
+landing in `registry.rs`.
 
 ## Layout
 
 | File | What it holds |
 |---|---|
-| [`src/lib.rs`](src/lib.rs) | Module list plus `resolve_within_root` — the one path-confinement primitive every tool resolves through. |
-| [`src/registry.rs`](src/registry.rs), [`src/registry/approval.rs`](src/registry/approval.rs), [`src/registry/process_tools.rs`](src/registry/process_tools.rs), [`src/registry/executor.rs`](src/registry/executor.rs) | The `Tool` trait, `ToolRegistry`, construction (which tools register under which conditions), and the single `execute` path all cross-cutting behaviour hangs off. `approval.rs` is the blocking policy chains plus the #2676 interactive approval flow (a `RequireApproval` parks on an injected responder with a TTL instead of dead-ending). `process_tools.rs` is the closed list of child-process-spawning built-ins; `executor.rs` is the `ToolExecutor` port impl (`schemas`/`execute` plus the drains and aggregations the engine reads). |
+| [`src/lib.rs`](src/lib.rs) | The module list and the crate doc — what is dispatchable and what is mechanism. |
+| [`src/registry.rs`](src/registry.rs), [`src/registry/approval.rs`](src/registry/approval.rs), [`src/registry/executor.rs`](src/registry/executor.rs), [`src/registry/validate.rs`](src/registry/validate.rs) | The `Tool` trait, `ToolRegistry`, construction, and the single `execute` path all cross-cutting behaviour hangs off. `approval.rs` is the `tool.call.requested` blocking policy chain plus the #2676 interactive approval flow (a `RequireApproval` parks on an injected responder with a TTL instead of dead-ending); `executor.rs` is the `ToolExecutor` port impl (`schemas`/`execute` plus the drains and aggregations the engine reads); `validate.rs` is dispatch-time input validation against the advertised schema (#3144). |
 | [`src/catalog.rs`](src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only". |
+| [`src/subagent.rs`](src/subagent.rs) | The `task` tool: sub-agent delegation over a host-attached dispatcher (#922), with turn controls and a spend ledger the engine drains at step boundaries. |
+| [`src/tasks.rs`](src/tasks.rs) | The six `task_*` tools over the session board, plus `task_assign`'s spawn queue. |
+| [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
+| [`src/environment.rs`](src/environment.rs) | `get_environment` and the shared environment-identity probes the CLI prompt renders from (#2697). |
+| [`src/policy.rs`](src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |
 | [`src/skill_grant.rs`](src/skill_grant.rs) | A skill's `allowed-tools` grant as `ToolPolicy` algebra (#2682): the grant policy, per-name `operator ∧ grant` intersection, and resolution against an advertised surface. |
-| [`src/verify.rs`](src/verify.rs) | `verify_done` — the shadow-worktree witness gate. See below. |
-| [`src/read.rs`](src/read.rs), [`src/read_symbol.rs`](src/read_symbol.rs), [`src/write.rs`](src/write.rs), [`src/edit.rs`](src/edit.rs), [`src/apply_edits.rs`](src/apply_edits.rs), [`src/delete.rs`](src/delete.rs) | File CRUD. They share one read-state ledger so an `old_string` miss can be attributed to out-of-band drift rather than to the model. |
-| [`src/durable_write.rs`](src/durable_write.rs) | Durable in-place file replacement. Read the header before touching any write path. |
-| [`src/file_touch.rs`](src/file_touch.rs) | The CRUD event model and per-session ledger behind the "Files Touched" panel and its telemetry. |
-| [`src/grep.rs`](src/grep.rs), [`src/glob.rs`](src/glob.rs), [`src/graph.rs`](src/graph.rs), [`src/code_map.rs`](src/code_map.rs) | Text search, file search, code-graph query, and the code-map footer search results carry so the agent's next move is structural. |
-| [`src/overview.rs`](src/overview.rs), [`src/gather.rs`](src/gather.rs), [`src/exploration.rs`](src/exploration.rs), [`src/staleness.rs`](src/staleness.rs) | Orientation and reusable context: `project_overview`, the `gather_context` sweep, saved exploration maps, and the per-file sha256 staleness oracle they all share. |
-| [`src/exec.rs`](src/exec.rs) | The shared subprocess runner: process-group spawn, hard timeout with group kill, output truncation, and the env-scrub constants. |
-| [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
-| [`src/project.rs`](src/project.rs), [`src/scripts.rs`](src/scripts.rs), [`src/diagnostics.rs`](src/diagnostics.rs), [`src/impact.rs`](src/impact.rs) | Build/test/lint/format as thin verbs over the scripts index, structured typecheck output, and the importer-edge blast radius behind `run_tests` `scope: "impacted"`. |
-| [`src/process.rs`](src/process.rs) | The long-running process group (`start_process`/`read_output`/`send_stdin`/`restart_process`/`stop_process`) for servers, REPLs, watchers. Also answers `Tool::live_services`, the read behind the engine's end-of-turn assertion (#2764). |
-| [`src/repo.rs`](src/repo.rs), [`src/ci.rs`](src/ci.rs) | Vendor-neutral `repo_*` tools behind the `RepoBackend` port (`GitCli` is the only adapter), and `ci_status` via `gh`. |
-| [`src/bash.rs`](src/bash.rs) | The default-on shell, withheld with `"tools": {"bash": "off"}`. No per-command OS confinement: the `STELLA_BASH_SANDBOX` Seatbelt/`bwrap` wrapper was removed in #1300 because it bounded this one tool while every other spawn path went around it. |
-| [`src/web.rs`](src/web.rs), [`src/web_extract.rs`](src/web_extract.rs) | The opt-in web family, and the pure HTML/CSS extraction behind it (no I/O in `web_extract.rs`, so it unit-tests without a network). |
-| [`src/issues.rs`](src/issues.rs), [`src/issue_ops.rs`](src/issue_ops.rs), [`src/github_rest.rs`](src/github_rest.rs), [`src/tracker_auth.rs`](src/tracker_auth.rs) | Issue-tracker tools, the backend-dispatching operations shared with the Command Deck, a minimal GitHub REST client, and the `stella connect` OAuth store. |
-| [`src/media.rs`](src/media.rs), [`src/media/`](src/media) | `generate_image`/`generate_video`/`poll_video` over `stella-media`'s port, plus the always-on client-side `generate_svg` and the host-attested process-free authority marker. |
-| [`src/memory.rs`](src/memory.rs), [`src/tasks.rs`](src/tasks.rs), [`src/agent_use.rs`](src/agent_use.rs) | `save_memory`/`cite_memory`, the six `task_*` tools over the session board, and the per-session agent-invocation ledger. |
-| [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate`. |
-| [`src/schema_gate.rs`](src/schema_gate.rs) | The pre-write storage gate that makes duplicate or misplaced schema hard to write. |
+| [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate` — and `CustomToolSet`, the decorator that layers them over an inner executor. |
+| [`src/foundry_author.rs`](src/foundry_author.rs), [`src/foundry_gate.rs`](src/foundry_gate.rs), [`src/foundry_witness.rs`](src/foundry_witness.rs) | The tool foundry: authoring a custom-tool manifest from observed shell invocations, the adoption gate that keeps self-authored tools withheld until a human adopts them (re-checked at launch), and the witness run that proves an authored tool works. |
+| [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the two spawn paths this crate owns (custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
+| [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
-| [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `HookApprovalRoute` port over the #2676 `ApprovalBroker`, so a hook's `require_approval` parks on the same emit → park → TTL flow as the registry's gates. |
-| [`src/screenshot.rs`](src/screenshot.rs) | `screenshot` — capture to `.stella/screenshots/` as visual evidence a verifier can demand. |
+| [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `HookApprovalRoute` port over the #2676 `ApprovalBroker`. |
+| [`src/input.rs`](src/input.rs) | Typed reads of a tool's JSON input (#1267) — the "absent" vs "present but wrong type" distinction the dispatch validator and the tools share. |
+| [`src/agent_use.rs`](src/agent_use.rs) | The per-session agent-invocation ledger. |
 
 ## Key concepts
 
-**One dispatch path.** `ToolRegistry::execute` ([`src/registry.rs:467`](src/registry.rs)) is the
-only way a tool runs, and everything cross-cutting lives in that one function, in order: the
-`tool.call.requested` blocking hook chain (a `modify` decision replaces the input, and every
-later stage must see the replacement); file-op classification, which happens *before* execution
-because create-vs-update depends on whether the file exists now, not after; the storage schema
-gate; the per-side-effect hook chains; execution; observer events; then the ledger drains and
-the exploration-coverage hint. New cross-cutting behaviour belongs here, not sprinkled into
-tools.
+**One dispatch path.** `ToolRegistry::execute`
+([`src/registry.rs`](src/registry.rs)) is the only way a built-in runs, and
+everything cross-cutting lives in that one function, in order: the
+`tool.call.requested` blocking hook chain (a `modify` decision replaces the
+input, and every later stage must see the replacement); dispatch-time input
+validation against the advertised schema; execution; observer events. New
+cross-cutting behaviour belongs here, not sprinkled into tools.
 
-**The catalog is the single declaration point.** [`src/catalog.rs`](src/catalog.rs) declares
-every dispatchable name once, with its `read_only` flag and what must be true for it to
-register. Everything else derives from it: the registry's expected-name pins, the read-only
-partition, `custom::RESERVED_NAMES` (aliased straight to `ALL_NAMES`, so a custom manifest
-cannot shadow a built-in), and the counts and access markers in the published docs. It exists
-because those used to be hand-maintained integers in six places: parallel PRs each bumped the
-same number off the same base and squash-merged to a plausible-but-wrong count with no
-conflict. The `read_only` flag is load-bearing, not documentation — `stella-core`'s speculation
-gate forwards exactly the read-only set and drops everything after the first mutating call, and
-`ReadOnlyTools` uses it to give a verifier evidence-gathering power without write authority.
+**The catalog is the single declaration point.**
+[`src/catalog.rs`](src/catalog.rs) declares every dispatchable name once,
+with its `read_only` and `speculation_safe` flags and its policy group.
+Everything else derives from it: the registry's expected-name pin, the
+read-only partition, `custom::RESERVED_NAMES` (aliased straight to
+`ALL_NAMES`, so a custom manifest cannot shadow a built-in), and the
+generated per-tool reference under `docs/tools/`. It exists because those
+used to be hand-maintained integers in six places: parallel PRs each bumped
+the same number off the same base and squash-merged to a
+plausible-but-wrong count with no conflict. The `read_only` flag is
+load-bearing, not documentation — `stella-core`'s dispatch grouping and
+`ReadOnlyTools` both key on it.
 
-**Root pinning — two primitives, and they are not interchangeable.**
-
-`rootfd::RootHandle` ([`src/rootfd.rs`](src/rootfd.rs)) is the confinement for anything that
-**opens**: read, write, create, stat, unlink. The root is opened once and the descriptor held;
-every component after it is opened `openat(dirfd, name, O_DIRECTORY | O_NOFOLLOW)` off the
-descriptor before it, `..` pops the descriptor stack rather than opening `".."`, and a symlink
-is expanded through `readlinkat` and re-confined rather than followed. A name is therefore
-resolved exactly once, by the kernel, at the moment it is used.
-
-`resolve_within_root` ([`src/lib.rs`](src/lib.rs)) is for **naming**: an argument handed to
-`rg` or `fd`, a working directory for a project script, the shadow-worktree copy in `verify`,
-the ledger's record of which workspace file a touch referred to. It canonicalises the root and
-normalises the join, because `Path::starts_with` is a *lexical* comparison that never resolves
-`..`, and its existence walk uses `symlink_metadata` (lstat) rather than `exists()`, which
-follows symlinks and so reports `false` for a *dangling* link. All four cases have witness
-tests at the bottom of `lib.rs`.
-
-What it cannot do — #938 — is stay true between its answer and an `open`. It approves a path
-whose interior directories do not exist yet without validating them, and everything downstream
-re-resolves every one of those names; a symlink planted in between is followed, and
-`O_NOFOLLOW` on the final component does not help because the final component is not the one
-that moved. `tests/path_confinement_race.rs` holds the witnesses, including a symlink swap
-raced against a write loop.
-
-**`verify_done` — the definition of done, as a tool.** A change is done when a witness test
-fails on the previous code and passes on the new code. Either half alone is worthless: a test
-that also passed before witnesses nothing. `verify_done` runs both halves and refuses anything
-else — `NOT DONE` when the new code fails, `VACUOUS TEST` when the old code passes.
-
-The half that needs care is producing "the previous version" without touching your tree. There
-is no stash and no checkout. Instead a **detached shadow git worktree** is created at `HEAD` in
-the temp dir, *only* the named test files are copied into it, the test command runs there, and
-the worktree is removed on every exit path. Three details are the difference between a correct
-verdict and a destroyed working tree:
-
-1. **Destinations come from the canonical root-relative path, never the model-supplied string.**
-   An absolute `test_files` entry would make `shadow.join(file)` discard the shadow prefix and
-   resolve straight back to the real file — and `fs::copy(src, src)` truncates it, silently
-   emptying the user's test file while violating the tool's central contract.
-2. **The shadow mirrors the git toplevel, not the workspace root.** Destinations are relative to
-   `git rev-parse --show-toplevel` and the shadow run's cwd is the corresponding subdirectory,
-   so a relative `test_cmd` resolves the same package it would in the real tree. Assuming
-   root == toplevel produced false `WITNESS CONFIRMED` and false `VACUOUS` verdicts whenever
-   `verify_done` ran from a repo subdirectory.
-3. **Shadow paths carry pid plus a process-wide counter**, because a timestamp alone can collide
-   when two `verify_done` calls run concurrently.
-
-Every `git` invocation goes through `git_in`, which strips the repo-targeting env vars and
-scrubs credentials, so a surrounding git hook cannot redirect it at the outer repository. The
-verdict always includes the previous-code output tail: a *compile* error is a much weaker
-witness than an assertion failure, and the reader — model or verifier — is told to check which it
-got.
-
-**A negative verdict must name the defeater it observed, not guess at three.** `VACUOUS TEST`
-used to offer "the behavior already existed / the test doesn't exercise it / your change isn't
-wired in" and close with "strengthen the test" — advice that cannot terminate when the test was
-never the problem. Two setup defects produced nearly all of it on the 2026-08-11 Terminal-Bench
-panel, and both are decidable (#2871): a `cd` to an absolute path inside `test_cmd` walks the
-shadow run back out of the tree it was aimed at, and naming the change's deliverable in
-`test_files` layers that deliverable onto the baseline so the previous code cannot fail. The
-first is refused before either run; the second is read off a per-file comparison against the
-baseline blob and named in the verdict. `src/verify/defeater.rs` holds both, plus the discipline
-each message keeps — say the mechanism, name the observation it came from, state the repair, and
-never accuse the test of a fault the call did not observe.
+**Custom tools are gated, not just discovered.** A directory scan returns an
+`UngatedDiscovery`, and the only way to get runnable `CustomTool`s out of it
+is `foundry_gate::gate_report` — so a new discovery site cannot skip the
+adoption ruling by accident (forgetting is a compile error). Hand-written
+manifests pass through untouched; self-authored (foundry-provenance)
+manifests register only if the workspace adopted them, a human enabled them,
+and their bytes still match what their witness ran against — re-checked at
+the moment of launch, not just at scan time.
 
 ## Gotchas
 
 - **A tool's timings never go in its `ToolOutput`.** That value is what
-  `stella-core`'s loop detector keys on — `exact_repeat_threshold` counts identical
-  *(name + input + output)* calls and the stagnation rung counts byte-identical outputs
-  from one tool — so an elapsed time in a verdict makes both rungs permanently blind for
-  that tool. `verify_done` reports its per-phase wall clock to the diagnostic plane
-  instead (`tools.verify_done.phases`, `src/verify/phases.rs`, #2486), which the model
-  and the detector both never see. This crate's seam for that handle is
-  `RegistryOptions::diagnostics`; the codes it emits have no generated reference yet
-  (#2507), so they are listed here.
-- **`schemas()` is sorted by name deliberately.** The list is serialized verbatim at position 0
-  of the prompt prefix and `HashMap` iteration order is per-process randomized. Prompt caching
-  is a byte-level prefix match, so an unsorted list means every process writes a divergent cache
-  entry.
-- **`bash` is registered by default in every scope** — user, org-managed, and project — and is
-  withheld with `tools.bash: "off"` (#710 moved every built-in to on-by-default with a switch;
-  the previous opt-in covered built-ins only, so most operators never found it). Prefer the
-  genuinely shell-free executors (`run_lint`, `format_code`, `diagnostics`, `repo_*`, the
-  process group), which spawn enumerable argv and never interpret a shell string.
-- **Turning `bash` off removes the shell *tool*, not the shell *capability*.** `build_project`
-  and `run_tests` take a `command` override, `verify_done` a `test_cmd`, and `run_script` composes
-  a line from the scripts index — all four are always-on and all four reach `bash -c` through
-  `exec::run`. There is no per-command OS confinement to fall back on: `STELLA_BASH_SANDBOX`
-  wrapped the `bash` tool alone and was removed for exactly that reason (#1300 — isolation is
-  the container the process runs in, `docs/spec/remote-sandboxes.md` §2). The one fence that
-  spans the whole class is the registry's
-  `command.started` policy chain (`ToolRegistry::command_line_for` enumerates every member), so a
-  deployment that needs shell execution actually bounded must gate on that chain — not on the
-  `tools.bash` switch. Any new tool that can reach `bash -c` must be added to that enumeration.
-- **Don't reintroduce `tokio::fs::write` on a write path.** It opens with `O_TRUNC`, and a crash
-  in that window left the user's own source file empty. `durable_write` rewrites **in place** —
-  write, then truncate, then `fsync` — and never renames over the target, because rename swaps
-  the inode and would drop the mode, change the owner, sever hard links, and leave any editor or
-  watcher holding the old one (#617). Stella's *own* state files are the opposite case and go
-  through `stella_store::durable::write_atomic` instead.
-- **Three env hygiene rules before any spawn**, all in [`src/exec.rs`](src/exec.rs) and
-  [`src/subprocess_env.rs`](src/subprocess_env.rs). Scrub `GIT_REPO_ENV_VARS`: when Stella runs
-  from inside a git hook (the pre-push gate), an inherited `GIT_DIR` aims every git call at the
-  *outer* repo, so a scratch `git init` re-inits the host repository — the `verify.rs` tests
-  scrub them for exactly this reason. Scrub `FORCED_COLOR_ENV_VARS`: everything here writes to a
-  captured pipe, so an inherited `CLICOLOR_FORCE=1` wraps `gh --json` in ANSI escapes and every
-  parse dies at column 1. And apply `scrub_sensitive_env` as the *final* env mutation on anything
-  that can run model- or repository-controlled code — a second credential list elsewhere drifts.
-- **No lock guard may cross an `.await`.** `execute` clones the `Arc<dyn Tool>` out of the
-  overlay before awaiting, and the storage-snapshot load awaits *before* the overlay merge takes
-  the `std` mutex — otherwise the future stops being `Send`.
-- **The opt-in `bash` tool does not go through `exec::run`.** It spawns its own child so the
-  sandbox wrapper can replace the program; a change to the shared runner will not reach it.
-- **`timeout_secs` is clamped.** `exec::timeout_from` treats 0 as "default" and caps at 600s, so
-  a model-supplied `u64::MAX` cannot disable a tool's own hang backstop.
-- **Process-free isolation omits a whole class, not a path.** When the host attests
-  `HostDataIsolation::ProcessFree`, every built-in that launches a child process is skipped
-  wholesale: all of `process_tools::builtins` (including `verify_done` and the `repo_*` tools),
-  plus `grep`, `glob`, `gather_context`, the exploration tools, and the issue backend probe. It is
-  not a filesystem sandbox and must never be inferred from path checks.
+  `stella-core`'s loop detector keys on — `exact_repeat_threshold` counts
+  identical *(name + input + output)* calls and the stagnation rung counts
+  byte-identical outputs from one tool — so an elapsed time in a result
+  makes both rungs permanently blind for that tool.
+- **`schemas()` is sorted by name deliberately.** The list is serialized
+  verbatim at position 0 of the prompt prefix and `HashMap` iteration order
+  is per-process randomized. Prompt caching is a byte-level prefix match, so
+  an unsorted list means every process writes a divergent cache entry.
+- **Three env hygiene rules before any spawn**, all in
+  [`src/subprocess_env.rs`](src/subprocess_env.rs). Scrub
+  `GIT_REPO_ENV_VARS`: when Stella runs from inside a git hook (the pre-push
+  gate), an inherited `GIT_DIR` aims every git call at the *outer* repo.
+  Scrub `FORCED_COLOR_ENV_VARS`: everything here writes to a captured pipe,
+  so an inherited `CLICOLOR_FORCE=1` wraps parseable output in ANSI escapes.
+  And apply `scrub_sensitive_env` as the *final* env mutation on anything
+  that can run model- or repository-controlled code — a second credential
+  list elsewhere drifts.
+- **No lock guard may cross an `.await`.** `execute` clones the
+  `Arc<dyn Tool>` out of the map before awaiting — otherwise the future
+  stops being `Send`.
+- **Every `pre_exec(setsid)` spawn site uses `exec::GroupKillGuard`.** A
+  `setsid` child is in its own session, so Ctrl-C's SIGINT never reaches
+  it; the guard is the only thing that reaps the tree when the driving
+  future is dropped.
+- **The scratch directory is no longer exported as `STELLA_SCRATCH`.** That
+  export rode the retired built-in shell spawns. The state tools and
+  `get_environment` still own and report the directory; a host that spawns
+  its own subprocesses passes the path itself.
 
 ## Testing
 
@@ -258,63 +173,55 @@ never accuse the test of a fault the call did not observe.
 make test-tools          # or: cargo test -p stella-tools
 ```
 
-Most coverage is inline `#[cfg(test)]` modules next to the code; `registry.rs` alone carries the
-hook-chain, schema-gate, and file-touch-ledger suites. Registry tests construct through
-`ToolRegistry::with_issue_backend` so tool counts depend on neither the host's `gh` auth nor its
-provider env keys nor any opt-in. Four integration suites live in [`tests/`](tests):
-`web_integration.rs` and `tracker_integration.rs` drive the full HTTP surface against `wiremock`
-(the OAuth "browser" round-trip is simulated by GETting the loopback redirect),
-`media_replay.rs` exercises the media authority rules against an in-test `MediaProvider`, and
-`docs_in_sync.rs` derives every expectation from `catalog.rs`. That last one skips when the
-`website/` tree is absent (a vendored copy of this crate ships without its siblings) but still
-fails on a missing file *inside* a present tree — renaming `index.mdx` must not silently disable
-the gate.
+Coverage is inline `#[cfg(test)]` modules next to the code. Registry tests
+construct through `ToolRegistry::new` in a fresh tempdir, so tool counts
+depend on nothing in the host environment. The one integration suite,
+[`tests/approval_witness.rs`](tests/approval_witness.rs), exercises the
+#2676 approval flow through the crate's public surface only. The foundry
+carries property tests (every detector proposal must author and round-trip
+through the real manifest parser), as does the approval precedence ladder.
 
 ## Extending it
 
 Adding a built-in tool:
 
-1. Add a module under `src/` with a `//!` header saying what the tool is *for* and why it exists.
-   Study a sibling of similar shape first.
-2. Implement `Tool`: `schema()` (name, model-facing description, JSON Schema, honest `read_only`)
-   and `execute(input, root)`. If the tool opens a file, do it through `rootfd::RootHandle`;
-   `resolve_within_root` is only for a path handed to a subprocess or recorded as a name (see
-   Root pinning above). Return `ToolOutput::Error` with a message that names the failure —
-   never panic on model input.
-3. Register it in `ToolRegistry::with_backends_and_options` ([`src/registry.rs`](src/registry.rs))
-   — or in [`src/registry/process_tools.rs`](src/registry/process_tools.rs) if it spawns a child
-   process, delegates to another agent, or reaches a process-backed adapter, since that list is
-   what a process-free registry omits wholesale.
-4. Add exactly one line to the `catalog!` invocation in [`src/catalog.rs`](src/catalog.rs), inside
-   the contiguous block for its `Availability`. Nothing else needs a count bumped.
-5. Document it in [`../../website/content/docs/agent-tools/index.mdx`](../../website/content/docs/agent-tools/index.mdx)
-   with the matching Read-only/Mutating marker.
+1. Add a module under `src/` with a `//!` header saying what the tool is
+   *for* and why it exists. Study a sibling of similar shape first.
+2. Implement `Tool`: `schema()` (name, model-facing description, JSON
+   Schema, honest `read_only`) and `execute(input, root)`. Return
+   `ToolOutput::Error` with a message that names the failure — never panic
+   on model input.
+3. Register it in `ToolRegistry::new` ([`src/registry.rs`](src/registry.rs)).
+4. Add exactly one line to the `catalog!` invocation in
+   [`src/catalog.rs`](src/catalog.rs). Nothing else needs a count bumped.
+5. Regenerate the per-tool reference (`make tool-docs-update`).
 6. Write the witness test.
-7. Ensure the tool follows AGENTS.md invariant #9 (tool-first, single-purpose) — one thing, no mode flags. See #2699 for the retroactive audit of existing tools.
+7. Ensure the tool follows AGENTS.md invariant #9 (tool-first,
+   single-purpose) — one thing, no mode flags.
 
-Until steps 4 and 5 are done these fail, by name rather than by an off-by-one:
-`registry_advertises_exactly_the_catalog_tool_set`, `an_undeclared_tool_fails_the_catalog_pin_by_name`,
+Until steps 3 and 4 agree these fail, by name rather than by an off-by-one:
+`registry_advertises_exactly_the_catalog_tool_set`,
+`an_undeclared_tool_fails_the_catalog_pin_by_name`,
 `read_only_flags_partition_the_registry_correctly`, and
-`every_registry_tool_is_reserved_against_custom_shadowing` in `registry.rs`, plus
-`every_catalog_tool_is_documented_and_vice_versa` and `documented_access_markers_match_the_catalog`
-in `tests/docs_in_sync.rs`.
+`every_registry_tool_is_reserved_against_custom_shadowing` in
+`registry/tests.rs`.
 
-A tool that needs no Rust at all is a **custom script tool** — a TOML manifest next to a script
-under `.stella/tools/` or `~/.stella/tools/`, discovered at startup with no registry edit. See
+A tool that needs no Rust at all is a **custom script tool** — a TOML
+manifest next to a script under `.stella/tools/` or `~/.stella/tools/`,
+discovered at startup with no registry edit. See
 [`src/custom.rs`](src/custom.rs) and
 [`../../website/content/docs/agent-tools/custom-tools.mdx`](../../website/content/docs/agent-tools/custom-tools.mdx).
 
 ## See also
 
-- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (ports and the no-I/O
-  rule) and "The definition of done: witness tests" (the contract `verify_done` automates).
-- [`../stella-core/src/ports.rs`](../stella-core/src/ports.rs) — the `ToolExecutor` port this
-  crate implements, and the `ReadOnlyTools` view built from `read_only`.
-- Specs for the subsystems above: [`scripts-index.md`](../../docs/spec/scripts-index.md) (verb
-  detection), [`exploration-sharing.md`](../../docs/spec/exploration-sharing.md) (saved maps, the
-  staleness oracle, coverage hints), [`storage-map.md`](../../docs/spec/storage-map.md) (§8 is the
-  pre-write schema gate).
+- [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not
+  concretions" (ports and the no-I/O rule) and invariant #9 (tool-first,
+  single-purpose).
+- [`../stella-core/src/ports.rs`](../stella-core/src/ports.rs) — the
+  `ToolExecutor` port this crate implements, and the `ReadOnlyTools` view
+  built from `read_only`.
 - [`../../website/content/docs/agent-tools/index.mdx`](../../website/content/docs/agent-tools/index.mdx),
   [`hooks.mdx`](../../website/content/docs/agent-tools/hooks.mdx),
-  [`permissions.mdx`](../../website/content/docs/agent-tools/permissions.mdx) — the user-facing tool
-  reference, the hook events the registry emits, and the permission model.
+  [`permissions.mdx`](../../website/content/docs/agent-tools/permissions.mdx)
+  — the user-facing tool reference, the hook events the registry emits, and
+  the permission model.

@@ -224,11 +224,9 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
         out[0].spans[1].style.fg
     };
     for tool in [
-        "read_file",
-        "write_file",
-        "bash",
-        "run_tests",
-        "repo_push",
+        "get_state",
+        "save_state",
+        "mcp__github__create_pull_request",
         "task",
     ] {
         assert_eq!(
@@ -244,11 +242,9 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
         );
     }
     for (a, b) in [
-        ("read_file", "write_file"),
-        ("write_file", "bash"),
-        ("bash", "run_tests"),
-        ("run_tests", "repo_push"),
-        ("repo_push", "task"),
+        ("get_state", "save_state"),
+        ("save_state", "mcp__github__create_pull_request"),
+        ("mcp__github__create_pull_request", "task"),
     ] {
         assert_ne!(name_fg(a), name_fg(b), "`{a}` and `{b}` must differ");
     }
@@ -256,7 +252,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
 
 /// An argument-less call renders no argument column.
 ///
-/// `project_overview` takes no arguments; the compact-JSON fallback printed a
+/// `get_environment` takes no arguments; the compact-JSON fallback printed a
 /// literal `{}` beside it, and a reader — the deck's own owner — read that as
 /// the tool having returned an empty object. There is no honest rendering of
 /// "nothing"; absence is the rendering.
@@ -266,7 +262,7 @@ fn an_argument_less_call_prints_no_empty_object() {
     entry_lines(
         &TranscriptEntry::ToolStart {
             call_id: "c".into(),
-            name: "project_overview".into(),
+            name: "get_environment".into(),
             input: String::new(),
             raw: "{}".into(),
             path: None,
@@ -280,7 +276,7 @@ fn an_argument_less_call_prints_no_empty_object() {
     );
     let rendered: String = out[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
-        rendered.contains("project_overview"),
+        rendered.contains("get_environment"),
         "the call is still named: {rendered:?}"
     );
     assert!(

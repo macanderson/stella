@@ -26,8 +26,10 @@ layer, so an ORM model and the DDL that materializes it resolve to one
 address and ring 1 exempts cross-family same-name pairs (§4a: "DDL wins
 field by field; the ORM definition is kept"); Mongoose and DynamoDB default
 to their own `mongo`/`dynamodb` layers, so the cross-layer conflict fires.
-The gate simulates edit_file's post-edit content, so a model gaining a
+The gate simulates post-edit content, so a model gaining a
 field is checked as a column addition (rings 1–2) with no ALTER anywhere.
+The ring logic has no built-in host today — no built-in tool writes workspace
+files — and awaits a write surface to hook.
 **Not yet built:** ActiveRecord + `$jsonSchema` adapters and the Diesel
 field upgrade (§4a table), context.db embedding of the cards +
 `NodeKind::Storage` recall integration (§7b–c), the LLM inference fold

@@ -131,9 +131,8 @@ fn an_opaque_call_forfeits_every_path_waiver() {
             "a {name}-shaped diff beside opaque calls must not waive the witness"
         );
     }
-    // The other direction keeps the warrant useful: an ordinary docs edit is
-    // made OF mutating calls (`edit_file` is not read-only), and every one of
-    // them is diff-accountable — the waiver stands.
+    // The other direction keeps the warrant useful: a turn whose mutating
+    // calls are all diff-accountable forfeits nothing — the waiver stands.
     let accounted = ChangeSignals {
         mutating_actions: 3,
         ..ChangeSignals::default()
@@ -141,25 +140,27 @@ fn an_opaque_call_forfeits_every_path_waiver() {
     assert_eq!(
         warrant(&diff(&["README.md"], "+Some new prose.\n"), accounted),
         WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly),
-        "file-tool mutations are what a docs edit is; they must not cost the waiver"
+        "accountable mutations must not cost the waiver"
     );
 }
 
-/// The classifier the tally rides on: only the file-CRUD and session-local
-/// bookkeeping tools are diff-accountable, and an unknown name fails closed
-/// as opaque.
+/// The classifier the tally rides on: only the session-local bookkeeping
+/// tools are diff-accountable, and an unknown name fails closed as opaque.
 #[test]
-fn only_workspace_file_tools_are_diff_accountable() {
-    for accountable in ["write_file", "edit_file", "apply_edits", "delete_file"] {
+fn only_session_bookkeeping_tools_are_diff_accountable() {
+    for accountable in [
+        "task_create",
+        "task_start",
+        "task_complete",
+        "task_cancel",
+        "task_assign",
+    ] {
         assert!(diff_accountable_mutator(accountable), "{accountable}");
     }
     for opaque in [
-        "bash",
-        "run_tests",
-        "start_process",
-        "repo_push",
-        "web_download",
-        "mcp_anything",
+        "task",
+        "save_state",
+        "mcp__server__anything",
         "some_custom_tool",
     ] {
         assert!(!diff_accountable_mutator(opaque), "{opaque} must be opaque");

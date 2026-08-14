@@ -17,7 +17,7 @@ use stella_tools::ToolRegistry;
 #[tokio::test]
 async fn headless_require_approval_names_the_missing_surface_and_grant_path() {
     let dir = tempfile::tempdir().unwrap();
-    let reg = ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
+    let reg = ToolRegistry::new(dir.path().to_path_buf());
     let bus = HookBus::new("witness-2676");
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, |_| {
         HookDecision::RequireApproval {

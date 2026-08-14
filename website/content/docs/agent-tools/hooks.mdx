@@ -49,7 +49,7 @@ Runs once before the turn begins. Anything the hook prints to **stdout is append
 
 ### `PreToolUse`
 
-Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `bash` or a family of tools.
+Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `task_assign` or a family of tools such as `mcp__github__*`.
 
 A `PreToolUse` hook can also **decide** rather than just block: print one JSON decision document on stdout — the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) speaks — and stella folds it exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
 
@@ -74,10 +74,10 @@ Every hook receives one JSON document on stdin. Its shape:
   "event": "PostToolUse",
   "cwd": "/path/to/workspace",
   "tool": {
-    "name": "bash",
-    "input": { "command": "git status" }
+    "name": "task_create",
+    "input": { "subject": "Fix the auth redirect loop" }
   },
-  "toolResult": "On branch main…"
+  "toolResult": "created 1 task(s)…"
 }
 ```
 
@@ -111,9 +111,9 @@ Absent fields are **omitted entirely**, not set to `null` — a `SessionStart` p
 
 <Callout type="warn">
   Because `toolResult` is unbounded, a `PostToolUse` hook matched on `"*"` will be handed
-  the full output of every tool call in the session — including a `read_file` of a large
-  file. Match narrowly, and read stdin in a streaming or size-capped way if the hook logs
-  it anywhere.
+  the full output of every tool call in the session — including an MCP or custom tool
+  that returns a large body. Match narrowly, and read stdin in a streaming or size-capped
+  way if the hook logs it anywhere.
 </Callout>
 
 ## Timeouts
@@ -130,14 +130,14 @@ Each hook may set a `timeoutMs`, the maximum time the command is allowed to run:
 
 ## Example
 
-The following `settings.json` runs `./scripts/guard.sh` before every `bash` tool call, with a 5-second timeout. Because it is a `PreToolUse` hook, a non-zero exit from the script blocks the `bash` call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
+The following `settings.json` runs `./scripts/guard.sh` before every `mcp__github__push_files` tool call, with a 5-second timeout. Because it is a `PreToolUse` hook, a non-zero exit from the script blocks the call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
 
 ```json title="<workspace>/.stella/settings.json"
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "bash",
+        "matcher": "mcp__github__push_files",
         "hooks": [
           {
             "type": "command",
@@ -151,21 +151,21 @@ The following `settings.json` runs `./scripts/guard.sh` before every `bash` tool
 }
 ```
 
-And the script itself — a complete `PreToolUse` guard that reads the payload with `jq` and vetoes force-pushes:
+And the script itself — a complete `PreToolUse` guard that reads the payload with `jq` and vetoes pushes to the default branch:
 
 ```bash title="scripts/guard.sh"
 #!/usr/bin/env bash
-# PreToolUse guard for the `bash` tool: block force-pushes.
+# PreToolUse guard for the GitHub MCP push tool: block pushes to main.
 # The event payload arrives as one JSON document on stdin.
 set -euo pipefail
 
-command="$(jq -r '.tool.input.command // empty')"
+branch="$(jq -r '.tool.input.branch // empty')"
 
-case "$command" in
-  *"git push --force"* | *"git push -f"*)
+case "$branch" in
+  main | master)
     # Any non-zero exit blocks the tool; trimmed stderr (falling back to
     # stdout) becomes the message the model receives instead of a result.
-    echo "blocked by scripts/guard.sh: force-push is not allowed" >&2
+    echo "blocked by scripts/guard.sh: direct pushes to $branch are not allowed" >&2
     exit 2
     ;;
 esac

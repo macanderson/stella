@@ -61,21 +61,18 @@ fn only(analysis: &Analysis) -> &TrialReport {
 }
 
 #[test]
-fn a_healthy_run_is_distilled_as_ran_with_tool_and_context_use() {
+fn a_healthy_run_is_distilled_as_ran_with_tool_use() {
     let stream = ev(&[
         r#"{"type":"stage","name":"triage"}"#,
         r#"{"type":"step_usage","role":"worker","cost_usd":0.01}"#,
-        r#"{"type":"tool_start","call":{"name":"project_overview"}}"#,
-        r#"{"type":"tool_start","call":{"name":"graph_query"}}"#,
-        r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+        r#"{"type":"tool_start","call":{"name":"task_list"}}"#,
+        r#"{"type":"tool_start","call":{"name":"get_state"}}"#,
+        r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
         r#"{"type":"complete","cost_usd":0.01}"#,
     ]);
     let r = distill_events("demo", &stream);
     assert_eq!(r.model_calls, 1);
     assert_eq!(r.tool_calls, 3);
-    assert_eq!(r.file_writes, 1);
-    assert_eq!(r.project_overview_calls, 1);
-    assert_eq!(r.graph_query_calls, 1);
     assert!(r.terminal_event);
     assert!(!r.zero_work);
     assert_eq!(r.loop_verdict(), "ran (unsolved)");
@@ -123,7 +120,7 @@ fn a_solved_task_is_never_a_silent_death_even_without_a_complete_event() {
     let mut stream = String::from(r#"{"type":"stage","name":"execute"}"#);
     for _ in 0..50 {
         stream.push('\n');
-        stream.push_str(r#"{"type":"tool_start","call":{"name":"edit_file"}}"#);
+        stream.push_str(r#"{"type":"tool_start","call":{"name":"save_state"}}"#);
     }
     let mut r = distill_events("busy", &stream);
     r.reward = Some(1.0);
@@ -131,19 +128,6 @@ fn a_solved_task_is_never_a_silent_death_even_without_a_complete_event() {
     assert!(!r.silent(), "work happened, so it is not silent");
     assert_eq!(r.loop_verdict(), "solved");
     assert!(!r.loop_broken());
-}
-
-#[test]
-fn a_batched_edit_counts_as_a_file_write() {
-    // `apply_edits` is the batch form of `edit_file`; a run that only ever
-    // edits in batches must not report zero writes.
-    let stream = ev(&[
-        r#"{"type":"tool_start","call":{"name":"apply_edits"}}"#,
-        r#"{"type":"tool_start","call":{"name":"delete_file"}}"#,
-    ]);
-    let r = distill_events("batch", &stream);
-    assert_eq!(r.tool_calls, 2);
-    assert_eq!(r.file_writes, 1, "a deletion is not a write");
 }
 
 #[test]
@@ -190,7 +174,7 @@ fn a_stream_of_non_events_is_unreadable_and_does_not_gate() {
 fn a_partially_unparsable_stream_is_still_judged_on_its_events() {
     let stream = ev(&[
         "not an event",
-        r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+        r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
     ]);
     let r = distill_events("drift", &stream);
     assert_eq!((r.parsed_lines, r.unparsable_lines), (1, 1));
@@ -215,9 +199,9 @@ fn a_retryable_warning_is_not_a_terminal_event() {
 #[test]
 fn a_detected_loop_on_a_non_pass_is_stuck_and_gates_red() {
     let stream = ev(&[
-        r#"{"type":"tool_start","call":{"name":"read_file"}}"#,
+        r#"{"type":"tool_start","call":{"name":"get_state"}}"#,
         r#"{"type":"loop_detected","window":4}"#,
-        r#"{"type":"tool_start","call":{"name":"read_file"}}"#,
+        r#"{"type":"tool_start","call":{"name":"get_state"}}"#,
         r#"{"type":"loop_detected","window":4}"#,
     ]);
     let r = distill_events("cycling", &stream);
@@ -280,7 +264,7 @@ fn analyze_reconciles_the_requested_task_set() {
     for (trial, event) in [
         (
             "wanted__t1",
-            r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+            r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
         ),
         ("stale__t0", r#"{"type":"complete"}"#),
     ] {
@@ -423,7 +407,7 @@ fn a_crash_after_real_work_is_not_an_ordinary_failure() {
         "died__t1",
         &[
             r#"{"type":"stage","name":"execute"}"#,
-            r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+            r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
             r#"{"type":"step_usage","cost_usd":0.02}"#,
         ],
     );
@@ -511,7 +495,7 @@ fn a_crash_is_read_from_the_files_a_dying_trial_manages_to_leave() {
     let trial = trial_dir(
         job.path(),
         "oom__t1",
-        &[r#"{"type":"tool_start","call":{"name":"write_file"}}"#],
+        &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
     );
     std::fs::write(
         trial.join("exception.txt"),
@@ -558,7 +542,7 @@ fn a_partially_launched_task_is_still_measured_over_what_was_requested() {
         let trial = trial_dir(
             job.path(),
             name,
-            &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+            &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
         );
         write_reward(&trial, "1.0");
     }
@@ -602,7 +586,7 @@ fn a_second_run_in_one_job_dir_is_reported_rather_than_absorbed() {
         trial_dir(
             job.path(),
             name,
-            &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+            &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
         );
     }
 
@@ -642,7 +626,7 @@ fn a_task_name_too_long_for_its_directory_still_reconciles() {
     let trial = trial_dir(
         job.path(),
         &format!("{prefix}__t1"),
-        &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+        &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
     );
     write_reward(&trial, "1.0");
 
@@ -671,7 +655,7 @@ fn a_multi_step_trial_is_folded_from_its_step_logs() {
             "01-setup",
             ev(&[
                 r#"{"type":"stage","name":"triage"}"#,
-                r#"{"type":"tool_start","call":{"name":"read_file"}}"#,
+                r#"{"type":"tool_start","call":{"name":"get_state"}}"#,
                 r#"{"type":"step_usage","cost_usd":0.01}"#,
                 r#"{"type":"complete"}"#,
             ]),
@@ -680,7 +664,7 @@ fn a_multi_step_trial_is_folded_from_its_step_logs() {
             "02-solve",
             ev(&[
                 r#"{"type":"stage","name":"execute"}"#,
-                r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+                r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
                 r#"{"type":"step_usage","cost_usd":0.03}"#,
                 r#"{"type":"complete"}"#,
             ]),
@@ -707,7 +691,6 @@ fn a_multi_step_trial_is_folded_from_its_step_logs() {
     let report = only(&analysis);
     assert_eq!(report.step_names, vec!["01-setup", "02-solve"]);
     assert_eq!(report.tool_calls, 2, "counters sum across steps");
-    assert_eq!(report.file_writes, 1);
     assert_eq!(report.model_calls, 2);
     assert!((report.spend_usd - 0.04).abs() < 1e-9);
     assert_eq!(report.stages, vec!["triage", "execute"]);
@@ -727,7 +710,7 @@ fn a_multi_step_fold_ends_where_the_last_step_ended() {
     let finished = distill_events(
         "staged",
         &ev(&[
-            r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+            r#"{"type":"tool_start","call":{"name":"save_state"}}"#,
             r#"{"type":"complete"}"#,
         ]),
     );
@@ -759,7 +742,7 @@ fn step_order_follows_harbors_record_not_the_alphabet() {
     for (step, events) in [
         (
             "zulu",
-            ev(&[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#]),
+            ev(&[r#"{"type":"tool_start","call":{"name":"save_state"}}"#]),
         ),
         ("alpha", ev(&[r#"{"type":"complete"}"#])),
     ] {
@@ -795,7 +778,7 @@ fn the_json_report_carries_the_denominator_check() {
     trial_dir(
         job.path(),
         "ran__t1",
-        &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+        &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
     );
     let requested = vec!["ran".to_string(), "never".to_string()];
     let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
@@ -842,8 +825,8 @@ fn attributable_stream() -> String {
         r#"{"type":"stage","name":"context_recall"}"#,
         r#"{"type":"context_recall","frames":[{"citation_label":"a","source":"s","token_cost":10},{"citation_label":"b","source":"s","token_cost":20}],"provider_mix":[{"provider":"stella-context","frames":2}],"tokens":30,"latency_ms":12,"usage":{"budget_requested":100,"budget_consumed":30,"as_of":"2026-08-08T00:00:00Z","providers":[{"provider_id":"stella-context","frames_served":3,"frames_rejected":1,"token_cost":30}]}}"#,
         r#"{"type":"stage","name":"execute"}"#,
-        r#"{"type":"tool_start","call":{"name":"graph_query"}}"#,
-        r#"{"type":"tool_start","call":{"name":"project_overview"}}"#,
+        r#"{"type":"tool_start","call":{"name":"task_list"}}"#,
+        r#"{"type":"tool_start","call":{"name":"get_environment"}}"#,
         r#"{"type":"tool_start","call":{"name":"task"}}"#,
         r#"{"type":"sub_agent","phase":{"phase":"started","agent_id":"c1","instruction_preview":"look","budget_usd":0.05,"write_access":false,"depth":1}}"#,
         r#"{"type":"sub_agent","phase":{"phase":"finished","agent_id":"c1","status":"completed","summary":"done"}}"#,
@@ -894,20 +877,20 @@ fn every_attributable_event_reaches_its_own_counter() {
         assert_eq!(count(&r, &format!("stage.{stage}")), 1, "stage.{stage}");
     }
 
-    // Tools by name — including one the harness has no dedicated column for,
-    // which is the whole reason the channel is keyed by name.
-    assert_eq!(count(&r, "tool.graph_query"), 1);
-    assert_eq!(count(&r, "tool.project_overview"), 1);
+    // Tools by name — including one that is not in the catalog at all, which
+    // is the whole reason the channel is keyed by name.
+    assert_eq!(count(&r, "tool.task_list"), 1);
+    assert_eq!(count(&r, "tool.get_environment"), 1);
     assert_eq!(count(&r, "tool.task"), 1);
     assert_eq!(count(&r, "tool.repo_stats"), 1);
 }
 
-/// #2382 (1): `project_overview` and `graph_query` are counted separately, and
-/// the counters agree with the dedicated columns that predate them. F3 and F5
-/// are separate cards with separate kill criteria; one shared bucket cannot
-/// grade either.
+/// The channel is keyed by whatever name the stream states, so an archived
+/// stream's tool names — `project_overview` and `graph_query` appear only in
+/// archived traces — still land under their own keys when the trial is
+/// replayed, instead of vanishing or sharing a bucket.
 #[test]
-fn the_two_context_tools_are_counted_separately_and_agree_with_their_columns() {
+fn a_pre_purge_streams_removed_tool_names_still_count_under_their_own_keys() {
     let r = distill_events(
         "split",
         &ev(&[
@@ -918,8 +901,6 @@ fn the_two_context_tools_are_counted_separately_and_agree_with_their_columns() {
     );
     assert_eq!(count(&r, "tool.project_overview"), 1);
     assert_eq!(count(&r, "tool.graph_query"), 2);
-    assert_eq!(u64::from(r.project_overview_calls), 1);
-    assert_eq!(u64::from(r.graph_query_calls), 2);
 }
 
 /// The verdict stage shipped on the wire as `judge` and is still aliased that
@@ -972,7 +953,7 @@ fn a_stage_entered_twice_counts_twice_where_the_stage_list_dedupes() {
 fn a_multi_step_trials_counters_sum_across_its_steps() {
     let job = tempfile::tempdir().expect("job dir");
     let trial = job.path().join("multi__t1");
-    for (step, tool) in [("one", "graph_query"), ("two", "graph_query")] {
+    for (step, tool) in [("one", "task_list"), ("two", "task_list")] {
         let agent = trial.join("steps").join(step).join("agent");
         std::fs::create_dir_all(&agent).expect("mkdir");
         std::fs::write(
@@ -990,7 +971,7 @@ fn a_multi_step_trials_counters_sum_across_its_steps() {
     );
     let requested = vec!["multi".to_string()];
     let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
-    assert_eq!(count(only(&analysis), "tool.graph_query"), 2);
+    assert_eq!(count(only(&analysis), "tool.task_list"), 2);
 }
 
 /// The counters reach the JSON a CI consumer trends, under `features`.
@@ -1000,7 +981,7 @@ fn the_json_report_carries_the_feature_counters() {
     trial_dir(
         job.path(),
         "ran__t1",
-        &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+        &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
     );
     let requested = vec!["ran".to_string(), "never".to_string()];
     let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
@@ -1010,7 +991,7 @@ fn the_json_report_carries_the_feature_counters() {
         .iter()
         .find(|row| row["task"] == "ran")
         .expect("the trial that ran");
-    assert_eq!(ran["features"]["tool.edit_file"], 1);
+    assert_eq!(ran["features"]["tool.save_state"], 1);
     let never = rows
         .iter()
         .find(|row| row["task"] == "never")

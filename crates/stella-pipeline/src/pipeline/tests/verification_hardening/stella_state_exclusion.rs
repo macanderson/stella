@@ -16,11 +16,10 @@
 //!    nor test — so the agent's own bookkeeping silently defeated a
 //!    `DocsOnly`/`TestsOnly` waiver the change had earned.
 //!
-//! The third channel, `AgentEvent::FileChange`, was already closed at its
-//! single emission point (`stella_tools::file_touch::is_stella_state_path`).
-//! The verification plane reaches the same files by a different route —
-//! `git ls-files --others --exclude-standard` — and inherited no exclusion,
-//! because `stella-pipeline` does not depend on `stella-tools`.
+//! The exclusion is this crate's own (`warrant::is_stella_state_path`): the
+//! verification plane reaches these files through
+//! `git ls-files --others --exclude-standard`, which honours `.gitignore`
+//! and nothing else, so nothing upstream can be relied on to filter them.
 //!
 //! **There is no `.gitignore` anywhere in this test.** That absence is the
 //! failing configuration: this repository ships a generated `.stella/.gitignore`
@@ -114,11 +113,6 @@ async fn stella_private_state_never_reaches_the_verifier_diff_or_the_warrant() {
         probe.text
     );
     assert_eq!(
-        probe.untracked_rendered,
-        vec!["test_regex.py".to_string()],
-        "and no sidecar body is claimed as rendered content"
-    );
-    assert_eq!(
         probe.lines, ADDED_PER_PATH,
         "the diff-size budget sees ONE file's lines: the agent's bookkeeping \
          is not the agent's change, so it must not be billed to the turn"
@@ -192,7 +186,6 @@ async fn gather(diagnostics: ScriptedTree, untracked: Vec<(&str, &str)>) -> Diff
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &runner,
             lint: None,

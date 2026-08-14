@@ -315,22 +315,13 @@ pub(super) fn surviving_workers_note(live_lanes: &[String]) -> Option<String> {
 pub(super) fn close_cleared_execution(
     execution: Option<&(Arc<Store>, i64)>,
     registry: &ToolRegistry,
-    files_before: usize,
     cleared_cost: f64,
     in_tx: &UnboundedSender<Inbound>,
 ) {
     let Some((store, id)) = execution else {
         return;
     };
-    if agent::record_execution_end(
-        store,
-        *id,
-        registry,
-        files_before,
-        "cancelled",
-        cleared_cost,
-        false,
-    ) {
+    if agent::record_execution_end(store, *id, registry, "cancelled", cleared_cost, false) {
         return;
     }
     let _ = in_tx.send(Inbound::Event {
@@ -702,10 +693,7 @@ mod tests {
     /// A registry whose board carries `subjects`, plus the sub-session
     /// bookkeeping that owns the generation watermark.
     fn board_fixture(subjects: &[&str]) -> (ToolRegistry, SubSessions) {
-        let registry = ToolRegistry::new(
-            std::env::temp_dir(),
-            stella_tools::registry::RegistryOptions::default(),
-        );
+        let registry = ToolRegistry::new(std::env::temp_dir());
         {
             let board = registry.task_board();
             let mut guard = board.lock().unwrap();

@@ -28,8 +28,7 @@ use stella_model::{ApiKey, AuxCredentials, factory::Dialect};
 pub enum Persistence {
     /// Open the workspace store and let this session's telemetry accumulate.
     Enabled,
-    /// Run without durable state: no store, no calibration seed, no
-    /// filesystem-backed tool backends.
+    /// Run without durable state: no store and no calibration seed.
     Disabled,
 }
 
@@ -123,8 +122,8 @@ impl ProviderParts {
 /// globals, and `stella-serve` fills it from a session-create request. The
 /// builder itself is then a pure function of this struct.
 ///
-/// No `Debug`: `RegistryOptions` does not implement it, and deriving one here
-/// would also put a credential one `{:?}` away from a log line.
+/// No `Debug`: deriving one would put a credential (`ProviderParts::api_key`)
+/// one `{:?}` away from a log line.
 #[derive(Clone)]
 pub struct RuntimeSpec {
     /// The workspace this session is rooted at. Every store, registry and
@@ -133,11 +132,6 @@ pub struct RuntimeSpec {
     pub workspace_root: PathBuf,
     /// The provider to build.
     pub provider: ProviderParts,
-    /// Tool-registry options, already resolved by the caller. Resolved
-    /// upstream rather than here because the media-journal and host-isolation
-    /// decisions are host policy, and a server's answer differs from the
-    /// CLI's.
-    pub registry_options: stella_tools::RegistryOptions,
     /// Whether durable workspace state is available to this session.
     pub persistence: Persistence,
     /// The per-turn USD ceiling, if the caller set one. `None` runs in

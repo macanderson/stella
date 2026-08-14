@@ -61,23 +61,20 @@ fn neither_prompt_re_enumerates_the_generated_tool_schemas() {
     }
 }
 
-/// What survived the cut is cross-tool steering: composition rules a single
-/// tool's schema cannot express. The five-tool rewrite retired the
-/// availability-model clauses with the discovery tools (`tool_search`, the
-/// `"bash": "off"` toggle prose, #615) — the mandate sentence now names the
-/// whole surface, so there is no long tail to explain. Pin the claims that
-/// remain so a later trim cannot quietly take them too.
+/// What lives in the steering is cross-tool policy a single tool's schema
+/// cannot express: which plane a capability belongs to, and how a session's
+/// surface is bounded. Pin the claims so a later trim cannot quietly take
+/// them.
 #[test]
 fn both_prompts_keep_the_steering_the_schemas_cannot_carry() {
     for (label, prompt) in PROMPTS {
         for claim in [
-            // The whole tool surface, named in one sentence.
-            "Your tools are search, read_file, edit_file, write_file, and bash",
             // The schemas stay the per-tool reference; this block is policy.
             "The schemas are the reference",
-            // Composition: which write tool for which shape of change.
-            "edit_file changes part of an existing file",
-            "write_file creates a new file or replaces one whole",
+            // The shape of the surface: built-ins are coordination/state...
+            "Your built-in tools are coordination and session state",
+            // ...and everything else is advertised, never assumed.
+            "never assume a capability no schema names",
         ] {
             assert!(
                 prompt.contains(claim),
@@ -87,11 +84,11 @@ fn both_prompts_keep_the_steering_the_schemas_cannot_carry() {
     }
 }
 
-/// The catalogue was copy-pasted into both prompts and had already rotted
-/// — `verify_done` and `ask_user` took comma splices in the pipeline copy
-/// where the base copy took an em dash (#450). The replacement is one
-/// shared literal, so pin that both prompts embed it byte-identically
-/// rather than growing a second copy to drift from.
+/// The catalogue was copy-pasted into both prompts and had already rotted —
+/// two tool clauses took comma splices in the pipeline copy where the base
+/// copy took an em dash (#450). The replacement is one shared literal, so
+/// pin that both prompts embed it byte-identically rather than growing a
+/// second copy to drift from.
 #[test]
 fn both_prompts_embed_the_one_shared_steering_literal() {
     let shared = tool_steering!();

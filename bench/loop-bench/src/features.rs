@@ -2,8 +2,8 @@
 //! difference (#2382).
 //!
 //! The distiller's original counters answer "was the loop healthy?" — tool
-//! calls, model calls, spend, a verdict. Two features got a column of their
-//! own (`project_overview`, `graph_query`) and every other feature in the tree
+//! calls, model calls, spend, a verdict. Only two features ever got a column
+//! of their own, and every other feature in the tree
 //! got none, so a paired ablation of recall, of the witness stage, of
 //! subagents, of an adopted foundry tool produced **no number**: the events
 //! were all there in `stella-events.jsonl`, and answering the question meant a
@@ -40,9 +40,11 @@
 //!   does not own, and a guess presented as an observation is the failure mode
 //!   the whole harness exists to avoid. Keying by name reports what the stream
 //!   actually says, and an operator ablating their adopted tool knows its
-//!   name. It also gets `project_overview` and `graph_query` their own keys
-//!   for free, which #2382 asks for on its own account: F3 and F5 are separate
-//!   cards with separate kill criteria and cannot share a bucket.
+//!   name. It also gives every archived stream's tool names their own keys
+//!   for free, which #2382 asked for on its own account: F3 and F5 were
+//!   separate cards with separate kill criteria and could not share a bucket
+//!   — an archived stream replayed today reports each tool under its own
+//!   name.
 //! * **Stages are canonicalized through [`StageKind`], not read as strings.**
 //!   The verdict stage shipped on the wire as `judge` and is still aliased
 //!   that way, so a raw-string key would split one stage across `stage.judge`

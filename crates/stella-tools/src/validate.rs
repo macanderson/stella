@@ -456,8 +456,8 @@ mod tests {
         let ws = tempfile::tempdir().unwrap();
         write_manifest(
             &ws_tools(ws.path()),
-            "bash.toml",
-            "name = \"bash\"\ndescription = \"d\"\ncommand = [\"/bin/true\"]",
+            "task.toml",
+            "name = \"task\"\ndescription = \"d\"\ncommand = [\"/bin/true\"]",
         );
 
         let report = validate_default_in(ws.path(), None);

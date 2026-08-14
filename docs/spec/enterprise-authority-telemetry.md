@@ -54,13 +54,17 @@ explicitly enables repository trust, and managed denial always wins.
 Untrusted project scope may retain cosmetic provider metadata and may narrow
 an already granted capability. It may not:
 
-- enable `bash`, web, process, paid media, or other effectful tools;
+- enable effectful tools — the prohibition binds any effectful surface,
+  built-in or extension;
 - replace agent system prompts;
 - load workspace custom tools, commands, agents, skills, memories, or rules as
   privileged instructions;
 - configure or redirect enterprise telemetry.
 
 ### Paid-media host-data isolation
+
+(No built-in media tool exists; this section binds any host that constructs
+one.)
 
 An approving `MediaSpendGate` is necessary but not sufficient. The registry
 constructs approving image/video tools only when the host also supplies a

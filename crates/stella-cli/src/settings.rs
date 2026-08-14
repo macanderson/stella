@@ -448,21 +448,6 @@ pub struct AgentEngineConfig {
     /// scope thresholds (more than 5 steps by default) ends the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
-    /// `on` = every `apply_edits` / `edit_file` / `write_file` call pauses on a
-    /// per-hunk approval card before it writes (#1265), and only the hunks the
-    /// reviewer keeps are applied.
-    ///
-    /// Off by default. This is the one gate that fires on ordinary work rather
-    /// than on a threshold, so turning it on trades throughput for control —
-    /// worth it while pointing the agent at code you are not ready to let it
-    /// change freely, and needless friction otherwise.
-    ///
-    /// Read only by surfaces that HAVE a reviewer: the deck honours it, and a
-    /// headless run ignores it entirely rather than blocking on a card nobody
-    /// will see. That asymmetry is the point — a gate with nobody to ask must
-    /// be absent, not auto-approving.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hunk_review: Option<Toggle>,
     /// Revision turns the pipeline may spend per candidate when verification
     /// fails (`stella_pipeline::PipelineConfig::max_revisions`). Absent keeps
     /// the pipeline's own default, which is what every run used before this
@@ -839,7 +824,6 @@ impl AgentEngineConfig {
         // review. Latent while nothing layered underneath the user's file;
         // load-bearing now that `provider_engine_baseline` does.
         take!(headless_scope_bypass);
-        take!(hunk_review);
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
         take!(pipeline_verifier_evidence_demand);
@@ -955,11 +939,6 @@ impl AgentEngineConfig {
     pub fn pipeline_require_diff_coverage_on(&self) -> bool {
         self.pipeline_require_diff_coverage
             .is_some_and(Toggle::is_on)
-    }
-
-    /// Whether interactive surfaces gate writes on per-hunk approval (#1265).
-    pub fn hunk_review_on(&self) -> bool {
-        self.hunk_review.is_some_and(Toggle::is_on)
     }
 
     /// The parked-approval deadline, if the operator set one (#1616).
@@ -1099,10 +1078,7 @@ pub fn user_engine_config_at(path: &Path) -> Result<AgentEngineConfig, String> {
 /// The `tools` section of settings.json — the one place a tool is switched
 /// off, whether it is a built-in, an MCP server's, or one the customer wrote.
 ///
-/// An **open map**, not a fixed set of fields. It used to be
-/// `{ bash: Option<Toggle>, web: Option<Toggle> }`, which made every new
-/// "should this be on?" question cost another field here, another
-/// `RegistryOptions` boolean, and another hand-written branch — and could
+/// An **open map**, not a fixed set of fields: a fixed field set could
 /// never address an MCP or custom tool at all, because those names are not
 /// known at compile time. A key is a tool name, a group name, or `"*"`; see
 /// [`stella_tools::policy::ToolPolicy`] for the precedence rules.

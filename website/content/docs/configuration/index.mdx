@@ -202,18 +202,18 @@ follows is the complete map; each card links to its detail page.
     Worker, verifier, and triage roles, each with its own model and sampling params.
   </SpecCard>
   <SpecCard
-    title="Switch off the raw bash tool"
+    title="Switch off a tool"
     href="/docs/configuration/settings#the-tools-section"
-    meta={[{ label: "Surface", value: 'settings.json tools.bash: "off"' }]}
+    meta={[{ label: "Surface", value: 'settings.json tools.task_assign: "off"' }]}
   >
-    It ships on. The `tools` section is the one way to turn it off.
+    Every tool ships on. The `tools` section is the one way to turn one off.
   </SpecCard>
   <SpecCard
     title="Switch off a whole family"
     href="/docs/configuration/settings#the-tools-section"
-    meta={[{ label: "Surface", value: 'settings.json tools.web: "off"' }]}
+    meta={[{ label: "Surface", value: 'settings.json tools.mcp: "off"' }]}
   >
-    Groups such as `web`, `process`, or `repo` — or `"*"` for everything.
+    Groups such as `task`, `scratch`, `mcp`, or `custom` — or `"*"` for everything.
   </SpecCard>
   <SpecCard
     title="Per-tool permission gates"
@@ -338,10 +338,10 @@ export STELLA_MANAGED_SETTINGS=/etc/stella/settings.json
 stella --model local/llama3.1 --base-url http://localhost:11434/v1 run "…"
 ```
 
-**Gate every `bash` call through a guard script** (`settings.json`):
+**Gate a tool call through a guard script** (`settings.json`):
 
 ```json title="~/.stella/settings.json"
-{ "hooks": { "PreToolUse": [ { "matcher": "bash",
+{ "hooks": { "PreToolUse": [ { "matcher": "mcp__github__push_files",
   "hooks": [ { "command": "./scripts/guard.sh", "timeoutMs": 5000 } ] } ] } }
 ```
 

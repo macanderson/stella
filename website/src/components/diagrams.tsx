@@ -279,10 +279,10 @@ export function RecallLoopDiagram() {
       <Wire d="M192 63 C240 63 240 88 278 92" />
       <Wire d="M192 135 C240 135 240 112 278 108" />
       <Wire d="M440 100 H526" />
-      {/* feedback: cite_memory / reflections back to the stores */}
+      {/* feedback: citations / reflections back to the stores */}
       <Wire d="M612 124 C612 182 108 182 108 160" />
       <text className="sdg-sub" x="360" y="176" textAnchor="middle">
-        cite_memory · reflections · episodes — memory that earns its place
+        citations · reflections · episodes — memory that earns its place
       </text>
     </svg>
   );

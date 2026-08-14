@@ -26,26 +26,22 @@
 //! (a bounded wait, not a hard refusal — lane contention is routine, edit
 //! contention is signal), not to the end of the turn:
 //!
-//! - [`BUILD_CLAIM`] — `run_tests` / `build_project` / `diagnostics`, and the
-//!   manifest-verb executors that can rewrite the tree (`run_lint`,
-//!   `format_code`, `run_script`). This kills the phantom-failure class where
-//!   one worker's test run observes a sibling's half-written edit (or a
-//!   sibling formatter's half-rewritten tree).
-//! - [`COMMIT_CLAIM`] — `repo_commit`. One shared tree means one `HEAD`, and
-//!   the fleet ledger has to name WHICH task moved it; the lane is what makes
-//!   the answer decidable (#1216).
+//! - [`BUILD_CLAIM`] — build/test runners, so one worker's test run never
+//!   observes a sibling's half-written edit.
+//! - [`COMMIT_CLAIM`] — commit creation. One shared tree means one `HEAD`,
+//!   and the fleet ledger has to name WHICH task moved it; the lane is what
+//!   makes the answer decidable (#1216).
 //!
 //! A missing/failed store degrades to no coordination rather than no work —
 //! the same observability-loss-not-work-stoppage contract as every other
 //! store write.
 //!
-//! Coverage note: with `bash` OFF by default (settings `tools.bash`), the
-//! historically documented "bash hole" — arbitrary shell writes invisible
-//! to claim tracking — is closed in the default configuration; it exists
-//! only in sessions that explicitly opted the shell back in. (The
-//! manifest-verb executors still write outside per-path claims, but they
-//! run the project's own declared verbs, not arbitrary shell, and they
-//! serialize under the build lane below.)
+//! Coverage note: the tap sees a mutation only where a tool's schema names
+//! one ([`mutating_path`] / [`transient_lane`] key on tool names). No
+//! built-in declares a per-path mutation or a lane, so this coverage today
+//! reaches only custom or MCP tools that adopt those conventional names;
+//! everything else writes outside claim tracking, and the witness/verify
+//! ladder is what covers it.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -145,13 +141,10 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// The tools whose successful call mutates the path in their `path` input.
-/// In the DEFAULT configuration this coverage is complete for file writes:
-/// `bash` — historically the documented hole, since a shell can write
-/// anything unattributably — is no longer registered unless the workspace
-/// opts in via settings (`tools.bash: "on"`). Only in an opted-in session
-/// does the hole reopen; claims cover the structured file tools, and the
-/// witness/verify ladder covers the rest.
+/// The conventional tool names whose successful call mutates the path in
+/// their `path` input. No built-in carries these names; a custom or MCP tool
+/// that adopts one is claim-gated by construction, and anything else writes
+/// outside claim tracking (the witness/verify ladder covers it).
 fn mutating_path<'i>(name: &str, input: &'i Value) -> Option<&'i str> {
     match name {
         "write_file" | "edit_file" | "delete_file" => input.get("path").and_then(Value::as_str),

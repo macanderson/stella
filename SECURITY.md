@@ -1,8 +1,9 @@
 # Security Policy
 
-Stella runs shell commands, edits files, and talks to model providers on your
-behalf — we take the security of that surface seriously, and we appreciate the
-researchers who help keep it tight.
+Stella talks to model providers on your behalf and, through the extension
+surfaces you configure (custom manifest tools, hooks, MCP servers), can run
+commands on your machine — we take the security of that surface seriously, and
+we appreciate the researchers who help keep it tight.
 
 ## Reporting a vulnerability
 
@@ -22,16 +23,18 @@ for confirmed issues, keeping you informed along the way.
 
 Especially interesting, given what Stella promises:
 
-- **Workspace-root escape** — any way a tool call (file CRUD, `bash`, `grep`/`glob`)
-  reaches outside the pinned workspace root: traversal, symlinks, race conditions.
+- **Workspace-root escape** — any way a tool call reaches outside the pinned
+  workspace root: traversal, symlinks, race conditions. The built-in surface
+  is the task board, the scratch state plane, and `get_environment` — no
+  built-in file CRUD or shell — so the paths that matter run through the
+  built-ins' own state files under `.stella/` and through the extension
+  surfaces (custom manifest tools, hooks, MCP servers).
 - **Phone-home violations** — telemetry, update checks, or analytics leaving the
   machine in Community/default mode. Zero is the contract there, and the only
   governed exception is an explicitly enrolled Oxagen Enterprise seat. Network
-  traffic the user asked for is *not* a violation: the chosen model provider,
-  configured MCP servers, the opt-in `web` tools (`web_fetch` /
-  `web_extract_assets` / `web_download`, and `web_search` against your own
-  Brave/Tavily key), and `gh`/Linear when an issue backend is connected. Traffic
-  from any of those to a host the user did not configure *is* in scope.
+  traffic the user asked for is *not* a violation: the chosen model provider and
+  configured MCP servers. No built-in tool fetches a URL. Traffic from any
+  sanctioned surface to a host the user did not configure *is* in scope.
 - **Credential exposure** — API keys leaking into logs, telemetry, error
   messages, or files with permissive modes.
 - **Prompt/tool injection with impact** — untrusted content (repo files, MCP
@@ -42,8 +45,9 @@ Especially interesting, given what Stella promises:
 - **install.sh / release integrity** — checksum bypasses, tag/asset confusion.
 
 Out of scope: vulnerabilities in the model providers themselves, and the
-inherent risk of running an agent with `bash` access on code you don't trust —
-that's the user's judgment call, not a boundary Stella claims to enforce.
+inherent risk of the commands you let an agent run — via custom tools or hooks —
+on code you don't trust. That's the user's judgment call, not a boundary Stella
+claims to enforce.
 
 ## Threat model
 
@@ -52,8 +56,7 @@ trust boundaries, and the attack paths that cross them — including the risks
 Stella knowingly does not defend against, and why. Read it before deciding
 whether a behavior you found is a vulnerability or a documented choice: several
 of the sharper edges (no in-process confinement on any spawned command since
-the per-command sandbox was removed, the `web` egress guard
-being bypassed by an HTTP proxy, materially weaker guarantees off Unix) are
+the per-command sandbox was removed, materially weaker guarantees off Unix) are
 deliberate and recorded there.
 
 ## Verifying a release

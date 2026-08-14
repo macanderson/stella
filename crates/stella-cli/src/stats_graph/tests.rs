@@ -48,7 +48,7 @@ fn snapshot(health: GraphHealth) -> GraphSnapshot {
 /// ways a query fails to land.
 #[test]
 fn graph_health_splits_successful_calls_into_resolved_and_the_ways_they_miss() {
-    use stella_tools::graph::{
+    use crate::search_cmd::codegraph::{
         AMBIGUOUS_MARKER, NOT_INDEXED_MARKER, OUT_OF_ROOT_MARKER, UNRESOLVED_MARKER,
     };
 
@@ -120,7 +120,7 @@ fn an_empty_store_reports_zeroes_rather_than_dividing_by_zero() {
 /// rather than of a fixture.
 #[test]
 fn a_seeded_store_reports_a_real_resolved_query_rate() {
-    use stella_tools::graph::OUT_OF_ROOT_MARKER;
+    use crate::search_cmd::codegraph::OUT_OF_ROOT_MARKER;
 
     let store = Store::in_memory().expect("store");
     seed_graph_calls(
@@ -249,7 +249,7 @@ fn pooling_weights_by_calls_not_by_workspace() {
 /// re-derived rather than carried over from either side.
 #[test]
 fn pooling_merges_op_rows_across_workspaces() {
-    use stella_tools::graph::UNRESOLVED_MARKER;
+    use crate::search_cmd::codegraph::UNRESOLVED_MARKER;
 
     let one = graph_health(
         &[answer("definitions", "- a.rs::x", true)],

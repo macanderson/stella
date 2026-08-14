@@ -36,8 +36,9 @@ You can see the rule everywhere in the product:
     evidence is unavailable or inconclusive.
   </SpecCard>
   <SpecCard title="What proves the change?">
-    **Mechanism:** `verify_done` replays the witness test on a shadow worktree
-    at `git HEAD` — it must fail there and pass on the change.
+    **Mechanism:** the [witness stage](/docs/inference-pipeline) replays the
+    witness test against the pre-change code — it must fail there and pass on
+    the change.
 
     **Model, as fallback:** none. A merely-green suite is *weak* evidence, never
     proof, whoever asserts it.

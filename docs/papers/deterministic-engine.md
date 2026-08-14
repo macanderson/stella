@@ -165,8 +165,10 @@ plan a step → execute tools (read-only concurrently, mutating in order)
 
 There is no coordinator. There are no peer agents. There is one thread of
 execution, one context window, one reasoning chain. The only parallelism is
-**within a step**: read-only tools (file reads, grep, glob) execute
-concurrently, while mutating tools (edit, write, bash) execute in call order
+**within a step**: read-only tools (`task_list`, `get_state`,
+`get_environment`) execute
+concurrently, while mutating tools (`save_state`, task-board updates) execute
+in call order
 behind a barrier.
 
 ### Why this avoids every MAST failure mode
@@ -174,7 +176,7 @@ behind a barrier.
 | MAST failure category | How Stella avoids it |
 |---|---|
 | **Inter-agent misalignment** | There is one agent. It cannot disagree with itself. Its understanding of the codebase, its plan, and its progress are in one context window — there is no inter-agent message to misinterpret. |
-| **Verification difficulty** | There is one thread of execution. Every step is in the event stream. The verify_done witness test (Property III) runs against this single thread. Goal-mode judging inspects the same repository the worker modified. |
+| **Verification difficulty** | There is one thread of execution. Every step is in the event stream. The pipeline's witness test (Property III) runs against this single thread. Goal-mode judging inspects the same repository the worker modified. |
 | **Information degradation** | There is no summarization between agents. The agent's full context — every file read, every command output, every compaction decision — is in one window. Information is lost only through explicit compaction (which is a deliberate, property-tested decision, not an accidental side effect of inter-agent messaging). |
 
 ### The parallelism that matters
@@ -182,7 +184,7 @@ behind a barrier.
 Stella does parallelize where it is safe and beneficial:
 
 - **Read-only tool concurrency.** When the model requests multiple read-only
-  operations (read three files, grep for two patterns), they execute
+  operations (list the task board, read three scratch entries), they execute
   concurrently. This is safe because read-only tools have no side effects.
 - **Context fan-out.** When the context plane queries multiple Context Graph
   Protocol providers,

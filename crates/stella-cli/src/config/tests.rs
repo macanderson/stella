@@ -272,8 +272,6 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
     let authority = crate::settings::AuthorityPolicy {
         project_prompts_allowed: true,
         project_custom_tools_allowed: false,
-        bash_allowed: false,
-        web_allowed: true,
         media_requires_host_approval: true,
     };
     let mut settings = crate::settings::Settings::default();

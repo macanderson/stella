@@ -23,15 +23,14 @@ Its only workspace dependencies are two leaves — [`stella-store`](../stella-st
 for the shared durable-write contract and [`stella-embed`](../stella-embed) for
 the embedding seam — plus `contextgraph-types` for the wire shape. It builds
 no binary.
-`stella-cli` and `stella-tools` both depend on it: the CLI mounts the graph
-for a session (`crates/stella-cli/src/agent/graph.rs`) and `stella-tools` uses it for
-`read_symbol`, `code_map`, `impact`, `overview`, and the pre-write schema gate
-(`crates/stella-tools/src/schema_gate.rs`).
+`stella-cli` is the workspace crate that depends on it: the CLI mounts the
+graph for a session (`crates/stella-cli/src/agent/graph.rs`), and recall
+reaches it through the CGP host.
 
 ## Semantic file vectors
 
 Beside the symbol and import tables sits `code_graph_vectors`: one vector per
-`(file, embedder fingerprint)`, so the `semantic_code_search` tool can answer a
+`(file, embedder fingerprint)`, so a semantic code search can answer a
 question phrased in English rather than in identifiers. They live **here**,
 next to the nodes they describe, rather than in `stella-context`'s
 `context.db`, for two reasons that are the same reason: a semantic query then
@@ -43,15 +42,14 @@ What this crate does **not** do is produce a vector. Making one is I/O against
 a model, and this crate holds no transport and no key (invariant 1). It
 reports what needs embedding (`files_pending_embedding`), accepts the result
 (`store_file_vectors`), and ranks (`rank_files_by_vector`, which delegates the
-arithmetic to `stella_embed::rank` — pure and property-tested there).
-`stella-tools` is where the network lives.
+arithmetic to `stella_embed::rank` — pure and property-tested there). The
+host that mounts the graph is where the network lives.
 
 Three properties worth knowing before changing anything here:
 
 - **Two callers, both capped.** `stella init` embeds the tree it just indexed
-  (`stella_tools::graph::semantic::warm_file_vectors`, capped at
-  `MAX_FILES_PER_EAGER_PASS`) so the first tool call of a run can be answered;
-  a semantic query then tops up whatever is still pending, at most
+  (capped at `MAX_FILES_PER_EAGER_PASS`) so the first query of a run can be
+  answered; a semantic query then tops up whatever is still pending, at most
   `MAX_FILES_PER_PASS` files at a time, which is what covers files written
   after init and workspaces that never ran it. A capped pass of either kind
   resumes on the next one, and a caller that finds work pending says so in its
@@ -76,10 +74,8 @@ other sources* — fusion, dedup, MMR, cross-provider budgets — belongs to
 [`stella-context`](../stella-context): this crate packs only its own answers,
 and recall reaches it through the CGP host, never through a link, which is
 the one-directional boundary stated above read in the other direction. A
-change to how a *tool* consumes the reads (`read_symbol`, `impact`, the
-pre-write gate's policy) belongs in `stella-tools`
-(`crates/stella-tools/src/schema_gate.rs`); this crate exposes the pure reads
-it calls.
+change to how a *host surface* consumes the reads belongs in that host's
+crate; this crate exposes the pure reads it calls.
 
 The mistake to head off explicitly: **a new language is not a new crate.** It
 is a new tree-sitter grammar crate wired into this one — a workspace
@@ -294,5 +290,3 @@ nothing rather than garbage.
   absorbed into `storage-map.md`.
 - [`../../website/content/docs/context-engine.mdx`](../../website/content/docs/context-engine.mdx)
   — how the code graph fits the retrieval plane from a user's point of view.
-- [`../stella-tools/src/schema_gate.rs`](../stella-tools/src/schema_gate.rs) —
-  the pre-write gate that consumes `load_storage_snapshot`.

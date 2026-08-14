@@ -170,9 +170,8 @@ impl EnvironmentIdentity {
 /// because hosts that assemble their own prompts (`stella-serve`) may carry
 /// no such block at all.
 pub struct GetEnvironment {
-    /// The session scratch directory, mirroring the source
-    /// `ToolRegistry::builtins` gives every other scratch-aware tool
-    /// (`bash`, `run_script`, `start_process`).
+    /// The session scratch directory the registry created — the same
+    /// directory the `save_state`/`get_state` plane is backed by.
     pub scratch_dir: Option<PathBuf>,
 }
 

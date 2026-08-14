@@ -1,10 +1,8 @@
-//! Tool-registry options and workspace port adapters.
+//! Workspace port adapters for the pipeline.
 //!
-//! `registry_options` translates the host/media half of settings into
-//! `RegistryOptions`. Tool on/off policy no longer rides here — it is
-//! enforced above the whole session stack by `PolicyToolSet` (see
-//! `session_tool_policy`). The rest are the pipeline's filesystem/VCS/command
-//! ports.
+//! Tool on/off policy does not ride here — it is enforced above the whole
+//! session stack by `PolicyToolSet` (see `session_tool_policy`). What lives
+//! here are the pipeline's filesystem/VCS/command ports.
 
 use super::*;
 // `DiagnosticInvocation`/`DiagnosticRunner` are deliberately absent: the impl
@@ -47,25 +45,10 @@ pub(crate) fn custom_tool_report_for_scopes(
 }
 
 /// Repo-structure summary for the planner's split context: the `git
-/// ls-files` tree plus, when a code-graph index exists, the graph-derived
-/// orientation complement (languages, entry points, storage relations) —
-/// so the plan names the relevant files instead of leaving the worker to
-/// rediscover them (#342 seam 2).
+/// ls-files` tree, so the plan names the relevant files instead of leaving
+/// the worker to rediscover them (#342 seam 2).
 pub(crate) struct GitRepoStructure {
     pub(crate) root: std::path::PathBuf,
-}
-
-/// Compose the planner's structure summary from the raw file tree and the
-/// optional graph-derived orientation block. Pure so the composition is
-/// directly testable: no orientation (no index yet) leaves the tree
-/// byte-identical, and an empty tree (not a git repo) still surfaces the
-/// orientation alone.
-fn compose_structure_summary(tree: String, orientation: Option<String>) -> String {
-    match orientation {
-        Some(block) if tree.is_empty() => block,
-        Some(block) => format!("{tree}\n\n{block}"),
-        None => tree,
-    }
 }
 
 #[async_trait::async_trait]
@@ -79,21 +62,12 @@ impl RepoStructurePort for GitRepoStructure {
         }
         scrub_model_subprocess(&mut cmd);
         let output = cmd.output().await;
-        let tree = match output {
+        match output {
             Ok(out) if out.status.success() => {
                 render_file_tree(&String::from_utf8_lossy(&out.stdout), 200)
             }
             _ => String::new(),
-        };
-        // Read-only like the system-prompt seam: renders only from an
-        // EXISTING index (never builds one inline), is bounded, and is
-        // byte-stable for a given index and top-level tree state. The
-        // graph-backed map appears once the session's background graph build
-        // has landed; until then it falls back to a bounded top-level listing.
-        compose_structure_summary(
-            tree,
-            stella_tools::overview::render_orientation_block(&self.root),
-        )
+        }
     }
 }
 
@@ -344,7 +318,6 @@ pub(crate) struct WorkspacePorts {
     pub(crate) repo_structure: GitRepoStructure,
     pub(crate) repo_status: GitRepoStatus,
     pub(crate) diagnostic_runner: GitDiagnosticRunner,
-    pub(crate) lint_probe: ToolchainLintProbe,
     /// The witness mutation check (#870), rooted at the session tree.
     pub(crate) mutation_probe: FsMutationProbe,
     /// The diff-coverage check (#1291), rooted at the session tree. Spawns
@@ -361,105 +334,26 @@ pub(crate) struct WorkspacePorts {
     pub(crate) mcp_prefetch: Option<crate::candidate_ws::McpPrefetchAdapter>,
 }
 
-/// The verification ladder's view of the session file recorder's own mutation
-/// tally ([`stella_tools::ToolRegistry::mutations_recorded`]).
-///
-/// Deliberately points at the **same** `ToolRegistry` the driver calls
-/// `attach_events` on, and is constructed beside that call for exactly that
-/// reason. The bug this closes was two numbers describing one event from two
-/// wires: `record_touch` announced six changes down the session channel while
-/// the pipeline, counting on a sender it had handed the *engine*, told its
-/// verifier the tally was zero — and the verifier reported the file as probably
-/// absent while it sat in the container (#973).
-///
-/// Not part of [`WorkspacePorts`]: that bundle is rooted at a path, and this is
-/// bound to a live registry instance. Folding it in would invite a future
-/// caller to build the bundle from one registry and run the turn on another,
-/// which is the very confusion being removed.
-pub(crate) struct RegistryTouches<'a>(pub(crate) &'a stella_tools::ToolRegistry);
-
-impl stella_pipeline::FileTouchPort for RegistryTouches<'_> {
-    fn mutations_recorded(&self) -> u64 {
-        self.0.mutations_recorded()
-    }
-
-    /// Rendered here rather than borrowed, because the two crates on either
-    /// side of this bridge do not depend on each other: the tool crate owns the
-    /// ledger, the pipeline crate owns the question, and this is the only place
-    /// that can see both.
-    fn authored_diff(&self) -> stella_pipeline::AuthoredChange {
-        let rendered = self.0.authored_diff();
-        stella_pipeline::AuthoredChange {
-            text: rendered.text,
-            lines: rendered.lines,
-        }
-    }
-
-    fn begin_workspace_probe(&self) {
-        self.0.begin_workspace_probe();
-    }
-
-    fn settle_workspace_probe(&self) {
-        self.0.settle_workspace_probe();
-    }
-}
-
 /// The caller's live session plane, as handed to every candidate the
 /// [`workspace_ports`] bundle creates: where a candidate announces what it
-/// does, and where the record of what it changed comes to rest.
+/// does.
 ///
-/// One argument rather than two because they are one fact — "the session this
-/// fan-out belongs to" — and because they fail together: a caller that wires
-/// neither gets candidates whose work is invisible on both surfaces at once.
-/// Passing this positionally (rather than as `with_*` builders) is deliberate:
-/// both halves are forgettable, and a caller that wants neither has to say so
-/// with a named constructor — a visible choice a reviewer can question instead
-/// of a line nobody wrote.
+/// Passing this positionally (rather than as a `with_*` builder) is
+/// deliberate: the event sink is forgettable, and a caller that wants no
+/// journal has to say so with a named constructor — a visible choice a
+/// reviewer can question instead of a line nobody wrote.
 pub(crate) struct SessionPlane {
     /// The turn's event sink, used to bridge each candidate registry's policy
     /// plane into the journal (#441).
     events: Option<stella_core::EventSender>,
-    /// The SESSION registry, so an isolated candidate's adopted changes are
-    /// attributed back into the ledger persisted as `files_touched` and read
-    /// for `execution_reflection.wrote_files` (#2907). Without it the durable
-    /// record stays blind to everything the candidates change.
-    registry: Option<Arc<stella_tools::ToolRegistry>>,
 }
 
 impl SessionPlane {
-    /// The complete plane: a caller that has both a live event sink and a
-    /// session ledger. Every production call site.
-    pub(crate) fn new(
-        events: stella_core::EventSender,
-        registry: Arc<stella_tools::ToolRegistry>,
-    ) -> Self {
+    /// The complete plane: a caller with a live event sink. Every production
+    /// call site.
+    pub(crate) fn new(events: stella_core::EventSender) -> Self {
         Self {
             events: Some(events),
-            registry: Some(registry),
-        }
-    }
-
-    /// Neither half. **Test-only**, and `cfg`-gated to keep it that way: every
-    /// production caller has both, so a shipped path reaching for this would
-    /// be a candidate fan-out whose policy decisions never reach the journal
-    /// and whose adopted changes never reach a durable record. The gate is
-    /// what makes that unavailable rather than merely discouraged.
-    #[cfg(test)]
-    pub(crate) fn none() -> Self {
-        Self {
-            events: None,
-            registry: None,
-        }
-    }
-
-    /// Events but no ledger — a test observing candidate events with no
-    /// session file record to attribute their work to. **Test-only** for the
-    /// same reason as `none` above.
-    #[cfg(test)]
-    pub(crate) fn events_only(events: stella_core::EventSender) -> Self {
-        Self {
-            events: Some(events),
-            registry: None,
         }
     }
 }
@@ -472,15 +366,11 @@ impl SessionPlane {
 pub(crate) fn workspace_ports(
     root: std::path::PathBuf,
     cfg: &Config,
-    registry_options: stella_tools::RegistryOptions,
     active_rules: crate::rules::ResolvedRules,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     session: SessionPlane,
 ) -> Result<WorkspacePorts, String> {
-    let SessionPlane {
-        events,
-        registry: session_registry,
-    } = session;
+    let SessionPlane { events } = session;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::WorkspacePorts,
     )?;
@@ -505,7 +395,6 @@ pub(crate) fn workspace_ports(
     .tools;
     let mut candidate_workspaces = crate::candidate_ws::GitCandidateWorkspaces::new(
         root.clone(),
-        registry_options,
         session_tool_policy(cfg),
         custom_tools,
         active_rules,
@@ -516,14 +405,10 @@ pub(crate) fn workspace_ports(
     if let Some(events) = events {
         candidate_workspaces = candidate_workspaces.with_events(events);
     }
-    if let Some(registry) = session_registry {
-        candidate_workspaces = candidate_workspaces.with_session_registry(registry);
-    }
     Ok(WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },
         repo_status: GitRepoStatus { root: root.clone() },
         diagnostic_runner: GitDiagnosticRunner::new(root.clone()),
-        lint_probe: ToolchainLintProbe { root: root.clone() },
         mutation_probe: FsMutationProbe { root: root.clone() },
         coverage_probe: super::coverage::ToolchainCoverageProbe { root: root.clone() },
         test_runner: TypedTestRunner { root },
@@ -531,20 +416,6 @@ pub(crate) fn workspace_ports(
         mcp_prefetch: mcp.map(crate::candidate_ws::McpPrefetchAdapter::new),
     })
 }
-
-/// The regression-veto lint probe (#861): the workspace's own diagnostics
-/// plan (cargo check / tsc / eslint / ruff — closed vocabulary, fixed argv),
-/// run at a caller-chosen root and returned as parsed, root-relative
-/// records. The `root` override is what lets one probe serve the session
-/// tree and every isolated candidate worktree.
-pub(crate) struct ToolchainLintProbe {
-    pub(crate) root: std::path::PathBuf,
-}
-
-/// Bounded like the diagnostics tool itself, well under the pipeline's own
-/// patience: a lint pass that needs longer than this is not a cheap veto
-/// probe any more.
-const LINT_PROBE_TIMEOUT_SECS: u64 = 240;
 
 /// The witness mutation check's host half (#870): apply one single-line
 /// mutant IN PLACE, run the witness invocation, and restore the original
@@ -612,27 +483,6 @@ impl stella_pipeline::MutationProbe for FsMutationProbe {
             // A timed-out mutant run observed nothing about the witness.
             None => MutantOutcome::Unavailable,
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl stella_pipeline::LintProbe for ToolchainLintProbe {
-    async fn snapshot(&self, root: Option<&str>) -> Option<Vec<stella_pipeline::LintRecord>> {
-        let root = root
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| self.root.clone());
-        let records = stella_tools::diagnostics::snapshot(&root, LINT_PROBE_TIMEOUT_SECS).await?;
-        Some(
-            records
-                .into_iter()
-                .map(|d| stella_pipeline::LintRecord {
-                    file: d.file,
-                    error: d.severity == stella_tools::diagnostics::Severity::Error,
-                    code: d.code,
-                    message: d.message,
-                })
-                .collect(),
-        )
     }
 }
 
@@ -860,52 +710,7 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
     s[idx..].to_string()
 }
 
-/// The registry's construction inputs for this session's config: host
-/// attestations and media prerequisites, and nothing else.
-///
-/// It used to also carry `bash`/`web` booleans translated from settings —
-/// operator policy applied at construction, which covered built-ins and
-/// nothing else. Policy now travels as [`Config::tool_policy`] and is enforced
-/// once, above the entire session tool stack, by
-/// [`crate::agent::PolicyToolSet`]; see [`session_tool_policy`] for the
-/// accompanying half every session driver pairs with this call.
-pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
-    let process_free = crate::enterprise_telemetry::process_free_authority_active();
-    let media_operation_journal = host_media_operation_journal(&cfg.workspace_root);
-    stella_tools::RegistryOptions {
-        // The one place the CLI opts into probing this host (#1596).
-        issue_backend: stella_tools::IssueBackendSource::ambient(),
-        media_requires_host_approval: cfg.authority.media_requires_host_approval,
-        media_operation_journal,
-        media_host_data_isolation: process_free
-            .then_some(stella_tools::media::HostDataIsolation::ProcessFree),
-        // `ignore_gitignore` (settings, default on): whether the workspace
-        // probe skips what the repository's own ignore rules exclude. Mapped
-        // here once — every session lane (interactive, pipeline, deck,
-        // sub-session workers) builds its registry from these options.
-        probe_ignore_policy: if cfg.ignore_gitignore {
-            stella_tools::shell_touch::IgnorePolicy::SkipIgnored
-        } else {
-            stella_tools::shell_touch::IgnorePolicy::WalkAll
-        },
-        // Where a built-in's own diagnostics go — `verify_done`'s per-phase
-        // wall clock today (#2486). Wired here, on the same "every session
-        // lane" reasoning as the line above, rather than through a
-        // post-construction setter beside `attach_events`: that setter would
-        // have to be remembered at ten call sites, and forgetting one fails
-        // silently by recording nothing.
-        //
-        // Always `Some`, never conditional on a log file existing:
-        // `diag_boot::dx()` returns a disabled handle before boot, and even a
-        // disabled one fills the crash ring — so a run that panics carries
-        // its last phase records into the dump whether or not anyone asked
-        // for a log.
-        diagnostics: Some(crate::diag_boot::dx()),
-        ..Default::default()
-    }
-}
-
-/// The session's tool policy — the other half of [`registry_options`].
+/// The session's tool policy.
 ///
 /// Every session driver wraps its assembled tool stack in
 /// [`crate::agent::PolicyToolSet`] with this, which is what makes a
@@ -915,23 +720,6 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
 /// is no second place that could disagree about what is switched off.
 pub(crate) fn session_tool_policy(cfg: &Config) -> stella_tools::policy::ToolPolicy {
     cfg.tool_policy.clone()
-}
-
-fn host_media_operation_journal(
-    workspace_root: &std::path::Path,
-) -> Option<Arc<dyn stella_media::MediaOperationJournal>> {
-    let workspace_root = workspace_root.canonicalize().ok()?;
-    let data_dir = std::path::absolute(crate::paths::data_dir()).ok()?;
-    if data_dir.starts_with(&workspace_root) {
-        return None;
-    }
-    stella_media::SqliteMediaOperationJournal::open_outside(
-        data_dir.join("media-operations.db"),
-        workspace_root,
-        Default::default(),
-    )
-    .ok()
-    .map(|journal| Arc::new(journal) as Arc<dyn stella_media::MediaOperationJournal>)
 }
 
 #[cfg(test)]

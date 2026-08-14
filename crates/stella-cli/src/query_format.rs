@@ -17,10 +17,6 @@
 //! Every query command declares one of the two enums below, spelled
 //! `--format`, defaulting to `text`, and wraps its JSON in the versioned
 //! envelope ([`Rows`] for array payloads, [`Versioned`] for object payloads).
-//! The one deliberate exemption is `scripts list`: its frame is shared
-//! byte-for-byte with the `list_scripts` tool and pinned at its own
-//! `schema_version` by `docs/spec/scripts-index.md`, so wrapping it here
-//! would version the same object twice.
 //!
 //! A tree-walking test in `src/tests.rs`
 //! (`query_commands_share_one_format_idiom`) fails the build if a `--json`

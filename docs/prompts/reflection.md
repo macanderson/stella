@@ -258,11 +258,11 @@ table, because a re-learned lesson is the recurrence the skill and rule miners
 count (#2358).
 
 Reflection does **not** write `.stella/memories/*.md`. That directory is the
-byte-stable prompt prefix and its only writer is the `save_memory` tool, called
-by the worker in-turn; a lesson mined here reaches a future prompt through
-recall, not through the prefix. The distinction is the whole cost model: prefix
-memories are paid for on every model call in every session whether relevant or
-not, while recalled ones are paid for only when retrieved.
+byte-stable prompt prefix and is authored by the operator; a lesson mined here
+reaches a future prompt through recall, not through the prefix. The
+distinction is the whole cost model: prefix memories are paid for on every
+model call in every session whether relevant or not, while recalled ones are
+paid for only when retrieved.
 
 ## Known limits
 
@@ -276,6 +276,5 @@ the event stream carries.
 
 ## Related
 
-- [worker.md](worker.md) — whose transcript is mined, and whose `save_memory`
-  calls write the prefix this prompt does not
+- [worker.md](worker.md) — whose transcript is mined
 - [domain-inference.md](domain-inference.md) — produces the allowed tag list

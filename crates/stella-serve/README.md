@@ -232,8 +232,8 @@ climbing count means a host is minting per-request provider ids.
   and going over either one is answered `413`** ([`src/http.rs`](src/http.rs)).
   The head and body caps are split because they are abused differently: no
   legitimate client sends 64 KiB of headers, while a body legitimately carries an
-  assembled conversation or one tool's whole output (which `stella-tools` caps at
-  100 KB per call). Over-cap used to get no response at all, which meant a
+  assembled conversation or one tool's whole output. Over-cap used to get no
+  response at all, which meant a
   `tool-result` one byte too large was indistinguishable from a crashed peer and
   left the engine step it would have answered parked until teardown.
 - **Reads are bounded by a 30-second deadline**, answered `408`. It applies to

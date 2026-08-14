@@ -225,8 +225,7 @@ mod tests {
     #[tokio::test]
     async fn the_turn_tail_completes_with_the_registry_still_attached() {
         let root = tempfile::tempdir().expect("root");
-        let registry =
-            stella_tools::ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
         let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let forwarder = spawn_forwarder(

@@ -6,8 +6,8 @@ status: implemented
 
 # Semantic-resolution bridge — evaluation
 
-**Status:** B2 shipped (#443 — `crates/stella-graph/src/rust_resolve.rs`, plus the
-`run_tests` `scope:"impacted"` cargo `-p` mapping). B1 shipped — per-language
+**Status:** B2 shipped (#443 — `crates/stella-graph/src/rust_resolve.rs`; no
+shipping surface exposes the impacted-test selection it feeds). B1 shipped — per-language
 call-site capture, the `code_graph_calls` table, and the `callees`/`callers`
 ops (`callees` honest within a definition's span, `callers` labeled
 best-effort, the `references` scoring discipline). The held Option A remains
