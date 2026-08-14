@@ -375,3 +375,44 @@ def test_a_record_round_trips_through_json(tmp_path: Path) -> None:
     assert back is not None
     assert back.agent_seats == record.agent_seats
     assert back.comparability_key == record.comparability_key
+
+
+class TestRunnerImageIdentity:
+    """#3214: the one apparatus field no provenance generation had a slot for."""
+
+    def test_the_cloud_writer_records_its_own_container_image(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            provenance.RUNNER_IMAGE_ENV,
+            "123.dkr.ecr.us-east-1.amazonaws.com/arenabench/runner:latest@sha256:abc",
+        )
+        provenance.write_match(tmp_path, base_record())
+        back = provenance.read_match(tmp_path)
+        assert back is not None
+        assert back.runner_image.endswith("@sha256:abc")
+
+    def test_a_local_launch_honestly_records_nothing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.delenv(provenance.RUNNER_IMAGE_ENV, raising=False)
+        provenance.write_match(tmp_path, base_record())
+        back = provenance.read_match(tmp_path)
+        assert back is not None
+        assert back.runner_image == ""
+
+    def test_a_host_side_restamp_keeps_the_containers_answer(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A fetched cloud record re-written on a laptop must not blank the
+        identity only the container could observe."""
+        monkeypatch.delenv(provenance.RUNNER_IMAGE_ENV, raising=False)
+        record = base_record(runner_image="ecr/arenabench/runner@sha256:abc")
+        provenance.write_match(tmp_path, record)
+        back = provenance.read_match(tmp_path)
+        assert back is not None
+        assert back.runner_image == "ecr/arenabench/runner@sha256:abc"
+
+    def test_a_legacy_record_reads_back_empty_not_fabricated(self) -> None:
+        legacy = provenance.Provenance.from_json({"dataset_key": "tb"})
+        assert legacy.runner_image == ""
