@@ -54,7 +54,7 @@
 //!
 //! - **Context recall, repo structure, lint, mutation, coverage, candidate
 //!   isolation** ([`NoContextRecall`], [`NoRepoStructure`], [`NoRepoStatus`],
-//!   [`NoFileTouches`], and `lint`/`mutation`/`coverage`/
+//!   and `lint`/`mutation`/`coverage`/
 //!   `candidate_workspaces` left `None`). Every one of these ports is
 //!   designed to degrade open when absent (their own doc comments say so:
 //!   "a caller with nothing to offer supplies `NoContextRecall`"), so a
