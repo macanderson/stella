@@ -423,7 +423,6 @@ mod tests {
 
     use async_trait::async_trait;
     use serde_json::Value;
-    use std::sync::Mutex;
     use stella_protocol::{
         CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
         Provider, ProviderError, ToolOutput, ToolSchema,
