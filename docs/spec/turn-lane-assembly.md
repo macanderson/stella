@@ -473,10 +473,12 @@ granted = requested ∩ authorized(principal, capability)
 ```
 
 `requested` comes from the manifest. `authorized` is the authority vocabulary
-of #2716 — `ToolContract` / `AuthzGate` / `Principal` / `RiskLevel`. That
-issue is closed `NOT_PLANNED` and has **zero code in the tree** (verified in
-#3246 §2: `rg -n "struct ToolContract|trait AuthzGate|enum RiskLevel|struct
-Principal" crates/` → 0 hits).
+of #2716 — `ToolContract` / `AuthzGate` / `Principal` / `RiskLevel`. It has
+**zero code in the tree** (`rg -n "struct ToolContract|trait AuthzGate|enum
+RiskLevel|struct Principal" crates/` → 0 hits, verified in #3246 §2), so it is
+greenfield rather than half-built. It was closed `NOT_PLANNED` as tool-surface
+governance and **reopened on 2026-08-14 as the authority plane plugin lanes
+need** — this section is the mission tie that reopened it.
 
 So: a plugin lane is designable today, and **safely grantable only after
 #2716**. Until that vocabulary exists, a paid plugin and a hostile one hold
