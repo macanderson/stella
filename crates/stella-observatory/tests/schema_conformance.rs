@@ -111,7 +111,6 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/mcp-servers", None),
     ("/api/config", None),
     ("/api/memories", None),
-    ("/api/explorations", None),
     ("/api/rules", Some("/db/0/rule_id")),
     ("/api/reflections", Some("/ratings/0/execution_id")),
     (

@@ -125,8 +125,8 @@ fn a_citation_becomes_feedback_pointing_at_its_own_use() {
 fn a_cited_record_handle_joins_use_to_feedback_like_any_memory_id() {
     let (_dir, store, context) = workspace();
     // The receipts plane records a rendered record block under its `^handle`
-    // (sigil included), and `cite_memory` accepts and stores the same string —
-    // so the join that turns a rendered directive into Cited-grade feedback is
+    // (sigil included), and the citation ledger stores the same string — so
+    // the join that turns a rendered directive into Cited-grade feedback is
     // plain string equality, exactly as it is for `nod_…` memories.
     finished_turn(
         &store,

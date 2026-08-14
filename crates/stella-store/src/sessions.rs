@@ -108,12 +108,6 @@ pub struct SessionRecord {
     pub status: SessionStatus,
     pub started_at_ms: u64,
     pub updated_at_ms: u64,
-    /// Exploration slices this session is currently mapping (its live draft
-    /// records in `.stella/explorations/`) — lets the SESSIONS view warn
-    /// before a prompt that would re-map territory another live session is
-    /// already on. Absent in pre-v2 records.
-    #[serde(default)]
-    pub exploring: Vec<String>,
     /// Present when the session runs under the CLI's supervisor rather than in
     /// the foreground of a terminal (#1552). Absent for every ordinary
     /// session, and for every record written before supervision existed.
@@ -237,7 +231,6 @@ impl SessionRecord {
             status: SessionStatus::InProgress,
             started_at_ms: now,
             updated_at_ms: now,
-            exploring: Vec::new(),
             supervisor: None,
         }
     }
@@ -973,7 +966,6 @@ mod tests {
 
         let record: SessionRecord = serde_json::from_str(pre_1552).expect("legacy record parses");
         assert_eq!(record.supervisor, None);
-        assert!(record.exploring.is_empty());
     }
 
     /// The absent case must stay absent on disk too. `list` is read by the

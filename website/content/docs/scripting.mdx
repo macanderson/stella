@@ -160,7 +160,7 @@ Key order is not part of the contract — read by key, never by position.
 
 ### Query commands version their JSON too
 
-The read-only query commands — `stats`, `stats graph`, `usage report`, `inspect`,
+The read-only query commands — `stats`, `usage report`, `inspect`,
 `calibration`, `memory list`, `context list|validate` — take `--format json` (their
 human rendering is `--format text`, the default) and wrap their JSON in the **query
 envelope**: `schema_version` first, then the payload. Array reports put their rows

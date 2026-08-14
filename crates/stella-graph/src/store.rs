@@ -152,9 +152,10 @@ CREATE INDEX IF NOT EXISTS code_graph_storage_file ON code_graph_storage_objects
 CREATE INDEX IF NOT EXISTS code_graph_storage_level  ON code_graph_storage_objects(level, address);
 CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objects(parent_id);
 -- Semantic file vectors. They live HERE, beside the nodes they describe,
--- rather than in `stella-context`'s `context.db`, so a `semantic_code_search`
--- reads one database and cannot answer from a vector whose file the graph no
--- longer has: the FK cascade deletes a vector with its file.
+-- rather than in `stella-context`'s `context.db`, so a semantic code search
+-- (`stella search`, the CGP `GraphProvider`) reads one database and cannot
+-- answer from a vector whose file the graph no longer has: the FK cascade
+-- deletes a vector with its file.
 --
 -- `fingerprint` is `stella_embed::EmbedderFingerprint::id()` and is part of
 -- the key, so vectors from two embedders coexist without ever being compared

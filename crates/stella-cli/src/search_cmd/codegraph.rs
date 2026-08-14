@@ -1,70 +1,14 @@
 //! Opening and reading the workspace code graph
 //! (`.stella/private/codegraph.db`) for the CLI's query surfaces.
 //!
-//! `stella search` ([`super::engine`]) ranks over the graph, `stella storage`
-//! reads its storage map, and `stella stats graph` classifies the answers
-//! recorded in past telemetry. This module owns what those doors share: the
-//! index location, the open-with-catch-up discipline, the non-fatal
-//! index-warning plumbing, and the answer-classification vocabulary the
-//! health metric counts with.
+//! `stella search` ([`super::engine`]) ranks over the graph and `stella
+//! storage` reads its storage map. This module owns what those doors share:
+//! the index location, the open-with-catch-up discipline, and the non-fatal
+//! index-warning plumbing.
 
 use std::path::{Path, PathBuf};
 
 use stella_protocol::tool::ToolOutput;
-
-// ---------------------------------------------------------------------------
-// Answer classification (#896)
-//
-// The health metric (`stella stats graph`) reports what share of recorded
-// graph queries actually resolved. That number can only exist if a miss is
-// machine-recognizable, and the only thing a telemetry reader has is the
-// rendered answer text — so the exact phrases every miss branch emitted live
-// here as constants and [`classify_answer`] is the single reader.
-// ---------------------------------------------------------------------------
-
-/// Opens every "the graph holds nothing for this" answer.
-pub(crate) const UNRESOLVED_MARKER: &str = "the code graph has no";
-/// Marks a target that lies outside the one indexed root.
-pub(crate) const OUT_OF_ROOT_MARKER: &str = "outside the indexed root";
-/// Marks a target the indexer structurally does not cover.
-pub(crate) const NOT_INDEXED_MARKER: &str = "is not a file type the code graph indexes";
-/// Marks a path target that matches several indexed files.
-pub(crate) const AMBIGUOUS_MARKER: &str = "matches several indexed files";
-
-/// What a rendered graph answer actually was — the vocabulary of the
-/// resolved-query-rate health metric (`stella stats graph`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GraphAnswer {
-    /// Frames came back (possibly under a labelled fallback spelling).
-    Resolved,
-    /// The target is not under the indexed root — re-rooting is the fix, and
-    /// no amount of re-indexing helps.
-    OutOfRoot,
-    /// The target exists but the indexer does not cover that file type.
-    NotIndexed,
-    /// The graph should plausibly have answered and did not — including an
-    /// ambiguous path and the importer-resolution capability gap.
-    Unresolved,
-}
-
-/// Classify one rendered graph answer.
-///
-/// Tolerant of the `(warning: …)` prefix a failed index pass adds above an
-/// answer, because a stale-index warning qualifies an answer rather than
-/// replacing it.
-#[must_use]
-pub(crate) fn classify_answer(content: &str) -> GraphAnswer {
-    if content.contains(OUT_OF_ROOT_MARKER) {
-        return GraphAnswer::OutOfRoot;
-    }
-    if content.contains(NOT_INDEXED_MARKER) {
-        return GraphAnswer::NotIndexed;
-    }
-    if content.contains(AMBIGUOUS_MARKER) || content.contains(UNRESOLVED_MARKER) {
-        return GraphAnswer::Unresolved;
-    }
-    GraphAnswer::Resolved
-}
 
 /// The index location `stella init` writes and every graph reader resolves.
 pub(crate) fn graph_db_path(root: &Path) -> PathBuf {
@@ -162,16 +106,6 @@ pub(crate) fn open_or_build(root: &Path) -> Result<OpenedGraph, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The warning prefix qualifies an answer; it must not reclassify it.
-    #[test]
-    fn an_index_warning_prefix_does_not_change_the_classification() {
-        let warned = format!("({INDEX_PASS_WARNING}: boom)\n- lib.rs::greet\n  pub fn greet()");
-        assert_eq!(classify_answer(&warned), GraphAnswer::Resolved);
-        let warned_miss =
-            format!("({INDEX_PASS_WARNING}: boom)\n{UNRESOLVED_MARKER} definitions for `x`");
-        assert_eq!(classify_answer(&warned_miss), GraphAnswer::Unresolved);
-    }
 
     /// A failing answer that ALSO had a failing index pass must report both —
     /// the named error leads, the stale-index caveat follows it.

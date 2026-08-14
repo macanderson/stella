@@ -7,8 +7,8 @@
 //! Two consumers now need to turn text into a vector and compare vectors
 //! honestly: `stella-context` (the retrieval plane, which has owned this code
 //! since it existed) and `stella-graph` (the code graph, which needs semantic
-//! file lookup so `graph_query` can answer a question the asker can only
-//! phrase in English). Neither may depend on the other — `stella-graph` owns
+//! file lookup so `stella search` and CGP recall can answer a question the
+//! asker can only phrase in English). Neither may depend on the other — `stella-graph` owns
 //! `codegraph.db` independently of `stella-context`, and a
 //! `stella-graph → stella-context` edge would drag the whole retrieval, ANN
 //! and episodic-memory machinery into the code indexer for the sake of one

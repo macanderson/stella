@@ -38,10 +38,11 @@
 //!
 //! Coverage note: the tap sees a mutation only where a tool's schema names
 //! one ([`mutating_path`] / [`transient_lane`] key on tool names). No
-//! built-in declares a per-path mutation or a lane, so this coverage today
-//! reaches only custom or MCP tools that adopt those conventional names;
-//! everything else writes outside claim tracking, and the witness/verify
-//! ladder is what covers it.
+//! built-in declares a per-path mutation or a lane, and an MCP tool can
+//! never match (its wire name carries the `mcp__<server>__` prefix), so this
+//! coverage today reaches only workspace custom tools that adopt those
+//! conventional names; everything else writes outside claim tracking, and
+//! the witness/verify ladder is what covers it.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -142,9 +143,10 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 /// The conventional tool names whose successful call mutates the path in
-/// their `path` input. No built-in carries these names; a custom or MCP tool
-/// that adopts one is claim-gated by construction, and anything else writes
-/// outside claim tracking (the witness/verify ladder covers it).
+/// their `path` input. No built-in carries these names; a workspace custom
+/// tool that adopts one is claim-gated by construction (an MCP tool cannot —
+/// its wire name is `mcp__`-prefixed), and anything else writes outside
+/// claim tracking (the witness/verify ladder covers it).
 fn mutating_path<'i>(name: &str, input: &'i Value) -> Option<&'i str> {
     match name {
         "write_file" | "edit_file" | "delete_file" => input.get("path").and_then(Value::as_str),

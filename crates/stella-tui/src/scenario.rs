@@ -339,7 +339,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             lead,
             tool_start(
                 "c1",
-                "read_file",
+                "mcp__fs__read_file",
                 json!({ "path": "apps/app/automations/page.tsx" }),
             ),
         ),
@@ -466,7 +466,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ),
         ev(
             auth,
-            tool_start("c2", "grep", json!({ "pattern": "trigger" })),
+            tool_start("c2", "search_code", json!({ "pattern": "trigger" })),
         ),
         ev(
             auth,

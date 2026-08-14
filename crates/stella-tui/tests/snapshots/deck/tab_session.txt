@@ -9,7 +9,7 @@
  ? lead  ·  needs input   0:00:00
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ grep trigger
+     ⚒ search_code trigger
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
@@ -28,7 +28,7 @@
 │                                                                                                                      ││                                      │
 │── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
 │                                                                                                                      ││                                      │
-│● read_file    apps/app/automations/page.tsx                                                                          ││                                      │
+│● mcp__fs__read_file apps/app/automations/page.tsx                                                                    ││                                      │
 │  ⎿ 312 lines                                                                                                     42ms││                                      │
 │                                                                                                                      │└────────────────────── /plan reads it ┘
 │☰  plan  5/7  ·  Workflows canvas                                                                                     │┌ PROOF ✓ proved ──────────────────────┐

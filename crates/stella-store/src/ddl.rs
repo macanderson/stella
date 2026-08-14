@@ -336,8 +336,8 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// outputs are NOT stored here — only shape, timing, and success
 /// (`bytes_out` records the result size, not the result). UNIQUE
 /// (execution_id, seq) is the house double-write guard. The by-name index is
-/// the access path for usage histograms (e.g. "grep called N times,
-/// graph_query zero").
+/// the access path for usage histograms (how often each built-in, MCP, or
+/// custom tool was reached for).
 ///
 /// **This projection is written LIVE** (v18), inside the same transaction as
 /// the `tool_start`/`tool_result` event that produces it
