@@ -54,6 +54,7 @@ use stella_protocol::{
 };
 
 use crate::budget::BudgetGuard;
+use crate::driver::deadline_notice::DeadlineNotices;
 use crate::driver::loop_escalation::LoopSteerBudget;
 use crate::driver::output_budget_recovery::OutputBudgetRecovery;
 use crate::driver::overflow_recovery::OverflowRecovery;
@@ -343,6 +344,11 @@ pub struct TurnState {
     /// (`crate::driver::output_budget_recovery`) — the output-side mirror of
     /// [`Self::overflow_recovery`], and not checkpointed for the same reason.
     pub(crate) output_budget_recovery: OutputBudgetRecovery,
+    /// Which task-deadline notices this turn has already delivered to the
+    /// model (`crate::driver::deadline_notice`). Bounded and not
+    /// checkpointed: a resumed turn re-warning once is cheap, and being
+    /// silent about a deadline is not.
+    pub(crate) deadline_notices: DeadlineNotices,
     /// The index of the step that will run next. Advanced by a step that
     /// COMMITTED and continued — and by an overflow-recovery retry, whose
     /// re-issued call is a new step so its receipts never collide with the
@@ -399,6 +405,7 @@ impl TurnState {
             usage_anchor: None,
             overflow_recovery: OverflowRecovery::default(),
             output_budget_recovery: OutputBudgetRecovery::default(),
+            deadline_notices: DeadlineNotices::default(),
             loop_steer: LoopSteerBudget::default(),
             transcript_rewrites: 0,
             step: 0,
@@ -434,6 +441,7 @@ impl TurnState {
             // exactly as `length_continuations` does.
             overflow_recovery: OverflowRecovery::default(),
             output_budget_recovery: OutputBudgetRecovery::default(),
+            deadline_notices: DeadlineNotices::default(),
             loop_steer: LoopSteerBudget::resumed(
                 checkpoint.loop_steered.then_some(LoopIdentity {
                     tools: checkpoint.loop_steered_pattern,

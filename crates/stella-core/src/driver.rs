@@ -128,6 +128,7 @@ use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
 mod completion;
+pub(crate) mod deadline_notice;
 mod dispatch;
 mod drive;
 mod model_fallback;
@@ -1002,6 +1003,19 @@ impl<'a> Engine<'a> {
         // step). Drain precedes the soft-stop check deliberately — a
         // steer typed just before Esc is preserved in history for the
         // next turn instead of evaporating with the per-turn tap.
+        // The task deadline, told to the model rather than only to the
+        // journal (`driver::deadline_notice`). Same safe boundary as the
+        // steering drain below, and bounded to at most one short message per
+        // threshold per turn so the cached prefix stays byte-stable
+        // (invariant 7). The engine has always known this number; a turn cut
+        // off mid-investigation with an answer it never wrote down is what
+        // never telling the model costs.
+        if let Some(remaining) = state.budget.deadline_remaining(std::time::Instant::now()) {
+            let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
+            if let Some(notice) = state.deadline_notices.due(remaining_ms) {
+                state.messages.push(CompletionMessage::user(notice));
+            }
+        }
         if let Some(steering) = self.steering {
             for text in steering.drain_steering() {
                 let _ = events.send(AgentEvent::Steered { text: text.clone() });
