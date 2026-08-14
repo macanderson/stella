@@ -17,8 +17,8 @@ agent can resume from.
 | Dispatch | raw completion, `tools: []` |
 | System prompt | `SUMMARIZE_SYSTEM`, `crates/stella-core/src/summarize.rs` |
 | User message | `render_span_for_summary`, same file |
-| Sent from | `Engine::run_compaction_pass`, `crates/stella-core/src/driver.rs` |
-| Output cap | 1,200 |
+| Sent from | `Engine::summarize_overflow_span`, `crates/stella-core/src/driver/restore.rs` |
+| Output cap | 1,200 visible output + `REASONING_HEADROOM_TOKENS` (4,096) |
 | Temperature | 0.0 |
 | Effort | `Low`, pinned |
 | Retry policy | `RetryPolicy::standard()` |
@@ -80,6 +80,19 @@ appended when cut. Bytes rather than chars because every cap here is a proxy
 for request size — the truncation helper is named `cap_chars` for historical
 reasons and the boundary walk is what keeps it safe on multi-byte input.
 
+## Starvation
+
+`max_output_tokens` is one number on the wire and a reasoning model bills its
+thinking against it, so the cap is the 1,200-token written contract **plus**
+`with_reasoning_headroom`'s thinking room (`stella-core`'s `starvation.rs`,
+the shared home — #2503). A response that still comes back empty with
+`finish_reason: length` has provably starved and is retried once at
+`STARVED_RETRY_CAP` (32,768) through the same accounting seam, with both
+attempts' spend reported. The starved first attempt does **not** count toward
+the give-up latch below — starvation is recoverable by room, which is exactly
+what the latch must not treat as a broken summarizer. Only a retry that also
+comes back empty records the failure.
+
 ## The give-up latch
 
 Each attempt is a completion and its latency, so a summarizer that keeps
@@ -100,7 +113,9 @@ failure.
 ## Receipts
 
 The summarizer takes **reserved seat 1** at its step (`call_seq: 1`).
-Compaction runs at most once per step, so it collides with nothing.
+Compaction runs at most once per step, so it collides with no other call; a
+starved retry re-emits at the same seat with identical messages, overwriting
+the first attempt's row with the same context.
 
 The receipt matters more here than elsewhere: the summarizer rewrites the
 conversation it is called on, so its own input is the only record of what it

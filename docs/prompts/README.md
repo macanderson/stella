@@ -193,6 +193,10 @@ adds `REASONING_HEADROOM_TOKENS` (4,096) on top, so the numbers below read
 against the prompts that justify them rather than encoding a guess at a
 thinking budget. Both matches are exhaustive over `ModelCallRole` on purpose: a
 new role has to decide its bounds rather than inherit a ceiling by omission.
+The engine's own overflow summarizer is the third dispatch site: it dispatches
+exactly one role, so it pins that contract locally
+(`crates/stella-core/src/driver/restore.rs`) rather than carrying a
+one-row table.
 
 | Role | Visible output | Effort | Declared by |
 |---|---|---|---|
@@ -203,6 +207,7 @@ new role has to decide its bounds rather than inherit a ceiling by omission.
 | `agent_author`, `skill_author` | 4,096 | inherited | `standalone_bounds` |
 | `domain_inference` | 2,048 | inherited | `standalone_bounds` |
 | `reflection` | 4,096 | `Low` (pinned) | `standalone_bounds` |
+| `summarization` | 1,200 | `Low` (pinned) | its own dispatch, `crates/stella-core/src/driver/restore.rs` |
 | everything else | engine base | inherited | — |
 
 The `verdict` / `distress_guidance` row is retained rather than removed because
@@ -226,9 +231,14 @@ truncation, up to 131,072, which no per-role constant could express.
 
 A call that comes back empty with `finish_reason: length` has provably starved
 — the whole budget went to reasoning before the first visible token — and is
-retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **both** chokepoints.
-The one role still outside either is summarization, which pins 1,200 at `Low`
-from the engine's own `run_compaction_pass`.
+retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **all three** dispatch
+sites. Summarization was the last to gain both halves (#2503): it dispatches
+exactly one role from the engine itself, so instead of a third bounds table its
+site pins the contract locally and pads it with the same shared
+`with_reasoning_headroom`. Its starved retry deliberately does **not** count
+toward the summarizer's give-up latch — the latch exists for a broken
+summarizer, and a starved one is merely short of room; only a retry that also
+comes back empty records the failure.
 
 ## This document set is a snapshot, not the source
 

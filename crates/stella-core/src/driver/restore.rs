@@ -32,8 +32,8 @@
 //! tripped budget no longer has, for a turn that is already over.
 
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionRequest, MessageRole, ReasoningEffort, ToolCall,
-    ToolOutput,
+    AgentEvent, CompletionMessage, CompletionRequest, CompletionResult, MessageRole,
+    ReasoningEffort, ToolCall, ToolOutput,
 };
 
 use super::{Engine, SUMMARY_MARKER_PREFIX, lifecycle};
@@ -43,6 +43,7 @@ use crate::estimator::estimate_conversation_tokens;
 use crate::event_sender::EventSender;
 use crate::restore::{FreshContent, FreshRead, WorkingSet};
 use crate::retry::RetryPolicy;
+use crate::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use crate::step::SummarizerHealth;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 
@@ -50,6 +51,15 @@ use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 /// `driver::waiting::PARKED_CALL_ID` shape: it never enters the transcript,
 /// so it only needs to be recognizable in hook payloads and diagnostics.
 const RESTORE_CALL_ID: &str = "working-set-restore";
+
+/// The summarizer's **visible-output** contract: the dense bullet summary
+/// `SUMMARIZE_SYSTEM` asks for. What reaches the wire is this plus
+/// [`with_reasoning_headroom`]'s thinking room, because `max_output_tokens`
+/// is one number and a reasoning model bills its thinking against it — the
+/// bare 1,200 this site used to send could be spent entirely before the
+/// first visible token (#2503), and an empty summary here trips the give-up
+/// latch that disables compaction for the rest of the turn.
+const SUMMARY_OUTPUT_CONTRACT: u32 = 1_200;
 
 impl<'a> Engine<'a> {
     /// Replace the oldest viable span with a model-written summary. Failures
@@ -118,62 +128,44 @@ impl<'a> Engine<'a> {
             rendered.push_str("\n\n[PreCompact hook instructions]\n");
             rendered.push_str(extra);
         }
-        let request = CompletionRequest {
-            messages: vec![
-                CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
-                CompletionMessage::user(&rendered),
-            ],
-            max_output_tokens: Some(1_200),
-            temperature: Some(0.0),
-            effort: Some(ReasoningEffort::Low),
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-        let estimated_input_tokens = estimate_conversation_tokens(&request.messages);
-        let result = match run_accounted_call(
-            AccountedCall {
-                provider: self.active_provider(),
-                role: stella_protocol::ModelCallRole::Summarization,
-                // The same placeholder #2831 removed from the two engine emit
-                // sites, and reachable the same way: this hint is what a
-                // failed summarizer call's `UsageIncomplete` names, and the
-                // provider dispatching it is right here.
-                model_hint: self
-                    .active_provider()
-                    .model()
-                    .unwrap_or(stella_protocol::UNKNOWN_MODEL)
-                    .to_string(),
-                request,
-                // The last line of defense before a terminal context
-                // overflow — a transient blip here must be retried, not
-                // fast-failed into an oversized, doomed next call.
-                retry_policy: RetryPolicy::standard(),
-                // The same generation deadline every worker call runs under.
-                // `None` left a wedged summarizer provider parking the whole
-                // turn indefinitely — the one un-bounded await on the step
-                // path — and a trip lands in the Timeout arm below, which
-                // counts toward the give-up latch like any other failure.
-                timeout: self.config.model_timeout,
-                estimated_input_tokens,
-                // The summarizer rewrites the conversation it is called on, so
-                // its own input is the only record of what it was given to
-                // compress — and the span it replaces is gone from the history
-                // afterwards. Reserved seat 1 at this step; compaction runs at
-                // most once per step, so it collides with nothing.
-                receipt: Some(crate::ReceiptContext {
-                    turn_instance: self.config.turn_instance,
-                    step,
-                    call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
-                    lifecycle_enabled: self.config.lifecycle_enabled,
-                }),
-            },
-            budget,
-            events,
-            self.sleeper,
-        )
-        .await
+        let summary_messages = vec![
+            CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
+            CompletionMessage::user(&rendered),
+        ];
+        // The written contract plus room to think (#2503): `max_output_tokens`
+        // is one number on the wire and a reasoning model bills its thinking
+        // against it, so `effort: Low` alone bounds the reasoning budget
+        // without zeroing it.
+        let cap = with_reasoning_headroom(SUMMARY_OUTPUT_CONTRACT);
+        // Kept only because a starved retry could change the outcome — the
+        // same one-`Vec`-copy trade `metered_raw_call` makes for a management
+        // prompt it might have to re-send (#2128).
+        let retry = starved_retry_cap(Some(cap)).map(|raised| (raised, summary_messages.clone()));
+        let mut outcome = self
+            .dispatch_summarizer(summary_messages, cap, step, budget, events)
+            .await;
+        // What a superseded starved attempt already spent. Every arm below
+        // adds it, because the retry is a real paid call: reporting only the
+        // surviving attempt's cost would understate the turn by exactly what
+        // the starvation cost.
+        let mut superseded_cost = 0.0;
+        // A provider that stopped at the token limit with nothing visible to
+        // show for it has stated that the budget ran out before the first
+        // answer token — the #2128 signature. Retried once with real room,
+        // and deliberately BEFORE the give-up latch sees anything: the latch
+        // exists for a summarizer that is broken, and a starved one is merely
+        // short of room, which one retry fixes. A retry that also comes back
+        // empty falls through to the empty-summary arm below, which is where
+        // that failure is recorded (#2503).
+        if let (Ok(result), Some((raised, summary_messages))) = (&outcome, retry)
+            && starved_of_output(result)
         {
+            superseded_cost = result.cost_usd;
+            outcome = self
+                .dispatch_summarizer(summary_messages, raised, step, budget, events)
+                .await;
+        }
+        let result = match outcome {
             Ok(result) => result,
             // The summary was generated and paid for before the budget
             // tripped. Splicing it in only shrinks the context the resumed
@@ -193,7 +185,7 @@ impl<'a> Engine<'a> {
                         events,
                     );
                 }
-                return result.cost_usd;
+                return superseded_cost + result.cost_usd;
             }
             // A silent 0.0 hid a failing summarizer that re-fired every step
             // until the provider hard-failed. Surface it and count it toward
@@ -204,7 +196,7 @@ impl<'a> Engine<'a> {
                     message: format!("overflow summarizer failed ({e}); context left intact"),
                     retryable: true,
                 });
-                return 0.0;
+                return superseded_cost;
             }
             Err(AccountedCallError::Timeout) => {
                 health.record_failure();
@@ -212,7 +204,7 @@ impl<'a> Engine<'a> {
                     message: "overflow summarizer timed out; context left intact".to_string(),
                     retryable: true,
                 });
-                return 0.0;
+                return superseded_cost;
             }
             // Refused before dispatch (#2238): nothing spent, nothing misbehaved.
             Err(AccountedCallError::Deadline { .. }) => {
@@ -220,15 +212,18 @@ impl<'a> Engine<'a> {
                     message: "overflow summarizer skipped: the task deadline passed".into(),
                     retryable: false,
                 });
-                return 0.0;
+                return superseded_cost;
             }
         };
-        let cost_usd = result.cost_usd;
+        let cost_usd = superseded_cost + result.cost_usd;
         let text = result.text.trim();
         if text.is_empty() {
             // An empty summary shrinks nothing, so the next step re-fires on
             // the same span — the same non-progress the error paths latch
-            // against, and just as invisible if left unannounced.
+            // against, and just as invisible if left unannounced. Reached by
+            // an empty `Stop` answer, and by a starved call whose retry came
+            // back empty too — more room was bought once and did not help, so
+            // this failure counts (#2503).
             health.record_failure();
             let _ = events.send(AgentEvent::Error {
                 message: "overflow summarizer returned an empty summary; context left intact"
@@ -259,6 +254,76 @@ impl<'a> Engine<'a> {
         self.restore_working_set(messages, working_set, compaction_budget, events)
             .await;
         cost_usd
+    }
+
+    /// One metered summarizer dispatch, so the starvation retry re-sends
+    /// through exactly the accounting seam the first attempt used — the shape
+    /// `complete_standalone`'s `dispatch` takes for the same reason (#2444).
+    /// Everything but the messages and the cap is fixed: the summarizer
+    /// dispatches exactly one role, which is why this is a helper and not a
+    /// third per-role bounds table (#2503).
+    async fn dispatch_summarizer(
+        &self,
+        messages: Vec<CompletionMessage>,
+        max_output_tokens: u32,
+        step: usize,
+        budget: &mut BudgetGuard,
+        events: &EventSender,
+    ) -> Result<CompletionResult, AccountedCallError> {
+        let estimated_input_tokens = estimate_conversation_tokens(&messages);
+        run_accounted_call(
+            AccountedCall {
+                provider: self.active_provider(),
+                role: stella_protocol::ModelCallRole::Summarization,
+                // The same placeholder #2831 removed from the two engine emit
+                // sites, and reachable the same way: this hint is what a
+                // failed summarizer call's `UsageIncomplete` names, and the
+                // provider dispatching it is right here.
+                model_hint: self
+                    .active_provider()
+                    .model()
+                    .unwrap_or(stella_protocol::UNKNOWN_MODEL)
+                    .to_string(),
+                request: CompletionRequest {
+                    messages,
+                    max_output_tokens: Some(max_output_tokens),
+                    temperature: Some(0.0),
+                    effort: Some(ReasoningEffort::Low),
+                    tools: vec![],
+                    reasoning: None,
+                    params: None,
+                },
+                // The last line of defense before a terminal context
+                // overflow — a transient blip here must be retried, not
+                // fast-failed into an oversized, doomed next call.
+                retry_policy: RetryPolicy::standard(),
+                // The same generation deadline every worker call runs under.
+                // `None` left a wedged summarizer provider parking the whole
+                // turn indefinitely — the one un-bounded await on the step
+                // path — and a trip lands in the caller's Timeout arm, which
+                // counts toward the give-up latch like any other failure.
+                timeout: self.config.model_timeout,
+                estimated_input_tokens,
+                // The summarizer rewrites the conversation it is called on, so
+                // its own input is the only record of what it was given to
+                // compress — and the span it replaces is gone from the history
+                // afterwards. Reserved seat 1 at this step; compaction runs at
+                // most once per step, so it collides with no other call. A
+                // starved retry (#2503) re-emits at the same seat with the
+                // identical messages, so its receipt overwrites the first
+                // attempt's row with the same context rather than losing it.
+                receipt: Some(crate::ReceiptContext {
+                    turn_instance: self.config.turn_instance,
+                    step,
+                    call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                    lifecycle_enabled: self.config.lifecycle_enabled,
+                }),
+            },
+            budget,
+            events,
+            self.sleeper,
+        )
+        .await
     }
 
     /// Splice `text` (trimmed, non-empty) over `messages[start..end]` as the
@@ -812,6 +877,180 @@ mod tests {
         assert_eq!(
             crate::restore::RESTORE_MARKER_PREFIX,
             "[working set restored"
+        );
+    }
+
+    /// Starves — empty text, `finish_reason: length` — on its first
+    /// `starve_first` calls, then answers; records the cap each dispatch
+    /// asked for. The scripted shape
+    /// `a_call_starved_by_its_own_reasoning_is_retried_with_room` uses on the
+    /// standalone chokepoint (`stella-cli`'s `accounted_call.rs`).
+    struct StarvingProvider {
+        starve_first: u32,
+        attempts: std::sync::atomic::AtomicU32,
+        caps: Mutex<Vec<Option<u32>>>,
+    }
+
+    impl StarvingProvider {
+        fn new(starve_first: u32) -> Self {
+            StarvingProvider {
+                starve_first,
+                attempts: std::sync::atomic::AtomicU32::new(0),
+                caps: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StarvingProvider {
+        fn id(&self) -> &str {
+            "starving"
+        }
+        async fn complete_ref(
+            &self,
+            req: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            self.caps.lock().unwrap().push(req.max_output_tokens);
+            let starved = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                < self.starve_first;
+            Ok(CompletionResult {
+                text: if starved {
+                    String::new()
+                } else {
+                    "RECOVERED SUMMARY".into()
+                },
+                tool_calls: vec![],
+                usage: CompletionUsage::reported_zero(),
+                model: "starving".into(),
+                cost_usd: 0.0001,
+                finish_reason: starved.then_some(stella_protocol::FinishReason::Length),
+                upstream_provider: None,
+            })
+        }
+    }
+
+    /// [`summarize`] with the caller owning the health latch, returning the
+    /// reported spend — what the #2503 witnesses assert on.
+    async fn summarize_owning_health(
+        engine: &Engine<'_>,
+        messages: &mut Vec<CompletionMessage>,
+        health: &mut SummarizerHealth,
+    ) -> f64 {
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let cost = engine
+            .summarize_overflow_span(
+                messages,
+                &mut budget,
+                100_000,
+                1.0,
+                health,
+                0,
+                None,
+                &events,
+            )
+            .await;
+        drop(rx);
+        cost
+    }
+
+    /// #2503 witness: the summarizer's cap carries reasoning headroom over
+    /// its written contract, a provably starved response is retried once at
+    /// `STARVED_RETRY_CAP`, the retry's summary is applied, and the give-up
+    /// latch counts nothing — a starved call that recovered made progress.
+    ///
+    /// Fails on base three ways: the first dispatch carries a bare
+    /// `Some(1_200)`, no second dispatch happens, and the empty reply
+    /// records a health failure that latches here.
+    #[tokio::test]
+    async fn a_starved_summarizer_is_retried_with_room_and_never_latches() {
+        let provider = StarvingProvider::new(1);
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
+            active: vec![],
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        messages.extend((0..6).map(|i| filler(&format!("a{i}"))));
+        let mut health = SummarizerHealth::default();
+        // One failure short of the latch: counting the starved attempt as a
+        // failure would disable compaction for the rest of the turn, which is
+        // exactly the conversion of a one-call problem into a doomed turn
+        // this witness exists to forbid.
+        health.record_failure();
+
+        let cost = summarize_owning_health(&engine, &mut messages, &mut health).await;
+
+        assert_eq!(
+            *provider.caps.lock().unwrap(),
+            vec![
+                Some(crate::starvation::with_reasoning_headroom(1_200)),
+                Some(crate::starvation::STARVED_RETRY_CAP),
+            ],
+            "the contract reaches the wire padded with thinking room, and the \
+             retry buys real room — re-sending the same cap would only starve \
+             again"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content.contains("RECOVERED SUMMARY")),
+            "the retry's summary is applied, not discarded as \"the model had \
+             nothing to say\""
+        );
+        assert_eq!(
+            health.consecutive_failures, 0,
+            "recovery resets the latch; even counting the starved attempt \
+             would have latched it from here"
+        );
+        assert!(
+            (cost - 0.0002).abs() < f64::EPSILON,
+            "both attempts are paid calls and the reported spend must say so: {cost}"
+        );
+    }
+
+    /// The retry is bought exactly once: a summarizer that starves again at
+    /// the raised cap records ONE latch failure for the round and leaves the
+    /// context intact — more room was tried and did not help, so this is the
+    /// give-up latch's business after all.
+    #[tokio::test]
+    async fn a_retry_that_starves_again_records_one_failure_and_stops() {
+        let provider = StarvingProvider::new(u32::MAX);
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
+            active: vec![],
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        messages.extend((0..6).map(|i| filler(&format!("a{i}"))));
+        let before = messages.clone();
+        let mut health = SummarizerHealth::default();
+
+        let cost = summarize_owning_health(&engine, &mut messages, &mut health).await;
+
+        assert_eq!(
+            provider.caps.lock().unwrap().len(),
+            2,
+            "one retry, never a loop — the second emptiness is not worth a \
+             third call"
+        );
+        assert_eq!(
+            health.consecutive_failures, 1,
+            "the starved-then-retried round is one non-progress result, not two"
+        );
+        assert_eq!(messages, before, "context left intact");
+        assert!(
+            (cost - 0.0002).abs() < f64::EPSILON,
+            "the superseded attempt's spend is still reported: {cost}"
         );
     }
 }
