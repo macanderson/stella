@@ -255,7 +255,7 @@ fn a_record_bullet_resolves_to_its_handle_sigil_included() {
     // The volatile record channel renders `- <statement> ^<handle>` with an
     // optional ` [enforced]` marker (records::render::bullet). The handle —
     // sigil included — is the id the block row carries, because it is the
-    // exact string `cite_memory` accepts for a record: the join from a
+    // exact string the citation ledger stores for a record: the join from a
     // rendered record to its citation works verbatim, which is what makes
     // ContextUseKind::Cited reachable for directives at all.
     let content = recall_message(

@@ -137,8 +137,8 @@ CREATE INDEX idx_memory_kind ON memory(kind);
 /// V3 — evict the code graph's tables from `context.db`. Historically the
 /// tree-sitter index shared this one file (`stella-graph`'s original
 /// single-file design, prefixing its tables `code_graph_`); it now lives in its
-/// own `.stella/private/codegraph.db`, which every consumer (`graph_query`, the CGP
-/// `GraphProvider`) reads. Any `code_graph_*` tables still in `context.db` are
+/// own `.stella/private/codegraph.db`, which every consumer (the `stella
+/// search` CLI, the CGP `GraphProvider`) reads. Any `code_graph_*` tables still in `context.db` are
 /// orphaned duplicates no code reads or updates — dropping them removes the
 /// "two databases hold the code graph" duplication. Children (FK to
 /// `code_graph_files`) are dropped first. `IF EXISTS` so a fresh store is a

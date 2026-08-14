@@ -318,8 +318,9 @@ pub fn scrub_sensitive_std_env(command: &mut std::process::Command) {
 /// hook must not re-aim the child's git at the outer repo) and
 /// [`FORCED_COLOR_ENV_VARS`] (output goes to a captured pipe, never a
 /// terminal). One helper so a new spawn path cannot pick up the credential
-/// scrub and silently miss the other two — `bash`, `start_process`, and the
-/// hook runner did exactly that.
+/// scrub and silently miss the other two — the workspace's two spawn paths
+/// (the custom-tool runner and the hook runner) each did exactly that in
+/// turn.
 pub fn scrub_spawn_env(command: &mut tokio::process::Command) {
     scrub_spawn_env_except(command, &[]);
 }
@@ -336,8 +337,8 @@ pub fn scrub_spawn_env_except(command: &mut tokio::process::Command, preserved_n
 ///
 /// It exists because the sync spawn paths previously had only
 /// [`scrub_sensitive_std_env`] available, which is exactly the partial
-/// application [`scrub_spawn_env`] documents as the mistake `bash`,
-/// `start_process` and the hook runner each made in turn. A sync caller that
+/// application [`scrub_spawn_env`] documents as the recurring mistake its
+/// own doc names. A sync caller that
 /// missed [`GIT_REPO_ENV_VARS`] would read a *surrounding* repository — an
 /// ambient `GIT_DIR` silently re-aims every `git` child — and report its
 /// branches as the workspace's own.

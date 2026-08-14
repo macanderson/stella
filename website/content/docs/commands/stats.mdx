@@ -9,10 +9,6 @@ Read back what your runs actually cost. `stella stats` summarizes cost, tokens, 
 
 ```bash
 stella stats [--format <text|json|csv>] [--provider <id>]
-stella stats graph [--format <text|json|csv>] [--limit <N>]
-                   [--workspace <DIR>]... [--scan <DIR>] [--scan-depth <N>]
-                   [--save-baseline <FILE>] [--label <TEXT>]
-                   [--baseline <FILE>] [--fail-on-regression]
 stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [--dry-run]
 ```
 
@@ -92,120 +88,6 @@ stella stats --format json | jq '.rows[] | select(.cache_hit_rate < 0.2) | {prov
 <Callout type="info">
 The store is a real SQLite file. Beyond `stella stats` you can query it directly with any SQLite client — see [Telemetry &amp; budget](/docs/telemetry).
 </Callout>
-
-## Code-graph retrieval health — `stella stats graph`
-
-The code graph only pays for itself if the agent reaches for it *and* gets an answer.
-`stella stats graph` reports both, from the same local store:
-
-```bash
-stella stats graph
-```
-
-```
-graph_query retrieval health (from .stella/private/store.db)
-
-OP              CALLS  RESOLVED  UNRESOLVED  OUT-OF-ROOT  NOT-INDEXED  FAILED  RESOLVED%
-definitions        12         9           3            0            0       0      75.0%
-neighbors           4         2           0            2            0       0      50.0%
-TOTAL              16        11           3            2            0       0      68.8%
-
-adoption: graph_query 16 of 84 structural searches (graph_query + grep + glob) = 19.0%
-```
-
-<CardGrid size="md">
-  <OptionCard name="RESOLVED%">
-    The health metric: what share of `graph_query` calls came back with frames rather
-    than a miss. An empty answer is a perfectly *successful* call, so a plain call count
-    cannot see this — a falling resolve rate is how a tool teaches the model to stop
-    asking.
-  </OptionCard>
-  <OptionCard name="OUT-OF-ROOT">
-    Queries aimed at a path outside the indexed workspace root — a sibling checkout, or a
-    session rooted on a package inside a larger monorepo. Re-indexing cannot fix these;
-    re-rooting the session on the enclosing tree can.
-  </OptionCard>
-  <OptionCard name="NOT-INDEXED">
-    Queries aimed at a file type the graph does not carry (Markdown, TOML, YAML…).
-    Also unfixable by re-indexing — use `grep` and `read_file` for those.
-  </OptionCard>
-  <OptionCard name="adoption">
-    `graph_query` calls as a share of `graph_query + grep + glob`. `bash` is deliberately
-    excluded from the denominator: most shell calls are builds and git, not searches.
-  </OptionCard>
-</CardGrid>
-
-<CardGrid size="md">
-  <OptionCard name="--limit <N>" defaultValue="500">
-    How many recent `graph_query` answers to classify. The adoption counts always come
-    from the full projection; only the resolve-rate window is bounded.
-  </OptionCard>
-  <OptionCard name="--format <text|json|csv>" defaultValue="text">
-    `json` emits the whole report as one object (per-op rows, the total, and the adoption
-    counts); `csv` emits the per-op rows plus a `TOTAL` row.
-  </OptionCard>
-  <OptionCard name="--workspace <DIR>">
-    Read a workspace other than the current directory. Repeatable — every named workspace
-    is pooled into one report. A path with no `store.db` is an error, not a zero.
-  </OptionCard>
-  <OptionCard name="--scan <DIR>" defaultValue="depth 4">
-    Find every workspace under `DIR` and pool them. A benchmark run is N task workspaces
-    with N stores; this is how they become one run-level number.
-  </OptionCard>
-</CardGrid>
-
-### Measuring a change
-
-"Retrieval got better" is a claim about two observations, so the report can be saved and
-diffed. Capture a baseline before the change:
-
-```bash
-stella stats graph --scan ./runs/before --save-baseline graph-before.json \
-  --label "v0.6.76, pre-change"
-```
-
-Then compare a later run against it:
-
-```bash
-stella stats graph --scan ./runs/after --baseline graph-before.json
-```
-
-```text
-graph_query retrieval: current vs baseline
-
-METRIC                   BASELINE    CURRENT      DELTA
-adoption                     4.6%      21.3%     +16.7pp
-resolved-query rate         88.0%      86.4%      -1.6pp
-structural searches           108        413       +305
-workspaces pooled               1         60
-
-baseline: v0.6.76, pre-change
-IMPROVED: adoption rose 16.7 points (4.6% → 21.3%) and the resolved-query rate held
-```
-
-The verdict is graded, not left to the reader:
-
-<CardGrid size="md">
-  <OptionCard name="IMPROVED">
-    Adoption rose by more than a percentage point and the resolve rate held.
-  </OptionCard>
-  <OptionCard name="RESOLVE-REGRESSED">
-    Adoption held or rose, but the resolved-query rate fell more than five points.
-    Queries made more often but landing less often is the tool getting *worse* at the job
-    adoption is read as evidence for — so this never grades as a win.
-  </OptionCard>
-  <OptionCard name="REGRESSED">
-    Adoption fell by more than a percentage point.
-  </OptionCard>
-  <OptionCard name="INCONCLUSIVE">
-    Fewer than 30 structural searches on one side. An adoption ratio over that few calls
-    swings by tens of points on one more `grep`, so it is refused rather than graded.
-  </OptionCard>
-</CardGrid>
-
-Add `--fail-on-regression` to make a benchmark or CI job exit non-zero on either
-regression verdict. It is off by default: reporting a regression and failing on one are
-different requests.
 
 ## Bounding the store — `stella stats prune`
 

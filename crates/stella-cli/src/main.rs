@@ -100,7 +100,6 @@ mod signals;
 mod skill_manager;
 mod startup;
 mod stats;
-mod stats_graph;
 mod storage_cmd;
 mod subagent;
 mod subsession;
@@ -778,7 +777,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
-                Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
             }
             .map_err(failure::CliFailure::from);
         }
@@ -984,8 +982,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER
     // settings so it can only narrow what they already allowed. `narrow_with`
     // is the intersection, not a key-level merge, which is what lets the
-    // read-only idiom `*:off,read_file:on` mean what it says while still
-    // being unable to re-enable anything an org policy denied.
+    // read-only idiom `*:off,get_environment:on` mean what it says while
+    // still being unable to re-enable anything an org policy denied.
     if let Some(spec) = cli.globals.tools.as_deref() {
         let scope = stella_tools::policy::ToolPolicy::parse_spec(spec)
             .map_err(|e| format!("--tools: {e}"))?;

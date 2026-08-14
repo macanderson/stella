@@ -1269,9 +1269,8 @@ pub struct HunkProposal {
     /// call raises one review, but the review is the host's object, not the
     /// model's.
     pub id: String,
-    /// The tool whose write is being reviewed (`apply_edits`, `edit_file`,
-    /// `write_file`) — the card names it so a reviewer knows what declining
-    /// costs.
+    /// The tool whose write is being reviewed (a custom or MCP write tool) —
+    /// the card names it so a reviewer knows what declining costs.
     pub tool: String,
     /// Every proposed hunk, in file-then-position order.
     pub hunks: Vec<ProposedHunk>,

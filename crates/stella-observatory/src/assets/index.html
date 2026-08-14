@@ -1017,11 +1017,6 @@ footer b{color:var(--identity);font-weight:600}
         <div id="rules-promotions"></div>
       </div>
     </div>
-    <div class="card">
-      <div class="kick">.stella/explorations · shared across every session on this workspace</div>
-      <h2>Exploration maps · freshness re-hashed against the working tree</h2>
-      <div class="scroll-x" id="mem-explorations"></div>
-    </div>
   </section>
 
   <!-- ══ SELF-IMPROVE ══════════════════════════════════════════════════ -->
@@ -2527,43 +2522,7 @@ function renderMcpTab(cfg) {
 /* ── memory & rules tab ──────────────────────────────────────────────── */
 /* The human-facing twin of the startup index every session reads: which
    maps exist, and whether the tree still matches the manifest they pinned. */
-const FRESHNESS = {
-  fresh: ["ok", "✓ fresh"],
-  drifted: ["warn", "◌ drifted"],
-  unknown: ["dim", "· unknown"],
-};
-function renderExplorations(rows) {
-  rows = rows ?? [];
-  if (!rows.length) {
-    $("mem-explorations").innerHTML = `<div class="empty">No exploration maps recorded.<br>
-      stella writes one to <code>.stella/explorations/</code> when a session maps a slice of
-      this codebase; every other session reads it instead of re-reading the tree.</div>`;
-    return;
-  }
-  $("mem-explorations").innerHTML = `<table><thead><tr>
-    <th scope="col">map</th><th scope="col">freshness</th><th scope="col" class="num">files</th>
-    <th scope="col">drift</th><th scope="col" class="num">recorded</th></tr></thead><tbody>` +
-    rows.map(r => {
-      const [cls, label] = pick(FRESHNESS, r.freshness, ["dim", String(r.freshness ?? "unknown")]);
-      const drifted = r.changed ?? [], missing = r.missing ?? [];
-      const drift = [
-        drifted.length ? `${drifted.length} changed` : "",
-        missing.length ? `${missing.length} missing` : "",
-      ].filter(Boolean).join(" · ") || "none";
-      return `<tr>
-        <td class="main" title="${esc(r.slice ?? "")}">${esc(r.title || r.slice || "—")}
-          ${r.status === "draft"
-            ? `<span class="badge dim" title="a session is exploring this slice right now">◐ in flight · pid ${esc(r.pid)}</span>`
-            : ""}</td>
-        <td><span class="badge ${cls}">${esc(label)}</span></td>
-        <td class="num">${fmtInt(r.manifest_files)}</td>
-        <td class="wrap-txt" style="max-width:420px;color:var(--text-2)"
-            title="${esc(drifted.concat(missing).join("\n"))}">${esc(drift)}</td>
-        <td class="num">${r.created_at_ms ? agoMs(r.created_at_ms) : "—"}</td></tr>`;
-    }).join("") + `</tbody></table>`;
-}
-function renderMemoryTab(files, rules, explorations) {
-  renderExplorations(explorations);
+function renderMemoryTab(files, rules) {
   if (!changed("memtab", files ?? [], rules ?? null, D.memory?.citations ?? [])) return;
   $("mem-files").innerHTML = (files ?? []).length
     ? files.map(f => `<div class="mem-card">
@@ -3658,8 +3617,6 @@ async function openSession(id, quiet) {
       ${calls ? (100 * errs / calls).toFixed(0) : 0}% tool errors ·
       ${cachePct(read, miss)} cache hits${
       avgRating ? ` · self-rated ${esc(avgRating)}/10 over ${fmtInt(rated.length)} turns` : ""}</div>
-    ${reg?.exploring?.length ? `<div class="feed-item"><b>Exploring</b> — ${
-      reg.exploring.map(esc).join(", ")}</div>` : ""}
     ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
       turns only; older turns were clipped from this view.</div>` : ""}`;
   $("ses-turns").innerHTML = turns.length ? `<table><thead><tr>
@@ -3692,13 +3649,10 @@ async function openSession(id, quiet) {
       <td class="num">${fmtInt(m.calls)}</td>
       <td>${m.last_called_at_ms ? agoMs(m.last_called_at_ms) : "—"}</td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No MCP calls in this session.</div>`;
-  const lessons = d?.lessons ?? [], writes = d?.memory_writes ?? [], cites = d?.memory ?? [];
-  $("ses-improve").innerHTML = (lessons.length || writes.length || cites.length) ? `
+  const lessons = d?.lessons ?? [], cites = d?.memory ?? [];
+  $("ses-improve").innerHTML = (lessons.length || cites.length) ? `
     ${lessons.map(l => `<div class="feed-item"><b>lesson</b>
       <span class="badge dim">${esc(l.kind)}</span> — ${esc(clip(l.content, 200))}</div>`).join("")}
-    ${writes.map(w => `<div class="feed-item"><b>memory kept</b> —
-      ${esc(w.slug || "(unnamed)")}${w.ok ? "" : ` <span class="badge bad">failed</span>`}
-      <span class="when">turn ${fmtInt(w.execution_id)}</span></div>`).join("")}
     ${cites.map(c => `<div class="feed-item"><b>cited</b> — ${esc(c.memory_id)} ·
       ${fmtInt(c.citations)}×${c.avg_useful_score != null
         ? ` · useful ${num(c.avg_useful_score).toFixed(1)}` : ""}${
@@ -3790,10 +3744,10 @@ async function loadTab(tab, force) {
       renderMcpTab(data);
     } else if (tab === "memory") {
       const data = cached ?? await Promise.all([
-        api("/api/memories"), api("/api/rules"), api("/api/explorations"),
+        api("/api/memories"), api("/api/rules"),
       ]);
       lazyCache[key] = data;
-      renderMemoryTab(data[0], data[1], data[2]);
+      renderMemoryTab(data[0], data[1]);
     } else if (tab === "improve") {
       const data = cached ?? await Promise.all([
         api("/api/skills"), api("/api/context-lifecycle"),

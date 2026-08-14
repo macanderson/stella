@@ -103,7 +103,7 @@ destination, and which a client written from it gets wrong:
   is unauthenticated — a kubelet has no bearer token. `/v1/metrics` **does**
   exist and is authenticated.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
-  `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
+  `call_id` on a `tool_start` / `scope_review` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
   variants whose ids are `<port>-<instance>-<counter>` (`prov-1-3`, `tool-0-0`,
   …) and are opaque to the host — echo them back, never parse them. This is the
@@ -586,8 +586,9 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
   engine's `RemoteToolExecutor::execute` awaits a per-`request_id` oneshot.
   **Not the same thing as** the `call_id` on a `tool_start` `AgentEvent`: that
   id is the model's, addresses the tool call inside the transcript, and is not
-  what a resolve POST is keyed by. `scope_review` / `ask_user` have no reverse
-  endpoint at all yet.
+  what a resolve POST is keyed by. `scope_review` has no reverse endpoint at
+  all yet; the wire vocabulary's `ask_user` event has no producer in the
+  engine, so a serve host never receives one.
 - **Provider deltas (built, #1165):** a host that streams its model call POSTs
   fragment batches to `/v1/turns/{id}/provider-delta`, keyed by the same
   `request_id` its eventual `provider-result` answers.

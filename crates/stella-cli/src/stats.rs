@@ -65,7 +65,6 @@ use stella_store::usage::UsageStore;
 use stella_store::{CacheCallGap, Store, StorePrunePolicy, StorePruneReport, UsageStatsRow};
 
 use crate::query_format::{Rows, StatsFormat};
-use crate::stats_graph::GraphArgs;
 use crate::usage_cmd::parse_age_window;
 
 /// Below this hit rate (with enough turns to have established a cache to
@@ -83,10 +82,6 @@ pub enum StatsCmd {
     /// calls, context blocks, receipts. Replication-safe by default — never
     /// drops an execution whose telemetry has not reached the usage hub
     Prune(PruneArgs),
-
-    /// Code-graph retrieval health: how often graph_query is reached for,
-    /// and what share of those queries actually resolve
-    Graph(GraphArgs),
 }
 
 /// Flags for `stella stats prune` and its alias `stella storage prune`.
