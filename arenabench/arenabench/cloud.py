@@ -68,6 +68,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from . import balance
 from .model import MatchSpec, slugify
 from .registry import DEFAULT_REGISTRY, known_task_names
 from .sut import is_full_sha, is_safe_ref
@@ -1129,6 +1130,27 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
     queue = select_queue(args.burst)
     plans = plan_trials(spec)
 
+    # Credit exhaustion is the most expensive defect recorded here — three
+    # runs killed or maimed by money running out AFTER submission, when the
+    # trials it kills are already dispatched and score as operational
+    # aborts. Checked last, because it needs the trial count the plan
+    # produces, and still before anything is uploaded or submitted.
+    key = balance.openrouter_key()
+    reading = balance.fetch_openrouter_balance(key) if key else None
+    money = balance.verdict(
+        reading.remaining_usd if reading else None,
+        len(plans),
+        getattr(args, "est_cost_per_trial", None),
+    )
+    print(f"balance   : {money.message}")
+    if money.blocks and not getattr(args, "ignore_balance", False):
+        print(
+            f"error: {money.message}. Add credit, or pass --ignore-balance to "
+            "submit anyway.",
+            file=sys.stderr,
+        )
+        return 2
+
     print(f"run       : {run_id}")
     print(f"match     : {spec.name}")
     print(f"queue     : {queue}" + ("  (spot — not for measured comparisons)"
@@ -1419,6 +1441,18 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument("--artifacts", action="store_true",
                      help="also download the full artifact tree (can be large)")
     run.add_argument("--out", help="local directory for downloaded results")
+    run.add_argument(
+        "--est-cost-per-trial", type=float, metavar="USD",
+        help="your own estimate of what one trial costs, used to price the run "
+             "against the gateway balance before submitting. There is no "
+             "default: a trial's cost is a fact about the panel, model and arm, "
+             "and a number invented here would later be quoted as measured",
+    )
+    run.add_argument(
+        "--ignore-balance", action="store_true",
+        help="submit even when the gateway balance cannot fund the run — the "
+             "trials the money kills will score as operational aborts",
+    )
     gate_arguments(run)
     _common_aws_arguments(run)
     run.set_defaults(func=_cmd_cloud_run)
