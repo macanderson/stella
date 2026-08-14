@@ -45,3 +45,16 @@ minimumReleaseAgeExclude:
 overrides:
   postcss: ">=8.5.23"
   sharp: ">=0.35.0"
+  # nanoid <3.3.18: a custom alphabet with a non-integer or zero `size` makes
+  # the generator loop indefinitely (GHSA high, patched at 3.3.18). It arrives
+  # transitively through postcss@8.5.23, which both `next` and
+  # `@tailwindcss/postcss` depend on as `nanoid@^3.3.16` — a range that already
+  # admits the patched version, so nothing here needs a dependency bump. The
+  # floor exists because a lockfile resolved before 3.3.18 published stays on
+  # 3.3.17 forever otherwise, which is exactly what happened: Dependabot could
+  # not raise it on its own and its security job failed on every run.
+  #
+  # Caret, not `>=`, unlike its neighbours above: nanoid 4 went ESM-only and
+  # changed its API, and postcss 8 calls the 3.x one. A `>=3.3.18` floor here
+  # resolves to 6.x and breaks the build, so the ceiling is load-bearing.
+  nanoid: "^3.3.18"
