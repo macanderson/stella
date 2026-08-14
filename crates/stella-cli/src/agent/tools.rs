@@ -493,9 +493,8 @@ pub(crate) struct GitDiagnosticRunner {
     /// The commit the session started on, resolved eagerly at construction.
     ///
     /// A bare `git diff` reports only unstaged working-tree changes, so an
-    /// agent that *commits* its work — with `repo_commit`, a tool this very
-    /// registry ships — leaves a clean tree and reads as having changed
-    /// nothing. Verification then tells it "no changes were made to the
+    /// agent that *commits* its work — through a custom or MCP commit tool —
+    /// leaves a clean tree and reads as having changed nothing. Verification then tells it "no changes were made to the
     /// repository" while the files sit on disk, and the honest conclusion
     /// available to the model is that its work was lost. Diffing against the
     /// starting commit instead counts staged, unstaged, and committed work

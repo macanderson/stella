@@ -16,8 +16,8 @@ stella-protocol = { path = "../stella-protocol" }
 stella-home = { path = "../stella-home" }
 # The single "is a human present to answer?" derivation (#3036) — the
 # credential prompt's interactive gate reads it rather than re-deriving the
-# fact from only stdin, which `stella-cli`'s ask_user tool and approvals
-# already learned is not enough on its own.
+# fact from only stdin, which `stella-cli`'s approval prompts already
+# learned is not enough on its own.
 stella-tty = { path = "../stella-tty" }
 base64.workspace = true
 serde.workspace = true

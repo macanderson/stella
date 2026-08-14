@@ -42,9 +42,8 @@ one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
 (#1613). Both now come from `stella-core`. The unified differ took the same
 exit before ever becoming a copy: `/api/execution-context-diff` links
 `stella-diff`, the zero-dependency leaf crate the CLI's `inspect::diff` was
-extracted into (#1511). Four copies remain: `project_id_for`
+extracted into (#1511). Three copies remain: `project_id_for`
 ([`src/global.rs`](src/global.rs)) still mirrors the store's,
-`/api/explorations` re-hashes exploration manifests itself,
 `sessions::pid_alive` ([`src/sessions.rs`](src/sessions.rs)) mirrors
 `stella_store::sessions::pid_alive` (one `kill(pid, 0)` probe, including the
 pid_t-overflow-reads-as-dead rule), and
@@ -77,7 +76,7 @@ free one). This crate builds no binary —
 | [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
 | [`src/sessions.rs`](src/sessions.rs) | The sessions plane: the `~/.stella/sessions/` registry (with the read-time pid-liveness downgrade) merged with per-session store rollups (`/api/sessions`, `/api/session`), plus the per-execution behavioural-tendencies fold (`/api/execution-tendencies`) and the per-turn workspace diff replay (`/api/session-turn-diff`, #1870 — served from the `session_turn_diffs` projection the owning session precomputed; the observatory never opens the work journal's bare repo). |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
-| [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
+| [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain — plus `redact`, the credential scrubber. |
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
 | [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. Sections are addressed by fragment: `#<tab>`, or `#<tab>/<arg>` for a tab that addresses one record. `#transcript/<execution>` is the only argument-taking route today, and its tab stays hidden until a turn is open. |
@@ -209,19 +208,6 @@ neither routed through `redact`. A token passed on the command line
 (`--token=…`) or in a query string (`https://mcp.example/sse?key=…`) is a
 credential sitting in a field the scrubber does not look at. Anything new that
 reaches the browser must be audited the same way before it lands.
-
-### The one input this crate does not own: exploration manifests
-
-Everything else here is read out of a store stella wrote. An exploration record
-is different — it travels with the tree and can be *ingested* from another
-machine, so its `path → sha256` manifest is untrusted text.
-`fsview::is_workspace_relative` refuses any key that is absolute or contains
-`..` before `/api/explorations` opens it: without it, a manifest keyed
-`"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root read whose
-verdict reports whether that file exists and whether its bytes hash to a
-chosen value. The check is lexical, so a symlink *inside* the workspace
-pointing out of it is still followed — the reason to keep the manifest a
-list of paths rather than anything more expressive.
 
 ### The palette is a mirror, and one data-mark step is deliberately unused
 

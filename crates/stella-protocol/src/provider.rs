@@ -65,8 +65,8 @@ pub trait ToolCallObserver: Send + Sync {
     /// payload on purpose: the bytes are partial JSON that only
     /// [`Self::tool_call_streamed`] may deliver once whole and parsed — this
     /// is purely a liveness signal, so a generation whose entire output is
-    /// one large tool call (a `write_file` of a whole document, say) still
-    /// registers as *producing* against an idle deadline that would
+    /// one large tool call (a whole document in one write argument, say)
+    /// still registers as *producing* against an idle deadline that would
     /// otherwise see total silence and kill a healthy call as stalled.
     ///
     /// Same best-effort contract as the other deltas, and a default no-op so

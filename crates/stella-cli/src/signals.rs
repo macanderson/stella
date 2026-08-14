@@ -33,9 +33,8 @@
 //!
 //! - every RAII guard on the interrupted work future's stack runs, inside a
 //!   live runtime — that is what reaps `setsid` child process groups
-//!   (`GroupKillGuard`), releases fleet claim locks (`ClaimGuard`), removes a
-//!   `verify_done` shadow worktree (`ShadowDirGuard`), and stops a detached
-//!   context warm;
+//!   (`GroupKillGuard`), releases fleet claim locks (`ClaimGuard`), and stops
+//!   a detached context warm;
 //! - the process exits `128 + signum` (130 for SIGINT, 143 for SIGTERM), so a
 //!   script wrapping `stella run` can tell "the user stopped this" from "this
 //!   failed";
@@ -49,9 +48,9 @@
 //! What it does **not** guarantee:
 //!
 //! - nothing awaits during teardown. A cleanup that genuinely needs an `await`
-//!   — `verify_done`'s `git worktree` unregistration, `run_best_of_n`'s
-//!   candidate-workspace removal — does not run, by construction; those
-//!   resources are reclaimed by a prune on the next start instead;
+//!   — `run_best_of_n`'s candidate-workspace removal — does not run, by
+//!   construction; those resources are reclaimed by a prune on the next
+//!   start instead;
 //! - it only covers work driven through [`block_on_interruptible`]. Short
 //!   local commands that build their own runtime (`stella models refresh`)
 //!   create no reapable resources and are deliberately not wrapped;

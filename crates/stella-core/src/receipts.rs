@@ -422,8 +422,8 @@ fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
 /// `memory_id` is worse than an absent one — it is the join key the
 /// write→citation loop reads, so a mis-parse would attribute a turn's use to
 /// the wrong record. A record line's id is the `^handle` **with its sigil**,
-/// which is also the exact string `cite_memory` accepts for records — the join
-/// works verbatim, and the sigil keeps the id disjoint from every `nod_…`.
+/// so the join works verbatim and the sigil keeps the id disjoint from every
+/// `nod_…`.
 fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
     let Some(first) = segment.lines().next() else {
         return (None, None);

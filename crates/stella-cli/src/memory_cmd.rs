@@ -1,7 +1,8 @@
 //! `stella memory` — the human window into the memory-citation loop.
 //!
 //! `list` ranks the project's memories most-cited first, joining the
-//! citation feedback the agent recorded (`cite_memory` → `.stella/private/store.db`)
+//! citation feedback recorded in `.stella/private/store.db` (`memory_citations`
+//! — a table no shipped tool currently writes new rows into)
 //! with the memories themselves (`.stella/private/context.db`), and flags the ones
 //! that have earned rule promotion. `promote <id>` publishes an eligible
 //! memory as a TOML context record under `.stella/rules/` (ADR 0011) — the
@@ -24,9 +25,8 @@ use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
 /// `stella memory` subcommands — the inspection and promotion surface of the
-/// memory-citation loop (agents cite the memories that informed a turn via
-/// the `cite_memory` tool; the citations aggregate into the eligibility gate
-/// `promote` enforces).
+/// memory-citation loop (recorded citations of the memories that informed a
+/// turn aggregate into the eligibility gate `promote` enforces).
 #[derive(Subcommand)]
 pub enum MemoryCmd {
     /// List memories ranked by citation count, with average usefulness,

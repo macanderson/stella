@@ -245,9 +245,10 @@ async fn run_pipeline_one_shot(
     let ask = human_is_present(format == OutputFormat::Text);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
-    // Auto-build + live-refresh the code graph in the background so the
-    // pipeline's localize step can reach for `graph_query` once it is ready.
-    // Status goes to stderr — stdout may be machine-readable JSON.
+    // Auto-build + live-refresh the code graph in the background so recall's
+    // code-graph anchors (and `stella search`) have an index to answer from
+    // once it is ready. Status goes to stderr — stdout may be
+    // machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
         Box::new(|line| eprintln!("  {line}")),

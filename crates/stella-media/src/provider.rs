@@ -146,14 +146,12 @@ pub struct ImageRequest {
     ///
     /// **Not yet honoured by the bundled adapters**, which submit and return
     /// exactly one candidate and price the artifact with
-    /// [`MediaCapabilities::estimate_image`]`(1, …)`. The spend gate, though,
-    /// is quoted [`MediaCapabilities::estimate_image`]`(n, …)` by the
-    /// `generate_image` tool in `stella-tools`, so a caller passing `n > 1`
-    /// approves an n× charge and then receives one image billed 1×. That is
-    /// the safe direction to be wrong in — a submission can never spend more
-    /// than the gate approved — but the quote overstates the charge, so
-    /// multi-candidate generation is a recorded follow-up, not a supported
-    /// flag.
+    /// [`MediaCapabilities::estimate_image`]`(1, …)`. A spend gate quoting
+    /// [`MediaCapabilities::estimate_image`]`(n, …)` therefore approves an
+    /// n× charge for one image billed 1×. That is the safe direction to be
+    /// wrong in — a submission can never spend more than the gate approved —
+    /// but the quote overstates the charge, so multi-candidate generation is
+    /// a recorded follow-up, not a supported flag.
     pub n: u32,
     /// A short slug used to label the resulting artifact; the caller derives
     /// it from the prompt.

@@ -398,17 +398,21 @@ pub(crate) fn enforce_workspace_rules(
 
 /// Map a registry tool name to the canonical vocabulary guards are authored
 /// in (`guard-tool: Bash|Write|Edit|Read|Delete`, `stella_core::rules::
-/// RuleGuard`). Unmapped names pass through unchanged, so a guard can still
-/// pin an exact registry tool (`guard-tool: grep`) and `*` matches all.
+/// RuleGuard`). No built-in carries these conventional names; a workspace
+/// custom tool that adopts one answers to the canonical guard vocabulary by
+/// construction, so a `guard-tool: Edit` rule is enforcement rather than a
+/// deny that silently never fires. Unmapped names pass through unchanged, so
+/// a guard can still pin an exact registry tool (a custom or `mcp__…` name)
+/// and `*` matches all.
 fn canonical_tool(name: &str) -> &str {
     match name {
         "bash" => "Bash",
         "read_file" => "Read",
         "write_file" => "Write",
-        // `apply_edits` is the transactional multi-file form of `edit_file`
-        // (#433) and the system prompt actively steers the model to prefer it,
-        // so it must answer to the same `guard-tool: Edit` rules — otherwise
-        // the recommended path is the unguarded one.
+        // `apply_edits` is the conventional transactional multi-file form of
+        // `edit_file` (#433), so it answers to the same `guard-tool: Edit`
+        // rules — a batch write must not be the unguarded spelling of the
+        // single-file one.
         "edit_file" | "apply_edits" => "Edit",
         "delete_file" => "Delete",
         other => other,
@@ -433,11 +437,11 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
         let input = &event.payload["input"];
         let command = input.get("command").and_then(|v| v.as_str());
         // A batch tool carries its paths inside its batch, not at `input.path`
-        // — `apply_edits` (#433) is `{"edits": [{"path": …}, …]}`. Reading only
-        // the single-path shape let one `apply_edits` call walk straight past
-        // every `guard-deny-path` rule, which is exactly the tool the system
-        // prompt tells the model to reach for. EVERY path in the call is
-        // checked; one violation denies the whole (transactional) call.
+        // — the conventional `apply_edits` shape (#433) is
+        // `{"edits": [{"path": …}, …]}`. Reading only the single-path shape
+        // once let a batch call walk straight past every `guard-deny-path`
+        // rule. EVERY path in the call is checked; one violation denies the
+        // whole (transactional) call.
         let mut paths: Vec<Option<&str>> = input
             .get("edits")
             .and_then(|v| v.as_array())

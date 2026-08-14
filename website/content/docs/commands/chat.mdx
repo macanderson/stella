@@ -76,8 +76,8 @@ fix the flaky login test           ← starts a separate sub-session
 <Callout type="info">
 A bare `⏎` **always** submits, even while an agent is busy — that is what makes the two
 behaviors above possible without waiting. The one exception is a **pending gate on the focused
-agent** (a scope review, a hunk review, or an `ask_user` question): there the submit answers the
-gate rather than steering or starting anything. Answer it first, then steer.
+agent** (a scope review, a hunk review, or a question the approvals plane put to you): there the
+submit answers the gate rather than steering or starting anything. Answer it first, then steer.
 </Callout>
 
 ### Reviewing a write hunk by hunk
