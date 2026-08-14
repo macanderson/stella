@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import Any
 
 from .model import MatchSpec, slugify
+from .registry import DEFAULT_REGISTRY, known_task_names
 from .sut import is_full_sha, is_safe_ref
 
 __all__ = [
@@ -1105,6 +1106,21 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
             "error: this match seats Stella "
             f"({', '.join(sut_seats(spec))}) but pins no SUT ref; the cloud "
             "runner has no local binary to fall back to. Pass --ref.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Refuse a phantom task before it becomes a Batch job that can only abort
+    # (#3255). Local-corpus check: `known_task_names` is empty when the dataset
+    # is not materialised here, and an empty corpus means "cannot tell", so a
+    # submitting host without the dataset on disk is unaffected rather than
+    # blocked.
+    phantoms = spec.unknown_tasks(known_task_names(DEFAULT_REGISTRY, spec.dataset))
+    if phantoms:
+        print(
+            f"error: {spec.dataset} has no such task(s): {', '.join(phantoms)}"
+            " — every one would dispatch a container that exits 1 and scores as"
+            " an operational abort. Fix the task list and resubmit.",
             file=sys.stderr,
         )
         return 2

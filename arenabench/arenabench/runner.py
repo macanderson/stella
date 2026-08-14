@@ -49,7 +49,7 @@ from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
 from .recorder import RecorderSupervisor
-from .registry import Dataset, Registry
+from .registry import Dataset, Registry, known_task_names
 from .snapshot import SnapshotSupervisor
 from .telemetry import (
     MetricsReader,
@@ -805,6 +805,13 @@ class MatchRunner:
         dataset = self.registry.get(spec.dataset)
         if dataset is None:
             raise ValueError(f"unknown dataset: {spec.dataset}")
+        phantoms = spec.unknown_tasks(known_task_names(self.registry, spec.dataset))
+        if phantoms:
+            raise ValueError(
+                f"{spec.dataset} has no such task(s): {', '.join(phantoms)} — "
+                "refusing the match rather than dispatching a trial that can "
+                "only abort (#3255)"
+            )
         match = Match(spec, dataset, self.workspace / "matches" / spec.id)
         # The spec is what a restart cannot rebuild from job directories alone
         # (names, colors, task order). `to_json` serializes seats through
