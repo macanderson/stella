@@ -50,8 +50,8 @@
 //! `VOYAGE_API_KEY` ambiently — a pre-existing, shipped contract this handoff
 //! does not change — so [`consume_at_startup`] re-exports it into the process
 //! environment once consumed. That is a strictly weaker guarantee than every
-//! other target gets: a spawned bash tool call inherits it, exactly as it
-//! would inherit a developer's own exported `VOYAGE_API_KEY`. What this
+//! other target gets: a subprocess a custom tool or hook spawns inherits it,
+//! exactly as it would inherit a developer's own exported `VOYAGE_API_KEY`. What this
 //! handoff still buys for it: it never touches Harbor's environment or
 //! `docker compose exec` argv, and it never enters the model-provider
 //! selection contract. Threading a typed, ambient-env-free path through

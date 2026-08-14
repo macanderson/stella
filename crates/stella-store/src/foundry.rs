@@ -30,7 +30,7 @@
 //! Issue #830 asks for the number of self-authored tools that pass a witness
 //! and then get **reused**, with tools that were authored and never called
 //! tracked as the cost. That is a fold over receipts the store already keeps
-//! (the `tool_calls` projection — see [`Store::tool_call_counts`]), not a
+//! (the `tool_calls` projection), not a
 //! counter this module has to maintain: a counter can drift from the log, and
 //! a fold cannot. [`Store::foundry_reuse`] joins each adoption against the
 //! calls recorded *after* it, so a name that meant something else before

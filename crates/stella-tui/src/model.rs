@@ -273,8 +273,8 @@ pub enum TranscriptEntry {
         /// marks these so overlap is visible, since `duration_ms` alone
         /// would read as ordinary post-stream latency.
         speculated: bool,
-        /// For a *successful* file-mutating tool
-        /// (`write_file`/`edit_file`/`delete_file`), the reference the
+        /// For a *successful* call of a conventionally-named file-mutating
+        /// tool (see `summarize::is_file_mutation`), the reference the
         /// renderer uses to show this call's diff inline. `None` for reads,
         /// non-file tools, and failed calls — which gates the inline diff to
         /// mutations that actually happened. The diff itself is never stored
@@ -620,7 +620,7 @@ impl SessionModel {
                 self.transcript.push(TranscriptEntry::ToolStart {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
-                    input: format_tool_input(&call.name, &call.input),
+                    input: format_tool_input(&call.input),
                     raw: cap_input_json(&call.input, INPUT_BUDGET),
                     path: tool_input_path(&call.input),
                 });

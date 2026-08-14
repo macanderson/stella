@@ -3,12 +3,12 @@
 //! [`super::adopt`], so the workspace's private fields stay reachable.
 //!
 //! Every other isolation property of a candidate workspace is structural
-//! (detached worktree, re-rooted tool registry, `O_NOFOLLOW` writes); the
-//! shell is the one capability that can still reach the real tree, because
-//! the bash tool is unconfined (#1300 removed the local sandbox). Until this
-//! module, that escape surfaced only when it happened to collide with the
-//! winner's adoption — an entire turn lost, attributed after the fact by
-//! [`super::adopt`]'s conflict forensics. This runs the same blob-signature
+//! (detached worktree, re-rooted tool registry, `O_NOFOLLOW` writes); a
+//! subprocess is the one capability that can still reach the real tree,
+//! because custom and MCP tools run unconfined (#1300 removed the local
+//! sandbox). Until this module, that escape surfaced only when it happened
+//! to collide with the winner's adoption — an entire turn lost, attributed
+//! after the fact by [`super::adopt`]'s conflict forensics. This runs the same blob-signature
 //! comparison *proactively*, immediately after each seal, so the run fails
 //! the escaping candidate in the round that caused it.
 //!

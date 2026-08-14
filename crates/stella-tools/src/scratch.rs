@@ -38,8 +38,8 @@ use crate::registry::Tool;
 /// into the same directory are deliberately uncapped.
 const MAX_SAVE_BYTES: usize = 1024 * 1024;
 
-/// Byte cap on one `get_state` page — mirrors the shared 30 KB page cap
-/// used by `read_output`.
+/// Byte cap on one `get_state` page — large enough for any reasonable
+/// scratch note, small enough that one page never swamps a model context.
 const PAGE_CAP: usize = 30 * 1024;
 
 /// The session scratch directory. Owned by the tool set; the `TempDir`

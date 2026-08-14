@@ -27,9 +27,10 @@
 //! ## What it does not see
 //!
 //! Only the tools [`crate::claims::transient_lane`] routes to the commit lane
-//! are observed — `repo_commit` today. A commit made some other way in a
-//! shared tree (a `git commit` through the shell, which the default
-//! configuration does not register at all, or one made by a sub-agent running
+//! are observed — the conventional `repo_commit` name, which no built-in
+//! carries; a workspace custom tool that adopts it is observed by
+//! construction. A commit made any other way in a shared tree (an MCP or
+//! custom tool under another name, or one made by a sub-agent running
 //! against the raw registry) is left OUT of the ledger rather than stamped
 //! onto whichever task happened to be open. That is the honest direction of
 //! the two: an under-reported commit costs a `--watch` target, while a

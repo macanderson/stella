@@ -29,11 +29,10 @@
 //!
 //! # What it deliberately does not do
 //!
-//! **It never stops anything.** `restart_process` stays the only path that kills
-//! a started child on Stella's own initiative (`stella-tools`'s `process`
-//! module doc), because #2666's finding is precisely that a surviving service
-//! can be the correct final state. A gate that tidied up would re-introduce
-//! the bug it came from, wearing a helpful face.
+//! **It never stops anything.** No built-in kills a started child on
+//! Stella's own initiative, because #2666's finding is precisely that a
+//! surviving service can be the correct final state. A gate that tidied up
+//! would re-introduce the bug it came from, wearing a helpful face.
 //!
 //! It also does not judge. There is no heuristic here about which services
 //! *ought* to be up — the state is reported, one line per handle, and the
@@ -67,8 +66,9 @@ use crate::ports::LiveService;
 pub(super) const SERVICES_PREFIX: &str = "Before ending this turn:";
 
 /// One line per still-running service, in the order the executor reported
-/// them. Named by handle first because that is the argument `restart_process`
-/// takes, so a model that decides to stop one has the call already written.
+/// them. Named by handle first: the handle is the stable identifier the
+/// model has held since the start call, so the roster reads back in the
+/// vocabulary the model already uses.
 fn roster(services: &[LiveService]) -> String {
     services
         .iter()
@@ -92,8 +92,7 @@ fn nudge(services: &[LiveService]) -> String {
          survive this turn. Decide which case this is. If it should keep running, confirm you \
          have checked it is actually reachable (connect to it, request from it, read its log) \
          and say so. If it was a leftover, say so and leave it running — a live service \
-          cannot be stopped (#2864); `restart_process` replaces one but never leaves it \
-          down. Then declare completion.",
+          cannot be stopped (#2864). Then declare completion.",
         if count == 1 { "is" } else { "are" },
         roster(services)
     )
@@ -192,8 +191,8 @@ mod tests {
             asked.content
         );
         assert!(
-            asked.content.contains("restart_process"),
-            "the way to stop one has to be in the message: {}",
+            asked.content.contains("leave it running"),
+            "the leftover answer has to be in the message: {}",
             asked.content
         );
         assert!(

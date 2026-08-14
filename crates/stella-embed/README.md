@@ -13,8 +13,8 @@ is the point, and it is the [`stella-diff`](../stella-diff/README.md) /
 [`stella-home`](../stella-home/README.md) precedent (#1511, #1139). Two planes
 now need to turn text into a vector: `stella-context` (retrieval, which owned
 this code since it existed) and `stella-graph` (the code graph, which needs
-semantic file lookup so `semantic_code_search` can answer a question the asker can only
-phrase in English). Neither may depend on the other — `stella-graph` owns
+semantic file lookup so `stella search` and CGP recall can answer a question
+the asker can only phrase in English). Neither may depend on the other — `stella-graph` owns
 `codegraph.db` independently of `stella-context`, and a
 `stella-graph → stella-context` edge would drag retrieval, ANN and episodic
 memory into the code indexer for the sake of one trait. So the seam moved down

@@ -5,8 +5,7 @@
 //! `stella_store::Store::reconstruct_call`. This crate links no workspace crate
 //! but `stella-home` (see `crate::db`'s module docs and the crate README), so
 //! the fold is re-implemented here rather than imported: an **acknowledged
-//! copy**, the same bargain `project_id_for` and the exploration re-hash already
-//! take. Three things keep the copy honest:
+//! copy**, the same bargain `project_id_for` already takes. Three things keep the copy honest:
 //!
 //! - `tests/schema_conformance.rs` drives this route against a database built
 //!   by the real `Store::open` migration path and seeded through the real write

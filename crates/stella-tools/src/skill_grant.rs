@@ -30,10 +30,12 @@
 //! policy *wider* than the per-name intersection (#2682 review finding; the
 //! property tests below pin the per-name form instead).
 //!
-//! Enforcement sites: the CLI's `invoke_skill` layer holds the grant for an
-//! inline skill's span, and a forked skill's grant is resolved to concrete
-//! names ([`resolve_grant`]) and enforced structurally by
-//! `stella_core::ports::GrantedTools` inside the child turn.
+//! Enforcement sites: a session layer that mounts skill invocation holds the
+//! grant for an inline skill's span, and a forked skill's grant is resolved
+//! to concrete names ([`resolve_grant`]) and enforced structurally by
+//! `stella_core::ports::GrantedTools` inside the child turn. No shipped
+//! surface mounts skill invocation today, so nothing constructs a grant in
+//! production.
 
 use crate::policy::{ToolPolicy, WILDCARD};
 

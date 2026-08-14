@@ -1,6 +1,6 @@
 [package]
 name = "stella-tty"
-description = "Whether a human is present to see and answer a prompt this process might print, mid-run — one pure derivation shared by stella-cli's ask_user/approval prompts and stella-model's credential prompt, neither of which may depend on the other."
+description = "Whether a human is present to see and answer a prompt this process might print, mid-run — one pure derivation shared by stella-cli's approval prompts and stella-model's credential prompt, neither of which may depend on the other."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -14,7 +14,7 @@
 │00:00  lead  [verdict] witness authored: apps/app/automations/triggers.test.ts                                                                                │
 │00:00  lead  [verdict] oracle: fail on base                                                                                                                   │
 │00:00  lead  [stage] execute                                                                                                                                  │
-│00:00  lead  [tool] read_file()                                                                                                                               │
+│00:00  lead  [tool] mcp__fs__read_file()                                                                                                                      │
 │00:00  lead  [tool] ok in 42ms                                                                                                                                │
 │00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1                                                                                              │
 │00:00  lead  [spend] glm-5.2 $0.0180                                                                                                                          │
@@ -24,7 +24,7 @@
 │00:00  lead  [·] tasks 5/7                                                                                                                                    │
 │00:00  sub:auth  [stage] wire the automations triggers API                                                                                                    │
 │00:00  sub:auth  [stage] execute                                                                                                                              │
-│00:00  sub:auth  [tool] grep()                                                                                                                                │
+│00:00  sub:auth  [tool] search_code()                                                                                                                         │
 │00:00  sub:auth  [file] created apps/api/routes/v1/automations.ts +3/-0                                                                                       │
 │00:00  sub:auth  [spend] glm-5.2 $0.0110                                                                                                                      │
 │00:00  sub:auth  [spend] $0.0110                                                                                                                              │

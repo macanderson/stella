@@ -381,7 +381,6 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/mcp-servers" => Ok(fsview::mcp_servers(root)),
         "/api/config" => Ok(fsview::config(root)),
         "/api/memories" => Ok(fsview::memories(root)),
-        "/api/explorations" => Ok(fsview::explorations(root)),
         "/api/rules" => obs.rules().map(|db| {
             serde_json::json!({
                 "db": db,

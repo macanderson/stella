@@ -77,16 +77,16 @@ pub enum ContextSurface {
     /// twice — the rules section of the system prompt, and the tool-boundary
     /// guards — which must never disagree, so one filter covers both.
     Rule,
-    /// An installed skill, by name. Reaches the model three ways: the recall
-    /// block, explicit `/skill-name` invocation, and `skill_search` results.
+    /// An installed skill, by name. Reaches the model two ways: the recall
+    /// block and explicit `/skill-name` invocation.
     Skill,
     /// A subagent definition at `.stella/agents/<name>.md`, by name.
     Agent,
     /// A slash command at `.stella/commands/<name>.md`, by name.
     Command,
     /// A domain in `.stella/domains.toml`, by name. Steers indirectly: it is
-    /// both text in `project_overview` output and the selection signal that
-    /// decides which skills and memories are recalled at all.
+    /// the selection signal that decides which skills and memories are
+    /// recalled at all.
     Domain,
 }
 

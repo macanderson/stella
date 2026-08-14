@@ -2905,7 +2905,6 @@ dependencies = [
  "stella-graph",
  "stella-home",
  "stella-mcp",
- "stella-media",
  "stella-model",
  "stella-observatory",
  "stella-pipeline",

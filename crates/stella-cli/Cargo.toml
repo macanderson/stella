@@ -56,7 +56,6 @@ stella-tools = { path = "../stella-tools" }
 stella-store = { path = "../stella-store" }
 stella-observatory = { path = "../stella-observatory" }
 stella-mcp = { path = "../stella-mcp" }
-stella-media = { path = "../stella-media" }
 stella-context = { path = "../stella-context" }
 stella-graph = { path = "../stella-graph" }
 # `stella init` decides whether to embed the tree it just indexed, which means

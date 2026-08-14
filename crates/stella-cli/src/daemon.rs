@@ -850,8 +850,8 @@ fn lock_is_held(sidecar: &Path) -> Option<bool> {
 /// `flock` is held by an **open file description**, not by a process, and an
 /// inherited descriptor is the same description. Left alone, the lock
 /// `pre_exec` took is inherited by every process the run spawns — every
-/// `bash` tool, every build, every dev server the agent starts in the
-/// background — and stays held until the *last* of them exits.
+/// custom-tool subprocess, every build, every dev server the agent starts in
+/// the background — and stays held until the *last* of them exits.
 ///
 /// That turns the liveness answer inside out. A run that finished an hour ago
 /// still reads as running because some backgrounded `npm run dev` holds the
