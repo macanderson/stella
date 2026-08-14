@@ -36,8 +36,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 from .cloud import (
     _QUEUED_STATES,

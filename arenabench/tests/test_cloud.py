@@ -27,7 +27,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from arenabench.cloud_ops import _cmd_cloud_cancel, _cmd_cloud_fetch, _cmd_cloud_status
 from arenabench.cloud import (
     BURST_QUEUE,
     JOB_DEFINITION,
@@ -51,6 +50,7 @@ from arenabench.cloud import (
     tip_from_ls_remote,
     trial_environment,
 )
+from arenabench.cloud_ops import _cmd_cloud_cancel, _cmd_cloud_fetch
 from arenabench.config import match_from_toml
 from arenabench.model import Contestant, Engine, MatchSpec
 
@@ -1404,10 +1404,10 @@ class TestCloudCancelCommand:
                     ]
                 }
 
-            def cancel_job(self, *, jobId, reason):
+            def cancel_job(self, *, jobId, reason):  # noqa: N803 - Batch's spelling
                 self.cancelled.append(jobId)
 
-            def terminate_job(self, *, jobId, reason):
+            def terminate_job(self, *, jobId, reason):  # noqa: N803 - Batch's spelling
                 self.terminated.append(jobId)
 
         batch = _CancellingBatch([{"job-1": "RUNNING", "job-2": "RUNNABLE"}])

@@ -34,6 +34,7 @@ Two hard rules, both load-bearing:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -228,12 +229,10 @@ def quota_refusal(status: int, headers: dict[str, str]) -> str | None:
     if status == 429:
         reset = lowered.get(_RESET_HEADER)
         when = ""
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             when = time.strftime(
                 " (resets %Y-%m-%d %H:%M:%S %Z)", time.localtime(float(reset or ""))
             )
-        except (TypeError, ValueError):
-            pass
         return (
             "the Claude subscription's usage limit is exhausted — a launch "
             f"now measures the quota, not the agent{when}"
