@@ -70,21 +70,16 @@ through [`stella-mcp`](../stella-mcp)'s client — do not teach this crate a
 wire protocol just to reach a tool. Cheaper than either, a tool that needs
 no Rust is a custom script tool and costs no code here (see Extending it).
 
-## God files — do not add lines
+## God files
 
-The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
-1500-line ratchet: a NEW file over the limit is a hard failure with no
-baseline escape, and the file below is grandfathered at a recorded ceiling
-in `scripts/file-size-baseline.txt`. It is currently far below that ceiling
-— the tool purge shrank it — but the baseline entry stands until a dedicated
-baseline-retightening PR lands (`make file-size-update` retightens every
-ceiling, and folding that into an unrelated PR is how parallel merges turn
-`main` red). Treat it as closed to growth all the same: new logic goes in a
-sibling submodule (`src/registry/approval.rs`, `src/registry/executor.rs`,
-and `src/registry/validate.rs` are the precedent), with only the call site
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it
+before it crosses: new registry logic goes in a sibling submodule
+(`src/registry/approval.rs`, `src/registry/executor.rs`, and
+`src/registry/validate.rs` are the precedent), with only the call site
 landing in `registry.rs`.
-
-- [`src/registry.rs`](src/registry.rs)
 
 ## Layout
 

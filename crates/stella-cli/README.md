@@ -69,7 +69,7 @@ merge. If you do add one, AGENTS.md's workspace table and the root
 
 The gate's file-size guard (`scripts/check-file-size.sh`) enforces a 1500-line
 ratchet: a new file over the limit is a hard failure with no baseline escape,
-and the five files below are grandfathered at recorded ceilings in
+and the files below are grandfathered at recorded ceilings in
 `scripts/file-size-baseline.txt`. They are god files — already too big, closed
 to growth — and the pressure to grow them is worst in this crate, because
 every feature ends in a flag or a subcommand and the path of least resistance
@@ -86,7 +86,6 @@ beside [`src/command_deck.rs`](src/command_deck.rs),
 file is a candidate to extract into one.
 
 - [`src/agent.rs`](src/agent.rs)
-- [`src/agent/tests.rs`](src/agent/tests.rs)
 - [`src/command_deck.rs`](src/command_deck.rs)
 
 ([`src/candidate_ws.rs`](src/candidate_ws.rs) left this list when adoption

@@ -559,15 +559,14 @@ a plan needs and the part that rarely changes:
 
 | Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs` |
+| `stella-cli` | `src/command_deck.rs`, `src/agent.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tools` | `src/registry.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other sixteen crates carry no god files — keep it that way. Each crate's
+The other seventeen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 
