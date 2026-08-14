@@ -50,6 +50,7 @@ from arenabench.cloud import (
     sut_seats,
     tip_from_ls_remote,
     trial_environment,
+    unknown_tasks,
 )
 from arenabench.config import match_from_toml
 from arenabench.model import Contestant, Engine, MatchSpec
@@ -324,6 +325,25 @@ class TestPlanTrials:
         assert len(plans) == 2
         assert all(p.task is None for p in plans)
 
+    def test_an_89_task_match_labels_every_slice_with_its_real_task(self) -> None:
+        """#3255's fingerprint, pinned from the slicer side: three cloud runs
+        each lost job 000 to a slice whose task slot held the literal string
+        "89" — the task COUNT — and suspicion landed on an off-by-one here.
+        The slicer is faithful: given 89 real names, slice 000 carries the
+        first task, slice 088 the last, and no slice's task slot ever holds
+        the count. The count reached those runs inside ``spec.tasks`` itself
+        (a task-listing capture swept in the "89 tasks" trailer, which sorts
+        ahead of every real name), which is what the submit-time refusal in
+        ``_cmd_cloud_run`` exists to stop."""
+        tasks = tuple(sorted(f"task-{i:02d}" for i in range(89)))
+        plans = plan_trials(_spec(tasks=tasks, seats=(_seat("stella"),)))
+        assert len(plans) == 89
+        assert plans[0].label == f"000-stella-{tasks[0]}"
+        assert plans[-1].label == f"088-stella-{tasks[-1]}"
+        count = str(len(tasks))
+        assert all(p.task != count for p in plans)
+        assert all(not p.label.endswith(f"-{count}") for p in plans)
+
 
 class TestSliceSpec:
     def test_a_task_slice_is_one_cell_of_the_grid(self) -> None:
@@ -455,6 +475,38 @@ class TestRefusedSeats:
 
     def test_a_seat_declaring_nothing_is_never_refused(self) -> None:
         assert refused_seats({"free": []}, {}, set()) == {}
+
+
+class TestUnknownTasks:
+    """A declared task the dataset does not contain must be refused at submit
+    time (#3255) — never sliced into a Batch container that fetches nothing
+    and dies as an operational abort."""
+
+    def test_a_count_entry_is_named(self) -> None:
+        """The exact #3255 shape: a task-listing capture swept the "89 tasks"
+        trailer into the list, where it sorted ahead of every real name."""
+        known = [f"task-{i:02d}" for i in range(89)]
+        declared = sorted(["89", *known[:-1]])
+        assert declared[0] == "89"
+        assert unknown_tasks(declared, known) == ["89"]
+
+    def test_a_clean_match_is_clean(self) -> None:
+        assert unknown_tasks(("task-a", "task-b"), ("task-a", "task-b")) == []
+
+    def test_an_unmaterialised_dataset_checks_nothing(self) -> None:
+        """An empty enumeration means the dataset is not on disk, not that it
+        has no tasks — refusing here would make local materialisation a
+        submit prerequisite, which it deliberately is not."""
+        assert unknown_tasks(("89", "task-a"), ()) == []
+
+    def test_duplicates_are_reported_once_in_declared_order(self) -> None:
+        assert unknown_tasks(("bogus-b", "bogus-a", "bogus-b"), ("task-a",)) == [
+            "bogus-b",
+            "bogus-a",
+        ]
+
+    def test_a_whole_dataset_match_declares_nothing_to_check(self) -> None:
+        assert unknown_tasks((), ("task-a",)) == []
 
 
 class TestProgress:
@@ -1157,7 +1209,11 @@ class TestCloudRunCommand:
         s3, batch = FakeS3(), FakeBatch()
         executor = _executor(s3=s3, batch=batch, ssm=FakeSsm([]))
 
-        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+        rc = _cmd_cloud_run(
+            _run_args(template),
+            executor=executor,
+            task_lister=lambda _dataset: ["task-a"],
+        )
 
         assert rc == 2
         assert batch.submitted == [], "a refused match must submit nothing"
@@ -1165,6 +1221,73 @@ class TestCloudRunCommand:
         err = capsys.readouterr().err
         assert "OPENROUTER_API_KEY" in err
         assert "refusing to submit" in err
+
+    def test_a_task_the_dataset_does_not_contain_is_refused_before_any_submit(
+        self, tmp_path, capsys
+    ) -> None:
+        """The refusal half of #3255's witness: gate89high1, fulleightynine1
+        and h2h891 each submitted a spec whose first sorted task was the
+        literal count "89" (a task-listing capture's trailer), and each
+        burned its index-000 container on it. With the dataset enumerable
+        locally, the submission is refused before any upload or job."""
+        template = tmp_path / "match.toml"
+        template.write_text(
+            TEMPLATE.replace('tasks = ["task-a"]', 'tasks = ["89", "task-a"]'),
+            encoding="utf-8",
+        )
+        s3, batch = FakeS3(), FakeBatch()
+        executor = _executor(s3=s3, batch=batch, ssm=FakeSsm([]))
+
+        rc = _cmd_cloud_run(
+            _run_args(template),
+            executor=executor,
+            task_lister=lambda _dataset: ["task-a", "task-b"],
+        )
+
+        assert rc == 2
+        assert batch.submitted == [], "a refused match must submit nothing"
+        assert s3.calls == [], "a refused match must upload nothing"
+        err = capsys.readouterr().err
+        assert "'89'" in err
+        assert "does not contain" in err
+        assert "task-a" not in err, "only the bogus names are refused"
+
+    def test_an_unmaterialised_dataset_submits_but_says_it_was_not_checked(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """The declared gap: with no local task tree to check against, the
+        submission proceeds — refusing would make local materialisation a
+        submit prerequisite — but the skipped validation is said out loud."""
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        commit = "d" * 40
+        template = tmp_path / "match.toml"
+        template.write_text(TEMPLATE, encoding="utf-8")
+        s3 = FakeS3(
+            {
+                "binaries/main/latest.json": json.dumps(
+                    {"git_ref": "main", "commit": commit}
+                ).encode()
+            }
+        )
+        batch = FakeBatch()
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+        )
+
+        rc = _cmd_cloud_run(
+            _run_args(template),
+            executor=executor,
+            task_lister=lambda _dataset: [],
+        )
+
+        assert rc == 0
+        assert len(batch.submitted) == 1
+        out = capsys.readouterr().out
+        assert "task names not validated" in out
 
     def test_a_credentialled_match_submits_with_the_matchs_own_ref(
         self, tmp_path, capsys, monkeypatch
@@ -1191,7 +1314,11 @@ class TestCloudRunCommand:
             ls_remote=FakeLsRemote({"refs/heads/main": commit}),
         )
 
-        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+        rc = _cmd_cloud_run(
+            _run_args(template),
+            executor=executor,
+            task_lister=lambda _dataset: ["task-a"],
+        )
 
         assert rc == 0
         (submitted,) = batch.submitted

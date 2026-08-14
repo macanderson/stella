@@ -43,6 +43,18 @@ exist in the trial environment would burn a container to score a ``0.0``
 indistinguishable from a real loss — the same contract #1777/#1827 enforce on
 the local path, applied before any job is submitted.
 
+**Tasks the dataset does not contain are refused at submit time**, for the
+same reason and with the same shape (#3255). The slicer is faithful: whatever
+``spec.tasks`` names becomes a Batch job, so a bogus entry becomes a container
+that fetches a task that does not exist and dies with an operational abort.
+Three consecutive 89-task runs each paid for exactly that: their task lists
+carried the literal string ``"89"`` — a task-listing *count* trailer swept
+into a shell capture — which sorts ahead of every real name and also displaced
+the true last task, so each "89-task" run silently ran 88. When the dataset is
+materialised locally the declared names are checked against it before any
+upload; when it is not, the gap is said out loud rather than skipped silently
+(:func:`unknown_tasks` holds the decision).
+
 **Mutability is a property of the ref, not of the cache.** ``binaries/<ref>/``
 is keyed by a *name*, but its contents are only ever valid for one *commit*.
 So a cached artifact is reused on presence alone only for an immutable ref (a
@@ -94,6 +106,7 @@ __all__ = [
     "sut_seats",
     "tip_from_ls_remote",
     "trial_environment",
+    "unknown_tasks",
 ]
 
 #: The provisioned resource names, mirrored from ``infra/core.yaml``. Constants
@@ -466,6 +479,34 @@ def refused_seats(
         if any(name in provided or held.get(name) for name in candidates):
             continue
         out[contestant_id] = list(candidates)
+    return out
+
+
+def unknown_tasks(declared: Iterable[str], known: Iterable[str]) -> list[str]:
+    """Declared task names the dataset does not contain, in declared order.
+
+    The refusal half of #3255: three consecutive 89-task cloud runs each lost
+    their index-000 job to a "task" literally named ``"89"`` — the dataset's
+    task *count*, swept into the template's task list by a shell capture of a
+    task listing, sorting ahead of every real name. The slicer faithfully gave
+    it a container, which fetched a nonexistent task and died with an
+    operational abort — and the count entry had also displaced the true last
+    task, so the "89-task" panel silently ran 88. A name the dataset cannot
+    resolve must be refused before a container is paid for, exactly as an
+    unauthenticated seat is (:func:`refused_seats`).
+
+    An empty ``known`` checks nothing and returns nothing: the registry
+    enumerates only a locally materialised dataset, and making local
+    materialisation a submit prerequisite would be a new requirement, not a
+    guard. The caller says that gap out loud instead of failing on it.
+    """
+    known_set = set(known)
+    if not known_set:
+        return []
+    out: list[str] = []
+    for name in declared:
+        if name not in known_set and name not in out:
+            out.append(name)
     return out
 
 
@@ -1040,7 +1081,23 @@ def _new_run_id() -> str:
     return time.strftime("r%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
-def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
+def _dataset_task_names(dataset: str) -> list[str]:
+    """The task names the local registry can enumerate for ``dataset``.
+
+    Empty when the dataset is not materialised on this machine — deliberately
+    not an error, and deliberately never a download: :meth:`Registry.fetch`
+    is never called implicitly.
+    """
+    from .registry import DEFAULT_REGISTRY
+
+    return [task.name for task in DEFAULT_REGISTRY.tasks(dataset)]
+
+
+def _cmd_cloud_run(
+    args: Any,
+    executor: CloudExecutor | None = None,
+    task_lister: Callable[[str], list[str]] = _dataset_task_names,
+) -> int:
     """``arenabench cloud run match.toml --ref main`` — submit, watch, fetch."""
     import sys
 
@@ -1068,6 +1125,34 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
     except GateNotArmedError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    # Refusal before any AWS client exists: a declared task the dataset does
+    # not contain becomes a Batch job that fetches nothing and dies (#3255 —
+    # three 89-task runs each burned their index-000 container on a "task"
+    # named "89", the count trailer of a task listing). Checkable only when
+    # the dataset is materialised locally; the unchecked case is said, not
+    # skipped silently.
+    known = task_lister(spec.dataset)
+    bogus = unknown_tasks(spec.tasks, known)
+    if bogus:
+        print(
+            f"error: match names {len(bogus)} task(s) that {spec.dataset} "
+            "does not contain — refusing to submit:",
+            file=sys.stderr,
+        )
+        for name in bogus:
+            print(f"  {name!r}", file=sys.stderr)
+        print(
+            "  (each would burn a Batch container on a task that cannot "
+            f"exist; list real names with: arenabench tasks {spec.dataset})",
+            file=sys.stderr,
+        )
+        return 2
+    if spec.tasks and not known:
+        print(
+            f"note: task names not validated — {spec.dataset} is not "
+            f"materialised locally (arenabench export {spec.dataset})"
+        )
 
     executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
 
