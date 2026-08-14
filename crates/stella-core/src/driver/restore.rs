@@ -30,7 +30,7 @@
 
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionResult, MessageRole,
-    ReasoningEffort, ToolCall, ToolOutput,
+    ReasoningEffort,
 };
 
 use super::{Engine, SUMMARY_MARKER_PREFIX, lifecycle};
@@ -43,11 +43,6 @@ use crate::retry::RetryPolicy;
 use crate::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use crate::step::SummarizerHealth;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
-
-/// The synthetic `call_id` restoration replays carry — the
-/// `driver::waiting::PARKED_CALL_ID` shape: it never enters the transcript,
-/// so it only needs to be recognizable in hook payloads and diagnostics.
-const RESTORE_CALL_ID: &str = "working-set-restore";
 
 /// The summarizer's **visible-output** contract: the dense bullet summary
 /// `SUMMARIZE_SYSTEM` asks for. What reaches the wire is this plus
@@ -424,6 +419,8 @@ mod tests {
     //! neither the constant nor the behavior); `the_literal_is_the_constant`
     //! pins the spelling.
 
+    use std::sync::Mutex;
+
     use async_trait::async_trait;
     use serde_json::Value;
     use stella_protocol::{
@@ -444,6 +441,21 @@ mod tests {
     #[async_trait]
     impl Sleeper for NoSleep {
         async fn sleep(&self, _duration_ms: u64) {}
+    }
+
+    /// An executor that offers nothing. The starvation witnesses below drive
+    /// the summarizer, never a tool, so the port only has to exist.
+    struct NoTools;
+    #[async_trait]
+    impl ToolExecutor for NoTools {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
     }
 
     /// Always answers "SUMMARY" — the summarizer path under test is the
@@ -761,10 +773,7 @@ mod tests {
     #[tokio::test]
     async fn a_starved_summarizer_is_retried_with_room_and_never_latches() {
         let provider = StarvingProvider::new(1);
-        let tools = MapTools {
-            files: Arc::new(Mutex::new(HashMap::new())),
-            active: vec![],
-        };
+        let tools = NoTools;
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),
@@ -815,10 +824,7 @@ mod tests {
     #[tokio::test]
     async fn a_retry_that_starves_again_records_one_failure_and_stops() {
         let provider = StarvingProvider::new(u32::MAX);
-        let tools = MapTools {
-            files: Arc::new(Mutex::new(HashMap::new())),
-            active: vec![],
-        };
+        let tools = NoTools;
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),
