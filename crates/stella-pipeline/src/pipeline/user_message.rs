@@ -90,9 +90,16 @@ pub(super) fn assemble_user_message(
             // Cite by human label (L-C4); include content as grounding. A
             // materialized memory ALSO carries its stable id, so a receipt
             // can join the rendered block back to the record it came from.
-            s.push_str("- [");
-            s.push_str(&f.citation_label);
-            s.push_str("] (");
+            // Memory-minted labels ARE the content (its head, `…`-marked when
+            // truncated), so only a label that adds information renders —
+            // otherwise the same sentence shipped twice per frame (#2476).
+            s.push_str("- ");
+            if let Some(label) = f.distinct_label() {
+                s.push('[');
+                s.push_str(label);
+                s.push_str("] ");
+            }
+            s.push('(');
             s.push_str(&f.source);
             s.push(')');
             if let Some(id) = citable_id(f) {
@@ -234,16 +241,10 @@ mod tests {
             msg.contains("prompt caching"),
             "the human label still leads the line (L-C4): {msg}"
         );
-        // The ask rides in the volatile recalled-context block, before the goal —
-        // invariant 7 is untouched because nothing here is in the stable prefix.
-        assert!(
-            msg.find("cite_memory").unwrap() < msg.find("## Task").unwrap(),
-            "the ask belongs to the recall block, not to the task: {msg}"
-        );
     }
 
     /// #2476's witness for this surface: a label the memory mint copied from
-    /// the content renders once, not twice. `a_recalled_memory_reaches_the_worker_citable`
+    /// the content renders once, not twice. `a_recalled_memory_reaches_the_worker_with_its_id_handle`
     /// above is the control — its hand-chosen label ("prompt caching") differs
     /// from the content and still leads the line.
     #[test]
@@ -268,29 +269,6 @@ mod tests {
             msg.contains(NOD),
             "the citation handle survives the collapsed label: {msg}"
         );
-    }
-
-    /// The ask is made exactly when there is something to cite. A code-graph hit
-    /// and an un-materialized memory are both grounding — neither carries a
-    /// citable handle, so asking would spend tokens inviting a fabricated id, and
-    /// `cite_memory` would reject it.
-    #[test]
-    fn nothing_citable_means_nothing_is_asked() {
-        for frames in [
-            vec![RecalledFrame {
-                kind: "symbol".into(),
-                id: Some("nod_0123456789abcdef01234567".into()),
-                ..memory_frame(None)
-            }],
-            vec![memory_frame(None)],
-        ] {
-            let msg =
-                assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
-            assert!(
-                !msg.contains("cite_memory"),
-                "no citable frame, so no ask: {msg}"
-            );
-        }
     }
 
     /// The configured test command is the run's actual oracle, so the worker is

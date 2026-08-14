@@ -9,5 +9,5 @@
 # This file is meant to reach empty. The remaining conversions are tracked in
 # #2392 -- do not add a crate here to turn the gate green.
 stella-model 10
-stella-tools 32
+stella-tools 5
 stella-tui 1
