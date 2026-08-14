@@ -78,8 +78,9 @@ pub(super) enum RawCallError {
 /// unset `effort` leaves the provider's own default (high) reasoning
 /// allowance in force — dispatching a role whose written output contract is
 /// two to six lines with a 64k allowance and unbounded thinking. The bounded
-/// shape is the one the engine's own overflow summarizer already pins
-/// (`stella-core`'s `run_compaction_pass`: 1,200 tokens, `effort: Low`).
+/// shape is the one the engine's own overflow summarizer pins
+/// (`stella-core`'s `driver/restore.rs`: a 1,200-token written contract plus
+/// reasoning headroom, `effort: Low`).
 ///
 /// Each arm names the role's **visible-output** contract;
 /// [`with_reasoning_headroom`] adds thinking room on top in

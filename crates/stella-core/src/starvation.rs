@@ -16,16 +16,19 @@
 //!
 //! # Why this lives in `stella-core`
 //!
-//! It is pure arithmetic over owned data with no I/O, and it has **two**
-//! dispatch chokepoints to serve: `stella-pipeline`'s `metered_raw_call`,
-//! which drives the staged pipeline's management roles, and `stella-cli`'s
+//! It is pure arithmetic over owned data with no I/O, and it has **three**
+//! dispatch sites to serve: `stella-pipeline`'s `metered_raw_call`, which
+//! drives the staged pipeline's management roles; `stella-cli`'s
 //! `complete_standalone`, which drives the four standalone paid calls
-//! (reflection, agent authoring, skill authoring, domain inference). #2128 fixed
-//! the first and left the second running on a bare cap; post-turn reflection
+//! (reflection, agent authoring, skill authoring, domain inference); and the
+//! engine's own overflow summarizer (`driver/restore.rs`). #2128 fixed the
+//! first and left the second running on a bare cap; post-turn reflection
 //! then hit `finish_reason: length` at exactly its 2,048-token allowance and
 //! froze the whole context lifecycle for nine days without a word in any
-//! artifact (#2174). One copy of these numbers is what makes the next fix
-//! reach both callers.
+//! artifact (#2174). The summarizer was the third site found on a bare cap
+//! (#2503) — worse than silent, because its empty reply counted toward the
+//! give-up latch that disables compaction for the rest of the turn. One copy
+//! of these numbers is what makes the next fix reach every caller.
 
 use stella_protocol::{CompletionResult, FinishReason};
 
