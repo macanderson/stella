@@ -1106,9 +1106,8 @@ impl<'a> Engine<'a> {
         let step_started = std::time::Instant::now();
         let committed = match self
             .run_model_call(
-                state.step,
+                state.model_call_shape(self.config.max_output_tokens),
                 &state.messages,
-                state.output_ceiling(self.config.max_output_tokens),
                 &mut state.budget,
                 &mut state.memos.receipts,
                 &mut state.memos.warnings,
@@ -1397,14 +1396,14 @@ impl<'a> Engine<'a> {
     /// pass.
     async fn run_model_call(
         &self,
-        step: usize,
+        call: crate::step::ModelCallShape,
         messages: &[CompletionMessage],
-        max_output_tokens: Option<u32>,
         budget: &mut BudgetGuard,
         receipts: &mut ReceiptLedger,
         warnings: &mut BudgetWarnings,
         events: &EventSender,
     ) -> Result<CommittedStep, ModelCallFailure> {
+        let step = call.step;
         let tools_schema = self.tools.schemas();
         let read_only_tools: HashSet<String> = tools_schema
             .iter()
@@ -1453,7 +1452,7 @@ impl<'a> Engine<'a> {
         // bound used to force on an owning request (#921).
         let req = CompletionRequestRef {
             messages,
-            max_output_tokens,
+            max_output_tokens: call.max_output_tokens,
             temperature: req_config.temperature,
             effort: req_config.effort,
             reasoning: req_config.reasoning,

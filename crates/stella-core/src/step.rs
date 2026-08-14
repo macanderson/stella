@@ -83,6 +83,23 @@ pub const CANCELLED_REASON: &str =
 /// so the pairing is honest as well as structurally valid.
 const CANCELLED_TOOL_RESULT: &str = "not executed — turn cancelled at a step boundary";
 
+/// What one model call needs to know about the turn it belongs to.
+///
+/// Two scalars travelling together because they answer one question and
+/// because splitting them back out is what pushed `run_model_call` past
+/// clippy's argument limit — a real signal that the call had stopped taking
+/// a *request* and started taking a pile of fields.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModelCallShape {
+    /// The step index this call is, for receipts and lifecycle payloads.
+    pub(crate) step: usize,
+    /// The output ceiling to ask for. Always via
+    /// [`TurnState::model_call_shape`], never read off `EngineConfig`
+    /// directly, so a provider that refused to fund this turn's ask cannot
+    /// be asked for it again.
+    pub(crate) max_output_tokens: Option<u32>,
+}
+
 /// A cheap, clonable "stop this turn at the next safe boundary" flag.
 ///
 /// Clone it, hand a clone to whatever watches for shutdown, and call
@@ -629,6 +646,19 @@ impl TurnState {
     /// No `Error` event: a cancellation is a decision, not a failure, exactly
     /// as the soft stop is. The `Aborted` outcome carries [`CANCELLED_REASON`]
     /// and that is what a host renders.
+    /// The per-call shape of this step: which step it is, and the output
+    /// ceiling it may ask for.
+    ///
+    /// One value rather than two parameters because they are one question —
+    /// "what is this call?" — and because the ceiling must never be read
+    /// anywhere but here (see [`Self::output_ceiling`]).
+    pub(crate) fn model_call_shape(&self, configured: Option<u32>) -> ModelCallShape {
+        ModelCallShape {
+            step: self.step,
+            max_output_tokens: self.output_ceiling(configured),
+        }
+    }
+
     /// The output ceiling this turn's next call may ask for: the configured
     /// value narrowed by any standing clamp
     /// (`crate::driver::output_budget_recovery`).

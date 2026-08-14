@@ -298,6 +298,15 @@ pub enum ProviderErrorWire {
     ContextOverflow {
         message: String,
     },
+    /// The provider refused to fund the requested output ceiling. Carried
+    /// as its own variant rather than folded into `Terminal` because a host
+    /// driving the engine over the wire must be able to tell a repairable
+    /// refusal from the end of the turn — the same split the engine-side
+    /// recovery keys on.
+    OutputBudgetExceeded {
+        message: String,
+        affordable_output_tokens: Option<u32>,
+    },
     Terminal {
         message: String,
     },
@@ -327,6 +336,13 @@ impl From<ProviderErrorWire> for ProviderError {
             ProviderErrorWire::ContextOverflow { message } => {
                 ProviderError::ContextOverflow { message }
             }
+            ProviderErrorWire::OutputBudgetExceeded {
+                message,
+                affordable_output_tokens,
+            } => ProviderError::OutputBudgetExceeded {
+                message,
+                affordable_output_tokens,
+            },
             ProviderErrorWire::Terminal { message } => ProviderError::Terminal(message),
         }
     }
@@ -354,6 +370,13 @@ impl From<&ProviderError> for ProviderErrorWire {
             ProviderError::Cancelled => ProviderErrorWire::Cancelled,
             ProviderError::ContextOverflow { message } => ProviderErrorWire::ContextOverflow {
                 message: message.clone(),
+            },
+            ProviderError::OutputBudgetExceeded {
+                message,
+                affordable_output_tokens,
+            } => ProviderErrorWire::OutputBudgetExceeded {
+                message: message.clone(),
+                affordable_output_tokens: *affordable_output_tokens,
             },
             ProviderError::Terminal(m) => ProviderErrorWire::Terminal { message: m.clone() },
         }
