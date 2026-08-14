@@ -132,6 +132,7 @@ impl ProviderSettings {
         take!(api_key);
         take!(api_key_env);
         take!(default_model);
+        take!(upstream_pin);
         take!(dialect);
         take!(cache_ttl);
     }
@@ -1460,5 +1461,7 @@ pub(crate) fn project_code_execution_trusted() -> bool {
     project_trust().hooks
 }
 
+#[cfg(test)]
+mod completeness;
 #[cfg(test)]
 mod tests;
