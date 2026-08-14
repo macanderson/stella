@@ -1461,7 +1461,11 @@ pub(crate) fn project_code_execution_trusted() -> bool {
     project_trust().hooks
 }
 
-#[cfg(test)]
+// `cfg(doc)` keeps this module visible to `cargo doc`: merge.rs and
+// unknown.rs carry intra-doc links to `super::completeness`, and rustdoc
+// does not set `cfg(test)` while building docs, so a plain `cfg(test)`
+// gate would leave those links broken outside a test build.
+#[cfg(any(test, doc))]
 mod completeness;
 #[cfg(test)]
 mod tests;
