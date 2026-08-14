@@ -115,7 +115,7 @@ struct ScopedStore {
 ///
 /// Sorted and deduplicated so the scope is byte-stable across turns that name
 /// the same files in a different order.
-fn query_domain_scope(domains: &Domains, anchors: &[String]) -> Vec<String> {
+pub(crate) fn query_domain_scope(domains: &Domains, anchors: &[String]) -> Vec<String> {
     let mut selected: Vec<String> = Vec::new();
     for anchor in anchors {
         for name in domains.domains_for_path(anchor) {

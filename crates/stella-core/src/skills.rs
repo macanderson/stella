@@ -442,7 +442,13 @@ pub fn select_skills(
             .cloned()
             .collect();
 
-        let lexical = jaccard(&prompt_terms, &skill_terms);
+        // Asymmetric: what fraction of THIS SKILL's vocabulary the prompt
+        // covers. The symmetric Jaccard this used to call divides by the
+        // union, so a long prompt was penalized for every term the skill's
+        // one-line description happens not to contain — which made lexical
+        // selection fire only on prompts about as short as a description, and
+        // effectively never on a real one (#3243 D2).
+        let lexical = coverage(&prompt_terms, &skill_terms);
         let domain_score = matched_domains.len() as f64 * config.domain_boost;
         let recency = if skill.origin == SkillOrigin::AutoCreated {
             config.auto_created_bonus
@@ -909,7 +915,7 @@ pub enum InstallDecision {
 
 // Lexical helpers — shared with the rules miner via `crate::mining`
 
-use crate::mining::{jaccard, terms};
+use crate::mining::{coverage, terms};
 
 /// Union of every domain across a cluster, dedup'd case-insensitively,
 /// first-seen casing preserved, order stable.

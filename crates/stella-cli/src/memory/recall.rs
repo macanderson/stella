@@ -163,7 +163,7 @@ impl SessionMemory {
         let selected = skills::select_skills(
             &all_skills,
             prompt,
-            &self.domains.names(),
+            &self.active_domains(prompt),
             &SelectionConfig::default(),
         );
         if !selected.is_empty() {
@@ -227,7 +227,7 @@ impl SessionMemory {
         let selected = skills::select_skills(
             &all_skills,
             prompt,
-            &self.domains.names(),
+            &self.active_domains(prompt),
             &SelectionConfig::default(),
         );
         if !selected.is_empty() {
@@ -238,6 +238,32 @@ impl SessionMemory {
         }
         sections.push(render_today_section(now_unix_secs()));
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
+    }
+
+    /// The domains **this turn** is working in, derived from the workspace
+    /// paths its prompt names.
+    ///
+    /// Every `select_skills` call site used to pass `self.domains.names()`,
+    /// which is every domain the repository declares, loaded once at session
+    /// open and constant for the session. Against that list `matched_domains`
+    /// answers "is this skill tagged with a domain this repo has?" — true for
+    /// every domain-tagged skill on every turn — rather than "is this domain
+    /// active right now?". With `domain_boost` at 0.5 against a `min_score` of
+    /// 0.08, and a single domain match satisfying `corroborated`, the effect
+    /// was that any domain-tagged skill was injected on every non-control
+    /// turn regardless of the prompt, ranked by how MANY tags it carried, so a
+    /// 3-tag skill permanently outranked a perfectly-matching 1-tag one and
+    /// the top-k was spent on the most-tagged rather than the most-relevant
+    /// (#3243 D1).
+    ///
+    /// Memory recall already derives per-query scope this way (#2333); skill
+    /// selection was simply never migrated to it. Anchors require the file to
+    /// exist, so a prompt naming no extant path yields an empty scope — the
+    /// honest answer, and the reason the lexical score has to carry its own
+    /// weight (see `mining::coverage`).
+    pub(super) fn active_domains(&self, prompt: &str) -> Vec<String> {
+        let anchors = goal_path_anchors(prompt, &self.workspace_root);
+        crate::contextgraph::query_domain_scope(&self.domains, &anchors)
     }
 
     /// Arm this turn's A/B recall control at the workspace's configured rate
