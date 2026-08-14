@@ -419,6 +419,8 @@ mod tests {
     //! neither the constant nor the behavior); `the_literal_is_the_constant`
     //! pins the spelling.
 
+    use std::sync::Mutex;
+
     use async_trait::async_trait;
     use serde_json::Value;
     use std::sync::Mutex;
@@ -440,6 +442,21 @@ mod tests {
     #[async_trait]
     impl Sleeper for NoSleep {
         async fn sleep(&self, _duration_ms: u64) {}
+    }
+
+    /// An executor that offers nothing. The starvation witnesses below drive
+    /// the summarizer, never a tool, so the port only has to exist.
+    struct NoTools;
+    #[async_trait]
+    impl ToolExecutor for NoTools {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
     }
 
     /// Always answers "SUMMARY" — the summarizer path under test is the
