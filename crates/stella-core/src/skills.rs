@@ -884,8 +884,8 @@ pub fn decide_auto_creation(
 /// A proposal to install a skill from a registry, produced by the
 /// search/install glue after querying the registry and shown to the user for
 /// confirmation. Kept minimal — the actual `npx skills`-style subprocess and
-/// the `ask_user` confirmation live in `stella-cli`; this is just the shared
-/// shape the glue and a future TUI both speak.
+/// the interactive confirmation prompt live in `stella-cli`; this is just
+/// the shared shape the glue and a future TUI both speak.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillInstallProposal {
     /// What the user searched the registry for.

@@ -118,13 +118,13 @@ pub use pipeline::{
     Verdict,
 };
 pub use ports::{
-    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind, AuthoredChange,
-    CITE_MEMORY_REQUEST, CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome,
-    ContextRecallPort, CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort,
-    LineMutation, LintProbe, LintRecord, McpPrefetchPort, MutantOutcome, MutationProbe,
-    NoContextRecall, NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver,
-    Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ResumeFrameSink, ScopeDecision,
-    StdioApprovalGate, TestInvocation, TestRunner, WorkspaceError, decision_from_line,
+    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
+    CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome, ContextRecallPort,
+    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, LineMutation, LintProbe, LintRecord,
+    McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoRepoStatus, NoRepoStructure,
+    PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort,
+    ResumeFrameSink, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner, WorkspaceError,
+    decision_from_line,
 };
 pub use reward::{
     DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,

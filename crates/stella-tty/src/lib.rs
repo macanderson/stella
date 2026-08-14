@@ -6,9 +6,9 @@
 //!
 //! This predicate has two consumers on opposite sides of a dependency
 //! direction invariant 1 (`AGENTS.md`) forbids: `stella-cli`'s own
-//! `ask_user` tool and scope-review approvals, and `stella-model`'s
-//! interactive credential prompt (`credential.rs`) — which must never depend
-//! on `stella-cli`, the binary above it (#3036). `stella-home` is the
+//! scope-review and approval prompts, and `stella-model`'s interactive
+//! credential prompt (`credential.rs`) — which must never depend on
+//! `stella-cli`, the binary above it (#3036). `stella-home` is the
 //! obvious-looking home (both crates already depend on it), but its own
 //! README draws the boundary explicitly: "this crate owns one decision: what
 //! path a process should treat as the stella home... everything else is
@@ -32,8 +32,8 @@
 //!   can accept bytes but never a keystroke meant for this question.
 //! - `prompt_is_visible` — the human can see the question in the first
 //!   place, on whichever stream this caller's prompt actually renders on.
-//!   `stella-cli`'s `ask_user` tool and its approval responder print via
-//!   `println!`, so their callers pass `stdout().is_terminal()`. The daemon
+//!   `stella-cli`'s approval responder prints via `println!`, so its
+//!   callers pass `stdout().is_terminal()`. The daemon
 //!   console's scope-review prompt is deliberately stderr-only — stdout there
 //!   is the run's own byte-verbatim relay, and folding a prompt into it would
 //!   corrupt a machine-format caller reading that stream — so its callers

@@ -14,7 +14,7 @@ use super::term_policy::{
     PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
 };
 use super::{
-    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
+    AuthCmd, Cli, Command, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
     query_format,
 };
 
@@ -741,35 +741,9 @@ fn no_subcommand_flag_reuses_a_global_name() {
     check(&cmd, &globals, "stella");
 }
 
-/// `connect linear --paste-key` (the rename that resolved the collision
-/// above) binds to the subcommand's bool, and the session-wide `--api-key`
-/// stays independently usable on the same command line.
-#[test]
-fn connect_linear_paste_key_parses() {
-    let cli = Cli::try_parse_from(["stella", "connect", "linear", "--paste-key"])
-        .expect("`connect linear --paste-key` must parse");
-    assert_eq!(cli.globals.api_key, None);
-    match cli.command {
-        Some(Command::Connect {
-            cmd: ConnectCmd::Linear { paste_key },
-        }) => assert!(paste_key),
-        _ => panic!("expected `connect linear`"),
-    }
-
-    let cli = Cli::try_parse_from(["stella", "connect", "linear", "--api-key", "sk-model"])
-        .expect("the global --api-key must parse after `connect linear`");
-    assert_eq!(cli.globals.api_key.as_deref(), Some("sk-model"));
-    match cli.command {
-        Some(Command::Connect {
-            cmd: ConnectCmd::Linear { paste_key },
-        }) => assert!(!paste_key),
-        _ => panic!("expected `connect linear`"),
-    }
-}
-
 /// `stella auth set <provider> --key <k>` parses, and the global `--api-key`
 /// (a different secret — the model-provider credential) still parses
-/// independently on the same command line, same shape as `connect linear`.
+/// independently on the same command line.
 #[test]
 fn auth_set_key_parses_and_stays_independent_of_the_global_api_key() {
     let cli = Cli::try_parse_from([

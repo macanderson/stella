@@ -316,12 +316,6 @@ impl<'a> Pipeline<'a> {
             diff_lines: 0,
             diff_text: String::new(),
             diff_available: true,
-            touch_baseline: {
-                // A fresh recorder counts from zero in this process, which is
-                // exactly the resume point the signal-honesty note describes.
-                self.touches.begin_workspace_probe();
-                self.touches.mutations_recorded()
-            },
             // The pre-execution lint snapshot died with the process; the
             // regression veto (#861) sits out a resumed run (module docs).
             lint_baseline: None,

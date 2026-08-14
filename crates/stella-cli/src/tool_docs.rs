@@ -1,12 +1,12 @@
 //! `docs/tools/` — one TOML page per dispatchable tool, generated from the
 //! declarations, and the guard that fails when the committed pages drift.
 //!
-//! Seventy-eight tools is past the size where a hand-written reference survives
-//! contact with a merge queue. This repository has watched that happen twice:
-//! #1435 stranded three prose copies of the god-file list behind a generated
-//! baseline, and #3029 found `docs/prompts/worker.md` five contracts behind
-//! its own code with nothing checking it. So these pages are not written, they
-//! are *derived*, and the derivation is re-run by the gate:
+//! A hand-written tool reference does not survive contact with a merge queue.
+//! This repository has watched that happen twice: #1435 stranded three prose
+//! copies of the god-file list behind a generated baseline, and #3029 found
+//! `docs/prompts/worker.md` five contracts behind its own code with nothing
+//! checking it. So these pages are not written, they are *derived*, and the
+//! derivation is re-run by the gate:
 //!
 //! - `make tool-docs-update` regenerates `docs/tools/`.
 //! - `make tool-docs` — a `make gate` step — regenerates into memory and fails
@@ -28,40 +28,21 @@
 //!
 //! # Why this lives in a `#[cfg(test)]` module of a binary crate
 //!
-//! Because that is the only place all seventy-eight schemas exist at once.
-//! Sixty-four are declared by `stella-tools`' registry; the other eight —
-//! `ask_user`, the two skills-registry tools, the discovery trio,
-//! `invoke_skill` and `recall_context` — are declared by layers inside
-//! `stella-cli`, which has no `src/lib.rs` (deliberately: adding one would
-//! reclassify its 400-odd `Result<_, String>` signatures as library
-//! violations). An exporter binary cannot link them; a unit test compiled into
-//! the crate can. `make record-golden` establishes the shape — an
-//! env-var-blessed test that rewrites a committed fixture, with the plain test
-//! run as the drift guard.
-//!
-//! The residue is filed: #3061 asks for the session layer's schema
-//! declarations to sit behind a linkable seam, which would let this become an
-//! ordinary exporter binary.
+//! The generator needs the registry's live schemas, the committed example
+//! fixture, and the repository root, and it needs to run inside `make gate`
+//! on every push — a unit test compiled into the shipping binary's crate is
+//! the one place all three meet without a dedicated exporter binary.
+//! `make record-golden` establishes the fixture's shape — an env-var-blessed
+//! test that rewrites it, with the plain test run as the drift guard.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use stella_media::{
-    CostDecision, ImageRequest, MediaArtifact, MediaCapabilities, MediaError, MediaJob,
-    MediaJobStatus, MediaOperationJournal, MediaOperationRetention, MediaProvider, MediaSpendGate,
-    MediaSpendRequest, SqliteMediaOperationJournal, VideoRequest,
-};
 use stella_protocol::{ToolOutput, ToolSchema};
+use stella_tools::ToolRegistry;
 use stella_tools::catalog::{self, Availability, ToolEntry};
-use stella_tools::media::{
-    HostDataIsolation, HostMediaOperation, MediaBackend, MediaOperationIdSource,
-};
-use stella_tools::registry::Tool;
-use stella_tools::{RegistryOptions, ToolRegistry};
 
 /// The env var that turns the drift guard into a writer, spelled like
 /// `STELLA_REFRESH_GOLDEN` because it is the same idea.
@@ -80,11 +61,11 @@ const DOCS_DIR: &str = "docs/tools";
 /// Two options were available and only one is honest. Deriving a three-rung
 /// ordering from `read_only` + `speculation_safe` is arithmetic on two
 /// booleans the page already prints: it would put `save_state` — which writes
-/// into a self-deleting `TempDir` — at the same rung as `bash`, and it would
-/// read to every future maintainer as a reviewed judgement rather than as a
-/// relabelling. Writing seventy-eight judgement calls by hand is worse: it
-/// manufactures a source of truth nobody reviewed, in the one artifact whose
-/// entire value proposition is that it is derived.
+/// into a self-deleting `TempDir` — at the same rung as `task` — which spends
+/// money — and it would read to every future maintainer as a reviewed
+/// judgement rather than as a relabelling. Writing a judgement call per tool
+/// by hand is worse: it manufactures a source of truth nobody reviewed, in
+/// the one artifact whose entire value proposition is that it is derived.
 ///
 /// So the field is emitted, and its value is `"undeclared"`, with the note
 /// below and an issue. That keeps the requested shape, keeps the page honest,
@@ -96,9 +77,9 @@ const RISK_NOTE: &str = "\
 # would have introduced the machinery, was closed wontfix). The two booleans
 # above are the only machine-checked safety claims a tool makes. Relabelling
 # them \"low/medium/high\" would add no information while reading as a reviewed
-# judgement, and hand-writing 72 judgements would manufacture a source of truth
-# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
-# it is declared once and reviewed like every other column.";
+# judgement, and hand-writing one judgement per tool would manufacture a source
+# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
+# `ToolEntry`, where it is declared once and reviewed like every other column.";
 
 // ── the committed example fixture ───────────────────────────────────────────
 
@@ -162,141 +143,16 @@ fn repo_root() -> PathBuf {
 
 // ── collecting every declared schema ────────────────────────────────────────
 
-/// An inert media provider. It exists so the registry will *register* the
-/// three media tools; nothing here is ever called, because only `schema()` is
-/// read. Media registration requires an approving host context, which in turn
-/// requires process-free isolation — the same posture that withholds the web
-/// and issue families — which is why the native side below builds two
-/// registries and unions them.
-struct InertMediaProvider;
-
-#[async_trait]
-impl MediaProvider for InertMediaProvider {
-    fn id(&self) -> &str {
-        "tool-docs-inert"
-    }
-
-    fn capabilities(&self) -> MediaCapabilities {
-        MediaCapabilities {
-            provider_id: self.id().into(),
-            image: true,
-            video: true,
-            ..Default::default()
-        }
-    }
-
-    async fn generate_image(&self, _request: ImageRequest) -> Result<MediaArtifact, MediaError> {
-        Err(MediaError::Transport("tool-docs: never executed".into()))
-    }
-
-    async fn generate_video(&self, _request: VideoRequest) -> Result<MediaJob, MediaError> {
-        Err(MediaError::Transport("tool-docs: never executed".into()))
-    }
-
-    async fn poll_video(&self, _job: &MediaJob) -> Result<MediaJobStatus, MediaError> {
-        Err(MediaError::Transport("tool-docs: never executed".into()))
-    }
-}
-
-struct InertSpendGate;
-
-#[async_trait]
-impl MediaSpendGate for InertSpendGate {
-    async fn authorize(&self, _request: &MediaSpendRequest) -> CostDecision {
-        CostDecision::Deny
-    }
-}
-
-struct InertOperationId;
-
-impl MediaOperationIdSource for InertOperationId {
-    fn operation_id(&self) -> HostMediaOperation {
-        HostMediaOperation {
-            opaque_id: "tool-docs".into(),
-            expires_at: 0,
-        }
-    }
-}
-
-/// Every schema the native [`ToolRegistry`] can advertise, with each optional
-/// backend supplied.
-///
-/// Two registries, because no single one advertises all of them: the media
-/// tools register only under an approving host context (process-free
-/// isolation), and that same posture is what withholds the web and issue
-/// families. Their union is the native surface — which is exactly the "up to
-/// M native" ceiling [`catalog::native`] names.
+/// Every schema the native [`ToolRegistry`] advertises. One registry: every
+/// catalog row registers unconditionally, so the constructor's surface IS the
+/// documented surface.
 fn native_schemas(scratch: &Path) -> BTreeMap<String, ToolSchema> {
-    let mut schemas = BTreeMap::new();
-
-    // Hosted posture: the web family and the issue family.
-    let hosted = ToolRegistry::with_backends_and_options(
-        scratch.join("hosted"),
-        Some(stella_tools::issues::IssueBackend::GitHub),
-        None,
-        RegistryOptions::default(),
-    );
-    for schema in hosted.schemas() {
-        schemas.insert(schema.name.clone(), schema);
-    }
-
-    // `web_search` is the one native tool no registry configuration reaches
-    // from here: it registers on `detect_search_backend()`, which reads
-    // BRAVE_API_KEY/TAVILY_API_KEY out of the process environment, and a
-    // reference page that appears or vanishes with the generating machine's
-    // env is not a reference page. So its declaration is read from the tool
-    // type directly, through the injectable half of the same detection the
-    // registry uses — the key is a placeholder and nothing is ever executed.
-    let search = stella_tools::web::detect_search_backend_with(|_| Some("tool-docs-inert".into()))
-        .expect("the injected env always yields a backend");
-    let web_search = stella_tools::web::WebSearch(search).schema();
-    schemas.insert(web_search.name.clone(), web_search);
-
-    let journal: Arc<dyn MediaOperationJournal> = Arc::new(
-        SqliteMediaOperationJournal::open(
-            scratch.join("media/operations.db"),
-            MediaOperationRetention::default(),
-        )
-        .expect("open an empty operations journal under a scratch dir"),
-    );
-    let media = ToolRegistry::with_backends_and_options(
-        scratch.join("media"),
-        None,
-        Some(MediaBackend {
-            image: Arc::new(InertMediaProvider),
-            video: Some(Arc::new(InertMediaProvider)),
-        }),
-        RegistryOptions {
-            media_requires_host_approval: true,
-            media_spend_gate: Some(Arc::new(InertSpendGate)),
-            media_operation_ids: Some(Arc::new(InertOperationId)),
-            media_operation_journal: Some(journal),
-            media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
-            ..Default::default()
-        },
-    );
-    for schema in media.schemas() {
-        schemas.entry(schema.name.clone()).or_insert(schema);
-    }
-    schemas
-}
-
-/// The eight schemas the CLI layers on top of the native registry.
-///
-/// Collected from the declaring functions rather than from a constructed tool
-/// set, deliberately: a constructed set renders session-conditional text (the
-/// lean-mode note `tool_search` grows, the tools a live skill grant withholds),
-/// and a reference page documents the tool as *declared*, not as one session
-/// happened to advertise it.
-fn session_schemas() -> BTreeMap<String, ToolSchema> {
-    let mut schemas = BTreeMap::new();
-    for schema in crate::interactive::declared_session_schemas()
+    let registry = ToolRegistry::new(scratch.to_path_buf());
+    registry
+        .schemas()
         .into_iter()
-        .chain(crate::discovery::declared_discovery_schemas())
-    {
-        schemas.insert(schema.name.clone(), schema);
-    }
-    schemas
+        .map(|schema| (schema.name.clone(), schema))
+        .collect()
 }
 
 // ── the output envelope, read off the type ──────────────────────────────────
@@ -370,11 +226,6 @@ fn availability_word(availability: Availability) -> &'static str {
     // to compile here rather than render as something plausible.
     match availability {
         Availability::Always => "always",
-        Availability::WebSearch => "requires-search-key",
-        Availability::Media => "requires-media-key",
-        Availability::Video => "requires-video-capable-media-key",
-        Availability::Issue => "requires-issue-backend",
-        Availability::Session => "cli-session-layer",
     }
 }
 
@@ -705,9 +556,8 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
 /// Every file the generator would write, keyed by path relative to `docs/tools`.
 fn generate() -> BTreeMap<String, String> {
     let fixture = load_fixture();
-    let scratch = tempfile::tempdir().expect("a scratch dir for the schema-collecting registries");
-    let mut schemas = native_schemas(scratch.path());
-    schemas.extend(session_schemas());
+    let scratch = tempfile::tempdir().expect("a scratch dir for the schema-collecting registry");
+    let schemas = native_schemas(scratch.path());
 
     let mut entries: Vec<&ToolEntry> = catalog::CATALOG.iter().collect();
     entries.sort_by_key(|entry| entry.name);
@@ -736,10 +586,10 @@ fn generate() -> BTreeMap<String, String> {
 /// `docs/tools/` still matches the declarations — or `STELLA_REFRESH_TOOL_DOCS`
 /// is set and it does now.
 ///
-/// This is the whole point of the directory. Sixty-four registry rows, eight
-/// CLI-layer declarations and seventy-eight catalog rows have to agree, and the
-/// only way to keep them agreeing through a merge queue is to derive one from
-/// the others and fail when the derivation drifts.
+/// This is the whole point of the directory. The registry's rows and the
+/// catalog's have to agree, and the only way to keep them agreeing through a
+/// merge queue is to derive one from the other and fail when the derivation
+/// drifts.
 #[test]
 fn tool_docs_match_the_declarations() {
     let root = repo_root().join(DOCS_DIR);

@@ -414,9 +414,8 @@ Re-verified absent as of 0.6.10, so design around them rather than discovering t
   list was written — `POST /v1/turns/{id}/steer`, `/pause` and `/resume`, with
   the hold announced on the stream as `turn_held` / `turn_released` so a
   client that reconnects mid-hold still knows the turn is waiting on it. What
-  is still absent is `/approve`: the `scope_review` and `ask_user` events have
-  no reverse endpoint, so an approval gate has to live in your app, in front
-  of the turn.
+  is still absent is `/approve`: the `scope_review` event has no reverse
+  endpoint, so an approval gate has to live in your app, in front of the turn.
 - **No token-level streaming from the engine.** It forwards whole completions.
   To stream tokens to your users, stream them from your own provider call, which
   you already control.

@@ -38,10 +38,10 @@ use stella_tools::ToolRegistry;
 
 use crate::agent;
 
-/// Close out a worker's execution row: files touched, citations, agent and
-/// MCP usage, and the outcome label ([`agent::record_execution_end`]) —
-/// best-effort, exactly as the worker's closeout always was (the inbox
-/// notification and the lane's own events are the user-facing signal).
+/// Close out a worker's execution row: agent and MCP usage, and the outcome
+/// label ([`agent::record_execution_end`]) — best-effort, exactly as the
+/// worker's closeout always was (the inbox notification and the lane's own
+/// events are the user-facing signal).
 ///
 /// The signature is the contract (#1708): no session id comes in, so the
 /// closeout **cannot** address the session-keyed `tasks` rows at all. See
@@ -49,7 +49,6 @@ use crate::agent;
 pub(crate) fn close_worker_execution(
     execution: Option<&(Arc<Store>, i64)>,
     registry: &ToolRegistry,
-    files_before: usize,
     outcome_label: &str,
     cost_usd: f64,
     persistence_complete: bool,
@@ -61,7 +60,6 @@ pub(crate) fn close_worker_execution(
         store,
         *id,
         registry,
-        files_before,
         outcome_label,
         cost_usd,
         persistence_complete,
@@ -106,7 +104,7 @@ mod tests {
         let worker_exec = store
             .begin_execution("deck-sub", "delegated work", "anthropic", "claude")
             .expect("worker execution");
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
         registry
             .task_board()
             .lock()
@@ -130,7 +128,6 @@ mod tests {
         close_worker_execution(
             Some(&(store.clone(), worker_exec)),
             &registry,
-            0,
             "completed",
             0.0,
             true,
@@ -172,7 +169,6 @@ mod tests {
         close_worker_execution(
             Some(&(store.clone(), worker_exec)),
             &registry,
-            0,
             "completed",
             0.0,
             true,

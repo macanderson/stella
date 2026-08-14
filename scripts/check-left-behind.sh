@@ -92,7 +92,11 @@ fi
 # markers in prose, and a guard that fails on its own documentation is a guard
 # someone deletes. Nothing else is exempt.
 current_counts() {
+  # The existence filter skips tracked files deleted from the working tree but
+  # not yet staged (#3268) — awk would otherwise die on the missing path
+  # instead of judging the files that exist.
   git ls-files -z '*.rs' '*.py' '*.sh' '.githooks/*' |
+    while IFS= read -r -d '' f; do [ -f "$f" ] && printf '%s\0' "$f"; done |
     xargs -0 awk '
       FILENAME == "scripts/check-left-behind.sh"      { next }
       FILENAME == "scripts/left-behind-baseline.txt"  { next }

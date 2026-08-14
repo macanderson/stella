@@ -258,9 +258,9 @@ wrinkle: `*` is not a valid bare TOML key, so the wildcard needs quotes.
 
 ```toml title="stella.toml"
 [tools]
-bash    = "off"
-process = "off"
-"*"     = "on"
+task_assign = "off"
+mcp         = "off"
+"*"         = "on"
 ```
 
 ### `[hooks]`
@@ -273,7 +273,7 @@ arrays:
 
 ```toml title="stella.toml"
 [[hooks.PreToolUse]]
-matcher = "bash"
+matcher = "mcp__github__push_files"
   [[hooks.PreToolUse.hooks]]
   type      = "command"
   command   = "./scripts/guard.sh"
@@ -402,11 +402,11 @@ default_model = "zai/glm-5.2"
 auto_mode     = "on"
 
 [tools]
-process     = "off"
-read_output = "on"
+task      = "off"
+task_list = "on"
 
 [[hooks.PreToolUse]]
-matcher = "bash"
+matcher = "mcp__github__push_files"
   [[hooks.PreToolUse.hooks]]
   type      = "command"
   command   = "./scripts/guard.sh"

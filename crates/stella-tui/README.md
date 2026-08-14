@@ -37,8 +37,7 @@ tests rely on.
 What must never land here is anything the fold cannot derive. Business
 decisions — what to compact, when a budget trips, whether a loop is detected —
 live in [`stella-core`](../stella-core); this crate renders the *events* those
-decisions emit and never re-decides them. Tool logic — spawning processes,
-reading files, touching the network — belongs in
+decisions emit and never re-decides them. Tool logic belongs in
 [`stella-tools`](../stella-tools) (the one existing exception, env scrubbing
 for `!` commands, is noted above). Provider calls go through
 [`stella-model`](../stella-model), persistence through
@@ -206,9 +205,9 @@ every panic on every thread, including panel panics the session survives.
   new `&mut DeckUi` write in a view has to be classified in that module's
   "what a caught panic can leave behind" list or the argument there stops
   being true.
-- **Digits never switch tabs, deliberately.** They quick-pick `ask_user`
-  answers and must stay typeable as a prompt's first character, so `Tab` /
-  `Shift-Tab` are the only tab navigation
+- **Digits never switch tabs, deliberately.** They quick-pick answers on a
+  pending question card and must stay typeable as a prompt's first character,
+  so `Tab` / `Shift-Tab` are the only tab navigation
   ([`src/deck_ui.rs:1418`](src/deck_ui.rs)). Adding a digit hotkey would eat a
   keystroke meant for the composer.
 - Mouse capture is off by default in both `RunOptions` and `DeckOptions` so

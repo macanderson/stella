@@ -1,10 +1,10 @@
 # loop-bench
 
-An inexpensive turn-loop and context-query correctness harness over
+An inexpensive turn-loop correctness harness over
 Terminal-Bench. The full benchmark measures *pass rate* — expensive, dominated
 by model quality. This measures what it hides and a **cheap** model exposes just
 as clearly: did the turn execute real work, or abort having done nothing? did it
-die without saying why? did `project_overview` / `graph_query` get used at all?
+die without saying why? was it caught cycling?
 
 It shells out to the `stella` binary and `harbor`. Its only workspace dependency
 is `stella-core`, for the A/B report shape `--compare` emits (see below); the
@@ -52,11 +52,10 @@ promotion decided by them is a decision about the machine.
 
 For each trial dir `<jobs-dir>/<job-name>/<task>__<id>/`, `distill_events` reads
 `agent/stella-events.jsonl`: `step_usage` counts model calls, `tool_start` tool
-calls (`write_file` / `edit_file` / `apply_edits` are writes — never
-`delete_file`, or a destructive loop would look productive; `project_overview`
-and `graph_query` each get their own column, `ov` and `gq`), and a terminal
+calls, and a terminal
 event is `complete` or an `error` with `retryable: false`. The reward comes from
-`verifier/reward.txt`.
+`verifier/reward.txt`. Per-tool-name counts live in the feature-attribution
+map's `tool.<name>` keys.
 
 Beside those loop-health counters, every trial also carries a **per-feature
 attribution** map — see [§ Feature attribution](#feature-attribution-2382).

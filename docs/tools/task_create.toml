@@ -21,9 +21,9 @@ available_for_speculation = false
 # would have introduced the machinery, was closed wontfix). The two booleans
 # above are the only machine-checked safety claims a tool makes. Relabelling
 # them "low/medium/high" would add no information while reading as a reviewed
-# judgement, and hand-writing 72 judgements would manufacture a source of truth
-# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
-# it is declared once and reviewed like every other column.
+# judgement, and hand-writing one judgement per tool would manufacture a source
+# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
+# `ToolEntry`, where it is declared once and reviewed like every other column.
 risk_level = "undeclared"
 
 description = '''

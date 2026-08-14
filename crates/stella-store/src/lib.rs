@@ -39,11 +39,11 @@
 //!   letters, session line-delta totals, and the ordered JSON audit log of
 //!   every individual touch (event, reason, per-touch line delta).
 //! - **memory_citations** — the self-improvement feedback loop: one row per
-//!   memory the agent explicitly cited as having informed a turn (the
-//!   `cite_memory` tool), carrying the agent's usefulness score, whether the
-//!   memory's content still held true, and a short remark. Aggregated by
-//!   [`Store::memory_citation_stats`] into the rule-promotion eligibility
-//!   gate `stella memory` surfaces.
+//!   recorded citation of a memory as having informed a turn, carrying the
+//!   usefulness score, whether the memory's content still held true, and a
+//!   short remark. Aggregated by [`Store::memory_citation_stats`] into the
+//!   rule-promotion eligibility gate `stella memory` surfaces. No shipped
+//!   tool writes new rows today.
 //! - **rules** — extension-authored workspace rules: one row per rule id,
 //!   holding the full rule markdown in the `.stella/rules/*.md` authoring
 //!   format (the store never parses it — `stella_core::rules` does).
@@ -218,7 +218,7 @@ pub use sessions::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 /// `stella-protocol` to call one.
 pub use stella_protocol::TaskItem;
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};
-pub use tool_calls::{ToolCallAnswer, ToolCallRow, ToolCallState};
+pub use tool_calls::{ToolCallRow, ToolCallState};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
 /// tool-arg fingerprints (loop detection, not security). Also the
@@ -291,8 +291,8 @@ impl MemoryCitationRow {
     }
 }
 
-/// Minimum usefulness score (on the 1–5 scale `cite_memory` enforces) for a
-/// citation to count as positive.
+/// Minimum usefulness score (on the recorded 1–5 scale) for a citation to
+/// count as positive.
 pub const POSITIVE_SCORE_MIN: i64 = 3;
 
 /// A memory must be cited successfully STRICTLY MORE THAN this many times to

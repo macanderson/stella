@@ -132,9 +132,10 @@ a worker that edits the witness test doesn't get credit for "passing" it.
 
 **What the author can actually do.** The witness author is the most
 capability-restricted role in the pipeline, and the restriction is enforced
-by its executor, not by prompt. It gets exactly three tools: `read_file`
-and `glob` (both confined to the candidate root, with credential and
-private-state paths excluded from reads and from discovery results), and
+by its executor, not by prompt. It gets exactly three tools: a file reader
+and a glob-pattern file lister — both stage-private, confined to the
+candidate root, with credential and private-state paths excluded from
+reads and from discovery results — and
 `create_witness_test` — an atomic, exclusive, symlink-refusing create that
 holds a single-artifact claim: at most one witness file ever exists, and a
 repeat create replaces the author's own previous artifact (which is what
@@ -245,11 +246,6 @@ pure removal), or triage waived independent review and the warrant agreed from
 the change itself. A waived pass carries no evidence either way and is scored
 `Unverified`, so it can never tie a genuinely flip-verified candidate in
 best-of-N and then win the smaller-diff tiebreak.
-
-The same discipline is available to the agent as a tool:
-**`verify_done`** replays a new test against the *previous* code in a shadow
-worktree at `git HEAD` — the test must fail there and pass on the change
-(**WITNESS CONFIRMED**). A green suite alone is never accepted as proof.
 
 ### 7. The verdict
 

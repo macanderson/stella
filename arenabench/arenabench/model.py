@@ -484,9 +484,10 @@ class Engine:
     #: with no pipeline ignore it, like the role overrides below.
     bare_loop: bool = False
     #: The exact tools this seat's agent is offered, or ``()`` for the shipping
-    #: catalog. For Stella that is ``STELLA_LEAN_TOOLS``, which advertises this
-    #: set plus the discovery tools and leaves everything else reachable by
-    #: ``tool_search`` — a prompt-budget measure, never a capability gate.
+    #: catalog. For Stella that is ``STELLA_LEAN_TOOLS``. (Some archived
+    #: matches ran under an earlier lean-layer behavior that also mounted
+    #: discovery tools on top and left everything else reachable — a
+    #: prompt-budget measure, never a capability gate.)
     #:
     #: A list of names and never a preset alias (#3032/#3033). The set is the
     #: independent variable of a tool-effectiveness experiment, so an arm that

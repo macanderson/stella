@@ -274,9 +274,9 @@ impl CodeGraph {
     }
 
     /// Every definition site of `name` with its exact source span — the
-    /// lookup behind the `read_symbol` tool, which needs the faithful
-    /// `(path, start..=end)` range to read (a definition frame renders a
-    /// truncated snippet, not an editable span).
+    /// lookup behind `stella search`'s symbol enrichment, which needs the
+    /// faithful `(path, start..=end)` range to read (a definition frame
+    /// renders a truncated snippet, not an editable span).
     pub fn definition_spans(&self, name: &str) -> Result<Vec<SymbolSpan>, GraphError> {
         Ok(store::definitions(&self.inner.read_guard(), name)?
             .into_iter()
@@ -331,9 +331,9 @@ impl CodeGraph {
 
     /// The files whose imports resolve to `file` — raw root-relative
     /// forward-slash paths, not rendered frames. The reverse-dependency
-    /// lookup behind `run_tests`' `scope:"impacted"` selection
-    /// (stella-tools), which walks this relation transitively and needs the
-    /// plain path list per hop rather than a prose frame.
+    /// lookup for impacted-scope selection: a caller walks this relation
+    /// transitively and needs the plain path list per hop rather than a
+    /// prose frame.
     pub fn importer_paths(&self, file: &Path) -> Result<Vec<String>, GraphError> {
         let rel = self.resolve_rel(file);
         store::importers_of(&self.inner.read_guard(), &rel)
@@ -761,7 +761,7 @@ mod tests {
 
     /// `importer_paths` answers the raw reverse-dependency question — which
     /// files' imports resolve to this one — as plain root-relative paths,
-    /// the relation `run_tests` `scope:"impacted"` walks transitively.
+    /// the same relation the recall plane's importer frames are built from.
     #[test]
     fn importer_paths_lists_files_whose_imports_resolve_here() {
         let ws = TempDir::new().unwrap();

@@ -18,7 +18,7 @@ stella memory <compact|index> [flags]
 
 ## What it does
 
-As the agent works, it cites the memories that informed a turn via the `cite_memory` tool; those citations aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection, editing, and lifecycle surface over that loop.
+Memories are hand-authored Markdown files, and recall serves each one to the model as a frame carrying its stable id. Citation receipts recorded against those ids in the local store aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection, editing, and lifecycle surface over that loop.
 
 ## Subcommands
 

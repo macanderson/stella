@@ -1,10 +1,9 @@
-//! The candidate stack's task-board seam (#1719) — the board half of the
-//! sweep that gave isolated candidates `attach_read_events` for the Files
-//! tab. A candidate's registry builds its own empty [`TaskBoard`] with no
-//! path to any surface, so before this module existed an isolated run's
-//! `task_start "3"` answered `UnknownTask` for a step the scope gate had
-//! already numbered 3, and even a successful mutation reached nobody: the
-//! deck's PLAN rail froze at hollow rings for the whole turn.
+//! The candidate stack's task-board seam (#1719). A candidate's registry
+//! builds its own empty [`TaskBoard`] with no path to any surface, so
+//! before this module existed an isolated run's `task_start "3"` answered
+//! `UnknownTask` for a step the scope gate had already numbered 3, and even
+//! a successful mutation reached nobody: the deck's PLAN rail froze at
+//! hollow rings for the whole turn.
 //!
 //! Two halves, matching the two failures:
 //!
@@ -186,7 +185,6 @@ mod tests {
     use super::super::tests::scaffold;
     use stella_pipeline::ports::CandidateWorkspace;
     use stella_protocol::{AgentEvent, TaskStatus};
-    use stella_tools::RegistryOptions;
 
     fn port_with_events(
         root: std::path::PathBuf,
@@ -197,7 +195,6 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let port = GitCandidateWorkspaces::new(
             root,
-            RegistryOptions::default(),
             Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),

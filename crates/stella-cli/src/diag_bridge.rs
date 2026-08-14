@@ -66,34 +66,23 @@ log_enum! {
     /// A closed vocabulary, not the raw string: a tool name usually comes from
     /// the registry, but the *model* chooses what to ask for and can name
     /// something that does not exist — at which point the "name" is model
-    /// output wearing an identifier's clothes. The built-ins answer the
-    /// question a benchmark actually asks (was it shelling out or editing?),
-    /// and everything else is [`ToolName::Other`].
+    /// output wearing an identifier's clothes. `task` is the one built-in a
+    /// benchmark reads on its own line (it spends money and spawns a
+    /// sub-agent); everything else is [`ToolName::Other`].
     ///
     /// The collapse to [`ToolName::Other`] is a **declared gap, not a
-    /// silence** (#3149): every MCP tool, script tool, and foundry tool
-    /// classifies as `other`, so per-tool attribution beyond this closed set
-    /// is deliberately not recoverable from the diagnostic plane — an
-    /// interned-identifier mechanism was considered and rejected as a
-    /// side-channel for model-chosen text. The raw name lives where content
-    /// is allowed to live: `store.db`'s `tool_calls` table records it for
-    /// every call, and a reader who needs to attribute an `other` failure
+    /// silence** (#3149): every other built-in, every MCP tool, script tool,
+    /// and foundry tool classifies as `other`, so per-tool attribution beyond
+    /// this closed set is deliberately not recoverable from the diagnostic
+    /// plane — an interned-identifier mechanism was considered and rejected
+    /// as a side-channel for model-chosen text. The raw name lives where
+    /// content is allowed to live: `store.db`'s `tool_calls` table records it
+    /// for every call, and a reader who needs to attribute an `other` failure
     /// joins there.
     pub enum ToolName {
-        Bash => "bash",
-        ReadFile => "read_file",
-        WriteFile => "write_file",
-        EditFile => "edit_file",
-        ApplyEdits => "apply_edits",
-        DeleteFile => "delete_file",
-        Glob => "glob",
-        Grep => "grep",
-        VerifyDone => "verify_done",
-        SaveMemory => "save_memory",
-        GenerateImage => "generate_image",
-        WebFetch => "web_fetch",
         Task => "task",
-        /// An MCP tool, a custom script tool, or a name the model invented.
+        /// Any other built-in, an MCP tool, a custom script tool, or a name
+        /// the model invented.
         Other => "other",
     }
 }
@@ -101,18 +90,6 @@ log_enum! {
 impl ToolName {
     fn classify(name: &str) -> Self {
         match name {
-            "bash" => Self::Bash,
-            "read_file" => Self::ReadFile,
-            "write_file" => Self::WriteFile,
-            "edit_file" => Self::EditFile,
-            "apply_edits" => Self::ApplyEdits,
-            "delete_file" => Self::DeleteFile,
-            "glob" => Self::Glob,
-            "grep" => Self::Grep,
-            "verify_done" => Self::VerifyDone,
-            "save_memory" => Self::SaveMemory,
-            "generate_image" => Self::GenerateImage,
-            "web_fetch" => Self::WebFetch,
             "task" => Self::Task,
             _ => Self::Other,
         }
@@ -716,9 +693,10 @@ impl DomainBridge {
             AgentEvent::HunkReview { .. } => {
                 self.emit(Level::Info, "agent.hunk.review", self.at_seq());
             }
-            AgentEvent::AskUser { .. } => {
-                self.emit(Level::Info, "agent.ask_user", self.at_seq());
-            }
+            // Deliberately no record: no producer emits this variant (it
+            // survives on the wire for replaying stored journals), so a code
+            // for it would document a line no run can write.
+            AgentEvent::AskUser { .. } => {}
             AgentEvent::MediaProgress { .. } => {
                 self.emit(Level::Debug, "agent.media.progress", self.at_seq());
             }
@@ -928,16 +906,16 @@ mod tests {
     fn a_tool_call_records_its_shape_and_not_its_arguments() {
         let (mut bridge, records) = bridge();
         bridge.observe(&tool_call(
-            "bash",
-            serde_json::json!({ "command": "cat ~/.ssh/id_ed25519" }),
+            "task",
+            serde_json::json!({ "prompt": "read ~/.ssh/id_ed25519 and summarize it" }),
         ));
 
         let record = records.find("agent.tool.call").expect("a record");
         let json = serde_json::to_string(&record).expect("serialize");
-        assert!(json.contains(r#""tool":"bash""#), "{json}");
+        assert!(json.contains(r#""tool":"task""#), "{json}");
         assert!(json.contains(r#""args_bytes""#), "{json}");
         assert!(!json.contains("id_ed25519"), "arguments leaked: {json}");
-        assert!(!json.contains("cat"), "arguments leaked: {json}");
+        assert!(!json.contains("summarize"), "arguments leaked: {json}");
     }
 
     /// A hallucinated or MCP tool name is model-chosen text, so it collapses to
@@ -980,8 +958,8 @@ mod tests {
     fn a_failed_tool_result_names_its_tool_without_a_join() {
         let (mut bridge, records) = bridge();
         bridge.observe(&tool_call(
-            "read_file",
-            serde_json::json!({ "path": "/w/src/lib.rs" }),
+            "task",
+            serde_json::json!({ "prompt": "fix the failing test" }),
         ));
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
@@ -994,7 +972,7 @@ mod tests {
         assert_eq!(record.level, Level::Warn);
         let json = serde_json::to_string(&record).expect("serialize");
         assert!(
-            json.contains(r#""tool":"read_file""#),
+            json.contains(r#""tool":"task""#),
             "the warn line must name the tool on its own: {json}"
         );
         assert!(!json.contains("no such file"), "{json}");
@@ -1023,7 +1001,7 @@ mod tests {
     #[test]
     fn in_flight_retention_drains_on_result_discard_and_turn_end() {
         let (mut bridge, _records) = bridge();
-        bridge.observe(&tool_call("grep", serde_json::json!({})));
+        bridge.observe(&tool_call("list_state", serde_json::json!({})));
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
             output: ToolOutput::Ok { content: "".into() },
@@ -1032,15 +1010,15 @@ mod tests {
         });
         assert!(bridge.in_flight.is_empty(), "the result removes its entry");
 
-        bridge.observe(&tool_call("bash", serde_json::json!({})));
+        bridge.observe(&tool_call("list_state", serde_json::json!({})));
         bridge.observe(&AgentEvent::SpeculationDiscarded {
             call_id: "call-1".into(),
-            name: "bash".into(),
+            name: "list_state".into(),
             reason: "attempt_failed".into(),
         });
         assert!(bridge.in_flight.is_empty(), "a discard removes its entry");
 
-        bridge.observe(&tool_call("bash", serde_json::json!({})));
+        bridge.observe(&tool_call("task", serde_json::json!({})));
         bridge.observe(&AgentEvent::Complete {
             model: "claude-fable-5".into(),
             cost_usd: 0.1,
@@ -1069,7 +1047,7 @@ mod tests {
         assert_eq!(bridge.cx.turn, Some(3));
         assert_eq!(bridge.cx.step, Some(7));
 
-        bridge.observe(&tool_call("grep", serde_json::json!({})));
+        bridge.observe(&tool_call("task_list", serde_json::json!({})));
         let record = records.find("agent.tool.call").expect("a record");
         assert_eq!(record.cx.turn, Some(3), "the tool call inherits the turn");
         assert_eq!(record.cx.step, Some(7));
@@ -1218,7 +1196,7 @@ mod tests {
         for _ in 0..5 {
             bridge.observe(&AgentEvent::TextDelta { delta: "x".into() });
         }
-        bridge.observe(&tool_call("bash", serde_json::json!({})));
+        bridge.observe(&tool_call("get_environment", serde_json::json!({})));
 
         let record = records.find("agent.tool.call").expect("a record");
         assert_eq!(

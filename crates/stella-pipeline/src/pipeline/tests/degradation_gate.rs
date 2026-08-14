@@ -75,7 +75,6 @@ async fn run_scenario(s: Scenario) {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             lint: lint.as_ref().map(|l| l as &dyn LintProbe),

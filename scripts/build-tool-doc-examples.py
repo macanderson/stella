@@ -43,7 +43,7 @@ import re
 import sys
 
 # Payload caps. A tool example is there to show the *shape* of a call; a
-# 40KB `bash` transcript shows nothing the first twenty lines do not.
+# 40KB output payload shows nothing the first twenty lines do not.
 INPUT_CAP = 600
 OUTPUT_CAP = 900
 

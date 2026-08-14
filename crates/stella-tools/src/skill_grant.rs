@@ -3,7 +3,7 @@
 
 //! A skill's `allowed-tools` grant as policy algebra (#2682).
 //!
-//! A skill that declares `allowed-tools: read_file, grep` runs against a
+//! A skill that declares `allowed-tools: task_list, get_state` runs against a
 //! **scoped narrowing layer**: the effective surface is the grant
 //! intersected with whatever the operator (and any org-managed scope above
 //! them) already allows — [`ToolPolicy::narrow_with`]'s semantics, "allowed
@@ -13,7 +13,7 @@
 //! restated for skills.
 //!
 //! The grant itself is the read-only idiom: `{"*": off, <name>: on, …}`.
-//! Entries may be exact tool names or catalog groups (`"file"`, `"mcp"`),
+//! Entries may be exact tool names or catalog groups (`"scratch"`, `"mcp"`),
 //! because [`ToolPolicy::allows`] resolves both — a skill author writes the
 //! same vocabulary an operator writes in `settings.json`.
 //!
@@ -25,15 +25,17 @@
 //! when **both** allow it — the exact intersection, structurally. A folded
 //! single-policy form (`operator.narrow_with(&grant_policy(...))`) is
 //! deliberately not offered: `narrow_with` resolves raw *keys*, and a group
-//! key like `"build"` resolves through `catalog::group_for` as an unknown
+//! key like `"scratch"` resolves through `catalog::group_for` as an unknown
 //! tool name into the dynamic `"custom"` group, which can make the folded
 //! policy *wider* than the per-name intersection (#2682 review finding; the
 //! property tests below pin the per-name form instead).
 //!
-//! Enforcement sites: the CLI's `invoke_skill` layer holds the grant for an
-//! inline skill's span, and a forked skill's grant is resolved to concrete
-//! names ([`resolve_grant`]) and enforced structurally by
-//! `stella_core::ports::GrantedTools` inside the child turn.
+//! Enforcement sites: a session layer that mounts skill invocation holds the
+//! grant for an inline skill's span, and a forked skill's grant is resolved
+//! to concrete names ([`resolve_grant`]) and enforced structurally by
+//! `stella_core::ports::GrantedTools` inside the child turn. No shipped
+//! surface mounts skill invocation today, so nothing constructs a grant in
+//! production.
 
 use crate::policy::{ToolPolicy, WILDCARD};
 
@@ -177,26 +179,29 @@ mod tests {
     /// selects its family, and everything unnamed is off.
     #[test]
     fn a_grant_is_the_read_only_idiom_over_the_named_tools() {
-        let grant = grant_policy(&["read_file".to_string(), "retrieval".to_string()]);
-        assert!(grant.allows("read_file"));
-        assert!(grant.allows("grep"), "group entries cover their family");
-        assert!(grant.allows("glob"));
-        assert!(!grant.allows("bash"));
-        assert!(!grant.allows("write_file"));
+        let grant = grant_policy(&["task_list".to_string(), "scratch".to_string()]);
+        assert!(grant.allows("task_list"));
+        assert!(
+            grant.allows("save_state"),
+            "group entries cover their family"
+        );
+        assert!(grant.allows("get_state"));
+        assert!(!grant.allows("task"));
+        assert!(!grant.allows("task_create"));
         assert!(!grant.allows("mcp__github__create_issue"));
     }
 
-    /// #3120: a granted *tool* name selects that tool alone — `search` no
-    /// longer doubles as its family's group key, so a skill that asks for the
-    /// fused entry point does not silently receive grep and glob too.
+    /// #3120: a granted *tool* name selects that tool alone — a name that is
+    /// not also a group key must never expand to its family, so a skill that
+    /// asks for one scratch verb does not silently receive the other three.
     #[test]
     fn a_granted_tool_name_does_not_expand_to_its_family() {
-        let grant = grant_policy(&["search".to_string()]);
-        assert!(grant.allows("search"));
-        for sibling in ["grep", "glob", "graph_query", "semantic_code_search"] {
+        let grant = grant_policy(&["save_state".to_string()]);
+        assert!(grant.allows("save_state"));
+        for sibling in ["get_state", "list_state", "delete_state"] {
             assert!(
                 !grant.allows(sibling),
-                "`search` must not grant `{sibling}`"
+                "`save_state` must not grant `{sibling}`"
             );
         }
     }

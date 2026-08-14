@@ -26,7 +26,7 @@ exhaustive `match` at compile time. If a role exists, it has a page here.
 | `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
 | `worker` | [worker.md](worker.md) | `doc:prompt-worker` | engine / raw | full registry | the change itself |
 | `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | **none** | — | retired (#2584) — no call, no prompt |
-| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | six read-only | `stella goal`'s outer assessor: is the objective met |
+| `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | four read-only | `stella goal`'s outer assessor: is the objective met |
 | `agent_author` | [agent-author.md](agent-author.md) | `doc:prompt-agent-author` | raw | none | a generated agent definition |
 | `skill_author` | [skill-author.md](skill-author.md) | `doc:prompt-skill-author` | raw | none | a generated `SKILL.md` |
 | `domain_inference` | [domain-inference.md](domain-inference.md) | `doc:prompt-domain-inference` | raw | none | the workspace's domain taxonomy |
@@ -112,10 +112,8 @@ fixed order:
 
 ```
 base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.prompt
-+ project scripts       package-manager scripts found at the workspace root
-+ project orientation
++ session environment   working directory, git checkout, platform, shell dialect
 + workspace memories    .stella/memories/*.md, sorted by filename, ≤16,000 chars
-+ exploration index     COMPLETED maps only, metadata only, ≤2,000 chars
 + rules section         .stella/rules/*.toml, Cached channel
 ```
 
@@ -193,6 +191,10 @@ adds `REASONING_HEADROOM_TOKENS` (4,096) on top, so the numbers below read
 against the prompts that justify them rather than encoding a guess at a
 thinking budget. Both matches are exhaustive over `ModelCallRole` on purpose: a
 new role has to decide its bounds rather than inherit a ceiling by omission.
+The engine's own overflow summarizer is the third dispatch site: it dispatches
+exactly one role, so it pins that contract locally
+(`crates/stella-core/src/driver/restore.rs`) rather than carrying a
+one-row table.
 
 | Role | Visible output | Effort | Declared by |
 |---|---|---|---|
@@ -203,6 +205,7 @@ new role has to decide its bounds rather than inherit a ceiling by omission.
 | `agent_author`, `skill_author` | 4,096 | inherited | `standalone_bounds` |
 | `domain_inference` | 2,048 | inherited | `standalone_bounds` |
 | `reflection` | 4,096 | `Low` (pinned) | `standalone_bounds` |
+| `summarization` | 1,200 | `Low` (pinned) | its own dispatch, `crates/stella-core/src/driver/restore.rs` |
 | everything else | engine base | inherited | — |
 
 The `verdict` / `distress_guidance` row is retained rather than removed because
@@ -226,9 +229,14 @@ truncation, up to 131,072, which no per-role constant could express.
 
 A call that comes back empty with `finish_reason: length` has provably starved
 — the whole budget went to reasoning before the first visible token — and is
-retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **both** chokepoints.
-The one role still outside either is summarization, which pins 1,200 at `Low`
-from the engine's own `run_compaction_pass`.
+retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **all three** dispatch
+sites. Summarization was the last to gain both halves (#2503): it dispatches
+exactly one role from the engine itself, so instead of a third bounds table its
+site pins the contract locally and pads it with the same shared
+`with_reasoning_headroom`. Its starved retry deliberately does **not** count
+toward the summarizer's give-up latch — the latch exists for a broken
+summarizer, and a starved one is merely short of room; only a retry that also
+comes back empty records the failure.
 
 ## This document set is a snapshot, not the source
 

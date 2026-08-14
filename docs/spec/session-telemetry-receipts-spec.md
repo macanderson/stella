@@ -7,6 +7,9 @@ status: living
 # Session Telemetry & Context Receipts — Schema Spec
 
 Status: proposed for implementation — extends epic **#364** ("Context receipts").
+The provable-use signal classes below assume a memory-citation source; no
+shipping surface emits one today, so implementing them includes building that
+source.
 
 ## Purpose
 

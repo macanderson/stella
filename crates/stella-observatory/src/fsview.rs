@@ -270,112 +270,6 @@ pub fn memories(workspace_root: &Path) -> Value {
     ))
 }
 
-/// Does this manifest key name a path *inside* the workspace? An absolute path
-/// makes [`Path::join`] drop the workspace root entirely and `..` walks out of
-/// it; a leading `./` is how a model-authored evidence path often arrives and
-/// is harmless, so it stays allowed.
-///
-/// Lexical on purpose — the observatory does not resolve or `stat` a path it is
-/// refusing, so unlike `stella_tools::resolve_within_root` (the writer-side
-/// twin, which canonicalises) this does not follow a symlink that points out of
-/// the tree. That is the narrower guarantee: no path *spelled* outside the
-/// workspace is read.
-fn is_workspace_relative(rel: &str) -> bool {
-    use std::path::Component;
-    let path = Path::new(rel);
-    if !path.is_relative() {
-        return false;
-    }
-    for component in path.components() {
-        if !matches!(component, Component::Normal(_) | Component::CurDir) {
-            return false;
-        }
-    }
-    true
-}
-
-/// Exploration maps from `.stella/explorations/*.json` with a per-map
-/// freshness verdict computed by re-hashing each record's `path → sha256`
-/// manifest against the working tree — the human-facing twin of the agents'
-/// startup index (`docs/spec/exploration-sharing.md` §4e). Records without
-/// a manifest (pre-v2) report `"unknown"`.
-pub fn explorations(workspace_root: &Path) -> Value {
-    use sha2::{Digest, Sha256};
-    let dir = workspace_root.join(".stella/explorations");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return json!([]);
-    };
-    let mut rows: Vec<Value> = Vec::new();
-    // Bounded like every other directory walk in this module (`MAX_DIR_ENTRIES`):
-    // each record re-hashes its whole manifest against the working tree, so an
-    // unbounded scan here is the most expensive one in the file, not the cheapest.
-    for entry in entries.flatten().take(MAX_DIR_ENTRIES) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(record) = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        else {
-            continue;
-        };
-        let manifest = record["manifest"].as_object().cloned().unwrap_or_default();
-        let (mut changed, mut missing) = (Vec::new(), Vec::new());
-        for (rel, saved) in &manifest {
-            // An exploration record is a shareable artifact that travels with
-            // the tree (docs/spec/exploration-sharing.md §3), so its manifest
-            // keys are untrusted text. `Path::join` discards the root when
-            // handed an absolute path, and `..` walks out of the workspace
-            // either way: both would turn a freshness poll into an
-            // arbitrary-file read whose verdict reports whether that file exists
-            // and whether its bytes hash to an attacker-chosen digest. The
-            // producer already refuses such a key (`stella_tools::staleness`);
-            // this side must too. It reads as missing — the same verdict a
-            // deleted file gets — without being opened.
-            if !is_workspace_relative(rel) {
-                missing.push(rel.clone());
-                continue;
-            }
-            match std::fs::read(workspace_root.join(rel)) {
-                Ok(bytes) => {
-                    let mut hasher = Sha256::new();
-                    hasher.update(&bytes);
-                    let digest = hasher.finalize();
-                    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-                    if Some(hex.as_str()) != saved.as_str() {
-                        changed.push(rel.clone());
-                    }
-                }
-                Err(_) => missing.push(rel.clone()),
-            }
-        }
-        let freshness = if manifest.is_empty() {
-            "unknown"
-        } else if changed.is_empty() && missing.is_empty() {
-            "fresh"
-        } else {
-            "drifted"
-        };
-        rows.push(json!({
-            "slice": record["slice"],
-            "title": record["title"],
-            "summary": record["summary"],
-            "status": record["status"].as_str().unwrap_or("complete"),
-            "pid": record["pid"],
-            "created_at_ms": record["created_at_ms"],
-            "git_head": record["git_head"],
-            "manifest_files": manifest.len(),
-            "freshness": freshness,
-            "changed": changed,
-            "missing": missing,
-            "content_chars": record["content"].as_str().map(|s| s.chars().count()).unwrap_or(0),
-        }));
-    }
-    rows.sort_by_key(|r| -(r["created_at_ms"].as_i64().unwrap_or(0)));
-    json!(rows)
-}
-
 /// The handle `stella context list` prints beside a record, derived from its
 /// lineage: `ctx.stella.rust-toolchain-pin` under set `stella` reads back as
 /// `rust-toolchain-pin`. A lineage that does not carry the set's prefix is its
@@ -970,20 +864,6 @@ tags       = ["testing", "pins"]
         assert!(!s.contains("Bearer xyz"));
         assert!(s.contains("ZAI_KEY"), "env var *names* survive");
         assert!(s.contains("glm-5.2"), "non-sensitive values survive");
-    }
-
-    /// Manifest keys come out of a shareable artifact, so an ingested map can
-    /// name a path outside the workspace. Anything but a plain relative path
-    /// must be refused before it reaches `fs::read`.
-    #[test]
-    fn manifest_keys_outside_the_workspace_are_refused() {
-        assert!(is_workspace_relative("src/lib.rs"));
-        assert!(is_workspace_relative("a/b/c.rs"));
-        assert!(!is_workspace_relative("/etc/passwd"));
-        assert!(!is_workspace_relative("../../.ssh/id_rsa"));
-        assert!(!is_workspace_relative("src/../../secrets"));
-        // A leading `./` is how model-authored evidence paths often arrive.
-        assert!(is_workspace_relative("./src/lib.rs"));
     }
 
     /// The `target` field is served to the browser, so the value-bearing

@@ -283,9 +283,9 @@ impl SessionSubAgents {
     }
 
     /// Build the dispatcher and hand it to the registry, so the `task` tool
-    /// stops reporting sub-agents as unavailable. Also returned, so callers
-    /// can hand the same runner to the session layers that dispatch children
-    /// outside the native registry (`invoke_skill`'s fork mode, #2682).
+    /// stops reporting sub-agents as unavailable. Also returned, so a caller
+    /// that dispatches children outside the native registry can share the
+    /// same runner.
     ///
     /// One call per session, next to where the registry is built. Kept a
     /// free function rather than folded into `ToolRegistry::new` because the

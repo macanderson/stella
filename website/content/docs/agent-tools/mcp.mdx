@@ -150,6 +150,5 @@ Two things follow from a server being `candidate_safe`:
   same read-only question (a schema listing, say) N times over. A tool that
   requires input is never called this way; its arguments are never guessed.
 
-`ask_user` stays withheld from candidates regardless: a fan-out of N
-candidates has no single owner for an interactive prompt, so candidates
-always run non-interactively.
+Candidates always run non-interactively regardless: a fan-out of N
+candidates has no single owner for an interactive prompt.

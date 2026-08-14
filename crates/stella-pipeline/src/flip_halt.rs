@@ -34,16 +34,19 @@
 //! test runs, the ones that tell it the work is finished, were invisible to
 //! it. This watches those runs as they happen.
 //!
+//! A turn with no tracked command gets no latch at all: with nothing to
+//! watch there is no deterministic done-signal, and the turn runs to its
+//! ordinary end.
+//!
 //! # How hard the stop lands
 //!
 //! The latch is read by the engine at two depths. The step boundary
 //! (`driver/drive.rs`) ends the turn without another model call. Since #2661
 //! the dispatch loop also consults it — between barrier groups and after each
 //! settled tool call — and a fired latch there *kills* the still-running
-//! sibling tools: their futures are dropped, `kill_on_drop` and the setsid'd
-//! SIGKILL group guard in `stella-tools` take the child processes with them,
-//! and the refused calls are answered synthetically so the transcript stays
-//! well-paired. Before that, a flip landing while a long tool was in flight
+//! sibling tools: their futures are dropped, `kill_on_drop` takes any child
+//! processes with them, and the refused calls are answered synthetically so
+//! the transcript stays well-paired. Before that, a flip landing while a long tool was in flight
 //! waited for it — minutes on a `pytest` or a build, which on Terminal-Bench
 //! is exactly the `solved_then_timeout` window: proven done, still billed to
 //! the 900s ceiling.
@@ -70,7 +73,10 @@ use stella_core::driver::TurnHalt;
 
 use crate::verify::{FlipState, normalize_command};
 
-/// The marker the bash tool appends to a command's output.
+/// The exit-status marker convention shell-shaped tools append to a
+/// command's rendered output (`[exit code: N]`). No built-in emits it; a
+/// custom or MCP shell tool that follows the convention feeds the oracle
+/// mid-turn, and output without it never advances the latch.
 ///
 /// Parsed rather than plumbed because the exit status genuinely is not
 /// carried anywhere else: `ToolOutput::Ok` holds only the text the model
@@ -79,10 +85,10 @@ use crate::verify::{FlipState, normalize_command};
 /// perfectly successful tool call.
 const EXIT_MARKER: &str = "[exit code:";
 
-/// Reads an exit status out of a bash tool result's content.
+/// Reads an exit status out of a shell-shaped tool result's content.
 ///
 /// Returns `None` when no marker is present, which is the honest answer for
-/// every tool that is not the shell — and `None` never advances the oracle,
+/// every tool that is not a shell — and `None` never advances the oracle,
 /// so an unrecognised result can only fail to stop a turn, never stop one
 /// early.
 #[must_use]
@@ -120,17 +126,8 @@ pub fn command_of(input: &serde_json::Value) -> Option<&str> {
 pub struct FlipHalt {
     /// The tracked command in normalized form — compared, and quoted back in
     /// the halt reason so a reader can see which command ended the turn.
-    /// Empty for a latch built by [`FlipHalt::watching_verify_done_only`],
-    /// which has no command to watch and can only be fired by
-    /// [`FlipHalt::confirm_verify_done`].
     tracked: String,
     flipped: AtomicBool,
-    /// The second live "done" signal (#2661): a `verify_done` call whose
-    /// output opened with the confirmed marker. Deterministic proof by the
-    /// same contract the witness stage credits (#2129), so it may end the
-    /// turn even when no tracked command was ever armed — which on
-    /// Terminal-Bench is every bare-loop execute turn.
-    verify_confirmed: AtomicBool,
 }
 
 impl FlipHalt {
@@ -141,21 +138,6 @@ impl FlipHalt {
         Self {
             tracked: normalize_command(tracked),
             flipped: AtomicBool::new(false),
-            verify_confirmed: AtomicBool::new(false),
-        }
-    }
-
-    /// A latch with no tracked command: only a confirmed `verify_done` can
-    /// fire it. This is what covers the turns `run_candidate` never arms —
-    /// no configured test command, no failing baseline — where before #2661
-    /// a worker that had already *proven* its work done (the definition-of-
-    /// done contract, not a self-report) still ran until a limit ended it.
-    #[must_use]
-    pub fn watching_verify_done_only() -> Self {
-        Self {
-            tracked: String::new(),
-            flipped: AtomicBool::new(false),
-            verify_confirmed: AtomicBool::new(false),
         }
     }
 
@@ -171,20 +153,6 @@ impl FlipHalt {
         self.flipped.load(Ordering::SeqCst)
     }
 
-    /// Whether either done-signal has fired: the tracked-command flip or a
-    /// confirmed `verify_done`.
-    #[must_use]
-    pub fn fired(&self) -> bool {
-        self.is_flipped() || self.verify_confirmed.load(Ordering::SeqCst)
-    }
-
-    /// Feed a `verify_done` result that opened with the confirmed marker.
-    /// Returns `true` on the transition, same edge contract as
-    /// [`FlipHalt::observe`].
-    pub fn confirm_verify_done(&self) -> bool {
-        !self.verify_confirmed.swap(true, Ordering::SeqCst)
-    }
-
     /// The latch to hand a follow-up turn: `Some(self)` only while unfired.
     ///
     /// A latch that already fired belongs to the turn it stopped. A revision
@@ -195,7 +163,7 @@ impl FlipHalt {
     /// and that is exactly what an unfired latch delivers (#1793).
     #[must_use]
     pub fn unfired(self: &Arc<Self>) -> Option<Arc<Self>> {
-        (!self.fired()).then(|| Arc::clone(self))
+        (!self.is_flipped()).then(|| Arc::clone(self))
     }
 
     /// Feed one finished shell call. Returns `true` if this observation
@@ -263,14 +231,6 @@ impl TurnHalt for FlipHalt {
                  here rather than spending the rest of the turn against a solved task",
                 self.tracked
             ));
-        }
-        if self.verify_confirmed.load(Ordering::SeqCst) {
-            return Some(
-                "verify_done confirmed the witness (fail→pass observed in a shadow worktree), so \
-                 the goal is proven met — stopping here rather than spending the rest of the turn \
-                 against a solved task"
-                    .to_string(),
-            );
         }
         None
     }
@@ -413,51 +373,5 @@ mod tests {
                 .observe("pytest -q", "ok\n[exit code: 0]")
         );
         assert!(for_revision(&armed, FlipState::Failing).is_none());
-    }
-
-    /// **The #2661 seam-C witness.** A turn with no tracked command — every
-    /// bare-loop Terminal-Bench execute turn — can now be ended by the one
-    /// deterministic done-signal it does have: a confirmed `verify_done`.
-    /// Fails on the old `FlipHalt` because neither the constructor nor the
-    /// confirm edge exists there, and `halt_reason` only ever reported a
-    /// tracked-command flip.
-    #[test]
-    fn a_confirmed_verify_done_fires_a_latch_with_no_tracked_command() {
-        use stella_core::driver::TurnHalt as _;
-
-        let halt = FlipHalt::watching_verify_done_only();
-        assert!(halt.halt_reason().is_none(), "unfired means silent");
-
-        assert!(halt.confirm_verify_done(), "first confirmation is the edge");
-        assert!(
-            !halt.confirm_verify_done(),
-            "the edge is claimed exactly once, same contract as observe()"
-        );
-        let reason = halt.halt_reason().expect("a confirmed latch reports");
-        assert!(
-            reason.contains("verify_done confirmed"),
-            "the reason names the signal that ended the turn: {reason}"
-        );
-    }
-
-    /// The two safety properties of the command-less latch: it can never be
-    /// fired by a shell observation (watching nothing matches nothing, not
-    /// everything), and once fired by verify_done it is refused to follow-up
-    /// turns exactly like a command-fired one.
-    #[test]
-    fn a_verify_done_only_latch_ignores_commands_and_is_not_inherited() {
-        let halt = Arc::new(FlipHalt::watching_verify_done_only());
-        assert!(
-            !halt.observe("", "ok\n[exit code: 0]"),
-            "an empty command line must not match the empty pattern"
-        );
-        assert!(!halt.observe("pytest -q", "ok\n[exit code: 0]"));
-        assert!(halt.unfired().is_some(), "nothing has fired yet");
-
-        halt.confirm_verify_done();
-        assert!(
-            halt.unfired().is_none(),
-            "a latch fired via verify_done belongs to the turn it stopped"
-        );
     }
 }

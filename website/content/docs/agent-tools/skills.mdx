@@ -100,24 +100,14 @@ older version to roll back without losing the newer one.
 No pin entry means the latest version. The sidecar is dot-prefixed so the
 recall walk — which reads only `*.md` and `<slug>/SKILL.md` — never sees it.
 
-## Searching installed skills
-
-The agent's **`skill_search`** tool (read-only) searches the skills already
-installed in this workspace — both scopes, ranked by fit for the task — and
-can return the best match's full instructions (`include_body: true`). With
-potentially thousands of installed skills, the agent pulls the relevant one
-on demand instead of frontloading them all.
-
 ## The public registry
 
 stella integrates with the community skills registry via `npx skills`:
 
-- **`search_skills`** (agent tool, read-only) / the SKILLS tab search — runs
-  `npx skills find <query>`.
-- **`install_skill`** (agent tool) — runs `npx skills add`, staging into a
+- The SKILLS tab search — runs `npx skills find <query>`.
+- Installing from the registry pane — runs `npx skills add`, staging into a
   private temp directory and adopting the produced `SKILL.md` into your
-  chosen scope. Installation **always requires your confirmation** — in a
-  headless run it fails loudly rather than installing unattended.
+  chosen scope. Installation **always requires your confirmation**.
 
 The underlying commands are overridable (`STELLA_SKILLS_SEARCH_CMD`,
 `STELLA_SKILLS_INSTALL_CMD`, `STELLA_SKILLS_USE_CMD`) for private registries.

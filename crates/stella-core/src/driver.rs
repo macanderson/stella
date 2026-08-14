@@ -323,7 +323,7 @@ pub struct EngineConfig {
     /// observes the tracked test go fail→pass.
     pub turn_halt: Option<Arc<dyn TurnHalt>>,
     /// Task-mode opt-in (#2663): a completing turn that mutated the workspace
-    /// with no confirmed `verify_done` is nudged once to prove its work
+    /// and was not yet challenged is nudged once to prove its work
     /// before the declaration is accepted (`confident_zero::check`, rung 4).
     pub completion_gate: bool,
 }

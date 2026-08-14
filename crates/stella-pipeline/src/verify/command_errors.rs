@@ -60,9 +60,9 @@ use crate::flip_halt::exit_status;
 /// outlives the thing it guards when each side spells its own copy.
 pub const EVIDENCE_KEY: &str = "errored_commands";
 
-/// The marker the shell tool prefixes a command's captured stderr with
-/// (`stella-tools/src/bash.rs` renders `stdout`, then `[stderr]`, then
-/// `[exit code: N]`).
+/// The marker a shell-style tool's rendered output prefixes a command's
+/// captured stderr with (the `stdout`, then `[stderr]`, then
+/// `[exit code: N]` convention).
 ///
 /// Parsed rather than plumbed for the same reason
 /// [`crate::flip_halt::exit_status`] parses its own marker: `ToolOutput::Ok`
@@ -96,9 +96,9 @@ fn line_reports_a_failed_command(line: &str) -> bool {
 /// Whether a shell result's captured stderr block names a failed command.
 ///
 /// The **last** marker, not the first, mirroring
-/// [`crate::flip_halt::exit_status`]: the harness appends this block after the
-/// command's stdout, so a command whose own stdout quotes the marker must not
-/// redirect the scan onto its own output.
+/// [`crate::flip_halt::exit_status`]: the convention appends this block after
+/// the command's stdout, so a command whose own stdout quotes the marker must
+/// not redirect the scan onto its own output.
 fn stderr_reports_a_failed_command(text: &str) -> bool {
     let Some(marker) = text.rfind(STDERR_MARKER) else {
         return false;

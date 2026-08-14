@@ -268,13 +268,9 @@ impl Settings {
         // Captured from the managed snapshot only: the ceiling is what the ORG
         // said, and no later fold can grow it or shrink it. `AuthorityPolicy`
         // reads it rather than re-deriving, so the two can never disagree.
-        let ceiling =
-            managed_tool_ceiling(managed.managed_authority.as_ref(), managed.tools.as_ref());
-        let authority = AuthorityPolicy::compute(
-            managed.managed_authority.as_ref(),
-            &ceiling,
-            trust.credentials,
-        );
+        let ceiling = managed_tool_ceiling(managed.tools.as_ref());
+        let authority =
+            AuthorityPolicy::compute(managed.managed_authority.as_ref(), trust.credentials);
 
         if !trust.hooks && project.hooks.is_some() {
             merged.hooks = trusted_only.hooks.clone();
@@ -523,10 +519,7 @@ impl Settings {
                 .unwrap_or_default()
         };
         Ok(ToolScopePolicies {
-            managed: managed_tool_ceiling(
-                managed.managed_authority.as_ref(),
-                managed.tools.as_ref(),
-            ),
+            managed: managed_tool_ceiling(managed.tools.as_ref()),
             user: own(&user),
             project: own(&project),
         })

@@ -11,10 +11,11 @@
 //!
 //! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
 //! plain synchronous functions over owned data, no I/O, no provider SDK, no
-//! `regex` — easy to property-test against fakes. The caller (the CLI) reads
-//! the durable `tool_calls` receipt log, hands the recent `bash` commands in
-//! as [`ShellInvocation`]s, and surfaces any [`ProposedTool`] to the user's
-//! `/inbox`. This module never reads the store and never writes a manifest.
+//! `regex` — easy to property-test against fakes. The caller hands a window
+//! of recorded shell commands in as [`ShellInvocation`]s — today the
+//! trace-replay harness (`stella-cli`'s `memory::replay`) is the shipped
+//! feeder — and surfaces any [`ProposedTool`] it detects. This module never
+//! reads the store and never writes a manifest.
 //!
 //! **How it differs from loop detection.** [`crate::loop_detect`] flags a
 //! *stuck* turn — the same call, byte-identical, producing byte-identical
@@ -98,8 +99,8 @@ impl ParamKind {
 /// event stream); the detector never learns where it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellInvocation {
-    /// The verbatim command line, as passed to the `bash` tool's `command`
-    /// input.
+    /// The verbatim command line, as recorded by whatever shell-shaped
+    /// surface produced it.
     pub command: String,
     /// Whether the invocation exited successfully. A shape that never once
     /// worked is not a tool worth minting (see
@@ -185,10 +186,9 @@ impl ProposedTool {
 /// Thresholds for [`detect_tool_gaps`].
 ///
 /// **One shipped value, and today no way to change it.** Every production call
-/// site constructs `GapDetectionConfig::default()` — the end-of-execution
-/// mining pass and `stella tools --author` (both in `stella-cli`'s
-/// `tool_foundry`), and the trace-replay harness (`stella-cli`'s
-/// `memory::replay`). No settings key reads any field, so what this struct
+/// site constructs `GapDetectionConfig::default()` — today that is the
+/// trace-replay harness (`stella-cli`'s `memory::replay`). No settings key
+/// reads any field, so what this struct
 /// holds is the shipped policy rather than a preference, and the numbers below
 /// are the ones every workspace gets. Exposing the two knobs a workspace would
 /// actually want to move is #2471.

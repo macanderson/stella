@@ -14,7 +14,7 @@ Everything is on your disk, under `.stella/`:
 
 <CardGrid size="md">
   <OptionCard name=".stella/memories/*.md">
-    Workspace memories — one Markdown lesson per file, written by `save_memory`.
+    Workspace memories — one Markdown lesson per file, loaded into every session's prompt.
   </OptionCard>
   <OptionCard name=".stella/private/context.db">
     The **bi-temporal** context store: episodes, reflection memories, domain facts.
@@ -24,9 +24,6 @@ Everything is on your disk, under `.stella/`:
   </OptionCard>
   <OptionCard name=".stella/private/codegraph.db">
     The tree-sitter code-graph index.
-  </OptionCard>
-  <OptionCard name=".stella/explorations/*">
-    Saved **exploration maps** — reusable codebase-slice notes with per-file staleness.
   </OptionCard>
   <OptionCard name=".stella/rules/*.md">
     Rules — promoted memories and guard rules. Also read from `.claude/rules/` and
@@ -182,12 +179,11 @@ and citation rules as the built-in providers. The full analysis lives in
 
 Memory in stella is not write-only. It is a feedback loop:
 
-- **`save_memory`** writes a lesson (a slug plus ≤ 2,000 chars of Markdown)
-  to `.stella/memories/`.
-- Recalled memories carry a stable id (`nod_…`). When one actually informs a
-  turn, the model calls **`cite_memory`** with a usefulness score (1–5), a
-  truthfulness flag, and a remark. Citations aggregate into a ledger in
-  `.stella/private/store.db`.
+- A memory is a lesson — a slug plus ≤ 2,000 chars of Markdown — saved as
+  one file in `.stella/memories/`.
+- Recalled memories carry a stable id (`nod_…`). Citations against those
+  ids — a usefulness score (1–5), a truthfulness flag, and a remark —
+  aggregate into a ledger in `.stella/private/store.db`.
 - **`stella memory list`** ranks memories by citation count, average
   usefulness, and truthful rate. **`stella memory validate`** flags memories
   whose file-path anchors no longer exist.
@@ -203,10 +199,9 @@ Memory in stella is not write-only. It is a feedback loop:
 
 Concretely, over a few sessions:
 
-1. **Save.** Mid-turn, the agent learns something durable — say, *"the
-   integration suite needs `TEST_DB=memory`; against a real socket it
-   hangs"* — and calls `save_memory` with a slug and the lesson (at most
-   2,000 characters of Markdown). It lands as a file in
+1. **Save.** A durable lesson — say, *"the integration suite needs
+   `TEST_DB=memory`; against a real socket it hangs"* — lands as a
+   slug-named file (at most 2,000 characters of Markdown) in
    `.stella/memories/` and, per the cache discipline above, takes effect
    from the **next** session.
 2. **Recall.** In a later session, a prompt about the integration tests
@@ -214,10 +209,9 @@ Concretely, over a few sessions:
    block as a frame tagged with its stable id (`nod_` plus 24 hex
    characters) — competing with everything else relevant for the default
    cap of 5 frames / ~1,200 tokens.
-3. **Cite.** The lesson actually informs the turn, so the model calls
-   `cite_memory` with that `nod_…` id, a usefulness score (1–5), a
-   truthfulness flag, and a one-line remark. The citation lands in the
-   ledger in `.stella/private/store.db`.
+3. **Cite.** The lesson actually informs the turn, and a citation against
+   that `nod_…` id — a usefulness score (1–5), a truthfulness flag, and a
+   one-line remark — lands in the ledger in `.stella/private/store.db`.
 4. **Inspect.** `stella memory list` shows the memory climbing the ranking
    — citation count, average usefulness, truthful rate — and flags it once
    it has earned promotion.
@@ -266,24 +260,22 @@ experiment off.
 
 ## The code graph
 
-`graph_query` gives the agent structural answers instead of grep guesses,
-backed by a native **tree-sitter** index of your code:
+The code graph gives structural answers instead of grep guesses, backed by
+a native **tree-sitter** index of your code:
 
 - **Languages:** Rust, Python, JavaScript, TypeScript, TSX, and SQL.
 - **Indexed:** symbol definitions, import edges, and call sites (the callee
   *name* at each call — unresolved by design).
 - **Queries:** `definitions`, `references`, `callees`, and `callers`
   (by symbol name — `callers` is a best-effort name match and says so);
-  `imports`, `importers`, and `neighbors` (by file path) — the agent's
-  `graph_query` tool. [`stella search`](/docs/commands/search) is the human
-  door onto the same index: a single ranked query rather than the seven
-  individual operations.
+  `imports`, `importers`, and `neighbors` (by file path).
+  [`stella search`](/docs/commands/search) is the door onto the index:
+  a single ranked query rather than seven individual operations.
 
 The index builds automatically: [`stella init`](/docs/getting-started/initialization)
-builds it eagerly, and every session also builds/refreshes it in the
-background — the moment it's ready, `graph_query` switches on mid-session.
-An in-process file watcher (200 ms debounce, no daemon) keeps it fresh as
-files change, for exactly as long as the session runs.
+builds it eagerly, and recall's graph-backed retrieval refreshes it as it
+reads. An in-process file watcher (200 ms debounce, no daemon) keeps it
+fresh as files change, for exactly as long as a session runs.
 
 <Callout type="info">
   `importers` edges resolve for relative TypeScript/JavaScript and Python
@@ -292,29 +284,6 @@ files change, for exactly as long as the session runs.
   gaps: Go and Java package imports, and PHP namespace `use`, are indexed
   unresolved.
 </Callout>
-
-## Exploration maps: understanding that outlives the turn
-
-Understanding a slice of a codebase is expensive — and most agents throw it
-away the moment the turn ends. stella keeps it. When the agent works out how a
-subsystem fits together, it can call `save_exploration` to write a high-fidelity
-**exploration map** to `.stella/explorations/`; a later session (or a teammate)
-reads it back with the read-only `explorations` tool instead of re-deriving the
-same picture from scratch.
-
-Two properties make the maps trustworthy rather than stale notes:
-
-- **Per-file staleness.** Each map carries a `path → sha256` manifest, so stella
-  can tell you *exactly which files* have changed since the map was written —
-  a per-file verdict, not a blunt "this might be old."
-- **Draft maps double as claims.** A map saved in *draft* status is also a
-  readable, in-flight claim: another session working the same area sees what's
-  already underway. If a session crashes, it leaves a legible note behind —
-  never a leaked lock. It coordinates [fleets](/docs/agent-fleets) the same way
-  cooperative file claims do, at the level of understanding rather than edits.
-
-Both surfaces are ordinary agent tools ([Agent Tools](/docs/agent-tools)), so a
-custom tool or an MCP server can read and write them too.
 
 ## The domain taxonomy
 

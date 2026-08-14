@@ -393,14 +393,13 @@ fn ui_theme_save_preserves_other_keys_and_roundtrips() {
     assert_eq!(raw["providers"]["zai"]["default_model"], "glm-5.2");
 }
 
-/// **Witness for the default flip.** With no settings at all — no file,
-/// no `tools` key, an empty `tools` object — every tool is on, `bash`
-/// included. This fails on the old code, where an absent key meant OFF.
+/// **Witness for the shipped default.** With no settings at all — no file,
+/// no `tools` key, an empty `tools` object — every tool is on.
 #[test]
 fn every_tool_is_on_with_no_settings_at_all() {
     let policy = Settings::default().tool_policy();
     assert!(policy.is_default(), "no settings means no switches");
-    for name in ["bash", "web_fetch", "web_download", "read_file", "grep"] {
+    for name in stella_tools::catalog::ALL_NAMES {
         assert!(policy.allows(name), "`{name}` must be on by default");
     }
     // An unknown name — an MCP tool, a customer's own — is on too: the
@@ -416,7 +415,7 @@ fn every_tool_is_on_with_no_settings_at_all() {
         let path = write(dir.path(), name, json);
         let merged = Settings::load_from(std::slice::from_ref(&path)).unwrap();
         assert!(
-            merged.tool_policy().allows("bash"),
+            merged.tool_policy().allows("save_state"),
             "{name}: an absent switch must mean ON"
         );
     }
@@ -554,21 +553,20 @@ fn a_tools_entry_switches_a_tool_off_and_the_project_scope_wins_per_key() {
 }
 
 /// **Witness: a group key covers its whole family in one line.**
-/// `{"process": "off"}` disables all five process tools — the case the
-/// two-field `ToolsSettings` could not express at all.
+/// `{"scratch": "off"}` disables the whole scratch state plane at once.
 #[test]
 fn a_group_key_switches_off_the_whole_family() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "group.json", r#"{"tools": {"process": "off"}}"#);
+    let path = write(dir.path(), "group.json", r#"{"tools": {"scratch": "off"}}"#);
     let merged = Settings::load_from(&[path]).unwrap();
     let policy = merged.tool_policy();
 
-    let family = stella_tools::catalog::names_in_group("process");
-    assert_eq!(family.len(), 6, "the process group is the six of them");
+    let family = stella_tools::catalog::names_in_group("scratch");
+    assert_eq!(family.len(), 4, "the scratch group is the four of them");
     for name in family {
         assert!(!policy.allows(name), "`{name}` must be off");
     }
-    assert!(policy.allows("bash"), "other groups are untouched");
+    assert!(policy.allows("task_list"), "other groups are untouched");
 }
 
 /// **Witness: the policy addresses MCP and customer-registered tools.**
@@ -795,7 +793,7 @@ fn no_settings_skips_user_managed_and_project_files() {
         "base_url": "https://task-image.invalid",
         "api_key": "must-not-load"
       }},
-      "tools": {"bash": "on", "web": "on"},
+      "tools": {"bash": "on", "scratch": "on"},
       "agent_engine_config": {
         "default_model": "anthropic/task-image-model"
       }
@@ -840,7 +838,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         &home.join(".stella"),
         "settings.json",
         r#"{
-          "tools": {"bash": "off", "web": "off"},
+          "tools": {"bash": "off", "scratch": "off"},
           "agent_engine_config": {
             "agents": {"verifier": {"prompt": "trusted prompt"}}
           }
@@ -850,7 +848,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         &workspace.join(".stella"),
         "settings.json",
         r#"{
-          "tools": {"bash": "on", "web": "on"},
+          "tools": {"bash": "on", "scratch": "on"},
           "agent_engine_config": {
             "agents": {"verifier": {"prompt": "untrusted prompt"}}
           }
@@ -871,7 +869,10 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
 
     let policy = merged.tool_policy();
     assert!(!policy.allows("bash"), "untrusted project enabled bash");
-    assert!(!policy.allows("web_fetch"), "untrusted project enabled web");
+    assert!(
+        !policy.allows("save_state"),
+        "untrusted project enabled scratch"
+    );
     assert_eq!(
         merged
             .agent_engine_config
@@ -902,12 +903,12 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
     write(
         &home.join(".stella"),
         "settings.json",
-        r#"{"tools": {"bash": "on", "web": "on"}}"#,
+        r#"{"tools": {"bash": "on", "scratch": "on"}}"#,
     );
     write(
         &workspace.join(".stella"),
         "settings.json",
-        r#"{"tools": {"bash": "off", "web": "off"}}"#,
+        r#"{"tools": {"bash": "off", "scratch": "off"}}"#,
     );
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
@@ -924,7 +925,10 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
 
     let policy = merged.tool_policy();
     assert!(!policy.allows("bash"), "project off must narrow bash");
-    assert!(!policy.allows("web_fetch"), "project off must narrow web");
+    assert!(
+        !policy.allows("save_state"),
+        "project off must narrow scratch"
+    );
 }
 
 #[test]
@@ -945,7 +949,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
     std::fs::write(
         &managed,
         r#"{
-          "tools": {"bash": "off", "web": "off"},
+          "tools": {"bash": "off", "scratch": "off"},
           "authority": {
             "project_prompts": "off",
             "project_custom_tools": "off"
@@ -957,7 +961,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
         &workspace.join(".stella"),
         "settings.json",
         r#"{
-          "tools": {"bash": "on", "web": "on"},
+          "tools": {"bash": "on", "scratch": "on"},
           "agent_engine_config": {
             "agents": {"verifier": {"prompt": "project prompt"}}
           }
@@ -979,11 +983,9 @@ fn managed_tool_denial_survives_explicit_project_trust() {
         "project overrode managed bash denial"
     );
     assert!(
-        !policy.allows("web_fetch"),
-        "project overrode managed web denial"
+        !policy.allows("save_state"),
+        "project overrode managed scratch denial"
     );
-    assert!(!merged.authority_policy.bash_allowed);
-    assert!(!merged.authority_policy.web_allowed);
     assert!(!merged.authority_policy.project_prompts_allowed);
     assert!(!merged.authority_policy.project_custom_tools_allowed);
     assert!(
@@ -997,12 +999,10 @@ fn managed_tool_denial_survives_explicit_project_trust() {
     );
 }
 
-/// **Witness: the managed ceiling is general, not a bash/web special
-/// case.** An org denies the `process` group and a customer's own
-/// `deploy_to_staging`; a *trusted* project scope tries to grant both
-/// back. Union-of-denials means it cannot. On the old code the managed
-/// scope could only ever pin `bash` and `web` — any other key was
-/// silently ignored and the project's grant simply stood.
+/// **Witness: the managed ceiling is general.** An org denies the
+/// `scratch` group and a customer's own `deploy_to_staging`; a *trusted*
+/// project scope tries to grant both back. Union-of-denials means it
+/// cannot.
 #[test]
 fn a_managed_denial_of_any_key_survives_a_project_grant() {
     let _env = crate::test_env::lock();
@@ -1020,15 +1020,15 @@ fn a_managed_denial_of_any_key_survives_a_project_grant() {
     std::fs::create_dir_all(workspace.join(".stella")).unwrap();
     std::fs::write(
         &managed,
-        r#"{"tools": {"process": "off", "deploy_to_staging": "off"}}"#,
+        r#"{"tools": {"scratch": "off", "deploy_to_staging": "off"}}"#,
     )
     .unwrap();
     write(
         &workspace.join(".stella"),
         "settings.json",
         r#"{"tools": {
-            "process": "on",
-            "start_process": "on",
+            "scratch": "on",
+            "save_state": "on",
             "deploy_to_staging": "on"
         }}"#,
     );
@@ -1043,7 +1043,7 @@ fn a_managed_denial_of_any_key_survives_a_project_grant() {
     let merged = Settings::load(&workspace);
 
     let policy = merged.unwrap().tool_policy();
-    for name in stella_tools::catalog::names_in_group("process") {
+    for name in stella_tools::catalog::names_in_group("scratch") {
         assert!(
             !policy.allows(name),
             "project re-enabled `{name}` over a managed group denial"
@@ -1053,7 +1053,7 @@ fn a_managed_denial_of_any_key_survives_a_project_grant() {
         !policy.allows("deploy_to_staging"),
         "project re-enabled a managed denial of a custom tool"
     );
-    assert!(policy.allows("read_file"), "and nothing else was narrowed");
+    assert!(policy.allows("task_list"), "and nothing else was narrowed");
 }
 
 #[test]
@@ -1061,8 +1061,6 @@ fn managed_authority_settings_round_trip() {
     let policy = ManagedAuthoritySettings {
         project_prompts: Some(Toggle::Off),
         project_custom_tools: Some(Toggle::Off),
-        bash: Some(Toggle::Off),
-        web: Some(Toggle::On),
         media_requires_host_approval: Some(Toggle::On),
     };
     let json = serde_json::to_string(&policy).unwrap();

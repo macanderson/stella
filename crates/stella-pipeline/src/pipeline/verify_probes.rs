@@ -313,7 +313,6 @@ impl<'a> Pipeline<'a> {
                 lines: 0,
                 text: String::new(),
                 available: false,
-                untracked_rendered: Vec::new(),
             };
         };
         let out = surface.diagnostics.run_diagnostic(diagnostic).await;
@@ -344,12 +343,10 @@ impl<'a> Pipeline<'a> {
                     DIFF_PROBE_FAILED.to_string()
                 },
                 available: false,
-                untracked_rendered: Vec::new(),
             };
         }
         let mut lines = count_diff_lines(&out.stdout_tail);
         let mut text = out.stdout_tail;
-        let mut untracked_rendered = Vec::new();
         if matches!(diagnostic, DiagnosticInvocation::GitDiff) {
             let after = surface.repo_status.untracked_fingerprints().await;
             // Created (absent before) OR modified (fingerprint changed) this
@@ -366,7 +363,7 @@ impl<'a> Pipeline<'a> {
             // agent's own bookkeeping rendered as binary escape bytes into a
             // verifier-facing payload. Filtered here rather than downstream
             // because this list is the single source of the untracked half of
-            // `text`, `lines`, and `untracked_rendered` at once — and because
+            // `text` and `lines` at once — and because
             // `warrant::changed_paths` parses its own path set back out of
             // that text.
             let mut fresh: Vec<&str> = after
@@ -425,15 +422,9 @@ impl<'a> Pipeline<'a> {
                 // file was graded PASS by a verifier that said so in as many
                 // words — "the unseen content cannot itself justify a FAIL".
                 //
-                // A hunk body is the file's content and makes the authored
-                // channel's copy redundant; git's binary sentence is not, so
-                // only the former claims the path.
                 if !body.is_empty() {
                     text.push('\n');
                     text.push_str(&body);
-                    if body.starts_with("@@ ") {
-                        untracked_rendered.push(path.to_string());
-                    }
                 }
             }
             // The tail past the budget is NAMED and COUNTED, just not read.
@@ -465,33 +456,7 @@ impl<'a> Pipeline<'a> {
             lines,
             text,
             available: true,
-            untracked_rendered,
         }
-    }
-
-    /// Mutating file touches this candidate has made, read from the recorder
-    /// that emitted the `FileChange` events rather than from a wrapper around
-    /// the engine's sender.
-    ///
-    /// This is the fix for the counter that read `0` while six `file_change`
-    /// events sat in the very stream the verifier's run produced (#973). The two
-    /// numbers came from different wires: `ToolRegistry::record_touch` sends to
-    /// the channel the *host* attached, and the tally lived on a sender the
-    /// pipeline handed the *engine*, which no file tool ever uses.
-    ///
-    /// `max` of the two, because they are independent lower bounds rather than
-    /// a sum: the recorder's delta is authoritative wherever a `FileTouchPort`
-    /// is wired, and the event tally is the only signal for a host with no
-    /// recorder at all. Neither can double-count the other — the sender the
-    /// tally wraps is built per-turn inside this pipeline and never handed out.
-    fn observed_mutations(&self, state: &CandidateState) -> u32 {
-        let delta = self
-            .touches
-            .mutations_recorded()
-            .saturating_sub(state.touch_baseline);
-        u32::try_from(delta)
-            .unwrap_or(u32::MAX)
-            .max(state.signals.file_changes)
     }
 
     /// Fold one working-tree observation into `state`, refreshing every
@@ -499,40 +464,15 @@ impl<'a> Pipeline<'a> {
     ///
     /// One function, so the channels cannot be updated apart and disagree about
     /// which round they describe — the honest-diff text in particular is built
-    /// from the touch count, and reading a stale one is how a real change gets
+    /// from the change count, and reading a stale one is how a real change gets
     /// rendered as an empty diff.
     pub(super) fn absorb_probe(&self, state: &mut CandidateState, probe: DiffProbe) {
-        // Attribute shell-driven changes BEFORE the count is read. The
-        // recorder only sees what a tool's input declared, and `bash` declares
-        // nothing, so without this the count below is blind to the tool that
-        // does most of the work on Terminal-Bench. Settling first is what
-        // makes `file_changes` an honest answer rather than a CRUD-tool tally.
-        // Settling also re-arms, from the same walk, so a revision's changes
-        // are bracketed exactly the way this one's were without paying for a
-        // second walk of an identical tree.
-        self.touches.settle_workspace_probe();
-        state.signals.file_changes = self.observed_mutations(state);
-        // The authored channel is read AFTER settling, for the same reason the
-        // count is: the probe's attributions are recorded through the same
-        // emitter, so reading first would describe the turn before its opaque
-        // calls had been accounted for.
-        let authored = self.touches.authored_diff();
-        // `max`, not a sum — these are two independent LOWER BOUNDS on one
-        // number, not two disjoint tallies. A tracked file edited through
-        // `write_file` is counted by both, and adding them would double it.
-        // (The same reasoning as `observed_mutations` above.)
-        state.diff_lines = probe.lines.max(authored.lines);
-        // Deliberately NOT widened by the authored channel. `diff_available`
-        // means "the configured probe could read the working tree", and the
-        // ladder's blind-evidence rung is built on that exact claim. An
-        // authored diff proves what was written, never what survived to sit on
-        // disk at the end of the turn — so it informs the verifier without
-        // asserting that the tree was successfully re-read.
+        state.diff_lines = probe.lines;
+        // `diff_available` means "the configured probe could read the working
+        // tree", and the ladder's blind-evidence rung is built on that exact
+        // claim.
         state.diff_available = probe.available;
-        state.diff_text = verification_honest_diff(
-            authored::splice_authored(probe.text, &authored, &probe.untracked_rendered),
-            state.signals.file_changes,
-        );
+        state.diff_text = verification_honest_diff(probe.text, state.signals.file_changes);
     }
 }
 
@@ -603,22 +543,6 @@ pub(super) struct DiffProbe {
     /// Whether the probe could read the working tree AT ALL. Never `false`
     /// merely because the diff came back empty.
     pub(super) available: bool,
-    /// Untracked paths whose CONTENT this probe's text already carries.
-    ///
-    /// The authored channel renders the same content for any file written
-    /// through the file tools, and the two halves are concatenated — so
-    /// without this, a tool-written untracked file reached the verifier
-    /// twice, spending a token budget twice to say one thing. Naming the
-    /// paths here lets [`super::authored::splice_authored`] drop the
-    /// redundant half, and keeps the choice of *which* half explicit rather
-    /// than inferred by re-parsing the text.
-    ///
-    /// The probe's copy is the one kept, for the reason `authored`'s module
-    /// docs already give: on-disk state is the stronger claim about what
-    /// survived the turn. A path whose body could not be rendered (binary,
-    /// failed probe) is deliberately absent, so the authored channel still
-    /// covers it.
-    pub(super) untracked_rendered: Vec<String>,
 }
 
 /// How many `git diff --no-index --numstat` probes [`Pipeline::gather_diff`]

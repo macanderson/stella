@@ -307,25 +307,6 @@
       "status": "living",
       "title": "Enterprise Authority and Telemetry"
     },
-    "exploration-sharing": {
-      "path": "docs/spec/exploration-sharing.md",
-      "sections": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11
-      ],
-      "status": "implemented",
-      "title": "Design: Session-Shared Exploration Maps"
-    },
     "file-budget": {
       "path": "docs/spec/file-budget.md",
       "sections": [
@@ -475,11 +456,6 @@
       "path": "docs/spec/schema-graph.md",
       "status": "implemented",
       "title": "Design: Schema-Aware Code Graph for Zero Schema Drift"
-    },
-    "scripts-index": {
-      "path": "docs/spec/scripts-index.md",
-      "status": "implemented",
-      "title": "Project scripts index"
     },
     "self-driving-foundry": {
       "path": "docs/spec/self-driving-foundry.md",
@@ -652,6 +628,11 @@
       "path": "docs/tools/README.md",
       "status": "living",
       "title": "docs/tools/ \u2014 the generated per-tool reference"
+    },
+    "tool-removal": {
+      "path": "docs/playbooks/tool-removal.md",
+      "status": "living",
+      "title": "Removing a built-in tool \u2014 the repeatable checklist"
     },
     "trace-replay-learning-harness": {
       "path": "docs/spec/trace-replay-learning-harness.md",

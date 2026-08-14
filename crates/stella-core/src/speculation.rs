@@ -139,9 +139,9 @@ pub(crate) struct SpeculationGate {
     /// call, an argument fragment — because each is a fragment that arrived,
     /// and the deadline's question is only "is anything arriving". Ticked
     /// FIRST in `tool_call_streamed`, before the fence/eligibility
-    /// early-returns: a stream of mutating calls (`bash`, `edit` — the
-    /// common case) announces work the gate declines to speculate, but the
-    /// provider is plainly answering and must never read as stalled.
+    /// early-returns: a stream of mutating calls (the common case) announces
+    /// work the gate declines to speculate, but the provider is plainly
+    /// answering and must never read as stalled.
     progress: StreamProgress,
 }
 
@@ -195,8 +195,8 @@ impl ToolCallObserver for SpeculationGate {
     fn tool_input_delta(&self) {
         // Pure liveness: the fragment's bytes are partial JSON only
         // `tool_call_streamed` may deliver whole. Without this, a generation
-        // whose entire output is one large tool call (a `write_file` of a
-        // whole document) streams in observer silence and the idle deadline
+        // whose entire output is one large tool call (a whole document in a
+        // single input) streams in observer silence and the idle deadline
         // kills a healthy, paying call as "stalled".
         self.progress.record();
     }

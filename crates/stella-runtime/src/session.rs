@@ -101,14 +101,7 @@ impl RuntimeBuilder {
         };
         let model_ref = ModelRef::new(spec.provider.id.clone(), spec.provider.model_id.clone());
 
-        let registry = Arc::new(
-            parts::tool_registry(
-                spec.workspace_root.clone(),
-                spec.registry_options,
-                spec.persistence,
-            )
-            .await,
-        );
+        let registry = Arc::new(ToolRegistry::new(spec.workspace_root.clone()));
 
         let mut notices = Vec::new();
         let (store, store_notice) = parts::open_store(&spec.workspace_root, spec.persistence);

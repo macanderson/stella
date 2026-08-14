@@ -21,13 +21,13 @@ available_for_speculation = false
 # would have introduced the machinery, was closed wontfix). The two booleans
 # above are the only machine-checked safety claims a tool makes. Relabelling
 # them "low/medium/high" would add no information while reading as a reviewed
-# judgement, and hand-writing 72 judgements would manufacture a source of truth
-# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
-# it is declared once and reviewed like every other column.
+# judgement, and hand-writing one judgement per tool would manufacture a source
+# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
+# `ToolEntry`, where it is declared once and reviewed like every other column.
 risk_level = "undeclared"
 
 description = '''
-Delegate a self-contained research question to a sub-agent that investigates with read-only tools and returns only its findings. Its intermediate work never enters this conversation, so use it when answering would otherwise mean reading many files you do not need to keep — 'which of these modules defines X', 'how is Y wired end to end', 'find every caller of Z and summarize the patterns'. Prefer it over running the same searches yourself whenever the evidence is bulky and only the conclusion matters. Independent questions should be dispatched as SEVERAL task calls in the same step — they run concurrently, so three parallel investigations cost the wall-clock of the slowest, not the sum. Not for work that must edit files (the sub-agent cannot write), and not for a single lookup you already know the location of — one read_file is cheaper than a sub-agent.
+Delegate a self-contained research question to a sub-agent that investigates with read-only tools and returns only its findings. Its intermediate work never enters this conversation, so use it when answering would otherwise mean reading many files you do not need to keep — 'which of these modules defines X', 'how is Y wired end to end', 'find every caller of Z and summarize the patterns'. Prefer it over running the same searches yourself whenever the evidence is bulky and only the conclusion matters. Independent questions should be dispatched as SEVERAL task calls in the same step — they run concurrently, so three parallel investigations cost the wall-clock of the slowest, not the sum. Not for work that must edit files (the sub-agent cannot write), and not for a single lookup you already know the location of — one direct read is cheaper than a sub-agent.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

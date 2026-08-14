@@ -430,10 +430,11 @@ fn fixture_issues() -> Vec<IssueRow> {
 fn fixture_tool_policy() -> ToolPolicyState {
     ToolPolicyState {
         tools: [
-            ("read_file", "file"),
-            ("write_file", "file"),
-            ("bash", "bash"),
-            ("start_process", "process"),
+            ("get_environment", "environment"),
+            ("get_state", "scratch"),
+            ("save_state", "scratch"),
+            ("task", "task"),
+            ("task_assign", "task"),
             ("mcp__github__create_issue", "mcp"),
             ("deploy_to_staging", "custom"),
         ]
@@ -441,14 +442,14 @@ fn fixture_tool_policy() -> ToolPolicyState {
         .map(|(name, group)| ToolRow {
             name: name.to_string(),
             group: group.to_string(),
-            locked: name == "bash",
-            off: (name == "bash").then(|| ToolDenial {
-                key: "bash".to_string(),
+            locked: name == "task_assign",
+            off: (name == "task_assign").then(|| ToolDenial {
+                key: "task_assign".to_string(),
                 scope: Some(ToolScope::Managed),
             }),
         })
         .collect(),
-        switches: std::collections::BTreeMap::from([("bash".to_string(), false)]),
+        switches: std::collections::BTreeMap::from([("task_assign".to_string(), false)]),
     }
 }
 

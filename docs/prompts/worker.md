@@ -36,10 +36,8 @@ runs on the worker's resolved provider.
 
 ```
 base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.prompt
-+ project scripts       append_project_scripts
-+ project orientation   append_project_orientation
++ session environment   append_session_environment
 + workspace memories    append_workspace_memories     ≤ 16,000 chars
-+ exploration index     append_exploration_index      ≤ 2,000 chars
 + rules section         Channel::Cached render
 ```
 
@@ -50,10 +48,10 @@ knowing:
 
 - **A memory saved mid-session does not appear until the next session.** Hot
   injection would invalidate the cached prefix on every save.
-- **In-progress exploration drafts are excluded** from the index. Their line
-  names the producing pid and whether it is still alive — that differs per
-  process and flips mid-session, which inside a cached prefix is a guaranteed
-  miss on every call (#639). They ride the volatile recall block instead.
+- **The environment block is session-constant.** Working directory, git
+  checkout or not, platform, OS release, shell dialect (#2692) — facts a
+  process cannot change mid-session, so they are compatible with the cached
+  prefix.
 - **The rules section is byte-stable by construction.** The truth sweep has
   already demoted or dropped anything whose freshness is in question, so no
   clock and no per-turn text enters here.
@@ -61,11 +59,11 @@ knowing:
   *after* the prefix.
 
 Two gates control the appended sections. Under
-`filesystem_settings_disabled()` (claim-mode isolation) only scripts and
-orientation are appended — package-manager scripts are ordinary task source and
-stay part of the evaluated repository, while Stella/agent state that could
-carry preinstalled prompt steering across trials is excluded. Otherwise the
-full list is gated on `authority.project_prompts_allowed`.
+`filesystem_settings_disabled()` (claim-mode isolation) only the environment
+block is appended — it is computed from the live process and workspace, never
+read from stored Stella state, so it carries no preinstalled steering across
+trials. Otherwise the memories are gated on
+`authority.project_prompts_allowed` and the rules section always renders.
 
 The tool schemas are serialized at **position 0 of the same cached prefix**
 (`ToolRegistry::schemas`, sorted for exactly that reason).
@@ -78,11 +76,10 @@ compile-time concatenation is what preserves byte-stability that a runtime
 `format!` would give up. One shared literal is also what keeps the two copies
 from drifting the way an earlier hand-maintained tool catalogue's did (#450).
 
-The contracts were rewritten minimal for the five-tool surface (#3179): short
-imperative sentences sized to mid-tier worker models, ~2,750 → ~900 tokens per
-session, with search advertised first. Each retired clause's provenance
-survives in the doc comment of its macro and in the re-derived pins in
-`prompt/parity.rs`.
+The contracts are written for the weakest capable reader: short imperative
+sentences sized to mid-tier worker models (#3179). Each clause's provenance —
+the measured incident that created it — lives in the doc comment of its macro
+and in the pins in `prompt/parity.rs`.
 
 **Adding a contract means embedding it in both prompts and adding its row to
 `SHARED_CONTRACTS` in `prompt/parity.rs`**, which derives the contract set from
@@ -94,23 +91,23 @@ guard, a contract could reach `SYSTEM_PROMPT` only and be invisible to
 ### `tool_steering!`
 
 ```text
-Your tools are search, read_file, edit_file, write_file, and bash. The schemas are the reference; this is how they fit together.
+The schemas are the reference for your tools; this is how they fit together.
 
-search comes first for every code question. Give it plain language, a symbol name, or a pasted error, stack trace, or log excerpt, exactly as you have it. It matches by meaning, falls back to symbol matching, then to keyword matching, and returns the relevant files with the matching code in view. One search replaces a chain of grep and find guesses. Follow with read_file only for context the result did not include. Use grep or find in bash only to list every occurrence of one exact string you already hold; if you are about to grep several spellings of one idea, call search with the idea instead.
+Your built-in tools are coordination and session state: the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign) tracks multi-step work, task delegates a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state) holds intermediate notes and data between steps, and get_environment reports the platform facts. Every other capability — reading and editing files, running commands, reaching the network — arrives as an MCP or custom tool in your schema list; use exactly what is advertised and never assume a capability no schema names.
 
-Read a file before you edit it. edit_file changes part of an existing file. write_file creates a new file or replaces one whole. bash runs everything else: builds, tests, git, packages, processes.
-
-Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep temporary files in $STELLA_SCRATCH, never in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch.
+Read a file before you edit it. Send independent tool calls together in one response; sequence calls only when one needs another's result. Within one response, put reads first and mutations last: the engine runs consecutive read-only calls concurrently and can start leading reads while the response is still streaming, while a mutating call runs alone, in call order, and nothing after it starts early. Ordering changes speed, never meaning. Keep intermediate notes and working data in the scratch state plane, never as files in the workspace: leave no backups, copies, or debug artifacts behind. A file the task asked for is a deliverable, not scratch.
 ```
 
-Search-first closes the measured gap of h2h891 (1 search call in 10 trials
-against a prompt that never named it, bash at 92% of calls); the reads-first
+The steering teaches the shape of the surface rather than a fixed capability
+list: the built-ins are coordination and session state, and everything that
+reaches the workspace or the network arrives as an MCP or custom tool, so the
+same bytes stay true whatever a workspace advertises. The reads-first
 ordering sentence (#3173) teaches the one scheduler lever the model holds —
 dispatch parallelizes only runs of consecutive read-only calls
 (`stella-core/src/driver/dispatch.rs`), speculation starts only the
 all-read-only *prefix* mid-stream (`stella-core/src/speculation.rs`) — so
 reads-first buys real wall clock at no semantic cost. Pins:
-`both_prompts_route_code_discovery_to_search_first`,
+`the_steering_names_every_catalog_tool_and_no_other_surface`,
 `both_prompts_batch_independent_tool_calls`,
 `both_prompts_teach_reads_first_ordering`,
 `both_prompts_name_the_sanctioned_scratch_space_and_still_forbid_the_workspace_one`.
@@ -169,7 +166,7 @@ Rules:
 ```text
 Rules:
 - When the task text claims something was DONE to this repository — introduced, planted, broke, leaked, removed, changed — read that delta first: `git status` and `git diff` (then `git diff --staged`), and `git log -p` only once the working tree is clean. A task with no claimed change gets no history probe; orient from the task's own subject.
-- After changing behavior, run the relevant test or build in bash and read its output.
+- After changing behavior, run the relevant test or build and read its output.
 - Before finishing, re-read the task and check every requirement it states.
 - Be concise. End with what changed and the evidence it works.
 - When a choice is ambiguous and getting it wrong would be costly, take the reversible option and name the ambiguity in your answer; otherwise proceed with your best judgment.
@@ -192,7 +189,7 @@ Methodology and rules:
 Methodology (always follow in order):
 1. ORIENT: list the workspace and read the files the task names before acting.
 2. REPRODUCE: run the failing test or reproduce the bug before touching any file. If nothing captures the task, write the failing test first and watch it fail.
-3. LOCALIZE: feed the raw error to search and read the code path it returns.
+3. LOCALIZE: follow the raw error to the code path that produced it and read that code.
 4. MINIMAL FIX: the smallest change that resolves the issue. No refactoring. No style changes. One logical change.
 5. VERIFY: run the target test, then the proportionate suite. If it fails, read the error and adjust.
 

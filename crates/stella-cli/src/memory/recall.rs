@@ -170,15 +170,6 @@ impl SessionMemory {
             sections.push(skills::render_skills_section(&selected));
         }
 
-        // In-progress workspace maps belong here, not in the cached system
-        // prefix: a draft line names the producing pid and its liveness, so
-        // it differs per process and flips mid-session. Rendering it in the
-        // prefix is what made the prefix non-byte-stable (#639).
-        if let Some(section) = stella_tools::exploration::render_draft_claims(&self.workspace_root)
-        {
-            sections.push(section);
-        }
-
         // The volatile context-record channel (epic #897). Same channel as the
         // memories above and for the same reason: a fact about a staging URL costs
         // tokens on every turn and is worth them on almost none — which is why it
@@ -195,7 +186,7 @@ impl SessionMemory {
         sections.push(render_today_section(now_unix_secs()));
 
         RecalledBlock {
-            // Skills and draft claims can produce a block with no frames behind
+            // Skills and records can produce a block with no frames behind
             // it; frames can be recalled and then filtered out of the render by
             // the citation-label rule. The two fields are therefore reported
             // independently rather than one gating the other — a provider still
@@ -208,8 +199,8 @@ impl SessionMemory {
         }
     }
 
-    /// The volatile block for a turn the *pipeline* will drive: skills, draft
-    /// claims, and the record channel — every section of
+    /// The volatile block for a turn the *pipeline* will drive: skills and
+    /// the record channel — every section of
     /// [`Self::recall_block_reported`] EXCEPT the recalled frames.
     ///
     /// The pipeline recalls frames itself through its [`ContextRecallPort`]
@@ -220,9 +211,9 @@ impl SessionMemory {
     /// round trips — and billed the same frame content into the prompt
     /// twice, once as "Relevant context" here and once as "## Recalled
     /// context" there. The deck guards the same duplication by dropping the
-    /// whole block on pipeline turns; that guard threw away skills, drafts,
-    /// and records with it. This keeps exactly the sections the pipeline
-    /// has no channel for.
+    /// whole block on pipeline turns; that guard threw away skills and
+    /// records with it. This keeps exactly the sections the pipeline has no
+    /// channel for.
     ///
     /// No telemetry rides with it, deliberately: the one `ContextRecall`
     /// event for a pipeline turn is the pipeline's own, and this block does
@@ -241,10 +232,6 @@ impl SessionMemory {
         );
         if !selected.is_empty() {
             sections.push(skills::render_skills_section(&selected));
-        }
-        if let Some(section) = stella_tools::exploration::render_draft_claims(&self.workspace_root)
-        {
-            sections.push(section);
         }
         if let Some(section) = self.turn_record_section(prompt) {
             sections.push(section);
@@ -549,52 +536,39 @@ impl ContextRecallPort for SessionMemory {
 
 /// Render recalled frames as the "Relevant context" section of the recall
 /// block. Memory-kind frames carry their stable `[nod_…]` id inline — the
-/// handle the `cite_memory` tool ties feedback to — and their presence
-/// appends the citation instruction, so the model is asked to cite exactly
-/// when there is something citable. Other frame kinds (code-graph hits,
-/// episodes) keep the plain label form: they are grounding, not memories,
-/// and never enter the citation → promotion loop. `None` when no frame has
-/// a citation label (L-C4 filters the rest).
+/// durable handle a reader (or a later promotion sweep) can resolve back to
+/// the record. Other frame kinds (code-graph hits, episodes) keep the plain
+/// label form: they are grounding, not memories. `None` when no frame has a
+/// citation label (L-C4 filters the rest).
 pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
-    let mut citable = false;
     for f in frames {
-        let label = &f.citation_label;
+        // Only a label that says something the content does not earns its
+        // bytes: memory (and episode) nodes mint theirs FROM the content, so
+        // rendering both shipped the same sentence twice into a recall budget
+        // the packer had already spent on the content alone (#2476).
+        let body = match f.distinct_label() {
+            Some(label) => format!("{label} — {}", f.content.trim()),
+            None => f.content.trim().to_string(),
+        };
         match (f.kind.as_str(), &f.id) {
-            // A memory with an id: citable, and the id is what the model
-            // hands back to `cite_memory`.
+            // A memory with an id keeps the id visible — it names the record.
             ("memory", Some(id)) => {
-                citable = true;
-                lines.push(format!("- [{id}] {label} — {}", f.content.trim()));
+                lines.push(format!("- [{id}] {body}"));
             }
             // A memory WITHOUT an id still has content worth recalling, and
             // the recall budget has already been spent fetching it.
-            //
-            // This arm used to be missing: an id-less memory flipped `citable`
-            // and then pushed no line at all, so its content vanished from the
-            // block while the model was still told to cite `[nod_…]` lines
-            // that might not exist anywhere in it. `RecalledFrame` documents
-            // `id: None` as a legitimate state for a not-yet-materialized
-            // frame (`crates/stella-pipeline/src/ports.rs`), so this was reachable by
-            // contract even though the only production projection happens to
-            // always set `Some`. Render it as grounding — it cannot be cited,
-            // so it must not claim to be.
-            ("memory", None) => lines.push(format!("- {label} — {}", f.content.trim())),
-            _ => lines.push(format!("- {label} — {}", f.content.trim())),
+            // `RecalledFrame` documents `id: None` as a legitimate state for
+            // a not-yet-materialized frame
+            // (`crates/stella-pipeline/src/ports.rs`). Render it as grounding.
+            ("memory", None) => lines.push(format!("- {body}")),
+            _ => lines.push(format!("- {body}")),
         }
     }
     if lines.is_empty() {
         return None;
     }
-    let mut section = format!("Relevant context:\n{}", lines.join("\n"));
-    if citable {
-        // The one wording, shared with the pipeline's own render of the same
-        // frames (#2195). This surface asked and the pipeline did not, for as
-        // long as both existed — see `CITE_MEMORY_REQUEST` for what that cost.
-        section.push_str("\n\n");
-        section.push_str(stella_pipeline::CITE_MEMORY_REQUEST);
-    }
-    Some(section)
+    Some(format!("Relevant context:\n{}", lines.join("\n")))
 }
 
 /// The wall clock's current instant, in Unix seconds. The one `SystemTime`
@@ -622,7 +596,7 @@ fn now_unix_secs() -> i64 {
 /// (invariant #7 / L-E8), and `the_assembled_prompt_names_the_session_environment`
 /// (`crates/stella-cli/src/agent/prompt.rs`) would start failing the moment a
 /// test ran across one. It belongs with the other genuinely volatile facts —
-/// draft claims, selected skills — that ride this per-turn block instead.
+/// selected skills, per-turn records — that ride this per-turn block instead.
 ///
 /// Takes Unix seconds rather than reading the clock itself so it stays a pure
 /// function of its input: two calls a day apart must render different text,

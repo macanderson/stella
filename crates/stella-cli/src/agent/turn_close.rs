@@ -2,8 +2,8 @@
 //!
 //! A turn boundary has always had two writes, and they were spelled out
 //! separately at every driver: close the `executions` row (what ran, what it
-//! touched, what it cost), then mark the workspace state the turn ended at so
-//! the per-turn diff projection has something to key off (#1870).
+//! cost), then mark the workspace state the turn ended at so the per-turn
+//! diff projection has something to key off (#1870).
 //!
 //! Spelling them separately is how they came apart. `mark_turn_end` ended up
 //! with exactly **one** production caller — the Command Deck's
@@ -36,9 +36,6 @@ pub(crate) struct TurnOutcomeRecord<'a> {
     pub(crate) label: &'a str,
     /// Everything this turn spent, reflection included.
     pub(crate) cost_usd: f64,
-    /// The file-touch ledger's length before the turn, so only this turn's
-    /// entries are attributed to it.
-    pub(crate) files_before: usize,
     /// Whether every event of the turn made it to the durable journal.
     pub(crate) persistence_complete: bool,
 }
@@ -56,9 +53,8 @@ pub(crate) struct TurnOutcomeRecord<'a> {
 /// should hear about it; the turn mark stays silent, because it is a
 /// convenience projection and the deck has always treated it that way.
 ///
-/// An **aborted** turn is marked too. Its files are exactly what a reader
-/// comparing turns wants, and the deck's own boundary has never conditioned
-/// the mark on the outcome.
+/// An **aborted** turn is marked too: the deck's own boundary has never
+/// conditioned the mark on the outcome.
 pub(crate) fn close_turn(
     cfg: &Config,
     store: &Option<Arc<Store>>,
@@ -72,13 +68,12 @@ pub(crate) fn close_turn(
             execution_store,
             *id,
             registry,
-            outcome.files_before,
             outcome.label,
             outcome.cost_usd,
             outcome.persistence_complete,
         )
     {
-        warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
+        warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
     }
     if let Some(session_id) = session_id {
         cfg.durability

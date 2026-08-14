@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
-use crate::interactive::{InteractiveToolSet, SkillRegistry, human_is_present, tty_ask_io};
+use crate::interactive::human_is_present;
 use crate::memory::{
     ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
     reflect_routed, should_reflect_on, turn_warrants_reflection,
@@ -79,7 +79,7 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    PersistOutcome, TurnBracket, close_event_stream, persist_event, persist_event_detailed,
+    PersistOutcome, close_event_stream, persist_event, persist_event_detailed,
     record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
@@ -91,20 +91,6 @@ pub(crate) use skill_usage::stamp_and_record_skill_usage;
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
 pub(crate) use crate::tool_policy::PolicyToolSet;
 pub(crate) use tools::*;
-
-/// Construct the native tool registry without consulting optional host/user backends when the
-/// trusted benchmark launcher seals filesystem state; ordinary sessions retain auto-detection.
-///
-/// The construction itself lives in [`stella_runtime::tool_registry`]; this
-/// wrapper's only remaining job is to answer the *ambient* half of the
-/// question — whether this process was launched with filesystem state sealed —
-/// which is a CLI concern and, for a server, a per-session one (#971).
-pub(crate) async fn new_tool_registry(
-    workspace_root: std::path::PathBuf,
-    options: stella_tools::RegistryOptions,
-) -> ToolRegistry {
-    stella_runtime::tool_registry(workspace_root, options, session_persistence()).await
-}
 
 /// Whether this process may touch durable workspace state, as the
 /// [`stella_runtime::Persistence`] switch the runtime crate takes explicitly.
@@ -212,8 +198,9 @@ struct RawRunSummary {
     reason: Option<String>,
     model: String,
     events: Vec<AgentEvent>,
-    /// The session file-touch telemetry payload (one record per normalized
-    /// path: crud_events, line-delta totals, audit log).
+    /// The file-touch telemetry envelope. The CLI keeps no per-file
+    /// recorder, so the inner `files_touched` record list is empty; the key
+    /// stays because the envelope's key set is the versioned contract.
     files_touched: serde_json::Value,
 }
 
@@ -251,22 +238,19 @@ async fn run_pipeline_one_shot(
     };
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let registry_options = registry_options(cfg);
-    let registry: Arc<ToolRegistry> =
-        Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await);
-    populate_schema_index(&registry, &cfg.workspace_root)?;
+    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
 
     crate::subagent::install_for_session(cfg, &registry)?;
-    // The one derivation of "a human is here to answer" (ask_user, approvals).
+    // The one derivation of "a human is here to answer" (approvals, rules).
     let ask = human_is_present(format == OutputFormat::Text);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
-    // Auto-build + live-refresh the code graph in the background so the
-    // pipeline's localize step can reach for `graph_query` once it is ready.
-    // Status goes to stderr — stdout may be machine-readable JSON.
+    // Auto-build + live-refresh the code graph in the background so recall's
+    // code-graph anchors (and `stella search`) have an index to answer from
+    // once it is ready. Status goes to stderr — stdout may be
+    // machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        registry.clone(),
         Box::new(|line| eprintln!("  {line}")),
         Box::new(|| {}),
     );
@@ -295,18 +279,16 @@ async fn run_pipeline_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: the deck's SESSIONS overlay sees this run live
     // and can replay its journal after it ends.
-    let mut presence = SessionPresence::announce(cfg, prompt, &registry);
+    let mut presence = SessionPresence::announce(cfg, prompt);
     let execution = begin_execution(&store, "pipeline", prompt, cfg, Some(presence.id()));
-    let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
-    // File changes ride the same stream, from the recorder that already
-    // computes the session's file-touch ledger — so a run's live output, its
-    // journal and its exported telemetry cannot disagree about what changed.
+    // Registry-born events (task board, sub-agent lifecycle) ride the same
+    // stream as the engine's, so a run's live output and its journal agree.
     registry.attach_events(tx.clone());
     let renderer = spawn_renderer(
         rx,
@@ -376,28 +358,16 @@ async fn run_pipeline_one_shot(
 
     let result = {
         let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
-        let interactive =
-            InteractiveToolSet::new(&customs, tx.clone()).with_ask_user(tty_ask_io(ask));
-        let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
-            Some(skills) => interactive.with_skill_registry(skills),
-            None => interactive,
-        };
-        // The operator's switches, applied over the complete surface — MCP and
-        // custom tools included — and BELOW discovery, so `tool_search` cannot
-        // advertise something the policy withholds.
-        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        // Outermost: the discovery layer (tool_search/skill_search/mcp_search)
-        // must see the complete advertised catalog below it.
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        // Outermost: the operator's switches, applied over the complete
+        // surface — MCP and custom tools included.
+        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
 
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
             cfg,
-            registry_options,
             active_rules.clone(),
             mcp.clone(),
-            SessionPlane::new(tx.clone(), registry.clone()),
+            SessionPlane::new(tx.clone()),
         )?;
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
@@ -446,10 +416,11 @@ async fn run_pipeline_one_shot(
             recall,
             repo: &ws_ports.repo_structure,
             repo_status: &ws_ports.repo_status,
-            touches: &crate::agent::RegistryTouches(&registry),
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
-            lint: Some(&ws_ports.lint_probe),
+            // No lint probe is wired: lint regressions are unmeasured, which
+            // the pipeline treats as a declared gap rather than a clean pass.
+            lint: None,
             mutation: Some(&ws_ports.mutation_probe),
             coverage: Some(&ws_ports.coverage_probe),
             approvals: &approval_gate,
@@ -473,12 +444,12 @@ async fn run_pipeline_one_shot(
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 
-    let files = registry.files_touched();
-
-    // Episodic memory: a run that did work (tools or file changes) becomes a
-    // retrievable Episode node — outcome, files touched, time window.
+    // Episodic memory: a run that did work becomes a retrievable Episode
+    // node — outcome and time window. "Did work" is read off the event
+    // stream (`TurnFriction::saw_tool_activity`).
+    let observed = friction.snapshot();
     if let Some(m) = &memory
-        && (turn_warrants_reflection(&messages) || !files.is_empty())
+        && (turn_warrants_reflection(&messages) || observed.saw_tool_activity())
     {
         let episode_outcome = match &result {
             Ok(outcome) => pipeline_episode_outcome(&outcome.status),
@@ -488,34 +459,27 @@ async fn run_pipeline_one_shot(
         // its full trajectory (`crate::trace::episode_tag`).
         let tag =
             crate::trace::episode_tag(cfg.trace_capture, execution.as_ref().map(|(_, id)| *id));
-        m.record_episode(
-            prompt,
-            episode_outcome,
-            &files,
-            started_unix,
-            tag.as_deref(),
-        )
-        .await;
+        m.record_episode(prompt, episode_outcome, &[], started_unix, tag.as_deref())
+            .await;
     }
 
     // Reflect on turns that did real work — success AND failure (a failed
     // pipeline run is a high-value root-cause signal via `succeeded=false`).
-    // The gate is `did real work` = tool-calls in the transcript OR files
-    // changed on disk. On the pipeline path the worker's tool-calling turns
-    // are deliberately kept OUT of `messages` (planner context hygiene,
-    // L-E6), so `turn_warrants_reflection(&messages)` alone is always false
-    // there and the self-improvement loop never fired on `stella run`;
-    // falling back to `!files.is_empty()` — mirroring the episode gate above
-    // — is what makes the primary surface actually learn. The reflector is
-    // handed an enriched transcript (final answer + a note of what changed)
-    // so it has signal even when the tool turns aren't in `messages`. Output
-    // format does not change learning semantics: text, JSON, and stream-JSON
-    // runs all reflect by default; ephemeral automation opts out with
-    // `STELLA_DISABLE_REFLECTION` when it must avoid a post-turn provider
-    // call (e.g. a benchmark adapter metering only the task envelope).
+    // The gate is `did real work` = tool-calls in the transcript OR tool
+    // activity observed on the event stream. On the pipeline path the
+    // worker's tool-calling turns are deliberately kept OUT of `messages`
+    // (planner context hygiene, L-E6), so `turn_warrants_reflection(&messages)`
+    // alone is always false there and the self-improvement loop never fired
+    // on `stella run`; falling back to the friction tap's tool tally —
+    // mirroring the episode gate above — is what makes the primary surface
+    // actually learn. Output format does not change learning semantics:
+    // text, JSON, and stream-JSON runs all reflect by default; ephemeral
+    // automation opts out with `STELLA_DISABLE_REFLECTION` when it must
+    // avoid a post-turn provider call (e.g. a benchmark adapter metering
+    // only the task envelope).
     let mut reflection_report = ReflectionReport::default();
     if one_shot_reflection_enabled(format)
-        && (turn_warrants_reflection(&messages) || !files.is_empty())
+        && (turn_warrants_reflection(&messages) || observed.saw_tool_activity())
         && let Some(m) = &mut memory
     {
         if format == OutputFormat::StreamJson {
@@ -531,17 +495,6 @@ async fn run_pipeline_one_shot(
         {
             reflect_transcript.push(CompletionMessage::assistant(&outcome.final_text));
         }
-        if !files.is_empty() {
-            let changed = files
-                .iter()
-                .map(|(path, ops)| format!("{path} ({ops})"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            reflect_transcript.push(CompletionMessage::user(format!(
-                "(files changed this turn: {changed})"
-            )));
-        }
-        let observed = friction.snapshot();
         let mut report = reflect_routed(
             m,
             cfg,
@@ -582,7 +535,7 @@ async fn run_pipeline_one_shot(
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
         });
     }
-    let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Leave).await;
+    let rendered = close_event_stream(&registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
@@ -596,7 +549,6 @@ async fn run_pipeline_one_shot(
         turn_close::TurnOutcomeRecord {
             label: outcome_label,
             cost_usd: cost + reflection_report.cost_usd,
-            files_before,
             persistence_complete,
         },
     );
@@ -605,7 +557,7 @@ async fn run_pipeline_one_shot(
     if let Some((store, id)) = &execution
         && cfg.trace_capture
     {
-        crate::trace::capture_or_warn(store, *id, &files, &cfg.workspace_root, &cfg.reward_policy);
+        crate::trace::capture_or_warn(store, *id, &cfg.workspace_root, &cfg.reward_policy);
     }
 
     if let Some(set) = &mcp {
@@ -648,14 +600,13 @@ async fn run_pipeline_one_shot(
             }
 
             if format == OutputFormat::Text {
-                plain::files_touched_panel(&files);
                 plain::cost_summary(
                     outcome.total_cost_usd + reflection_report.cost_usd,
                     &wiring.worker_model.to_string(),
                     turn_start.elapsed(),
                 );
                 if cfg.enable_recap {
-                    plain::recap_panel(&outcome.status, outcome.verdict.as_ref(), &files);
+                    plain::recap_panel(&outcome.status, outcome.verdict.as_ref());
                 }
                 println!();
             }
@@ -698,8 +649,8 @@ async fn run_pipeline_one_shot(
 /// exact-match handlers in the loop only claim the bare forms). Must cover
 /// every `/`-command the loop below handles.
 const REPL_RESERVED: &[&str] = &[
-    "/exit", "/quit", "/models", "/config", "/help", "/clear", "/files", "/agents", "/init",
-    "/rename", "/color", "/goal",
+    "/exit", "/quit", "/models", "/config", "/help", "/clear", "/agents", "/init", "/rename",
+    "/color", "/goal",
 ];
 
 /// The usage line for an argument-requiring local command invoked bare (or
@@ -730,9 +681,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         crate::enterprise_telemetry::ExecutionSurface::Interactive,
     )?;
     let provider = build_provider(cfg)?;
-    let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        new_tool_registry(cfg.workspace_root.clone(), registry_options(cfg)).await,
-    );
+    let registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
     let mcp = connect_mcp(
         cfg,
         registry.clone(),
@@ -740,7 +690,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         true,
     )
     .await?;
-    populate_schema_index(&registry, &cfg.workspace_root)?;
 
     crate::subagent::install_for_session(cfg, &registry)?;
     let ask = human_is_present(true);
@@ -748,12 +697,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority, ask);
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
-    // `graph_query` becomes available this session without a manual `stella
-    // init`. Non-blocking; status goes to stderr so it never disturbs the
-    // prompt. Kept alive for the whole REPL; the watcher stops when it drops.
+    // `stella search` and the deck's Graph tab have an index this session
+    // without a manual `stella init`. Non-blocking; status goes to stderr so
+    // it never disturbs the prompt. Kept alive for the whole REPL; the
+    // watcher stops when it drops.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
-        registry.clone(),
         Box::new(|line| eprintln!("  {line}")),
         Box::new(|| {}),
     );
@@ -814,12 +763,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // Machine-wide presence: the plain REPL registers like the deck does,
     // so its sessions are findable in every SESSIONS overlay and replayable
     // from their journals. No inbox notifications — the user is right here.
-    let mut presence = SessionPresence::announce(cfg, "interactive session", &registry);
-
-    // Session-scoped lean-mode activation state: the tool stack is rebuilt
-    // every turn, but a tool the model surfaced via tool_search must stay
-    // advertised for the rest of the session (see crate::discovery).
-    let repl_activation = crate::discovery::new_activation();
+    let mut presence = SessionPresence::announce(cfg, "interactive session");
 
     loop {
         print!("{} ", ">".bright_cyan().bold());
@@ -884,11 +828,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             println!("  {}\n", "conversation cleared".dimmed());
             continue;
         }
-        if input == "/files" {
-            plain::files_touched_panel(&registry.files_touched());
-            println!();
-            continue;
-        }
         if input == "/agents" {
             println!("  {}\n", custom.render_agent_list().replace('\n', "\n  "));
             continue;
@@ -906,23 +845,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             .await
             {
                 Ok((_domains, _cost_usd)) => {
-                    // A fresh index may name tables/types the schema gate
-                    // should know about this session, not just the next one.
-                    // Warn-and-fall-through: a schema-index failure must not
-                    // skip the graph-tool enable, the memory reopen, or the
-                    // extensions reload below — those refreshes are
-                    // independent of it (issue #373, item 3).
-                    if let Err(error) = populate_schema_index(&registry, &cfg.workspace_root) {
-                        println!("  {} schema governance unavailable: {error}", "!".yellow());
-                    }
-                    // The code graph now exists — expose the `graph_query` tool
-                    // to the rest of this session (it is registered only when
-                    // an index is present, so a session that started without
-                    // one otherwise wouldn't see it until relaunch).
-                    if let Err(error) = registry.enable_code_graph_if_available(&cfg.workspace_root)
-                    {
-                        println!("  {} graph tool unavailable: {error}", "!".yellow());
-                    }
                     // Re-open memory so recall/reflection use the taxonomy
                     // `/init` just wrote — otherwise the cached domains stay
                     // stale until the next launch. The re-open carries the
@@ -1009,7 +931,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             // Everything the goal loop appends past here is this turn's work,
             // gating reflection on it (see `turn_warrants_reflection`).
             let turn_start = messages.len();
-            let files_before = registry.files_touched().len();
             let started_unix = crate::memory::unix_now_secs();
             presence.update_prompt(goal);
             let result = run_goal_turn(
@@ -1033,8 +954,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &memory,
                 goal,
                 &result,
-                &registry,
-                files_before,
                 started_unix,
                 &messages[turn_start..],
             )
@@ -1088,7 +1007,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         // Everything `run_turn` appends past here is this turn's work; the
         // reflection gate reads only that slice (see `turn_warrants_reflection`).
         let turn_start = messages.len();
-        let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
         presence.update_prompt(input);
         let result = run_turn(
@@ -1106,7 +1024,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             "chat",
             input,
             Some(presence.id()),
-            &repl_activation,
             recall_event,
             memory.as_mut(),
         )
@@ -1116,8 +1033,6 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &memory,
             input,
             &result,
-            &registry,
-            files_before,
             started_unix,
             &messages[turn_start..],
         )
@@ -1145,27 +1060,21 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     Ok(())
 }
 
-/// Record one interactive turn as an episode: only new paths this turn (the
-/// slice past `files_before` in the session-cumulative ledger — a re-touch of
-/// an earlier path is not re-listed, an accepted approximation), gated the
-/// same way as reflection so trivial conversational turns write nothing.
-/// `pub(crate)`: the Command Deck's turn driver records through the same
-/// helper.
+/// Record one interactive turn as an episode — outcome and time window,
+/// gated the same way as reflection so trivial conversational turns write
+/// nothing. `pub(crate)`: the Command Deck's turn driver records through the
+/// same helper.
 pub(crate) async fn record_turn_episode<E>(
     memory: &Option<SessionMemory>,
     prompt: &str,
     result: &Result<(), E>,
-    registry: &ToolRegistry,
-    files_before: usize,
     started_unix: i64,
     turn_messages: &[CompletionMessage],
 ) {
     let Some(m) = memory else {
         return;
     };
-    let mut all_files = registry.files_touched();
-    let turn_files = all_files.split_off(files_before.min(all_files.len()));
-    if !turn_warrants_reflection(turn_messages) && turn_files.is_empty() {
+    if !turn_warrants_reflection(turn_messages) {
         return;
     }
     let episode_outcome = if result.is_ok() {
@@ -1178,7 +1087,7 @@ pub(crate) async fn record_turn_episode<E>(
     // composed into the prompt here, where a 240-character prompt truncated it
     // away, and where the three other episode-writing surfaces never had it at
     // all.
-    m.record_episode(prompt, episode_outcome, &turn_files, started_unix, None)
+    m.record_episode(prompt, episode_outcome, &[], started_unix, None)
         .await;
 }
 
@@ -1274,26 +1183,6 @@ pub(crate) fn graph_snapshot_focus(
         edges,
         files,
     })
-}
-
-/// Seed the storage gate; unsafe legacy state is an error, not an empty map.
-pub(crate) fn populate_schema_index(
-    registry: &ToolRegistry,
-    workspace_root: &std::path::Path,
-) -> Result<(), String> {
-    let snapshot = stella_tools::graph::load_storage_snapshot(workspace_root)?;
-    // Seeding an empty gate because of a TOML typo is the one failure here
-    // that looks exactly like success: every configured boundary silently
-    // stops being enforced for the whole session. Say it once, at seed time.
-    if let Some(error) = &snapshot.manifest_error {
-        eprintln!(
-            "  {} stella.storage.toml did not parse — its layers and boundaries are \
-             NOT being enforced this session: {error}",
-            "warning:".yellow()
-        );
-    }
-    registry.update_storage_index(snapshot);
-    Ok(())
 }
 
 /// Cap on each MCP server's connect — the per-server bound
@@ -1474,10 +1363,8 @@ fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> Strin
 }
 
 /// `stella tools` — list the tools the agent would have this session:
-/// native built-ins (including the issue tools when a tracker is detected),
-/// the interactive/session tools layered on top (ask_user, search_skills,
-/// install_skill), developer custom tools (with their source manifests), and
-/// any discovery diagnostics for broken manifests. MCP-server tools
+/// native built-ins, developer custom tools (with their source manifests),
+/// and any discovery diagnostics for broken manifests. MCP-server tools
 /// (.stella/mcp.toml) are merged in at session build time and are not
 /// enumerated here — connecting to the servers is out of scope for a listing.
 pub fn run_tools_listing() -> Result<(), String> {
@@ -1489,10 +1376,7 @@ pub fn run_tools_listing() -> Result<(), String> {
     // surface, and the operator's `"tools"` switches decide what survives.
     let settings = crate::settings::Settings::load(&workspace_root)?;
     let policy = settings.tool_policy();
-    let registry = ToolRegistry::new(
-        workspace_root.clone(),
-        stella_tools::RegistryOptions::ambient(),
-    );
+    let registry = ToolRegistry::new(workspace_root.clone());
     println!("  {}", "built-in:".dimmed());
     let mut native: Vec<String> = stella_core::ports::ToolExecutor::schemas(&registry)
         .into_iter()
@@ -1510,9 +1394,8 @@ pub fn run_tools_listing() -> Result<(), String> {
             );
         }
     }
-    // A tool the catalog declares but this environment cannot register is a
-    // missing prerequisite, not a switch — and a tool switched off in settings
-    // that also has an unmet prerequisite would otherwise vanish silently.
+    // A denied name that never registered would otherwise vanish silently;
+    // list it as off rather than pretend it does not exist.
     let mut withheld: Vec<&str> = policy
         .denied_builtins()
         .into_iter()
@@ -1532,37 +1415,6 @@ pub fn run_tools_listing() -> Result<(), String> {
             "every tool is on — switch one off with \"tools\": {\"<name|group|*>\": \"off\"} \
              in settings"
                 .dimmed()
-        );
-    }
-    println!(
-        "\n  {}",
-        "interactive / session tools (added by the CLI each session):".dimmed()
-    );
-    for (name, note) in [
-        (
-            "ask_user",
-            "ask the user a multiple-choice question (TTY only)",
-        ),
-        (
-            "tool_search",
-            "search every session tool (built-in/MCP/custom) by keyword",
-        ),
-        (
-            "skill_search",
-            "search the skills installed in this workspace",
-        ),
-        (
-            "mcp_search",
-            "find MCP servers — configured (.stella/mcp.toml) or the public registry",
-        ),
-        ("search_skills", "search the public skills registry"),
-        ("install_skill", "install a registry skill (asks first)"),
-    ] {
-        println!(
-            "    {} {} {}",
-            "·".dimmed(),
-            name,
-            format!("— {note}").dimmed()
         );
     }
 
@@ -1762,8 +1614,8 @@ pub(crate) fn begin_execution(
 /// append+flush each event before enqueueing it, so paid-call evidence
 /// survives a paused/cancelled renderer. The drain task ([`spawn_renderer`])
 /// persists every event and each `StepUsage` to the workspace store when one
-/// is open. `registry` is the concrete tool registry (its CRUD ledger feeds
-/// the Files Touched panel); `base_tools` is the same registry as the
+/// is open. `registry` is the concrete tool registry (its ledgers close the
+/// execution's audit record); `base_tools` is the same registry as the
 /// engine's executor, possibly MCP-wrapped.
 #[allow(clippy::too_many_arguments)]
 async fn run_turn(
@@ -1782,7 +1634,6 @@ async fn run_turn(
     kind: &str,
     prompt: &str,
     session: Option<&str>,
-    activated: &crate::discovery::ActivatedTools,
     // Phase 2 (#713): this turn's `ContextRecall`, if recall ran. Recall
     // happens before the turn's event channel exists — it has to, because its
     // frames go into the messages the turn is built from — so the caller hands
@@ -1801,16 +1652,14 @@ async fn run_turn(
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
     stamp_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
-    let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
-    // File changes ride the same stream, from the recorder that already
-    // computes the session's file-touch ledger — so a run's live output, its
-    // journal and its exported telemetry cannot disagree about what changed.
+    // Registry-born events (task board, sub-agent lifecycle) ride the same
+    // stream as the engine's, so a run's live output and its journal agree.
     registry.attach_events(tx.clone());
     let renderer = spawn_renderer(
         rx,
@@ -1850,18 +1699,9 @@ async fn run_turn(
             custom_tools.to_vec(),
             cfg.workspace_root.clone(),
         );
-        let interactive = InteractiveToolSet::new(&customs, tx.clone())
-            .with_ask_user(tty_ask_io(human_is_present(format == OutputFormat::Text)));
-        let interactive = match engine::skill_registry_for_run(cfg.workspace_root.clone()) {
-            Some(skills) => interactive.with_skill_registry(skills),
-            None => interactive,
-        };
-        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
-        // Outermost discovery layer; the session-scoped `activated` handle
-        // keeps lean-mode activations across the per-turn stack rebuild.
-        let tools = crate::discovery::DiscoveryToolSet::for_session(&permitted, cfg)
-            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-            .with_activation(activated.clone());
+        // Outermost: the operator's switches, applied over the complete
+        // surface — MCP and custom tools included.
+        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
         let hook_runner = ShellHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any
@@ -1883,15 +1723,10 @@ async fn run_turn(
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
     // already-queued event has actually printed before this function returns
     // (no events lost to a detached task racing process exit).
-    let rendered = close_event_stream(registry, tx, renderer, TurnBracket::Settle).await;
+    let rendered = close_event_stream(registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
-    // Persist the files-touched ledger and close the execution record. The
-    // ledger lives on the concrete registry (the engine drove tool calls
-    // through it, MCP-wrapped or not), so it's read here regardless of which
-    // executor the engine held.
-    let files = registry.files_touched();
     let (outcome_label, cost) = match &outcome {
         TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
         TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
@@ -1905,7 +1740,6 @@ async fn run_turn(
         turn_close::TurnOutcomeRecord {
             label: outcome_label,
             cost_usd: cost,
-            files_before,
             persistence_complete,
         },
     );
@@ -1930,7 +1764,7 @@ async fn run_turn(
             reason,
             model: format!("{}/{}", cfg.provider.id, cfg.model_id),
             events: collected,
-            files_touched: registry.file_touch_telemetry().to_json(),
+            files_touched: serde_json::json!({ "files_touched": [] }),
         };
         println!(
             "{}",
@@ -1944,7 +1778,6 @@ async fn run_turn(
     match outcome {
         TurnOutcome::Completed { cost_usd, .. } => {
             if format == OutputFormat::Text {
-                plain::files_touched_panel(&files);
                 plain::cost_summary(
                     cost_usd,
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
@@ -1976,10 +1809,6 @@ fn print_help() {
     println!(
         "  {}  Work in judged rounds until a verifier confirms the goal is met",
         "/goal <text>".bright_magenta()
-    );
-    println!(
-        "  {}       Show files touched this session",
-        "/files".bright_magenta()
     );
     println!(
         "  {}      List custom agents (⚡ from .stella/agents or ~/.stella/agents)",

@@ -186,13 +186,6 @@ reasoning_auto = "on"   # on = thinking on for verifier/worker/default/plan,
 # disposable and the budget cap is the real guard.
 headless_scope_bypass = "off"
 
-# on = every apply_edits/edit_file/write_file call pauses on a per-hunk
-# approval card and applies only the hunks the reviewer keeps (#1265). Read
-# only by surfaces that HAVE a reviewer: a headless run ignores it rather than
-# blocking on a card nobody will see. OFF by default — this is the one gate
-# that fires on ordinary work rather than above a threshold.
-hunk_review = "off"
-
 # ---- per-agent overrides. Every field optional = "no opinion" ---------------
 #
 # The JSON nests these one level deeper (`agent_engine_config.agents.verifier`).
@@ -261,12 +254,11 @@ effort = "medium"
 #   1. exact tool name
 #   2. its group
 #   3. "*"
-# So `{"*" = "off", "read_file" = "on"}` is a read-only agent in two lines.
+# So `{"*" = "off", "task_list" = "on"}` is a board-reading agent in two lines.
 #
 # Groups (stella-tools/src/catalog.rs, plus "mcp" and "custom" for tools the
 # catalog does not know):
-#   bash  build  ci  context  file  issue  media  process  repo  scripts
-#   search  session  task  web  |  mcp  custom
+#   task  scratch  environment  |  mcp  custom
 #
 # CEILING: a tool the managed scope denies is denied for good. Neither user
 # nor project can grant it back, and the settings editor renders it LOCKED
@@ -274,9 +266,9 @@ effort = "medium"
 # -----------------------------------------------------------------------------
 
 [tools]
-bash    = "off"   # one tool
-process = "off"   # one whole group
-"*"     = "on"    # the wildcard (quoted — bare * is not a TOML key)
+save_state = "off"   # one tool
+scratch    = "off"   # one whole group
+"*"        = "on"    # the wildcard (quoted — bare * is not a TOML key)
 
 
 # -----------------------------------------------------------------------------
@@ -305,14 +297,14 @@ process = "off"   # one whole group
   command = "./scripts/session-context.sh"
 
 [[hooks.PreToolUse]]
-matcher = "bash"
+matcher = "task"
   [[hooks.PreToolUse.hooks]]
   type      = "command"
-  command   = "./scripts/audit-bash.sh"
+  command   = "./scripts/audit-spawns.sh"
   timeoutMs = 5000
 
 [[hooks.PostToolUse]]
-matcher = "write_file"
+matcher = "save_state"
   [[hooks.PostToolUse.hooks]]
   type    = "command"
   command = "./scripts/fmt-on-write.sh"
@@ -520,8 +512,6 @@ consent_grantor = "security@corp.example"
 [authority]
 project_prompts             = "off"  # may a repo replace an agent's system prompt?
 project_custom_tools        = "off"  # may a repo's .stella/tools/*.toml load?
-bash                        = "off"  # hard deny, unraisable
-web                         = "on"
 media_requires_host_approval = "on"
 
 

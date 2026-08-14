@@ -9,6 +9,10 @@ test module — `each_family_lands_in_its_own_class`,
 and the same trial replayed in the deck are pinned to agree, name for name.
 A future edit to either side's table that drops one of these names into a
 different class is exactly the defect this file exists to catch.
+
+Most of the names below appear only in archived traces; they pin the LEGACY
+half of the table, which exists so archived matches keep rendering with the
+classes they were recorded under.
 """
 
 from __future__ import annotations

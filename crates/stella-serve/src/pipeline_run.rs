@@ -54,7 +54,7 @@
 //!
 //! - **Context recall, repo structure, lint, mutation, coverage, candidate
 //!   isolation** ([`NoContextRecall`], [`NoRepoStructure`], [`NoRepoStatus`],
-//!   [`NoFileTouches`], and `lint`/`mutation`/`coverage`/
+//!   and `lint`/`mutation`/`coverage`/
 //!   `candidate_workspaces` left `None`). Every one of these ports is
 //!   designed to degrade open when absent (their own doc comments say so:
 //!   "a caller with nothing to offer supplies `NoContextRecall`"), so a
@@ -84,8 +84,8 @@ use async_trait::async_trait;
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{BudgetGuard, EngineConfig, RoleTable, Router, TurnOutcome};
 use stella_pipeline::ports::{
-    ApprovalGate, NoContextRecall, NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts,
-    ProviderResolver, ScopeDecision,
+    ApprovalGate, NoContextRecall, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver,
+    ScopeDecision,
 };
 use stella_pipeline::{Pipeline, PipelineConfig};
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Provider, ScopeProposal};
@@ -258,8 +258,7 @@ pub(crate) async fn drive_pipeline(
     // `tool.call.requested` policy as an ordinary turn's. The verification
     // ladder's own process launches (`RemoteVerificationRunner`) are
     // deliberately NOT gated the same way: they are the pipeline's own
-    // deterministic diagnostics, not model-initiated tool calls, exactly as
-    // `verify_done`'s local runner bypasses `ToolRegistry` in the CLI.
+    // deterministic diagnostics, not model-initiated tool calls.
     tools: &dyn stella_core::ToolExecutor,
     engine_config: EngineConfig,
     messages: Vec<CompletionMessage>,
@@ -327,7 +326,6 @@ pub(crate) async fn drive_pipeline(
         recall: &NoContextRecall,
         repo: &NoRepoStructure,
         repo_status: &NoRepoStatus,
-        touches: &NoFileTouches,
         diagnostics: &verify,
         tests: &verify,
         lint: None,

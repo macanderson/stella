@@ -38,7 +38,6 @@ mod command_deck;
 mod commands_cmd;
 mod config;
 mod config_wiring;
-mod connect_cmd;
 mod context_cmd;
 mod context_records;
 mod contextgraph;
@@ -50,7 +49,6 @@ mod dataset_cmd;
 mod deck_mcp;
 mod diag_boot;
 mod diag_bridge;
-mod discovery;
 mod doctor;
 mod domains;
 mod durability;
@@ -70,7 +68,6 @@ mod fleet_warmth;
 mod ingest_cmd;
 mod inspect;
 mod interactive;
-mod invoke_skill;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;
@@ -95,7 +92,6 @@ mod query_format;
 mod resume_frame;
 mod rules;
 mod runtime;
-mod scripts_cmd;
 mod search_cmd;
 mod session_persist;
 mod settings;
@@ -104,7 +100,6 @@ mod signals;
 mod skill_manager;
 mod startup;
 mod stats;
-mod stats_graph;
 mod storage_cmd;
 mod subagent;
 mod subsession;
@@ -114,9 +109,7 @@ mod tool_foundry;
 mod tool_policy;
 // The generated per-tool reference (`docs/tools/`) and the guard that fails
 // when it drifts. Test-only: it is a build-time artifact generator, not
-// runtime behaviour, and this is the only scope from which all seventy-two
-// schemas — the registry's sixty-four plus this crate's eight session-layer
-// declarations — are reachable at once.
+// runtime behaviour.
 #[cfg(test)]
 mod tool_docs;
 mod tool_switches;
@@ -322,7 +315,7 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
 pub(crate) use cli::{
-    AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
+    AuthCmd, Cli, Command, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
 
 /// How this invocation meets the supervisor (#1552, #1607).
@@ -679,17 +672,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         }
         Some(Command::Tools {
             validate,
-            author,
             adopt,
             enable,
             disable,
             foundry,
         }) => {
-            // The tool-foundry protocol's three decisions are three flags, in
-            // the order a tool travels through them: author -> adopt (prove)
-            // -> enable (approve). `clap` makes them mutually exclusive, so
-            // this is a first-match chain rather than a state machine.
-            return match (validate, author) {
+            // The tool-foundry protocol's decisions are flags, in the order a
+            // tool travels through them: adopt (prove) -> enable (approve).
+            // `clap` makes them mutually exclusive, so this is a first-match
+            // chain rather than a state machine.
+            return match validate {
                 _ if *foundry => tool_foundry::adopt::run_tools_foundry_report(),
                 _ if adopt.is_some() => {
                     tool_foundry::adopt::run_tools_adopt(adopt.as_deref().unwrap_or_default())
@@ -702,13 +694,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     disable.as_deref().unwrap_or_default(),
                     false,
                 ),
-                // `--author` (name optional) stages a tool-foundry proposal
-                // as a reviewable manifest+script pair — or lists proposals.
-                (_, Some(name)) => tool_foundry::run_tools_author(name.as_deref()),
                 // `--validate` (dir optional) is the strict pre-flight path;
                 // a plain `stella tools` stays the lenient listing.
-                (Some(dir), None) => agent::run_tools_validation(dir.as_deref()),
-                (None, None) => agent::run_tools_listing(),
+                Some(dir) => agent::run_tools_validation(dir.as_deref()),
+                None => agent::run_tools_listing(),
             }
             .map_err(failure::CliFailure::from);
         }
@@ -718,11 +707,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // index only.
             return signals::block_on_interruptible(rt()?, search_cmd::run_search(query, *format))
                 .map_err(failure::CliFailure::from);
-        }
-        Some(Command::Scripts { cmd }) => {
-            // Static manifest parsing plus a local subprocess — works with
-            // zero API keys.
-            return scripts_cmd::run_scripts(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Storage { cmd }) => {
             // Reads the local index + manifest only — zero API keys.
@@ -793,7 +777,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
-                Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
             }
             .map_err(failure::CliFailure::from);
         }
@@ -861,21 +844,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // MCP management reads/writes local config + the registry over
             // HTTP — no provider or API key required.
             return mcp_cmd::run(cmd).map_err(failure::CliFailure::from);
-        }
-        Some(Command::Connect { cmd }) => {
-            // Tracker OAuth talks only to the tracker the user is connecting
-            // — no provider or API key required. A `--api-key` here is
-            // almost always muscle memory from when `connect linear` had a
-            // flag by that name (now `--paste-key`): say so instead of
-            // silently running the OAuth path.
-            if cli.globals.api_key.is_some() {
-                eprintln!(
-                    "⚠ --api-key is the model-provider credential and is unused by \
-                     `stella connect`; to paste a Linear personal API key, use \
-                     `stella connect linear --paste-key`"
-                );
-            }
-            return connect_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Auth { cmd }) => {
             // Reads/writes ~/.stella/credentials.toml directly — no
@@ -1014,8 +982,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER
     // settings so it can only narrow what they already allowed. `narrow_with`
     // is the intersection, not a key-level merge, which is what lets the
-    // read-only idiom `*:off,read_file:on` mean what it says while still
-    // being unable to re-enable anything an org policy denied.
+    // read-only idiom `*:off,get_environment:on` mean what it says while
+    // still being unable to re-enable anything an org policy denied.
     if let Some(spec) = cli.globals.tools.as_deref() {
         let scope = stella_tools::policy::ToolPolicy::parse_spec(spec)
             .map_err(|e| format!("--tools: {e}"))?;
@@ -1194,13 +1162,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
-            // Monitoring IS a goal: the verifier (who can call ci_status
-            // itself) ends the loop only on a fully green latest run.
+            // Monitoring IS a goal: the verifier ends the loop only on a
+            // fully green latest run. CI is reached through whatever the
+            // session offers — a custom tool or an MCP server — never a
+            // named built-in.
             let goal = format!(
-                "Drive CI for `{target}` to fully green. Use ci_status (wait: true) to watch \
-                 the latest runs, read the failure logs it returns, fix each root cause in the \
-                 code, commit and push the fix, then re-check. The goal is met only when the \
-                 latest CI run for `{target}` has completed with every check successful."
+                "Drive CI for `{target}` to fully green. Watch the latest runs with the CI \
+                 tooling available in this session, read the failure logs, fix each root \
+                 cause in the code, commit and push the fix, then re-check. The goal is met \
+                 only when the latest CI run for `{target}` has completed with every check \
+                 successful."
             );
             signals::block_on_interruptible(
                 rt()?,
@@ -1296,7 +1267,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Search { .. }
-        | Command::Scripts { .. }
         | Command::Storage { .. }
         | Command::Commands { .. }
         | Command::Inspect { .. }
@@ -1318,7 +1288,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }
-        | Command::Connect { .. }
         | Command::Auth { .. }
         | Command::Observe { .. }
         | Command::Models { .. }

@@ -77,7 +77,6 @@ impl Fixture {
                 recall: &self.recall,
                 repo: &self.repo,
                 repo_status: &self.repo_status,
-                touches: &NoFileTouches,
                 diagnostics: &self.runner,
                 tests: &self.runner,
                 lint: None,

@@ -8,7 +8,7 @@
 //!   stream-json). It is declared per-command since #1493 and its JSON
 //!   envelope is versioned by [`crate::SUMMARY_SCHEMA_VERSION`].
 //! - **Query output** — `--format <text|json[|csv]>` — belongs to the
-//!   read-only commands that report local state (`stats`, `stats graph`,
+//!   read-only commands that report local state (`stats`,
 //!   `usage report`, `inspect`, `calibration`, `memory list`, `context
 //!   list|validate`, `scripts list`). Before #1568 this idiom had sprawled
 //!   into three hand-rolled enums plus three `--json` booleans, and most of
@@ -17,10 +17,6 @@
 //! Every query command declares one of the two enums below, spelled
 //! `--format`, defaulting to `text`, and wraps its JSON in the versioned
 //! envelope ([`Rows`] for array payloads, [`Versioned`] for object payloads).
-//! The one deliberate exemption is `scripts list`: its frame is shared
-//! byte-for-byte with the `list_scripts` tool and pinned at its own
-//! `schema_version` by `docs/spec/scripts-index.md`, so wrapping it here
-//! would version the same object twice.
 //!
 //! A tree-walking test in `src/tests.rs`
 //! (`query_commands_share_one_format_idiom`) fails the build if a `--json`
@@ -55,7 +51,7 @@ pub(crate) enum QueryFormat {
 }
 
 /// [`QueryFormat`] plus CSV, for the tabular telemetry surfaces (`stats`,
-/// `stats graph`, `usage report`) where a spreadsheet is a first-class
+/// `usage report`) where a spreadsheet is a first-class
 /// consumer. Same spelling, same alias, same envelope on the JSON arm; CSV
 /// stays a bare RFC-4180 body (a header row is its version story).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

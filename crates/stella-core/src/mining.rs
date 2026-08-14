@@ -23,10 +23,9 @@ const STOPWORDS: &[&str] = &[
 /// Word characters are **ASCII** alphanumerics plus `_`; everything else is a
 /// boundary. That is deliberate for the English-shaped lesson text the miners
 /// see, but it does mean an accented or non-Latin observation tokenizes to
-/// nothing and therefore never clusters — unlike [`crate::discovery`]'s
-/// `split_terms`, which is Unicode-aware because it indexes tool and skill
-/// names. Widening this would change every mined `<slug>-<hash8>` id, so it is
-/// a deliberate migration, not a drive-by tweak.
+/// nothing and therefore never clusters. Widening this would change every
+/// mined `<slug>-<hash8>` id, so it is a deliberate migration, not a
+/// drive-by tweak.
 pub(crate) fn terms(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();

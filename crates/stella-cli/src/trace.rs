@@ -41,7 +41,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use stella_core::redact::redact_secrets;
 use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::{AgentEvent, CompletionMessage};
@@ -181,11 +180,10 @@ pub fn episode_tag(enabled: bool, execution_id: Option<i64>) -> Option<String> {
 pub fn capture_or_warn(
     store: &Store,
     execution_id: i64,
-    files_touched: &[(String, String)],
     workspace_root: &Path,
     policy: &RewardPolicy,
 ) {
-    if let Err(error) = capture(store, execution_id, files_touched, workspace_root, policy) {
+    if let Err(error) = capture(store, execution_id, workspace_root, policy) {
         eprintln!("  ⚠ trace capture failed: {error}");
     }
 }
@@ -195,11 +193,10 @@ pub fn capture_or_warn(
 pub fn capture(
     store: &Store,
     execution_id: i64,
-    files_touched: &[(String, String)],
     workspace_root: &Path,
     policy: &RewardPolicy,
 ) -> Result<PathBuf, String> {
-    let record = assemble(store, execution_id, files_touched, policy)?;
+    let record = assemble(store, execution_id, policy)?;
     append_trace(workspace_root, &record)
 }
 
@@ -208,7 +205,6 @@ pub fn capture(
 pub fn assemble(
     store: &Store,
     execution_id: i64,
-    files_touched: &[(String, String)],
     policy: &RewardPolicy,
 ) -> Result<TraceRecord, String> {
     let summary = store
@@ -311,11 +307,8 @@ pub fn assemble(
         started_at: summary.started_at,
         finished_at: summary.finished_at,
         stage_trajectory: fold.stage_trajectory,
-        files_touched: files_touched
-            .iter()
-            .map(|(path, ops)| format!("{path} ({ops})"))
-            .collect(),
-        change_digest: change_digest(files_touched),
+        files_touched: Vec::new(),
+        change_digest: None,
         redacted,
         reward,
         calls,
@@ -475,27 +468,6 @@ fn redact_value(value: &mut serde_json::Value, redacted: &mut bool) {
         }
         _ => {}
     }
-}
-
-/// SHA-256 over the sorted `path\0ops` rows, truncated to 16 hex — `None`
-/// when nothing was touched (a read-only run has no change shape).
-fn change_digest(files_touched: &[(String, String)]) -> Option<String> {
-    if files_touched.is_empty() {
-        return None;
-    }
-    let mut rows: Vec<String> = files_touched
-        .iter()
-        .map(|(path, ops)| format!("{path}\0{ops}"))
-        .collect();
-    rows.sort();
-    let mut hasher = Sha256::new();
-    for row in &rows {
-        hasher.update(row.as_bytes());
-        hasher.update(b"\n");
-    }
-    let digest = hasher.finalize();
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    Some(hex[..16].to_string())
 }
 
 /// Append one record to `.stella/private/traces.jsonl`, owner-only. The
@@ -678,14 +650,13 @@ mod tests {
             .finish_execution_accounted(id, "completed", 0.25, true)
             .unwrap();
 
-        let files = vec![("src/auth.rs".to_string(), "U".to_string())];
-        let record = assemble(&store, id, &files, &RewardPolicy::default()).unwrap();
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
 
         assert_eq!(record.schema, TRACE_SCHEMA_VERSION);
         assert_eq!(record.outcome.as_deref(), Some("completed"));
         assert_eq!(record.stage_trajectory, vec!["triage", "execute"]);
         assert_eq!(record.cost_usd, 0.25);
-        assert_eq!(record.change_digest.as_deref().map(str::len), Some(16));
+        assert_eq!(record.change_digest, None);
         assert!(record.redacted, "the ghp_ token must be recognized");
         assert!(
             !record.prompt.contains("ghp_"),
@@ -759,7 +730,7 @@ mod tests {
             )
             .unwrap();
 
-        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
         assert_eq!(record.calls.len(), 1);
         assert!(!record.calls[0].reconstruction_verified);
         assert!(record.calls[0].reconstruction_error.is_some());
@@ -808,7 +779,7 @@ mod tests {
             .finish_execution_accounted(id, "completed", 0.40, true)
             .unwrap();
 
-        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
         assert_eq!(record.reward.rung, Some(LadderRung::SubmitFast));
         assert_eq!(record.reward.outcome, Some(1.0));
         assert_eq!(
@@ -857,7 +828,7 @@ mod tests {
             .finish_execution_accounted(id, "completed", 0.10, true)
             .unwrap();
 
-        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
+        let record = assemble(&store, id, &RewardPolicy::default()).unwrap();
         assert_eq!(record.reward.rung, Some(LadderRung::Unverifiable));
         assert_eq!(record.reward.reward, None);
         assert_eq!(

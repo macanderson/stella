@@ -4,9 +4,11 @@
 //! `stella-cli` — `agent.rs` twice, `agent/goal.rs` twice, `command_deck.rs`,
 //! `fleet_cmd.rs`, and `subsession.rs`. They are exposed individually as well
 //! as through [`crate::RuntimeBuilder`] because the drivers do not all want
-//! the same subset: the fleet wants a registry rooted at a *task* directory
-//! while its claims store stays rooted at the session's, and the deck builds
-//! its stack incrementally as the user turns surfaces on.
+//! the same subset: the fleet opens a claims store without a provider, and
+//! the deck builds its stack incrementally as the user turns surfaces on.
+//! (The tool registry needs no step here: `stella_tools::ToolRegistry::new`
+//! takes only the workspace root, so [`crate::RuntimeBuilder`] calls it
+//! directly.)
 //!
 //! Every one of them is a pure function of its arguments. Where the CLI
 //! version consulted a process global or wrote to stderr, the argument list
@@ -19,7 +21,6 @@ use stella_core::budget::BudgetGuard;
 use stella_core::estimator::CalibrationMap;
 use stella_protocol::{BudgetMode, Provider};
 use stella_store::Store;
-use stella_tools::{RegistryOptions, ToolRegistry};
 
 use crate::error::RuntimeError;
 use crate::spec::{Notice, NoticeSubject, Persistence, ProviderParts};
@@ -28,26 +29,6 @@ use crate::spec::{Notice, NoticeSubject, Persistence, ProviderParts};
 /// calibration. With the estimator's EWMA weight (0.3) anything past ~20
 /// samples has negligible influence, and 20 rows is a trivial query.
 const DRIFT_SEED_SAMPLES: usize = 20;
-
-/// Build the session's tool registry.
-///
-/// `persistence` decides whether the filesystem-backed backends are detected
-/// at all: a claim-mode trial gets a registry with no backends rather than one
-/// pointed at state it must not read. This is the parameter that replaces
-/// `stella-cli`'s `settings::filesystem_settings_disabled()` call — the same
-/// decision, made by the caller instead of by a process-wide environment
-/// variable, which is what lets two sessions in one process disagree about it.
-pub async fn tool_registry(
-    workspace_root: std::path::PathBuf,
-    options: RegistryOptions,
-    persistence: Persistence,
-) -> ToolRegistry {
-    if persistence.is_disabled() {
-        ToolRegistry::with_backends_and_options(workspace_root, None, None, options)
-    } else {
-        ToolRegistry::new_detected(workspace_root, options).await
-    }
-}
 
 /// Open the workspace SQLite store (`.stella/private/store.db`).
 ///

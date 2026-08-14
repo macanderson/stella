@@ -143,8 +143,8 @@ impl ApiKey {
     /// `daemon::approval::console_is_interactive` use.
     ///
     /// The single "is a human present?" derivation (#3036), shared with
-    /// `stella-cli`'s `ask_user` tool and approvals without this crate
-    /// depending on that one (invariant 1). `interactive` here already plays
+    /// `stella-cli`'s approval prompts without this crate depending on that
+    /// one (invariant 1). `interactive` here already plays
     /// [`stella_tty::human_can_answer`]'s `interactive_output` role — the
     /// caller's "would I even attempt a prompt" decision (`stella-cli` clears
     /// it for a machine `--output-format`) — so this only adds the check that

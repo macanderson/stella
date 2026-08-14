@@ -97,7 +97,7 @@ We identify seven such properties in Stella's design.
 |---|---|---|---|
 | I | Ports, not concretions | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
 | II | No I/O in the engine | All decision logic is synchronous functions over owned data | Architectural discipline; property-tested in `stella-core` |
-| III | Witness-test contract | A task is done only when a test fails on old code and passes on new | `verify_done` tool (`stella-tools::verify`) |
+| III | Witness-test contract | A task is done only when a test fails on old code and passes on new | The pipeline's witness stage and flip oracle (`stella-pipeline`) |
 | IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
 | V | Prompt-cache-native memory | Lessons load into a byte-stable system prompt prefix at ~0.1x input price | `build_system_prompt` (`stella-cli::agent`); L-E8 cache discipline |
 | VI | Budget at safe boundaries | The budget guard consults only between model calls, never interrupts a tool | `run_turn` budget check (`stella-core::driver`); property-tested |
@@ -209,23 +209,22 @@ loops on your API budget).
 Stella refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
 on the new code** (the feature is genuinely present). This is enforced by the
-`verify_done` tool (`crates/stella-tools/src/verify.rs`).
+staged pipeline's witness stage (`stella-pipeline`):
 
-The verification runs in a **detached shadow git worktree** at `HEAD`:
+1. The worker executes the change.
+2. When no `--test-command` is configured, an independent model — the
+   verifier's resolution, never the worker — authors the failing witness
+   test after reading the executed diff.
+3. The flip oracle tracks the witness's fail→pass transition by running it:
+   fail on the pre-change code, pass on the changed code.
+4. The flip is refused if the worker modified the witness files (tamper
+   exclusion).
+5. The flip holds = the work is credited. It does not = the run cannot claim
+   the change is proven.
 
-1. The agent writes the code change and a witness test in the working tree.
-2. `verify_done` creates a shadow worktree at `git HEAD` (the pre-change
-   state).
-3. It copies *only the test files* from the working tree into the shadow.
-4. It runs the suite in the shadow. The witness test must **fail** there
-   (the feature is absent).
-5. It runs the suite on the working tree. The witness test must **pass**
-   (the feature is present).
-6. Both conditions hold = `WITNESS CONFIRMED`. Either fails = the agent
-   continues.
-
-**The working tree is never mutated** — no stash, no checkout. The shadow
-worktree is created and destroyed in isolation.
+The witness is scaffolding for that one run — it lives in the candidate
+workspace and is discarded with it (`stella run --keep-witness` promotes it
+instead).
 
 ### Why it is hard to copy
 
@@ -341,8 +340,8 @@ local identifiers.
 
 ### The invariant
 
-Lessons saved with `save_memory` (or written as markdown in
-`.stella/memories/`) load once at session start into a **byte-stable system
+Lessons written as markdown in
+`.stella/memories/` load once at session start into a **byte-stable system
 prompt prefix**. Every model call in the session considers them at
 prompt-cache-hit prices (~0.1x input token cost).
 
@@ -416,10 +415,11 @@ execution).
 Budget enforcement sounds simple until you consider the failure modes:
 
 1. **Mid-tool interruption.** If the budget guard can interrupt a tool
-   mid-execution, a `write_file` or `bash` command may be left half-complete,
-   corrupting the workspace. The agent's "done" state is now undefined.
+   mid-execution, a mutating call may be left half-complete,
+   corrupting the state it was writing. The agent's "done" state is now
+   undefined.
 2. **Retry amplification.** If a retried step re-executes a tool call, a
-   non-idempotent tool (e.g., `create_issue`) may execute twice. The budget
+   non-idempotent tool (e.g., `task_create`) may execute twice. The budget
    leak is not just tokens — it is side effects.
 3. **Budget lie from a provider.** If the model provider misreports token
    counts, the budget guard may think it has room when it doesn't.
@@ -550,7 +550,7 @@ Stella on:
   operational exception.
 - **Ports**: Claude Code's engine is not separable from its provider
   integration. Stella's engine is SDK-free.
-- **Witness-test**: Claude Code does not have a verify_done-equivalent. It
+- **Witness-test**: Claude Code has no witness-stage equivalent. It
   stops at "the suite is green."
 - **CGP**: Claude Code does not expose a context-retrieval protocol. Its
   retrieval is opaque and vendor-locked.

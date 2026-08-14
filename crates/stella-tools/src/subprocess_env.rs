@@ -32,8 +32,8 @@
 //!
 //! # Re-admitting one variable: `STELLA_SUBPROCESS_ENV_ALLOW`
 //!
-//! Widening a scrub breaks real workflows — a Django dev server started via
-//! `start_process` needs `DJANGO_SECRET_KEY`, and a deploy-key setup drives
+//! Widening a scrub breaks real workflows — a Django dev server a custom
+//! tool starts needs `DJANGO_SECRET_KEY`, and a deploy-key setup drives
 //! git through `GIT_SSH_COMMAND`. The operator re-admits a variable by naming
 //! it in the `STELLA_SUBPROCESS_ENV_ALLOW` environment variable, a
 //! comma-separated list of **exact** names:
@@ -62,9 +62,9 @@ use std::sync::{OnceLock, RwLock};
 /// subprocesses always run against their explicit working dir; when Stella
 /// itself was spawned from inside a git hook (which exports `GIT_DIR` et
 /// al.), letting them leak through would silently aim every git invocation
-/// at the OUTER repo instead — `git init` in a scratch dir re-initing the
-/// host repo, `verify_done` diffing against the wrong HEAD. Scrub these from
-/// every subprocess that shells out with an explicit dir.
+/// at the OUTER repo instead — a `git init` in a scratch dir re-initing the
+/// host repo. Scrub these from every subprocess that shells out with an
+/// explicit dir.
 pub const GIT_REPO_ENV_VARS: [&str; 8] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -318,8 +318,9 @@ pub fn scrub_sensitive_std_env(command: &mut std::process::Command) {
 /// hook must not re-aim the child's git at the outer repo) and
 /// [`FORCED_COLOR_ENV_VARS`] (output goes to a captured pipe, never a
 /// terminal). One helper so a new spawn path cannot pick up the credential
-/// scrub and silently miss the other two — `bash`, `start_process`, and the
-/// hook runner did exactly that.
+/// scrub and silently miss the other two — the workspace's two spawn paths
+/// (the custom-tool runner and the hook runner) each did exactly that in
+/// turn.
 pub fn scrub_spawn_env(command: &mut tokio::process::Command) {
     scrub_spawn_env_except(command, &[]);
 }
@@ -336,8 +337,8 @@ pub fn scrub_spawn_env_except(command: &mut tokio::process::Command, preserved_n
 ///
 /// It exists because the sync spawn paths previously had only
 /// [`scrub_sensitive_std_env`] available, which is exactly the partial
-/// application [`scrub_spawn_env`] documents as the mistake `bash`,
-/// `start_process` and the hook runner each made in turn. A sync caller that
+/// application [`scrub_spawn_env`] documents as the recurring mistake its
+/// own doc names. A sync caller that
 /// missed [`GIT_REPO_ENV_VARS`] would read a *surrounding* repository — an
 /// ambient `GIT_DIR` silently re-aims every `git` child — and report its
 /// branches as the workspace's own.
@@ -355,28 +356,6 @@ pub fn scrub_spawn_std_env_except(command: &mut std::process::Command, preserved
         command.env_remove(var);
     }
     scrub_sensitive_std_env_except(command, preserved_names);
-}
-
-/// Inject the session scratch directory path into a command's environment.
-/// Called AFTER the scrub, so the scrub cannot remove it. If `scratch` is None,
-/// does nothing.
-pub fn inject_scratch_env(
-    command: &mut tokio::process::Command,
-    scratch: Option<&std::path::Path>,
-) {
-    if let Some(path) = scratch {
-        command.env("STELLA_SCRATCH", path);
-    }
-}
-
-/// Synchronous counterpart of [`inject_scratch_env`].
-pub fn inject_scratch_std_env(
-    command: &mut std::process::Command,
-    scratch: Option<&std::path::Path>,
-) {
-    if let Some(path) = scratch {
-        command.env("STELLA_SCRATCH", path);
-    }
 }
 
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].

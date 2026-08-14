@@ -86,7 +86,7 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
 pub(crate) fn load_storage_snapshot_checked(
     root: &std::path::Path,
 ) -> Result<stella_graph::StorageSnapshot, String> {
-    stella_tools::graph::load_storage_snapshot(root)
+    crate::search_cmd::codegraph::load_storage_snapshot(root)
         .map_err(|e| format!("cannot resolve private storage-map index: {e}"))
 }
 

@@ -6,8 +6,7 @@
 //! only position that sees the complete session surface — built-ins, every
 //! connected MCP server's tools, and whatever the customer registered in
 //! `.stella/tools/*.toml`. Enforcing inside the registry would cover only the
-//! first of the three, which is precisely the gap the old `RegistryOptions`
-//! booleans had.
+//! first of the three.
 //!
 //! # Both sides, deliberately
 //!
@@ -15,13 +14,11 @@
 //! [`ToolExecutor::execute`]. The two-sided shape is the point: hiding a schema
 //! is a prompt-budget measure, but a capability gate has to hold when the model
 //! calls the name anyway — from a stale prompt, a replayed trajectory, or a
-//! hand-written call. `DiscoveryToolSet`'s lean mode is deliberately the
-//! opposite (it hides without gating); this is not that, and the two must not
-//! be confused.
+//! hand-written call.
 //!
 //! The refusal reads like the unknown-tool error rather than announcing a
-//! hidden capability, so a disabled tool is indistinguishable from one that was
-//! never built — the property `bash` had when it was opt-in.
+//! hidden capability, so a disabled tool is indistinguishable from one that
+//! was never built.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -65,10 +62,9 @@ impl<'a> PolicyToolSet<'a> {
 
 impl PolicyToolSet<'static> {
     /// Own the inner executor by `Arc` — for callers that must hold the whole
-    /// chain as one value, e.g. a boxed best-of-N candidate workspace. A
-    /// candidate's registry is built from the same `RegistryOptions` as the
-    /// session's, so without this the policy would stop at the candidate
-    /// boundary and best-of-N would be a way around it.
+    /// chain as one value, e.g. a boxed best-of-N candidate workspace.
+    /// Without this the policy would stop at the candidate boundary and
+    /// best-of-N would be a way around it.
     pub fn new_owned(inner: std::sync::Arc<dyn ToolExecutor>, policy: ToolPolicy) -> Self {
         Self {
             inner: Inner::Owned(inner),
@@ -164,9 +160,9 @@ mod tests {
     impl ToolExecutor for Fake {
         fn schemas(&self) -> Vec<ToolSchema> {
             [
-                "read_file",
-                "bash",
-                "start_process",
+                "task_list",
+                "save_state",
+                "get_environment",
                 "mcp__gh__create_issue",
             ]
             .into_iter()
@@ -198,9 +194,8 @@ mod tests {
         let fake = Fake;
         let set = PolicyToolSet::new(&fake, ToolPolicy::allow_all());
         assert_eq!(names(&set).len(), 4);
-        // bash ships ON. This is the assertion that changes with the default.
         assert!(matches!(
-            set.execute("bash", &serde_json::json!({})).await,
+            set.execute("save_state", &serde_json::json!({})).await,
             ToolOutput::Ok { .. }
         ));
     }
@@ -208,13 +203,16 @@ mod tests {
     #[tokio::test]
     async fn a_disabled_tool_is_hidden_and_refused() {
         let fake = Fake;
-        let set = PolicyToolSet::new(&fake, ToolPolicy::from_switches([("bash".into(), false)]));
+        let set = PolicyToolSet::new(
+            &fake,
+            ToolPolicy::from_switches([("save_state".into(), false)]),
+        );
 
-        assert!(!names(&set).contains(&"bash".to_string()), "hidden");
-        assert!(names(&set).contains(&"read_file".to_string()), "untouched");
+        assert!(!names(&set).contains(&"save_state".to_string()), "hidden");
+        assert!(names(&set).contains(&"task_list".to_string()), "untouched");
 
         // The half that matters: calling it by name anyway must not execute.
-        match set.execute("bash", &serde_json::json!({})).await {
+        match set.execute("save_state", &serde_json::json!({})).await {
             ToolOutput::Error { message, .. } => assert!(
                 message.contains("unknown tool"),
                 "a disabled tool must not announce itself: {message}"
@@ -228,17 +226,17 @@ mod tests {
         let fake = Fake;
         let set = PolicyToolSet::new(
             &fake,
-            ToolPolicy::from_switches([("process".into(), false)]),
+            ToolPolicy::from_switches([("scratch".into(), false)]),
         );
-        assert!(!names(&set).contains(&"start_process".to_string()));
+        assert!(!names(&set).contains(&"save_state".to_string()));
         assert!(matches!(
-            set.execute("start_process", &serde_json::json!({})).await,
+            set.execute("save_state", &serde_json::json!({})).await,
             ToolOutput::Error { .. }
         ));
     }
 
     /// The reason this decorator sits above the MCP and custom layers instead
-    /// of inside the registry: those tools never pass through `RegistryOptions`.
+    /// of inside the registry: those tools never pass through it.
     #[tokio::test]
     async fn mcp_tools_are_covered_too() {
         let fake = Fake;
@@ -249,7 +247,7 @@ mod tests {
                 .await,
             ToolOutput::Error { .. }
         ));
-        assert!(names(&set).contains(&"read_file".to_string()));
+        assert!(names(&set).contains(&"task_list".to_string()));
     }
 
     /// `stella tools` has to name the entry that did it — "disabled (default)"
@@ -259,29 +257,29 @@ mod tests {
     fn a_disabled_tool_reports_the_key_that_withheld_it() {
         let policy = ToolPolicy::from_switches([
             (WILDCARD.into(), false),
-            ("process".into(), true),
-            ("send_stdin".into(), false),
+            ("scratch".into(), true),
+            ("delete_state".into(), false),
             ("mcp__gh__create_issue".into(), false),
         ]);
         // Most specific first, in the same order `allows` resolves.
         assert_eq!(
-            disabled_by(&policy, "send_stdin").as_deref(),
-            Some("send_stdin")
+            disabled_by(&policy, "delete_state").as_deref(),
+            Some("delete_state")
         );
-        assert_eq!(disabled_by(&policy, "read_file").as_deref(), Some(WILDCARD));
+        assert_eq!(disabled_by(&policy, "task_list").as_deref(), Some(WILDCARD));
         // An MCP tool denied by exact name, which no catalog lookup can find.
         assert_eq!(
             disabled_by(&policy, "mcp__gh__create_issue").as_deref(),
             Some("mcp__gh__create_issue")
         );
         // An allowed tool has no key to report.
-        assert_eq!(disabled_by(&policy, "start_process"), None);
+        assert_eq!(disabled_by(&policy, "save_state"), None);
 
         // A group denial is reported as the group, not as the tool.
-        let policy = ToolPolicy::from_switches([("process".into(), false)]);
+        let policy = ToolPolicy::from_switches([("scratch".into(), false)]);
         assert_eq!(
-            disabled_by(&policy, "start_process").as_deref(),
-            Some("process")
+            disabled_by(&policy, "save_state").as_deref(),
+            Some("scratch")
         );
     }
 
@@ -316,9 +314,9 @@ mod tests {
         let fake = Fake;
         let set = PolicyToolSet::new(
             &fake,
-            ToolPolicy::from_switches([(WILDCARD.into(), false), ("read_file".into(), true)]),
+            ToolPolicy::from_switches([(WILDCARD.into(), false), ("task_list".into(), true)]),
         );
-        assert_eq!(names(&set), vec!["read_file".to_string()]);
+        assert_eq!(names(&set), vec!["task_list".to_string()]);
     }
 
     // -----------------------------------------------------------------------
@@ -329,30 +327,17 @@ mod tests {
     // it advertises, which is the exact `tools` array the provider serializes.
     // -----------------------------------------------------------------------
 
-    /// The real session chain — native registry, customs, interactive, the
-    /// policy filter, discovery on top — with the discovery layer carrying
-    /// the same policy `for_session` gives it, and lean pinned explicitly so
-    /// an ambient `STELLA_LEAN_TOOLS` cannot wobble the census.
+    /// The real session chain — native registry, customs, the policy filter
+    /// on top — censused exactly as a session driver assembles it.
     async fn wire_surface(
         root: &std::path::Path,
         policy: ToolPolicy,
-        lean: Option<crate::discovery::LeanConfig>,
         call: Option<(&str, Value)>,
     ) -> (Vec<ToolSchema>, Option<ToolOutput>) {
-        let registry = stella_tools::ToolRegistry::with_backends_and_options(
-            root.to_path_buf(),
-            None,
-            None,
-            Default::default(),
-        );
+        let registry = stella_tools::ToolRegistry::new(root.to_path_buf());
         let customs =
             stella_tools::custom::CustomToolSet::new(&registry, vec![], root.to_path_buf());
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let interactive = crate::interactive::InteractiveToolSet::new(&customs, event_tx);
-        let permitted = PolicyToolSet::new(&interactive, policy.clone());
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, root.to_path_buf())
-            .with_policy(policy)
-            .with_lean(lean);
+        let tools = PolicyToolSet::new(&customs, policy);
         let schemas = tools.schemas();
         let output = match call {
             Some((name, input)) => Some(tools.execute(name, &input).await),
@@ -361,100 +346,24 @@ mod tests {
         (schemas, output)
     }
 
-    /// **The #3120 witness.** `--tools
-    /// "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on"`
-    /// puts exactly the five requested names on the wire. The old stack
-    /// advertised thirteen, through two independent defects asserted here by
-    /// name: the catalog group then called `search` made `search:on` resolve
-    /// as a family switch for grep/glob/graph_query/semantic_code_search, and
-    /// the discovery layer appended its four tools above the policy filter.
+    /// **The #3120 witness.** `--tools "*:off,task_list:on,get_state:on"`
+    /// puts exactly the two requested names on the wire — an only-set is the
+    /// whole advertised surface, with nothing re-added above the policy
+    /// filter and no group key resolving wider than its family.
     #[tokio::test]
     async fn a_tools_spec_advertises_exactly_the_requested_set() {
         let root = tempfile::tempdir().unwrap();
-        let spec = "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on";
+        let spec = "*:off,task_list:on,get_state:on";
         let mut policy = ToolPolicy::allow_all();
         policy.narrow_with(&ToolPolicy::parse_spec(spec).unwrap());
 
-        let (schemas, _) = wire_surface(root.path(), policy, None, None).await;
+        let (schemas, _) = wire_surface(root.path(), policy, None).await;
         let mut advertised: Vec<String> = schemas.into_iter().map(|s| s.name).collect();
-
-        // Each family explicitly, so a partial regression names itself.
-        for leak in ["grep", "glob", "graph_query", "semantic_code_search"] {
-            assert!(
-                !advertised.contains(&leak.to_string()),
-                "`{leak}` leaked through the `search` group key: {advertised:?}"
-            );
-        }
-        for leak in ["tool_search", "skill_search", "mcp_search", "invoke_skill"] {
-            assert!(
-                !advertised.contains(&leak.to_string()),
-                "`{leak}` was re-added above the policy filter: {advertised:?}"
-            );
-        }
         advertised.sort_unstable();
         assert_eq!(
             advertised,
-            ["bash", "edit_file", "read_file", "search", "write_file"].map(String::from),
-            "five requested, exactly five on the wire"
+            ["get_state", "task_list"].map(String::from),
+            "two requested, exactly two on the wire"
         );
-    }
-
-    /// The issue's closing demand: `--tools X` and `STELLA_LEAN_TOOLS=only:X`
-    /// are one intent and must be one wire result — byte-identical `tools`
-    /// arrays. The lean arm uses [`crate::discovery::LeanConfig::closed`],
-    /// the parsed form of `only:` pinned by
-    /// `lean_env_parsing_covers_all_forms`.
-    #[tokio::test]
-    async fn a_tools_spec_and_a_closed_lean_set_are_byte_identical_on_the_wire() {
-        let root = tempfile::tempdir().unwrap();
-        let five = ["search", "read_file", "edit_file", "write_file", "bash"];
-
-        let mut policy = ToolPolicy::allow_all();
-        let spec = "*:off,search:on,read_file:on,edit_file:on,write_file:on,bash:on";
-        policy.narrow_with(&ToolPolicy::parse_spec(spec).unwrap());
-        let (via_policy, _) = wire_surface(root.path(), policy, None, None).await;
-
-        let lean = crate::discovery::LeanConfig::closed(five.map(String::from));
-        let (via_lean, _) =
-            wire_surface(root.path(), ToolPolicy::allow_all(), Some(lean), None).await;
-
-        assert_eq!(
-            serde_json::to_string(&via_policy).unwrap(),
-            serde_json::to_string(&via_lean).unwrap(),
-            "two mechanisms, one intent, one wire result"
-        );
-    }
-
-    /// The discovery layer's four tools never reach `PolicyToolSet`, so the
-    /// operator's two-sided contract — withheld from `schemas` AND refused by
-    /// `execute`, in the unknown-tool wording — has to hold at that layer
-    /// too. Exact-name deny: the rest of the layer stays advertised.
-    #[tokio::test]
-    async fn a_policy_denied_discovery_tool_is_hidden_and_refused() {
-        let root = tempfile::tempdir().unwrap();
-
-        // Anti-vacuity: with no switches at all, the tool is advertised.
-        let (schemas, _) = wire_surface(root.path(), ToolPolicy::allow_all(), None, None).await;
-        assert!(schemas.iter().any(|s| s.name == "tool_search"));
-
-        let policy = ToolPolicy::from_switches([("tool_search".into(), false)]);
-        let (schemas, output) = wire_surface(
-            root.path(),
-            policy,
-            None,
-            Some(("tool_search", serde_json::json!({"query": "anything"}))),
-        )
-        .await;
-        assert!(
-            schemas.iter().all(|s| s.name != "tool_search"),
-            "a denied discovery tool must be withheld"
-        );
-        match output.expect("a call was made") {
-            ToolOutput::Error { message, .. } => assert!(
-                message.contains("unknown tool"),
-                "a denied tool must not announce itself: {message}"
-            ),
-            other => panic!("a denied discovery tool must be refused, got {other:?}"),
-        }
     }
 }

@@ -225,9 +225,10 @@ def format_tool_input(name: str, arguments: Any) -> str:
     if not isinstance(arguments, dict):
         return summarize("" if arguments is None else _as_text(arguments))
 
-    # `apply_edits` carries its paths inside a batch rather than at the top
-    # level; surfacing them keeps its row reading like the other file tools'
-    # instead of falling through to the raw-JSON tail.
+    # `apply_edits` (a name appearing only in the archived traces this
+    # renders) carries its paths inside a batch
+    # rather than at the top level; surfacing them keeps its row reading like
+    # the other file tools' instead of falling through to the raw-JSON tail.
     if name == "apply_edits" and isinstance(arguments.get("edits"), list):
         paths: list[str] = []
         for edit in arguments["edits"]:

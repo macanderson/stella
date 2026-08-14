@@ -21,13 +21,13 @@ available_for_speculation = false
 # would have introduced the machinery, was closed wontfix). The two booleans
 # above are the only machine-checked safety claims a tool makes. Relabelling
 # them "low/medium/high" would add no information while reading as a reviewed
-# judgement, and hand-writing 72 judgements would manufacture a source of truth
-# nobody reviewed. Tracked in #3060: put a `risk` column on `ToolEntry`, where
-# it is declared once and reviewed like every other column.
+# judgement, and hand-writing one judgement per tool would manufacture a source
+# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
+# `ToolEntry`, where it is declared once and reviewed like every other column.
 risk_level = "undeclared"
 
 description = '''
-Save intermediate session state under a key so later steps can reference it instead of re-deriving it (parse results, extracted lists, computed digests). Scratch is session-private and deleted when the session ends; anything the user should keep belongs in the workspace instead. For artifacts too large to write here, have the shell produce the file directly into $STELLA_SCRATCH and page it with get_state.
+Save intermediate session state under a key so later steps can reference it instead of re-deriving it (parse results, extracted lists, computed digests). Scratch is session-private and deleted when the session ends; anything the user should keep belongs in the workspace instead. Content is capped at 1 MiB per save.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

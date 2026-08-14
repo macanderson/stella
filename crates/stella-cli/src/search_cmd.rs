@@ -1,12 +1,10 @@
-//! `stella search` — the human door to the same `search` tool the agent
-//! calls, replacing the retired `stella graph <op> <target>` surface.
+//! `stella search` — describe what you are looking for and get back the
+//! files that answer it, ranked by meaning when an embedder is configured.
 //!
-//! The command runs [`stella_tools::search::report`], the exact mechanism the
-//! agent's tool wraps — not a reimplementation — so a CLI invocation and an
-//! in-turn call exercise identical dispatch, ranking, and rendering. What
-//! differs is only what survives the call: the agent's door gets the rendered
-//! prose (the module docs there argue why the model must not get a
-//! pipeline-shapeable match list), while `--format json` also carries the
+//! The command runs [`engine::report`], the search ladder over the workspace
+//! code graph ([`codegraph`]): exact symbol lookup, semantic embedding rank,
+//! graph-name matching, and an index-free file scan, in that order. The text
+//! format prints the rendered prose; `--format json` also carries the
 //! decided answer — `hits` in rank order, the strategy ladder that ran, the
 //! degradation note — so a script probing ranking quality asserts on data
 //! instead of regexing prose.
@@ -16,6 +14,12 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::query_format::{QueryFormat, Versioned};
+
+pub(crate) mod codegraph;
+pub(crate) mod engine;
+pub(crate) mod enrich;
+pub(crate) mod scan;
+pub(crate) mod semantic;
 
 /// One `stella search` answer, machine-readable — the `--format json`
 /// envelope. `content` carries the exact text the agent would read; `error`
@@ -55,9 +59,7 @@ pub async fn run_search(query: &str, format: QueryFormat) -> Result<(), String> 
 /// the printing, so tests can drive it against a temp root (the
 /// `memory_cmd::list_rows` discipline: no process-global cwd mutation).
 async fn search_answer_in(root: &Path, query: &str) -> SearchAnswer {
-    let report =
-        stella_tools::search::report(root, query, stella_tools::search::SearchConfig::from_env())
-            .await;
+    let report = engine::report(root, query, engine::SearchConfig::from_env()).await;
 
     let (ok, content, error) = match report.rendered {
         stella_protocol::tool::ToolOutput::Ok { content } => (true, content, None),
@@ -114,11 +116,10 @@ fn render(answer: SearchAnswer, format: QueryFormat) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// The blank-query refusal, through the same [`stella_tools::search::report`]
-    /// path the agent's tool takes — one validation, two doors (#3098's
-    /// follow-up ask). Environment-free: the refusal short-circuits before
-    /// the graph is opened or an embedder is resolved, so this asserts the
-    /// real plumbing without touching the network.
+    /// The blank-query refusal, through the same [`engine::report`] path the
+    /// command runs. Environment-free: the refusal short-circuits before the
+    /// graph is opened or an embedder is resolved, so this asserts the real
+    /// plumbing without touching the network.
     #[tokio::test]
     async fn a_blank_query_is_refused_before_anything_is_opened() {
         let dir = tempfile::TempDir::new().unwrap();

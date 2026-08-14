@@ -58,8 +58,8 @@
 //!   past a byte cap, tail budget ≥ head budget per lesson L-S3).
 //! - **Non-zero exit** → [`ToolOutput::Error`] carrying the exit code and the
 //!   stderr tail (also truncated).
-//! - **Timeout** → the process group is killed (SIGKILL to `-pid`, mirroring
-//!   [`crate::bash`]) and a named error is returned.
+//! - **Timeout** → the process group is killed (SIGKILL to `-pid`) and a
+//!   named error is returned.
 //! - **Cancellation** (the driving future dropped mid-wait, e.g. Esc) → the
 //!   same group kill, armed as an RAII guard
 //!   (`crate::exec::GroupKillGuard`), so nothing survives the turn.
@@ -74,8 +74,8 @@
 //! wins and the global one is reported as a [`ToolDiagnostic`]. A malformed
 //! manifest never aborts discovery — it becomes a typed per-file diagnostic so
 //! `stella tools` can show developers exactly which file is broken and why. A
-//! manifest whose `name` collides with a reserved built-in (or `ask_user`) is
-//! likewise skipped with a diagnostic.
+//! manifest whose `name` collides with a reserved built-in is likewise
+//! skipped with a diagnostic.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -91,12 +91,10 @@ use tokio::process::Command;
 
 /// Tool names that a custom manifest may not claim — every name in the
 /// canonical [`crate::catalog`], which covers every built-in registered in
-/// [`crate::registry::ToolRegistry`] (including the conditionally-registered
-/// bash/web/media/issue tools) plus the six the CLI layers on top. A custom
-/// tool must never shadow one, or the decorator chain
-/// (native ← custom ← mcp ← ask_user) would route the wrong executor and a
-/// manifest named e.g. `verify_done` or `delete_file` could silently replace a
-/// flagship built-in.
+/// [`crate::registry::ToolRegistry`]. A custom tool must never shadow one,
+/// or the decorator chain (native ← custom ← mcp) would route the wrong
+/// executor and a manifest named e.g. `task` or `save_state` could silently
+/// replace a built-in.
 ///
 /// This is an alias, not a copy: declaring a tool in the catalog reserves its
 /// name automatically, so the two can no longer drift apart.
@@ -108,10 +106,11 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// Hard ceiling on `timeout_ms`; a manifest cannot ask for more. Public so
 /// [`crate::validate`] can warn about the clamp it mirrors.
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
-/// Byte cap on captured stdout/stderr before head+tail elision. An alias for
-/// [`crate::bash`]'s constant — not a copy — so custom and native shell
-/// output budgets cannot drift apart (#1889): same mechanism, same number.
-pub(crate) use crate::bash::MAX_OUTPUT_BYTES;
+/// Byte cap on captured stdout/stderr before head+tail elision. Inherited
+/// from the retired native shell tool's budget (#1889) so a manifest tool's
+/// output window did not shrink when that tool left the surface: 2.2x
+/// `exec::MAX_OUTPUT_BYTES` (30k), preserving #616's ratio.
+pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// A parsed, validated custom tool ready to advertise and execute.
 #[derive(Debug, Clone)]
@@ -531,8 +530,8 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         cmd.env(k, v);
     }
     // A custom tool spawns a model-invoked command, so it is a full command
-    // path like `bash`/`start_process`/the hook runner — it must also strip
-    // the surrounding git env and forced-color vars, not only credentials.
+    // path like the hook runner — it must also strip the surrounding git env
+    // and forced-color vars, not only credentials.
     // Manifest env is deliberately set BEFORE the scrub (a credential-shaped
     // manifest entry is stripped like an inherited one).
     crate::subprocess_env::scrub_spawn_env(&mut cmd);
@@ -552,8 +551,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         }
     }
 
-    // New process group so a timeout kills the whole child tree (mirrors
-    // `crate::bash`).
+    // New process group so a timeout kills the whole child tree.
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {

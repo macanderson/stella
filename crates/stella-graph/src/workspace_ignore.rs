@@ -1,16 +1,10 @@
 //! What a workspace's own repository declares uninteresting.
 //!
-//! Two tree walks in this codebase need the same answer: the code-graph walk
-//! (this crate's private `walk` module), which must not index a checked-in
-//! build tree, and the workspace probe in `stella-tools`, which must not
-//! attribute one as agent work. They used to approximate it separately — the
-//! graph with a hardcoded deny-list, the probe with nothing at all — and the
-//! two approximations disagreed with each other and with `git`.
-//!
-//! This module is the one answer both consume. It lives here rather than in
-//! `stella-tools` because `stella-tools` already depends on this crate and
-//! not the reverse, so one implementation can serve both without a new crate
-//! or a new dependency edge; it costs this crate nothing but `std`.
+//! The code-graph walk (this crate's private `walk` module, and the watcher
+//! beside it) must not index a checked-in build tree. A hardcoded deny-list
+//! used to approximate that answer and disagreed with `git`; this module is
+//! the one answer the walks consume instead, and it costs this crate nothing
+//! but `std`.
 //!
 //! **The resolution is `git`'s own, not a reimplementation.** Per-directory
 //! ignore files, negations, `.git/info/exclude`, and the user's global

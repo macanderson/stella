@@ -79,10 +79,10 @@ export function IntakeStation() {
 
 const LOOP_FEED = [
   '{"type":"step_manifest","turn":4,"step":2,"planned_tools":3}',
-  '{"type":"tool_start","tool":"read_file","call_seq":0}',
-  '{"type":"tool_start","tool":"grep","call_seq":0}',
-  '{"type":"tool_result","tool":"read_file","status":"ok"}',
-  '{"type":"tool_result","tool":"grep","status":"ok"}',
+  '{"type":"tool_start","tool":"task_list","call_seq":0}',
+  '{"type":"tool_start","tool":"get_state","call_seq":0}',
+  '{"type":"tool_result","tool":"task_list","status":"ok"}',
+  '{"type":"tool_result","tool":"get_state","status":"ok"}',
   '{"type":"step_receipt","turn":4,"step":2,"outcome":"continue"}',
   '{"type":"step_usage","role":"worker","tokens_in":18204,"cached":17651}',
 ] as const;
@@ -202,8 +202,8 @@ export function TurnLoopStation() {
 /* ── 02 · the tool bay ───────────────────────────────────────────────────── */
 
 /**
- * A walk of the racks — real built-in tool names and access levels from
- * /docs/agent-tools, not the whole registry. `read` racks are plain; a
+ * A walk of the racks — the real built-in tool names and access levels from
+ * /docs/agent-tools: the whole 12-tool surface. `read` racks are plain; a
  * `mutating` tool carries the amber edge, the same convention the docs'
  * tool cards use.
  */
@@ -212,45 +212,20 @@ const TOOL_RACKS: readonly {
   tools: readonly { name: string; access: "read" | "mutating" }[];
 }[] = [
   {
-    rack: "files",
+    rack: "task board",
     tools: [
-      { name: "read_file", access: "read" },
-      { name: "read_symbol", access: "read" },
-      { name: "grep", access: "read" },
-      { name: "glob", access: "read" },
-      { name: "write_file", access: "mutating" },
-      { name: "edit_file", access: "mutating" },
-      { name: "apply_edits", access: "mutating" },
-      { name: "delete_file", access: "mutating" },
+      { name: "task_create", access: "mutating" },
+      { name: "task_list", access: "read" },
+      { name: "task_start", access: "mutating" },
+      { name: "task_complete", access: "mutating" },
+      { name: "task_cancel", access: "mutating" },
     ],
   },
   {
-    rack: "understanding",
+    rack: "sub-agents",
     tools: [
-      { name: "project_overview", access: "read" },
-      { name: "graph_query", access: "read" },
-      { name: "gather_context", access: "read" },
-      { name: "diagnostics", access: "read" },
-    ],
-  },
-  {
-    rack: "proving",
-    tools: [
-      { name: "run_tests", access: "mutating" },
-      { name: "build_project", access: "mutating" },
-      { name: "verify_done", access: "mutating" },
-      { name: "format_code", access: "mutating" },
-    ],
-  },
-  {
-    rack: "the world",
-    tools: [
-      { name: "bash", access: "mutating" },
-      { name: "web_fetch", access: "read" },
-      { name: "repo_status", access: "read" },
-      { name: "repo_diff", access: "read" },
-      { name: "repo_commit", access: "mutating" },
-      { name: "start_process", access: "mutating" },
+      { name: "task", access: "mutating" },
+      { name: "task_assign", access: "mutating" },
     ],
   },
   {
@@ -261,6 +236,10 @@ const TOOL_RACKS: readonly {
       { name: "list_state", access: "read" },
       { name: "delete_state", access: "mutating" },
     ],
+  },
+  {
+    rack: "environment",
+    tools: [{ name: "get_environment", access: "read" }],
   },
 ] as const;
 
@@ -322,9 +301,9 @@ export function ToolBayStation() {
           mutating
         </span>{" "}
         — every tool declares which it is, honestly: the engine&apos;s
-        concurrency contract depends on it. A selection of the racks, not the
-        registry;{" "}
-        <Link href="/docs/agent-tools">the full toolbelt and its permissions</Link>
+        concurrency contract depends on it. This is the whole built-in
+        registry; everything else docks via MCP or a custom manifest.{" "}
+        <Link href="/docs/agent-tools">The full toolbelt and its permissions</Link>
         .
       </p>
     </Station>

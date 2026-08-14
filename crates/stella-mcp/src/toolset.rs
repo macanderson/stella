@@ -384,7 +384,7 @@ impl McpToolSet {
     /// no per-candidate subprocess. Requires `Arc<Self>` (not `&self`) so the
     /// returned view can outlive the session's own borrow of the set — see
     /// `stella-cli/src/candidate_ws.rs`'s module doc for the full rationale
-    /// and why every OTHER server (and `ask_user`) stays withheld.
+    /// and why every OTHER server stays withheld.
     pub fn for_candidates(self: &Arc<Self>, native: Arc<dyn ToolExecutor>) -> CandidateMcpView {
         CandidateMcpView {
             inner: Arc::clone(self),
@@ -877,11 +877,11 @@ impl ToolExecutor for McpToolSet {
             .and_then(|native| native.drain_wait_request())
     }
 
-    /// Forwarded from the native layer, which owns the process table. An
-    /// external MCP server's own long-running state is not reported here and
-    /// deliberately so: the end-of-turn assertion (#2764) names things the
-    /// model can act on with `restart_process`, and a remote server's children
-    /// are not among them.
+    /// Forwarded from the native layer, which owns the local session's
+    /// state. An external MCP server's own long-running state is not
+    /// reported here and deliberately so: the end-of-turn assertion (#2764)
+    /// names things this session started and answers for, and a remote
+    /// server's children are not among them.
     fn live_services(&self) -> Vec<stella_core::LiveService> {
         self.native
             .as_ref()
@@ -952,7 +952,8 @@ impl ToolExecutor for CandidateMcpView {
     /// Forwarded so a swallowed wait request cannot turn parked waits
     /// (#1471) back into model-step polling — to `native`, not `inner`:
     /// remote MCP tools never deposit wait requests, and the native layer
-    /// this view executes (`ci_status` included) is the only depositor.
+    /// this view executes is the only place one could be deposited (no
+    /// shipped tool deposits one today).
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.native.drain_wait_request()
     }

@@ -286,7 +286,7 @@ mod tests {
              name: review-pr\n\
              description: Review a pull request\n\
              argument-hint: <pr-number>\n\
-             allowed-tools: read_file, grep\n\
+             allowed-tools: task_list, get_environment\n\
              model: anthropic/claude-fable-5\n\
              disable-model-invocation: true\n\
              ---\n\

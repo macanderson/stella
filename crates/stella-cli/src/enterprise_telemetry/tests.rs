@@ -6,16 +6,15 @@ use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
-use stella_protocol::ToolOutput;
 use stella_store::enterprise_telemetry::StellaOperationalEventV1;
 use stella_store::usage::ExecutionRollupRow;
 
 use crate::enterprise_telemetry::{
-    BatchSender, ExecutionSurface, PROCESS_FREE_FORBIDDEN_TOOLS, StartupAuthoritySnapshot,
-    activate_process_free_authority_with, authorize_execution_surface,
-    authorize_execution_surface_with, build_runtime_from_managed, canonical_enrollment_bytes,
-    host_spool_path, process_free_authority_active, prove_process_free_surface,
-    reset_process_free_authority_for_test, validate_response_status, verify_managed_enrollment,
+    BatchSender, ExecutionSurface, StartupAuthoritySnapshot, activate_process_free_authority_with,
+    authorize_execution_surface, authorize_execution_surface_with, build_runtime_from_managed,
+    canonical_enrollment_bytes, host_spool_path, process_free_authority_active,
+    prove_process_free_surface, reset_process_free_authority_for_test, validate_response_status,
+    verify_managed_enrollment,
 };
 use crate::settings::Settings;
 use crate::startup::StartupPhase;
@@ -39,72 +38,25 @@ impl Drop for AuthorityReset {
 }
 
 #[test]
-fn process_free_surface_enumeration_omits_every_spawn_and_extension_action() {
-    use stella_core::ports::ToolExecutor;
-    use stella_tools::media::HostDataIsolation;
-
+fn process_free_surface_enumeration_is_closed_over_the_catalog() {
     let dir = tempfile::tempdir().unwrap();
     prove_process_free_surface(dir.path()).unwrap();
-    let registry = stella_tools::ToolRegistry::with_backends_and_options(
-        dir.path().to_path_buf(),
-        None,
-        None,
-        stella_tools::RegistryOptions {
-            media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
-            ..Default::default()
-        },
-    );
-    assert!(registry.is_process_free());
-    let (events, _) = tokio::sync::mpsc::unbounded_channel();
-    let interactive = crate::interactive::InteractiveToolSet::new(&registry, events);
-    let names: std::collections::BTreeSet<String> = interactive
-        .schemas()
-        .into_iter()
-        .map(|schema| schema.name)
-        .collect();
-    // The registry-side deny-list, plus the two skills tools that only ever
-    // exist on the `InteractiveToolSet` — they are never `ToolRegistry`
-    // members, so they are enforced here, where they are actually assembled.
-    for forbidden in PROCESS_FREE_FORBIDDEN_TOOLS
-        .iter()
-        .copied()
-        .chain(["search_skills", "install_skill"])
-    {
-        assert!(
-            !names.contains(forbidden),
-            "process action exposed: {forbidden}"
-        );
-    }
-}
-
-/// Witness: `prove_process_free_surface`'s deny-list once carried five names
-/// (`process_start`, `process_write`, `process_poll`, `test_start`,
-/// `test_poll`) that no tool in the workspace ever produces, so the proof
-/// passed by naming nothing. Pin every entry to a name a real registry can
-/// actually surface.
-#[test]
-fn every_process_free_forbidden_name_is_a_real_tool() {
-    let dir = tempfile::tempdir().unwrap();
-    let registry = stella_tools::ToolRegistry::with_backends_and_options(
-        dir.path().to_path_buf(),
-        None,
-        None,
-        stella_tools::RegistryOptions {
-            ..Default::default()
-        },
-    );
+    let registry = stella_tools::ToolRegistry::new(dir.path().to_path_buf());
+    let catalog: std::collections::BTreeSet<&str> =
+        stella_tools::catalog::ALL_NAMES.iter().copied().collect();
     let names: std::collections::BTreeSet<String> = registry
         .schemas()
         .into_iter()
         .map(|schema| schema.name)
         .collect();
-    for forbidden in PROCESS_FREE_FORBIDDEN_TOOLS {
+    for name in &names {
         assert!(
-            names.contains(*forbidden),
-            "deny-listed `{forbidden}` is not a tool any registry produces — \
-             the process-free proof would pass vacuously on it"
+            catalog.contains(name.as_str()),
+            "the registry advertises `{name}`, which the catalog does not declare — \
+             the process-free proof has never audited it"
         );
     }
+    assert!(!names.is_empty(), "an empty surface proves nothing");
 }
 
 #[test]
@@ -1108,7 +1060,7 @@ fn credential_rotation_failure_releases_the_claim_to_retry_state() {
 }
 
 #[test]
-fn enrolled_host_can_flush_but_run_tests_cannot_observe_its_credentials() {
+fn enrolled_host_can_flush_and_its_credentials_stay_scrubbed_from_spawns() {
     let _env = crate::test_env::lock();
     let _restore = EnvRestore::capture(&[
         "STELLA_DATA_DIR",
@@ -1153,19 +1105,18 @@ fn enrolled_host_can_flush_but_run_tests_cannot_observe_its_credentials() {
         1
     );
 
-    let registry = stella_tools::ToolRegistry::with_backends(workspace, None, None);
-    let output = handle.block_on(registry.execute("run_tests", &json!({"command": "env"})));
-    let ToolOutput::Ok { content } = output else {
-        panic!("run_tests failed: {output:?}");
-    };
-    for forbidden in [
-        "STELLA_TEST_VERIFY_SECRET",
-        "STELLA_TEST_TELEMETRY_TOKEN",
-        "0123456789abcdef0123456789abcdef",
-        "bearer-secret-value",
-    ] {
-        assert!(!content.contains(forbidden), "credential leaked: {content}");
-    }
+    // The enrollment registered both credential names with the shared spawn
+    // scrub, so any subprocess the session runs (custom script tools, hook
+    // commands) starts without them.
+    let mut command = std::process::Command::new("sh");
+    command.args([
+        "-c",
+        "printf '%s|%s' \"${STELLA_TEST_VERIFY_SECRET-unset}\" \"${STELLA_TEST_TELEMETRY_TOKEN-unset}\"",
+    ]);
+    stella_tools::subprocess_env::scrub_sensitive_std_env(&mut command);
+    let output = command.output().expect("spawn the probe shell");
+    let content = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(content, "unset|unset", "credential leaked: {content}");
 }
 
 #[test]
@@ -1226,13 +1177,12 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
     let id = store
         .begin_execution("run", "private prompt", "anthropic", "claude-sonnet-4")
         .unwrap();
-    let registry = stella_tools::ToolRegistry::with_backends(workspace.clone(), None, None);
+    let registry = stella_tools::ToolRegistry::new(workspace.clone());
 
     assert!(crate::agent::record_execution_end(
         &store,
         id,
         &registry,
-        0,
         "completed",
         0.01,
         true,

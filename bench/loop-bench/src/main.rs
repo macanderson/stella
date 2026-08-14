@@ -1,4 +1,4 @@
-//! `loop-bench` — an inexpensive turn-loop + context-query correctness harness
+//! `loop-bench` — an inexpensive turn-loop correctness harness
 //! over Terminal-Bench.
 //!
 //! The full benchmark (task pass rate) is expensive: Docker containers plus a
@@ -103,7 +103,7 @@ const ADAPTER_PYTHONPATH: &str = "bench/harbor_adapter";
 #[derive(Parser, Debug)]
 #[command(
     name = "loop-bench",
-    about = "Inexpensive turn-loop + context-query correctness over Terminal-Bench"
+    about = "Inexpensive turn-loop correctness over Terminal-Bench"
 )]
 struct Args {
     /// Number of tasks from the default pool (ignored when --tasks is given).

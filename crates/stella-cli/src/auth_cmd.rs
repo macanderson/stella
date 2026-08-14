@@ -66,8 +66,7 @@ fn validate_provider_id(id: &str) -> Result<(), String> {
 
 /// The key value for `set`, in priority order: `--key` (warned), `--stdin`
 /// (one line, trimmed), or an interactive masked prompt (rpassword) —
-/// mirroring `stella_model::credential`'s own interactive-prompt idiom and
-/// `connect_cmd`'s `prompt_secret`.
+/// mirroring `stella_model::credential`'s own interactive-prompt idiom.
 fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<String, String> {
     if let Some(k) = key {
         eprintln!(

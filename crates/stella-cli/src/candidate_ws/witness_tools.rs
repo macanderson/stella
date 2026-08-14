@@ -1,13 +1,30 @@
 //! Capability-minimal tool surface for candidate-local witness authoring.
+//!
+//! The witness author's tools are **stage-private**: a file reader and a
+//! glob-pattern file lister — both confined to the candidate snapshot — plus
+//! the one mutation, `create_witness_test`. None of them is a registry
+//! built-in: they exist only inside the candidate-workspace mount, are never
+//! model-visible in an ordinary session, and their lifecycle is the witness
+//! stage's, not the registry's.
 
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use stella_core::ToolExecutor;
 use stella_pipeline::ports::WorkspaceError;
 use stella_protocol::{ToolOutput, ToolSchema};
+
+/// Ceiling on one `read_file` answer. A witness author reads source and test
+/// files to decide what to pin; a file past this bound is truncated with a
+/// note rather than flooding the authoring turn.
+const READ_CAP_BYTES: usize = 131_072;
+
+/// Ceiling on one `glob` answer, in matched paths. Past it the tail is
+/// summarized as a count so a `**/*` over a large tree stays a listing, not
+/// a flood.
+const GLOB_MATCH_CAP: usize = 2_000;
 
 /// Candidate-root executor built specifically for witness authoring. Reads
 /// stay in the snapshot; the sole mutation atomically creates one new test,
@@ -21,12 +38,20 @@ pub(super) struct WitnessToolExecutor {
     /// Ordered session-first, because that is the spelling an author copies
     /// out of the goal and so the one worth naming in the refusal.
     tree_roots: Vec<String>,
-    reads: Arc<dyn ToolExecutor>,
+    /// The operator's tool switches (#1784): a `"tools": {"read_file":
+    /// "off"}` (or `"glob": "off"`) entry withholds the author's matching
+    /// read exactly as a switch withholds any session tool — the schema is
+    /// not offered and dispatch refuses by name.
+    policy: stella_tools::policy::ToolPolicy,
     created_path: Mutex<Option<String>>,
 }
 
 impl WitnessToolExecutor {
-    pub(super) fn new(root: PathBuf, session_root: &Path, reads: Arc<dyn ToolExecutor>) -> Self {
+    pub(super) fn new(
+        root: PathBuf,
+        session_root: &Path,
+        policy: stella_tools::policy::ToolPolicy,
+    ) -> Self {
         let mut tree_roots = vec![session_root.display().to_string()];
         let snapshot = root.display().to_string();
         if !tree_roots.contains(&snapshot) {
@@ -35,7 +60,7 @@ impl WitnessToolExecutor {
         Self {
             root,
             tree_roots,
-            reads,
+            policy,
             created_path: Mutex::new(None),
         }
     }
@@ -44,6 +69,116 @@ impl WitnessToolExecutor {
         ToolOutput::error(format!(
             "`{name}` is not available to the witness author: {reason}"
         ))
+    }
+
+    /// The stage-private file reader: one workspace-relative path, answered
+    /// with the file's content (truncated past [`READ_CAP_BYTES`]).
+    fn read_file(&self, input: &serde_json::Value) -> ToolOutput {
+        let name = "read_file";
+        if !self.policy.allows(name) {
+            return Self::denied(name, "it is switched off by the operator's tool policy");
+        }
+        let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str) else {
+            return Self::denied(name, "a workspace-relative `path` is required");
+        };
+        let Some(path) = normalized_candidate_path(raw_path) else {
+            return Self::denied(name, "the path must stay within the candidate root");
+        };
+        if is_credential_path(&path) {
+            return Self::denied(name, "credential and private-state paths are excluded");
+        }
+        let Some(full) = confined(&self.root, &path) else {
+            return Self::denied(
+                name,
+                format!("`{path}` does not resolve inside the candidate root"),
+            );
+        };
+        let metadata = match std::fs::metadata(&full) {
+            Ok(metadata) => metadata,
+            Err(error) => return Self::denied(name, format!("`{path}`: {error}")),
+        };
+        if !metadata.is_file() {
+            return Self::denied(name, format!("`{path}` is not a regular file"));
+        }
+        let bytes = match std::fs::read(&full) {
+            Ok(bytes) => bytes,
+            Err(error) => return Self::denied(name, format!("`{path}`: {error}")),
+        };
+        let truncated = bytes.len() > READ_CAP_BYTES;
+        let shown = if truncated {
+            // Never split a UTF-8 sequence: back off to a char boundary of
+            // the lossy rendering below by trimming raw bytes first and
+            // letting `from_utf8_lossy` absorb a clipped tail sequence.
+            &bytes[..READ_CAP_BYTES]
+        } else {
+            &bytes[..]
+        };
+        let mut content = String::from_utf8_lossy(shown).into_owned();
+        if truncated {
+            content.push_str("\n… [truncated: the file continues past the read ceiling]");
+        }
+        ToolOutput::Ok { content }
+    }
+
+    /// The stage-private lister: candidate files whose paths match a glob
+    /// pattern, names only, root-confined, credential paths excluded.
+    fn glob(&self, input: &serde_json::Value) -> ToolOutput {
+        let name = "glob";
+        if !self.policy.allows(name) {
+            return Self::denied(name, "it is switched off by the operator's tool policy");
+        }
+        let Some(pattern) = input.get("pattern").and_then(serde_json::Value::as_str) else {
+            return Self::denied(name, "a `pattern` is required");
+        };
+        if pattern.trim().is_empty() {
+            return Self::denied(name, "the `pattern` must not be empty");
+        }
+        // The root itself may be spelled `.`, `""` or `./` — the default and
+        // the blind author's whole opening move, so it must pass. A subdir
+        // narrows the search; anything else is an escape.
+        let search_rel = match input.get("path").and_then(serde_json::Value::as_str) {
+            None => None,
+            Some(raw) if names_candidate_root(raw) => None,
+            Some(raw) => match normalized_candidate_path(raw) {
+                Some(rel) => Some(rel),
+                None => {
+                    return Self::denied(name, "the path must stay within the candidate root");
+                }
+            },
+        };
+        let Ok(root) = self.root.canonicalize() else {
+            return Self::denied(name, "the candidate root is unavailable");
+        };
+        let search_dir = match &search_rel {
+            None => root.clone(),
+            Some(rel) => {
+                let Some(dir) = confined(&root, rel) else {
+                    return Self::denied(
+                        name,
+                        format!("`{rel}` does not resolve inside the candidate root"),
+                    );
+                };
+                if !dir.is_dir() {
+                    return Self::denied(name, format!("`{rel}` is not a directory"));
+                }
+                dir
+            }
+        };
+
+        let mut matches = Vec::new();
+        let mut overflow = 0usize;
+        walk_matching(&root, &search_dir, pattern, &mut matches, &mut overflow);
+        matches.sort();
+        if matches.is_empty() {
+            return ToolOutput::Ok {
+                content: format!("no files match `{pattern}`"),
+            };
+        }
+        let mut content = matches.join("\n");
+        if overflow > 0 {
+            content.push_str(&format!("\n… and {overflow} more (narrow the pattern)"));
+        }
+        ToolOutput::Ok { content }
     }
 
     fn create_test(&self, input: &serde_json::Value) -> ToolOutput {
@@ -182,12 +317,39 @@ impl ToolExecutor for WitnessToolExecutor {
     // about another agent's workspace state. The assertion belongs to the
     // turn that owns the process, which is the worker's.
     fn schemas(&self) -> Vec<ToolSchema> {
-        let mut schemas: Vec<_> = self
-            .reads
-            .schemas()
-            .into_iter()
-            .filter(|schema| schema.name == "read_file" || schema.name == "glob")
-            .collect();
+        let mut schemas = Vec::new();
+        if self.policy.allows("glob") {
+            schemas.push(ToolSchema {
+                name: "glob".into(),
+                description: "List candidate files whose workspace-relative paths match a glob pattern (`*`, `?`, `**`). Names only; `path` narrows the search to a subdirectory.".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Glob pattern matched against workspace-relative paths" },
+                        "path": { "type": "string", "description": "Subdirectory to search (default: the candidate root)" }
+                    },
+                    "required": ["pattern"]
+                }),
+                read_only: true,
+                speculation_safe: true,
+            });
+        }
+        if self.policy.allows("read_file") {
+            schemas.push(ToolSchema {
+                name: "read_file".into(),
+                description: "Read one file inside the candidate, by workspace-relative path."
+                    .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Workspace-relative file path" }
+                    },
+                    "required": ["path"]
+                }),
+                read_only: true,
+                speculation_safe: true,
+            });
+        }
         schemas.push(ToolSchema {
             name: "create_witness_test".into(),
             description: "Atomically create one previously absent test file inside the candidate. Existing files are refused; calling again replaces your previous artifact.".into(),
@@ -207,50 +369,8 @@ impl ToolExecutor for WitnessToolExecutor {
 
     async fn execute(&self, name: &str, input: &serde_json::Value) -> ToolOutput {
         match name {
-            "read_file" => {
-                let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str) else {
-                    return Self::denied(name, "a workspace-relative `path` is required");
-                };
-                let Some(path) = normalized_candidate_path(raw_path) else {
-                    return Self::denied(name, "the path must stay within the candidate root");
-                };
-                if is_credential_path(&path) {
-                    return Self::denied(name, "credential and private-state paths are excluded");
-                }
-                self.reads.execute(name, input).await
-            }
-            // Discovery for the blind author (#1792): the repo listing in the
-            // prompt is truncated to its first 200 sorted paths, and an
-            // author that cannot see any `tests/` directory there had no
-            // legal move — `read_file` needs a path it can already name, and
-            // `create_witness_test` requires the parent to exist. `glob` is
-            // names-only, root-confined by the tool itself, and its results
-            // pass the same credential exclusion the read path enforces.
-            "glob" => {
-                // The root itself is spelled `.` or `""` — the `glob` tool
-                // defaults its `path` to `.` and resolves both to the root —
-                // and it is the blind author's whole opening move, so it must
-                // pass. `normalized_candidate_path` answers `None` for them
-                // because it was written for `read_file`, where a path that
-                // names no file is a different question; reusing that answer
-                // here denied the one call #1792 exists to enable.
-                if let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str)
-                    && !names_candidate_root(raw_path)
-                    && normalized_candidate_path(raw_path).is_none()
-                {
-                    return Self::denied(name, "the path must stay within the candidate root");
-                }
-                match self.reads.execute(name, input).await {
-                    ToolOutput::Ok { content } => ToolOutput::Ok {
-                        content: content
-                            .lines()
-                            .filter(|line| !is_credential_path(line.trim()))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    },
-                    error => error,
-                }
-            }
+            "read_file" => self.read_file(input),
+            "glob" => self.glob(input),
             "create_witness_test" => self.create_test(input),
             _ => Self::denied(
                 name,
@@ -258,6 +378,120 @@ impl ToolExecutor for WitnessToolExecutor {
             ),
         }
     }
+}
+
+/// Resolve the workspace-relative `rel` (already vetted by
+/// [`normalized_candidate_path`]) to its canonical on-disk location and prove
+/// it stays inside `root`: both sides are canonicalized — symlinks resolved —
+/// and the resolved location must sit under the resolved root. Layered on
+/// top of the lexical screen so a symlink planted *inside* the snapshot can
+/// never reach outside it: the lexical screen refuses `..`/absolute
+/// spellings by name, and this check refuses what the filesystem actually
+/// resolves them to. `None` when the path does not resolve (absent,
+/// unreadable) or escapes.
+fn confined(root: &Path, rel: &str) -> Option<PathBuf> {
+    let root = root.canonicalize().ok()?;
+    let full = root.join(rel).canonicalize().ok()?;
+    full.starts_with(&root).then_some(full)
+}
+
+/// Recursively collect files under `dir` whose paths relative to the
+/// candidate `root` match `pattern`, excluding credential paths from both
+/// the answer and — where nothing readable can live below — the descent.
+///
+/// Matching is against the path relative to the search directory, so a
+/// `tests/*.rs` pattern means the same thing whether the search starts at
+/// the root or at `path: "tests"`'s parent; emitted paths are root-relative
+/// so the author can hand them straight to `read_file`.
+fn walk_matching(
+    root: &Path,
+    dir: &Path,
+    pattern: &str,
+    matches: &mut Vec<String>,
+    overflow: &mut usize,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        let Ok(rel_to_root) = entry_path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel_to_root.to_string_lossy().replace('\\', "/");
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        // Symlinks are not followed: a link's target may sit outside the
+        // snapshot, and names-only discovery loses nothing by skipping it.
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            // Prune descent where nothing readable can live below. `.git`
+            // itself still descends — what follows it is judged entry by
+            // entry (refs and logs are evidence; objects and hooks are not).
+            let is_git_dir = rel == ".git" || rel.ends_with("/.git");
+            if is_credential_path(&rel) && !is_git_dir {
+                continue;
+            }
+            walk_matching(root, &entry_path, pattern, matches, overflow);
+        } else if file_type.is_file() && !is_credential_path(&rel) && glob_match(pattern, &rel) {
+            if matches.len() < GLOB_MATCH_CAP {
+                matches.push(rel);
+            } else {
+                *overflow += 1;
+            }
+        }
+    }
+}
+
+/// Match a glob `pattern` against a `/`-separated relative path.
+///
+/// Supported syntax: `*` (any run of characters within one component), `?`
+/// (exactly one character within a component), and `**` as a whole component
+/// (zero or more components). Everything else matches literally; there are
+/// no character classes or brace sets — the author's discovery needs names,
+/// not a pattern language.
+fn glob_match(pattern: &str, path: &str) -> bool {
+    let pattern: Vec<&str> = pattern
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect();
+    let path: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    match_components(&pattern, &path)
+}
+
+fn match_components(pattern: &[&str], path: &[&str]) -> bool {
+    match pattern.split_first() {
+        None => path.is_empty(),
+        Some((&"**", rest)) => (0..=path.len()).any(|skip| match_components(rest, &path[skip..])),
+        Some((first, rest)) => path.split_first().is_some_and(|(segment, tail)| {
+            component_match(first, segment) && match_components(rest, tail)
+        }),
+    }
+}
+
+/// `*`/`?` wildcard match within one path component.
+fn component_match(pattern: &str, segment: &str) -> bool {
+    fn matches(pattern: &[char], segment: &[char]) -> bool {
+        match pattern.split_first() {
+            None => segment.is_empty(),
+            // Consecutive `*`s collapse to one, keeping the backtracking
+            // linear in the segment for the patterns authors actually write.
+            Some(('*', rest)) if rest.first() == Some(&'*') => matches(rest, segment),
+            Some(('*', rest)) => (0..=segment.len()).any(|skip| matches(rest, &segment[skip..])),
+            Some(('?', rest)) => segment
+                .split_first()
+                .is_some_and(|(_, tail)| matches(rest, tail)),
+            Some((expected, rest)) => segment
+                .split_first()
+                .is_some_and(|(actual, tail)| actual == expected && matches(rest, tail)),
+        }
+    }
+    let pattern: Vec<char> = pattern.chars().collect();
+    let segment: Vec<char> = segment.chars().collect();
+    matches(&pattern, &segment)
 }
 
 /// Does this `path` name the candidate root itself?
@@ -298,17 +532,17 @@ pub(super) fn normalized_candidate_path(raw: &str) -> Option<String> {
 /// The `.git` entries a witness author may read, given the path components
 /// that follow the `.git` component itself.
 ///
-/// `.git` used to sit on the blanket denylist below. That is right for
-/// `.git/config` (a remote URL can carry a token), right for `.git/hooks`
-/// (executable code), and useless for `.git/HEAD`. On a git-shaped goal it
-/// was worse than useless: it withheld the *entire* evidence surface from
-/// the one role whose job is to assert something true about the repository.
-/// A `fix-git` bench trial recorded the result — the author's `read_file`
-/// calls on `.git/HEAD` and `.git/logs/HEAD` were both refused as
-/// "credential and private-state paths", so it reasoned counterfactually
-/// about a repository it was forbidden to look at, and insured against its
-/// own uncertainty by writing a universally quantified assertion far
-/// stronger than the goal. The witness then failed on work that was correct.
+/// A blanket `.git` denial is right for `.git/config` (a remote URL can
+/// carry a token), right for `.git/hooks` (executable code), and useless for
+/// `.git/HEAD`. On a git-shaped goal it is worse than useless: it withholds
+/// the *entire* evidence surface from the one role whose job is to assert
+/// something true about the repository. A `fix-git` bench trial recorded the
+/// result — the author's `read_file` calls on `.git/HEAD` and
+/// `.git/logs/HEAD` were both refused as "credential and private-state
+/// paths", so it reasoned counterfactually about a repository it was
+/// forbidden to look at, and insured against its own uncertainty by writing
+/// a universally quantified assertion far stronger than the goal. The
+/// witness then failed on work that was correct.
 ///
 /// An allowlist, not a narrowed denylist: a `.git` entry added by a future
 /// git version is denied until someone decides it is safe, which is the
@@ -469,7 +703,6 @@ async fn read_nofollow(src: &Path) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_tools::{RegistryOptions, ToolRegistry};
 
     /// Witness: a git-shaped goal needs git evidence, and `.git` sat on the
     /// blanket credential denylist. The author's `read_file` on `.git/HEAD`
@@ -526,19 +759,48 @@ mod tests {
         assert!(!is_credential_path("tests/env_test.rs"));
     }
 
-    async fn witness_executor(root: &Path) -> WitnessToolExecutor {
-        witness_executor_for(root, root).await
+    /// The matcher's contract, spelled out: `*`/`?` stay inside a component,
+    /// `**` crosses them, and everything else is literal.
+    #[test]
+    fn glob_matching_covers_the_supported_syntax() {
+        for (pattern, path) in [
+            ("**/*", "src.rs"),
+            ("**/*", "tests/existing.rs"),
+            ("**/*.rs", "a/b/c/d.rs"),
+            ("tests/*.rs", "tests/existing.rs"),
+            ("tests/**/*.rs", "tests/existing.rs"),
+            ("tests/e?isting.rs", "tests/existing.rs"),
+            ("**/existing.rs", "tests/existing.rs"),
+        ] {
+            assert!(glob_match(pattern, path), "`{pattern}` must match `{path}`");
+        }
+        for (pattern, path) in [
+            ("*.rs", "tests/existing.rs"),
+            ("tests/*.py", "tests/existing.rs"),
+            ("tests/?.rs", "tests/existing.rs"),
+            ("src/**", "tests/existing.rs"),
+        ] {
+            assert!(
+                !glob_match(pattern, path),
+                "`{pattern}` must not match `{path}`"
+            );
+        }
+    }
+
+    fn witness_executor(root: &Path) -> WitnessToolExecutor {
+        witness_executor_for(root, root)
     }
 
     /// The two-tree shape the production path always has (#2130): the author
     /// stands in a snapshot while the goal's paths are phrased against the
     /// session's own root. `witness_executor` collapses them because the tests
     /// that use it are about file mechanics, where the distinction is noise.
-    async fn witness_executor_for(root: &Path, session_root: &Path) -> WitnessToolExecutor {
-        let registry: Arc<dyn ToolExecutor> = Arc::new(
-            ToolRegistry::new_detected(root.to_path_buf(), RegistryOptions::default()).await,
-        );
-        WitnessToolExecutor::new(root.to_path_buf(), session_root, registry)
+    fn witness_executor_for(root: &Path, session_root: &Path) -> WitnessToolExecutor {
+        WitnessToolExecutor::new(
+            root.to_path_buf(),
+            session_root,
+            stella_tools::policy::ToolPolicy::allow_all(),
+        )
     }
 
     /// A witness body that would really witness something, tagged so the tests
@@ -562,7 +824,7 @@ mod tests {
         std::fs::write(root.path().join(".env.local"), "secret").unwrap();
         std::fs::create_dir(root.path().join(".git")).unwrap();
         std::fs::write(root.path().join(".git/config"), "credential-helper").unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         let names: Vec<_> = tools
             .schemas()
@@ -571,16 +833,13 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["glob", "read_file", "create_witness_test"]);
         for denied in [
-            "write_file",
-            "edit_file",
-            "bash",
-            "run_tests",
+            "save_state",
+            "get_state",
+            "task",
+            "task_create",
+            "get_environment",
             "mcp_external",
             "custom_script",
-            "web_search",
-            "get_issue",
-            "generate_image",
-            "save_memory",
         ] {
             assert!(
                 tools
@@ -609,13 +868,39 @@ mod tests {
         ));
     }
 
+    /// The reader is root-confined by resolution, not by spelling alone: a
+    /// symlink inside the snapshot pointing outside it does not resolve
+    /// inside the root, so the read is refused even though its spelling
+    /// passes the lexical screen.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_file_refuses_a_symlink_escaping_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "outside").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            root.path().join("escape.txt"),
+        )
+        .unwrap();
+        let tools = witness_executor(root.path());
+
+        assert!(
+            tools
+                .execute("read_file", &serde_json::json!({"path": "escape.txt"}))
+                .await
+                .is_error(),
+            "a symlink out of the snapshot must not be readable"
+        );
+    }
+
     #[tokio::test]
     async fn exclusive_creation_never_mutates_an_existing_file() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
         let existing = root.path().join("tests/existing.rs");
         std::fs::write(&existing, "original").unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         let output = tools
             .execute(
@@ -670,7 +955,7 @@ mod tests {
     async fn a_vacuous_witness_is_refused_and_the_author_may_still_revise() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         for (name, content, expected) in [
             (
@@ -734,15 +1019,14 @@ mod tests {
     /// goal named `/app/ssl/server.crt`, so the author wrote that down, and the
     /// oracle ran the script inside the candidate copy — where it failed
     /// identically for every change, correct or not, and rode a finished trial
-    /// into its timeout at reward 0. On `main` this artifact is ACCEPTED and
-    /// reaches disk; here it never does, and the refusal hands back the
-    /// relative form. Both roots are refused: anchoring to the snapshot the
-    /// author is standing in is just as unsatisfiable, because the graft moves
-    /// the test into a different candidate before the oracle sees it.
+    /// into its timeout at reward 0. Both roots are refused: anchoring to the
+    /// snapshot the author is standing in is just as unsatisfiable, because
+    /// the graft moves the test into a different candidate before the oracle
+    /// sees it.
     #[tokio::test]
     async fn a_witness_anchored_to_a_tree_it_will_not_run_in_is_refused() {
         let root = tempfile::tempdir().unwrap();
-        let tools = witness_executor_for(root.path(), Path::new("/app")).await;
+        let tools = witness_executor_for(root.path(), Path::new("/app"));
 
         let misframed = format!(
             "#!/bin/sh\nset -e\nSSL_DIR=/app/ssl\ntest -f \"$SSL_DIR/server.crt\"\n\
@@ -816,7 +1100,7 @@ mod tests {
     #[tokio::test]
     async fn machine_paths_stay_available_to_the_witness_author() {
         let root = tempfile::tempdir().unwrap();
-        let tools = witness_executor_for(root.path(), Path::new("/app")).await;
+        let tools = witness_executor_for(root.path(), Path::new("/app"));
 
         let output = tools
             .execute(
@@ -844,7 +1128,7 @@ mod tests {
         std::fs::create_dir(root.path().join("tests")).unwrap();
         std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
         std::fs::write(root.path().join(".env.local"), "secret").unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         let output = tools
             .execute("glob", &serde_json::json!({"pattern": "**/*"}))
@@ -875,19 +1159,19 @@ mod tests {
 
     /// Naming the root explicitly is the same call as omitting `path`.
     ///
-    /// The `glob` tool documents `path` as "Subdirectory to search (default:
-    /// workspace root)" and resolves `.` and `""` to the root, so a model that
+    /// `path` is documented as "Subdirectory to search (default: the
+    /// candidate root)" and `.` and `""` resolve to the root, so a model that
     /// spells the default out loud — which they routinely do — must not be
-    /// refused. The guard reused `normalized_candidate_path`, whose `None`
-    /// means "no relative path" and therefore covers both "escapes the root"
-    /// and "*is* the root"; only the second is legal, and collapsing them shut
-    /// the door on the blind author's opening move (#1792).
+    /// refused. [`normalized_candidate_path`]'s `None` means "no relative
+    /// path" and therefore covers both "escapes the root" and "*is* the
+    /// root"; only the second is legal, and collapsing them shuts the door
+    /// on the blind author's opening move (#1792).
     #[tokio::test]
     async fn glob_accepts_the_root_spelled_out_as_well_as_omitted() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
         std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         for path in [".", "", "./"] {
             let output = tools
@@ -919,23 +1203,20 @@ mod tests {
     }
 
     /// #1784's witness: the operator's tool policy governs the witness
-    /// author's reads exactly as it governs the worker's. The executor takes
-    /// whatever read surface it is handed — the candidate workspace hands it
-    /// the policy-wrapped one — so a `read_file: off` switch removes both
-    /// the schema and the dispatch here, not just on the worker path.
+    /// author's reads exactly as it governs the worker's. The executor
+    /// carries the policy the candidate workspace hands it, so a
+    /// `read_file: off` switch removes both the schema and the dispatch
+    /// here, not just on the worker path.
     #[tokio::test]
     async fn the_tool_policy_reaches_the_witness_authors_reads() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
         std::fs::write(root.path().join("src.rs"), "source").unwrap();
-        let registry: Arc<dyn ToolExecutor> = Arc::new(
-            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
-        );
-        let policied: Arc<dyn ToolExecutor> = Arc::new(crate::agent::PolicyToolSet::new_owned(
-            registry,
+        let tools = WitnessToolExecutor::new(
+            root.path().to_path_buf(),
+            root.path(),
             stella_tools::policy::ToolPolicy::from_switches([("read_file".to_string(), false)]),
-        ));
-        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), root.path(), policied);
+        );
 
         let names: Vec<_> = tools
             .schemas()
@@ -965,7 +1246,7 @@ mod tests {
         let target = outside.path().join("target.rs");
         std::fs::write(&target, "outside").unwrap();
         std::os::unix::fs::symlink(&target, root.path().join("tests/witness.rs")).unwrap();
-        let tools = witness_executor(root.path()).await;
+        let tools = witness_executor(root.path());
 
         let output = tools
             .execute(
@@ -981,8 +1262,8 @@ mod tests {
     async fn concurrent_creates_commit_at_most_one_artifact() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
-        let left_tools = Arc::new(witness_executor(root.path()).await);
-        let right_tools = Arc::new(witness_executor(root.path()).await);
+        let left_tools = std::sync::Arc::new(witness_executor(root.path()));
+        let right_tools = std::sync::Arc::new(witness_executor(root.path()));
         let left = tokio::spawn(async move {
             left_tools
                 .execute(
@@ -1020,7 +1301,7 @@ mod tests {
     async fn one_executor_holds_at_most_one_artifact_under_concurrency() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
-        let tools = Arc::new(witness_executor(root.path()).await);
+        let tools = std::sync::Arc::new(witness_executor(root.path()));
         let left_tools = tools.clone();
         let left = tokio::spawn(async move {
             left_tools
@@ -1053,31 +1334,28 @@ mod tests {
         assert_eq!(created, 1, "the replaced artifact must not survive");
     }
 
-    /// #3148: `create_witness_test` is the one tool mounted outside
+    /// #3148: the witness surface is the one tool mount outside
     /// `stella_tools::catalog` — a **declared** exemption, pinned from both
-    /// sides, where before this test it was a silence.
+    /// sides.
     ///
-    /// It is deliberately not a catalog row: it exists only inside the
+    /// These are deliberately not catalog rows: they exist only inside the
     /// candidate-workspace mount, must never be model-visible in an ordinary
-    /// session, and its artifact's lifecycle is the witness stage's, not the
+    /// session, and the artifact's lifecycle is the witness stage's, not the
     /// registry's. The catalog pins (`registry_advertises_exactly_the_catalog
-    /// _tool_set`) cannot see it because it never enters a `ToolRegistry` —
-    /// so nothing would have noticed a *second* bespoke tool accumulating
+    /// _tool_set`) cannot see this surface because it never enters a
+    /// `ToolRegistry` — so nothing would notice a bespoke tool accumulating
     /// out here either. Now:
     ///
     /// - a new out-of-catalog name on this surface fails here until it is
     ///   cataloged or added to `EXEMPT` with its own issue;
-    /// - `create_witness_test` joining the catalog fails here too, so the
-    ///   exemption is retired instead of going stale.
-    #[tokio::test]
-    async fn the_out_of_catalog_surface_is_exactly_the_declared_exemption() {
-        const EXEMPT: &[&str] = &["create_witness_test"];
+    /// - an exempt name joining the catalog fails here too, so the exemption
+    ///   is retired instead of going stale.
+    #[test]
+    fn the_out_of_catalog_surface_is_exactly_the_declared_exemption() {
+        const EXEMPT: &[&str] = &["glob", "read_file", "create_witness_test"];
 
         let root = tempfile::tempdir().unwrap();
-        let registry: Arc<dyn ToolExecutor> = Arc::new(
-            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
-        );
-        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), root.path(), registry);
+        let tools = witness_executor(root.path());
 
         let advertised: Vec<String> = tools
             .schemas()

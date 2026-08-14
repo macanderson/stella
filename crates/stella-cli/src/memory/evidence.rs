@@ -47,8 +47,8 @@ use stella_store::MemoryCitationRow;
 
 /// The longest observation text either source will emit.
 ///
-/// A remark is capped at 300 characters by `cite_memory` itself, but a tool
-/// error is unbounded — a stack trace or a wall of compiler output would
+/// A citation remark is at most 300 characters by the ledger's own contract,
+/// but a tool error is unbounded — a stack trace or a wall of compiler output would
 /// otherwise become one enormous "observation" that the miner cannot cluster
 /// and a person cannot read.
 const MAX_OBSERVATION_CHARS: usize = 300;

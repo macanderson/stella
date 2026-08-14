@@ -16,26 +16,16 @@ pub(super) fn sessions_inbound(
     let sessions = registry
         .list()
         .into_iter()
-        .map(|r| {
-            // A session mid-mapping advertises its slices right in the
-            // summary line, so a human sees "already being mapped" before
-            // typing a prompt that would duplicate the exploration.
-            let summary = if r.exploring.is_empty() {
-                r.summary
-            } else {
-                format!("{} [mapping: {}]", r.summary, r.exploring.join(", "))
-            };
-            stella_tui::SessionInfo {
-                mine: r.id == mine,
-                resumable: r.id != mine && r.workspace == workspace && registry.resumable(&r.id),
-                phase: session_phase(r.status),
-                id: r.id,
-                title: r.title,
-                summary,
-                workspace: r.workspace,
-                started_ms: r.started_at_ms,
-                updated_ms: r.updated_at_ms,
-            }
+        .map(|r| stella_tui::SessionInfo {
+            mine: r.id == mine,
+            resumable: r.id != mine && r.workspace == workspace && registry.resumable(&r.id),
+            phase: session_phase(r.status),
+            id: r.id,
+            title: r.title,
+            summary: r.summary,
+            workspace: r.workspace,
+            started_ms: r.started_at_ms,
+            updated_ms: r.updated_at_ms,
         })
         .collect();
     Inbound::Sessions(sessions)

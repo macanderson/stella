@@ -101,9 +101,7 @@ way to ask for one.
 
 A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments
-(`storage-map.md` from `crates/stella-tools/src/registry.rs`, `scripts-index.md` from
-`crates/stella-tools/src/scripts.rs`, `exploration-sharing.md` from
-`crates/stella-tools/src/staleness.rs`, and others) — they are the normative reference
+— they are the normative reference
 the code points at, so renaming or removing one means chasing every citation in
 the same PR. What each spec's `**Status:**` header says is therefore load-bearing:
 update it when the feature lands, and mark a document *Superseded* with a link to

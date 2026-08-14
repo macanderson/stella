@@ -518,8 +518,7 @@ async fn an_adoption_attributes_its_own_rows_to_the_durable_record_exactly_once(
 /// The shared-tree half, and the reason the fold lives at the adoption site
 /// rather than at the event forwarder: a run with no isolation port has no
 /// `CandidateWorkspace` at all, so there is nothing that *could* attribute —
-/// and its mutations were already recorded by the session's own recorder as
-/// they happened.
+/// its mutations already happened in the user's own tree.
 ///
 /// Folding at the forwarder instead would have counted those a second time.
 /// This asserts the structural property that makes the double impossible:
@@ -547,7 +546,6 @@ async fn a_shared_tree_run_never_reaches_the_attribution_seam() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             lint: None,
@@ -557,8 +555,8 @@ async fn a_shared_tree_run_never_reaches_the_attribution_seam() {
             sleeper: &sleeper,
             hooks: None,
             // The whole point: no isolation port, so the run executes against
-            // the session's own ports and its recorder sees every mutation
-            // first-hand.
+            // the session's own ports and its mutations land in the user's
+            // own tree first-hand.
             candidate_workspaces: None,
             mcp_prefetch: None,
             steering: None,
@@ -582,8 +580,8 @@ async fn a_shared_tree_run_never_reaches_the_attribution_seam() {
     assert!(
         log.lock().unwrap().is_empty(),
         "a shared-tree run must never create or adopt a candidate workspace — if it could, \
-         its mutations would be counted once by the session recorder and again by the \
-         attribution: {:?}",
+         its mutations would land in the user's tree once and be attributed a second \
+         time: {:?}",
         log.lock().unwrap()
     );
 }

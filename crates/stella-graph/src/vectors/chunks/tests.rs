@@ -53,12 +53,11 @@ fn store_whole_file(conn: &mut Connection, file: &PendingChunkFile) {
 ///
 /// It used to store one of two chunks and assert the file was still pending.
 /// That state is unreachable: [`store_chunk_vectors`] documents "one file per
-/// call, one transaction", the single production caller
-/// (`stella_tools::search::embed_and_store_chunk_file`) always passes the
-/// file's complete row set, and splitting a file across two calls is precisely
-/// what that doc says the sweep would corrupt. Pinning the count's behaviour in
-/// a state the writer forbids pinned the old predicate's arithmetic rather than
-/// the contract (#3128).
+/// call, one transaction" — a caller passes the file's complete row set, and
+/// splitting a file across two calls is precisely what that doc says the
+/// sweep would corrupt. Pinning the count's behaviour in a state the writer
+/// forbids pinned the old predicate's arithmetic rather than the contract
+/// (#3128).
 #[test]
 fn the_pending_file_count_tracks_whole_file_coverage() {
     let (ws, mut conn) = indexed_workspace(&[("a.rs", "fn alpha() {}\nfn beta() {}\n")]);
