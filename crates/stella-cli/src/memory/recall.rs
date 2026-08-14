@@ -543,7 +543,14 @@ impl ContextRecallPort for SessionMemory {
 pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for f in frames {
-        let label = &f.citation_label;
+        // Only a label that says something the content does not earns its
+        // bytes: memory (and episode) nodes mint theirs FROM the content, so
+        // rendering both shipped the same sentence twice into a recall budget
+        // the packer had already spent on the content alone (#2476).
+        let body = match f.distinct_label() {
+            Some(label) => format!("{label} — {}", f.content.trim()),
+            None => f.content.trim().to_string(),
+        };
         match (f.kind.as_str(), &f.id) {
             // A memory with an id keeps the id visible — it names the record.
             ("memory", Some(id)) => {

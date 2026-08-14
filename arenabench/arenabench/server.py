@@ -81,6 +81,7 @@ from .credentials import (
     missing_required_credentials,
     resolve_launch_credentials,
 )
+from .experiments import experiment_document, experiments_payload
 from .model import (
     EFFORTS,
     RESPONSIBILITIES,
@@ -501,6 +502,22 @@ class ArenaServer:
         grouping is enforced rather than assumed.
         """
         return series_payload(list(self.runner.matches.values()))
+
+    def experiments(self) -> Any:
+        """Stored experiment documents, summarized for the gallery (#3215).
+
+        Reads the experiments store only — a workspace that never stored an
+        experiment gets an empty listing, and the read never creates the
+        database. Match discovery stays independent of this store by design.
+        """
+        return experiments_payload()
+
+    def experiment(self, experiment_id: str) -> Any:
+        """One full experiment document by its id (#3215)."""
+        document = experiment_document(experiment_id)
+        if document is None:
+            raise KeyError(experiment_id)
+        return document
 
     #: Shortest gap between disk sweeps driven by a request. The listing is
     #: polled by every open browser tab, and the sweep stats every match
@@ -1057,6 +1074,10 @@ def _handler_factory(
                     self._json(arena.sut_build(build_id))
                 case ["series"]:
                     self._json(arena.series())
+                case ["experiments"]:
+                    self._json(arena.experiments())
+                case ["experiments", experiment_id]:
+                    self._json(arena.experiment(experiment_id))
                 case ["matches"]:
                     self._json(arena.list_matches())
                 case ["matches", match_id]:

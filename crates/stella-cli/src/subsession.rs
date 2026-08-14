@@ -729,7 +729,11 @@ async fn run_worker(
         let engine = Engine::with_sleeper(
             &*provider,
             &permitted,
-            agent::engine_config_for(cfg),
+            // Never `engine_config_for`: that attaches the LEAD session's
+            // checkpoint sink, and this worker runs concurrently with the lead
+            // turn against the same `CHECKPOINT_BLOB` — see
+            // `subsession_engine_config_for`.
+            agent::subsession_engine_config_for(cfg),
             &TokioSleeper,
         )
         .with_calibration(&calibration)
