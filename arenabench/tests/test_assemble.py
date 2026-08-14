@@ -337,6 +337,36 @@ def test_a_task_with_no_trial_is_named_not_dropped(tmp_path: Path) -> None:
     assert any(TASKS[1] in w and "no trial artifact" in w for w in assembly.warnings)
 
 
+def test_a_missing_task_names_its_job_state_when_the_fetch_recorded_one(
+    tmp_path: Path,
+) -> None:
+    """#3218: "no artifact" is two facts — a job still RUNNING at fetch time
+    (the artifact is coming; re-fetch) and a terminal job that uploaded
+    nothing (it never will). The h2h891 analysis read a short match as
+    complete because the warning could not tell them apart."""
+    run_dir = tmp_path / "partial"
+    run_dir.mkdir()
+    (run_dir / "match.toml").write_text(MATCH_TOML, encoding="utf-8")
+    _write_trial(run_dir, "job-000", "stella-bare-loop", TASKS[0], 1)
+    (run_dir / "jobs.json").write_text(
+        json.dumps(
+            {
+                "run_id": "partial",
+                "jobs": [
+                    {"id": "a", "task": TASKS[0], "state": "SUCCEEDED"},
+                    {"id": "b", "task": TASKS[1], "state": "RUNNING"},
+                    {"id": "c", "task": TASKS[2], "state": "FAILED"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assembly = assemble_run(run_dir)
+    warning = next(w for w in assembly.warnings if "no trial artifact" in w)
+    assert f"{TASKS[1]} (still RUNNING in Batch at fetch time — re-fetch)" in warning
+    assert f"{TASKS[2]} (terminal, no artifact uploaded)" in warning
+
+
 # --------------------------------------------------------------------------
 # the assembled match is one `arenabench serve` opens
 # --------------------------------------------------------------------------

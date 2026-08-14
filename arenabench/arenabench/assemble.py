@@ -236,6 +236,44 @@ def _job_id_of(run_dir: Path, trial: Path) -> str:
     return trial.relative_to(run_dir).parts[0]
 
 
+#: Batch states that mean a job may yet upload the artifact it is missing.
+#: Mirrored from :mod:`.cloud`'s split rather than imported: assembly is a
+#: pure local fold and must keep working on a machine with no cloud module
+#: concerns at all — and these strings are Batch's public contract, not ours.
+_LIVE_BATCH_STATES = frozenset(
+    {"SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"}
+)
+
+
+def _sidecar_task_states(run_dir: Path) -> dict[str, list[str]]:
+    """Per-task Batch states from the fetch's ``jobs.json`` sidecar.
+
+    Empty on a fetch that predates the sidecar — the warning then degrades to
+    its old, state-blind wording rather than failing the fold (#3218).
+    """
+    try:
+        record = json.loads((run_dir / "jobs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    states: dict[str, list[str]] = {}
+    for job in record.get("jobs", []) if isinstance(record, dict) else []:
+        task = job.get("task") if isinstance(job, dict) else None
+        if task:
+            states.setdefault(str(task), []).append(str(job.get("state") or ""))
+    return states
+
+
+def _missing_note(task: str, states: dict[str, list[str]]) -> str:
+    """Why this task has no artifact, as far as the fetch-time states can say."""
+    observed = [state for state in states.get(task, []) if state]
+    if not observed:
+        return ""
+    live = sorted({s for s in observed if s in _LIVE_BATCH_STATES})
+    if live:
+        return f" (still {'/'.join(live)} in Batch at fetch time — re-fetch)"
+    return " (terminal, no artifact uploaded)"
+
+
 # --------------------------------------------------------------------------
 # the filesystem side
 # --------------------------------------------------------------------------
@@ -385,9 +423,18 @@ def assemble_run(
 
     missing = sorted(set(spec.tasks) - {cell["task"] for cell in cells})
     if missing:
+        # "No artifact" is two different facts wearing one warning: a trial
+        # that will never produce one, and a trial that has not finished yet.
+        # The h2h891 head-to-head was analyzed on a match missing two Claude
+        # Code results that were still RUNNING at fetch time, and the short
+        # match read as complete (#3218). The fetch leaves the per-job Batch
+        # state it observed in a `jobs.json` sidecar, so assembly — still a
+        # pure local fold — can name which kind each miss is.
+        states = _sidecar_task_states(run_dir)
+        described = [task + _missing_note(task, states) for task in missing[:8]]
         assembly.warnings.append(
             f"{len(missing)} task(s) produced no trial artifact: "
-            + ", ".join(missing[:8])
+            + ", ".join(described)
             + (" …" if len(missing) > 8 else "")
         )
 
