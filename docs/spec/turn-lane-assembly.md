@@ -298,7 +298,7 @@ that is never called, three files from the site that reads it — becomes a
 
 ---
 
-## 6. The open question this forces (and it is yours)
+## 6. The question this forces — decided
 
 Moves 1–3 make the gap visible and typed. They do not by themselves decide
 `#3232`/`#3233`, because those are blocked on a genuine design question that
@@ -385,154 +385,8 @@ PRs 1 and 2 are independent and can run in parallel. PR 3 is the one that must
 not be split across two sessions — it is a single mechanical sweep, and half a
 sweep is worse than none.
 
----
-
-## 9. Plugin lanes — why `TurnLane` is open from the first commit
-
-This section exists because of a standing directive that predates this
-document: **plugins become turn-loop participants by manifest** (Mac,
-2026-08-13), and **the verification engine leaves `stella-core` for a plugin
-called Vera** — `stella-core` is to be the bare, near-immutable agent loop, and
-the witness protocol, verification ladder, flip oracle and staged pipeline are
-an opinionated policy layer that moves out. The live authority is **#3246**;
-**#3245** is closed as completed, and **#3243** is the companion steering
-plane. Anything here that contradicts #3246 loses.
-
-That directive changes exactly one thing in §5, and it is cheap now and
-expensive later.
-
-### 9.1 A closed `TurnLane` would have been a one-way door
-
-If a plugin can contribute a lane, then a closed seven-variant enum is wrong
-from the first commit — every plugin lane would need a `stella-protocol`
-release to exist, which is the precise thing a manifest-only plugin system is
-for. Hence the two-level shape in Move 1:
-
-- **`BuiltinLane` stays closed.** This is what preserves Move 2's
-  compile-error property: a new capability still fails to build at all seven
-  in-tree lanes, because those are exhaustively known.
-- **`TurnLane` is open.** A manifest contributes a `LaneId` and the matrix
-  gains a row without a core change.
-
-Neither half is a compromise of the other, and reversing this later means
-rewriting every `TurnLane` match in the tree. That asymmetry — free today,
-costly in six months — is why it lands in PR 1 rather than being deferred to
-the plugin work.
-
-### 9.2 Resolution order: builtin-first, never port-first
-
-`#2456` (opening the pipeline roster's agent vocabulary) already spec'd this
-exact shape and recorded the finding that matters here, which this design
-adopts rather than re-derives:
-
-> **Builtin-first, not port-first.** The issue proposed consulting the new port
-> before the router. Wrong direction — a port answering a builtin name creates
-> two paths for one name.
-
-So lane resolution consults `BuiltinLane` first and the plugin registry only on
-a miss. A manifest naming `lead` is a load-time rejection ("that lane exists
-and is not yours"), not a silent override of the deck's own lane. The second
-`#2456` finding applies too: the custom set nests (`[lanes.custom.<id>]`), it
-does not `#[serde(flatten)]`, because a flattened map is silently skipped by
-scope-merge.
-
-### 9.3 The matrix becomes two-tier, with one schema
-
-Move 3's matrix is a *schema*; a manifest is an *instance* of it. Same fields,
-two enforcement mechanisms:
-
-| | Core lanes | Plugin lanes |
-|---|---|---|
-| Declared in | `stella-parity`'s `LANES` | the plugin manifest |
-| Enforced at | compile + `cargo test` | manifest load |
-| Missing posture | build error | load-time rejection |
-| Postures | `Bound` / `Declined` / `Deferred` | the same three |
-
-The load-time validator and the compile-time completeness test read **one**
-list of capability names — derived from `TurnCapabilities`' fields — so a
-capability added in core cannot be one a manifest is unable to speak about.
-That is the "drive it from manifests/registries" ask, and the matrix is what
-makes it expressible: without Move 2 there is no single list to validate a
-manifest against, because the capabilities are spread across three
-vocabularies.
-
-### 9.4 `TurnCapabilities` is the plugin ABI
-
-This is the strongest argument for landing Moves 2–4 **before** plugin work
-rather than alongside it. A manifest-driven plugin surface has to name what a
-plugin may change about the loop. Today that surface would have to be spelled
-three ways at once — `EngineConfig` fields, `Engine::with_*` builders, and
-`TurnControls` published to the registry — and a plugin author would have to
-know which capability lives in which vocabulary. After Move 2 there is exactly
-one struct, and the manifest schema is a projection of its field names.
-
-Concretely, #3246's stated ownership — *"change the definition of done — the
-exit condition of the turn loop"* — is `TurnCapabilities::halt` plus the Stop
-gate. That capability already exists (`turn_halt`, today bound only by the
-pipeline). Move 2 does not build it; it makes it **nameable**, which is what a
-manifest needs.
-
-### 9.5 What this section does not decide
-
-Participation levels (`none | observer | steering | arbiter`), `max_holds`,
-fail-open semantics, the witness/oracle wire contract, deck presence, and the
-authority plane are all **#3246's**, not this document's. A lane is *where a
-turn runs and what it is allowed to bind*. Participation is *what a plugin may
-do to a running turn*. They meet at `TurnCapabilities` and are otherwise
-separate; this document deliberately stops at the seam.
-
----
-
-## 10. Moving the pipeline out of core: now, later, or never
-
-The question raised in review: *do we refactor the verification engine /
-pipeline out of core Stella now, later, or never?*
-
-**Never is already off the table** — the Vera directive settled it, and 22
-issues were closed `wontfix` on the strength of it precisely because they were
-defects in a subsystem that is leaving. So the live question is now vs later.
-
-**Recommendation: later, and this PR is what makes later cheap.** Specifically:
-after PR 3, before PR 5.
-
-### The argument for *not* now
-
-Extraction needs a typed surface to extract **onto**. Today the pipeline's
-relationship to the loop is not expressible as data: it binds `turn_halt`
-through `with_turn_halt`, sets `checkpoint_sink = None` at
-`witness_stage.rs:380`, attaches gate and steering per stage, and reaches the
-engine through `PipelineConfig::engine` — four different mechanisms, none of
-which a manifest can name. Extracting first means designing the plugin ABI and
-performing the dependency cut in one motion, against a moving target, with no
-compile-time check that a lane kept its capabilities across the move.
-
-Extracting *after* Moves 2–4 turns the same work into a **dependency cut**:
-the pipeline's lanes already declare their postures in the matrix, so the
-extraction has an explicit before/after to hold itself to, and a row that
-changes posture during the move is a failing test rather than a silent
-regression. That is the difference between a refactor and a redesign.
-
-This also matches the sequencing already recorded for the plugin work: *the
-dependency cut is the LAST slice, only after a side-by-side bench holds.*
-
-### The argument against waiting longer than that
-
-Every capability added to the loop between now and extraction gets bound at the
-pipeline's stage sites by hand, which is more surface to cut later. Moves 2–4
-stop that accumulation — after them, new capabilities arrive as matrix rows,
-and the pipeline's rows move with it. So the window is not "whenever"; it is
-"as soon as the matrix exists".
-
-### What would change this answer
-
-If #3246 needs a working plugin lane sooner than PR 3 can land, invert it: do
-PR 1 (open `TurnLane`) and PR 2 (`TurnCapabilities`) only, ship a plugin lane
-against the new ABI with the in-tree lanes still on the deprecated shims, and
-take PR 3's sweep afterwards. That costs one extra migration of the plugin lane
-and keeps the shims alive longer, but it does not require extraction to precede
-the matrix — which is the ordering this section is actually arguing for. PR 6 is free and can go first. PRs 7 and 8 are the
-plugin half and are specified in §9 and §10; 8 is gated on a bench, not on a
-review.
+PR 6 is free and can go first. PRs 7 and 8 are the plugin half and are
+specified in §9 and §10; PR 8 is gated on a bench, not on a review.
 
 ---
 
@@ -671,6 +525,28 @@ verification engine.
 The work is therefore not carving policy *out of* the loop. It is giving the
 loop a registry so that policy can be plugged *into* it from outside — which
 is a smaller and much less dangerous job.
+
+This is also the shape the standing Vera directive asks for: the witness
+protocol, verification ladder, flip oracle and staged pipeline become
+plugin-owned so that a customer can define done for themselves. §10 is that
+directive's schedule; this section is why its first half is already true.
+
+### 9.7 Two mechanics #2456 already settled — do not re-derive them
+
+The open-agent-vocabulary work recorded both of these, and both are the kind of
+thing that looks like a style choice and is not:
+
+- **Resolution is builtin-first, never registry-first.** A manifest naming
+  `lead` is a **load-time rejection** — *that lane exists and is not yours* —
+  not a silent override. Consulting the plugin registry ahead of the builtins
+  creates two paths for one name, which is the failure this whole document is
+  about, re-introduced at the seam meant to fix it.
+- **The custom lane set nests; it is never `#[serde(flatten)]`.** It is
+  `[lanes.custom.<id>]`. A flattened map is silently skipped by the settings
+  scope-merge, because the overlay iterates a closed list of known keys — so
+  `flatten` reads correctly and quietly drops project-scope overrides. That is
+  a silent capability drop arriving through the config plane instead of the
+  assembly plane, and §3 is a document about how expensive those are to find.
 
 ---
 
