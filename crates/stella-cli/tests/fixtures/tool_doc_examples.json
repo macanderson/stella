@@ -1,25 +1,5 @@
 {
   "examples": {
-    "apply_edits": {
-      "arm": "w10p",
-      "input": "{\n  \"edits\": [\n    {\n      \"new_string\": \"        for node, data in g.nodes(data=True):\\n            y = data['vertex_position']\\n            xb = data['vertex_start']\\n            xe = data['vertex_end']\\n            x = int((xe + xb) / 2.)\\n\\n            node_labels[node] = (x, y)\\n            xs.extend([xb, xe])\\n            ys.append(y)\\n\\n            nodes_by_height[data['vertex_position']] = node\\n            node_xs_by_y[data['vertex_position']] = x\\n            node_xs_ys[node] = (x, y)\\n            node_lefts_rights[node] = (xb, xe)\",",
-      "input_truncated": true,
-      "outcome": "error",
-      "output": "{\n  \"error\": {\n    \"message\": \"3 of 3 edits failed validation \u2014 NOTHING was written (all-or-nothing):\\n  edit 0: FAILED \u2014 failed to read `pyknotid/representations/representation.py`: No such file or directory (os error 2)\\n  edit 1: FAILED \u2014 failed to read `pyknotid/representations/representation.py`: No such file or directory (os error 2)\\n  edit 2: FAILED \u2014 failed to read `pyknotid/representations/representation.py`: No such file or directory (os error 2)\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__4xjNAy9"
-    },
-    "bash": {
-      "arm": "w10b",
-      "input": "{\n  \"command\": \"python --version && python -c \\\"import numpy; print('numpy', numpy.__version__)\\\" && python -c \\\"import Cython; print('cython', Cython.__version__)\\\" 2>/dev/null; pip --version\",\n  \"timeout_secs\": 30\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"Python 3.13.7\\nnumpy 2.3.0\\npip 25.2 from /usr/local/lib/python3.13/site-packages/pip (python 3.13)\\n\\n[exit code: 0]\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__5nLVNS5"
-    },
     "create_witness_test": {
       "arm": "w10p",
       "input": "{\n  \"content\": \"#!/bin/sh\\n# Check if the web server serves the expected content\\noutput=$(curl -s http://localhost:8080/hello.html)\\nif [ \\\"$output\\\" != \\\"hello world\\\" ]; then\\n    echo \\\"Expected 'hello world' but got '$output'\\\"\\n    exit 1\\nfi\\n\",\n  \"path\": \"witness_git_web_push.sh\"\n}",
@@ -30,26 +10,6 @@
       "task": "configure-git-webserver",
       "trial": "configure-git-webserver__9rDJ8td"
     },
-    "delete_file": {
-      "arm": "w10b",
-      "input": "{\n  \"path\": \"/app/verify.py\",\n  \"reason\": \"Temporary witness test, not part of the task deliverable\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"deleted /app/verify.py\"\n  }\n}",
-      "output_truncated": false,
-      "task": "financial-document-processor",
-      "trial": "financial-document-processor__4hAengQ"
-    },
-    "edit_file": {
-      "arm": "w10b",
-      "input": "{\n  \"new_string\": \"from math import gcd\",\n  \"old_string\": \"from fractions import gcd\",\n  \"path\": \"/app/pyknotid/pyknotid/make/torus.py\",\n  \"reason\": \"Fix Python 3.13 compat: fractions.gcd removed, use math.gcd\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"replaced 1 occurrence(s) in /app/pyknotid/pyknotid/make/torus.py\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__5nLVNS5"
-    },
     "get_environment": {
       "arm": "w10b",
       "input": "{}",
@@ -59,116 +19,6 @@
       "output_truncated": false,
       "task": "configure-git-webserver",
       "trial": "configure-git-webserver__XJdENXa"
-    },
-    "glob": {
-      "arm": "w10p",
-      "input": "{\n  \"pattern\": \"**/*.png\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"code.png\"\n  }\n}",
-      "output_truncated": false,
-      "task": "code-from-image",
-      "trial": "code-from-image__rmypedL"
-    },
-    "probe_capability": {
-      "arm": "w10b",
-      "input": "{\n  \"name\": \"openssl\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"openssl: /usr/bin/openssl\"\n  }\n}",
-      "output_truncated": false,
-      "task": "openssl-selfsigned-cert",
-      "trial": "openssl-selfsigned-cert__mYeVDop"
-    },
-    "project_overview": {
-      "arm": "w10f",
-      "input": "{}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"{\\n  \\\"code\\\": {\\n    \\\"busiest_file\\\": null,\\n    \\\"entry_points\\\": [],\\n    \\\"languages\\\": [],\\n    \\\"top_level\\\": null\\n  },\\n  \\\"domains\\\": [],\\n  \\\"git\\\": {\\n    \\\"branch\\\": \\\"master\\\",\\n    \\\"branch_convention\\\": null,\\n    \\\"branch_count\\\": 1,\\n    \\\"branches\\\": [\\n      {\\n        \\\"current\\\": true,\\n        \\\"name\\\": \\\"master\\\"\\n      }\\n    ],\\n    \\\"default_branch\\\": null,\\n    \\\"detached\\\": false,\\n    \\\"note\\\": \\\"orientation only \u2014 `repo_status` is the next step for live state (ahead/behind, changed files, shelved count, commits no ref points at); `repo_history` goes deeper (position log, full branch list); `repo_recover` searches the object store for commits even the reflog has forgotten\\\",\\n    \\\"recent_commits\\\": [\\n      \\\"50c2d4d stella-harbor: task workspace baseline\\\"\\n    ],\\n    \\\"remotes\\\": [],\\n    \\\"repository\\\": true,\\n    \\\"shelved\\\"",
-      "output_truncated": true,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__J9nn7YQ"
-    },
-    "read_file": {
-      "arm": "w10b",
-      "input": "{\n  \"limit\": 20,\n  \"path\": \"/app/pyknotid/pyknotid/make/torus.py\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"     1\\t'''\\n     2\\tTorus knots\\n     3\\t===========\\n     4\\t\\n     5\\tFunctions for creating torus knots and links.\\n     6\\t\\n     7\\tAPI documentation\\n     8\\t-----------------\\n     9\\t'''\\n    10\\t\\n    11\\tfrom __future__ import division\\n    12\\t\\n    13\\timport numpy as np\\n    14\\tfrom fractions import gcd\\n    15\\t\\n    16\\tfrom pyknotid.spacecurves.knot import Knot\\n    17\\tfrom pyknotid.spacecurves.link import Link\\n    18\\t\\n    19\\t\\n    20\\tdef torus_knot_num_components(p, q):\\n\\n(20/193 lines shown \u00b7 read 1\u00d7 this session)\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__5nLVNS5"
-    },
-    "read_output": {
-      "arm": "w10b",
-      "input": "{\n  \"handle\": \"proc-1\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"proc-1 `/usr/local/bin/webserver.sh` (webserver): running\\n127.0.0.1 - - [12/Aug/2026 00:28:19] \\\"GET / HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:28:32] \\\"GET /hello.html HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:28:58] \\\"GET / HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:29:55] \\\"GET /hello.html HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:30:02] \\\"GET / HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:31:36] \\\"GET /hello.html HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:31:36] \\\"GET /hello.html HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:32:15] \\\"GET / HTTP/1.1\\\" 200 -\\n127.0.0.1 - - [12/Aug/2026 00:32:40] \\\"GET / HTTP/1.1\\\" 200 -\\n\"\n  }\n}",
-      "output_truncated": false,
-      "task": "configure-git-webserver",
-      "trial": "configure-git-webserver__sktTpxP"
-    },
-    "repo_commit": {
-      "arm": "w10b",
-      "input": "{\n  \"message\": \"Add log severity summary CSV\",\n  \"paths\": [\n    \"/app/summary.csv\"\n  ]\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"committed: 535e6d6 Add log severity summary CSV\"\n  }\n}",
-      "output_truncated": false,
-      "task": "log-summary-date-ranges",
-      "trial": "log-summary-date-ranges__WiCPR6a"
-    },
-    "repo_status": {
-      "arm": "w10b",
-      "input": "{}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"{\\n  \\\"branch\\\": \\\"master\\\",\\n  \\\"worktree\\\": {\\n    \\\"linked\\\": false,\\n    \\\"candidate_shadow\\\": false,\\n    \\\"main_branch\\\": \\\"master\\\"\\n  },\\n  \\\"head\\\": {\\n    \\\"commit\\\": \\\"53ae7d3\\\",\\n    \\\"subject\\\": \\\"stella-harbor: task workspace baseline\\\"\\n  },\\n  \\\"ahead\\\": null,\\n  \\\"behind\\\": null,\\n  \\\"changed\\\": [\\n    {\\n      \\\"state\\\": \\\"??\\\",\\n      \\\"path\\\": \\\"check_cert.py\\\"\\n    },\\n    {\\n      \\\"state\\\": \\\"??\\\",\\n      \\\"path\\\": \\\"ssl/\\\"\\n    },\\n    {\\n      \\\"state\\\": \\\"??\\\",\\n      \\\"path\\\": \\\"test_ssl_artifacts.py\\\"\\n    }\\n  ],\\n  \\\"truncated\\\": false,\\n  \\\"unreachable\\\": [],\\n  \\\"unreachable_truncated\\\": false,\\n  \\\"stashes\\\": 0\\n}\"\n  }\n}",
-      "output_truncated": false,
-      "task": "openssl-selfsigned-cert",
-      "trial": "openssl-selfsigned-cert__mYeVDop"
-    },
-    "save_memory": {
-      "arm": "w10b",
-      "input": "{\n  \"memory\": \"When building pyknotid (SPOCKnots) from source with NumPy >=2.0 / Python 3.13:\\n- Build with `pip install . --no-build-isolation` after installing cython+setuptools+numpy in the global env; build isolation produces a pure-python wheel with NO compiled .so extensions.\\n- NumPy 2.0 removed the deprecated aliases np.float/np.int/np.bool/np.complex/np.object/np.str \u2014 replace with float/np.int_/bool/complex/object/str. Note pyknotid uses `n` as the numpy alias in most files (not `np`), so use n.int_ there.\\n- Python 3.9+ removed fractions.gcd \u2014 use math.gcd (pyknotid/make/torus.py).\\",
-      "input_truncated": true,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"saved memory `pyknotid-numpy2-build` \u2014 it will be in the prompt from the next session on\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__YeSke5W"
-    },
-    "screenshot": {
-      "arm": "w10p",
-      "input": "{\n  \"label\": \"view-code\"\n}",
-      "input_truncated": false,
-      "outcome": "error",
-      "output": "{\n  \"error\": {\n    \"message\": \"screen capture failed (exit 1): no capture backend (grim or imagemagick import)\\n\"\n  }\n}",
-      "output_truncated": false,
-      "task": "code-from-image",
-      "trial": "code-from-image__UTUWFRc"
-    },
-    "start_process": {
-      "arm": "w10b",
-      "input": "{\n  \"argv\": [\n    \"/usr/local/bin/webserver.sh\"\n  ],\n  \"name\": \"webserver\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"started `/usr/local/bin/webserver.sh` (webserver) as proc-1 (pid 702) \u2014 poll it with read_output, stop it with stop_process\"\n  }\n}",
-      "output_truncated": false,
-      "task": "configure-git-webserver",
-      "trial": "configure-git-webserver__sktTpxP"
-    },
-    "stop_process": {
-      "arm": "w10p",
-      "input": "{\n  \"handle\": \"proc-1\"\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"proc-1 terminated (code -1)\"\n  }\n}",
-      "output_truncated": false,
-      "task": "pypi-server",
-      "trial": "pypi-server__Y5AF37Z"
     },
     "task_complete": {
       "arm": "w10f",
@@ -199,26 +49,6 @@
       "output_truncated": false,
       "task": "configure-git-webserver",
       "trial": "configure-git-webserver__E7VJw7y"
-    },
-    "verify_done": {
-      "arm": "w10b",
-      "input": "{\n  \"test_cmd\": \"python -m pytest pyknotid/tests/test_witness_build.py -q\",\n  \"test_files\": [\n    \"/app/pyknotid/tests/test_witness_build.py\"\n  ],\n  \"timeout_secs\": 120\n}",
-      "input_truncated": false,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"WITNESS CONFIRMED \u2014 deterministic definition of done met:\\n- new code:      `python -m pytest pyknotid/tests/test_witness_build.py -q` exit 0 (PASS)\\n- previous code: baseline 4eb46f9a (pinned by refs/stella/task-baseline) + your test files \u2192 exit 1 (FAIL)\\nCheck the tail below: an assertion failure is a strong witness; a compile error (test references symbols that don't exist on the baseline) is weaker \u2014 prefer behavioral assertions when possible.\\n--- previous-code failure tail ---\\nF....                                                                    [100%]\\n=================================== FAILURES ===================================\\n___________________________ test_torus_uses_math_gcd ___________________________\\n\\n    def test_torus_uses_math_gcd():\\n        \\\"\\\"\\\"fractions.gcd was removed in Python 3.9; must use math.gcd.\\\"\\\"\\\"\\n>       src = _re",
-      "output_truncated": true,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__5nLVNS5"
-    },
-    "write_file": {
-      "arm": "w10b",
-      "input": "{\n  \"content\": \"\\\"\\\"\\\"Witness test: pyknotid Cython extensions compile and run under NumPy 2.3.0.\\n\\nExercises the README snippet and asserts the three required extensions\\n(chelpers, ccomplexity, cinvariants) are the compiled .so modules, not\\nthe pure-Python fallbacks.\\n\\\"\\\"\\\"\\nimport os\\n\\nimport numpy as np\\n\\nimport pyknotid\\nfrom pyknotid.spacecurves import chelpers, ccomplexity\\nfrom pyknotid import cinvariants\\nimport pyknotid.make as mk\\nimport pyknotid.spacecurves as sp\\n\\n\\ndef test_compiled_extensions_are_native():\\n    # The compiled extensions ship as .so (CPython extension modul",
-      "input_truncated": true,
-      "outcome": "ok",
-      "output": "{\n  \"ok\": {\n    \"content\": \"wrote 1241 bytes to /app/pyknotid/tests/test_witness_build.py\"\n  }\n}",
-      "output_truncated": false,
-      "task": "build-cython-ext",
-      "trial": "build-cython-ext__5nLVNS5"
     }
   },
   "provenance": {

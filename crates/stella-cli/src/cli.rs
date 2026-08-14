@@ -514,8 +514,9 @@ pub(crate) enum Command {
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
         /// a change that flips a failing test to passing is proven done.
-        /// Omitted, the only proof left is the worker's own verify_done, and
-        /// a turn that reaches neither is reported unverified — not passed.
+        /// Omitted, the pipeline's witness stage is the remaining oracle,
+        /// and a turn that reaches neither is reported unverified — not
+        /// passed.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
@@ -797,7 +798,7 @@ pub(crate) enum Command {
         output_format: OutputFormat,
     },
 
-    /// Find code — the CLI door to the `search` tool the agent calls
+    /// Find code — semantic and structural search over the workspace
     ///
     /// Describe what you are looking for — a question, a behaviour, or a
     /// symbol/file name — and get back the files that answer it, ranked by
