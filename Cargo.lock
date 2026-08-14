@@ -3164,6 +3164,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-plugin"
+version = "0.9.47"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "toml",
+]
+
+[[package]]
 name = "stella-protocol"
 version = "0.9.47"
 dependencies = [
