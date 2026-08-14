@@ -26,6 +26,11 @@ import { Tip } from "@/components/ui/tooltip";
  *
  * A `—` still has to say *why* (#2108): when an arm's cost is unknown the
  * cost card's sub-line names the models with no price row.
+ *
+ * The tasks card carries an `incidents` row for the third rule, which is
+ * about what a rate CANNOT say: a trial that scored the reward and then
+ * raised is invisible in a solve rate, so exceptions are counted beside it and
+ * never folded into it (#2066, #3225).
  */
 
 /** Per-arm figures the wire totals do not reliably carry, summed from the
@@ -40,13 +45,26 @@ interface CellSums {
   attempted: number;
   tools: number;
   steps: number;
+  /** Attempted trials that observed ANY behaviour — a step or a tool call.
+   *
+   *  The denominator behind `tools`, and deliberately NOT `usage_measured`
+   *  (#3224). Behaviour and spend come from the same artifacts but different
+   *  sub-objects: `telemetry.py` counts steps/tools off the trajectory's
+   *  `steps` array and reads tokens off its `final_metrics`, so `final_metrics`
+   *  can be missing while the step array is intact. On match `feebd80ba873`
+   *  the `claude code` arm is exactly that — `usage_measured: false` on all
+   *  three trials, but two of them recorded `steps: 1, tools: 0`, which is a
+   *  real observation of zero tool calls. Gating tools on the usage flag would
+   *  hide those two genuine zeros, so the honest test is whether this seat was
+   *  ever observed doing anything at all. */
+  observed: number;
 }
 
 function useCellSums(snapshot: Snapshot): Record<string, CellSums> {
   return React.useMemo(() => {
     const sums: Record<string, CellSums> = {};
     for (const seat of snapshot.contestants) {
-      sums[seat.id] = { attempted: 0, tools: 0, steps: 0 };
+      sums[seat.id] = { attempted: 0, tools: 0, steps: 0, observed: 0 };
     }
     for (const row of snapshot.rows) {
       for (const seat of snapshot.contestants) {
@@ -54,6 +72,7 @@ function useCellSums(snapshot: Snapshot): Record<string, CellSums> {
         if (!cell) continue;
         const sum = sums[seat.id];
         if (cell.status === "running" || cell.status === "done") sum.attempted += 1;
+        if ((cell.steps || 0) > 0 || (cell.tools || 0) > 0) sum.observed += 1;
         sum.tools += cell.tools || 0;
         sum.steps += cell.steps || 0;
       }
@@ -100,6 +119,93 @@ function avg(numer: number, denom: number): number | null {
   return denom > 0 ? numer / denom : null;
 }
 
+/** One arm's exceptions, split by whether the trial had already solved. */
+interface Incidents {
+  onSolved: number;
+  onFailed: number;
+  timeoutAfterSolve: number;
+  timeoutBeforeSolve: number;
+}
+
+/**
+ * Trials that raised, per arm, counted STRICTLY APART from the solve rate in
+ * both directions (#2066).
+ *
+ * A trial can score the reward and then raise, so folding either number into
+ * the other hides exactly the trials a headline rate flatters — which is why
+ * this is its own row beside `success` rather than a correction applied to it.
+ * An incident on a SOLVED trial means the agent kept burning budget after
+ * succeeding; on a failed trial it is the ordinary kind.
+ *
+ * Timeouts split for the same reason: `solved_then_timeout` (did not stop when
+ * done) and `timeout_before_solve` (ran out of time) mean opposite things, and
+ * a merged count cannot be acted on — the first cost four trials on one
+ * certification panel before the halt was wired (#2661).
+ *
+ * Per arm rather than per match: the old header summed both arms into one
+ * tile, which could not say which agent was the one that would not stop.
+ */
+function useIncidents(snapshot: Snapshot): Record<string, Incidents> {
+  return React.useMemo(() => {
+    const out: Record<string, Incidents> = {};
+    for (const seat of snapshot.contestants) {
+      out[seat.id] = {
+        onSolved: 0,
+        onFailed: 0,
+        timeoutAfterSolve: 0,
+        timeoutBeforeSolve: 0,
+      };
+    }
+    for (const row of snapshot.rows) {
+      for (const seat of snapshot.contestants) {
+        const cell = row.cells[seat.id];
+        if (!cell || cell.status !== "done" || !cell.failure) continue;
+        // The #2076 taxonomy label is authoritative — only the exception the
+        // agent-budget machinery actually raises counts as a timeout. The
+        // substring test survives solely for payloads recorded before the
+        // field existed.
+        const isTimeout =
+          cell.outcome_reason != null
+            ? cell.outcome_reason === "solved_then_timeout" ||
+              cell.outcome_reason === "timeout_before_solve"
+            : /timeout/i.test(cell.failure);
+        const seen = out[seat.id];
+        if (cell.resolved === true) {
+          seen.onSolved += 1;
+          if (isTimeout) seen.timeoutAfterSolve += 1;
+        } else {
+          seen.onFailed += 1;
+          if (isTimeout) seen.timeoutBeforeSolve += 1;
+        }
+      }
+    }
+    return out;
+  }, [snapshot.rows, snapshot.contestants]);
+}
+
+/**
+ * The timeout split, spelled per arm for the tasks card's tooltip.
+ *
+ * It lives in prose rather than in a row because the two numbers are a
+ * breakdown OF the incident count, not a fourth metric — but it cannot be
+ * dropped: "did not stop when done" and "ran out of time before it" mean
+ * opposite things about an agent, and only the first is a halt bug.
+ */
+function incidentTimeoutNote(
+  seats: ContestantSnap[],
+  incidents: Record<string, Incidents>,
+): string {
+  const parts = seats.flatMap((seat) => {
+    const seen = incidents[seat.id];
+    if (!seen || seen.timeoutAfterSolve + seen.timeoutBeforeSolve === 0) return [];
+    return [
+      `${seat.name}: ${seen.timeoutAfterSolve} timed out after the solve, ` +
+        `${seen.timeoutBeforeSolve} before it`,
+    ];
+  });
+  return parts.length > 0 ? `Timeouts — ${parts.join("; ")}.` : "No timeouts recorded.";
+}
+
 /**
  * One card: a label, then a small table — the arms across the top, one row
  * per metric. The first column is the metric's own label, so a card with
@@ -129,14 +235,13 @@ function CompareCard({
       >
         <span />
         {seats.map((seat) => (
-          /* The arm is identified by its COLOUR CHIP, not by tinted text.
-             Five cards across a 1600px page leave each name ~90px, so every
-             name here truncates — and `text-(--seat-fg)` cannot rescue it:
-             that token is declared on `:root`, where `var(--seat, …)` is
-             substituted against a `--seat` that does not exist yet, so every
-             seat inherits the same paper fallback. Measured, not assumed
-             (see the PR). The chip reads `--seat` on the element that sets
-             it, which is the same shape `task-table.tsx`'s legend uses. */
+          /* The chip carries the identity, because five cards across a 1600px
+             page leave each name ~90px and every name here truncates. The
+             tint is the second signal rather than the only one, which is the
+             same shape `task-table.tsx`'s legend uses — and it is now a real
+             per-seat colour: `--seat-fg` used to be declared on `:root`, where
+             it resolved against a `--seat` that does not exist and every seat
+             inherited one paper fallback (#3223). */
           <div
             key={seat.id}
             style={seatStyle(seat.color)}
@@ -144,7 +249,9 @@ function CompareCard({
             className="flex min-w-0 items-center justify-end gap-1.5"
           >
             <span className="size-[7px] flex-none bg-(--seat)" />
-            <span className="truncate font-mono text-[10.5px] text-muted">{seat.name}</span>
+            <span className="truncate font-mono text-[10.5px] text-(--seat-fg)">
+              {seat.name}
+            </span>
           </div>
         ))}
         {rows.map((row) => (
@@ -170,6 +277,7 @@ function CompareCard({
 export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
   const seats = snapshot.contestants;
   const cellSums = useCellSums(snapshot);
+  const incidents = useIncidents(snapshot);
 
   const critical = (snapshot.detections || []).filter((d) => d.severity === "critical").length;
 
@@ -196,19 +304,29 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
           label="tool calls"
           blurb={
             "Every tool invocation the arm made, and the mean per attempted task. " +
-            "Summed from the per-task cells, so a running trial's calls count as they happen."
+            "Summed from the per-task cells, so a running trial's calls count as they happen. " +
+            "`—` means no trial of this arm was ever observed taking a step or calling a " +
+            "tool; a zero here is a trial that genuinely called nothing."
           }
           seats={seats}
           rows={[
             {
               label: "total",
-              values: seats.map((seat) => fmtCount(cellSums[seat.id]?.tools ?? 0)),
+              values: seats.map((seat) => {
+                const sums = cellSums[seat.id];
+                // Zero observed trials means nothing watched this arm work,
+                // so the sum is unknown rather than none (#3224). One
+                // observed trial is enough to make the total a measurement.
+                if (!sums || sums.observed <= 0) return "—";
+                return fmtCount(sums.tools);
+              }),
             },
             {
               label: "avg / task",
               values: seats.map((seat) => {
                 const sums = cellSums[seat.id];
-                const perTask = sums ? avg(sums.tools, sums.attempted) : null;
+                if (!sums || sums.observed <= 0) return "—";
+                const perTask = avg(sums.tools, sums.attempted);
                 return perTask == null ? "—" : perTask.toFixed(1);
               }),
             },
@@ -284,7 +402,12 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
           blurb={
             "Attempted counts every trial that started (running or done). Solved is trials " +
             "the verifier passed. The success rate is over judged trials only — a queued or " +
-            "running trial is not a failure, and an infrastructure void is outside the rate."
+            "running trial is not a failure, and an infrastructure void is outside the rate. " +
+            "Incidents are trials that RAISED, read solved/failed, and are counted apart " +
+            "from the rate in both directions: a trial can score the reward and then raise, " +
+            "and the tick alone hides it. An incident on a solved trial means the agent kept " +
+            "burning budget after succeeding — amber flags exactly that. " +
+            incidentTimeoutNote(seats, incidents)
           }
           seats={seats}
           rows={[
@@ -299,6 +422,21 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
             {
               label: "success",
               values: seats.map((seat) => fmtPct(seat.totals.solve_rate)),
+            },
+            {
+              // Restored from the tile the five-card rebuild dropped (#3225),
+              // now per arm: the old one summed both arms and so could not say
+              // which agent was the one that would not stop.
+              label: "incidents",
+              values: seats.map((seat) => {
+                const seen = incidents[seat.id];
+                if (!seen) return "—";
+                return (
+                  <span className={seen.onSolved > 0 ? "text-warn" : undefined}>
+                    {seen.onSolved}/{seen.onFailed}
+                  </span>
+                );
+              }),
             },
           ]}
         />
