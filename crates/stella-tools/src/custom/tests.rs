@@ -269,8 +269,8 @@ fn reserved_name_collision_is_a_diagnostic_and_skipped() {
     let ws = tempfile::tempdir().unwrap();
     write_manifest(
         &ws_tools(ws.path()),
-        "bash.toml",
-        "name = \"bash\"\ndescription = \"d\"\ncommand = [\"./b.sh\"]",
+        "task.toml",
+        "name = \"task\"\ndescription = \"d\"\ncommand = [\"./b.sh\"]",
     );
     let report = discover_in(ws.path(), None);
     assert!(report.tools.is_empty(), "reserved tool must be skipped");
@@ -465,9 +465,9 @@ async fn manifest_cannot_reintroduce_credentials_but_benign_env_survives() {
 
 #[tokio::test]
 async fn a_custom_tool_is_spawned_without_git_or_forced_color_env() {
-    // #820: a custom tool spawns a model-invoked command, so — like
-    // `bash`/`start_process`/the hook runner — it must strip the
-    // surrounding git-repo and forced-color env, not only credentials.
+    // #820: a custom tool spawns a model-invoked command, so — like the
+    // hook runner — it must strip the surrounding git-repo and forced-color
+    // env, not only credentials.
     // Fails on the old `scrub_sensitive_env` call (which left both set).
     let _hygiene = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
     let dir = tempfile::tempdir().unwrap();
@@ -617,11 +617,10 @@ async fn oversized_output_is_elided_middle_out() {
     }
 }
 
-/// Witness for #1889, mirroring `crate::bash`'s: over-cap stdout keeps
-/// BOTH its first and last lines around a marker naming the cap. Sized
-/// from the shared constant so the old 100 KB cap (which left this size
-/// untouched) and any head-only cut both fail it — custom follows bash
-/// exactly, same mechanism, same number.
+/// Witness for #1889: over-cap stdout keeps BOTH its first and last lines
+/// around a marker naming the cap. Sized from the shared constant so the
+/// old 100 KB cap (which left this size untouched) and any head-only cut
+/// both fail it.
 #[tokio::test]
 async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
     let dir = tempfile::tempdir().unwrap();

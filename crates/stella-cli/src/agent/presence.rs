@@ -20,8 +20,8 @@ pub(crate) struct SessionPresence {
 
 impl SessionPresence {
     /// Announce the session (status In Progress), titled from the workspace
-    /// and the prompt/goal that started it, and bind this session's durability
-    /// to `tools`.
+    /// and the prompt/goal that started it, and bind this session's
+    /// durability.
     ///
     /// The binding is done HERE, rather than left to each headless driver,
     /// because this is the moment the session acquires the identity durability
@@ -29,7 +29,7 @@ impl SessionPresence {
     /// session whose turns checkpoint nowhere — and the failure would be
     /// silent, because an unbound sink is indistinguishable from a session
     /// that simply never crashed.
-    pub(crate) fn announce(cfg: &Config, prompt: &str, tools: &Arc<ToolRegistry>) -> Self {
+    pub(crate) fn announce(cfg: &Config, prompt: &str) -> Self {
         let name = cfg
             .workspace_root
             .file_name()
@@ -57,7 +57,7 @@ impl SessionPresence {
         // durability advisory must never land inside a machine-readable
         // document.
         if let Some(warning) =
-            crate::durability::bind_session(&cfg.durability, tools, &cfg.workspace_root, &record.id)
+            crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &record.id)
         {
             eprintln!("  {warning}");
         }

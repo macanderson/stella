@@ -37,11 +37,11 @@ Most agents decide they are *done* when a test suite passes. That accepts two
 failure modes silently: a suite that was already green, and an edit that doesn't
 actually exercise the fix. Stella rejects both.
 
-`verify_done` replays your **new** test files against the **previous** code in a
-shadow worktree pinned at `git HEAD`. The test must **fail there** and **pass on
-your change**. A green suite alone is never accepted — the fail → pass
-transition *is* the evidence. When you don't hand it a test, the staged pipeline
-(`stella run`, on by default) spawns an independent **witness author** that
+The staged pipeline (`stella run`, on by default) demands a **witness test**:
+one that must **fail on the previous code** and **pass on your change**. A
+green suite alone is never accepted — the fail → pass
+transition *is* the evidence. Hand it your own test with `--test-command`, or
+the pipeline spawns an independent **witness author** that
 writes the failing test, tamper-excluded from the code under change, so the flip
 cannot be gamed. Deterministic definition of done, enforced by construction —
 see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
@@ -67,12 +67,12 @@ plane.
 | **BYOK, model-agnostic** | Nine hosted providers (Anthropic, OpenAI, Gemini, xAI, DeepSeek, Z.ai, OpenRouter, Vertex, Bedrock) plus **any** OpenAI-compatible local server (Ollama, vLLM, LM Studio, llama.cpp). No account, no gateway. Pin per run with `--model provider/id`. |
 | **Zero telemetry egress by default** | Community/default Stella sends no telemetry anywhere. Executions, the full event stream, per-call token/cost telemetry, and a `[C·R·U·D] path` files-touched ledger land in a local `.stella/private/store.db` you can open with any SQLite client — and the store is never a dependency of a turn. The sole exception is an [explicitly enrolled Oxagen Enterprise managed deployment](https://stella.oxagen.sh/docs/telemetry#oxagen-enterprise-managed-export): a current signed policy may authorize one minimal content-free operational rollup to one exact allowlisted HTTPS sink. |
 | **Budget you can trust** | `--spend-limit <usd>` aborts cleanly **between** steps, never mid-tool, so a cap can't corrupt a half-written edit. |
-| **Bounded blast radius** | File tools are workspace-root-pinned; the `bash` tool is **registered by default** and withheld with settings `tools.bash: "off"` (and switching it off bounds the shell _tool_, not every path to a shell — `build_project`, `run_tests`, `verify_done` and `run_script` still compose `bash -c` behind the `command.started` policy fence); a cloned repo's own hooks never auto-execute (`STELLA_PROJECT_HOOKS=1` to opt in). Note what is *not* claimed: no spawned command is confined in-process — the opt-in `bash` sandbox was removed because it bounded one tool while every other spawn path went around it, and containment now means running Stella inside a container. |
+| **Bounded blast radius** | No built-in runs a shell or spawns a workspace process — the twelve that ship are the task board, sub-agent delegation, scratch state, and an environment probe. Code execution enters only through the surfaces you opt into: workspace custom tools (gated, default off) and hooks — a cloned repo's own hooks never auto-execute (`STELLA_PROJECT_HOOKS=1` to opt in). Note what is *not* claimed: a spawned command from those opt-in surfaces is not confined in-process — containment means running Stella inside a container. |
 
 ## Also in the box
 
 An **offline tree-sitter code graph** queried instead of grepping (`stella
-graph`, the `graph_query` tool; Rust/TS/TSX/JS/Python/Go/Java/C/PHP/SQL, no
+search`; Rust/TS/TSX/JS/Python/Go/Java/C/PHP/SQL, no
 key needed) ·
 **prompt-cache-native memory** that loads once into a byte-stable system prompt
 at ~0.1× input cost · a **fleet mode** that fans a task DAG out to

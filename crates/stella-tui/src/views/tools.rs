@@ -21,8 +21,8 @@
 //! 1. **Most specific key wins, and toggling writes the most specific key.**
 //!    Toggling one tool writes its exact name, never its group; toggling a
 //!    group header writes the group key. A tool can therefore stay off after
-//!    its group is switched on (an exact `"send_stdin": "off"` outranks a
-//!    group `"process": "on"`) — the row says so, naming the key that did it,
+//!    its group is switched on (an exact `"save_state": "off"` outranks a
+//!    group `"scratch": "on"`) — the row says so, naming the key that did it,
 //!    rather than showing a switch that visibly does nothing.
 //! 2. **An org-managed denial is not a switch.** A row the managed ceiling
 //!    denies renders LOCKED and refuses to toggle. Letting the UI imply a user
@@ -572,8 +572,8 @@ fn render_row(
 ///
 /// The default row is three fixed-width columns — name, then `on`/`off`, then
 /// a reason — and the padding between them is what separates the values. A
-/// reader collapses runs of spaces, so `read_file            on` becomes
-/// `read_file on`, which happens to still be readable; `mcp__github__create…
+/// reader collapses runs of spaces, so `get_state            on` becomes
+/// `get_state on`, which happens to still be readable; `mcp__github__create…
 /// off  org policy` does not, because nothing says which token is the state
 /// and which is the reason. Both get labels here rather than only the row that
 /// visibly breaks.
@@ -671,15 +671,15 @@ mod tests {
         }
     }
 
-    /// A session with a built-in family, an MCP server's tool, and a
+    /// A session with the built-in families, an MCP server's tool, and a
     /// customer's own registered tool — the three sources the panel must show.
     fn sample_state() -> ToolPolicyState {
         ToolPolicyState {
             tools: vec![
-                tool("read_file", "file"),
-                tool("bash", "bash"),
-                tool("start_process", "process"),
-                tool("send_stdin", "process"),
+                tool("get_environment", "environment"),
+                tool("task", "task"),
+                tool("get_state", "scratch"),
+                tool("save_state", "scratch"),
                 tool("mcp__gh__create_issue", "mcp"),
                 tool("deploy_to_staging", "custom"),
             ],
@@ -710,19 +710,19 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "[bash]".to_string(),
-                "bash".to_string(),
                 "[custom]".to_string(),
                 // A customer's own tool gets its own section, by name.
                 "deploy_to_staging".to_string(),
-                "[file]".to_string(),
-                "read_file".to_string(),
+                "[environment]".to_string(),
+                "get_environment".to_string(),
                 "[mcp]".to_string(),
                 "mcp__gh__create_issue".to_string(),
-                "[process]".to_string(),
+                "[scratch]".to_string(),
                 // Sorted within the group.
-                "send_stdin".to_string(),
-                "start_process".to_string(),
+                "get_state".to_string(),
+                "save_state".to_string(),
+                "[task]".to_string(),
+                "task".to_string(),
             ],
             "groups sorted, tools sorted within them, one header each"
         );
@@ -732,8 +732,8 @@ mod tests {
     fn a_row_resolves_most_specific_key_first_over_saved_switches_and_edits() {
         let mut state = sample_state();
         state.switches.insert(WILDCARD.into(), false);
-        state.switches.insert("process".into(), true);
-        state.switches.insert("send_stdin".into(), false);
+        state.switches.insert("scratch".into(), true);
+        state.switches.insert("save_state".into(), false);
         let none = BTreeMap::new();
 
         let at = |name: &str| {
@@ -744,33 +744,33 @@ mod tests {
                 .expect("tool present")
         };
         assert!(
-            !tool_enabled(&state, &none, at("read_file")),
+            !tool_enabled(&state, &none, at("get_environment")),
             "wildcard off"
         );
         assert!(
-            tool_enabled(&state, &none, at("start_process")),
+            tool_enabled(&state, &none, at("get_state")),
             "group on beats the wildcard"
         );
         assert!(
-            !tool_enabled(&state, &none, at("send_stdin")),
+            !tool_enabled(&state, &none, at("save_state")),
             "exact off beats the group"
         );
 
         // An edit at a LESS specific level must not defeat a saved exact key —
         // the panel would otherwise show a tool as on that the runtime keeps off.
         let mut edits = BTreeMap::new();
-        edits.insert("process".to_string(), true);
+        edits.insert("scratch".to_string(), true);
         assert!(
-            !tool_enabled(&state, &edits, at("send_stdin")),
+            !tool_enabled(&state, &edits, at("save_state")),
             "a pending group grant does not outrank a saved exact denial"
         );
         // …and an edit at the SAME level does.
-        edits.insert("send_stdin".to_string(), true);
-        assert!(tool_enabled(&state, &edits, at("send_stdin")));
+        edits.insert("save_state".to_string(), true);
+        assert!(tool_enabled(&state, &edits, at("save_state")));
     }
 
-    /// Deliberately over `start_process`, whose group (`process`) has a
-    /// DIFFERENT name: `bash` sits in a group called `bash`, so a row toggle
+    /// Deliberately over `save_state`, whose group (`scratch`) has a
+    /// DIFFERENT name: `task` sits in a group called `task`, so a row toggle
     /// that wrongly wrote the group key would be indistinguishable there.
     #[test]
     fn toggling_a_tool_writes_its_exact_name_never_its_group() {
@@ -780,26 +780,26 @@ mod tests {
         ui.tools.row = rows
             .iter()
             .position(
-                |row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "start_process"),
+                |row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "save_state"),
             )
-            .expect("start_process row");
+            .expect("save_state row");
 
         handle_deck_key(ch(' '), &model, &mut ui);
         assert_eq!(
             ui.tools.edits,
-            BTreeMap::from([("start_process".to_string(), false)]),
-            "the exact tool key, and only it — never the `process` group"
+            BTreeMap::from([("save_state".to_string(), false)]),
+            "the exact tool key, and only it — never the `scratch` group"
         );
         // Its sibling in the same group is untouched, which is the whole point
         // of writing the most specific key.
-        let send_stdin = state.tools.iter().find(|t| t.name == "send_stdin").unwrap();
-        assert!(tool_enabled(&state, &ui.tools.edits, send_stdin));
+        let get_state = state.tools.iter().find(|t| t.name == "get_state").unwrap();
+        assert!(tool_enabled(&state, &ui.tools.edits, get_state));
 
         // Toggling back flips the same key rather than deleting it.
         handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             ui.tools.edits,
-            BTreeMap::from([("start_process".to_string(), true)])
+            BTreeMap::from([("save_state".to_string(), true)])
         );
         // `x` drops the unsaved edit entirely.
         handle_deck_key(ch('x'), &model, &mut ui);
@@ -813,16 +813,16 @@ mod tests {
         let rows = ui.tools.rows();
         ui.tools.row = rows
             .iter()
-            .position(|row| matches!(row, ToolsRow::Group(g) if g == "process"))
-            .expect("process header");
+            .position(|row| matches!(row, ToolsRow::Group(g) if g == "scratch"))
+            .expect("scratch header");
         handle_deck_key(ch(' '), &model, &mut ui);
         assert_eq!(
             ui.tools.edits,
-            BTreeMap::from([("process".to_string(), false)]),
+            BTreeMap::from([("scratch".to_string(), false)]),
             "the group key covers the family in one line"
         );
         let state = ui.tools.state.clone().unwrap();
-        for name in ["start_process", "send_stdin"] {
+        for name in ["get_state", "save_state"] {
             let tool = state.tools.iter().find(|t| t.name == name).unwrap();
             assert!(
                 !tool_enabled(&state, &ui.tools.edits, tool),
@@ -832,30 +832,35 @@ mod tests {
         // A member edit made afterwards is more specific and wins.
         ui.tools.row = rows
             .iter()
-            .position(
-                |row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "send_stdin"),
-            )
-            .expect("send_stdin row");
+            .position(|row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "get_state"))
+            .expect("get_state row");
         handle_deck_key(ch(' '), &model, &mut ui);
-        assert_eq!(ui.tools.edits.get("send_stdin"), Some(&true));
+        assert_eq!(ui.tools.edits.get("get_state"), Some(&true));
     }
 
     #[test]
     fn a_managed_denied_row_is_locked_and_refuses_to_toggle_on() {
         let (model, mut ui) = open_ui();
         let mut state = sample_state();
-        state.switches.insert("bash".into(), false);
+        state.switches.insert("task".into(), false);
         for tool in &mut state.tools {
-            if tool.name == "bash" {
+            if tool.name == "task" {
                 tool.locked = true;
                 tool.off = Some(ToolDenial {
-                    key: "bash".into(),
+                    key: "task".into(),
                     scope: Some(ToolScope::Managed),
                 });
             }
         }
         ui.tools.state = Some(state);
-        ui.tools.row = 1; // the `bash` tool row
+        let rows = ui.tools.rows();
+        let state_snapshot = ui.tools.state.clone().unwrap();
+        ui.tools.row = rows
+            .iter()
+            .position(
+                |row| matches!(row, ToolsRow::Tool(i) if state_snapshot.tools[*i].name == "task"),
+            )
+            .expect("the `task` tool row");
 
         handle_deck_key(ch(' '), &model, &mut ui);
         assert!(
@@ -871,37 +876,37 @@ mod tests {
             ui.tools.status
         );
         let state = ui.tools.state.as_ref().unwrap();
-        let bash = state.tools.iter().find(|t| t.name == "bash").unwrap();
-        assert!(!tool_enabled(state, &ui.tools.edits, bash));
+        let task = state.tools.iter().find(|t| t.name == "task").unwrap();
+        assert!(!tool_enabled(state, &ui.tools.edits, task));
         assert_eq!(
-            off_reason(bash).as_deref(),
-            Some("locked · \"bash\" off in org-managed settings")
+            off_reason(task).as_deref(),
+            Some("locked · \"task\" off in org-managed settings")
         );
 
         // Even a forged edit (a group or wildcard grant reaching the map any
         // other way) cannot render it on.
         let mut edits = BTreeMap::new();
         edits.insert(WILDCARD.to_string(), true);
-        edits.insert("bash".to_string(), true);
+        edits.insert("task".to_string(), true);
         assert!(
-            !tool_enabled(state, &edits, bash),
+            !tool_enabled(state, &edits, task),
             "locked short-circuits every level of the precedence ladder"
         );
         // The group header the org fully denies is locked too.
-        assert!(group_locked(state, "bash"));
+        assert!(group_locked(state, "task"));
     }
 
     #[test]
     fn s_and_shift_s_send_only_the_edited_keys_at_the_chosen_scope() {
         let (model, mut ui) = open_ui();
-        ui.tools.row = 1; // bash
+        ui.tools.row = 1; // deploy_to_staging, the first tool row
         handle_deck_key(ch(' '), &model, &mut ui);
 
         handle_deck_key(ch('s'), &model, &mut ui);
         assert_eq!(
             ui.pending_inputs,
             vec![WorkspaceInput::ToolsSave {
-                switches: BTreeMap::from([("bash".to_string(), false)]),
+                switches: BTreeMap::from([("deploy_to_staging".to_string(), false)]),
                 scope: AgentScope::User,
             }],
             "only the changed key goes out, at user scope"
@@ -913,7 +918,7 @@ mod tests {
         assert_eq!(
             ui.pending_inputs,
             vec![WorkspaceInput::ToolsSave {
-                switches: BTreeMap::from([("bash".to_string(), false)]),
+                switches: BTreeMap::from([("deploy_to_staging".to_string(), false)]),
                 scope: AgentScope::Project,
             }]
         );
@@ -925,10 +930,11 @@ mod tests {
         let mut ui = DeckUi::default();
         ui.splash.skip();
         ui.tools.state = Some(sample_state());
-        ui.tools.edits.insert("bash".into(), false);
+        ui.tools.edits.insert("task".into(), false);
         ui.tools.busy = true;
 
-        // A failed save: the snapshot still says bash is on, so the edit stands.
+        // A failed save: the snapshot still says `task` is on, so the edit
+        // stands.
         ingest_inbound(
             &Inbound::ToolPolicy {
                 state: sample_state(),
@@ -937,13 +943,13 @@ mod tests {
             &mut model,
             &mut ui,
         );
-        assert_eq!(ui.tools.edits.get("bash"), Some(&false), "still unsaved");
+        assert_eq!(ui.tools.edits.get("task"), Some(&false), "still unsaved");
         assert!(!ui.tools.busy, "a snapshot always ends the in-flight op");
         assert!(ui.tools.dirty());
 
         // The successful echo carries the switch — the marker clears.
         let mut saved = sample_state();
-        saved.switches.insert("bash".into(), false);
+        saved.switches.insert("task".into(), false);
         ingest_inbound(
             &Inbound::ToolPolicy {
                 state: saved.clone(),
@@ -1004,16 +1010,16 @@ mod tests {
 
     #[test]
     fn the_reason_names_the_key_and_the_scope_that_switched_it_off() {
-        let mut off = tool("start_process", "process");
+        let mut off = tool("save_state", "scratch");
         off.off = Some(ToolDenial {
-            key: "process".into(),
+            key: "scratch".into(),
             scope: Some(ToolScope::Project),
         });
         assert_eq!(
             off_reason(&off).as_deref(),
-            Some("\"process\" off in project settings")
+            Some("\"scratch\" off in project settings")
         );
-        assert_eq!(off_reason(&tool("read_file", "file")), None);
+        assert_eq!(off_reason(&tool("get_state", "scratch")), None);
     }
 
     #[test]
@@ -1032,18 +1038,18 @@ mod tests {
 
         let (_model, mut ui) = open_ui();
         let mut state = sample_state();
-        state.switches.insert("process".into(), false);
+        state.switches.insert("scratch".into(), false);
         for tool in &mut state.tools {
-            if tool.group == "process" {
+            if tool.group == "scratch" {
                 tool.off = Some(ToolDenial {
-                    key: "process".into(),
+                    key: "scratch".into(),
                     scope: Some(ToolScope::User),
                 });
             }
-            if tool.name == "bash" {
+            if tool.name == "task" {
                 tool.locked = true;
                 tool.off = Some(ToolDenial {
-                    key: "bash".into(),
+                    key: "task".into(),
                     scope: Some(ToolScope::Managed),
                 });
             }
@@ -1055,7 +1061,7 @@ mod tests {
         render_panel(&ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("tools ·"), "title drawn");
-        assert!(text.contains("PROCESS"), "group headers drawn");
+        assert!(text.contains("SCRATCH"), "group headers drawn");
         assert!(text.contains("MCP"), "an MCP section is listed");
         assert!(text.contains("CUSTOM"), "a custom-tool section is listed");
         assert!(

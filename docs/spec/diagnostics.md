@@ -391,7 +391,7 @@ records at `debug` that carry **only** the seq and a shape — never the payload
 - `AgentEvent::TextDelta` → **no record**. Counted into the turn tally, exactly
   as `observe/tally.rs` concluded after building the alternative and rejecting
   it for putting model output in a log.
-- `AgentEvent::ToolCall` → `{code:"agent.tool.call", seq, tool:"bash", args_bytes:412}`.
+- `AgentEvent::ToolCall` → `{code:"agent.tool.call", seq, tool:"task_create", args_bytes:412}`.
 
 One merged, ordered timeline for an operator; one authority for replay. The
 domain plane stays the source of truth and the diagnostic plane points at it.

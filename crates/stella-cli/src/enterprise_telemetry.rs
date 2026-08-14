@@ -391,53 +391,24 @@ fn register_verified_credentials(enrollment: &VerifiedEnrollment) {
     ]);
 }
 
-/// Tool names a process-free registry must never surface. Every entry is a
-/// real `stella_tools` tool name registered only inside the process-ful
-/// branch of `ToolRegistry` — pinned by
-/// `every_process_free_forbidden_name_is_a_real_tool`, so a hand-typed name
-/// that matches nothing can no longer pass the proof vacuously.
-pub(crate) const PROCESS_FREE_FORBIDDEN_TOOLS: &[&str] = &[
-    "bash",
-    "grep",
-    "glob",
-    "gather_context",
-    "build_project",
-    "run_tests",
-    "run_lint",
-    "format_code",
-    "run_script",
-    "start_process",
-    "read_output",
-    "clear_output",
-    "send_stdin",
-    "restart_process",
-    "stop_process",
-];
-
+/// Prove the built-in tool surface is closed over the declared catalog — the
+/// process-free posture's structural claim. Every advertised tool must be a
+/// catalog row, and no catalog row executes a subprocess: the registry's
+/// dispatchable surface is coordination, session state, and the environment
+/// report, so a registry whose surface equals the catalog cannot spawn.
+/// A stray name would mean a tool this proof has never audited.
 pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), String> {
-    let registry = stella_tools::ToolRegistry::with_backends_and_options(
-        workspace_root.to_path_buf(),
-        None,
-        None,
-        stella_tools::RegistryOptions {
-            media_host_data_isolation: Some(stella_tools::media::HostDataIsolation::ProcessFree),
-            ..Default::default()
-        },
-    );
-    if !registry.is_process_free() {
-        return Err("enterprise telemetry process-free registry proof failed".into());
-    }
+    let registry = stella_tools::ToolRegistry::new(workspace_root.to_path_buf());
+    let catalog: BTreeSet<&str> = stella_tools::catalog::ALL_NAMES.iter().copied().collect();
     let names: BTreeSet<String> = registry
         .schemas()
         .into_iter()
         .map(|schema| schema.name)
         .collect();
-    if let Some(name) = PROCESS_FREE_FORBIDDEN_TOOLS
-        .iter()
-        .find(|name| names.contains(**name))
-    {
+    if let Some(name) = names.iter().find(|name| !catalog.contains(name.as_str())) {
         return Err(format!(
-            "enterprise telemetry process-free registry exposes `{name}`"
+            "enterprise telemetry process-free registry exposes `{name}`, which the \
+             catalog does not declare"
         ));
     }
     Ok(())

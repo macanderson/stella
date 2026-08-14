@@ -172,8 +172,8 @@ stella inspect 42 --step 0 --diff --only system
 +++ turn 0 · step 0 · seq 0 (worker)
 +1 added, -0 removed  (system messages)
 @@ -14,3 +14,4 @@
- - Always read a file before editing it — never edit blind.
-+- Prefer `apply_edits` for a change touching several files.
+ - Create board tasks before starting multi-step work.
++- Save intermediate results with `save_state` instead of re-deriving them.
  - Make minimal, surgical edits.
 ```
 

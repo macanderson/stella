@@ -171,101 +171,8 @@ pub fn rename_tab(title: &str) {
     let _ = io::stdout().flush();
 }
 
-/// Render the Files Touched panel: one `[C|R|U|D]` badge per file, in
-/// first-touch order, sourced from the registry's CRUD ledger.
-pub fn files_touched_panel(entries: &[(String, String)]) {
-    if entries.is_empty() {
-        return;
-    }
-    println!(
-        "\n  {} {}",
-        "─".repeat(3).dimmed(),
-        "Files Touched".color(accent()).bold()
-    );
-    let width = entries.iter().map(|(_, ops)| ops.len()).max().unwrap_or(1);
-    for (path, ops) in entries {
-        let colored_ops: String = ops
-            .chars()
-            .map(|op| match op {
-                'C' => "C".green().to_string(),
-                'R' => "R".bright_magenta().to_string(),
-                'U' => "U".yellow().to_string(),
-                'D' => "D".red().to_string(),
-                other => other.to_string(),
-            })
-            .collect();
-        println!(
-            "  [{colored_ops}]{} {}",
-            " ".repeat(width - ops.len()),
-            path
-        );
-    }
-}
-
-/// Pretty per-verb rendering for the CRUD file tools; returns false (so the
-/// caller falls back to the generic key=value card) for anything else.
-fn file_tool_card(name: &str, input: &serde_json::Value) -> bool {
-    let Some(path) = input.get("path").and_then(|v| v.as_str()) else {
-        return false;
-    };
-    match name {
-        "read_file" => {
-            let range = match (
-                input.get("offset").and_then(|v| v.as_u64()),
-                input.get("limit").and_then(|v| v.as_u64()),
-            ) {
-                (Some(offset), Some(limit)) => format!(" [{offset}..+{limit}]"),
-                (Some(offset), None) => format!(" [{offset}..]"),
-                _ => String::new(),
-            };
-            println!(
-                "  {} {} {}{}",
-                "▷".bright_magenta(),
-                "read".bright_magenta(),
-                path,
-                range.dimmed()
-            );
-        }
-        "write_file" => {
-            let lines = input
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(|content| content.lines().count())
-                .unwrap_or(0);
-            println!(
-                "  {} {} {} {}",
-                "✚".green(),
-                "write".green(),
-                path,
-                format!("({lines} lines)").dimmed()
-            );
-        }
-        "edit_file" => {
-            println!("  {} {} {}", "±".yellow(), "edit".yellow(), path);
-            if let Some(old) = input.get("old_string").and_then(|v| v.as_str()) {
-                let old_line = truncate_with_ellipsis(old.lines().next().unwrap_or(""), 70);
-                println!("    {} {}", "-".red(), old_line.red().dimmed());
-            }
-            if let Some(new) = input.get("new_string").and_then(|v| v.as_str()) {
-                let new_line = truncate_with_ellipsis(new.lines().next().unwrap_or(""), 70);
-                println!("    {} {}", "+".green(), new_line.green());
-            }
-        }
-        "delete_file" => {
-            println!("  {} {} {}", "✖".red(), "delete".red(), path);
-        }
-        _ => return false,
-    }
-    true
-}
-
-/// Print a tool-call card: name, input summary, status. The CRUD file tools
-/// get a dedicated per-verb card (`file_tool_card`) while they're running;
-/// everything else gets the generic key=value summary below.
+/// Print a tool-call card: name, input summary, status.
 pub fn tool_call_card(name: &str, input: &serde_json::Value, status: &str) {
-    if status == "running" && file_tool_card(name, input) {
-        return;
-    }
     let icon = match status {
         "running" => "▶".bright_red(),
         "ok" => "✓".green(),
@@ -376,14 +283,11 @@ pub fn cost_summary(cost_usd: f64, model: &str, elapsed: Duration) {
 }
 
 /// The end-of-run recap (settings `enable_recap`): a deterministic synthesis
-/// of the outcome and what changed, printed after the file and cost panels in
-/// text mode. No model call — it reads the run's own facts. Complements the
-/// file-list panel with the "so what": did it complete, was it verified, and
-/// a created/modified/deleted tally.
+/// of the outcome, printed after the cost panel in text mode. No model call —
+/// it reads the run's own facts: did it complete, and was it verified.
 pub fn recap_panel(
     status: &stella_pipeline::PipelineStatus,
     verdict: Option<&stella_pipeline::Verdict>,
-    files: &[(String, String)],
 ) {
     use stella_pipeline::PipelineStatus;
     let headline = match status {
@@ -406,35 +310,8 @@ pub fn recap_panel(
         PipelineStatus::Aborted { reason, .. } => format!("⚠ aborted — {reason}"),
     };
 
-    let mut created = 0usize;
-    let mut modified = 0usize;
-    let mut deleted = 0usize;
-    for (_, op) in files {
-        match op.to_ascii_lowercase().as_str() {
-            o if o.contains("creat") || o.contains("add") => created += 1,
-            o if o.contains("delet") || o.contains("remov") => deleted += 1,
-            _ => modified += 1,
-        }
-    }
-    let changes = if files.is_empty() {
-        "no files changed".to_string()
-    } else {
-        let mut parts = Vec::new();
-        if created > 0 {
-            parts.push(format!("{created} created"));
-        }
-        if modified > 0 {
-            parts.push(format!("{modified} modified"));
-        }
-        if deleted > 0 {
-            parts.push(format!("{deleted} deleted"));
-        }
-        parts.join(" · ")
-    };
-
     println!("\n  {} Recap", "◆".dimmed());
     println!("    {headline}");
-    println!("    {changes}");
 }
 
 /// Print the welcome banner: the STELLA block-letter logomark swept with the
@@ -687,9 +564,9 @@ pub fn render_event(event: &AgentEvent) {
         AgentEvent::AskUser {
             question, options, ..
         } => {
-            // The interactive ask_user tool prints the numbered options and
-            // collects the answer itself (it owns stdin while the turn is
-            // in flight); this render arm exists for replay/stream-json
+            // The approvals plane's question io prints the numbered options
+            // and collects the answer itself (it owns stdin while the turn
+            // is in flight); this render arm exists for replay/stream-json
             // consumers of the event log. The binding free-text contract
             // (every question always offers a type-your-own option) is
             // enforced at the prompt site, not here.

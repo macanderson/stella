@@ -31,8 +31,7 @@ const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// Cap on the request body we will buffer.
 ///
 /// A turn request carries an assembled conversation, and a `tool-result` POST
-/// carries one tool's whole output — which `stella-tools` caps at 100 KB per
-/// call — so the old 1 MiB ceiling was roughly ten tool results, close enough
+/// carries one tool's whole output, so the old 1 MiB ceiling was close enough
 /// to a real conversation to be reachable by accident. 8 MiB is far past any
 /// legitimate turn while still bounded.
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;

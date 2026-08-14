@@ -386,10 +386,11 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
     ui.settings_pane = SettingsPane::Tools;
     ui.tools.state = Some(ToolPolicyState {
         tools: [
-            ("read_file", "file"),
-            ("bash", "bash"),
-            ("start_process", "process"),
-            ("send_stdin", "process"),
+            ("get_environment", "environment"),
+            ("get_state", "scratch"),
+            ("save_state", "scratch"),
+            ("task", "task"),
+            ("task_assign", "task"),
             ("mcp__github__create_issue", "mcp"),
             ("deploy_to_staging", "custom"),
         ]
@@ -397,14 +398,14 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
         .map(|(name, group)| ToolRow {
             name: name.to_string(),
             group: group.to_string(),
-            locked: name == "bash",
-            off: (name == "bash").then(|| ToolDenial {
-                key: "bash".to_string(),
+            locked: name == "task_assign",
+            off: (name == "task_assign").then(|| ToolDenial {
+                key: "task_assign".to_string(),
                 scope: Some(ToolScope::Managed),
             }),
         })
         .collect(),
-        switches: std::collections::BTreeMap::from([("bash".to_string(), false)]),
+        switches: std::collections::BTreeMap::from([("task_assign".to_string(), false)]),
     });
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
@@ -423,7 +424,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
         text.contains("tools ·"),
         "the tool panel fills the tab on the TOOLS pane:\n{text}"
     );
-    for section in ["FILE", "PROCESS", "MCP", "CUSTOM"] {
+    for section in ["ENVIRONMENT", "SCRATCH", "TASK", "MCP", "CUSTOM"] {
         assert!(
             text.contains(section),
             "the {section} section header renders:\n{text}"

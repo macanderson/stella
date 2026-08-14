@@ -51,6 +51,6 @@ pub mod session;
 pub mod spec;
 
 pub use error::RuntimeError;
-pub use parts::{budget_guard, build_provider, open_store, seed_calibration, tool_registry};
+pub use parts::{budget_guard, build_provider, open_store, seed_calibration};
 pub use session::{RuntimeBuilder, SessionRuntime};
 pub use spec::{Notice, NoticeSubject, Persistence, ProviderParts, RuntimeSpec};

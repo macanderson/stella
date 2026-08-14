@@ -7,6 +7,12 @@ no GitHub, no network, no policy about what to do with what it found. That
 split is what makes the whole set testable against a fixture trace, and it is
 why adding a detector is one decorated function and nothing else.
 
+The tool names in here (`bash`, `grep`, ...) are **recorded-trace**
+vocabulary — names appearing in archived runs, whose streams state exactly
+these names. The detectors match what the traces say, not the shipping
+catalog; a trace stating none of these names simply never trips the shapes
+keyed on them.
+
 ## Adding a detector
 
     @detector(

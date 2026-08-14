@@ -26,8 +26,7 @@
 //!
 //! Only scratch written by *running* code. Build outputs (`target`, `dist`,
 //! `build`) are deliberately absent: producing one of those is frequently the
-//! whole job, and the same reasoning keeps them out of
-//! `stella_tools::shell_touch::SKIP_DIRS`. Coverage data (`.gcda`) is likewise
+//! whole job. Coverage data (`.gcda`) is likewise
 //! absent, and stays absent: whether a gcov task's coverage data is scratch or
 //! deliverable is a judgement no list of names can make. The seal check now
 //! answers the question this list was being asked to approximate — *did the

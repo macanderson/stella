@@ -331,9 +331,9 @@ impl CodeGraph {
 
     /// The files whose imports resolve to `file` — raw root-relative
     /// forward-slash paths, not rendered frames. The reverse-dependency
-    /// lookup behind `run_tests`' `scope:"impacted"` selection
-    /// (stella-tools), which walks this relation transitively and needs the
-    /// plain path list per hop rather than a prose frame.
+    /// lookup for impacted-scope selection: a caller walks this relation
+    /// transitively and needs the plain path list per hop rather than a
+    /// prose frame.
     pub fn importer_paths(&self, file: &Path) -> Result<Vec<String>, GraphError> {
         let rel = self.resolve_rel(file);
         store::importers_of(&self.inner.read_guard(), &rel)

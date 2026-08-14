@@ -29,11 +29,11 @@ pub(super) async fn build_code_graph(
 
 /// [`build_code_graph`] against an explicit embedder configuration.
 ///
-/// The environment arrives as **data** rather than being read in here, for the
-/// reason the semantic tool gives for its own embedder parameter: resolution is
-/// a pure function of it (`stella_embed::resolve`), so the witness test drives
-/// exactly the code a real `stella init` runs — no test-only branch, and no
-/// process-environment mutation racing every other test in the binary.
+/// The environment arrives as **data** rather than being read in here:
+/// resolution is a pure function of it (`stella_embed::resolve`), so the
+/// witness test drives exactly the code a real `stella init` runs — no
+/// test-only branch, and no process-environment mutation racing every other
+/// test in the binary.
 async fn build_code_graph_with(
     workspace_root: &std::path::Path,
     embed_env: &stella_embed::EmbedderEnv,
@@ -153,18 +153,17 @@ async fn drive_index_blocking<F: FnMut(String) + ?Sized>(
     }
 }
 
-/// Embed the files just indexed, so `semantic_code_search` can answer on the
-/// **first** tool call of the first turn.
+/// Embed the files just indexed, so `stella search` can rank by meaning on
+/// its **first** invocation.
 ///
 /// # Why eagerly, and why here
 ///
-/// The vector pass is lazy by default (`stella_tools::graph::semantic`), which
-/// is right for a long interactive session and wrong for a single-turn run in
-/// a fresh checkout: the lazy pass fires only once the agent has *already*
-/// decided to search, which is after the grep spiral it exists to prevent has
-/// begun — and never at all if the agent does not reach for the tool. `stella
-/// init` is the one place that runs before any turn, so work done here is free
-/// from the agent's perspective.
+/// The vector pass is lazy by default ([`crate::search_cmd::semantic`]),
+/// which is right for a long interactive session and wrong for a fresh
+/// checkout: the lazy pass fires only once a search has already been asked,
+/// so the first searches rank against whichever files happened to be
+/// processed first. `stella init` is the one place that runs before any
+/// turn, so work done here is free from the session's perspective.
 ///
 /// # Why it is automatic rather than a flag
 ///
@@ -180,7 +179,8 @@ async fn warm_semantic_index(
     emit: &mut dyn FnMut(String),
 ) {
     use stella_embed::Embedder;
-    use stella_tools::graph::semantic::MAX_FILES_PER_EAGER_PASS;
+
+    use crate::search_cmd::semantic::MAX_FILES_PER_EAGER_PASS;
 
     let embedder = match stella_embed::resolve(embed_env) {
         stella_embed::Resolution::Configured(embedder) => embedder,
@@ -191,7 +191,7 @@ async fn warm_semantic_index(
             emit(
                 "· semantic index: skipped — no embedding backend configured (set \
                  VOYAGE_API_KEY, OPENAI_API_KEY, or STELLA_EMBED_URL + STELLA_EMBED_MODEL to \
-                 enable `semantic_code_search`)"
+                 let `stella search` rank by meaning)"
                     .to_string(),
             );
             return;
@@ -206,7 +206,7 @@ async fn warm_semantic_index(
 
     emit("◈ embedding files for semantic search…".to_string());
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
-    let outcome = stella_tools::graph::semantic::warm_file_vectors_with_progress(
+    let outcome = crate::search_cmd::semantic::warm_file_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
         MAX_FILES_PER_EAGER_PASS,
@@ -222,17 +222,17 @@ async fn warm_semantic_index(
         &embedder.fingerprint().model_id,
     ));
 
-    // The sharper rung `search` ranks first (#3098): a file-level vector
+    // The sharper rung the search ranks first (#3098): a file-level vector
     // exists but a query naming one function in a large multi-purpose file
     // loses to a file that happens to have complete per-symbol coverage,
     // regardless of which is the true answer. Same reasoning as the pass
     // above, one layer down.
     emit("◈ embedding code chunks for search…".to_string());
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
-    let chunk_outcome = stella_tools::search::warm_chunk_vectors_with_progress(
+    let chunk_outcome = crate::search_cmd::engine::warm_chunk_vectors_with_progress(
         workspace_root,
         embedder.as_ref(),
-        stella_tools::search::MAX_FILES_PER_CHUNK_EAGER_PASS,
+        crate::search_cmd::engine::MAX_FILES_PER_CHUNK_EAGER_PASS,
         &mut |embedded| {
             if ticker.ready(Instant::now()) {
                 emit(format!("· chunk index: {embedded} files embedded…"));
@@ -257,11 +257,8 @@ async fn warm_semantic_index(
 /// Unless they cannot be read, which is a different sentence and gets one: no
 /// later pass will pick those up, so "they embed on demand" would be a promise
 /// this code cannot keep (#3016).
-fn format_warm_outcome(
-    outcome: &stella_tools::graph::semantic::WarmOutcome,
-    model: &str,
-) -> String {
-    use stella_tools::graph::semantic::WarmOutcome;
+fn format_warm_outcome(outcome: &crate::search_cmd::semantic::WarmOutcome, model: &str) -> String {
+    use crate::search_cmd::semantic::WarmOutcome;
     match outcome {
         WarmOutcome::Warmed {
             embedded,
@@ -295,10 +292,10 @@ fn format_warm_outcome(
 /// The one-line report of an eager chunk-embedding pass. Same shape and the
 /// same reasoning as [`format_warm_outcome`], one rung sharper.
 fn format_chunk_warm_outcome(
-    outcome: &stella_tools::search::ChunkWarmOutcome,
+    outcome: &crate::search_cmd::engine::ChunkWarmOutcome,
     model: &str,
 ) -> String {
-    use stella_tools::search::ChunkWarmOutcome;
+    use crate::search_cmd::engine::ChunkWarmOutcome;
     match outcome {
         ChunkWarmOutcome::Warmed {
             files_embedded,
@@ -462,28 +459,23 @@ impl Drop for SessionGraph {
 /// 1. If there is no index yet it is built in the background
 ///    ([`index_workspace_graph_blocking`], the same index step `stella init`
 ///    runs); if one already exists it is a cheap incremental catch-up
-///    (byte-identical files are skipped, L-C2).
-/// 2. The moment the index is ready the `graph_query` tool is enabled for the
-///    rest of the session ([`ToolRegistry::enable_code_graph_if_available`])
-///    and the schema gate learns any new table/type names — so a session that
-///    launched in a repo with no `.stella/private/codegraph.db` gains the tool
-///    mid-session, no restart, no manual `stella init`.
-/// 3. The live `notify` watcher is then armed via
+///    (byte-identical files are skipped, L-C2). The finished index is what
+///    `stella search` ranks over and the deck's Graph tab renders.
+/// 2. The live `notify` watcher is then armed via
 ///    [`stella_graph::CodeGraph::mount`] so subsequent edits incrementally
 ///    re-index. mount's own catch-up sha-skips everything just indexed in
 ///    step 1 — the watcher is the point of the second open.
 ///
 /// Non-blocking: returns immediately with a [`SessionGraph`] the caller keeps
 /// alive for the session (dropping it stops the watcher) and the setup task's
-/// `JoinHandle`, which completes once the tool has been enabled — a
+/// `JoinHandle`, which completes once the index build has settled — a
 /// deterministic "index ready" signal for tests. `status` receives the same
 /// `◈ indexing code graph…` / `✓ …` lines `stella init` prints (route it to
 /// stderr or the deck transcript, never to a machine-readable stdout);
-/// `on_ready` fires once after the tool is enabled (the deck refreshes its
-/// Graph tab there; other callers pass a no-op).
+/// `on_ready` fires once after the build (the deck refreshes its Graph tab
+/// there; other callers pass a no-op).
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
-    registry: Arc<ToolRegistry>,
     mut status: Box<dyn FnMut(String) + Send>,
     on_ready: Box<dyn FnOnce() + Send>,
 ) -> (SessionGraph, tokio::task::JoinHandle<()>) {
@@ -506,22 +498,15 @@ pub(crate) fn spawn_session_graph(
             Ok(Ok(stats)) => status(format_graph_stats(&stats)),
             Ok(Err(warning)) => status(warning),
             Err(e) => status(format!(
-                "! code-graph indexing task failed: {e} — the graph tool stays off this session"
+                "! code-graph indexing task failed: {e} — search ranks over the last good index \
+                 this session"
             )),
         }
-        // 2) Expose `graph_query` for the rest of the session and teach the
-        //    schema gate any table/type names the fresh index now carries.
-        if let Err(error) = registry.enable_code_graph_if_available(&root) {
-            status(format!("! graph tool unavailable: {error}"));
-        }
-        if let Err(error) = populate_schema_index(&registry, &root) {
-            status(format!("! schema governance unavailable: {error}"));
-        }
         on_ready();
-        // 3) Arm the live watcher on a mounted graph kept alive for the
+        // 2) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
         //    never loses the index built in step 1.
-        let db_path = stella_tools::graph::graph_db_path(&root);
+        let db_path = crate::search_cmd::codegraph::graph_db_path(&root);
         match stella_graph::CodeGraph::mount(&root, &db_path).await {
             Ok(graph) => {
                 *slot_task.lock().unwrap_or_else(|p| p.into_inner()) = Some(graph);

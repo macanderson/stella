@@ -89,10 +89,8 @@ clobbering an existing file, and filtered against tombstones from two surfaces.
 Those skills load into later prompts. This is observe → cluster → propose →
 govern → persist → re-inject, already closed.
 
-**Also shipped:** a code graph with a query tool and live re-indexing;
-exploration sharing between sessions in a workspace; a storage map with a
-pre-write schema gate; `gather_context` packs; citation-driven memory
-quarantine and promotion.
+**Also shipped:** a code graph with live re-indexing, feeding recall and
+semantic code search.
 
 **Shipped but inert:** the `context.*` settings block, and a domain type layer
 covering the record taxonomy, scope, temporal intervals, canonical hashing,

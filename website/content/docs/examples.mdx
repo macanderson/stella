@@ -425,14 +425,14 @@ any repo, shipped by MDM, that every stella on the machine inherits.
       "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     ]
   },
-  "tools": { "web": "off" },
+  "tools": { "mcp": "off" },
   "authority": {
     "project_prompts": "off",
     "project_custom_tools": "off"
   },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "repo_push",
+      { "matcher": "mcp__github__push_files",
         "hooks": [ { "command": "/usr/local/bin/acme-push-policy", "timeoutMs": 10000 } ] }
     ]
   }
@@ -469,14 +469,14 @@ local state:
   "providers": {
     "zai": { "api_key_env": "ACME_ZAI_KEY" }
   },
-  "tools": { "web": "off" },
+  "tools": { "task_assign": "off" },
   "agent_engine_config": {
     "default_model": "zai/glm-5.2",
     "pipeline_verifier_model": "anthropic/claude-fable-5"
   },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "bash",
+      { "matcher": "mcp__github__push_files",
         "hooks": [ { "command": "./scripts/guard.sh", "timeoutMs": 5000 } ] }
     ]
   }

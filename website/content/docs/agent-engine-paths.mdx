@@ -45,9 +45,7 @@ came through:
 - **One tool stack.** Every path assembles the same layered
   [tool executor](/docs/agent-tools): the native registry, wrapped by
   [MCP-server tools](/docs/agent-tools/mcp), wrapped by
-  [custom script tools](/docs/agent-tools/custom-tools), wrapped by the
-  interactive layer (`ask_user`, the skills-registry tools), wrapped by the
-  discovery layer (`tool_search`, `skill_search`, `mcp_search`). What varies
+  [custom script tools](/docs/agent-tools/custom-tools). What varies
   per path is only what gets layered *on top* (deck taps, read-only views —
   see [below](#how-the-tool-stack-varies)).
 - **Memory rides along.** Relevant memories and
@@ -152,8 +150,8 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    The verifier reads `ci_status` itself; only a fully green *latest* run for the
-    target ends the loop. `target` defaults to `main`.
+    The verifier reads the CI state itself; only a fully green *latest* run for
+    the target ends the loop. `target` defaults to `main`.
   </SpecCard>
   <SpecCard
     title="Fleet workers"
@@ -305,7 +303,7 @@ verifier alone is enough.
 ### `stella monitor`: goal mode, specialized
 
 Monitoring **is** a goal: the objective is pinned to "the latest CI run for
-*target* is fully green", assessed through the `ci_status` tool. The engine
+*target* is fully green", assessed from the CI state itself. The engine
 fixes failures, pushes, waits out the next run, and only a green board ends
 the loop. Same machinery, fixed objective.
 
@@ -347,15 +345,9 @@ differently:
   </OptionCard>
 </CardGrid>
 
-Every path can also opt into the lean toolset — `STELLA_LEAN_TOOLS`
-advertises only a lean core plus the discovery tools; see
-[Built-in Tools](/docs/agent-tools#lean-frontloading-experimental).
-
-Two consequences worth knowing. First, `ask_user` degrades gracefully:
-headless paths (one-shot JSON formats, goal in CI) fail it loudly with
-guidance to proceed, rather than hanging on stdin. Second, because the
-discovery tools are read-only, even the verifier can run `tool_search`,
-`skill_search`, and `mcp_search` — searching is never a side effect.
+One consequence worth knowing: because the verifier's view keeps only
+`read_only: true` tools, a read-only lookup is never a side effect — the
+verifier can inspect anything it can see, and structurally cannot change it.
 
 ## Choosing a path
 
@@ -460,7 +452,7 @@ sqlite3 .stella/private/store.db \
   shared tree, and opt-in isolated worktrees.
 - [Agent engine config](/docs/configuration/agent-engine-config) — per-role
   model pins the paths share.
-- [Built-in Tools](/docs/agent-tools) — the shared catalog, including the
-  discovery tools.
+- [Built-in Tools](/docs/agent-tools) — the shared catalog, and how MCP and
+  custom tools layer onto it.
 - [Scripting](/docs/scripting) — headless output formats, exit codes, and
   automation patterns for the non-interactive paths.

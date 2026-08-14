@@ -4,7 +4,7 @@
 #
 # `docs/tools/` is one TOML page per dispatchable tool — name, description,
 # input schema, output envelope, the catalog's flags, and an observed example
-# payload. Seventy-eight of them. Nothing about that survives being written by
+# payload. Nothing about that survives being written by
 # hand: #1435 stranded three prose copies of the god-file list behind a
 # generated baseline, and #3029 found docs/prompts/worker.md five contracts
 # behind its own code with nothing checking it. Both were quiet, and both read
@@ -21,8 +21,8 @@
 #
 # The derivation lives in `crates/stella-cli/src/tool_docs.rs`, as a test
 # rather than an exporter binary, because that is the only scope from which
-# all the schemas are reachable at once — sixty-four come from stella-tools'
-# registry and the rest from CLI-internal layers, and stella-cli has no
+# all the schemas are reachable at once — the registry's own schemas plus any
+# from CLI-internal layers, and stella-cli has no
 # `src/lib.rs` for a binary to link (#3061 tracks the seam that would let this
 # become an ordinary exporter). `make record-golden` is the same shape.
 #

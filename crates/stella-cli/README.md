@@ -69,7 +69,7 @@ merge. If you do add one, AGENTS.md's workspace table and the root
 
 The gate's file-size guard (`scripts/check-file-size.sh`) enforces a 1500-line
 ratchet: a new file over the limit is a hard failure with no baseline escape,
-and the five files below are grandfathered at recorded ceilings in
+and the files below are grandfathered at recorded ceilings in
 `scripts/file-size-baseline.txt`. They are god files — already too big, closed
 to growth — and the pressure to grow them is worst in this crate, because
 every feature ends in a flag or a subcommand and the path of least resistance
@@ -86,7 +86,6 @@ beside [`src/command_deck.rs`](src/command_deck.rs),
 file is a candidate to extract into one.
 
 - [`src/agent.rs`](src/agent.rs)
-- [`src/agent/tests.rs`](src/agent/tests.rs)
 - [`src/command_deck.rs`](src/command_deck.rs)
 
 ([`src/candidate_ws.rs`](src/candidate_ws.rs) left this list when adoption
@@ -111,16 +110,17 @@ file), never as a planning assumption.
 | [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it; `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
 | [`src/env_files.rs`](src/env_files.rs) | Project-scoped `.env` loading with shell-wins precedence and the execution-hijack refusal list. |
 | [`src/memory.rs`](src/memory.rs) + [`src/memory/`](src/memory), [`src/contextgraph.rs`](src/contextgraph.rs) | `SessionMemory` (per-turn recall, post-turn reflection, skill auto-promotion, CGP→pipeline projection) and the session's `contextgraph-host`, which serves the in-tree workspace-memory and code-graph sources as real CGP providers. |
-| [`src/rules.rs`](src/rules.rs), [`src/domains.rs`](src/domains.rs), [`src/discovery.rs`](src/discovery.rs), [`src/invoke_skill.rs`](src/invoke_skill.rs) | Workspace-rule wiring (Tier-2 guards armed at the tool boundary), `stella init`'s domain inference, the `tool_search`/`skill_search`/`mcp_search` tools, and `invoke_skill` (#2682) — inline expansion through the steering seam, fork mode through the session's sub-agent runner, and the allowed-tools grant layer. |
+| [`src/rules.rs`](src/rules.rs), [`src/domains.rs`](src/domains.rs) | Workspace-rule wiring (Tier-2 guards armed at the tool boundary) and `stella init`'s domain inference. |
+| [`src/search_cmd.rs`](src/search_cmd.rs) + [`src/search_cmd/`](src/search_cmd) | `stella search`: the code-graph query surface — semantic, symbol, and keyword matching over `.stella/private/codegraph.db`, with result enrichment and the session graph spawn. |
 | [`src/command_deck.rs`](src/command_deck.rs) + [`src/command_deck/`](src/command_deck), [`src/subsession.rs`](src/subsession.rs), [`src/session_persist.rs`](src/session_persist.rs), [`src/claims.rs`](src/claims.rs), [`src/cache_insight.rs`](src/cache_insight.rs) | The deck driver: bridges engine `AgentEvent`s into `stella-tui`'s `Inbound` fold, runs per-prompt sub-sessions, tees every fold-relevant envelope to the resume journal, and coordinates concurrent writers by claim-on-first-write. |
-| [`src/tui.rs`](src/tui.rs), [`src/interactive.rs`](src/interactive.rs) | The non-deck surfaces: `render_event`'s plain streaming renderer and `ask_user`'s TTY implementation. |
-| [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/connect_cmd.rs`](src/connect_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
+| [`src/tui.rs`](src/tui.rs), [`src/interactive.rs`](src/interactive.rs) | The non-deck surfaces: `render_event`'s plain streaming renderer and the approvals plane's TTY question io (`AskUserIo`). |
+| [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
 | [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; the managed-only operational spool. |
 | [`src/arena.rs`](src/arena.rs), [`src/candidate_ws.rs`](src/candidate_ws.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`) and best-of-N candidate isolation over detached git worktrees. |
 | [`src/skill_manager.rs`](src/skill_manager.rs), [`src/agents_installed.rs`](src/agents_installed.rs), [`src/extensions.rs`](src/extensions.rs) | Disk I/O for the deck's SKILLS and INSTALLED AGENTS panes, and the `.claude/`/`.agents/` adoption sync. |
 | [`src/paths.rs`](src/paths.rs), [`src/startup.rs`](src/startup.rs) | The two things `main` establishes before anything else runs. `paths` resolves every user-global anchor (home, XDG state home, the user-tier data dir, the filesystem-isolation boundary) **once** and hands it out — nothing else in the crate reads `HOME` from `std::env`, and tests redirect it per-thread instead of mutating the process environment. `startup` mints the one `StartupPhase` token the three environment-writing paths require, and marks the point where the process stops being single-threaded. |
 | [`src/attachments.rs`](src/attachments.rs), [`src/accounted_call.rs`](src/accounted_call.rs), [`src/runtime.rs`](src/runtime.rs), [`src/signals.rs`](src/signals.rs) | Prompt-text → multimodal attachments, cost accounting for paid calls outside a turn, the production time ports, SIGINT/SIGTERM handling. |
-| [`build.rs`](build.rs), [`tests/inspect_cli.rs`](tests/inspect_cli.rs), [`tests/fixtures/`](tests/fixtures) | `STELLA_BUILD_VERSION` (package version, or `<version>-dev.<sha>` when `STELLA_BUILD_GIT_SHA` is set) and the only integration test. Fixtures are also `include_str!`'d by `settings/context.rs` and `rules.rs`. |
+| [`build.rs`](build.rs), [`tests/`](tests), [`tests/fixtures/`](tests/fixtures) | `STELLA_BUILD_VERSION` (package version, or `<version>-dev.<sha>` when `STELLA_BUILD_GIT_SHA` is set) and the spawned-binary integration tests. Fixtures are also `include_str!`'d by `settings/context.rs` and `rules.rs`. |
 
 ## Key concepts
 
@@ -128,9 +128,9 @@ file), never as a planning assumption.
 
 `run()` in [`src/main.rs`](src/main.rs) matches `cli.command` **twice**. The first
 match returns early for every command that resolves no provider — `models`,
-`tools`, `graph`, `scripts`, `storage`, `inspect`, `stats`, `usage`, `cloud`,
-`telemetry`, `memory`, `mcp`, `connect`, `auth`, `observe`, `version`,
-`resume --list`. Only then does it run `model_catalog::bootstrap()`,
+`tools`, `search`, `storage`, `inspect`, `stats`, `usage`, `cloud`,
+`telemetry`, `memory`, `mcp`, `auth`, `observe`, `version`, and the rest of
+the key-free family. Only then does it run `model_catalog::bootstrap()`,
 `config::Config::load` (which can prompt for a key) and
 `settings_check::validate_at_launch`. The second match handles the rest (`run`,
 `arena`, `goal`, `monitor`, `fleet`, `chat`, `resume`, `config`) and lists the
@@ -148,15 +148,15 @@ silently unreachable where users actually type it — `stella fleet … --spend-
 died with "unexpected argument". `every_root_flag_is_global` in
 [`src/tests.rs`](src/tests.rs) fails the suite instead, and its
 corollary `no_subcommand_flag_reuses_a_global_name` reserves those names
-CLI-wide — which is why `connect linear` takes `--paste-key`, not `--api-key`.
+CLI-wide.
 
 ### Byte-stable prompt prefix (L-E8) — the discipline that costs money to break
 
 [`src/agent/prompt.rs`](src/agent/prompt.rs)'s `build_system_prompt` /
 `build_pipeline_system_prompt` funnel into `assemble_system_prompt`, which
-appends, in fixed order, the project scripts index, the project orientation
-block, the workspace memories, the exploration index, and the rendered rules
-section. Everything appended must be deterministic for a given workspace state:
+appends, in fixed order, the session-environment block, the workspace
+memories, and the rendered rules section. Everything appended must be
+deterministic for a given workspace state:
 that prefix is what the provider's prompt cache keys on, so nondeterminism here
 is a re-billing regression, not a cosmetic one. Two consequences the code
 enforces on purpose:
@@ -166,12 +166,12 @@ enforces on purpose:
   overflow is dropped with a count, never reordered. The prompt is built **once
   per session** and reused verbatim (including across `/clear`), so a memory
   saved mid-session deliberately does not appear until the next session —
-  hot-injecting it would invalidate the cached prefix on every `save_memory`.
-- In-progress exploration drafts are excluded from `append_exploration_index`:
-  their line names the producing pid and its liveness, which flips mid-session —
-  a guaranteed cache miss on every call (#639).
+  hot-injecting it would invalidate the cached prefix on every save.
+- `append_session_environment` states only session-constant facts — working
+  directory, git checkout or not, platform, OS release, shell dialect (#2692).
+  A process cannot change its OS mid-session, so the block is prefix-safe.
 
-Both ride the volatile channel instead — [`src/memory.rs`](src/memory.rs)'s
+Turn-relevant context rides the volatile channel instead — [`src/memory.rs`](src/memory.rs)'s
 `inject_recall_block`, which builds a `MessageRole::User` message prefixed with
 `RECALL_MARKER` and inserts it at the conversation *tail* (just before the turn's
 prompt when that prompt is already last), skipping insertion when the newest
@@ -248,9 +248,11 @@ execution on the first subprocess (#553). `STELLA_NO_ENV_FILE=1` disables it all
   [`src/config/tests.rs`](src/config/tests.rs) asserts every seeded provider has
   both a `CachePosture` and a `ReasoningPosture` row in
   `crates/stella-model/src/provider_parity.rs`.
-- **`registry_options` in [`src/agent/tools.rs`](src/agent/tools.rs) is the only
-  translation from settings to `RegistryOptions`**, so no path can quietly
-  re-enable the shell. Hand-build `RegistryOptions` elsewhere and you made one.
+- **`session_tool_policy` in [`src/agent/tools.rs`](src/agent/tools.rs) is the
+  only translation from settings `tools.*` switches to the policy layer** —
+  every session stack wraps the registry in the `PolicyToolSet` it builds.
+  Hand-assemble a registry elsewhere and the workspace's switches stop
+  applying.
 
 ## Testing
 
@@ -264,9 +266,10 @@ Almost all of it is in-crate unit tests, each declared with a plain
 [`src/agent/tests.rs`](src/agent/tests.rs) (prompt assembly, provider routing,
 usage completeness), [`src/config/tests.rs`](src/config/tests.rs) (key
 resolution, the provider-parity matrix), plus the `settings`/`memory`
-private-state and quarantine suites. [`tests/inspect_cli.rs`](tests/inspect_cli.rs)
-is the sole integration test — it spawns `env!("CARGO_BIN_EXE_stella")` against a
-real store, needing a built binary but no API key. No feature flags, no fixture
+private-state and quarantine suites. The [`tests/`](tests) targets
+(`inspect_cli.rs`, `doctor_cli.rs`, `stats_prune_cli.rs`, …) spawn
+`env!("CARGO_BIN_EXE_stella")` against a real store, needing a built binary but
+no API key. No feature flags, no fixture
 server; env-mutating tests must take `crate::test_env::lock()`.
 
 ## Extending it
@@ -299,6 +302,5 @@ unrecognized value is a hard parse error, never a silent fallback.
   [`../../website/content/docs/configuration/settings.mdx`](../../website/content/docs/configuration/settings.mdx),
   [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
   — the published docs this crate's surfaces must stay honest to.
-- [`../../docs/spec/scripts-index.md`](../../docs/spec/scripts-index.md),
-  [`../../docs/spec/storage-map.md`](../../docs/spec/storage-map.md) — the contracts
-  behind `stella scripts` and `stella storage`.
+- [`../../docs/spec/storage-map.md`](../../docs/spec/storage-map.md) — the contract
+  behind `stella storage`.

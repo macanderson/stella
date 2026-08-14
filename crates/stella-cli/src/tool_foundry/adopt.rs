@@ -107,7 +107,8 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
     let staged_script = root.join(PROPOSED_DIR).join(format!("{name}.sh"));
     let manifest_text = std::fs::read_to_string(&staged_manifest).map_err(|e| {
         format!(
-            "cannot read {} ({e}) — stage it first with `stella tools --author {name}`",
+            "cannot read {} ({e}) — stage a `{name}.toml` + `{name}.sh` pair under \
+             {PROPOSED_DIR}/ first",
             staged_manifest.display()
         )
     })?;
@@ -263,8 +264,8 @@ pub(crate) fn render_report(store: &Store) -> Result<String, String> {
     let mut out = String::new();
     if rows.is_empty() {
         out.push_str(
-            "  no self-authored tools adopted yet — `stella tools --author` stages one, \
-             `--adopt` proves it\n",
+            "  no self-authored tools adopted yet — stage a manifest+script pair under \
+             .stella/tools/proposed/, then `--adopt` proves it\n",
         );
         return Ok(out);
     }

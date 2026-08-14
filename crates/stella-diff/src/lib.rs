@@ -1,17 +1,13 @@
 //! A real line-oriented unified diff — the shape a developer already knows how
 //! to read, because it is the shape `git diff` produces.
 //!
-//! The tree had no unified-diff generator when this landed. `stella-tools`'
-//! `file_touch::changed_region_diff` is the display companion to a
-//! *line-count* helper and says so in its own docs: it trims the common prefix
-//! and suffix and then prints the entire remaining span twice, once as `-` and
-//! once as `+`. That is honest and cheap for a file edit, where the changed
-//! region is small and the viewer already has the file open. It is useless for
-//! a system prompt, where the interesting change is one inserted paragraph
-//! inside four hundred stable lines — the coarse renderer would print all four
-//! hundred lines as removed and all four hundred and one as added, which is
-//! exactly the "I cannot see what actually changed" problem this crate exists
-//! to end.
+//! A trim-prefix/suffix-and-print-both-spans renderer is honest and cheap
+//! for a small file edit, where the changed region is tiny and the viewer
+//! already has the file open. It is useless for a system prompt, where the
+//! interesting change is one inserted paragraph inside four hundred stable
+//! lines — a coarse renderer would print all four hundred lines as removed
+//! and all four hundred and one as added, which is exactly the "I cannot see
+//! what actually changed" problem this crate exists to end.
 //!
 //! So: trim the common prefix/suffix (cheap, and it shrinks the quadratic
 //! region a lot on append-mostly prompts), run an exact longest-common-
@@ -25,9 +21,9 @@
 //! isolation.
 
 /// Beyond this many DP cells the exact LCS is abandoned for the
-/// replace-everything bound. Mirrors `stella_tools::file_touch`'s cap for the
-/// same reason: a pathological input must degrade to a coarse-but-instant
-/// answer rather than allocate a gigabyte and stall the terminal.
+/// replace-everything bound: a pathological input must degrade to a
+/// coarse-but-instant answer rather than allocate a gigabyte and stall the
+/// terminal.
 ///
 /// The fallback is still a correct diff — every old line removed, every new one
 /// added — just not a minimal one, and [`Diff::minimal`] says which you got
@@ -137,9 +133,9 @@ impl Diff {
 /// Diff `old` against `new` line-wise, framing each change with `context`
 /// unchanged lines on either side.
 ///
-/// Line semantics follow `str::lines()`, matching `count_lines` in
-/// `stella-tools`: `""` is zero lines and a trailing newline adds none. Two
-/// empty inputs therefore produce no hunks rather than one empty hunk.
+/// Line semantics follow `str::lines()`: `""` is zero lines and a trailing
+/// newline adds none. Two empty inputs therefore produce no hunks rather
+/// than one empty hunk.
 #[must_use]
 pub fn unified_diff(old: &str, new: &str, context: usize) -> Diff {
     let old_lines: Vec<&str> = old.lines().collect();

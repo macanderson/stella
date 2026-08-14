@@ -801,10 +801,9 @@ pub const WITNESS_SYSTEM_PROMPT: &str = "You are the WITNESS AUTHOR for a coding
 /// The committer email on the pipeline's own plumbing commits, as the witness
 /// author must spell it to exclude them.
 ///
-/// `stella-tools::verify::CANDIDATE_SNAPSHOT_EMAIL` and `stella-cli`'s
-/// `SNAPSHOT_IDENT` are the other two copies. This crate depends on neither, so
-/// the spellings are pinned together by the parity test in `stella-cli` rather
-/// than shared — the same arrangement those two already use.
+/// `stella-cli`'s `SNAPSHOT_IDENT` is the other copy. This crate does not
+/// depend on `stella-cli`, so the spellings are pinned together by the parity
+/// test there rather than shared.
 pub const MACHINERY_COMMIT_EMAIL: &str = "pipeline@stella.invalid";
 
 /// Warn the author off the pipeline's own commits.

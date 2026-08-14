@@ -206,7 +206,7 @@ than discovering it in a quarantine event.
 ## Relationship to file-touch telemetry
 
 The bus is how you react to file changes *as they happen*: the same
-[file-touch telemetry](/docs/telemetry/files-touched) that stella records also drives `file.created`,
+[file-touch telemetry](/docs/telemetry) that stella records also drives `file.created`,
 `file.updated`, `file.deleted`, and `files_touched.updated` events, each carrying the path,
 reason, and line deltas of the touch (never the file contents).
 

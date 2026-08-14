@@ -35,17 +35,7 @@
 //! width 1 mutes nothing, so the single-shot and authored-witness paths stream
 //! exactly as they always did.
 //!
-//! # Two shared surfaces this deliberately does not fence
-//!
-//! **The file-touch tally.** [`Pipeline::observed_mutations`] reads a delta off
-//! one session-wide [`crate::ports::FileTouchPort`], and concurrent candidates
-//! read overlapping windows of it. It is not cross-talk *here* because an
-//! isolated candidate executes against its workspace's own tool surface
-//! (`CandidateWorkspace::tools`), which the session recorder never sees — the
-//! delta stays at zero and the count falls through to the per-candidate
-//! `FileChange` tally, which is private to one turn's engine channel. A host
-//! that ever wires a recorder observing candidate workspaces too would need a
-//! per-candidate port, not a shared one.
+//! # One shared surface this deliberately does not fence
 //!
 //! **`EngineConfig::turn_instance`.** Every candidate runs under the turn's
 //! one instance, so their step manifests key alike and the last writer wins.

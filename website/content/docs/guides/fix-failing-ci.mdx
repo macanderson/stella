@@ -30,8 +30,8 @@ for a pull request.
 
 <CardGrid size="md">
   <OptionCard name="gh, installed and authenticated">
-    `monitor` reads CI state through the `ci_status` tool, which shells out to
-    GitHub's `gh` CLI. `gh auth status` should be clean. Without it, the run fails at
+    `monitor` reads CI state through GitHub's `gh` CLI.
+    `gh auth status` should be clean. Without it, the run fails at
     the first status check rather than silently doing nothing.
   </OptionCard>
   <OptionCard name="A branch you are willing to have pushed to">
@@ -57,8 +57,8 @@ with one fixed objective compiled in:
 Which means it inherits goal mode's machinery wholesale, and that machinery is
 the interesting part:
 
-1. **Watch.** `ci_status` with `wait: true` blocks until the latest run for the
-   target finishes, then returns its conclusion and the failing jobs' logs.
+1. **Watch.** The engine waits until the latest run for the target finishes,
+   then reads its conclusion and the failing jobs' logs.
 2. **Diagnose and fix.** A working round runs the full
    [staged pipeline](/docs/inference-pipeline) — triage, plan, witness, execute,
    verify. It is not a raw step loop: `monitor` always runs pipelined, and unlike
@@ -67,7 +67,7 @@ the interesting part:
    round's evidence.
 4. **Verifier.** A separate verifier model — by preference from a
    [different family](/docs/inference-pipeline#per-role-model-routing) than the
-   worker — assesses whether the objective is met. It can call `ci_status`
+   worker — assesses whether the objective is met. It reads the CI state
    itself, so it is checking the run rather than reading the worker's account of
    the run.
 5. **Repeat**, up to a hard cap of **8** judged rounds.
@@ -87,11 +87,6 @@ cannot be used to claim one. That structurally excludes the failure mode you
 actually fear — a change that makes the red go away without making the bug go
 away.
 
-The same discipline is available to the agent directly as the **`verify_done`**
-tool, which replays a new test against the previous code in a shadow worktree at
-`git HEAD`. The test must fail there and pass on the change to earn a
-**WITNESS CONFIRMED**.
-
 **Across rounds**, the outer goal verifier only ends the loop when the *latest CI
 run for the target has completed with every check successful*. Not "the tests I
 ran locally passed". Not "I believe this is fixed". A run on the remote, green,
@@ -110,8 +105,8 @@ The interesting cases are the ones where it doesn't just work.
 ### The next run is red for a different reason
 
 This is the normal case and needs nothing from you. The round ends "not met",
-the new failure logs come back through `ci_status`, and the next round works on
-the new root cause. That is what the round loop is for.
+the new failure logs come back with the next status check, and the next round
+works on the new root cause. That is what the round loop is for.
 
 ### The same failure comes back
 
@@ -144,7 +139,7 @@ the diff — read on.
 Some red CI is not a code problem: an expired token, a billing cap, a runner
 that no longer exists, a required check whose workflow file never starts. stella
 will keep proposing code changes because code changes are what it can make. The
-tell is a `ci_status` conclusion that never reaches the test step at all — a job
+tell is a CI conclusion that never reaches the test step at all — a job
 that fails in setup, or a run whose conclusion is `startup_failure`.
 
 Read the raw job yourself at that point:

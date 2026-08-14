@@ -195,8 +195,7 @@ struct Unwound {
 ///
 /// Read from the real repository, so it sees the shared namespace plus the
 /// *main* worktree's own per-worktree refs — never a candidate's
-/// `refs/worktree/*`, which is what keeps the pipeline's own
-/// [`stella_tools::verify::WITNESS_BASELINE_WORKTREE_REF`] pin out of this
+/// `refs/worktree/*`, which keeps any per-worktree pin out of this
 /// comparison by construction.
 ///
 /// Best-effort: an unreadable ref store yields an empty map, which can only
@@ -700,7 +699,6 @@ pub(super) fn refusal(restored: &[Restored], unexamined: usize) -> String {
 #[cfg(test)]
 mod tests {
     use stella_pipeline::ports::CandidateWorkspace;
-    use stella_tools::RegistryOptions;
 
     use super::super::tests::{scaffold, scratch_git};
     use super::super::{GitCandidateWorkspaces, git};
@@ -724,7 +722,6 @@ mod tests {
     fn port(root: std::path::PathBuf) -> GitCandidateWorkspaces {
         GitCandidateWorkspaces::new(
             root,
-            RegistryOptions::default(),
             Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),

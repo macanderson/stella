@@ -21,7 +21,7 @@ from arenabench import provenance
 from arenabench.config import MatchTemplateError, dump_match, match_from_toml
 from arenabench.model import MatchSpec
 
-_BASELINE = ["bash", "read_file", "write_file", "edit_file"]
+_BASELINE = ["task_list", "save_state", "get_state", "get_environment"]
 
 
 def _spec(engine: dict, agent: str = "stella") -> MatchSpec:
@@ -69,7 +69,7 @@ class TestRefusals:
 
     def test_an_entry_that_is_not_tool_shaped_is_refused(self) -> None:
         with pytest.raises(MatchTemplateError, match="not tool-shaped"):
-            match_from_toml(_toml('tool_set = ["bash", "read file"]'))
+            match_from_toml(_toml('tool_set = ["task_list", "save state"]'))
 
     def test_an_empty_list_is_refused_rather_than_read_as_the_catalog(self) -> None:
         # `[]` reads as "no tools", which is not a runnable arm. Omitting the
@@ -83,10 +83,10 @@ class TestRefusals:
         # Stella adapter forwards the declaration, so anywhere else it is a
         # template claiming a restriction the arm never ran.
         with pytest.raises(MatchTemplateError, match="only to a stella seat"):
-            match_from_toml(_toml('tool_set = ["bash"]', agent="claude-code"))
+            match_from_toml(_toml('tool_set = ["task_list"]', agent="claude-code"))
 
     def test_the_same_refusal_holds_on_the_validate_path(self) -> None:
-        problems = _spec({"tool_set": ["bash"]}, agent="claude-code").validate()
+        problems = _spec({"tool_set": ["task_list"]}, agent="claude-code").validate()
         assert any("tool_set applies only to a stella seat" in p for p in problems)
 
 
@@ -123,8 +123,8 @@ class TestProvenance:
         # Two templates listing the same tools in a different order ran the
         # same apparatus; a key that separated them would split one series.
         label = provenance.Provenance.tool_set_label
-        assert label(["bash", "read_file"]) == label(["read_file", "bash"])
-        assert label(["bash", "read_file"]) != label(["bash", "grep"])
+        assert label(["task_list", "save_state"]) == label(["save_state", "task_list"])
+        assert label(["task_list", "save_state"]) != label(["task_list", "get_state"])
 
     def test_the_record_round_trips_through_json(self) -> None:
         record = provenance.Provenance(tool_set_seats={"lean": list(_BASELINE)})

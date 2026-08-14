@@ -7,7 +7,7 @@
 //!
 //! A transcript is a log of actions, and the first question a reader asks of
 //! any row is not *which* tool ran but what kind of thing it did: was that a
-//! look, a change, a shell, a test, a push, a hand-off to another agent? Every
+//! look, a change, an opaque external call, a hand-off to another agent? Every
 //! tool name used to render in one colour — the brand gold — so answering that
 //! question meant reading each name and recalling what it does. Twenty rows in,
 //! nobody does. The rest of the transcript was one warm neutral end to end,
@@ -24,14 +24,15 @@
 //! [`stella_tools::catalog`] — the same gate-enforced table the policy layer
 //! addresses, so a tool cannot be filed under one family for `tools.<group>:
 //! "off"` and a different one on screen. This module is a projection of that
-//! table onto six visual classes, plus the two dynamic groups (`mcp`,
+//! table onto four visual classes, plus the two dynamic groups (`mcp`,
 //! `custom`) the catalog already answers for names it has never heard of.
 //!
-//! The one axis the catalog cannot supply is mutation: its `file` group holds
-//! `read_file` and `write_file` alike, and telling a read from a write is the
-//! single distinction the reader asked for first. That comes from the
-//! catalog's own `read_only` column, which is the same bit the engine's
-//! concurrency contract and the ladder's no-op rung already trust.
+//! The one axis the catalog's group column cannot supply is mutation: its
+//! `scratch` group holds `get_state` and `save_state` alike, and telling a
+//! read from a write is the single distinction the reader asked for first.
+//! That comes from the catalog's own `read_only` column, which is the same
+//! bit the engine's concurrency contract and the ladder's no-op rung already
+//! trust.
 //!
 //! # Colour law
 //!
@@ -46,31 +47,25 @@ use crate::theme;
 
 /// The visual classes a tool call falls into.
 ///
-/// Six, deliberately — one per question a reader actually asks of a
-/// transcript row. A seventh would stop being distinguishable at a glance
-/// (the categorical series has exactly six hues that clear the 30° separation
-/// floor without entering gold's exclusion zone), and every finer distinction
-/// the catalog draws is already spelled out by the tool's own name beside the
-/// colour.
+/// Four, deliberately — one per question a reader actually asks of a
+/// transcript row on the built-in surface (a look, a change, an external
+/// call, a hand-off). Every finer distinction the catalog draws is already
+/// spelled out by the tool's own name beside the colour, and the categorical
+/// series has hues to spare, so a class earns its slot only when a family of
+/// tools can actually land in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolClass {
-    /// Reads: files, search, the graph, orientation, repository *queries*,
-    /// scratch reads, the web. Nothing in the workspace changed.
+    /// Reads: scratch-state reads, the task listing, the environment report.
+    /// Nothing in the workspace changed.
     Inspect,
-    /// Writes to the workspace: file CRUD, scratch writes, saved memories and
-    /// explorations, generated media. The class a reviewer scans for.
+    /// Writes to session state: scratch-state writes. The class a reviewer
+    /// scans for.
     Mutate,
-    /// Code execution: the shell, manifest scripts, long-running processes,
-    /// screenshots. Effects the diff cannot account for.
+    /// Calls whose effects this table cannot vouch for: MCP tools, custom
+    /// script tools, anything unrecognised. The class that promises the
+    /// least.
     Execute,
-    /// Proving things: the definition-of-done tool, tests, builds, lint,
-    /// formatters, diagnostics, CI status.
-    Verify,
-    /// Version control and the forge: commits, pushes, pulls, rollbacks,
-    /// issues.
-    Repo,
-    /// Orchestration: sub-agent delegation, the plan board, skills, and the
-    /// session tools that ask the user something.
+    /// Orchestration: sub-agent delegation and the plan board.
     Delegate,
 }
 
@@ -84,8 +79,6 @@ impl ToolClass {
             ToolClass::Inspect => theme::TEAL,
             ToolClass::Mutate => theme::MAGENTA,
             ToolClass::Execute => theme::VIOLET,
-            ToolClass::Verify => theme::SUCCESS,
-            ToolClass::Repo => theme::CITRON,
             ToolClass::Delegate => theme::ORCHID,
         }
     }
@@ -96,32 +89,27 @@ impl ToolClass {
             ToolClass::Inspect => "read",
             ToolClass::Mutate => "write",
             ToolClass::Execute => "run",
-            ToolClass::Verify => "verify",
-            ToolClass::Repo => "repo",
             ToolClass::Delegate => "delegate",
         }
     }
 
     /// Every class, in legend order.
-    pub const ALL: [ToolClass; 6] = [
+    pub const ALL: [ToolClass; 4] = [
         ToolClass::Inspect,
         ToolClass::Mutate,
         ToolClass::Execute,
-        ToolClass::Verify,
-        ToolClass::Repo,
         ToolClass::Delegate,
     ];
 }
 
 /// Classify one dispatch name.
 ///
-/// Group first, then the read/write bit *within* the groups that hold both.
-/// The order matters: `repo_status` is a repository tool that happens to read,
-/// and filing it under `Inspect` would leave the repo class holding only the
-/// three or four rows a session ends with — the reader's question there is
-/// "what did this do to my repository", and a query is part of that answer.
-/// The groups that genuinely mix (`file`, `context`, `scratch`) split on
-/// mutation, because there the read/write distinction *is* the question.
+/// Group first, then the read/write bit *within* the group that holds both.
+/// The `task` group is orchestration whole — the reader's question there is
+/// "what moved on the board", and `task_list` beside `task_create` is part of
+/// that answer, not a file read. The `scratch` group genuinely mixes, so it
+/// splits on mutation, because there the read/write distinction *is* the
+/// question.
 ///
 /// An unknown name — an MCP server's tool, a customer's own manifest tool —
 /// falls back to the same read-only bit, so a third-party read never renders
@@ -131,20 +119,16 @@ impl ToolClass {
 pub fn classify(name: &str) -> ToolClass {
     let read_only = stella_tools::catalog::get(name).is_some_and(|entry| entry.read_only);
     match stella_tools::catalog::group_for(name) {
-        // Split on mutation: these groups hold both halves.
-        "file" | "context" | "scratch" => {
+        // Split on mutation: this group holds both halves.
+        "scratch" => {
             if read_only {
                 ToolClass::Inspect
             } else {
                 ToolClass::Mutate
             }
         }
-        "retrieval" | "environment" | "web" => ToolClass::Inspect,
-        "media" => ToolClass::Mutate,
-        "bash" | "process" | "scripts" => ToolClass::Execute,
-        "build" | "ci" => ToolClass::Verify,
-        "repo" | "issue" => ToolClass::Repo,
-        "task" | "session" => ToolClass::Delegate,
+        "environment" => ToolClass::Inspect,
+        "task" => ToolClass::Delegate,
         // `mcp`, `custom`, and any group added to the catalog without a class
         // here. A read stays a read; everything else promises the least.
         _ if read_only => ToolClass::Inspect,
@@ -161,15 +145,7 @@ mod tests {
     /// write must not share a colour.
     #[test]
     fn a_read_and_a_write_of_the_same_family_are_different_classes() {
-        for (read, write) in [
-            ("read_file", "write_file"),
-            ("read_file", "edit_file"),
-            ("read_file", "apply_edits"),
-            ("read_file", "delete_file"),
-            ("explorations", "save_exploration"),
-            ("get_state", "save_state"),
-            ("list_state", "delete_state"),
-        ] {
+        for (read, write) in [("get_state", "save_state"), ("list_state", "delete_state")] {
             assert_eq!(classify(read), ToolClass::Inspect, "{read}");
             assert_eq!(classify(write), ToolClass::Mutate, "{write}");
             assert_ne!(
@@ -180,32 +156,22 @@ mod tests {
         }
     }
 
-    /// The five families the deck's owner named, each landing where the name
-    /// says it should. Pinned by example rather than by exhaustion so the test
-    /// stays readable; `every_catalog_name_classifies` below covers the rest.
+    /// Every registered tool lands where its name says it should. Pinned by
+    /// example rather than by exhaustion so the test stays readable;
+    /// `every_catalog_group_has_an_explicit_class` below covers the rest.
     #[test]
     fn each_family_lands_in_its_own_class() {
         for (name, class) in [
-            ("grep", ToolClass::Inspect),
-            ("glob", ToolClass::Inspect),
-            ("project_overview", ToolClass::Inspect),
-            ("graph_query", ToolClass::Inspect),
-            ("web_fetch", ToolClass::Inspect),
-            ("write_file", ToolClass::Mutate),
-            ("save_memory", ToolClass::Mutate),
-            ("bash", ToolClass::Execute),
-            ("run_script", ToolClass::Execute),
-            ("start_process", ToolClass::Execute),
-            ("verify_done", ToolClass::Verify),
-            ("run_tests", ToolClass::Verify),
-            ("diagnostics", ToolClass::Verify),
-            ("ci_status", ToolClass::Verify),
-            ("repo_push", ToolClass::Repo),
-            ("repo_status", ToolClass::Repo),
-            ("create_issue", ToolClass::Repo),
+            ("get_state", ToolClass::Inspect),
+            ("list_state", ToolClass::Inspect),
+            ("get_environment", ToolClass::Inspect),
+            ("save_state", ToolClass::Mutate),
+            ("delete_state", ToolClass::Mutate),
             ("task", ToolClass::Delegate),
+            ("task_create", ToolClass::Delegate),
+            ("task_list", ToolClass::Delegate),
             ("task_complete", ToolClass::Delegate),
-            ("invoke_skill", ToolClass::Delegate),
+            ("task_assign", ToolClass::Delegate),
         ] {
             assert_eq!(classify(name), class, "{name}");
         }
@@ -224,25 +190,7 @@ mod tests {
                 .first()
                 .copied()
                 .unwrap_or_else(|| panic!("group `{group}` is empty"));
-            let explicit = matches!(
-                group,
-                "file"
-                    | "context"
-                    | "scratch"
-                    | "retrieval"
-                    | "environment"
-                    | "web"
-                    | "media"
-                    | "bash"
-                    | "process"
-                    | "scripts"
-                    | "build"
-                    | "ci"
-                    | "repo"
-                    | "issue"
-                    | "task"
-                    | "session"
-            );
+            let explicit = matches!(group, "scratch" | "environment" | "task");
             assert!(
                 explicit,
                 "catalog group `{group}` (e.g. `{name}`) has no tool class — add an \
@@ -263,10 +211,10 @@ mod tests {
         assert_eq!(classify("some_customer_manifest_tool"), ToolClass::Execute);
     }
 
-    /// The six classes are six colours. A class that shared a hue with another
-    /// would be a class the reader cannot see.
+    /// The four classes are four colours. A class that shared a hue with
+    /// another would be a class the reader cannot see.
     #[test]
-    fn the_six_classes_are_six_distinct_colors() {
+    fn the_four_classes_are_four_distinct_colors() {
         let colors: Vec<Color> = ToolClass::ALL.iter().map(|c| c.color()).collect();
         for (i, color) in colors.iter().enumerate() {
             assert!(

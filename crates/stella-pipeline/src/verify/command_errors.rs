@@ -60,9 +60,9 @@ use crate::flip_halt::exit_status;
 /// outlives the thing it guards when each side spells its own copy.
 pub const EVIDENCE_KEY: &str = "errored_commands";
 
-/// The marker the shell tool prefixes a command's captured stderr with
-/// (`stella-tools/src/bash.rs` renders `stdout`, then `[stderr]`, then
-/// `[exit code: N]`).
+/// The marker a shell-style tool's rendered output prefixes a command's
+/// captured stderr with (the `stdout`, then `[stderr]`, then
+/// `[exit code: N]` convention).
 ///
 /// Parsed rather than plumbed for the same reason
 /// [`crate::flip_halt::exit_status`] parses its own marker: `ToolOutput::Ok`

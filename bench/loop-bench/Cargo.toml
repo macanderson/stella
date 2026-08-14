@@ -10,7 +10,7 @@ edition = "2024"
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Inexpensive turn-loop + context-query correctness harness over Terminal-Bench"
+description = "Inexpensive turn-loop correctness harness over Terminal-Bench"
 publish = false
 
 [lib]

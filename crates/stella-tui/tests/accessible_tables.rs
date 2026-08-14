@@ -128,7 +128,7 @@ fn the_installed_agents_list_reads_as_labelled_records() {
             entries: vec![InstalledAgentEntry {
                 name: "reviewer".into(),
                 description: "reviews a diff against the house rules".into(),
-                tools: Some(vec!["read_file".into(), "grep".into()]),
+                tools: Some(vec!["task_list".into(), "get_state".into()]),
                 scope: AgentScope::Project,
                 source_path: ".stella/agents/reviewer.md".into(),
                 version: 2,

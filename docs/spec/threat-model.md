@@ -14,9 +14,7 @@ Stella's security reasoning has always been written down. It was just never
 written down *together*: the project trust boundary is argued in
 `crates/stella-cli/src/settings/merge.rs`, the authority ceiling in
 `settings/authority.rs`, the subprocess scrub in
-`crates/stella-tools/src/subprocess_env.rs`, the shell tool's scope in
-`crates/stella-tools/src/bash.rs`, the web egress denylist in
-`crates/stella-tools/src/web_egress.rs`, the filesystem identity checks in
+`crates/stella-tools/src/subprocess_env.rs`, the filesystem identity checks in
 `crates/stella-store/src/private.rs`, and the dotenv refusals in
 `crates/stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
 whether the set is *complete*, because none of them enumerates the assets or
@@ -96,7 +94,7 @@ untrusted input.
 
 Dropped from an untrusted project scope: `hooks`, `context_providers`,
 per-provider `base_url` / `api_key` / `api_key_env`, `mcp.registry_url`,
-`tools.bash`/`tools.web` set to `"on"`, and agent `prompt` overrides. Never
+any `tools.*` entry set to `"on"`, and agent `prompt` overrides. Never
 read from the project scope at any trust level: the `authority` block
 (`#[serde(skip)]`) and `enterprise_telemetry`.
 
@@ -118,27 +116,24 @@ only from the managed scope, which itself is loaded through a hardened path
 write). Its semantics are deliberately one-directional: `off` denies; `on`
 *permits a later explicit grant but never grants by itself*.
 
-`apply_tool_ceiling` forces `tools.bash`/`tools.web` to `Off` after the merge,
-so managed denial survives explicit repository trust — the witness is
-`managed_tool_denial_survives_explicit_project_trust` (`settings.rs:1382`).
+`apply_tool_ceiling` re-denies every tool key the managed ceiling denies after
+the merge, so managed denial survives explicit repository trust — the witness
+is `managed_tool_denial_survives_explicit_project_trust`
+(`settings/tests.rs:935`).
 
 ### B3 — Model output → code execution
 
-The agent's tool surface is the blast radius of a successful A2. Two
-sub-boundaries matter and they are frequently conflated:
+The agent's tool surface is the blast radius of a successful A2. The built-in
+surface is the 12 task-board / sub-agent / scratch-state / environment tools,
+none of which runs a shell or spawns a workspace process. Two facts matter:
 
-- **`bash` ships registered** and is withheld with `tools.bash: "off"`. #710
-  moved every built-in to on-by-default with a switch, because the previous
-  posture covered built-ins only and most operators never found the switch.
-  Assume the default surface HAS a shell.
-- **The default surface is nonetheless not execution-free.** `run_script`,
-  `start_process`, `repo_commit`/`repo_push`, and workspace custom tools all
-  execute code without `bash` ever being enabled. `start_process` spawns argv
-  directly — "no shell" is a quoting guarantee, not a power bound, which is
-  why the registry routes its joined argv through the same `command.started`
-  policy chain as `bash`.
+- **Built-ins ship registered.** #710 moved every built-in to on-by-default
+  with a per-tool `tools.<name>: "off"` switch.
+- **The surface is nonetheless not execution-free.** Workspace custom tools
+  under `.stella/tools/` and hook actions execute code with the process's own
+  privileges.
 
-See [R2](#r2--the-default-tool-surface-executes-code).
+See [R2](#r2--the-extension-surfaces-execute-code).
 
 ### B4 — Process → subprocess (ambient authority)
 
@@ -160,36 +155,13 @@ refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 
 ### B5 — Workspace root → filesystem
 
-Every file tool that **opens** — read, write, edit, apply_edits, delete,
-download, and the content hashing behind exploration and context packs — is
-confined by `stella_tools::rootfd::RootHandle`, which holds the workspace
-root's directory descriptor and walks each component `openat(dirfd, name,
-O_DIRECTORY | O_NOFOLLOW)` off the one before it. `..` pops the descriptor
-stack rather than opening `".."`; a symlink is read with `readlinkat` and
-re-confined rather than followed; expansion is bounded. The boundary is
-therefore the descriptor chain, not a string comparison, and a name is
-resolved exactly once — by the kernel, at the moment it is used.
-
-That replaced a string resolution (#938). `resolve_within_root` canonicalizes
-and rejects escapes, using `symlink_metadata` rather than `exists()` so a
-dangling symlink is caught, and it is still correct about a filesystem that
-holds still. It could not be correct about one that does not: it approves a
-path whose interior directories do not exist yet without validating them, and
-everything downstream re-resolves those names, so a symlink planted in between
-by the model's own `bash` tool or by a `build.rs` under audit was followed.
-`O_NOFOLLOW` on the final component did not close it — the final component is
-not the one that moves. It survives for the callers that need a *name* rather
-than a descriptor: an argument to `rg` or `fd`, a subprocess working
-directory, the shadow worktree in `verify_done`, the file-touch ledger. #695
-extended it to workspace-member patterns read from `Cargo.toml`,
-`package.json`, and `pnpm-workspace.yaml`, and made out-of-root skips counted
-and surfaced rather than silent.
-
-This confines Stella's own tools, not the subprocesses they spawn: `bash` can
-still write anywhere the user's account can, and isolating that is structural
-(a container), not a matter of path resolution. Off Unix there is no `openat`,
-so the descriptor walk degrades to the string resolver — see
-[R5](#r5--non-unix-platforms-are-materially-weaker).
+No built-in tool opens workspace files. The built-ins' only filesystem writes
+are their own state under `.stella/` — the scratch state plane and the task
+board — through the store's private-state discipline (B6). The filesystem
+reach that remains belongs to the extension surfaces: a custom manifest tool
+or a hook action can write anywhere the user's account can, and isolating
+that is structural (a container), not a matter of path resolution. See
+[R3](#r3--nothing-confines-a-spawned-command-in-process).
 
 ### B6 — Stella's private state → other local processes
 
@@ -227,16 +199,12 @@ HTTPS endpoint allowlist.
 | P4 | Repo declares an `enabled` stdio `context_provider` → spawn at admission | B1 | Mitigated (dropped wholesale) |
 | P5 | Repo ships `.env` with `GIT_SSH_COMMAND` → RCE on first git subprocess | B4 | Mitigated (refused, never applied) |
 | P6 | Repo sets `GIT_CONFIG_KEY_n` in the environment a tool inherits | B4 | Mitigated (prefix-scrubbed) |
-| P7 | Workspace member pattern escapes root via `../` or glob | B5 | Mitigated (#695) |
-| P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | **Not mitigated in-process** — gated by the `command.started` chain, bounded only by the container Stella runs in; see R3 |
-| P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Not mitigated in-process** — same posture as P8; see R2, R3 |
-| P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | Mitigated (#939 egress denylist, post-DNS and per redirect hop) — proxy residual in R4 |
 | P11 | Co-tenant plants a symlink at a private-state path | B6 | Mitigated on Unix; not off it |
-| P12 | SVG `data:` URI smuggled past the sanitizer | — | Mitigated (#695 replaced the `//` substring test with a real scheme test) |
 | P13 | Partial-read defeats the MCP OAuth `state` CSRF check | — | Mitigated (#696 read-until-CRLFCRLF) |
 | P14 | Credential reaches a log line, trace record, or panic message | — | Mitigated (`ApiKey` has no `Display`, redacted `Debug`) |
 | P15 | Credential recovered from process memory after use | — | Partial — see R6 |
 | P16 | Credential read from `ps` | — | **Not mitigated** — see R7 |
+| P17 | Injected instruction escalates through a custom tool or hook action | B3 | **Not confined in-process** — see R2, R3; gated by `authority.project_custom_tools_allowed` and `STELLA_PROJECT_HOOKS=1` |
 
 ## Residual risk
 
@@ -255,27 +223,20 @@ in their shell profile silently trusts every repository thereafter. The
 mitigation today is that the *default* is untrusted and the drops are loud
 (warnings to stderr, with the repo-controlled provider id `escape_debug`'d).
 
-### R2 — The default tool surface executes code
+### R2 — The extension surfaces execute code
 
-"`bash` is off by default" is true and is not the same claim as "the agent
-cannot run code by default." `run_script` executes commands sourced from repo
-manifests (`package.json` scripts, `Makefile` targets, `Cargo.toml` aliases);
-`start_process` spawns argv; `repo_commit`/`repo_push` mutate and publish;
-workspace custom tools under `.stella/tools/` are auto-discovered.
-
-Custom tools are gated on `authority.project_custom_tools_allowed`, which
-defaults false. `run_script` and `start_process` are not gated that way — they
-route through the `command.started` policy chain, which is a policy-handler
-seam rather than an interactive confirmation.
+No built-in executes workspace code. The risk lives in the extension
+surfaces — workspace custom tools under `.stella/tools/` are auto-discovered,
+and hook actions run shell commands. Custom tools are gated on
+`authority.project_custom_tools_allowed`, which defaults false; project hooks
+load only under `STELLA_PROJECT_HOOKS=1`.
 
 ### R3 — Nothing confines a spawned command in-process
 
-Every path that starts a process — `bash`, `build_project`/`run_tests`'s
-`command` override, `verify_done`'s `test_cmd`, `run_script`, `start_process`,
-the `repo_*`/`ci_status` `git` and `gh` invocations, custom manifest tools,
-and hook actions — runs with the privileges of the Stella process itself. A
-command the model was injected into writing can reach anything the operator's
-account can reach.
+Every path that starts a process — custom manifest tools and hook actions —
+runs with the privileges of the Stella process itself. A command the model
+was injected into writing can reach anything the operator's account can
+reach.
 
 This used to read "the sandbox wraps `bash` only": `STELLA_BASH_SANDBOX`
 (`workspace-write` / `restricted`, Seatbelt on macOS, `bwrap` on Linux) was an
@@ -286,42 +247,10 @@ not match the threat it named, and with it the impression that "sandbox: on"
 bounded a session.
 
 What is left in-process is a *gate*, not a boundary: the `command.started`
-policy chain sees every model-authored command line before anything spawns
-(`ToolRegistry::command_line_for` enumerates every member). A boundary has to
+policy chain sees a model-authored command line before anything spawns. A boundary has to
 come from outside the process — run Stella in a container, where no spawn path
 can step around the isolation because the isolation is not on the spawn path.
 See `docs/spec/remote-sandboxes.md` §2.
-
-### R4 — The web egress guard is bypassed by an HTTP proxy
-
-#615 is ruled (#939, option A): `web_fetch`, `web_extract_assets` and
-`web_download` refuse loopback, RFC1918, link-local (`169.254.0.0/16`), IPv6
-unique-local (`fc00::/7`) and link-local (`fe80::/10`), carrier-grade NAT, and
-the `localhost` / `.internal` / `.local` name families by default. The check
-runs on the URL, on **the addresses DNS returns** (the resolver filters them,
-which is what closes DNS rebinding), and again on **every redirect hop**. An
-operator re-opens a specific destination with `[egress] allow` in
-`~/.stella/web_auth.toml` — user scope, deliberately not `settings.json`, which
-a repo can write.
-
-Two residuals remain, both recorded in `crates/stella-tools/src/web_egress.rs`:
-
-- **Proxies.** With `HTTP_PROXY`/`HTTPS_PROXY` set, reqwest resolves and
-  connects to the *proxy*; the real destination travels in the `CONNECT` line
-  and never reaches the guarded resolver. The URL-level check still refuses
-  literal-IP and denied-name targets on every hop, but a public name that
-  resolves to a private address goes unchecked behind a proxy. Disabling proxy
-  support would break every corporate user's fetch, which is the worse trade.
-- **Port granularity at the resolver.** `reqwest::dns::Name` carries no port, so
-  `allow = ["dev.internal:8080"]` is honoured host-wide by the resolver and
-  port-exactly by the URL check. Every request passes the URL check first, so
-  the port fence holds; the resolver half of it cannot express one.
-
-One sharp edge is recorded in `web.rs`: reqwest strips `Cookie` and
-`Authorization` across a cross-host redirect, but a secret placed in a custom
-`[domains.x.headers]` entry is not in reqwest's sensitive set and **will**
-follow the redirect. The egress guard does not cover it — that guard bounds
-*where* a request may go, not *which* credentials ride it.
 
 ### R5 — Non-Unix platforms are materially weaker
 
@@ -376,7 +305,6 @@ available today is retention — `stella stats prune` — not redaction.
 | `0600` / `0700` enforcement | Yes | No |
 | Credentials-file permission advisory | Yes | No |
 | Subprocess env scrub | Yes | Yes |
-| Workspace-root confinement | Yes | Yes |
 | Settings trust boundary | Yes | Yes |
 
 ## What would change this model
@@ -387,7 +315,6 @@ available today is retention — `stella stats prune` — not redaction.
   the direction of record (`docs/spec/remote-sandboxes.md`); the per-command
   sandbox was removed rather than extended precisely because extending it
   would have had to be repeated for every future spawn site.
-- Gating `run_script` behind an authority flag would narrow R2.
 - A secret detector — if one could be made accurate enough to not be
   false assurance — would narrow R9.
 

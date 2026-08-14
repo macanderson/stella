@@ -319,10 +319,10 @@ concept becomes real.
 
 **The pruning-eligibility tier is now enforced, and it is the load-bearing
 correctness result.** The type layer always said `agent_self_report` is
-recognized but may never drive pruning; nothing implemented it. `cite_memory`
-is the *agent* judging context the agent was given, so citation-derived
-verdicts are recorded as `agent_self_report` and are deliberately **not**
-pruning-eligible — a self-report that can retire its own subject is
+recognized but may never drive pruning; nothing implemented it. A memory
+citation is the *agent* judging context the agent was given, so
+citation-derived verdicts are recorded as `agent_self_report` and are
+deliberately **not** pruning-eligible — a self-report that can retire its own subject is
 self-reinforcing, because a model that misreads a memory reports it unhelpful,
 retires it, and destroys the evidence that the reading was wrong. Selection
 health therefore carries two populations: everything assessed (what is known)

@@ -17,10 +17,10 @@
 //! the board task auto-completing on success.
 //!
 //! Scope (v1, documented rather than implied): workers run the raw engine
-//! step-loop with native tools only (no MCP set, no custom tools, no
-//! interactive ask_user — an autonomous worker has nobody to ask), recall is
-//! skipped in favor of latency, and delegation is not recursive — a worker's
-//! own `task_assign` requests are reported on its lane instead of spawning.
+//! step-loop with native tools only (no MCP set, no custom tools — an
+//! autonomous worker runs on the built-in surface alone), recall is skipped
+//! in favor of latency, and delegation is not recursive — a worker's own
+//! `task_assign` requests are reported on its lane instead of spawning.
 
 mod closeout;
 
@@ -30,7 +30,7 @@ use std::sync::Arc;
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
 use stella_protocol::{AgentEvent, CompletionMessage};
-use stella_tools::RegistryOptions;
+use stella_tools::ToolRegistry;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -104,16 +104,10 @@ pub(crate) struct SubSessions {
     winding_down: HashMap<String, u64>,
     /// Every lane's spec, retained past its end — what Restart respawns.
     specs: HashMap<String, SubSessionSpec>,
-    registry_options: RegistryOptions,
 }
 
 impl SubSessions {
-    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::with_registry_options(RegistryOptions::default())
-    }
-
-    pub(crate) fn with_registry_options(registry_options: RegistryOptions) -> Self {
         Self {
             active: 0,
             next_req: 0,
@@ -123,12 +117,7 @@ impl SubSessions {
             pauses: HashMap::new(),
             winding_down: HashMap::new(),
             specs: HashMap::new(),
-            registry_options,
         }
-    }
-
-    fn worker_registry_options(&self) -> RegistryOptions {
-        self.registry_options.clone()
     }
 
     pub(crate) fn has_slot(&self) -> bool {
@@ -534,7 +523,6 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn(
     cfg: &Config,
-    registry_options: RegistryOptions,
     spec: SubSessionSpec,
     generation: u64,
     budget_limit: Option<f64>,
@@ -565,7 +553,6 @@ pub(crate) fn spawn(
             {
                 Ok(rt) => rt.block_on(run_worker(
                     &cfg,
-                    registry_options,
                     &spec,
                     budget_limit,
                     &session_id,
@@ -650,7 +637,6 @@ pub(crate) fn spawn(
 #[allow(clippy::too_many_arguments)]
 async fn run_worker(
     cfg: &Config,
-    registry_options: RegistryOptions,
     spec: &SubSessionSpec,
     budget_limit: Option<f64>,
     session_id: &str,
@@ -665,11 +651,7 @@ async fn run_worker(
     // `Arc` because the lane's sub-agent dispatcher holds a `Weak` back to it
     // (`crate::subagent`) — the registry is the child's tool set, so an owning
     // handle either way would leak both.
-    let registry =
-        Arc::new(agent::new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
-    if let Err(error) = agent::populate_schema_index(&registry, &cfg.workspace_root) {
-        return (None, 0.0, WorkerEnd::Failed(error));
-    }
+    let registry = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
     // A worker lane delegates research like any other turn. Without this the
     // `task` tool is still advertised (the registry registers it
     // unconditionally) and answers "sub-agents are unavailable" every time —
@@ -704,7 +686,6 @@ async fn run_worker(
     let calibration = agent::seed_calibration(&store, cfg);
     let execution = agent::begin_execution(&store, "deck-sub", &spec.prompt, cfg, Some(session_id));
     let execution_id = execution.as_ref().map(|(_, id)| *id);
-    let files_before = registry.files_touched().len();
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let forwarder = spawn_forwarder(
@@ -734,11 +715,8 @@ async fn run_worker(
     // apply to it identically — a sub-agent must not be a way to reach a tool
     // the lead was denied.
     let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(cfg));
-    // A worker's edits are real edits to the shared tree, so its lane announces
-    // them on its own channel: point the registry's recorder at this turn's
-    // sender. Without it the whole lane was invisible in the Files tab — every
-    // `deck-sub` execution wrote files and emitted not one `FileChange`, so the
-    // ledger described a session in which the delegated work never happened.
+    // Registry-born events (task board, sub-agent lifecycle) ride this
+    // lane's own channel, so the lane's live view and its journal agree.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
     // `Arc` so the same gate can be published for the turn as well as
     // borrowed by it: a lane parked at Pause must not keep spending inside a
@@ -816,7 +794,6 @@ async fn run_worker(
     closeout::close_worker_execution(
         execution.as_ref(),
         &registry,
-        files_before,
         label,
         cost,
         persistence_complete,
@@ -879,7 +856,6 @@ pub(crate) fn drain_queue(
         let generation = subs.started(&lane, stop_tx, pause_tx, spec.clone());
         spawn(
             cfg,
-            subs.worker_registry_options(),
             spec,
             generation,
             budget_limit,
@@ -932,11 +908,9 @@ pub(crate) fn respawn(
     };
     let (stop_tx, stop_rx) = oneshot::channel();
     let (pause_tx, pause_rx) = watch::channel(false);
-    let registry_options = subs.worker_registry_options();
     let generation = subs.started(lane, stop_tx, pause_tx, spec.clone());
     spawn(
         cfg,
-        registry_options,
         spec,
         generation,
         budget_limit,
@@ -982,11 +956,9 @@ pub(crate) fn spawn_task_worker(
             prompt_line(&req.subject, 40)
         ),
     };
-    let registry_options = subs.worker_registry_options();
     let generation = subs.started(&lane, stop_tx, pause_tx, spec.clone());
     spawn(
         cfg,
-        registry_options,
         spec,
         generation,
         budget_limit,
@@ -1083,24 +1055,6 @@ mod tests {
             notice.lines().count() <= 4,
             "the notice must stay a few lines — it prints on every spawn: {notice}"
         );
-    }
-
-    #[test]
-    fn workers_clone_the_exact_parent_media_journal() {
-        let journal: std::sync::Arc<dyn stella_media::MediaOperationJournal> = std::sync::Arc::new(
-            stella_media::SqliteMediaOperationJournal::open_in_memory(Default::default()).unwrap(),
-        );
-        let subs = SubSessions::with_registry_options(RegistryOptions {
-            media_operation_journal: Some(journal.clone()),
-            ..Default::default()
-        });
-
-        let worker = subs.worker_registry_options();
-
-        assert!(std::sync::Arc::ptr_eq(
-            &journal,
-            worker.media_operation_journal.as_ref().unwrap()
-        ));
     }
 
     fn dummy_spec(lane: &str) -> SubSessionSpec {

@@ -6,13 +6,8 @@
    `font-family:system-ui` on a white default page, which is the one look the
    design system does not have.
 
-   TWO BYTE-IDENTICAL COPIES EXIST, and they must stay that way:
-   crates/stella-mcp/src/oauth/callback_page.css and
-   crates/stella-tools/src/tracker_auth_page.css. The two listeners live in
-   crates that share no dependency and should not acquire one for a
-   stylesheet, so the copy is deliberate — and
-   crates/stella-cli/tests/design_token_parity.rs fails if they diverge by a
-   single byte. Edit one, copy it to the other; do not fix them separately.
+   crates/stella-cli/tests/design_token_parity.rs checks this page's tokens,
+   so a palette drift fails a test rather than shipping.
 
    Values are the web instrument palette
    (crates/stella-observatory/src/assets/index.html is the single definition),

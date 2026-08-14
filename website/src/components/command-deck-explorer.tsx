@@ -34,7 +34,7 @@ const TABS: DeckTabSpec[] = [
     lines: [
       "? lead  ·  needs input                                     0:00:00",
       "└─ ◆ sub:auth  needs input · model glm-5.2 · spend $0.01",
-      "     ⚒ grep trigger → wire automations triggers API",
+      "     ⚒ mcp__fs__grep trigger → wire automations triggers API",
       "└─ ◆ sub:ci    running    · model glm-5.2-air · spend $0.00",
       "     ⚒ no tool calls yet → watch CI + open PR",
       "",
@@ -42,7 +42,7 @@ const TABS: DeckTabSpec[] = [
       "☰  plan  4/7 · Wire the triggers API",
       "── WITNESS ──",
       "── EXECUTE ──",
-      "● read_file  apps/app/automations/page.tsx      ⎿ 312 lines · 42ms",
+      "● mcp__fs__read  apps/app/automations/page.tsx  ⎿ 312 lines · 42ms",
     ],
   },
   {
@@ -68,7 +68,7 @@ const TABS: DeckTabSpec[] = [
       "00:00 lead      [stage] witness",
       "00:00 lead      [verdict] witness authored: automations/triggers.test.ts",
       "00:00 lead      [verdict] oracle: fail on base",
-      "00:00 lead      [tool] read_file() → ok in 42ms",
+      "00:00 lead      [tool] mcp__fs__read() → ok in 42ms",
       "00:00 lead      [file] modified automations/page.tsx +4/-1",
       "00:00 lead      [verdict] oracle: pass on new",
       "00:00 sub:auth  [stage] wire the automations triggers API",

@@ -20,14 +20,13 @@ stella init
    and a file to the same area of your project. Also persisted into the
    context plane at `.stella/private/context.db`.
 2. **Builds the code-graph index** → `.stella/private/codegraph.db`. A tree-sitter
-   symbol/import index the agent queries through `search` (and you query
-   the same way, from your shell, through
-   [`stella search`](/docs/commands/search)) instead of grepping blind.
+   symbol/import index you query from your shell through
+   [`stella search`](/docs/commands/search) instead of grepping blind.
 3. **Embeds the indexed files for semantic search**, when an embedding
    backend is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
    `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`). That is what lets
-   `semantic_code_search` answer *"which file strips secrets before logging"*
-   on the agent's first tool call instead of after it has started grepping.
+   `stella search` answer *"which file strips secrets before logging"*
+   by meaning rather than by substring.
    With no backend configured init says so in one line and does nothing else;
    with one, it prints how many files it embedded and how many a large
    repository left for later (they embed on demand as searches reach them).

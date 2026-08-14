@@ -13,9 +13,7 @@
 //! - `py` — Python: Django `models.Model` classes, SQLAlchemy declarative
 //!   and core `Table(...)` definitions.
 //!
-//! Extraction here is **shared** by the indexer (`crate::store`) and the
-//! pre-write gate (`stella-tools`), so the gate and the index cannot drift
-//! apart. Structure only: intent/boundary meaning comes from the committed
+//! Extraction here feeds the indexer (`crate::store`). Structure only: intent/boundary meaning comes from the committed
 //! manifest ([`crate::manifest`]) and is merged at snapshot time, never
 //! persisted in the rebuildable store (spec §6 rebuild invariant).
 //!

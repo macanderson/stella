@@ -15,7 +15,7 @@
 //!
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
-//! no custom tools, no ask_user, so a worker can never block on stdin. The
+//! no custom tools, so a worker can never block on stdin. The
 //! parent `--spend-limit` is enforced twice, per the fleet's contract: each child
 //! runs under its own enforced guard, and the fleet stops launching new
 //! waves once the metered total crosses the cap (in-flight siblings settle
@@ -674,11 +674,9 @@ async fn run_task(
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
     let provider = agent::build_provider(&cfg)?;
-    let registry_options = agent::registry_options(&cfg);
     // `Arc` because the worker's sub-agent dispatcher holds a `Weak` back to
     // it (`crate::subagent`) — the registry is the child's tool set.
-    let registry =
-        Arc::new(agent::new_tool_registry(root.to_path_buf(), registry_options.clone()).await);
+    let registry = Arc::new(stella_tools::ToolRegistry::new(root.to_path_buf()));
     // As in a deck lane: without a dispatcher the `task` tool is advertised
     // and always refuses, and the pause gate published below has nothing to
     // reach. A worker's children inherit its headless posture through the
@@ -830,13 +828,9 @@ async fn run_task(
             let ws_ports = agent::workspace_ports(
                 root.to_path_buf(),
                 &cfg,
-                registry_options,
                 active_rules.clone(),
                 None,
-                agent::SessionPlane::new(
-                    stella_core::EventSender::new(tx.clone()),
-                    registry.clone(),
-                ),
+                agent::SessionPlane::new(stella_core::EventSender::new(tx.clone())),
             )?;
             let recall = NoContextRecall;
             let hook_runner = ShellHookRunner;
@@ -847,10 +841,9 @@ async fn run_task(
                 recall: &recall,
                 repo: &ws_ports.repo_structure,
                 repo_status: &ws_ports.repo_status,
-                touches: &crate::agent::RegistryTouches(&registry),
                 diagnostics: &ws_ports.diagnostic_runner,
                 tests: &ws_ports.test_runner,
-                lint: Some(&ws_ports.lint_probe),
+                lint: None,
                 mutation: Some(&ws_ports.mutation_probe),
                 coverage: Some(&ws_ports.coverage_probe),
                 approvals: &agent::HEADLESS_APPROVAL_GATE,
@@ -978,13 +971,10 @@ fn finalize_fleet_execution(
     let Some((store, execution_id)) = execution else {
         return false;
     };
-    // A fleet worker owns a fresh registry and runs exactly one execution in
-    // it, so every touched path belongs to this execution: the watermark is 0.
     agent::record_execution_end(
         store,
         *execution_id,
         registry,
-        0,
         outcome_label,
         cost_usd,
         persistence_complete && !force_incomplete,
@@ -1297,7 +1287,7 @@ mod tests {
         .expect("event");
         drop(tx);
         let rendered = renderer.await.expect("renderer");
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
 
         assert!(finalize_fleet_execution(
             &execution,
@@ -1319,7 +1309,7 @@ mod tests {
             .begin_execution("fleet", "task", "anthropic", "claude")
             .expect("begin");
         let execution = Some((store.clone(), id));
-        let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let registry = ToolRegistry::new(root.path().to_path_buf());
 
         assert!(!finalize_fleet_execution(
             &execution,

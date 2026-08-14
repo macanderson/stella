@@ -52,9 +52,8 @@
 //! Executing JavaScript needs a JavaScript engine, and embedding one
 //! (`boa`, `quickjs`) is a large dependency for one arrow function. Shelling
 //! out to a binary and skipping when it is absent is this workspace's
-//! established idiom for exactly this — `stella-tools`' git tests and
-//! `stella-tools/src/registry/tests/fence.rs`'s `make` test both do it. CI's
-//! runners ship node, so this gates there.
+//! established idiom for exactly this. CI's runners ship node, so this gates
+//! there.
 
 use std::process::Command;
 

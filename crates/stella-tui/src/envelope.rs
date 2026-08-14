@@ -519,9 +519,9 @@ impl InspectView {
     }
 }
 
-/// One row of the ISSUES tab's browse list — a tracker-agnostic mirror of
-/// `stella-tools`' `IssueSummary` (the TUI never links the tools crate; the
-/// driver maps one to the other).
+/// One row of the ISSUES tab's browse list — tracker-agnostic: the driver
+/// maps whatever issue source it carries into this shape, and the TUI never
+/// learns which tracker it was.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IssueRow {
     /// `#123` (GitHub) or `ENG-123` (Linear).

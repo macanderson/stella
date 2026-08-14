@@ -102,7 +102,6 @@ async fn a_tree_sized_untracked_change_is_read_within_a_bounded_number_of_probes
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &runner,
             lint: None,

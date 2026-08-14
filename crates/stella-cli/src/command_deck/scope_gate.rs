@@ -20,8 +20,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// following the advice changed nothing. Meanwhile the TUI's approval card
 /// and its decision keys were fully built and wired to nothing.
 ///
-/// This closes that loop the same way `DeckAskUserIo` closes `ask_user`: emit
-/// the card, park on a channel, let the input pump deliver the keypress. The
+/// This closes that loop the same way `DeckAskUserIo` closes its question
+/// cards: emit the card, park on a channel, let the input pump deliver the
+/// keypress. The
 /// pipeline emits its own `ScopeReview` event on the non-headless branch, which
 /// is what raises the card, so this gate only awaits the answer.
 pub(crate) struct DeckApprovalGate {
@@ -38,7 +39,7 @@ pub(crate) struct DeckApprovalGate {
     /// questions. The decision channel is fed by the scope card's keys, and
     /// that card is raised by the pipeline's own `ScopeReview` event — so a
     /// plain yes/no parked on it would wait for a card nobody was going to
-    /// draw. `ask_user`'s io raises its own.
+    /// draw. The question io raises its own.
     pub(crate) ask: Arc<dyn crate::interactive::AskUserIo>,
 }
 
@@ -120,7 +121,7 @@ impl ApprovalGate for DeckApprovalGate {
         resolved
     }
 
-    /// Yes/no through `ask_user`'s card. Fail-closed: a closed deck, an io
+    /// Yes/no through the question io's card. Fail-closed: a closed deck, an io
     /// error, or anything that is not an affirmative leaves the run doing what
     /// it would have done unasked.
     async fn confirm(&self, question: &str) -> bool {
@@ -140,6 +141,17 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
+    /// An io with nobody behind it: every prompt is an error, so a confirm
+    /// through it fails closed — the posture a gate test wants.
+    struct UnansweredIo;
+
+    #[async_trait]
+    impl crate::interactive::AskUserIo for UnansweredIo {
+        async fn prompt(&self, _question: &str, _options: &[String]) -> Result<String, String> {
+            Err("nobody is listening".to_string())
+        }
+    }
+
     fn gate(max_steps: usize) -> DeckApprovalGate {
         let (tx, _rx) = mpsc::unbounded_channel();
         let (_dtx, drx) = mpsc::unbounded_channel();
@@ -148,7 +160,7 @@ mod tests {
             inbound: tx,
             decisions: Arc::new(tokio::sync::Mutex::new(drx)),
             max_steps,
-            ask: Arc::new(crate::interactive::HeadlessAskUserIo),
+            ask: Arc::new(UnansweredIo),
         }
     }
 
@@ -216,7 +228,7 @@ mod tests {
             inbound: tx,
             decisions: Arc::new(tokio::sync::Mutex::new(drx)),
             max_steps: 5,
-            ask: Arc::new(crate::interactive::HeadlessAskUserIo),
+            ask: Arc::new(UnansweredIo),
         };
         let proposal = ScopeProposal {
             summary: "big".into(),

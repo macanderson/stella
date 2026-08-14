@@ -37,8 +37,8 @@ provider credential resolved — useful on a machine where you have not set up
 keys yet.
 
 <Callout type="info">
-`init` is a head start, not a prerequisite. Both `stella search` and the agent's
-own tools **bootstrap the index on first use** if it isn't there, and each query
+`init` is a head start, not a prerequisite. `stella search`
+**bootstraps the index on first use** if it isn't there, and each query
 runs a catch-up pass over changed files. Running `init` up front just means the
 first query isn't the one that pays for the full index build — and you get the
 domain taxonomy, which querying alone does not produce.
@@ -84,39 +84,7 @@ Two of them are worth calling out as habits:
   </SpecCard>
 </CardGrid>
 
-## 3. Let the agent use the same index
-
-The graph is not just a CLI convenience — the agent queries it as the
-`graph_query` tool, and that is the point. Where an agent without one greps for
-a symbol name, gets 200 textual hits, and reads a dozen files to disambiguate
-them, an agent with a graph asks for definitions and gets the answer with a
-citation.
-
-Two related tools ride on the same index:
-
-<CardGrid size="md">
-  <OptionCard name="graph_query">
-    Definitions, references, imports, importers, neighborhood — structural questions,
-    answered structurally.
-  </OptionCard>
-  <OptionCard name="read_symbol">
-    Reads a named symbol's exact source span, resolved through the graph rather than
-    by guessing line offsets. Multiple definitions are listed, never silently chosen.
-  </OptionCard>
-  <OptionCard name="project_overview">
-    One read-only pass for languages, entry points, and layout — the orientation call.
-  </OptionCard>
-  <OptionCard name="gather_context">
-    One deterministic sweep combining greps, globs, symbol lookups, and bounded
-    excerpts, saved as a reusable context pack.
-  </OptionCard>
-</CardGrid>
-
-You do not invoke these yourself. They exist so that the cheapest correct
-answer is also the one the model reaches for first, which is what keeps a run in
-an unfamiliar repository from turning into forty file reads.
-
-## 4. Make the change, with an oracle
+## 3. Make the change, with an oracle
 
 Now the actual work. In an unfamiliar codebase the single highest-value thing
 you can supply is the **test command**, because it converts "I think this is
@@ -157,7 +125,7 @@ sitting in your test directory afterwards. When it turns out to be worth keeping
 stella run --keep-witness "make Plan::validate reject a self-dependency by name"
 ```
 
-## 5. Review what actually changed
+## 4. Review what actually changed
 
 ```bash
 stella search "what imports src/db/schema.ts"   # re-ask: did the blast radius move?

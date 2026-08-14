@@ -1,9 +1,10 @@
 # Agent-loop survey: skills, tools, tasks, and the skills-first question
 
 Survey date: 2026-08-10. A ten-question audit of what the agent loop actually
-exposes today — what exists, what does not, and whether "skills drive
+exposed on that date — what existed, what did not, and whether "skills drive
 everything" is a direction worth taking. Every claim carries the file and line
-where it was read. Line numbers are as of this date and will drift.
+where it was read. Line numbers are as of this date and will drift; read
+every "exists today" below as "existed on 2026-08-10".
 
 ## 1. Skills: no invocation tool, no functions, no prompt text
 

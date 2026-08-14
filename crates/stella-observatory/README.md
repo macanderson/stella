@@ -214,17 +214,14 @@ reaches the browser must be audited the same way before it lands.
 
 Everything else here is read out of a store stella wrote. An exploration record
 is different — it travels with the tree and can be *ingested* from another
-machine ([`../../docs/spec/exploration-sharing.md`](../../docs/spec/exploration-sharing.md)
-§3), so its `path → sha256` manifest is untrusted text.
+machine, so its `path → sha256` manifest is untrusted text.
 `fsview::is_workspace_relative` refuses any key that is absolute or contains
-`..` before `/api/explorations` opens it, mirroring the `resolve_within_root`
-guard the producer (`stella_tools::staleness`) already applies: without it, a
-manifest keyed `"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root
-read whose verdict reports whether that file exists and whether its bytes hash
-to a chosen value. The check is lexical, so a
-symlink *inside* the workspace pointing out of it is still followed — a narrower
-guarantee than the producer's canonicalising one, and the reason to keep the
-manifest a list of paths rather than anything more expressive.
+`..` before `/api/explorations` opens it: without it, a manifest keyed
+`"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root read whose
+verdict reports whether that file exists and whether its bytes hash to a
+chosen value. The check is lexical, so a symlink *inside* the workspace
+pointing out of it is still followed — the reason to keep the manifest a
+list of paths rather than anything more expressive.
 
 ### The palette is a mirror, and one data-mark step is deliberately unused
 
@@ -377,8 +374,6 @@ through `redact`, or emit key names only, the way `mcp_servers` does.
   (the `execution_id` / `run_id` distinction this crate joins across), "The
   `.stella/` directory (per-workspace state)" for what each store holds, and
   invariant 3, "Zero telemetry egress by default".
-- [`../../docs/spec/exploration-sharing.md`](../../docs/spec/exploration-sharing.md)
-  §4e — the exploration-map freshness verdict `fsview::explorations` computes.
 - [`../../website/content/docs/commands/observe.mdx`](../../website/content/docs/commands/observe.mdx)
   and [`../../website/content/docs/telemetry/dashboard.mdx`](../../website/content/docs/telemetry/dashboard.mdx)
   — the user-facing flags and a tour of each tab.

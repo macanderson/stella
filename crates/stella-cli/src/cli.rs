@@ -16,8 +16,8 @@ pub(crate) mod help;
 
 use crate::{
     OutputFormat, build_info, commands_cmd, context_cmd, dataset_cmd, fleet_verbs, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd, stats,
-    storage_cmd, tune_cmd, usage_cmd,
+    inspect, memory_cmd, proposals_cmd, query_format, self_driving_cmd, stats, storage_cmd,
+    tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -99,8 +99,7 @@ impl Cli {
 // does not shadow cleanly — clap propagates the global's value slot into
 // every subcommand, and the id collision panics at match time in debug
 // builds and misbinds in release. `no_subcommand_flag_reuses_a_global_name`
-// in src/tests.rs enforces uniqueness (it is why `connect linear` pastes
-// a key via `--paste-key`, not `--api-key`).
+// in src/tests.rs enforces uniqueness.
 /// Session-wide flags shared by every subcommand — model routing,
 /// credentials, spend limit, UI toggles.
 #[derive(clap::Args)]
@@ -515,8 +514,9 @@ pub(crate) enum Command {
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
         /// a change that flips a failing test to passing is proven done.
-        /// Omitted, the only proof left is the worker's own verify_done, and
-        /// a turn that reaches neither is reported unverified — not passed.
+        /// Omitted, the pipeline's witness stage is the remaining oracle,
+        /// and a turn that reaches neither is reported unverified — not
+        /// passed.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
@@ -696,31 +696,24 @@ pub(crate) enum Command {
         #[arg(long, value_name = "DIR")]
         validate: Option<Option<std::path::PathBuf>>,
 
-        /// Author a tool-foundry proposal into a staged custom tool:
-        /// writes `<name>.toml` + `<name>.sh` under .stella/tools/proposed/
-        /// (inert until it is adopted AND enabled). Omit the value to list
-        /// the current proposals mined from recent bash receipts.
-        #[arg(long, value_name = "NAME", conflicts_with = "validate")]
-        author: Option<Option<String>>,
-
         /// Adopt a staged tool: move it into .stella/tools/ and run its
         /// capability witness — the call must FAIL on the existing tool
         /// surface and PASS with the new tool, producing a real value.
         /// Records the proof. Does NOT make the tool usable.
-        #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "author"])]
+        #[arg(long, value_name = "NAME", conflicts_with = "validate")]
         adopt: Option<String>,
 
         /// Enable an adopted tool — the one approval in the protocol a
         /// machine never grants itself. Refused if the tool's bytes changed
         /// since its witness ran.
-        #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "author", "adopt"])]
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "adopt"])]
         enable: Option<String>,
 
         /// Stop offering an adopted tool, keeping its proof on file
         #[arg(
             long,
             value_name = "NAME",
-            conflicts_with_all = ["validate", "author", "adopt", "enable"]
+            conflicts_with_all = ["validate", "adopt", "enable"]
         )]
         disable: Option<String>,
 
@@ -729,7 +722,7 @@ pub(crate) enum Command {
         /// (with the never-used ones named as the cost)
         #[arg(
             long,
-            conflicts_with_all = ["validate", "author", "adopt", "enable", "disable"]
+            conflicts_with_all = ["validate", "adopt", "enable", "disable"]
         )]
         foundry: bool,
     },
@@ -805,7 +798,7 @@ pub(crate) enum Command {
         output_format: OutputFormat,
     },
 
-    /// Find code — the CLI door to the `search` tool the agent calls
+    /// Find code — semantic and structural search over the workspace
     ///
     /// Describe what you are looking for — a question, a behaviour, or a
     /// symbol/file name — and get back the files that answer it, ranked by
@@ -822,17 +815,6 @@ pub(crate) enum Command {
         /// under the versioned query envelope — for scripted testing
         #[arg(long, value_enum, default_value = "text")]
         format: query_format::QueryFormat,
-    },
-
-    /// List or run the project's package-manager scripts
-    ///
-    /// List or run the project's package-manager scripts — deterministic
-    /// static detection (cargo/npm/uv/go/make/just/…) mapped onto canonical
-    /// verbs (install/build/check/start/test/lint/format). Offline: manifest
-    /// parsing plus a local subprocess, needs no API key.
-    Scripts {
-        #[command(subcommand)]
-        cmd: scripts_cmd::ScriptsCmd,
     },
 
     /// List or convert this workspace's custom slash commands
@@ -1083,17 +1065,6 @@ pub(crate) enum Command {
         cmd: McpCmd,
     },
 
-    /// Connect an issue tracker (GitHub or Linear)
-    ///
-    /// Connect an issue tracker (GitHub/Linear) via OAuth or a pasted key —
-    /// enables the issue tools (search_issues, create_issue, list_labels, …)
-    /// and the deck's Issues tab. Credentials land owner-only in
-    /// ~/.stella/integrations.json; needs no model API key.
-    Connect {
-        #[command(subcommand)]
-        cmd: ConnectCmd,
-    },
-
     /// Show current configuration
     Config,
 
@@ -1255,37 +1226,6 @@ pub(crate) enum ModelsCmd {
         /// Include providers with no configured credential
         #[arg(long)]
         all: bool,
-    },
-}
-
-/// `stella connect` subcommands — tracker connections consumed by the issue
-/// tools. GitHub uses the OAuth device flow (public client, no secret in the
-/// binary); Linear uses browser OAuth when an app is configured, else a
-/// personal API key. All traffic is user-initiated — connecting is what opts
-/// a workspace into tracker calls.
-#[derive(Subcommand)]
-pub enum ConnectCmd {
-    /// Connect GitHub via the OAuth device flow (or --token to paste a PAT)
-    Github {
-        /// Paste a personal access token instead of running the device flow
-        #[arg(long)]
-        token: bool,
-    },
-    /// Connect Linear via browser OAuth (needs STELLA_LINEAR_CLIENT_ID) or a
-    /// personal API key
-    Linear {
-        /// Paste a personal API key even when an OAuth app is configured.
-        /// (Named to stay clear of the session-wide `--api-key`, which is
-        /// the model-provider credential — a different secret entirely.)
-        #[arg(long)]
-        paste_key: bool,
-    },
-    /// Show stored connections, their accounts, and credential precedence
-    Status,
-    /// Forget a stored connection
-    Remove {
-        /// github | linear
-        provider: String,
     },
 }
 

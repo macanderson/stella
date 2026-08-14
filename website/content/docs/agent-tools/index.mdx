@@ -1,9 +1,9 @@
 ---
 title: Built-in Tools
-description: The complete catalog of tools the stella agent can call in every session, including which are read-only and which mutate your workspace.
+description: The complete catalog of tools the stella agent can call in every session — the coordination core of sub-agents, the task board, scratch state, and the environment probe — including which are read-only.
 ---
 
-stella ships with a set of built-in tools that are always available to the agent. On top of these, you can add your own [custom script tools](/docs/agent-tools/custom-tools) and merge in tools from [MCP servers](/docs/agent-tools/mcp). Every tool is subject to a [per-tool permission model](/docs/agent-tools/permissions).
+stella ships a deliberately small built-in surface: **12 tools**, covering sub-agent delegation, the session task board, scratch session state, and the session environment. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool — built-in or merged — is subject to a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
@@ -17,11 +17,11 @@ This reflects the live session: it accounts for custom tools discovered in `.ste
 
 ## The built-in catalog
 
-Each tool is either **read-only** (it only observes your workspace and environment) or **mutating** (it changes files, runs commands, or performs side effects). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects.
+Each tool is either **read-only** (it only observes session state and the environment) or **mutating** (it changes the task board, writes scratch state, or dispatches work to a sub-agent). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects.
 
-A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice. A web search burns a metered API call on every run, an issue lookup spends a rate-limited API, and the graph-backed tools write catch-up state to `codegraph.db` on the read path — so those reads run only at dispatch, exactly once per committed call. A mutating tool is never speculated, and MCP-provided tools never opt in.
+A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice, so only calls that are free to repeat opt in. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
-The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
+The speculation-safe subset is exactly: `get_state`, `list_state`, `get_environment`, and `task_list`.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 
@@ -29,200 +29,9 @@ Tool names are their exact identifiers — the agent dispatches by name, and the
 This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs` asserts that every card below matches `catalog.rs` — the name, the access marker, and the counts. Adding a tool without documenting it fails the test suite by name.
 </Callout>
 
-### Always available
+All 12 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
-These 59 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
-
-#### Files
-
-<CardGrid size="md">
-  <ToolCard name="read_file" access="read">
-    Read a file, returned with 1-based line numbers; `offset`/`limit` read a range.
-  </ToolCard>
-  <ToolCard name="read_symbol" access="read">
-    Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing. Multiple definitions are listed (pick one with `path`), never silently chosen.
-  </ToolCard>
-  <ToolCard name="write_file" access="mutating">
-    Create a file or overwrite an existing one — parent directories are created as needed.
-  </ToolCard>
-  <ToolCard name="edit_file" access="mutating">
-    Replace an exact substring in a file — exactly-once by default, every occurrence with `replace_all`.
-  </ToolCard>
-  <ToolCard name="apply_edits" access="mutating">
-    Apply a batch of exact-substring edits — across multiple files — in one transactional call: every edit validates first, and if any fails nothing is written. `dry_run` validates without writing.
-  </ToolCard>
-  <ToolCard name="delete_file" access="mutating">
-    Delete a file — preferred over shelling out to `rm`, so the deletion lands in the file-touch audit log.
-  </ToolCard>
-</CardGrid>
-
-#### Search
-
-<CardGrid size="md">
-  <ToolCard name="search" access="read">
-    One way to find code, whatever form the question takes: a description of behaviour, a question, or a symbol name. Ranks by meaning rather than substring, then spends a fixed context budget attaching structure to the top hits — symbols, imports, importers, signatures, docs, callers, callees, a body excerpt — so one call usually replaces a run of grep/glob/read_file round trips. How much detail each hit carries is the `STELLA_SEARCH_DEPTH` dial (1–10, default 10 — everything the budget affords), owned by configuration and never by the model; `STELLA_SEARCH_BUDGET` is the hard stop in characters, and budget the decayed tail leaves unspent deepens the best-ranked hits back toward the dial. Also available at the CLI as `stella search`. Degrades to symbol-name matching without an embedder and to an index-free file scan without a code graph, and every answer states which strategies ran and whether it was truncated.
-  </ToolCard>
-  <ToolCard name="grep" access="read">
-    Search file contents with a regex (ripgrep-backed when available); once the code-graph index exists, matches carry a code-map footer.
-  </ToolCard>
-  <ToolCard name="glob" access="read">
-    Find files by glob pattern, returned as workspace-relative paths.
-  </ToolCard>
-  <ToolCard name="graph_query" access="read">
-    Query the indexed code graph instead of grepping: definitions, references, callees, callers (best-effort by name), imports, importers, or a file's full graph neighborhood. Registers every session and builds its own code-graph index on first use.
-  </ToolCard>
-  <ToolCard name="semantic_code_search" access="read">
-    Find the files a plain-English description is about — "which file strips secrets before logging" — when you know what the code does but cannot guess what it is called. Ranks indexed files by meaning; needs an embedding backend (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) and says so in its answer when there is none. `stella init` embeds the tree up front so the first call can answer.
-  </ToolCard>
-</CardGrid>
-
-#### Context &amp; memory
-
-<CardGrid size="md">
-  <ToolCard name="project_overview" access="read">
-    Orient in the workspace: languages, entry points, and layout, in one read-only pass.
-  </ToolCard>
-  <ToolCard name="gather_context" access="read">
-    Run one deterministic context sweep — grep patterns + file globs + code-graph symbol lookups + bounded excerpts — in a single call, saved as a reusable context pack.
-  </ToolCard>
-  <ToolCard name="explorations" access="read">
-    List saved codebase explorations, or read one back by slice.
-  </ToolCard>
-  <ToolCard name="save_exploration" access="mutating">
-    Persist an end-to-end map of a codebase slice for other agents to reuse.
-  </ToolCard>
-  <ToolCard name="save_memory" access="mutating">
-    Save a durable workspace lesson (gotcha, convention, failed approach) to `.stella/memories/` — loaded into every future session's prompt.
-  </ToolCard>
-  <ToolCard name="cite_memory" access="mutating">
-    Cite a recalled memory (`nod_…`) or a workspace record (`^handle`) that
-    informed the turn (feeds the citation loop).
-  </ToolCard>
-</CardGrid>
-
-#### Verify &amp; build
-
-<CardGrid size="md">
-  <ToolCard name="verify_done" access="mutating">
-    Prove a change is done: the test command must pass on the new code and fail on `git HEAD`. Runs in a shadow worktree and never edits your working tree.
-  </ToolCard>
-  <ToolCard name="build_project" access="mutating">
-    Build the workspace with its own toolchain (cargo/npm/go/make), or a custom command.
-  </ToolCard>
-  <ToolCard name="run_tests" access="mutating">
-    Run the project's tests with its own runner — `kind` picks unit/e2e/all, `filter` is runner-native, and `scope: "impacted"` runs only the tests reaching the working-tree change through the code graph's importer edges (relative TS/JS, Python, and Rust `use`/`mod` paths; Rust narrows to the owning cargo packages, since its unit tests live inside the sources). Falls back loudly to the full suite when selection is unavailable — an unresolvable language, or a missing/stale index — never silently under-testing.
-  </ToolCard>
-  <ToolCard name="diagnostics" access="read">
-    Fast typecheck: run the toolchain's native machine-readable check (`cargo check` / `tsc` / `eslint` / `ruff`) and return structured file:line:col diagnostics with severity and rule code, grouped by file.
-  </ToolCard>
-  <ToolCard name="run_lint" access="mutating">
-    Run the project's own linter (cargo clippy, or the `lint` script); `fix` applies automatic fixes.
-  </ToolCard>
-  <ToolCard name="format_code" access="mutating">
-    Run the project's own formatter (cargo fmt, or the `format` script); `check` verifies without rewriting.
-  </ToolCard>
-  <ToolCard name="list_scripts" access="read">
-    List the verbs the project declares (Makefile targets, package.json scripts, cargo aliases) — the index `run_script` draws from.
-  </ToolCard>
-  <ToolCard name="run_script" access="mutating">
-    Run a verb the project itself declares — a Makefile target, a package.json script, or a cargo alias — argv-style, never through a shell.
-  </ToolCard>
-</CardGrid>
-
-#### Process control
-
-<CardGrid size="md">
-  <ToolCard name="probe_capability" access="read">
-    Check whether a binary is available on PATH without executing it. Results are cached for the session — install mid-session won't be seen until restart.
-  </ToolCard>
-  <ToolCard name="start_process" access="mutating">
-    Start a long-running process (dev server, REPL, watcher) from an argv vector — no shell — and get a handle for the other four.
-  </ToolCard>
-  <ToolCard name="read_output" access="mutating">
-    Read a started process's buffered stdout+stderr since the last read, plus its running/exited state.
-  </ToolCard>
-  <ToolCard name="clear_output" access="mutating">
-    Discard a started process's buffered stdout+stderr without reading it. Does not stop the process.
-  </ToolCard>
-  <ToolCard name="send_stdin" access="mutating">
-    Write text to a started process's stdin (e.g. a REPL command).
-  </ToolCard>
-  <ToolCard name="restart_process" access="mutating">
-    Replace what runs under a started process handle — same argv to pick up an edit, or a corrected one — leaving the handle running.
-  </ToolCard>
-  <ToolCard name="stop_process" access="mutating">
-    Reap a started process that has already exited. A process still running is not stopped: use restart_process.
-  </ToolCard>
-</CardGrid>
-
-#### Shell
-
-<CardGrid size="md">
-  <ToolCard name="bash" access="mutating">
-    Run a shell command in the workspace root, with a timeout backstop.
-  </ToolCard>
-</CardGrid>
-
-#### Web
-
-<CardGrid size="md">
-  <ToolCard name="web_fetch" access="read">
-    Fetch a URL and read it as markdown, plain text, or raw HTML — links absolutized so the agent can follow them.
-  </ToolCard>
-  <ToolCard name="web_extract_assets" access="read">
-    Fetch a page and mine its design assets — stylesheets, scripts, images, fonts, plus design tokens (colors, font families, custom properties, `@font-face`) distilled from the CSS.
-  </ToolCard>
-  <ToolCard name="web_download" access="mutating">
-    Download a URL to a file inside the workspace (images, fonts, stylesheets, archives).
-  </ToolCard>
-</CardGrid>
-
-`web_search` is the one web tool with a prerequisite — a BYOK search key — so it sits in the next section.
-
-#### Git
-
-<CardGrid size="md">
-  <ToolCard name="repo_status" access="read">
-    Repository state right now, in one git call with no arguments: current branch, commits ahead/behind upstream, changed files as structured rows, the HEAD commit, linked-worktree context, how many changes are shelved (`git stash`), and up to 20 commits no branch, tag or remote points at. The first rung of the three git readers — including when work seems to have gone missing, since a detached position, a shelved change, or an orphaned commit is usually the whole answer.
-  </ToolCard>
-  <ToolCard name="repo_diff" access="read">
-    The pending changes as patch hunks plus a per-file +added/-removed summary — self-review before committing. Unstaged by default, `staged: true` for staged changes, optionally scoped to `paths`; the patch is capped with a loud elision marker.
-  </ToolCard>
-  <ToolCard name="repo_history" access="read">
-    Where the repository has *been*: recent commits, every branch with its ahead/behind vs the default, each shelved change with the selector that addresses it (`stash@{0}`), and the working-position log (`git reflog`). One call, no shell. The second rung — `repo_status` answers the current branch, a detached position and the shelved count more cheaply, so come here for the history *around* those facts: when the position moved, how far each branch diverged, or a stash's selector.
-  </ToolCard>
-  <ToolCard name="repo_recover" access="read">
-    Find committed work no branch points at, judged against a reference you name (`target`, default `HEAD`). Searches the whole object store (`git fsck`) unioned with the position log, so it is the only one of the three that reaches commits the reflog has already expired, and the only one that answers "unreferenced relative to *this* ref". Each commit carries `sits_on_target`, so a fast-forward is distinguishable from a merge that could conflict. Scanning every object is why `repo_status` does not do it on every call — the slow last rung, once `repo_status` has shown no shelved change, no detached position and nothing unreachable; stella's own candidate-workspace snapshot commits are excluded and counted separately.
-  </ToolCard>
-  <ToolCard name="repo_commit" access="mutating">
-    Commit exactly the named paths — there is no stage-everything mode.
-  </ToolCard>
-  <ToolCard name="repo_push" access="mutating">
-    Push the current (or named) branch; structurally refuses the default branch, and force-push does not exist here.
-  </ToolCard>
-  <ToolCard name="repo_pull" access="mutating">
-    Update the current branch from upstream, fast-forward only — never merges or rewrites.
-  </ToolCard>
-  <ToolCard name="repo_rollback" access="mutating">
-    Restore exactly the named paths to their last committed state; history itself is never rewritten.
-  </ToolCard>
-</CardGrid>
-
-#### CI &amp; media
-
-<CardGrid size="md">
-  <ToolCard name="ci_status" access="read">
-    Inspect CI runs and failure-log tails for a branch, PR, or commit via `gh`; `wait` blocks until the latest run finishes.
-  </ToolCard>
-  <ToolCard name="screenshot" access="mutating">
-    Capture the screen to a PNG in `.stella/screenshots/` as verification evidence.
-  </ToolCard>
-  <ToolCard name="generate_svg" access="mutating">
-    Validate, sanitize, and save an SVG the agent authored into `.stella/artifacts/` — scripts, event handlers, and external references are stripped.
-  </ToolCard>
-</CardGrid>
-
-#### Task board
+### Task board &amp; sub-agents
 
 <CardGrid size="md">
   <ToolCard name="task_create" access="mutating">
@@ -248,24 +57,24 @@ These 59 tools register in every session — no configuration, no prerequisites.
   </ToolCard>
 </CardGrid>
 
-#### Session state
+### Session state
 
 <CardGrid size="md">
   <ToolCard name="save_state" access="mutating">
-    Save intermediate session state under a key so later steps can reference it instead of re-deriving it (parse results, extracted lists, computed digests). Capped at 1 MiB for model-authored content; shell-produced files in `$STELLA_SCRATCH` are uncapped.
+    Save intermediate session state under a key so later steps can reference it instead of re-deriving it (parse results, extracted lists, computed digests). Capped at 1 MiB for model-authored content; files produced into `$STELLA_SCRATCH` are uncapped.
   </ToolCard>
   <ToolCard name="get_state" access="read">
-    Read a saved scratch entry by key, paged at 30 KB with explicit remainder headers. Prefer this over re-running commands that produced expensive state.
+    Read a saved scratch entry by key, paged at 30 KB with explicit remainder headers. Prefer this over re-deriving expensive state.
   </ToolCard>
   <ToolCard name="list_state" access="read">
-    List saved scratch entries (key and size in bytes), including files a shell command wrote into `$STELLA_SCRATCH`.
+    List saved scratch entries (key and size in bytes), including files written into `$STELLA_SCRATCH`.
   </ToolCard>
   <ToolCard name="delete_state" access="mutating">
     Delete one scratch entry by key — use when saved state is stale or superseded so later steps cannot read an invalidated value.
   </ToolCard>
 </CardGrid>
 
-#### Environment
+### Environment
 
 <CardGrid size="md">
   <ToolCard name="get_environment" access="read">
@@ -273,91 +82,39 @@ These 59 tools register in every session — no configuration, no prerequisites.
   </ToolCard>
 </CardGrid>
 
-<Callout type="info">
-`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
+The read-only partition is exactly: `task_list`, `get_state`, `list_state`, and `get_environment`. The other eight are mutating.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `search`, `grep`, `glob`, `graph_query`, `semantic_code_search`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `get_state`, `list_state`, `get_environment`, `probe_capability`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `recall_context`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
-</Callout>
+## Switching tools off
 
-### Conditionally registered
-
-These appear only when their prerequisite is met. A prerequisite is something the **environment** supplies — a key, a backend — never a default someone has to discover. Turning an available tool *off* is a separate thing, covered under [Switching tools off](#switching-tools-off).
-
-<CardGrid size="md">
-  <ToolCard name="web_search" access="read" when="a BYOK search key is present — BRAVE_API_KEY or TAVILY_API_KEY. The other three web tools need no key.">
-    Search the web and get ranked results (title, URL, snippet).
-  </ToolCard>
-  <ToolCard name="generate_image" access="mutating" when="an image-capable BYOK provider key is configured.">
-    Generate an image from a text prompt into `.stella/artifacts/`.
-  </ToolCard>
-  <ToolCard name="generate_video" access="mutating" when="the configured media provider has a video adapter — an image-only key registers generate_image without the video pair.">
-    Submit an asynchronous text-to-video job. Video costs real money: any job with a positive estimated cost is denied unless `confirm_spend` is true.
-  </ToolCard>
-  <ToolCard name="poll_video" access="mutating" when="the same video-adapter condition as generate_video.">
-    Poll a video job, reconciling its state live against the provider.
-  </ToolCard>
-  <ToolCard name="create_issue" access="mutating" when="an issue backend is configured.">
-    Create an issue (title, body, labels, assignee, Linear team). Labels and assignees must exist — search them first.
-  </ToolCard>
-  <ToolCard name="update_issue" access="mutating" when="an issue backend is configured.">
-    Update title/body, comment, change status, add labels, set the assignee — any combination.
-  </ToolCard>
-  <ToolCard name="close_issue" access="mutating" when="an issue backend is configured.">
-    Close an issue, optionally with a closing comment.
-  </ToolCard>
-  <ToolCard name="search_issues" access="read" when="an issue backend is configured.">
-    Search or list issues, with state/assignee/label filters.
-  </ToolCard>
-  <ToolCard name="get_issue" access="read" when="an issue backend is configured.">
-    Read one issue in full, including its comment thread.
-  </ToolCard>
-  <ToolCard name="list_labels" access="read" when="an issue backend is configured.">
-    Search labels by substring — no guessing exact names.
-  </ToolCard>
-  <ToolCard name="list_members" access="read" when="an issue backend is configured.">
-    Search assignable people by login, name, or email substring.
-  </ToolCard>
-  <ToolCard name="start_work_on_issue" access="mutating" when="an issue backend is configured.">
-    Move an issue to in-progress and create or check out its branch.
-  </ToolCard>
-</CardGrid>
-
-<Callout type="info">
-The issue backend resolves in precedence order: `LINEAR_API_KEY` env → a stored **Linear** connection (`stella connect linear`) → a stored **GitHub** connection (`stella connect github`, runs over REST with no `gh` CLI needed) → ambient `gh` CLI auth. If none is available, no issue tools are registered at all. See [stella connect](/docs/commands/connect).
-</Callout>
-
-### Switching tools off
-
-Every tool ships **on**, `bash` and the web family included. The one way to turn something off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it reads the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:
+Every tool ships **on**. The one way to turn something off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it reads the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:
 
 ```json title="settings.json"
 {
   "tools": {
-    "bash": "off",
-    "process": "off",
+    "task_assign": "off",
     "mcp__github__create_issue": "off"
   }
 }
 ```
 
-A key is a **tool name**, a **group name** (the family headings above — `file`, `retrieval` (the Search family; deliberately not keyed `search`, so that key addresses the `search` tool alone), `process`, `repo`, `web`, `bash`, `task`, …, plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on.
+A key is a **tool name**, a **group name** (the family headings above — `task`, `scratch`, `environment` — plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on.
 
 Two recipes that fall out of that rule:
 
-```json title="A read-only agent, in two lines"
+```json title="A board reader that cannot change the board"
 {
   "tools": {
-    "*": "off",
-    "read_file": "on"
+    "task": "off",
+    "task_list": "on"
   }
 }
 ```
 
-```json title="Keep exactly one of the five process tools"
+```json title="No sub-agent delegation, everything else untouched"
 {
   "tools": {
-    "process": "off",
-    "read_output": "on"
+    "task_assign": "off",
+    "task": "off"
   }
 }
 ```
@@ -365,134 +122,6 @@ Two recipes that fall out of that rule:
 A switched-off tool is **withheld from the schema list and refused if called anyway** — the refusal reads like the unknown-tool error, so a disabled tool is indistinguishable from one that was never built. Enforcement is at the tool boundary, not by prompt discipline.
 
 Scopes merge per key (project beats user), with one asymmetry: an **org-managed** `settings.json` that turns a tool off is a ceiling. A user or project scope may narrow further but can never turn it back on — see [settings](/docs/configuration/settings).
-
-### Web access
-
-The web family gives the agent the open internet: search, fetch-and-read, asset extraction, and download. It powers things like *"build me a design system based on this site"* or *"read this article and summarize it."*
-
-Three of the four register with **no key required** — `web_fetch`, `web_extract_assets`, and `web_download`, all listed above. Worth knowing beyond their one-line summaries:
-
-- **`web_fetch`** renders HTML as markdown by default, or returns plain `text` or raw `html`. Links and images come back absolute so the agent can follow them. A binary response is reported, not dumped — use `web_download` for those.
-- **`web_extract_assets`** distills **design tokens from the CSS**: colors and font families ranked by frequency, CSS custom properties, and `@font-face` families with their source files. It is the starting point for reconstructing a site's design system.
-- **`web_download`** is confined to the workspace root and audited in the file-touch ledger exactly like `write_file`. Assets belong under `.stella/artifacts/web/`.
-
-`web_search` registers additionally when a **BYOK search key** is present — `BRAVE_API_KEY` (a dedicated web-search API) or `TAVILY_API_KEY`. Without a key the other three still work; you just fetch URLs you already know.
-
-#### Logging in to sites (`web_auth.toml`)
-
-To fetch pages behind a login — your subscriptions, a paywalled news site, an internal tool — give stella your own session in `~/.stella/web_auth.toml` (override the path with `STELLA_WEB_AUTH_FILE`). Cookies and headers are injected per domain at request time and **never appear in tool output**, so the secrets stay out of the model's context.
-
-```toml title="~/.stella/web_auth.toml"
-# Optional: override the default `stella/<version>` User-Agent for all requests.
-[defaults]
-user_agent = "Mozilla/5.0 (compatible; my-research-bot)"
-
-# One block per domain. A domain also matches its subdomains; the longest
-# configured suffix wins (api.example.com beats example.com).
-[domains."news.example.com"]
-cookie = "session=…; csrftoken=…"   # paste from your logged-in browser session
-
-[domains."internal.corp"]
-authorization = "Bearer …"
-[domains."internal.corp".headers]
-X-Tenant = "acme"
-
-# Optional: re-open destinations the egress guard denies by default (below).
-# Entries are `host` or `host:port`, matched exactly — not by subdomain.
-[egress]
-allow = ["localhost:3000", "127.0.0.1:3000"]
-```
-
-```bash
-# Lock it down — it holds live session secrets.
-chmod 600 ~/.stella/web_auth.toml
-```
-
-<Callout type="warn">
-`web_auth.toml` holds live session secrets — treat it like `credentials.toml`. stella redacts the values from its own logs and never echoes them into a tool result, but the file itself is plaintext: restrict it to owner-only (`chmod 600`). Unknown keys are a hard parse error, and a broken file makes every web tool fail loudly rather than silently fetching unauthenticated. `cookie` and `authorization` are dropped on a cross-host redirect; a secret in a custom `headers` entry is **not** — it would follow the redirect, so only put secrets in custom headers for hosts you trust to redirect.
-</Callout>
-
-<Callout type="warn">
-**Internal destinations are denied by default.** A page the agent fetches can contain instructions — so can a README, an issue body, or a CI log — and prompt injection is the normal condition for a tool that fetches, not an edge case. So `web_fetch`, `web_extract_assets` and `web_download` refuse loopback, private (RFC1918) ranges, link-local `169.254.0.0/16` and `fe80::/10`, IPv6 unique-local `fc00::/7`, carrier-grade NAT, and the `localhost` / `.internal` / `.local` name families. The check runs three times over: on the URL, on **the addresses DNS returns** for it (so a public hostname pointed at `127.0.0.1` is caught too), and on **every redirect hop** (so a public URL that 302s to the metadata endpoint is caught).
-
-To fetch your own dev server, name it in the `[egress] allow` list above — `"localhost:3000"` for one port, `"localhost"` for all of them, `"*"` to switch the guard off entirely. It lives in `web_auth.toml` rather than `settings.json` on purpose: a project's `settings.json` is untrusted repo input, and a checked-in file must not be able to re-open loopback.
-
-Two things it does **not** cover. If `HTTP_PROXY`/`HTTPS_PROXY` is set, requests are resolved and connected by the proxy, so the post-DNS half of the check does not see the real destination. And it bounds *where* a request may go, not *which* credentials ride it — that fence is the same-origin rule above. For anything narrower, constrain destinations with [`PreToolUse` hooks or `guard-tool` rules](/docs/agent-tools/permissions), or turn the family off with `"tools": {"web": "off"}`.
-</Callout>
-
-### Session tools
-
-The CLI layers **eight** more tools on top of the native registry. Three belong to interactive sessions:
-
-<CardGrid size="md">
-  <ToolCard name="ask_user" access="mutating">
-    Ask the user a multiple-choice question when a decision is genuinely theirs to make — 2–6 short options, and the UI always adds a free-text option. In a headless run it returns a named error instead of hanging on stdin.
-  </ToolCard>
-  <ToolCard name="search_skills" access="read">
-    Search the public skills registry for reusable agent [skills](/docs/agent-tools/skills) matching a topic.
-  </ToolCard>
-  <ToolCard name="install_skill" access="mutating">
-    Install a skill from the registry into the project's `.stella/skills/` — always asks for confirmation first.
-  </ToolCard>
-</CardGrid>
-
-One reaches the **context plane** mid-turn:
-
-<CardGrid size="md">
-  <ToolCard name="recall_context" access="read">
-    Search this workspace's context plane — durable memories, past episodes, indexed symbols — for anything relevant to a question, and get it back as citable frames. The turn's opening recall runs against the goal *as stated*, before the agent has read anything; this is the same port, reachable at the moment it hits something the goal did not predict. It costs no model call, and an empty plane answers `no relevant context` rather than erroring — "nobody wrote this down" is an answer worth acting on.
-  </ToolCard>
-</CardGrid>
-
-One **executes** installed [skills](/docs/agent-tools/skills):
-
-<CardGrid size="md">
-  <ToolCard name="invoke_skill" access="mutating">
-    Invoke an installed skill by name, with optional arguments. The skill's own frontmatter decides how it runs: inline (the full body expands into the conversation with `$ARGUMENTS` substituted) or `context: fork` (a sub-agent runs it and only the result returns). An `allowed-tools` grant narrows the tool surface for the skill's span — and can never re-enable a tool the operator or an org scope switched off.
-  </ToolCard>
-</CardGrid>
-
-### Discovery tools
-
-The remaining three session tools are read-only **discovery** tools layered over the whole catalog. They exist so the agent never needs the entire tool, skill, and MCP surface frontloaded: a workspace can carry hundreds of tools and thousands of installed skills, and the agent finds the best fit on demand instead of carrying all of it in every prompt.
-
-<CardGrid size="md">
-  <ToolCard name="tool_search" access="read">
-    Search every tool available this session — built-ins, `mcp__<server>__<tool>` MCP tools, custom tools — ranked by fit. Queries are keywords (`issue tracking`), `+required` terms (`+github pr`), or `select:name1,name2` for exact lookup.
-  </ToolCard>
-  <ToolCard name="skill_search" access="read">
-    Search the skills **installed** in this workspace (`.stella/skills/` plus the user-global directory), ranked by fit. `include_body: true` also returns the best match's full instructions. Complements `search_skills`, which queries the public registry for skills you'd still have to install.
-  </ToolCard>
-  <ToolCard name="mcp_search" access="read">
-    Find MCP servers and their tools: the workspace's configured servers (default scope), or the public MCP registry (`scope: "registry"`) for servers worth installing with `stella mcp install <name>`.
-  </ToolCard>
-</CardGrid>
-
-#### Lean frontloading (experimental)
-
-Set `STELLA_LEAN_TOOLS=1` to advertise only a lean core toolset plus the discovery tools; everything else stays out of the prompt until a `tool_search` surfaces it.
-
-```bash
-# Trim the prompt to the default core plus the discovery tools.
-STELLA_LEAN_TOOLS=1 stella run "wire up the new webhook handler"
-
-# Or choose your own core — a comma-separated list replaces the default.
-# The discovery tools still ride along on top of it.
-STELLA_LEAN_TOOLS=read_file,grep,glob,bash stella run "audit the config loader"
-
-# Or close the set: `only:` advertises exactly these and nothing else,
-# discovery tools included. This is the form a fixed-size experiment needs.
-STELLA_LEAN_TOOLS=only:search,read_file,edit_file,write_file,bash \
-  stella run "audit the config loader"
-```
-
-The default core is exactly thirteen tools: `read_file`, `write_file`, `edit_file`, `bash`, `grep`, `glob`, `graph_query`, `read_symbol`, `gather_context`, `verify_done`, `build_project`, `run_tests`, and `ask_user`. Note what is *not* in it — `delete_file` and `apply_edits` are absent, so lean mode is read/write/edit rather than full file CRUD.
-
-`graph_query` and `read_symbol` are core rather than searchable on purpose: a model that does not know the code graph exists has no reason to search for it, so hiding the structural retrieval tools behind `tool_search` pins every lean session to grep.
-
-Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
-
-All told: 59 always-on tools, up to 71 native tools with the code graph, media keys, a search key, and an issue backend, plus the eight session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

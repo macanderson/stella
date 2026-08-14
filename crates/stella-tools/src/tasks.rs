@@ -6,9 +6,8 @@
 //! additionally queues a [`SpawnRequest`] for the session driver to turn
 //! into a real sub-agent spawn (spawning is I/O and never happens here —
 //! see the module docs on `stella_core::tasks`). The board and the queue
-//! follow the [`crate::memory::CitationLedger`] idiom: `Arc<Mutex<…>>`
-//! handles shared between the tool instances and the [`crate::ToolRegistry`]
-//! that exposes/drains them.
+//! are `Arc<Mutex<…>>` handles shared between the tool instances and the
+//! [`crate::ToolRegistry`] that exposes/drains them.
 
 use std::sync::{Arc, Mutex};
 
@@ -799,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn registry_dispatches_task_tools_and_drains_spawn_requests() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = crate::ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
+        let reg = crate::ToolRegistry::new(dir.path().to_path_buf());
 
         let out = reg
             .execute(

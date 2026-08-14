@@ -15,9 +15,9 @@
 //!   so a rising adoption number on top of a falling resolve rate is a
 //!   regression wearing a win's clothes.
 //!
-//! Classification comes from `stella_tools::graph::classify_answer`, which
-//! owns the exact literals every miss branch emits — this module never
-//! pattern-matches prose of its own.
+//! Classification comes from [`crate::search_cmd::codegraph::classify_answer`],
+//! which owns the exact literals every miss branch emitted — this module
+//! never pattern-matches prose of its own.
 //!
 //! # Why this module also compares
 //!
@@ -209,7 +209,7 @@ impl GraphHealth {
 /// Fold classified answers plus lifetime call counts into the report. Pure, so
 /// the arithmetic is testable without a store.
 fn graph_health(answers: &[stella_store::ToolCallAnswer], counts: &[(String, i64)]) -> GraphHealth {
-    use stella_tools::graph::{GraphAnswer, classify_answer};
+    use crate::search_cmd::codegraph::{GraphAnswer, classify_answer};
 
     let mut by_op: HashMap<String, GraphOpRow> = HashMap::new();
     let mut total = GraphOpRow::new("TOTAL");

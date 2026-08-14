@@ -365,15 +365,14 @@ so a project can point at a different registry than the user default.
 
 ## The `tools` section
 
-stella ships with **every tool on**, `bash` and the web family included. The top-level
+stella ships with **every tool on**. The top-level
 `tools` section is the one way to turn something off, and it works identically for
 built-ins, MCP-server tools, and tools you registered yourself:
 
 ```json title="settings.json"
 {
   "tools": {
-    "bash": "off",
-    "process": "off",
+    "task_assign": "off",
     "mcp__github__create_issue": "off"
   }
 }
@@ -381,19 +380,16 @@ built-ins, MCP-server tools, and tools you registered yourself:
 
 A key is one of three things, and the most specific one wins:
 
-1. an exact **tool name** — `repo_push`, `mcp__github__create_issue`, your own
+1. an exact **tool name** — `task_assign`, `mcp__github__create_issue`, your own
    `deploy_to_staging`;
-2. a **group** — the families in [Built-in tools](/docs/agent-tools): `file`,
-   `retrieval` (the Search family: `search`, `grep`, `glob`, `graph_query`,
-   `semantic_code_search` — deliberately not keyed `search`, so that key addresses the
-   `search` tool alone), `context`, `build`, `scripts`, `process`, `bash`, `web`,
-   `repo`, `ci`, `media`, `task`, `issue`, `session`, `environment`, `scratch`, plus
+2. a **group** — the families in [Built-in tools](/docs/agent-tools): `task`,
+   `scratch`, `environment`, plus
    `mcp` and `custom` for anything the built-in catalog has never heard of;
 3. `"*"`, every tool.
 
-Anything unmentioned is on. So `{"*": "off", "read_file": "on"}` is a read-only agent in
-two lines, and `{"process": "off", "read_output": "on"}` keeps exactly one of the five
-process tools.
+Anything unmentioned is on. So `{"*": "off", "task_list": "on"}` is an agent that can
+read the board and nothing else, and `{"task": "off", "task_list": "on"}` keeps exactly
+the read-only member of the task family.
 
 A switched-off tool is **withheld from the schema list and refused if it is called
 anyway** — the refusal reads like the unknown-tool error, so a disabled tool is
@@ -404,8 +400,8 @@ The values are the strings `"on"`/`"off"` — a bare boolean or a typo is a hard
 parse error rather than a silent ignore. Keys merge independently across scopes, later
 scope winning. A project `"off"` always narrows an earlier grant; project `"on"` requires
 `STELLA_TRUST_PROJECT=1`. A managed `"off"` remains a ceiling even for a trusted project,
-at any level of specificity: a managed `{"process": "off"}` cannot be defeated by a
-project naming `{"start_process": "on"}`.
+at any level of specificity: a managed `{"task": "off"}` cannot be defeated by a
+project naming `{"task_assign": "on"}`.
 
 ## The end-of-run recap
 
@@ -846,13 +842,13 @@ defaults. Copy it, delete what you don't want:
     }
   },
   "tools": {
-    "process": "off",
-    "read_output": "on"
+    "task": "off",
+    "task_list": "on"
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "bash",
+        "matcher": "mcp__github__push_files",
         "hooks": [
           { "type": "command", "command": "./scripts/guard.sh", "timeoutMs": 5000 }
         ]
