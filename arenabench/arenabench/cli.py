@@ -183,6 +183,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"  {line}", file=sys.stderr)
         return 2
 
+    # One minimal request on the subscription route before any container
+    # exists: an exhausted five-hour limit turned 4 of 6 head-to-head trials
+    # into quota measurements, and the only preflight was a hand-rolled
+    # script one layer too late (#3216). Fail closed, like the SUT check
+    # below; the refusal names the reset time when the provider does.
+    from .claude_oauth import seat_quota_refusals
+
+    throttled = seat_quota_refusals(spec)
+    if throttled:
+        print("error: subscription seat(s) cannot serve right now:", file=sys.stderr)
+        for name, reason in throttled.items():
+            print(f"  {name}: {reason}", file=sys.stderr)
+        return 2
+
     # The same SUT preflight the server runs in `create_match`, which this
     # path never consulted: #2098's reproduction entered exactly here, a
     # template whose default `main` had moved since the build, and the match
