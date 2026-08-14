@@ -352,11 +352,12 @@ pub struct TurnState {
     /// spend; deliberately NOT checkpointed — a resumed turn starts the
     /// allowance over, which only re-permits a bounded amount of work.
     pub(crate) length_continuations: u32,
-    /// Whether this turn's `Stop` hooks have fired — the once-per-turn
-    /// latch that caps the compact→error→stop-hook→retry spiral at one
-    /// held-open round (`driver::user_hooks`, #2684). Not checkpointed,
-    /// like `length_continuations`.
-    pub(crate) stop_hook_fired: bool,
+    /// How many times this turn's `Stop` hooks have been consulted — the
+    /// bounded counter (`driver::user_hooks::MAX_STOP_CONSULTS`) that lets a
+    /// verification hook deny, watch the revision, and re-check, while still
+    /// capping the compact→error→stop-hook→retry spiral (#2684, #3246). Not
+    /// checkpointed, like `length_continuations`.
+    pub(crate) stop_hook_consults: u32,
     /// When this turn began, for deciding whether a length continuation is
     /// affordable against `EngineConfig::turn_budget`.
     ///
@@ -398,7 +399,7 @@ impl TurnState {
             step: 0,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
             length_continuations: 0,
-            stop_hook_fired: false,
+            stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
             last_step: None,
             cancel: CancelToken::new(),
@@ -441,7 +442,7 @@ impl TurnState {
             // Not carried across the checkpoint: the once-per-turn Stop-hook
             // latch re-arms, which only re-permits one more held-open round —
             // the same bounded-allowance reasoning as `length_continuations`.
-            stop_hook_fired: false,
+            stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
             last_step: None,
             cancel: CancelToken::new(),
