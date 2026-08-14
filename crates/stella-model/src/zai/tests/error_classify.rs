@@ -110,6 +110,8 @@ async fn complete_maps_openrouter_403_model_not_enabled_to_a_distinct_hint() {
 /// Issue #250: some gateways answer out-of-credits with HTTP 402 rather than
 /// folding it into a 403. The 402 must get dedicated billing wording rather
 /// than falling into the generic `Terminal` bucket, and stay non-retryable.
+/// The mock expects exactly one request: a 402 whose body carries no afford
+/// hint must also never trigger the afford-capped retry below.
 #[tokio::test]
 async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     let server = MockServer::start().await;
@@ -119,6 +121,7 @@ async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
             ResponseTemplate::new(402)
                 .set_body_string(r#"{"error":{"message":"account balance depleted"}}"#),
         )
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -133,6 +136,110 @@ async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     assert!(msg.contains("payment required"), "{msg}");
     assert!(msg.contains("out of credits"), "{msg}");
     assert!(msg.contains("account balance depleted"), "{msg}");
+}
+
+/// The shape that killed three bench runs whole (h2h891, fivetools5,
+/// gate89high1): OpenRouter answers a request whose `max_tokens` ceiling the
+/// credit balance cannot cover with HTTP 402 naming the ceiling it *can*
+/// serve — "You requested up to 128000 tokens, but can only afford 47365" —
+/// and treating that as terminal aborts a trial the balance could still have
+/// funded. The adapter must retry the same request ONCE with `max_tokens`
+/// reduced to 90% of the hint (47365 → 42628); the success mock here matches
+/// only a body carrying that reduced ceiling, so a retry without the
+/// reduction — or no retry at all, the pre-fix behavior — fails this test.
+#[tokio::test]
+async fn complete_retries_an_afford_hinted_402_with_reduced_max_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(
+            r#"{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 128000 tokens, but can only afford 47365."}}"#,
+        ))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":1}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"max_tokens\":42628"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+
+    let mut req = hi_request();
+    req.max_output_tokens = Some(128_000);
+    let result = provider
+        .complete(req)
+        .await
+        .expect("the afford-hinted 402 must be retried at the reduced ceiling");
+    assert_eq!(result.text, "ok");
+}
+
+/// The floor half of the afford retry: a hint below
+/// `AFFORD_RETRY_FLOOR_TOKENS` names a ceiling too small to fit an agent
+/// turn, so the rejection stays the terminal billing abort — the mock
+/// expects exactly one request, proving no doomed retry went out.
+#[tokio::test]
+async fn a_402_afford_hint_below_the_floor_stays_terminal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(
+            r#"{"error":{"message":"You requested up to 128000 tokens, but can only afford 4096."}}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+
+    let err = provider.complete(hi_request()).await.unwrap_err();
+    assert!(!err.is_retryable());
+    assert!(matches!(err, ProviderError::Terminal(_)));
+    assert!(err.to_string().contains("payment required"), "{err}");
+}
+
+/// The parser behind the one 402 retry, pinned at its edges: the real
+/// classifier-wrapped message parses to 90% of the hint, the floor is
+/// inclusive, and every malformed shape — no hint, no digits, an absurd
+/// count — degrades to `None`, which is the ordinary terminal abort.
+#[test]
+fn afford_hint_parsing_is_defensive() {
+    let real = "OpenRouter rejected the request (HTTP 402: payment required): This request \
+                requires more credits, or fewer max_tokens. You requested up to 128000 \
+                tokens, but can only afford 47365. — the account is out of credits";
+    assert_eq!(afford_capped_max_tokens(real), Some(42_628));
+    // The floor is inclusive: exactly 8192 affordable still retries...
+    assert_eq!(
+        afford_capped_max_tokens("can only afford 8192"),
+        Some(7_372)
+    );
+    // ...and one token under it does not.
+    assert_eq!(afford_capped_max_tokens("can only afford 8191"), None);
+    // No hint at all (the existing dedicated-billing-wording shape).
+    assert_eq!(afford_capped_max_tokens("account balance depleted"), None);
+    // The phrase with no number after it.
+    assert_eq!(
+        afford_capped_max_tokens("can only afford more credits"),
+        None
+    );
+    // A count that cannot be a token ceiling.
+    assert_eq!(
+        afford_capped_max_tokens("can only afford 99999999999999999999999999 tokens"),
+        None
+    );
 }
 
 /// End-to-end funnel proof for the shared chat-completions adapter (#2680):

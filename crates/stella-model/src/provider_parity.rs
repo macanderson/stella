@@ -12,7 +12,7 @@
 //! row is missing (`stella-cli` config tests), duplicated, or names a witness
 //! test that no longer exists in the adapter sources.
 //!
-//! Three axes are guarded today, all born from the same shape of silent
+//! Five axes are guarded today, all born from the same shape of silent
 //! per-provider divergence:
 //! - [`CachePosture`] — how a provider's prompt cache is engaged and observed.
 //! - [`ReasoningPosture`] — how a provider's reasoning/thinking budget is
@@ -27,6 +27,15 @@
 //!   `ProviderError::Terminal` — safe (the turn aborts exactly as before the
 //!   overflow-recovery path existed) but unrecovered, so which spellings are
 //!   *detected* is a declared per-provider fact, not an assumption.
+//! - [`StreamFallbackPosture`] — how a provider recovers when its streaming
+//!   path is broken (#2686): the shared chat-completions adapter re-issues a
+//!   faulted attempt's retry as a unary request; the other streaming
+//!   dialects declare the gap; Bedrock is already unary.
+//! - [`BillingPosture`] — how a provider rejects a request its credit
+//!   balance cannot fund. OpenRouter's 402 names the output ceiling the
+//!   balance can still afford, and the adapter retries once below it;
+//!   everyone else's billing rejection carries no such hint and stays the
+//!   terminal abort it always was.
 //!
 //! **The law for new providers:** adding a provider id means adding a row on
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
@@ -574,6 +583,125 @@ pub fn stream_fallback_posture(provider_id: &str) -> Option<&'static StreamFallb
         .map(|(_, posture)| posture)
 }
 
+/// How a provider rejects a request its credit balance cannot fund, and
+/// whether that rejection carries a hint the adapter can degrade onto
+/// instead of aborting the turn. The fifth axis of the matrix, born from
+/// three bench runs lost whole (h2h891: 16 trials, fivetools5: 30/30,
+/// gate89high1: 35/89) to 402s that each named an output ceiling the balance
+/// could still have funded — and were aborted as terminal anyway.
+#[derive(Debug)]
+pub enum BillingPosture {
+    /// The provider's out-of-credit rejection names the output ceiling the
+    /// remaining balance can still fund, and the adapter retries the request
+    /// ONCE with `max_tokens` reduced below that ceiling (hints under the
+    /// adapter's floor are declined — a ceiling too small to fit a turn buys
+    /// a truncation, not an answer). A second rejection aborts as the
+    /// terminal billing error it always was.
+    AffordHintRetry {
+        /// The wire signature, for humans reading the matrix.
+        signature: &'static str,
+        /// Name of the test proving the retry goes out with the reduced
+        /// ceiling; checked for existence by this module's tests.
+        witness: &'static str,
+    },
+    /// Out-of-credit rejections carry no affordable-ceiling hint (or none
+    /// verified on this provider's wire): they abort as terminal billing
+    /// errors, exactly as before this axis existed. Allowed only with a note
+    /// a reviewer can check.
+    TerminalAbort { note: &'static str },
+}
+
+/// One billing row per provider id constructible by the CLI — same
+/// completeness contract as the other axes. Settings-defined custom
+/// providers inherit the shared OpenAI-compatible adapter; one whose base
+/// URL addresses OpenRouter gets the gateway's afford-hint retry (the gate
+/// follows the endpoint, not the identity string — #1285), and every other
+/// endpoint keeps the terminal abort. They need no row of their own.
+pub static BILLING_POSTURE: &[(&str, BillingPosture)] = &[
+    (
+        "anthropic",
+        BillingPosture::TerminalAbort {
+            note: "out-of-credit rejections ('credit balance is too low') arrive as HTTP 400 \
+                   invalid_request_error and name no affordable output ceiling",
+        },
+    ),
+    (
+        "bedrock",
+        BillingPosture::TerminalAbort {
+            note: "billing problems surface as AWS account-level exceptions with no affordable \
+                   output ceiling to degrade onto",
+        },
+    ),
+    (
+        "openrouter",
+        BillingPosture::AffordHintRetry {
+            signature: "HTTP 402, message `You requested up to X tokens, but can only afford N` \
+                        — N at or above the 8192-token floor triggers one retry with max_tokens \
+                        at 90% of N",
+            witness: "complete_retries_an_afford_hinted_402_with_reduced_max_tokens",
+        },
+    ),
+    (
+        "openai",
+        BillingPosture::TerminalAbort {
+            note: "quota exhaustion (insufficient_quota) names no affordable output ceiling",
+        },
+    ),
+    (
+        "gemini",
+        BillingPosture::TerminalAbort {
+            note: "RESOURCE_EXHAUSTED / billing-disabled rejections name no affordable output \
+                   ceiling",
+        },
+    ),
+    (
+        "vertex",
+        BillingPosture::TerminalAbort {
+            note: "same RESOURCE_EXHAUSTED dialect as gemini (shared error funnel); no \
+                   affordable-ceiling hint",
+        },
+    ),
+    (
+        "zai",
+        BillingPosture::TerminalAbort {
+            note: "out-of-credit arrives 429-encoded (code 1113, 'Insufficient balance or no \
+                   resource package') and classifies terminal via classify_zai_429; no \
+                   affordable-ceiling hint",
+        },
+    ),
+    (
+        "xai",
+        BillingPosture::TerminalAbort {
+            note: "OpenAI-compatible billing rejections on the shared ladder name no affordable \
+                   output ceiling",
+        },
+    ),
+    (
+        "deepseek",
+        BillingPosture::TerminalAbort {
+            note: "OpenAI-compatible billing rejections on the shared ladder name no affordable \
+                   output ceiling",
+        },
+    ),
+    (
+        "local",
+        BillingPosture::TerminalAbort {
+            note: "local servers bill nothing; a 402 from one still aborts through the shared \
+                   ladder",
+        },
+    ),
+];
+
+/// The declared billing posture for `provider_id`, or `None` for an id the
+/// matrix doesn't know — which the `stella-cli` completeness test turns into
+/// a hard failure for any seeded provider.
+pub fn billing_posture(provider_id: &str) -> Option<&'static BillingPosture> {
+    BILLING_POSTURE
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, posture)| posture)
+}
+
 /// The tier `effort` is really served as by `provider_id`, when the adapter
 /// cannot put that tier on the wire distinctly — `None` when it reaches the
 /// wire as itself.
@@ -779,11 +907,73 @@ mod tests {
         }
     }
 
+    /// The stream-fallback-axis sibling: every `UnaryFallback` row must name
+    /// a test that exists in the adapter sources, proving the faulted
+    /// attempt's retry really goes out unary. The no-fallback variants carry
+    /// a note, not a witness. This axis shipped (#2686) without the
+    /// enforcement the other axes carry; added alongside the billing axis so
+    /// no axis is folklore.
+    #[test]
+    fn every_stream_fallback_witness_test_exists_in_the_adapter_sources() {
+        let sources = adapter_sources();
+        for (id, posture) in STREAM_FALLBACK_POSTURE {
+            let witness = match posture {
+                StreamFallbackPosture::UnaryFallback { witness, .. } => witness,
+                StreamFallbackPosture::StreamingOnly { .. }
+                | StreamFallbackPosture::AlwaysUnary { .. } => continue,
+            };
+            let needle = format!("fn {witness}(");
+            assert!(
+                sources.iter().any(|source| source.contains(&needle)),
+                "stream-fallback witness for `{id}` not found in adapter sources: {witness}"
+            );
+        }
+    }
+
+    /// The billing-axis sibling: every `AffordHintRetry` row must name a
+    /// test that exists in the adapter sources, proving the retry goes out
+    /// with the reduced ceiling. `TerminalAbort` rows carry a note, not a
+    /// witness — they declare the absence of a recoverable hint.
+    #[test]
+    fn every_billing_witness_test_exists_in_the_adapter_sources() {
+        let sources = adapter_sources();
+        for (id, posture) in BILLING_POSTURE {
+            let witness = match posture {
+                BillingPosture::AffordHintRetry { witness, .. } => witness,
+                BillingPosture::TerminalAbort { .. } => continue,
+            };
+            let needle = format!("fn {witness}(");
+            assert!(
+                sources.iter().any(|source| source.contains(&needle)),
+                "billing-posture witness for `{id}` not found in adapter sources: {witness}"
+            );
+        }
+    }
+
     #[test]
     fn overflow_provider_ids_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
         for (id, _) in OVERFLOW_POSTURE {
             assert!(seen.insert(id), "duplicate overflow-posture row for `{id}`");
+        }
+    }
+
+    #[test]
+    fn stream_fallback_provider_ids_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, _) in STREAM_FALLBACK_POSTURE {
+            assert!(
+                seen.insert(id),
+                "duplicate stream-fallback-posture row for `{id}`"
+            );
+        }
+    }
+
+    #[test]
+    fn billing_provider_ids_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, _) in BILLING_POSTURE {
+            assert!(seen.insert(id), "duplicate billing-posture row for `{id}`");
         }
     }
 
@@ -816,6 +1006,10 @@ mod tests {
             REASONING_POSTURE.iter().map(|(id, _)| *id).collect();
         let overflow: std::collections::BTreeSet<_> =
             OVERFLOW_POSTURE.iter().map(|(id, _)| *id).collect();
+        let stream_fallback: std::collections::BTreeSet<_> =
+            STREAM_FALLBACK_POSTURE.iter().map(|(id, _)| *id).collect();
+        let billing: std::collections::BTreeSet<_> =
+            BILLING_POSTURE.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             cache, reasoning,
             "cache and reasoning matrices cover different provider ids"
@@ -823,6 +1017,14 @@ mod tests {
         assert_eq!(
             cache, overflow,
             "cache and overflow matrices cover different provider ids"
+        );
+        assert_eq!(
+            cache, stream_fallback,
+            "cache and stream-fallback matrices cover different provider ids"
+        );
+        assert_eq!(
+            cache, billing,
+            "cache and billing matrices cover different provider ids"
         );
     }
 
@@ -840,5 +1042,13 @@ mod tests {
             assert!(overflow_posture(id).is_some());
         }
         assert!(overflow_posture("no-such-provider").is_none());
+        for (id, _) in STREAM_FALLBACK_POSTURE {
+            assert!(stream_fallback_posture(id).is_some());
+        }
+        assert!(stream_fallback_posture("no-such-provider").is_none());
+        for (id, _) in BILLING_POSTURE {
+            assert!(billing_posture(id).is_some());
+        }
+        assert!(billing_posture("no-such-provider").is_none());
     }
 }

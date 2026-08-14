@@ -102,7 +102,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/anthropic.rs`](src/anthropic.rs) (+ [`src/anthropic/tests.rs`](src/anthropic/tests.rs)), [`src/openai.rs`](src/openai.rs), [`src/gemini.rs`](src/gemini.rs), [`src/vertex.rs`](src/vertex.rs), [`src/bedrock.rs`](src/bedrock.rs) | One adapter per structurally distinct wire dialect: Messages API, Responses API, `generateContent` (direct and Vertex's project-scoped enterprise path, sharing wire types and the stream aggregator), Bedrock Converse. All follow the same shape — `new(ApiKey, model)` capturing catalog pricing, `with_base_url`, `http::client()`, `SseDecoder`, `http::classify_http_status`, `impl Provider` (plus `complete_observed`, the mid-stream tool-call announcement the engine speculates on — every streaming adapter implements it; Bedrock, which is unary, implements it as one terminal `text_delta` and announces no tool calls). Open the one whose vendor you are debugging. |
 | [`src/catalog.rs`](src/catalog.rs) | `Catalog`, `CatalogEntry`, `Pricing`, `ToolDialect`, and the compile-time seed. The only sanctioned slug → model resolution. |
 | [`src/credential.rs`](src/credential.rs) (+ [`src/credential/aux.rs`](src/credential/aux.rs)) | `ApiKey` (the non-`Display` secret wrapper), the flag → env → file → prompt chain, `CredentialsFile` (keys *and* the `[credential_fields.<provider>]` companions), the multi-variable resolvers `VertexAddressing` / `BedrockCredentials`, and `AuxCredentials` — the redacting, zeroizing set a host uses to carry the values a provider needs beyond one key (Bedrock's secret access key, session token, and region). |
-| [`src/provider_parity.rs`](src/provider_parity.rs) | `CachePosture` / `ReasoningPosture` / `StreamFallbackPosture` — the per-provider matrix. A new provider id lands here or tests fail. |
+| [`src/provider_parity.rs`](src/provider_parity.rs) | `CachePosture` / `ReasoningPosture` / `OverflowPosture` / `StreamFallbackPosture` / `BillingPosture` — the per-provider matrix. A new provider id lands here or tests fail. |
 | [`src/cache_economics.rs`](src/cache_economics.rs) | Cache savings arithmetic (`Pricing::cache_savings_usd`) and `diagnose_cache`, which reads the parity matrix to tell an opt-in bug from prefix instability. |
 | [`src/sse.rs`](src/sse.rs) | Dependency-free SSE line parser + incremental UTF-8 decoder every streaming adapter feeds. |
 | [`src/http.rs`](src/http.rs) | Crate-private plumbing: the timeout-bounded `reqwest` clients, the first-byte/idle stream-read bounds, `classify_http_status`, and the two shared stream-failure errors. Change error retryability here, not in an adapter. |
@@ -234,8 +234,9 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    `default_model`, or `every_provider_default_model_resolves_against_the_catalog_seed`
    ([`../stella-cli/src/config/tests.rs`](../stella-cli/src/config/tests.rs))
    fails — and the provider would hard-error on first use.
-3. **Declare both parity rows, in the same PR.** Add the provider id to *both*
-   `CACHE_POSTURE` and `REASONING_POSTURE` in
+3. **Declare a parity row on every axis, in the same PR.** Add the provider id
+   to `CACHE_POSTURE`, `REASONING_POSTURE`, `OVERFLOW_POSTURE`,
+   `STREAM_FALLBACK_POSTURE`, and `BILLING_POSTURE` in
    [`src/provider_parity.rs`](src/provider_parity.rs).
    - Cache: `OptIn` when the adapter must SEND a marker, `Implicit` when it must
      PARSE hit telemetry, `NotApplicable` only when no billed cache exists.
@@ -249,19 +250,20 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
      (`anthropic/tests.rs`, `bedrock.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`,
      `zai/tests.rs`); a witness in a *new* adapter's own test module is invisible
      until you add that file there too. No-control variants carry a `note` instead.
-   - What fails if you skip it: `every_seeded_provider_declares_a_cache_posture`
-     / `every_seeded_provider_declares_a_reasoning_posture` (in `stella-cli`) on
-     a missing row, `both_axes_cover_the_same_provider_ids` if you add one axis
-     and forget the other, `provider_ids_are_unique` and its reasoning twin on a
-     duplicate, and `every_witness_test_exists_in_the_adapter_sources` — which
-     matches the literal `fn <witness>(` — the moment a witness is renamed.
+   - What fails if you skip it: the per-axis
+     `every_seeded_provider_declares_a_*_posture` tests (in `stella-cli`) on a
+     missing row, `all_axes_cover_the_same_provider_ids` if you add one axis
+     and forget another, `provider_ids_are_unique` and its per-axis twins on a
+     duplicate, and the per-axis `every_*_witness_test_exists_in_the_adapter_sources`
+     tests — which match the literal `fn <witness>(` — the moment a witness is
+     renamed.
 4. **Multi-variable credentials belong here**, not in `stella-cli` — follow
    `VertexAddressing` / `BedrockCredentials` in
    [`src/credential.rs`](src/credential.rs), so a second host of the engine gets
    the same variable names, fallback order, and named errors without copying them.
 5. **Add a gated live-smoke test** to [`tests/live_smoke.rs`](tests/live_smoke.rs).
 
-A *new* per-provider divergence (attachment dialects, tool schemas) means a third
+A *new* per-provider divergence (attachment dialects, tool schemas) means a new
 axis in `provider_parity.rs` — record it as a matrix, not as adapter folklore.
 
 ## See also

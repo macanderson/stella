@@ -472,6 +472,47 @@ fn rejects_disabled_reasoning(detail: &str) -> bool {
             || detail.contains("mandatory for this endpoint"))
 }
 
+/// Floor below which an afford-hinted retry is declined. An output ceiling
+/// this small cannot fit an agent turn's reasoning plus its answer — the
+/// retry would spend a model call to produce a `finish_reason: length`
+/// truncation carrying no tool call (the shape that ended 30 of 30 cap-hit
+/// steps in the 2026-07-31 Terminal-Bench bundle) — so a balance this close
+/// to empty gets the honest terminal abort instead of a doomed retry.
+const AFFORD_RETRY_FLOOR_TOKENS: u64 = 8_192;
+
+/// The token count an out-of-credit rejection says the balance can still
+/// fund, parsed from OpenRouter's HTTP 402 wording: "You requested up to
+/// 128000 tokens, but can only afford 47365". Matched on the gateway's own
+/// prose like [`rejects_disabled_reasoning`] — there is no machine field for
+/// it on the wire. Defensive by construction: no "can only afford", no
+/// digits after it, or a count that overflows `u64` all yield `None`, and
+/// `None` means the ordinary terminal abort.
+fn afford_hint_tokens(detail: &str) -> Option<u64> {
+    let lowered = detail.to_lowercase();
+    let (_, tail) = lowered.split_once("can only afford")?;
+    let digits: String = tail
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+/// The `max_tokens` for the one afford-hinted retry, or `None` when the
+/// rejection carries no usable hint and must stay terminal. 90% of the
+/// affordable count rather than all of it: the hint is computed from the
+/// balance at rejection time, and shaving the margin keeps the retry from
+/// landing back on the exact boundary the first attempt just lost on.
+/// Hints below [`AFFORD_RETRY_FLOOR_TOKENS`] are declined — see the
+/// constant for why a floor exists at all.
+fn afford_capped_max_tokens(detail: &str) -> Option<u32> {
+    let affordable = afford_hint_tokens(detail)?;
+    if affordable < AFFORD_RETRY_FLOOR_TOKENS {
+        return None;
+    }
+    u32::try_from(affordable.checked_mul(9)? / 10).ok()
+}
+
 /// Build OpenRouter's `reasoning` object from the request's reasoning/effort
 /// pair. Rules: an explicit off (`reasoning == Some(false)`) always wins and
 /// sends `{"enabled": false}` — a pinned effort must not resurrect thinking
@@ -1098,24 +1139,47 @@ impl ZaiProvider {
         req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
-        // Some upstreams OpenRouter fronts make reasoning mandatory and answer
-        // `reasoning:{enabled:false}` with a hard 400. The caller's "off" is an
-        // economy preference, never a correctness requirement — losing it must
-        // not lose the call. Resend once, letting the endpoint apply its own
-        // default. Same family of provider-quirk gate as the sampling-param and
-        // thinking-shape omissions in the sibling adapters.
-        let disables_reasoning = self.id == "openrouter" && req.reasoning == Some(false);
-        // Keeping the request for a possible resend used to mean retaining a
-        // copy of the whole replayed message history, so the fast path was
-        // written to avoid paying for it. Since #921 the request is a borrowed
-        // `Copy` view, so both arms are the same nothing and the branch stays
-        // only because the *resend* is what needs guarding, not the copy.
-        if !disables_reasoning {
-            return self.complete_attempt(req, observer, false).await;
-        }
+        // Two one-shot resends hang off the first attempt's terminal error,
+        // both cheap to arm because the request is a borrowed `Copy` view
+        // since #921 — re-issuing it, even with one field overridden, copies
+        // pointers rather than the replayed message history. Both resends
+        // dispatch through `complete_attempt` directly, so a second terminal
+        // rejection propagates unretried.
         match self.complete_attempt(req, observer, false).await {
-            Err(ProviderError::Terminal(detail)) if rejects_disabled_reasoning(&detail) => {
-                self.complete_attempt(req, observer, true).await
+            Err(ProviderError::Terminal(detail)) => {
+                // Some upstreams OpenRouter fronts make reasoning mandatory
+                // and answer `reasoning:{enabled:false}` with a hard 400. The
+                // caller's "off" is an economy preference, never a
+                // correctness requirement — losing it must not lose the
+                // call. Resend once, letting the endpoint apply its own
+                // default. Same family of provider-quirk gate as the
+                // sampling-param and thinking-shape omissions in the sibling
+                // adapters.
+                if self.id == "openrouter"
+                    && req.reasoning == Some(false)
+                    && rejects_disabled_reasoning(&detail)
+                {
+                    return self.complete_attempt(req, observer, true).await;
+                }
+                // OpenRouter's under-funded HTTP 402 names the output
+                // ceiling the remaining balance can still fund ("can only
+                // afford N"), and aborting on it kills a turn — and, on a
+                // bench, a whole trial — the balance could still have paid
+                // for. Resend once with `max_tokens` capped below the hint
+                // ([`afford_capped_max_tokens`], parity: BillingPosture).
+                // Gated on "actually talking to OpenRouter" like the cache
+                // opt-in rather than on the identity string: billing
+                // behavior follows the endpoint (#1285), and the hint's
+                // wording is the gateway's own, so no other server this
+                // adapter fronts can match it by accident.
+                if self.serves_openrouter()
+                    && let Some(ceiling) = afford_capped_max_tokens(&detail)
+                {
+                    let mut reduced = req;
+                    reduced.max_output_tokens = Some(ceiling);
+                    return self.complete_attempt(reduced, observer, false).await;
+                }
+                Err(ProviderError::Terminal(detail))
             }
             other => other,
         }

@@ -4,6 +4,7 @@ use super::*;
 // unused import in every non-test build.
 use super::providers::COMMON_KEY_ENV_VARS;
 
+mod parity;
 mod trusted_engine;
 
 /// Every provider's `default_model` here must resolve against
@@ -35,64 +36,6 @@ fn provider_ids_are_unique() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), before, "duplicate provider id in PROVIDERS");
-}
-
-/// Every seeded provider must declare its prompt-cache posture in
-/// stella-model's parity matrix — the guard born from OpenRouter
-/// silently running Claude with zero caching. A new provider cannot
-/// land without stating how caching is engaged and naming the witness
-/// test that proves it.
-#[test]
-fn every_seeded_provider_declares_a_cache_posture() {
-    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
-        assert!(
-            stella_model::provider_parity::cache_posture(provider.id).is_some(),
-            "provider `{}` has no row in stella-model/src/provider_parity.rs — \
-             add its CachePosture (with a witness test) in this PR",
-            provider.id
-        );
-    }
-}
-
-/// The reasoning-axis sibling of the cache-posture guard: every seeded
-/// provider must declare how its reasoning/thinking budget is controlled (or
-/// that the shared adapter deliberately drops it). Born from the same silent
-/// per-provider divergence — a pinned effort reaching only Z.ai and OpenRouter
-/// and being dropped everywhere else with nothing enforcing the omission stays
-/// deliberate. A new provider cannot land without stating its reasoning
-/// posture and naming the witness that proves a `Controllable` control on the
-/// wire.
-#[test]
-fn every_seeded_provider_declares_a_reasoning_posture() {
-    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
-        assert!(
-            stella_model::provider_parity::reasoning_posture(provider.id).is_some(),
-            "provider `{}` has no ReasoningPosture row in \
-             stella-model/src/provider_parity.rs — add it (with a witness test for a \
-             Controllable control, or a note for a no-control posture) in this PR",
-            provider.id
-        );
-    }
-}
-
-/// The overflow-axis sibling (#2680): every seeded provider must declare how
-/// it signals a context-window overflow — either a verified wire signature
-/// with a witness test (`Detected`), or an explicit note that detection is
-/// best-effort through the shared funnel (`BestEffort`). Without a row, a
-/// provider's overflow rejections silently miss the engine's reactive
-/// recovery and abort the turn with nothing enforcing that the omission was
-/// deliberate.
-#[test]
-fn every_seeded_provider_declares_an_overflow_posture() {
-    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
-        assert!(
-            stella_model::provider_parity::overflow_posture(provider.id).is_some(),
-            "provider `{}` has no OverflowPosture row in \
-             stella-model/src/provider_parity.rs — add it (with a witness test for a \
-             Detected signature, or a note for a BestEffort row) in this PR",
-            provider.id
-        );
-    }
 }
 
 #[test]
