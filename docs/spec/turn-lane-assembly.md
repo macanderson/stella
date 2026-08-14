@@ -1,7 +1,7 @@
 ---
 id: turn-lane-assembly
 title: "One loop, seven lanes — making turn-loop capability assembly a single place"
-status: proposal
+status: proposed
 ---
 
 # One loop, seven lanes
