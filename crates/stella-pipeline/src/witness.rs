@@ -914,9 +914,14 @@ pub fn witness_prompt(
     if !recall.is_empty() {
         s.push_str("\n## Recalled context\n");
         for f in recall {
-            s.push_str("- [");
-            s.push_str(&f.citation_label);
-            s.push_str("] ");
+            // A memory-minted label duplicates the content it was cut from,
+            // so it renders only when it adds information (#2476).
+            s.push_str("- ");
+            if let Some(label) = f.distinct_label() {
+                s.push('[');
+                s.push_str(label);
+                s.push_str("] ");
+            }
             s.push_str(f.content.trim());
             s.push('\n');
         }

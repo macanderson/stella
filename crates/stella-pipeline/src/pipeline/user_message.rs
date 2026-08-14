@@ -234,6 +234,63 @@ mod tests {
             msg.contains("prompt caching"),
             "the human label still leads the line (L-C4): {msg}"
         );
+        // The ask rides in the volatile recalled-context block, before the goal —
+        // invariant 7 is untouched because nothing here is in the stable prefix.
+        assert!(
+            msg.find("cite_memory").unwrap() < msg.find("## Task").unwrap(),
+            "the ask belongs to the recall block, not to the task: {msg}"
+        );
+    }
+
+    /// #2476's witness for this surface: a label the memory mint copied from
+    /// the content renders once, not twice. `a_recalled_memory_reaches_the_worker_citable`
+    /// above is the control — its hand-chosen label ("prompt caching") differs
+    /// from the content and still leads the line.
+    #[test]
+    fn a_content_minted_label_renders_its_sentence_once() {
+        const NOD: &str = "nod_0123456789abcdef01234567";
+        let lesson = "Anthropic's prompt cache is explicit opt-in.";
+        let msg = assemble_user_message(
+            "fix the cache posture",
+            &[RecalledFrame {
+                citation_label: lesson.into(),
+                ..memory_frame(Some(NOD))
+            }],
+            &[],
+            VerificationContract::None,
+        );
+        assert_eq!(
+            msg.matches(lesson).count(),
+            1,
+            "a content-minted label must not re-ship the content: {msg}"
+        );
+        assert!(
+            msg.contains(NOD),
+            "the citation handle survives the collapsed label: {msg}"
+        );
+    }
+
+    /// The ask is made exactly when there is something to cite. A code-graph hit
+    /// and an un-materialized memory are both grounding — neither carries a
+    /// citable handle, so asking would spend tokens inviting a fabricated id, and
+    /// `cite_memory` would reject it.
+    #[test]
+    fn nothing_citable_means_nothing_is_asked() {
+        for frames in [
+            vec![RecalledFrame {
+                kind: "symbol".into(),
+                id: Some("nod_0123456789abcdef01234567".into()),
+                ..memory_frame(None)
+            }],
+            vec![memory_frame(None)],
+        ] {
+            let msg =
+                assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
+            assert!(
+                !msg.contains("cite_memory"),
+                "no citable frame, so no ask: {msg}"
+            );
+        }
     }
 
     /// The configured test command is the run's actual oracle, so the worker is

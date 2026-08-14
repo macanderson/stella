@@ -56,13 +56,30 @@ use stella_store::work_journal::WorkJournal;
 /// A finished session leaves the handle bound, and nothing clears it. That is
 /// safe because the only thing a binding does is answer where the *next* turn
 /// checkpoints, and after a session finishes there is no next turn: the deck
-/// re-binds on a switch, and the one-shot drivers exit. A stale binding cannot
-/// reach a child either — sub-agent and isolated-candidate engines carry no sink
-/// at all (see `Engine::run_sub_agent`), so nothing inherits it downward.
+/// re-binds on a switch, and the one-shot drivers exit.
 ///
-/// An unbind would also cost something real: it would open a window where a
-/// turn still in flight finds `sink()` empty and silently stops checkpointing,
-/// which is the failure this whole module exists to prevent.
+/// # What must NOT inherit a binding
+///
+/// One handle is one session record, so a lane that runs *beside* the session's
+/// own turn and inherits this sink is not a second resume point — it is a second
+/// writer of the one resume point, and it both overwrites the lead's transcript
+/// and `discard`s the lead's point when it ends. There are three such doors and
+/// each is closed at its own end, because no single place can see all three:
+///
+/// - **A dispatched sub-agent** — `Engine::run_sub_agent` strips the sink from
+///   the child config it builds, inside `stella-core`.
+/// - **An isolated candidate** — `Pipeline::engine_config_for` clears it for a
+///   candidate running in a throwaway snapshot, whose transcript names paths
+///   that will not exist.
+/// - **A deck sub-session** — `agent::subsession_engine_config_for`. This one is
+///   invisible to `stella-core`: a sub-session is a full engine session built
+///   through `Engine::with_sleeper`, not a child reached through
+///   `run_sub_agent`, so the engine crate never sees a parent to strip it from.
+///
+/// An unbind would not help with any of them, and would cost something real: it
+/// would open a window where a turn still in flight finds `sink()` empty and
+/// silently stops checkpointing, which is the failure this whole module exists
+/// to prevent.
 #[derive(Clone, Debug, Default)]
 pub struct SessionDurability {
     /// `RwLock` rather than `OnceLock` because a deck session can be switched,
