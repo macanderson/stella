@@ -1003,19 +1003,7 @@ impl<'a> Engine<'a> {
         // step). Drain precedes the soft-stop check deliberately — a
         // steer typed just before Esc is preserved in history for the
         // next turn instead of evaporating with the per-turn tap.
-        // The task deadline, told to the model rather than only to the
-        // journal (`driver::deadline_notice`). Same safe boundary as the
-        // steering drain below, and bounded to at most one short message per
-        // threshold per turn so the cached prefix stays byte-stable
-        // (invariant 7). The engine has always known this number; a turn cut
-        // off mid-investigation with an answer it never wrote down is what
-        // never telling the model costs.
-        if let Some(remaining) = state.budget.deadline_remaining(std::time::Instant::now()) {
-            let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
-            if let Some(notice) = state.deadline_notices.due(remaining_ms) {
-                state.messages.push(CompletionMessage::user(notice));
-            }
-        }
+        deadline_notice::push_if_due(state, std::time::Instant::now());
         if let Some(steering) = self.steering {
             for text in steering.drain_steering() {
                 let _ = events.send(AgentEvent::Steered { text: text.clone() });
@@ -1120,12 +1108,7 @@ impl<'a> Engine<'a> {
             .run_model_call(
                 state.step,
                 &state.messages,
-                // Narrowed by any standing output-ceiling clamp
-                // (`driver::output_budget_recovery`): a provider that refused
-                // to fund this turn's ask must not be asked for it again.
-                state
-                    .output_budget_recovery
-                    .apply(self.config.max_output_tokens),
+                state.output_ceiling(self.config.max_output_tokens),
                 &mut state.budget,
                 &mut state.memos.receipts,
                 &mut state.memos.warnings,
@@ -1416,10 +1399,6 @@ impl<'a> Engine<'a> {
         &self,
         step: usize,
         messages: &[CompletionMessage],
-        // The output ceiling this call may ask for — `self.config`'s value
-        // narrowed by any standing clamp. Passed rather than read off the
-        // config so the clamp cannot be bypassed by a future call site
-        // (`driver::output_budget_recovery`).
         max_output_tokens: Option<u32>,
         budget: &mut BudgetGuard,
         receipts: &mut ReceiptLedger,

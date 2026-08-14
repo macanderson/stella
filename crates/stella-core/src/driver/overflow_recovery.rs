@@ -232,9 +232,7 @@ impl<'a> Engine<'a> {
                     bus::names::MODEL_REQUEST_FAILED,
                     || serde_json::json!({ "step": state.step, "reason": message }),
                 );
-                let asked = state
-                    .output_budget_recovery
-                    .apply(self.config.max_output_tokens);
+                let asked = state.output_ceiling(self.config.max_output_tokens);
                 return match state
                     .output_budget_recovery
                     .arm(affordable_output_tokens, asked)

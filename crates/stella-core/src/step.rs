@@ -629,6 +629,17 @@ impl TurnState {
     /// No `Error` event: a cancellation is a decision, not a failure, exactly
     /// as the soft stop is. The `Aborted` outcome carries [`CANCELLED_REASON`]
     /// and that is what a host renders.
+    /// The output ceiling this turn's next call may ask for: the configured
+    /// value narrowed by any standing clamp
+    /// (`crate::driver::output_budget_recovery`).
+    ///
+    /// The one seam the ceiling is read through, so a provider that has
+    /// already refused to fund this turn's ask cannot be asked for it again
+    /// by some future call site reading `EngineConfig` directly.
+    pub(crate) fn output_ceiling(&self, configured: Option<u32>) -> Option<u32> {
+        self.output_budget_recovery.apply(configured)
+    }
+
     pub(crate) fn cancel_outcome(&mut self, events: &EventSender) -> Option<StepOutcome> {
         if !self.cancel.is_cancelled() {
             return None;

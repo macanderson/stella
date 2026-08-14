@@ -73,6 +73,23 @@ impl DeadlineNotices {
     }
 }
 
+/// Append the deadline notice due at `now`, if one is.
+///
+/// The whole effect lives here rather than at the call site so `driver.rs`
+/// carries one line: it is a god file closed to growth, and this module is
+/// where the decision belongs anyway.
+pub(crate) fn push_if_due(state: &mut crate::step::TurnState, now: std::time::Instant) {
+    let Some(remaining) = state.budget.deadline_remaining(now) else {
+        return;
+    };
+    let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
+    if let Some(notice) = state.deadline_notices.due(remaining_ms) {
+        state
+            .messages
+            .push(stella_protocol::CompletionMessage::user(notice));
+    }
+}
+
 /// What the model is actually told. Names the remaining time and the change
 /// of strategy it implies — a bare number invites the model to note it and
 /// carry on doing what it was doing, which is the behaviour this exists to
