@@ -18,7 +18,6 @@ pub mod bus;
 pub mod compaction;
 pub mod comparison;
 pub mod context_record;
-pub mod discovery;
 pub mod driver;
 pub mod engine_markers;
 pub mod estimator;
@@ -62,7 +61,6 @@ pub use accounted_call::{AccountedCall, AccountedCallError, ReceiptContext, run_
 pub use bus::{
     ExtensionFailure, HookBus, HookDecision, HookEventDraft, HookSubscription, PolicyOutcome,
 };
-pub use discovery::{Candidate, DiscoveryQuery, QueryTerm, RankedMatch, parse_query, rank};
 pub use driver::{Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome};
 pub use estimator::{Calibration, CalibrationMap};
 pub use event_sender::{EventSendError, EventSender};
