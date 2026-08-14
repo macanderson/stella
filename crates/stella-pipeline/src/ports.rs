@@ -94,6 +94,46 @@ pub struct RecalledFrame {
     pub content_digest: Option<String>,
 }
 
+impl RecalledFrame {
+    /// The citation label, when it says something [`Self::content`] does not.
+    ///
+    /// Memory and episode nodes mint their label FROM their content
+    /// (`stella-context`'s `writeback.rs::truncate_label`: the content
+    /// verbatim at ≤80 chars, its first 79 chars plus `…` above that), so for
+    /// them the label is the content — or its head — repeated. Every surface
+    /// that rendered `label` beside `content` therefore shipped the same
+    /// sentence twice into a rationed recall budget, on every turn that
+    /// recalled anything, and the budget packer never saw it: frames are
+    /// packed by `content` alone, so the block silently exceeded the budget
+    /// it was packed to (#2476).
+    ///
+    /// `None` for exactly the two shapes `truncate_label` produces and
+    /// nothing else — a label equal to the content, or a `…`-terminated
+    /// prefix of it. An author-chosen label that merely resembles the
+    /// content's opening words stays distinct: this predicate models the
+    /// mint, not a similarity heuristic, so it can never swallow a label a
+    /// human picked (L-C4 keeps its guarantee that every frame is citable —
+    /// the collapsed cases are those where the content IS the citation text).
+    #[must_use]
+    pub fn distinct_label(&self) -> Option<&str> {
+        let label = self.citation_label.trim();
+        if label.is_empty() {
+            return None;
+        }
+        let content = self.content.trim();
+        if label == content {
+            return None;
+        }
+        if let Some(stem) = label.strip_suffix('…')
+            && !stem.is_empty()
+            && content.starts_with(stem)
+        {
+            return None;
+        }
+        Some(label)
+    }
+}
+
 /// The one sentence that asks a model to cite the injected context it used —
 /// the `cite_memory` affordance, in the words every surface says it in.
 ///
@@ -1223,6 +1263,53 @@ mod tests {
             AlwaysAbortGate.review(&proposal).await,
             ScopeDecision::Abort
         );
+    }
+
+    /// #2476's predicate: a label is dropped for exactly the two shapes the
+    /// memory mint (`truncate_label`) produces, and nothing else.
+    #[test]
+    fn a_label_minted_from_the_content_is_not_distinct() {
+        let frame = |label: &str, content: &str| RecalledFrame {
+            citation_label: label.into(),
+            content: content.into(),
+            ..recalled("workspace-memory", "nod_x", None)
+        };
+        // ≤80 chars: the mint copies the content verbatim.
+        let short = frame("prefer rg over grep", "prefer rg over grep");
+        assert_eq!(short.distinct_label(), None);
+        // >80 chars: the mint keeps the first 79 chars plus `…`.
+        let long_content = "a".repeat(120);
+        let minted: String = format!("{}…", "a".repeat(79));
+        let long = frame(&minted, &long_content);
+        assert_eq!(long.distinct_label(), None);
+        // Whitespace differences do not defeat the match — both sides render
+        // trimmed, so they compare trimmed.
+        let padded = frame("  prefer rg over grep  ", "prefer rg over grep\n");
+        assert_eq!(padded.distinct_label(), None);
+        // An empty label was never citable text at all.
+        assert_eq!(frame("", "some content").distinct_label(), None);
+    }
+
+    #[test]
+    fn an_author_chosen_label_stays_distinct() {
+        let frame = |label: &str, content: &str| RecalledFrame {
+            citation_label: label.into(),
+            content: content.into(),
+            ..recalled("code-graph", "nod_y", None)
+        };
+        // A path label over a code excerpt — the ordinary code-graph shape.
+        let hit = frame("src/lib.rs", "fn main() {}");
+        assert_eq!(hit.distinct_label(), Some("src/lib.rs"));
+        // A hand-picked label that happens to open the content is NOT the
+        // mint's shape (no `…`), so it is the author's choice and it stays.
+        let prefix = frame("prefer rg", "prefer rg over grep here");
+        assert_eq!(prefix.distinct_label(), Some("prefer rg"));
+        // `…`-terminated, but over different text: distinct.
+        let elsewhere = frame("retry policy…", "the backoff doubles per attempt");
+        assert_eq!(elsewhere.distinct_label(), Some("retry policy…"));
+        // A frame with no content cannot cover any label.
+        let bare = frame("an episode title", "");
+        assert_eq!(bare.distinct_label(), Some("an episode title"));
     }
 
     fn recalled(provider: &str, id: &str, digest: Option<&str>) -> RecalledFrame {

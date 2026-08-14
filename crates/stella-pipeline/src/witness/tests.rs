@@ -611,6 +611,32 @@ fn witness_prompt_carries_goal_structure_recall_and_marker() {
     );
 }
 
+/// #2476's witness for this surface: a label the memory mint copied from the
+/// content renders once, not twice — the frame above (distinct label) is the
+/// control that labels which add information still ship.
+#[test]
+fn witness_prompt_renders_a_memory_minted_label_once() {
+    let lesson = "the spend ledger is append-only, and a resize never rewrites a row";
+    let recall = vec![RecalledFrame {
+        citation_label: lesson.to_string(),
+        provider: "workspace-memory".to_string(),
+        source: "memory".to_string(),
+        kind: "memory".to_string(),
+        uri: None,
+        method: None,
+        content: lesson.to_string(),
+        token_cost: 4,
+        id: None,
+        content_digest: None,
+    }];
+    let p = witness_prompt("fix the retry bug", &recall, "", &[], "");
+    assert_eq!(
+        p.matches(lesson).count(),
+        1,
+        "a content-minted label must not re-ship the content: {p}"
+    );
+}
+
 /// The fixed system block carries the whole enforced contract: the
 /// marker line, the one-new-file rule, and the density-screen rule
 /// (#863) — a refusal the author could not have anticipated costs the

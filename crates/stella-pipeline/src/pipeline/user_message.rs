@@ -96,9 +96,16 @@ pub(super) fn assemble_user_message(
             // materialized memory ALSO carries its stable id, because that is
             // the handle `cite_memory` ties feedback to — see the citation ask
             // below for why its absence was not a cosmetic omission.
-            s.push_str("- [");
-            s.push_str(&f.citation_label);
-            s.push_str("] (");
+            // Memory-minted labels ARE the content (its head, `…`-marked when
+            // truncated), so only a label that adds information renders —
+            // otherwise the same sentence shipped twice per frame (#2476).
+            s.push_str("- ");
+            if let Some(label) = f.distinct_label() {
+                s.push('[');
+                s.push_str(label);
+                s.push_str("] ");
+            }
+            s.push('(');
             s.push_str(&f.source);
             s.push(')');
             if let Some(id) = citable_id(f) {
@@ -277,6 +284,34 @@ mod tests {
         assert!(
             msg.find("cite_memory").unwrap() < msg.find("## Task").unwrap(),
             "the ask belongs to the recall block, not to the task: {msg}"
+        );
+    }
+
+    /// #2476's witness for this surface: a label the memory mint copied from
+    /// the content renders once, not twice. `a_recalled_memory_reaches_the_worker_citable`
+    /// above is the control — its hand-chosen label ("prompt caching") differs
+    /// from the content and still leads the line.
+    #[test]
+    fn a_content_minted_label_renders_its_sentence_once() {
+        const NOD: &str = "nod_0123456789abcdef01234567";
+        let lesson = "Anthropic's prompt cache is explicit opt-in.";
+        let msg = assemble_user_message(
+            "fix the cache posture",
+            &[RecalledFrame {
+                citation_label: lesson.into(),
+                ..memory_frame(Some(NOD))
+            }],
+            &[],
+            VerificationContract::None,
+        );
+        assert_eq!(
+            msg.matches(lesson).count(),
+            1,
+            "a content-minted label must not re-ship the content: {msg}"
+        );
+        assert!(
+            msg.contains(NOD),
+            "the citation handle survives the collapsed label: {msg}"
         );
     }
 
