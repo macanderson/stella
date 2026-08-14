@@ -94,7 +94,7 @@ untrusted input.
 
 Dropped from an untrusted project scope: `hooks`, `context_providers`,
 per-provider `base_url` / `api_key` / `api_key_env`, `mcp.registry_url`,
-`tools.bash`/`tools.web` set to `"on"`, and agent `prompt` overrides. Never
+any `tools.*` entry set to `"on"`, and agent `prompt` overrides. Never
 read from the project scope at any trust level: the `authority` block
 (`#[serde(skip)]`) and `enterprise_telemetry`.
 
@@ -116,9 +116,10 @@ only from the managed scope, which itself is loaded through a hardened path
 write). Its semantics are deliberately one-directional: `off` denies; `on`
 *permits a later explicit grant but never grants by itself*.
 
-`apply_tool_ceiling` forces `tools.bash`/`tools.web` to `Off` after the merge,
-so managed denial survives explicit repository trust — the witness is
-`managed_tool_denial_survives_explicit_project_trust` (`settings.rs:1382`).
+`apply_tool_ceiling` re-denies every tool key the managed ceiling denies after
+the merge, so managed denial survives explicit repository trust — the witness
+is `managed_tool_denial_survives_explicit_project_trust`
+(`settings/tests.rs:935`).
 
 ### B3 — Model output → code execution
 
