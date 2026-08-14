@@ -367,6 +367,65 @@ def test_a_missing_task_names_its_job_state_when_the_fetch_recorded_one(
     assert f"{TASKS[2]} (terminal, no artifact uploaded)" in warning
 
 
+def test_a_copied_match_survives_its_fetch_directory_being_deleted(
+    tmp_path: Path,
+) -> None:
+    """#3261: a symlink-only match is only as durable as a scratch folder
+    nothing owns — two loaded matches were found with every trial link
+    dangling while the match still listed its arms. --copy buys a match that
+    is actually a match."""
+    import shutil
+
+    run_dir = fetched_run(tmp_path / "fetched")
+    workspace = tmp_path / "arena"
+    assembly = assemble_run(run_dir, workspace=workspace, copy=True)
+    assert assembly.trials == 12
+
+    shutil.rmtree(run_dir)
+
+    jobs_root = assembly.match_dir / "jobs"
+    trial_dirs = [
+        entry
+        for job in jobs_root.iterdir()
+        if job.is_dir()
+        for entry in job.iterdir()
+    ]
+    assert trial_dirs, "the copied match lost its cells"
+    for entry in trial_dirs:
+        assert not entry.is_symlink()
+        assert (entry / "result.json").is_file(), f"{entry} is not readable"
+
+
+def test_the_manifest_names_its_source_and_recovery(tmp_path: Path) -> None:
+    run_dir = fetched_run(tmp_path / "fetched")
+    (run_dir / "jobs.json").write_text(
+        json.dumps({"run_id": "s5b2", "jobs": []}), encoding="utf-8"
+    )
+    assembly = assemble_run(run_dir, workspace=tmp_path / "arena")
+    manifest = json.loads((assembly.match_dir / "assembly.json").read_text())
+    assert manifest["copied"] is False
+    assert manifest["source"]["run_id"] == "s5b2"
+    assert "cloud fetch s5b2 --artifacts" in manifest["source"]["recover"]
+
+
+def test_reassembling_a_copied_match_without_copy_keeps_the_copies(
+    tmp_path: Path,
+) -> None:
+    run_dir = fetched_run(tmp_path / "fetched")
+    workspace = tmp_path / "arena"
+    assemble_run(run_dir, workspace=workspace, copy=True)
+    assembly = assemble_run(run_dir, workspace=workspace)
+    jobs_root = assembly.match_dir / "jobs"
+    for job in jobs_root.iterdir():
+        if not job.is_dir():
+            continue
+        for entry in job.iterdir():
+            assert not entry.is_symlink(), (
+                "a durable copy must not be downgraded to a link that can "
+                "dangle"
+            )
+
+
 # --------------------------------------------------------------------------
 # the assembled match is one `arenabench serve` opens
 # --------------------------------------------------------------------------
