@@ -134,35 +134,6 @@ impl RecalledFrame {
     }
 }
 
-/// The one sentence that asks a model to cite the injected context it used —
-/// the `cite_memory` affordance, in the words every surface says it in.
-///
-/// It lives beside [`RecalledFrame`] because injecting one is what creates the
-/// obligation, and it is a shared `const` because it had already drifted into
-/// existing on one surface and not the other. `stella-cli`'s
-/// `render_context_section` (the REPL, `/goal`, the non-pipeline one-shot)
-/// carried both the `nod_…` handles and this ask from the day it shipped; the
-/// pipeline — the default `stella run` path — rendered neither, so
-/// `memory_citations` stayed empty at 85 executions and selection health,
-/// which is the fold over citations, could never populate (#2195). Two copies
-/// of a prompt sentence is how a third surface ships with a fourth wording;
-/// one copy is how "which surfaces ask?" stays answerable by `grep`.
-///
-/// Kept in `stella-pipeline` rather than beside the tool it names because
-/// `stella-tools` sits outside this crate's dependency graph and the sentence
-/// is not worth widening it for; `stella-cli` depends on both and reads it
-/// from here.
-///
-/// Deliberately not a demand. The work standing on its own is the rule
-/// everywhere else in this plane, and a turn is never failed for declining to
-/// cite — an uncited memory is unmeasured, which is exactly what it was
-/// before anyone asked.
-pub const CITE_MEMORY_REQUEST: &str = "When a memory above (a [nod_…]-tagged line) actually informs your work this turn, call \
-     cite_memory with that id once you can judge it: useful_score 1-5 for how much it helped the \
-     actual work, truthful for whether its content still holds (verify against the workspace, \
-     don't assume), and a one-sentence remark. Cite only memories you genuinely used — no \
-     courtesy citations.";
-
 /// Where the pipeline reports the resume-relevant facts it learns mid-run
 /// (#1671) — triage's class, the plan, the execute cursor, the test
 /// baseline — so a host can store them beside the engine checkpoint and hand

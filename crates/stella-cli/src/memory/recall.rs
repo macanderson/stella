@@ -554,15 +554,15 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
         match (f.kind.as_str(), &f.id) {
             // A memory with an id keeps the id visible — it names the record.
             ("memory", Some(id)) => {
-                lines.push(format!("- [{id}] {label} — {}", f.content.trim()));
+                lines.push(format!("- [{id}] {body}"));
             }
             // A memory WITHOUT an id still has content worth recalling, and
             // the recall budget has already been spent fetching it.
             // `RecalledFrame` documents `id: None` as a legitimate state for
             // a not-yet-materialized frame
             // (`crates/stella-pipeline/src/ports.rs`). Render it as grounding.
-            ("memory", None) => lines.push(format!("- {label} — {}", f.content.trim())),
-            _ => lines.push(format!("- {label} — {}", f.content.trim())),
+            ("memory", None) => lines.push(format!("- {body}")),
+            _ => lines.push(format!("- {body}")),
         }
     }
     if lines.is_empty() {
