@@ -21,9 +21,8 @@
 //! | Field | Source of truth |
 //! |---|---|
 //! | `name`, `description`, `input_schema` | the tool's own [`ToolSchema`] |
-//! | `read_only`, `available_for_speculation`, `category`, `availability` | [`stella_tools::catalog`] |
+//! | `read_only`, `available_for_speculation`, `category`, `availability`, `risk_level` | [`stella_tools::catalog`] |
 //! | `output_schema` | [`ToolOutput`]'s serde encoding, read off the type |
-//! | `risk_level` | **nothing declares it** — see [`RISK_NOTE`] |
 //! | the example payloads | an observed bench capture, via a committed fixture |
 //!
 //! # Why this lives in a `#[cfg(test)]` module of a binary crate
@@ -51,35 +50,33 @@ const REFRESH_ENV: &str = "STELLA_REFRESH_TOOL_DOCS";
 /// Where the generated pages live, relative to the repository root.
 const DOCS_DIR: &str = "docs/tools";
 
-/// The one thing in these pages that is a stated absence rather than a value.
+/// What `risk_level` means on these pages, and why it is declared rather than
+/// computed.
 ///
-/// `risk_level` was requested as a field and does not exist as data. Nothing
-/// in [`stella_tools::catalog`], in [`ToolSchema`], or in the policy layer
-/// carries a per-tool risk, and the one PR that would have introduced the
-/// machinery for it (#2716's `ToolContract`) was closed `wontfix`.
+/// This field used to read `"undeclared"`: nothing in the repository carried a
+/// per-tool risk, because #2716's `ToolContract` — the machinery for it — had
+/// been closed `wontfix`. #3060 asked for the fix to land as a `risk` column
+/// on `ToolEntry`, declared once beside the flags it sits with and reviewed
+/// like them, and that is where it now lives
+/// ([`stella_tools::catalog::ToolEntry::risk`]).
 ///
-/// Two options were available and only one is honest. Deriving a three-rung
-/// ordering from `read_only` + `speculation_safe` is arithmetic on two
-/// booleans the page already prints: it would put `save_state` — which writes
-/// into a self-deleting `TempDir` — at the same rung as `task` — which spends
-/// money — and it would read to every future maintainer as a reviewed
-/// judgement rather than as a relabelling. Writing a judgement call per tool
-/// by hand is worse: it manufactures a source of truth nobody reviewed, in
-/// the one artifact whose entire value proposition is that it is derived.
-///
-/// So the field is emitted, and its value is `"undeclared"`, with the note
-/// below and an issue. That keeps the requested shape, keeps the page honest,
-/// and puts the fix where it belongs: a `risk` column on `ToolEntry`, declared
-/// once beside the flags it sits with and reviewed like them.
+/// The note survives the fix because the reasoning it records is still what
+/// keeps the column honest: a rung derived from `read_only` +
+/// `speculation_safe` would be arithmetic on two booleans this page already
+/// prints, and it would put `save_state` — which writes into a self-deleting
+/// `TempDir` — at the same rung as `task`, which spends money. The grades are
+/// reviewed judgements against a stated rubric, which is exactly why they are
+/// declared.
 const RISK_NOTE: &str = "\
-# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
-# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
-# would have introduced the machinery, was closed wontfix). The two booleans
-# above are the only machine-checked safety claims a tool makes. Relabelling
-# them \"low/medium/high\" would add no information while reading as a reviewed
-# judgement, and hand-writing one judgement per tool would manufacture a source
-# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
-# `ToolEntry`, where it is declared once and reviewed like every other column.";
+# risk_level: how bad one honest call is — a reviewed judgement, declared in
+# crates/stella-tools/src/catalog.rs beside the flags above and graded against
+# the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
+# `read_only`: `task` mutates no file and spends real money, while
+# `task_create` mutates a board that dies with the session. Deliberately not
+# derived from the two booleans above — that would be a relabelling, not
+# information. A policy grant is expressed as a ceiling over this grade, and
+# every non-built-in tool (MCP, custom manifest) is graded `high` for being
+# unreviewed.";
 
 // ── the committed example fixture ───────────────────────────────────────────
 
@@ -413,9 +410,8 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          # Where each field comes from:\n\
          #   name / description / input_schema      the tool's own ToolSchema\n\
          #   read_only / available_for_speculation / category / availability\n\
-         #                                          crates/stella-tools/src/catalog.rs\n\
-         #   output_schema                          stella_protocol::ToolOutput\n\
-         #   risk_level                             nothing declares it (see below)",
+         #   risk_level                             crates/stella-tools/src/catalog.rs\n\
+         #   output_schema                          stella_protocol::ToolOutput",
         name = entry.name,
     );
 
@@ -434,7 +430,7 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          available_for_speculation = {speculation}\n\
          \n\
          {risk_note}\n\
-         risk_level = \"undeclared\"\n\
+         risk_level = {risk:?}\n\
          \n\
          description = {description}\n\
          \n\
@@ -457,6 +453,7 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
         read_only = entry.read_only,
         speculation = entry.speculation_safe,
         risk_note = RISK_NOTE,
+        risk = entry.risk.as_str(),
         description = literal_block("description", &schema.description),
         input_schema = literal_block("input_schema", &input_schema),
         output_schema = literal_block("output_schema", &output_schema),
@@ -502,12 +499,18 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
     ));
     out.push_str(
         "Each page carries the tool's name, description, input schema, output schema, \
-         `read_only`, `available_for_speculation`, category, and a commented example \
-         input and output payload.\n\n\
-         Two fields are stated absences rather than values, because inventing them \
+         `read_only`, `available_for_speculation`, `risk_level`, category, and a \
+         commented example input and output payload.\n\n\
+         `risk_level` is a reviewed judgement declared beside the flags it sits with \
+         in `crates/stella-tools/src/catalog.rs`, graded against the rubric on \
+         `ToolEntry::risk` (#2716, #3060). It answers a different question from \
+         `read_only` — what one honest call costs the world, rather than whether the \
+         workspace changes — and is deliberately not derived from the booleans above \
+         it, which would be a relabelling rather than information. A policy grant is \
+         expressed as a ceiling over this grade; every tool that is not a built-in \
+         (MCP, custom manifest) is graded `high` for being unreviewed.\n\n\
+         One field remains a stated absence rather than a value, because inventing it \
          would manufacture a source of truth nobody reviewed:\n\n\
-         - **`risk_level` is `\"undeclared\"`.** Nothing in the repository carries a \
-           per-tool risk level. Tracked in #3060.\n\
          - **`output_schema` is the envelope only.** Every tool answers in \
            `ToolOutput { ok | error }`, which is declared and is what the field \
            holds; the shape of the text inside `ok.content` is a per-tool \
@@ -682,10 +685,19 @@ fn generated_pages_parse_and_carry_every_promised_field() {
             Some(name.trim_end_matches(".toml")),
             "{name} documents a different tool than its filename claims"
         );
-        // The two declared gaps are gaps on purpose. If either ever becomes
-        // real data, this assertion is the reminder to change the prose that
-        // explains why it is not.
-        assert_eq!(table["risk_level"].as_str(), Some("undeclared"));
+        // `risk_level` stopped being a declared gap in #2716/#3060, so the
+        // assertion got stronger rather than disappearing: the page must print
+        // the grade its catalog row actually declares. Presence alone would
+        // let the generator drift from the declaration it derives from, which
+        // is the one failure this whole directory exists to prevent.
+        let declared = catalog::get(name.trim_end_matches(".toml"))
+            .expect("every page is generated from a catalog row")
+            .risk;
+        assert_eq!(
+            table["risk_level"].as_str(),
+            Some(declared.as_str()),
+            "{name} prints a risk grade its catalog row does not declare"
+        );
         let schema = table["input_schema"]
             .as_str()
             .expect("input_schema is a string");

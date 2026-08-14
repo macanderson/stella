@@ -54,6 +54,7 @@ pub mod cache;
 pub mod compaction_rewrite;
 pub mod completion;
 pub mod context_event;
+pub mod contract;
 pub mod delivery_event;
 pub mod error;
 pub mod event;
@@ -81,6 +82,7 @@ pub use completion::{
     Verbosity,
 };
 pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
+pub use contract::{ContractError, Provenance, RiskLevel, ToolContract};
 pub use delivery_event::{DeliveryDecline, DeliveryOutcome};
 pub use error::ProviderError;
 pub use event::{

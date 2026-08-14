@@ -6,9 +6,8 @@
 # Where each field comes from:
 #   name / description / input_schema      the tool's own ToolSchema
 #   read_only / available_for_speculation / category / availability
-#                                          crates/stella-tools/src/catalog.rs
+#   risk_level                             crates/stella-tools/src/catalog.rs
 #   output_schema                          stella_protocol::ToolOutput
-#   risk_level                             nothing declares it (see below)
 
 name = "get_state"
 category = "scratch"
@@ -16,15 +15,16 @@ availability = "always"
 read_only = true
 available_for_speculation = true
 
-# risk_level: NOT DECLARED. Nothing in this repository carries a per-tool risk
-# level — not the catalog, not ToolSchema, not the policy layer (#2716, which
-# would have introduced the machinery, was closed wontfix). The two booleans
-# above are the only machine-checked safety claims a tool makes. Relabelling
-# them "low/medium/high" would add no information while reading as a reviewed
-# judgement, and hand-writing one judgement per tool would manufacture a source
-# of truth nobody reviewed. Tracked in #3060: put a `risk` column on
-# `ToolEntry`, where it is declared once and reviewed like every other column.
-risk_level = "undeclared"
+# risk_level: how bad one honest call is — a reviewed judgement, declared in
+# crates/stella-tools/src/catalog.rs beside the flags above and graded against
+# the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
+# `read_only`: `task` mutates no file and spends real money, while
+# `task_create` mutates a board that dies with the session. Deliberately not
+# derived from the two booleans above — that would be a relabelling, not
+# information. A policy grant is expressed as a ceiling over this grade, and
+# every non-built-in tool (MCP, custom manifest) is graded `high` for being
+# unreviewed.
+risk_level = "low"
 
 description = '''
 Read a saved scratch entry by key. Pages by byte offset/limit; a partial read names the remaining bytes. Prefer this over re-deriving the state that produced it.
