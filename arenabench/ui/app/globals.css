@@ -127,8 +127,45 @@
   /* Seat colours arrive as data (each contestant carries a hex) and stay —
      a seat IS data, and it is the one place on the page where distinguishing
      two things by hue is the job. As fills they work on both schemes; as
-     *text* on paper they need ink mixed in. */
-  --seat-fg: color-mix(in srgb, var(--seat, #0a0a0a) 62%, #0a0a0a);
+     *text* on paper they need ink mixed in.
+
+     The paper fallback, for an element that asks for --seat-fg without
+     carrying a seat. The REAL per-seat value is defined by `.seat` below;
+     this declaration cannot produce one, because a custom property is
+     substituted on the element the declaration applies to — here the root,
+     where --seat does not exist — and descendants inherit the already
+     resolved literal. Setting --seat deeper cannot change it (#3223). */
+  --seat-fg: #0a0a0a;
+}
+
+/* Keyed off the inline --seat that `seatStyle()` writes, rather than off a
+   class the author must remember: the declaration has to live on the SAME
+   element as --seat for the substitution to see it, and there are nine
+   seatStyle() call sites today. A class would be one shared cell every future
+   seat surface has to write, and the one that forgets fails silently — which
+   is precisely how this bug survived unnoticed in the first place. The
+   selector matches exactly the elements the helper produces, and a seat with
+   no colour writes no inline style, so it correctly keeps the paper fallback.
+
+   Split by scheme rather than folded into one color-mix because the schemes
+   want opposite treatments: on paper the hue needs ink mixed in to clear
+   contrast against --panel; on ink it is already legible and is used raw.
+
+   50%, not the 62% this token carried before. That ratio had never actually
+   been rendered — the declaration lived on :root and resolved to the fallback,
+   so nothing ever painted with it — and once it did paint, it failed the
+   4.5:1 AA floor this file holds itself to for three of the four seat hues in
+   use. Measured on --panel (#ffffff), worst case of each ratio:
+
+     62%  rose 5.83  amber 4.29 FAIL  cyan 4.34 FAIL  green 4.14 FAIL
+     55%  rose 6.85  amber 5.16       cyan 5.21       green 4.94
+     50%  rose 7.74  amber 5.92       cyan 6.04       green 5.70
+
+   50% keeps enough saturation for the hue to identify the seat while leaving
+   headroom for an arbitrary seat hex, which is data a user supplies and not a
+   value from this palette. */
+[style*="--seat"] {
+  --seat-fg: color-mix(in srgb, var(--seat, #0a0a0a) 50%, #0a0a0a);
 }
 
 .dark {
@@ -165,6 +202,12 @@
   --tool-repo:     #a3d14b; /* repo — citron */
   --tool-delegate: #d46fe8; /* delegate — orchid */
 
+  --seat-fg: #ededed;
+}
+
+/* The ink-scheme half of the pair above. On this side the seat hue is used
+   raw: the palette's seat colours are chosen to read on --panel already. */
+.dark [style*="--seat"] {
   --seat-fg: var(--seat, #ededed);
 }
 
