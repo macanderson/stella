@@ -97,6 +97,56 @@ fn a_skill_tagged_with_an_inactive_domain_is_not_selected() {
     );
 }
 
+/// **Witness (#3243 Phase 3).** The two-phase task: a turn opens outside a
+/// skill's domain, then its work drifts INTO that domain — and the phase-2
+/// skill arrives by proactive re-query, selected against the paths the turn
+/// touched rather than the prompt it opened on. Absent on base twice over:
+/// there is no re-query port at all, and every selector fires once against
+/// the opening prompt, so this skill was structurally unreachable mid-turn.
+#[tokio::test]
+async fn a_drifted_turn_recalls_the_skill_its_prompt_could_not() {
+    use stella_core::ports::SteeringRequery as _;
+
+    let dir = workspace();
+    let memory = session(dir.path());
+    let prompt = "rename the changelog heading";
+    assert!(
+        memory.selected_skills(prompt).is_empty(),
+        "phase 1: the prompt anchors nowhere near the skill's domain"
+    );
+
+    let requery = crate::memory::SessionRequery::new(&memory, &[]);
+    let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
+    let drifted = stella_core::steering::TurnSignal {
+        prompt,
+        touched_paths: &touched,
+        since_last_query: 5,
+        ..Default::default()
+    };
+    let undrifted = stella_core::steering::TurnSignal {
+        prompt,
+        since_last_query: 5,
+        ..Default::default()
+    };
+
+    assert!(
+        requery.requery(&undrifted).await.is_none(),
+        "an undrifted signal buys no re-query — the fingerprint never moved"
+    );
+    let block = requery
+        .requery(&drifted)
+        .await
+        .expect("the drift into the domain surfaces its skill");
+    assert!(
+        block.contains("adapter-notes"),
+        "phase 2: the touched path selects the domain's skill: {block}"
+    );
+    assert!(
+        requery.requery(&drifted).await.is_none(),
+        "the same drift is answered once, not once per step"
+    );
+}
+
 /// **Witness (D1, the other side).** The same skill IS injected once the
 /// prompt names a file inside its domain.
 ///
