@@ -12,6 +12,7 @@
 #     --min-idle-secs   age threshold before a process is even considered
 #                       (default 1200 = 20 minutes)
 #     --sample-secs     CPU-activity sampling window (default 5)
+# (--help text ends here.)
 #
 # Two things this hunts, both left behind the same way: a hard kill of the
 # parent (crash, OOM, closed terminal) reparents its children to launchd
@@ -70,8 +71,11 @@ ASSUME_YES=0
 DRY_RUN=0
 VERBOSE=0
 
+# The header comment block, bounded by the sentinel above (or the first
+# non-comment line) — a hardcoded line range truncates silently when the
+# header grows (#3350).
 usage() {
-  sed -n '2,15p' "$0"
+  awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
 }
 
 while [[ $# -gt 0 ]]; do

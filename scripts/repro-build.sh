@@ -94,7 +94,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "repro-build: --glibc needs a version" >&2; exit 2; }
       glibc="$2"; shift 2 ;;
     -h | --help)
-      sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
+      # The whole header comment block, bounded by its first non-comment
+      # line. The previous hardcoded range cut off mid-option after the
+      # header grew — exactly the silent truncation #3350 is about.
+      awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
       exit 0 ;;
     -*)
       echo "repro-build: unknown option: $1" >&2; exit 2 ;;

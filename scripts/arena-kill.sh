@@ -9,6 +9,7 @@
 #                  the destructive mode; see "Which signal" below
 #     --timeout N  seconds to wait for a signalled server to exit before
 #                  escalating to KILL (default 5, or 20 with --cancel)
+# (--help text ends here.)
 #
 # WHY THIS EXISTS
 #
@@ -62,8 +63,11 @@ DRY_RUN=0
 SIGNAL="TERM"
 TIMEOUT=""
 
+# The header comment block, bounded by the sentinel above (or the first
+# non-comment line) — a hardcoded line range truncates silently when the
+# header grows (#3350).
 usage() {
-  sed -n '2,12p' "$0"
+  awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
 }
 
 while [ $# -gt 0 ]; do

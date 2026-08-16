@@ -28,7 +28,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --loops)    LOOPS="$2"; shift 2 ;;
     --no-clean) CLEAN=0; shift ;;
-    -h|--help)  sed -n '2,22p' "$0" | sed 's/^#//; s/^ //'; exit 0 ;;
+    # The whole header comment block, bounded by its first non-comment line —
+    # a hardcoded line range truncates silently when the header grows (#3350).
+    -h|--help)  awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done

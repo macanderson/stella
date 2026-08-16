@@ -23,6 +23,7 @@
 #
 #   scripts/impacted-crates.sh --range <base>..<head>
 #   git diff --name-only A B | scripts/impacted-crates.sh
+# (--help text ends here.)
 #
 # WHY THIS IS MORE THAN A REVERSE-DEPENDENCY WALK
 #
@@ -90,7 +91,10 @@ while [ $# -gt 0 ]; do
 		shift 2
 		;;
 	-h | --help)
-		sed -n '2,30p' "$0"
+		# The header up to its sentinel. The previous hardcoded range cut
+		# off mid-sentence after the header grew — exactly the silent
+		# truncation #3350 is about.
+		awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
 		exit 0
 		;;
 	*)

@@ -15,6 +15,7 @@
 #                         (default 5; 0 disables)
 #     --allow-stale-sut   launch anyway, and say why
 #     --dry-run, -n       resolve and report everything, launch nothing
+# (--help text ends here.)
 #
 # WHY THIS EXISTS ALONGSIDE arena-run.sh
 #
@@ -62,7 +63,10 @@ DRY_RUN=0
 PASSTHRU=()
 FORWARD=()
 
-usage() { sed -n '2,20p' "$0"; }
+# The header comment block, bounded by the sentinel above (or the first
+# non-comment line) — a hardcoded line range truncates silently when the
+# header grows (#3350).
+usage() { awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; }
 
 bold=""; dim=""; red=""; green=""; yellow=""; reset=""
 if [ -t 1 ]; then

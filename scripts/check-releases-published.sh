@@ -4,6 +4,7 @@
 #
 #   ./scripts/check-releases-published.sh [--grace-secs N]
 #   ./scripts/check-releases-published.sh --select --now <unix> --grace-secs <n>   # pure: JSON on stdin
+# (--help text ends here.)
 #
 # ── The silence ──────────────────────────────────────────────────────────────
 #
@@ -60,7 +61,9 @@ while [ $# -gt 0 ]; do
     --now) now="${2:?--now needs a unix timestamp}"; shift 2 ;;
     --select) select_only=1; shift ;;
     --update) update=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    # The header up to its sentinel — a hardcoded line range truncates
+    # silently when the header grows (#3350).
+    -h|--help) awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
