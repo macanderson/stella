@@ -13,7 +13,7 @@
 #     ARENA_PYTHON    interpreter override — must import BOTH `arenabench` and
 #                     `stella_harbor`; see "Which interpreter" below
 #     STELLA_BINARY   the SUT the seats run (default ~/.arenabench/sut/stella)
-# (--help text ends here.)
+# --help text ends here.
 #
 # A bare `arenabench serve` starts a server that looks completely healthy and
 # loses every Stella seat. Three things have to be true at launch, none of them
@@ -73,16 +73,16 @@
 
 set -uo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 DEFAULT_PORT=8900
 PORT="${ARENA_PORT:-}"
 PORT_PINNED=0
 DRY_RUN=0
 
-# The header comment block, bounded by the sentinel above (or the first
-# non-comment line) — a hardcoded line range truncates silently when the
-# header grows (#3350).
 usage() {
-  awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
+  print_help_header "$0"
 }
 
 if [ -n "$PORT" ]; then PORT_PINNED=1; fi

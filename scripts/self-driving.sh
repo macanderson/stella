@@ -29,6 +29,9 @@
 # #448) and is owned by the binary; this script never writes a state file.
 set -uo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 # ---------------------------------------------------------------------------
 # Constants that are facts about this machine and this repository
 # ---------------------------------------------------------------------------
@@ -947,11 +950,8 @@ cmd_install_commands() {
 
 # ---------------------------------------------------------------------------
 
-# The header comment IS the usage text. Read it structurally — from line 2 to
-# the first line that is not a comment — so adding a line to the header can
-# never silently truncate or overrun the help output.
 usage() {
-  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+  print_help_header "$0"
 }
 
 main() {

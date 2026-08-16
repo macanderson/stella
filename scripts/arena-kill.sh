@@ -9,7 +9,7 @@
 #                  the destructive mode; see "Which signal" below
 #     --timeout N  seconds to wait for a signalled server to exit before
 #                  escalating to KILL (default 5, or 20 with --cancel)
-# (--help text ends here.)
+# --help text ends here.
 #
 # WHY THIS EXISTS
 #
@@ -59,15 +59,15 @@
 
 set -uo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 DRY_RUN=0
 SIGNAL="TERM"
 TIMEOUT=""
 
-# The header comment block, bounded by the sentinel above (or the first
-# non-comment line) — a hardcoded line range truncates silently when the
-# header grows (#3350).
 usage() {
-  awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
+  print_help_header "$0"
 }
 
 while [ $# -gt 0 ]; do

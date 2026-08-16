@@ -23,7 +23,7 @@
 #
 #   scripts/impacted-crates.sh --range <base>..<head>
 #   git diff --name-only A B | scripts/impacted-crates.sh
-# (--help text ends here.)
+# --help text ends here.
 #
 # WHY THIS IS MORE THAN A REVERSE-DEPENDENCY WALK
 #
@@ -73,6 +73,9 @@
 # no associative arrays (same constraint as scripts/check-file-size.sh).
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 full() {
 	printf '%s\n' "--workspace"
 	printf 'impacted-crates: full workspace — %s\n' "$1" >&2
@@ -91,10 +94,7 @@ while [ $# -gt 0 ]; do
 		shift 2
 		;;
 	-h | --help)
-		# The header up to its sentinel. The previous hardcoded range cut
-		# off mid-sentence after the header grew — exactly the silent
-		# truncation #3350 is about.
-		awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
+		print_help_header "$0"
 		exit 0
 		;;
 	*)

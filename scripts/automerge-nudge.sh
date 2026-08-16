@@ -4,7 +4,7 @@
 #
 #   ./scripts/automerge-nudge.sh [--base main] [--dry-run]
 #   ./scripts/automerge-nudge.sh --select [--base main]   # pure: JSON on stdin
-# (--help text ends here.)
+# --help text ends here.
 #
 # ── The deadlock ─────────────────────────────────────────────────────────────
 #
@@ -38,6 +38,9 @@
 # rather than a fallback.
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 base="main"
 dry_run=0
 select_only=0
@@ -47,9 +50,7 @@ while [ $# -gt 0 ]; do
     --base) base="${2:?--base needs a branch}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --select) select_only=1; shift ;;
-    # The header up to its sentinel — a hardcoded line range truncates
-    # silently when the header grows (#3350).
-    -h|--help) awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
+    -h|--help) print_help_header "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done

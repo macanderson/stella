@@ -285,7 +285,7 @@ doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included 
 
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
-	shellcheck install.sh scripts/*.sh .githooks/*
+	shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 
 # Deliberately not part of `gate`: it needs a Docker daemon, which the gate
 # must not. CI runs the same two commands (.github/workflows/docker-serve.yml).

@@ -26,7 +26,7 @@
 #         --cast-only      record but skip rendering
 #         --render-only F  skip recording; render an existing .cast file
 #     -h, --help           show this help text
-# (--help text ends here.)
+# --help text ends here.
 #
 # Why this shape: the recording layer is asciinema, whose .cast file is an
 # append-only JSON-lines log of terminal output events. Its size scales with
@@ -70,16 +70,16 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 # ── Output helpers (house style: scripts/release.sh) ────────────────────────
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '\033[36m▸ %s\033[0m\n' "$*"; }
 ok()   { printf '\033[32m✔ %s\033[0m\n' "$*"; }
 die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# The header comment block, bounded by the sentinel above (or the first
-# non-comment line) — a hardcoded line range truncates silently when the
-# header grows (#3350).
-usage() { awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; }
+usage() { print_help_header "$0"; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

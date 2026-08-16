@@ -13,7 +13,7 @@
 #     --min-idle-secs    age threshold before a seat is considered (default 1200)
 #     --sample-secs      CPU-activity sampling window (default 5)
 #     --keep-containers  reap the process, leave its containers alone
-# (--help text ends here.)
+# --help text ends here.
 #
 # A seat is one `harbor run` invocation — one contestant's whole arm of a match
 # (`arenabench/arenabench/runner.py` spawns one per contestant with
@@ -69,6 +69,9 @@
 
 set -uo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 MIN_IDLE_SECS=1200
 SAMPLE_SECS=5
 ASSUME_YES=0
@@ -76,11 +79,8 @@ DRY_RUN=0
 VERBOSE=0
 KEEP_CONTAINERS=0
 
-# The header comment block, bounded by the sentinel above (or the first
-# non-comment line) — a hardcoded line range truncates silently when the
-# header grows (#3350).
 usage() {
-  awk 'NR == 1 { next } /^# \(--help text ends here\.\)$/ { exit } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
+  print_help_header "$0"
 }
 
 while [ $# -gt 0 ]; do
