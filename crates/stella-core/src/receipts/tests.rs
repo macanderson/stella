@@ -752,20 +752,20 @@ fn a_receipts_two_numbers_reconcile_the_same_way_in_any_language() {
 
 // ---- #3243 D4: the rendered recall line is a wire format ------------------
 
-/// The round trip that keeps the renderer and the parser from drifting.
-///
-/// A rendered recall line crosses a crate boundary — `stella-cli` and
-/// `stella-pipeline` write it, `receipts` reads it — so it is a wire format,
-/// and invariant 4's serde-first discipline applies: it round-trips, or it is
-/// a defect. It had already drifted once, silently, which is exactly #3243
-/// D4: the pipeline wrote its id in a position the parser never inspected, so
-/// `stella run` produced no `memory_citations` at all.
-///
-/// The id is asserted unconditionally because it is the join key the
-/// write→citation loop reads — a lost id is a lost citation. The label is
-/// asserted only when the caller supplied one: with no label the parser
-/// correctly reads the body's head as the label, which is the documented
-/// shape of a frame that has nothing to add beyond its content.
+// The round trip that keeps the renderer and the parser from drifting.
+//
+// A rendered recall line crosses a crate boundary — `stella-cli` and
+// `stella-pipeline` write it, `receipts` reads it — so it is a wire format,
+// and invariant 4's serde-first discipline applies: it round-trips, or it is
+// a defect. It had already drifted once, silently, which is exactly #3243
+// D4: the pipeline wrote its id in a position the parser never inspected, so
+// `stella run` produced no `memory_citations` at all.
+//
+// The id is asserted unconditionally because it is the join key the
+// write→citation loop reads — a lost id is a lost citation. The label is
+// asserted only when the caller supplied one: with no label the parser
+// correctly reads the body's head as the label, which is the documented
+// shape of a frame that has nothing to add beyond its content.
 proptest::proptest! {
     #[test]
     fn a_rendered_recall_line_parses_back_to_what_it_declared(
