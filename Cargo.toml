@@ -5,6 +5,7 @@ members = [
   "crates/stella-diff",
   "crates/stella-embed",
   "crates/stella-home",
+  "crates/stella-plugin",
   "crates/stella-tty",
   "crates/stella-protocol",
   "crates/stella-core",

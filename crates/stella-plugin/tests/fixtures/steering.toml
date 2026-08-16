@@ -1,0 +1,18 @@
+# A steering plugin acts at declared hook points and runs a cheap-role
+# subloop, but may not touch completion — no Stop hook, no requirements,
+# no oracle, no max_holds. Any of those here would be a load error.
+name = "cheap-scout"
+description = "Injects recall context and pre-screens tool input on a cheap model."
+
+[loop]
+participation = "steering"
+hooks = ["SessionStart", "PreToolUse"]
+
+[subloop]
+stages = ["triage", "research"]
+
+[roles.triage]
+tier = "cheap"
+
+[roles.researcher]
+tier = "cheap"
