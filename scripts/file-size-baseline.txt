@@ -7,7 +7,7 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1503 arenabench/arenabench/runner.py
+1501 arenabench/arenabench/runner.py
 1864 bench/harbor_adapter/stella_harbor/__init__.py
 4381 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2356 bench/harbor_adapter/tests/test_adapter.py
@@ -16,20 +16,20 @@
 1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
 4339 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1659 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
-1837 crates/stella-cli/src/agent.rs
-4097 crates/stella-cli/src/command_deck.rs
+1815 crates/stella-cli/src/agent.rs
+4010 crates/stella-cli/src/command_deck.rs
 1891 crates/stella-core/src/bus.rs
-1922 crates/stella-core/src/driver.rs
-2985 crates/stella-core/src/driver/tests.rs
-1781 crates/stella-model/src/anthropic/tests.rs
-2078 crates/stella-model/src/openai.rs
-1862 crates/stella-model/src/zai/tests.rs
-2792 crates/stella-pipeline/src/pipeline.rs
-2394 crates/stella-pipeline/src/pipeline/tests.rs
+1919 crates/stella-core/src/driver.rs
+2931 crates/stella-core/src/driver/tests.rs
+1779 crates/stella-model/src/anthropic/tests.rs
+2077 crates/stella-model/src/openai.rs
+1861 crates/stella-model/src/zai/tests.rs
+2783 crates/stella-pipeline/src/pipeline.rs
+2382 crates/stella-pipeline/src/pipeline/tests.rs
 1750 crates/stella-store/src/lib.rs
-2264 crates/stella-store/src/tests.rs
+2266 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs
 1527 crates/stella-tui/src/deck_render.rs
 4003 crates/stella-tui/src/deck_ui.rs
 1599 crates/stella-tui/src/views/engine.rs
-1609 crates/stella-tui/src/views/session.rs
+1611 crates/stella-tui/src/views/session.rs
