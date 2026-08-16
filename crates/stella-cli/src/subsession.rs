@@ -712,9 +712,14 @@ async fn run_worker(
         format!("{session_id}/{}", spec.lane),
     );
     // A worker's tool surface is the session's, so the operator's switches
-    // apply to it identically — a sub-agent must not be a way to reach a tool
-    // the lead was denied.
-    let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(cfg));
+    // and the authorization gate apply to it identically — a sub-agent must
+    // not be a way to reach a tool the lead was denied. The principal names
+    // the lane, not the human, so a gate can tell the two apart.
+    let permitted = agent::tool_stack::policy_stack(
+        &claims,
+        cfg,
+        stella_core::ports::Principal::SubAgent(format!("{session_id}/{}", spec.lane)),
+    );
     // Registry-born events (task board, sub-agent lifecycle) ride this
     // lane's own channel, so the lane's live view and its journal agree.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));

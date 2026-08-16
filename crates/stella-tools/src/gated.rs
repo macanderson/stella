@@ -18,8 +18,9 @@
 //! are the ones a third party supplied.
 //!
 //! So this composes like [`crate::policy::ToolPolicy`]'s enforcement point
-//! does, and belongs **outermost** — above the operator's policy filter,
-//! which `stella-cli`'s session driver currently assembles last:
+//! does, and belongs **outermost** — above the operator's policy filter.
+//! `stella-cli`'s `agent::tool_stack` assembles exactly this order for every
+//! session driver (#3283):
 //!
 //! ```text
 //! GatedToolSet        <- authorization: who is asking, and may they?
@@ -81,6 +82,7 @@ use crate::contracts;
 /// same stacks.
 enum Inner<'a> {
     Borrowed(&'a dyn ToolExecutor),
+    Boxed(Box<dyn ToolExecutor + 'a>),
     Owned(Arc<dyn ToolExecutor>),
 }
 
@@ -88,6 +90,7 @@ impl Inner<'_> {
     fn get(&self) -> &dyn ToolExecutor {
         match self {
             Inner::Borrowed(inner) => *inner,
+            Inner::Boxed(inner) => inner.as_ref(),
             Inner::Owned(inner) => inner.as_ref(),
         }
     }
@@ -124,6 +127,25 @@ impl<'a> GatedToolSet<'a> {
         let contracts = Self::snapshot(inner);
         Self {
             inner: Inner::Borrowed(inner),
+            gate,
+            principal,
+            contracts,
+        }
+    }
+
+    /// Own the inner executor by value — for an assembly function that builds
+    /// the chain below (policy filter, customs, registry) and hands the whole
+    /// stack back as one value, rather than a caller holding each layer as its
+    /// own stack local. The lifetime rides along, so the boxed chain may still
+    /// borrow the session's registry at its base.
+    pub fn new_boxed(
+        inner: Box<dyn ToolExecutor + 'a>,
+        gate: Arc<dyn AuthzGate>,
+        principal: Principal,
+    ) -> Self {
+        let contracts = Self::snapshot(inner.as_ref());
+        Self {
+            inner: Inner::Boxed(inner),
             gate,
             principal,
             contracts,

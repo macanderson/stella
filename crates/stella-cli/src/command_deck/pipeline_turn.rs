@@ -81,11 +81,15 @@ pub(super) async fn run_lead_pipeline_turn(
     let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
 
     let result = {
-        let customs =
-            CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
-        // The operator's switches, applied over the complete surface — MCP
-        // and custom tools included.
-        let permitted = agent::PolicyToolSet::new(&customs, agent::session_tool_policy(cfg));
+        // Customs, the operator's switches, and the authorization gate
+        // (#3283) — the deck's pipeline turn acts as the human at the
+        // keyboard.
+        let permitted = agent::tool_stack::session_stack(
+            &claims,
+            custom_tools.to_vec(),
+            cfg,
+            stella_core::ports::Principal::User,
+        );
         let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
 
         let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());

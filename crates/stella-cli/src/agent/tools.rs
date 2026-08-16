@@ -733,7 +733,8 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
 /// The session's tool policy.
 ///
 /// Every session driver wraps its assembled tool stack in
-/// [`crate::agent::PolicyToolSet`] with this, which is what makes a
+/// [`crate::tool_policy::PolicyToolSet`] with this (via
+/// [`super::tool_stack`]), which is what makes a
 /// `"tools"` entry cover built-ins, MCP tools, and customer-registered custom
 /// tools identically. Resolved once in `Config::load_with_settings` (managed
 /// ceiling already folded in), so this is a clone, not a re-derivation — there
