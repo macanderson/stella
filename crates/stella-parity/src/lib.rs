@@ -228,6 +228,23 @@ pub static CAPABILITIES: &[Capability] = &[
         },
     },
     Capability {
+        id: "turn.steering_requery",
+        engine_home: "stella-core SteeringRequery port — the steering plane re-queried at step \
+                      boundaries when TurnSignal drift says the opening prompt no longer \
+                      describes the turn (#3243 Phase 3)",
+        engine_entries: &["with_requery"],
+        cli: SurfacePosture::Shipped {
+            mechanism: "agent::run_turn and the deck attach a SessionRequery over SessionMemory, \
+                        so a drifted turn re-selects skills/records against what it has become",
+            witness: "a_drifted_turn_recalls_the_skill_its_prompt_could_not",
+        },
+        api: SurfacePosture::Deferred {
+            waiting_on: "a serve-side SteeringRequery implementor: the engine port exists, but \
+                         the serve stack assembles no requery source, so remote turns still \
+                         select context against the opening prompt alone",
+        },
+    },
+    Capability {
         id: "turn.halt_on_goal_met",
         engine_home: "stella-core TurnHalt port — end a turn at a step boundary because the goal \
                       is MET, the one exit that is not a limit being reached",
@@ -656,9 +673,12 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 9] {
+    fn cli_sources() -> [&'static str; 10] {
         [
             include_str!("../../stella-cli/src/agent/tests.rs"),
+            // The steering-plane selection suite — home of the
+            // `turn.steering_requery` witness (#3243 Phase 3).
+            include_str!("../../stella-cli/src/memory/tests/steering_selection.rs"),
             // The tool-chain assembly seam (#3283) — home of the
             // `tools.contracts` witness.
             include_str!("../../stella-cli/src/agent/tool_stack.rs"),
