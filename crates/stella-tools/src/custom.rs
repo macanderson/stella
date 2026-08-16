@@ -730,6 +730,15 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         // checker the registry runs (#3285). A breach is the tool's own
         // defect — `Internal`, never model misuse.
         let Some(expected) = &tool.output_schema else {
+            // A silent success (exit 0, empty stdout) renders the
+            // deterministic input-stamped line, never the empty string —
+            // an every-call-identical output is what the stagnation
+            // detector kills a loop over (#3303). A schema-declaring
+            // manifest never takes this arm: its empty stdout is a
+            // contract breach reported below.
+            if output.stdout.is_empty() {
+                return ToolOutput::ok(silent_success_stamp(&tool.name, input));
+            }
             return ToolOutput::ok(content);
         };
         let parsed: Value = match serde_json::from_str(stdout.trim()) {
