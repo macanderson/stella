@@ -467,6 +467,61 @@ fn the_deletion_ceiling_does_not_swallow_real_work() {
 }
 
 #[test]
+fn acting_on_pull_requests_never_authors_a_witness() {
+    // The reported failure, verbatim as the first entry: this asked for a
+    // remote state change, got `WITNESS: yes`, and the authored witness then
+    // forced the run into a candidate workspace that could not delegate — so
+    // the worker had no way to act at all (#3320, #3318).
+    for goal in [
+        "merge all open prs to main on github",
+        "merge all open pull requests",
+        "close the stale prs",
+        "approve and merge pr 3312",
+        "land the open pull requests on main",
+    ] {
+        assert!(
+            acts_on_pull_requests(goal),
+            "{goal:?} should be recognized as acting on pull requests"
+        );
+        assert!(
+            !resolve_witness(Some(true), TaskClass::MultiStep, goal),
+            "{goal:?} must not author a witness even when triage asked for one"
+        );
+        assert!(!resolve_witness(None, TaskClass::MultiStep, goal));
+    }
+}
+
+#[test]
+fn the_pull_request_ceiling_does_not_swallow_local_work() {
+    // The half that matters: a false positive here ships a real code change
+    // with no authored witness.
+    for goal in [
+        // Local code that merely mentions pull requests.
+        "fix scripts/automerge-nudge.sh so prs land cleanly",
+        "add a test for the pr template renderer in stella-cli/src/pr.rs",
+        "update .github/workflows/ci.yml to run on pull requests",
+        // A merge that is not a pull request.
+        "merge main into my branch",
+        "merge the two config loaders into one",
+        // Pull requests named without a verb that acts on them.
+        "explain how prs are labelled",
+        "why did that pull request fail ci",
+        // The prefix trap: `prepare` and `preview` must not read as `pr`.
+        "prepare the release notes",
+        "close the preview server cleanly",
+    ] {
+        assert!(
+            !acts_on_pull_requests(goal),
+            "{goal:?} must NOT be treated as acting on pull requests"
+        );
+        assert!(
+            resolve_witness(Some(true), TaskClass::SingleTask, goal),
+            "{goal:?} must honor an explicit WITNESS: yes"
+        );
+    }
+}
+
+#[test]
 fn the_ceiling_leaves_every_other_witness_decision_untouched() {
     // Outside the deletion shape, `resolve_witness` must be exactly the old
     // `wants_witness` contract: triage's call, else the class default.
