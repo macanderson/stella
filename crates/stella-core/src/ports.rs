@@ -446,6 +446,34 @@ pub trait TurnSteering: Send + Sync {
     fn soft_stop_requested(&self) -> bool;
 }
 
+/// Step-boundary context re-query (#3243 Phase 3) — the steering plane,
+/// asked again once the turn has become something its opening prompt did
+/// not describe.
+///
+/// Polled at the same safe boundary as [`TurnSteering`] (L-E6: never
+/// mid-tool), with the [`TurnSignal`](crate::steering::TurnSignal) the
+/// engine assembled from the turn's own transcript: the tools it has
+/// actually called, the error classes it has seen, the step index, and how
+/// many steps since this port last answered. The engine brings only what it
+/// can witness in `messages`; the host merges what it alone can see
+/// (touched paths from its file ledger, active domains) before querying its
+/// plane.
+///
+/// A `Some` block is appended to history verbatim, as a User-role message —
+/// it must carry the recall marker
+/// ([`RECALL_MARKER`](crate::receipts::RECALL_MARKER)) so the turn-window
+/// rule (`driver::loop_evidence::turn_start_index`) knows it is injected
+/// context and not a user turn. Like [`TurnSteering::drain_steering`],
+/// whatever this returns WILL be injected: the implementation owns both the
+/// hysteresis (when a changed signal is worth a re-query) and the dedup (an
+/// unchanged block must be `None`, not a re-append).
+#[async_trait]
+pub trait SteeringRequery: Send + Sync {
+    /// The volatile context this turn should now also see, or `None` when
+    /// the signal has not changed enough to buy one.
+    async fn requery(&self, signal: &crate::steering::TurnSignal<'_>) -> Option<String>;
+}
+
 /// [`TurnGate`] and [`TurnSteering`] in owned form, so something that
 /// outlives a turn can hold them.
 ///

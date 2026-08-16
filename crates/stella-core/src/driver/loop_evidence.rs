@@ -83,6 +83,51 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
         .unwrap_or(0)
 }
 
+/// The transcript evidence a steering re-query reads (#3243 Phase 3): the
+/// prompt that opened this turn, the tools it has called (most recent last),
+/// and the error classes it has seen — assembled fresh each step from the
+/// same window [`turn_start_index`] gives loop detection, so the two planes
+/// cannot disagree about what "this turn" means.
+pub(super) struct TurnEvidence {
+    /// Index of the real user message that bounds this turn, when one exists.
+    pub prompt_index: Option<usize>,
+    /// Tool names in call order, most recent last.
+    pub tool_names: Vec<String>,
+    /// Stable error-class tokens for every failed tool result, in order. An
+    /// unclassified failure reads as `"error"` — still evidence of being
+    /// stuck, just not audited into a class yet.
+    pub error_classes: Vec<&'static str>,
+}
+
+pub(super) fn turn_evidence(messages: &[CompletionMessage]) -> TurnEvidence {
+    let start = turn_start_index(messages);
+    let mut evidence = TurnEvidence {
+        prompt_index: start.checked_sub(1),
+        tool_names: Vec::new(),
+        error_classes: Vec::new(),
+    };
+    for message in &messages[start..] {
+        match message.role {
+            MessageRole::Assistant => evidence
+                .tool_names
+                .extend(message.tool_calls.iter().map(|call| call.name.clone())),
+            MessageRole::Tool => {
+                for result in &message.tool_results {
+                    if let stella_protocol::ToolOutput::Error { class, .. } = &result.output {
+                        evidence.error_classes.push(
+                            class
+                                .map(stella_protocol::ErrorClass::as_str)
+                                .unwrap_or("error"),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    evidence
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

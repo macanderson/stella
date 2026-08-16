@@ -399,6 +399,12 @@ pub struct TurnState {
     /// truncated, so its predecessor's duration is the honest forecast — and
     /// the only one available without predicting the model.
     pub(crate) last_step: Option<std::time::Duration>,
+    /// Steps since the [`SteeringRequery`](crate::ports::SteeringRequery)
+    /// port last answered — the `since_last_query` half of the hysteresis
+    /// input (#3243 Phase 3). Reset when the port returns a block. Not
+    /// checkpointed, like `length_continuations`: a resumed turn starting
+    /// the counter over only delays one re-query, never repeats spend.
+    pub(crate) steps_since_requery: u32,
     /// The host's stop signal, checked at the top of every step.
     pub(crate) cancel: CancelToken,
 }
@@ -432,6 +438,7 @@ impl TurnState {
             stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
             last_step: None,
+            steps_since_requery: 0,
             cancel: CancelToken::new(),
         }
     }
@@ -477,6 +484,7 @@ impl TurnState {
             stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
             last_step: None,
+            steps_since_requery: 0,
             cancel: CancelToken::new(),
         }
     }

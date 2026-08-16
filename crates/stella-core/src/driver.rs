@@ -512,6 +512,12 @@ pub struct Engine<'a> {
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
     pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
+    /// Step-boundary context re-query ([`crate::ports::SteeringRequery`]),
+    /// off by default (#3243 Phase 3). Attached via [`Engine::with_requery`];
+    /// consulted once per step at the same boundary as steering, with the
+    /// TurnSignal assembled from this turn's transcript. `None` adds zero
+    /// work.
+    pub(crate) requery: Option<&'a dyn crate::ports::SteeringRequery>,
     /// Extension hook bus ([`crate::bus::HookBus`]), off by default.
     /// Attached via [`Engine::with_bus`]; receives the turn/step/model-call
     /// lifecycle events an out-of-process host uses to observe and, per
@@ -625,6 +631,7 @@ impl<'a> Engine<'a> {
             calibration: None,
             gate: None,
             steering: None,
+            requery: None,
             bus: None,
             outcomes: None,
             fallback: None,
@@ -677,6 +684,7 @@ impl<'a> Engine<'a> {
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
+            requery: self.requery,
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
@@ -715,6 +723,7 @@ impl<'a> Engine<'a> {
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
+            requery: self.requery,
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
@@ -782,6 +791,14 @@ impl<'a> Engine<'a> {
     /// stop, at step granularity, never mid-tool.
     pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
         self.steering = Some(steering);
+        self
+    }
+
+    /// Attach the step-boundary context re-query (#3243 Phase 3) — the
+    /// steering plane asked again when the turn's own evidence says the work
+    /// has moved, at step granularity, never mid-tool.
+    pub fn with_requery(mut self, requery: &'a dyn crate::ports::SteeringRequery) -> Self {
+        self.requery = Some(requery);
         self
     }
 
@@ -1029,6 +1046,39 @@ impl<'a> Engine<'a> {
                     kind: AbortKind::DeliberateStop,
                     cost_usd: state.total_cost_usd,
                 };
+            }
+        }
+        // The proactive context re-query (#3243 Phase 3) rides the same
+        // committed boundary, AFTER the steering drain: a user steer landed
+        // this step is part of what the next query should answer to, not
+        // something to race. The engine brings only what the transcript
+        // witnesses — tools called, error classes seen, the step index and
+        // the steps since the port last answered; the host side merges its
+        // own ledger (touched paths, active domains) and owns hysteresis and
+        // dedup, so an unchanged signal costs nothing here.
+        if let Some(requery) = self.requery {
+            let evidence = loop_evidence::turn_evidence(&state.messages);
+            let prompt = evidence
+                .prompt_index
+                .map(|i| state.messages[i].content.as_str())
+                .unwrap_or("");
+            let signal = crate::steering::TurnSignal {
+                prompt,
+                recent_tool_calls: &evidence.tool_names,
+                touched_paths: &[],
+                active_domains: &[],
+                step: u32::try_from(state.step).unwrap_or(u32::MAX),
+                since_last_query: state.steps_since_requery,
+                errors_seen: &evidence.error_classes,
+            };
+            match requery.requery(&signal).await {
+                Some(block) => {
+                    state.messages.push(CompletionMessage::user(block));
+                    state.steps_since_requery = 0;
+                }
+                None => {
+                    state.steps_since_requery = state.steps_since_requery.saturating_add(1);
+                }
             }
         }
         if let Some(aborted) = self.check_budget(state, events) {
@@ -1919,3 +1969,8 @@ pub const SOFT_STOP_REASON: &str = "stopped at step boundary by user — complet
 
 #[cfg(test)]
 mod tests;
+
+// #3243 Phase 3: the step-boundary re-query port's witnesses. A separate
+// file because `tests.rs` is closed to growth under the file-size ratchet.
+#[cfg(test)]
+mod requery_tests;
