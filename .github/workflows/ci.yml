@@ -358,10 +358,16 @@ jobs:
       # sub-second resolve that reports the drift precisely, instead of making
       # every later step's failure mode ambiguous between "lock is stale" and
       # "code is broken".
+      #
+      # The command itself moved into scripts/check-lockfile-sync.sh so this job
+      # and `make gate` cannot disagree about what "in sync" means, and so the
+      # check reaches the pre-push hook — where it catches a stale lock before
+      # the push rather than after review (#3332). This step stays because it is
+      # the required job: the hook is advisory and bypassable.
       - name: Cargo.lock is in sync with the manifests
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: |
-          cargo metadata --locked --format-version 1 > /dev/null \
+          ./scripts/check-lockfile-sync.sh \
             || { echo "::error::Cargo.lock is out of sync with the manifests. Run 'cargo check --workspace' and commit the updated Cargo.lock."; exit 1; }
 
       - name: cargo fmt --check
