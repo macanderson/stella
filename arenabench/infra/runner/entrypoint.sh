@@ -23,7 +23,12 @@ set -euo pipefail
 MODE="${1:-smoke}"
 JOB_ID="${AWS_BATCH_JOB_ID:-local-$$}"
 
-log() { printf '[runner] %s\n' "$*"; }
+# Every log line is also kept on disk so an external kill can upload the
+# runner's own narrative — before this, a SIGTERM'd trial's only evidence was
+# its CloudWatch stream, and diagnosing a wedge needed infra access instead of
+# the artifact tree every other diagnosis reads (#3219).
+RUNNER_LOG=/tmp/runner.log
+log() { printf '[runner] %s\n' "$*" | tee -a "$RUNNER_LOG"; }
 
 cleanup_dockerd() {
     kill "${DOCKERD_PID:-0}" 2>/dev/null || true
@@ -196,6 +201,94 @@ ddb_put_status() {
     }" >/dev/null 2>&1 || log "dynamodb status write failed (non-fatal)"
 }
 
+export_runner_image() {
+    # Record which runner image this trial actually ran as (#3214): the ECS
+    # container metadata endpoint knows the image ref and its digest, and
+    # `ARENABENCH_RUNNER_IMAGE` is how provenance.py's writer learns it. A
+    # digest is the identity; a bare tag is recorded too, as the weaker fact.
+    # Best-effort — a metadata endpoint that does not answer must not stop a
+    # paid trial.
+    [ -n "${ECS_CONTAINER_METADATA_URI_V4:-}" ] || return 0
+    local meta image
+    meta=$(curl -fsS --max-time 5 "$ECS_CONTAINER_METADATA_URI_V4" 2>/dev/null) || return 0
+    image=$(printf '%s' "$meta" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+image = data.get("Image") or ""
+image_id = data.get("ImageID") or ""
+if image and image_id.startswith("sha256:") and "@" not in image:
+    image = f"{image}@{image_id}"
+print(image)
+' 2>/dev/null) || return 0
+    if [ -n "$image" ]; then
+        export ARENABENCH_RUNNER_IMAGE="$image"
+        log "runner image: $image"
+    fi
+}
+
+evidence_prefix() {
+    printf 's3://%s/runs/%s/%s' "$ARTIFACTS_BUCKET" "${RUN_ID:-smoke}" "$JOB_ID"
+}
+
+upload_evidence() {
+    # Whatever exists, to the artifact prefix, best-effort — called on
+    # external kill and on a wedge self-abort, when the alternative is a
+    # completely empty S3 prefix that can only be diagnosed from CloudWatch
+    # (#3219). Named files rather than a bare sync so the wedge point is
+    # legible: the runner's own log, docker's view of the world, and the
+    # daemon log tail say where it stopped.
+    local reason="$1" prefix
+    prefix=$(evidence_prefix)
+    { docker ps -a; echo; docker images; } >/tmp/docker-state.txt 2>&1 || true
+    tail -c 262144 /var/log/dockerd.log >/tmp/dockerd-tail.log 2>/dev/null || true
+    printf '{"job":"%s","reason":"%s","at":"%s"}\n' \
+        "$JOB_ID" "$reason" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/tmp/evidence.json
+    aws s3 cp /tmp/evidence.json "$prefix/evidence/$reason.json" --only-show-errors || true
+    aws s3 cp "$RUNNER_LOG" "$prefix/evidence/runner.log" --only-show-errors || true
+    aws s3 cp /tmp/docker-state.txt "$prefix/evidence/docker-state.txt" --only-show-errors || true
+    if [ -s /tmp/dockerd-tail.log ]; then
+        aws s3 cp /tmp/dockerd-tail.log "$prefix/evidence/dockerd-tail.log" --only-show-errors || true
+    fi
+    if [ -d /work/ws ]; then
+        aws s3 sync /work/ws "$prefix/ws" --only-show-errors || true
+    fi
+}
+
+WEDGE_FLAG=/tmp/wedged
+watch_for_wedge() {
+    # The watchdog below the agent (#3219): harbor can wedge before starting
+    # any trial — dockerd up, SUT staged, zero trial containers ever
+    # registered — and the agent-level deadline never arms because no trial
+    # exists. Five jobs burned 35-58 minutes each this way until a human
+    # noticed. The grace is generous on purpose: the wedge reproduced on
+    # exactly the tasks whose images take longest to pull, so a tight limit
+    # would abort the legitimate slow path it exists to distinguish.
+    local grace="${ARENABENCH_WEDGE_GRACE_SECONDS:-2700}" waited=0
+    while sleep 60; do
+        waited=$((waited + 60))
+        # A trial directory under the workspace is harbor's own registration.
+        if compgen -G '/work/ws/matches/*/jobs/*/*' >/dev/null; then
+            return 0
+        fi
+        [ "$waited" -lt "$grace" ] && continue
+        log "watchdog: no trial registered after ${waited}s; self-aborting with diagnostics"
+        : >"$WEDGE_FLAG"
+        upload_evidence "wedge"
+        ddb_put_status "failed" "wedged: no trial after ${waited}s; evidence uploaded"
+        kill -TERM "${AGENT_PID:-0}" 2>/dev/null || true
+        return 0
+    done
+}
+
+on_term() {
+    trap - TERM INT
+    log "external kill (SIGTERM); uploading evidence before exit"
+    kill -TERM "${AGENT_PID:-0}" 2>/dev/null || true
+    upload_evidence "sigterm"
+    ddb_put_status "failed" "external kill (SIGTERM); evidence uploaded"
+    exit 143
+}
+
 stage_sut() {
     # Reconstruct the finished-build layout sut_build.py stages, so
     # arenabench's binary_for() accepts the prebuilt binary as done.
@@ -227,13 +320,26 @@ run)
     [ -n "${SUT_S3_URI:-}" ] && stage_sut
     ddb_put_status "running" "$MATCH_S3_URI"
 
+    export_runner_image
+
     mkdir -p /work/ws
     aws s3 cp "$MATCH_S3_URI" /work/match.toml
     rc=0
+    # Backgrounded plus `wait`, not foregrounded: bash defers signal traps
+    # until a foreground command exits, so a trap behind a foreground agent
+    # would fire only after the thing being interrupted had already finished
+    # — which is why every SIGTERM'd trial used to upload nothing (#3219).
     arenabench run /work/match.toml \
         --workspace /work/ws \
         --results /work/results.json \
-        --progress || rc=$?
+        --progress &
+    AGENT_PID=$!
+    trap on_term TERM INT
+    watch_for_wedge &
+    WATCHDOG_PID=$!
+    wait "$AGENT_PID" || rc=$?
+    trap - TERM INT
+    kill "$WATCHDOG_PID" 2>/dev/null || true
 
     log "arenabench run exited $rc; syncing artifacts"
     aws s3 sync /work/ws "s3://$ARTIFACTS_BUCKET/runs/$RUN_ID/$JOB_ID/ws" --only-show-errors || true
@@ -241,9 +347,16 @@ run)
         aws s3 cp /work/results.json "s3://$ARTIFACTS_BUCKET/runs/$RUN_ID/$JOB_ID/results.json"
     [ -d "$HOME/.arenabench/matches" ] &&
         aws s3 sync "$HOME/.arenabench/matches" "s3://$ARTIFACTS_BUCKET/runs/$RUN_ID/$JOB_ID/matches" --only-show-errors || true
+    aws s3 cp "$RUNNER_LOG" "s3://$ARTIFACTS_BUCKET/runs/$RUN_ID/$JOB_ID/runner.log" --only-show-errors || true
 
     if [ "$rc" -eq 0 ]; then
         ddb_put_status "done" "exit 0"
+    elif [ -f "$WEDGE_FLAG" ]; then
+        ddb_put_status "failed" "exit $rc (wedged: harbor registered no trial; evidence uploaded)"
+    elif [ -f /work/results.json ]; then
+        # The container died *after* grading — a graded trial wearing a
+        # FAILED badge is a different fact from one that did no work (#3264).
+        ddb_put_status "failed" "exit $rc (results.json uploaded)"
     else
         ddb_put_status "failed" "exit $rc"
     fi
