@@ -1078,6 +1078,37 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
 
     executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
 
+    # Refusal before any upload or submission: a task id the dataset does not
+    # contain must not become a Batch job. A phantom "89" pasted over
+    # `write-compressor` burned two containers and silently shrank the
+    # "full 89" panel to 88 tasks with no surface saying so (#3208). An empty
+    # task list still means "the whole dataset", and a dataset not on this
+    # disk is a validation *gap*, said out loud rather than silently waved
+    # through.
+    from .registry import DEFAULT_REGISTRY
+
+    if spec.tasks:
+        known = {task.name for task in DEFAULT_REGISTRY.tasks(spec.dataset)}
+        unknown = sorted(set(spec.tasks) - known) if known else []
+        if unknown:
+            print(
+                f"error: {len(unknown)} task(s) in the template do not exist "
+                f"in {spec.dataset} — refusing to submit: "
+                + ", ".join(unknown),
+                file=sys.stderr,
+            )
+            print(
+                f"  (arenabench tasks {spec.dataset} lists the real ids)",
+                file=sys.stderr,
+            )
+            return 2
+        if not known:
+            print(
+                f"note: {spec.dataset} is not on this disk, so task ids were "
+                f"not validated (harbor download {spec.dataset} to close the "
+                "gap)"
+            )
+
     # Refusal before any upload or submission: a seat whose declared
     # credentials will not exist in the trial environment must not launch.
     needed = required_env(spec)
@@ -1192,6 +1223,11 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
         fetched = executor.fetch_results(
             run_id, jobs, dest, artifacts=args.artifacts
         )
+        from .cloud_ops import write_jobs_sidecar
+
+        write_jobs_sidecar(
+            dest, {"run_id": run_id, "queue": queue, "jobs": jobs}, states
+        )
         print(f"results   : {fetched} file(s) -> {dest}")
         _assemble_fetched(dest)
     return 0 if final.failed == 0 else 1
@@ -1233,36 +1269,6 @@ def _assemble_fetched(dest: Path) -> None:
     for warning in assembly.warnings:
         print(f"  !! {warning}")
     print(f"open with : arenabench serve --workspace {dest}")
-
-
-def _cmd_cloud_status(args: Any, executor: CloudExecutor | None = None) -> int:
-    """``arenabench cloud status <run-id>`` — one snapshot, or follow."""
-    executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
-    record = executor.load_jobs(args.run_id)
-    jobs = record["jobs"]
-    print(f"run   : {record['run_id']}  ({len(jobs)} trials on {record['queue']})")
-    if args.follow:
-        states = executor.watch(jobs, poll_interval=args.poll)
-    else:
-        states = executor.job_states([job["id"] for job in jobs])
-        print(progress_from_states(states.values()).to_line(0.0))
-    for row in executor.run_rows(args.run_id):
-        print(f"  ddb {row['job']}: {row['status']}  {row['detail']}")
-    final = progress_from_states(states.values())
-    return 0 if final.failed == 0 else 1
-
-
-def _cmd_cloud_fetch(args: Any, executor: CloudExecutor | None = None) -> int:
-    """``arenabench cloud fetch <run-id>`` — pull results (and artifacts)."""
-    executor = executor or CloudExecutor(region=args.region, bucket=args.bucket)
-    record = executor.load_jobs(args.run_id)
-    dest = Path(args.out or f"arenabench-cloud/{args.run_id}").expanduser()
-    fetched = executor.fetch_results(
-        args.run_id, record["jobs"], dest, artifacts=args.artifacts
-    )
-    print(f"results   : {fetched} file(s) -> {dest}")
-    _assemble_fetched(dest)
-    return 0
 
 
 def _cmd_cloud_merge(args: Any) -> int:
@@ -1439,13 +1445,10 @@ def register_cli(subparsers: Any) -> None:
     _common_aws_arguments(run)
     run.set_defaults(func=_cmd_cloud_run)
 
-    status = verbs.add_parser("status", help="progress of a submitted cloud run")
-    status.add_argument("run_id")
-    status.add_argument("--follow", action="store_true",
-                        help="keep polling until every trial settles")
-    status.add_argument("--poll", type=float, default=15.0)
-    _common_aws_arguments(status)
-    status.set_defaults(func=_cmd_cloud_status)
+    # status / fetch / cancel — the read-and-stop side — live in .cloud_ops.
+    from .cloud_ops import register_verbs
+
+    register_verbs(verbs, _common_aws_arguments)
 
     watch = verbs.add_parser(
         "watch", help="live head-to-head scoreboard for a cloud run, in a browser"
@@ -1460,14 +1463,6 @@ def register_cli(subparsers: Any) -> None:
     watch.add_argument("--no-browser", action="store_true")
     _common_aws_arguments(watch)
     watch.set_defaults(func=_cmd_cloud_watch)
-
-    fetch = verbs.add_parser("fetch", help="download a cloud run's results")
-    fetch.add_argument("run_id")
-    fetch.add_argument("--artifacts", action="store_true",
-                       help="also download the full artifact tree (can be large)")
-    fetch.add_argument("--out", help="local directory for downloaded results")
-    _common_aws_arguments(fetch)
-    fetch.set_defaults(func=_cmd_cloud_fetch)
 
     merge = verbs.add_parser(
         "merge",

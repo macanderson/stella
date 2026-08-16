@@ -465,6 +465,17 @@ class ArenaServer:
             raise ValueError(
                 "; ".join(f"{name}: {reason}" for name, reason in dead.items())
             )
+        from .claude_oauth import seat_quota_refusals
+
+        throttled = seat_quota_refusals(spec)
+        if throttled:
+            # And one step deeper again: a valid, readable token whose
+            # subscription is out of quota. Four of six head-to-head trials
+            # measured that quota instead of the agent before this preflight
+            # existed (#3216).
+            raise ValueError(
+                "; ".join(f"{name}: {reason}" for name, reason in throttled.items())
+            )
         problem = sut_problem_for(spec)
         if problem:
             # The third refusal, and the one that protects the *subject* of the

@@ -131,6 +131,35 @@ def test_an_unjudged_trial_is_excluded_from_solve_rate_not_scored_zero() -> None
     assert totals["solve_rate"] == 100.0
 
 
+def test_a_voided_cell_with_a_scored_zero_is_not_a_loss() -> None:
+    """#3209: the merged view judges on the classified verdict, not the raw
+    reward. An unfunded cell carries `resolved: None` beside a verifier reward
+    of 0 — counting the 0 would disagree with the per-cell classification and
+    put a dead arm's deaths back in the denominator."""
+    voided = _body("task-a", "stella", reward=0.0)
+    cell = voided["rows"][0]["cells"]["stella"]
+    cell["resolved"] = None
+    cell["infrastructure"] = True
+    cell["unfunded"] = True
+    bodies = [voided, _body("task-b", "stella", reward=1.0)]
+    merged = merge_trial(bodies)
+    totals = merged["match"]["contestants"][0]["totals"]
+    assert totals["judged"] == 1
+    assert totals["passed"] == 1
+    assert totals["solve_rate"] == 100.0
+    assert totals["unfunded"] == 1
+
+
+def test_a_cell_predating_the_resolved_field_judges_on_its_reward() -> None:
+    """Archived cells with no `resolved` key keep their old meaning."""
+    legacy = _body("task-a", "stella", reward=0.0)
+    del legacy["rows"][0]["cells"]["stella"]["resolved"]
+    merged = merge_trial([legacy])
+    totals = merged["match"]["contestants"][0]["totals"]
+    assert totals["judged"] == 1
+    assert totals["passed"] == 0
+
+
 def test_refuses_to_merge_across_datasets() -> None:
     bodies = [
         _body("task-a", "stella", reward=1.0, dataset="terminal-bench-2.1"),

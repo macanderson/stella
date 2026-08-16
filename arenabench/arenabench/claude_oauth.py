@@ -34,11 +34,13 @@ Two hard rules, both load-bearing:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -48,6 +50,8 @@ __all__ = [
     "CLAUDE_OAUTH_ENV",
     "apply_local_claude_login",
     "local_claude_token",
+    "quota_refusal",
+    "seat_quota_refusals",
 ]
 
 #: The variable Claude Code reads a subscription token from.
@@ -159,3 +163,124 @@ def apply_local_claude_login(spec: MatchSpec) -> tuple[MatchSpec, list[str]]:
         else:
             filled.append(contestant)
     return replace(spec, contestants=tuple(filled)), notes
+
+
+# --------------------------------------------------------------------------
+# quota preflight (#3216)
+# --------------------------------------------------------------------------
+
+#: The subscription route the seat itself will call — the preflight probes
+#: the real thing, not a proxy for it.
+_PREFLIGHT_URL = "https://api.anthropic.com/v1/messages"
+_PREFLIGHT_BETA = "oauth-2025-04-20"
+#: The header Anthropic stamps the unified (five-hour) limit's reset time on,
+#: as epoch seconds. Absent on some responses; the refusal degrades to
+#: naming the status without a time.
+_RESET_HEADER = "anthropic-ratelimit-unified-reset"
+
+
+def _post_preflight(token: str) -> tuple[int, dict[str, str]]:
+    """One minimal request on the seat's route: ``(status, headers)``.
+
+    stdlib-only by charter. The body asks for a single token from the
+    cheapest current model — the probe's cost is the point of contrast with
+    what it prevents: four of six head-to-head trials measuring a quota
+    instead of an agent.
+    """
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps(
+        {
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        _PREFLIGHT_URL,
+        data=body,
+        headers={
+            "authorization": f"Bearer {token}",
+            "anthropic-beta": _PREFLIGHT_BETA,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return int(response.status), dict(response.headers.items())
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), dict(exc.headers.items())
+
+
+def quota_refusal(status: int, headers: dict[str, str]) -> str | None:
+    """The launch-refusing reason a preflight response carries, or ``None``.
+
+    Pure, so the fail-closed decision is testable without a network. Only the
+    two terminal shapes refuse: 429 is the subscription's five-hour limit
+    (the refusal names the reset time when the response does), and 401 is a
+    revoked or expired token. Every other status — including a 400 for the
+    probe body — proves the route serves this token, which is all the
+    preflight asks.
+    """
+    lowered = {name.lower(): value for name, value in headers.items()}
+    if status == 429:
+        reset = lowered.get(_RESET_HEADER)
+        when = ""
+        with contextlib.suppress(TypeError, ValueError):
+            when = time.strftime(
+                " (resets %Y-%m-%d %H:%M:%S %Z)", time.localtime(float(reset or ""))
+            )
+        return (
+            "the Claude subscription's usage limit is exhausted — a launch "
+            f"now measures the quota, not the agent{when}"
+        )
+    if status == 401:
+        return (
+            "the subscription OAuth token was rejected (401) — expired or "
+            "revoked; re-login with Claude Code and relaunch"
+        )
+    return None
+
+
+def seat_quota_refusals(
+    spec: MatchSpec,
+    probe: Callable[[str], tuple[int, dict[str, str]]] | None = None,
+) -> dict[str, str]:
+    """Seat name -> refusal for every subscription seat that cannot serve.
+
+    Probes once per distinct token, not once per seat: two seats on one plan
+    share one five-hour limit, and a second probe against an exhausted plan
+    is a wasted request that can only agree. A transport failure is reported
+    as no refusal — the preflight measures the quota, and a network it cannot
+    cross says nothing about it; the trial will meet the same network with
+    its own error handling.
+
+    The trap this closes is measured, not hypothetical: the only
+    claude-fable-5 head-to-head lost 4 of its 6 Claude Code trials to a
+    429'd token — three refused before turn 1, one throttled through 37
+    turns — and none of the four measured the agent (#3216).
+    """
+    if probe is None:
+        # Resolved at call time, not bound at def time, so a test's
+        # monkeypatch of `_post_preflight` actually takes.
+        probe = _post_preflight
+    verdicts: dict[str, str | None] = {}
+    refusals: dict[str, str] = {}
+    for contestant in spec.contestants:
+        token = contestant.env.get(CLAUDE_OAUTH_ENV)
+        if not token:
+            continue
+        if token not in verdicts:
+            try:
+                status, headers = probe(token)
+            except OSError:
+                verdicts[token] = None
+                continue
+            verdicts[token] = quota_refusal(status, headers)
+        reason = verdicts[token]
+        if reason:
+            refusals[contestant.name] = reason
+    return refusals

@@ -93,15 +93,25 @@ them, which is every Harbor before 0.20.0. So a backfilled record carries
 ``harbor_version = None`` and ``harbor_bound = "<0.20.0"``, with
 :attr:`source` saying it was inferred. "Unknown, but provably older than X" is
 a true statement; "0.6.1" would not be.
+
+To save the next auditor re-deriving it the hard way (#3214): a
+``source: backfilled`` record can **never** recover the Harbor version (only
+the bound above), the SUT commit or binary hash, any opponent's product
+version, or the runner image — none of those were written anywhere at the
+time, and every apparent source (a launcher script's assert, a mutable
+``sut_commit.txt``) is state that cannot date the run. What it *can* carry is
+the dataset digest when the fetched artifacts still name it, the bound, and
+the per-trial facts the artifacts themselves hold.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +125,7 @@ __all__ = [
     "backfill_match",
     "observe_agent_versions",
     "observe_lineage",
+    "observed_runner_image",
     "read_match",
     "stamp_agent_versions",
     "stamp_lineage",
@@ -233,6 +244,17 @@ class Provenance:
     #: list for the same reason ``agent_seats.versions`` is: one arm genuinely
     #: spans several, one per task, and collapsing that erases the fact.
     lineage_seats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: The container image identity the trial substrate ran as — the cloud
+    #: runner's ECR image, as ``repo:tag@sha256:…`` when the digest is
+    #: resolvable and the bare tag otherwise (a tag is a warning wearing a
+    #: value: it is mutable, so it dates the record only to whenever someone
+    #: reads it — the same hazard :attr:`sut_ref` documents). Empty on the
+    #: local path, which runs trials on the host's own Docker with no runner
+    #: image to name, and empty on every record written before the field
+    #: existed (#3214). Auditing every provenance generation found no
+    #: generation with a slot for this — the one apparatus field with no home
+    #: anywhere.
+    runner_image: str = ""
     arenabench_version: str = ""
     recorded_at: float = field(default_factory=time.time)
     source: str = SOURCE_RECORDED
@@ -521,6 +543,18 @@ class Provenance:
         return cls(**{k: v for k, v in payload.items() if k in known})
 
 
+#: How the cloud runner tells the process inside it which image it is. The
+#: entrypoint resolves it from the ECS container metadata endpoint before
+#: launching ``arenabench run``; a local launch has no such environment and
+#: the field honestly stays empty (#3214).
+RUNNER_IMAGE_ENV = "ARENABENCH_RUNNER_IMAGE"
+
+
+def observed_runner_image() -> str:
+    """The runner image identity of the process's own container, or ``""``."""
+    return os.environ.get(RUNNER_IMAGE_ENV, "").strip()
+
+
 def write_match(match_dir: Path, provenance: Provenance) -> None:
     """Record the apparatus beside the match's jobs.
 
@@ -528,7 +562,19 @@ def write_match(match_dir: Path, provenance: Provenance) -> None:
     label is bad, but refusing to benchmark because a directory is read-only
     would be worse, and the absence is itself detectable (a match with no
     record reads as unknown, never as "same as the last one").
+
+    The runner image is observed here rather than at construction: it is a
+    fact about the *process holding the record* — on the cloud path the
+    launch, the stamps and this write all happen inside the runner container,
+    so the writer sees exactly what the builder would, and keeping the
+    observation beside the field's definition means no caller can forget it.
+    A record that already carries an identity keeps it: a host-side re-stamp
+    of a fetched cloud record must not blank the container's own answer.
     """
+    if not provenance.runner_image:
+        observed = observed_runner_image()
+        if observed:
+            provenance = replace(provenance, runner_image=observed)
     try:
         match_dir.mkdir(parents=True, exist_ok=True)
         (match_dir / PROVENANCE_FILE).write_text(

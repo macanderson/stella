@@ -58,8 +58,22 @@ def _totals(cells: list[dict[str, Any]]) -> dict[str, Any]:
     entirely rather than counted as a loss, which is what would happen if a
     missing cell were padded with a zero-reward placeholder.
     """
-    judged = [c for c in cells if c.get("reward") is not None]
-    passed = sum(1 for c in judged if (c.get("reward") or 0) >= 1.0)
+    # Judged from the classified verdict (`resolved`), not the raw reward:
+    # a voided cell — infrastructure, never-ran, unfunded (#3209) — carries
+    # `resolved: None` beside a verifier reward of 0, and judging on the
+    # reward would count the void as a loss, disagreeing with the
+    # `telemetry.aggregate` totals the per-cell classification already
+    # computed. The reward fallback is for archived cells that predate the
+    # `resolved` field, where the raw reward is all there is.
+    def _verdict(cell: dict[str, Any]) -> bool | None:
+        if "resolved" in cell:
+            resolved = cell["resolved"]
+            return None if resolved is None else bool(resolved)
+        reward = cell.get("reward")
+        return None if reward is None else reward >= 1.0
+
+    judged = [c for c in cells if _verdict(c) is not None]
+    passed = sum(1 for c in judged if _verdict(c))
 
     def total(key: str) -> float:
         return sum((c.get(key) or 0) for c in cells)
@@ -85,6 +99,9 @@ def _totals(cells: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "trials": len(cells),
         "infrastructure": sum(1 for c in cells if c.get("infrastructure")),
+        # The funding sub-case, kept visible in the merged view for the same
+        # reason `telemetry.aggregate` names it (#3209).
+        "unfunded": sum(1 for c in cells if c.get("unfunded")),
         "running": sum(1 for c in cells if c.get("status") == "running"),
         "done": sum(1 for c in cells if c.get("status") == "done"),
         "judged": len(judged),
