@@ -45,6 +45,29 @@ def test_an_attempted_trial_with_no_reward_is_a_real_zero() -> None:
     assert reward_of({"exception_info": {"exception_type": "AgentTimeoutError"}}) == 0.0
 
 
+def test_a_verifier_timeout_with_no_reward_is_a_void_not_a_zero() -> None:
+    """#3264: the grader ran out of time on a trial the agent may well have
+    solved. Scoring the absence as 0.0 blames the agent for the harness —
+    selectively on the heaviest tasks. Observed on run preregA2,
+    torch-tensor-parallelism: agent completed in ~200s of a 900s budget,
+    VerifierTimeoutError, no reward on disk."""
+    dead_grader = {
+        "exception_info": {"exception_type": "VerifierTimeoutError"},
+        "finished_at": "2026-08-14T00:00:00Z",
+    }
+    assert reward_of(dead_grader) is None
+    cell = cell_for("FAILED", dead_grader)
+    assert cell.state == "void"
+    assert "VerifierTimeoutError" in cell.detail
+    # The whole infrastructure family voids the same way, and an agent-named
+    # exception does not.
+    assert reward_of({"exception_info": {"exception_type": "HealthcheckError"}}) is None
+    assert (
+        reward_of({"exception_info": {"exception_type": "NonZeroAgentExitCodeError"}})
+        == 0.0
+    )
+
+
 def test_a_boolean_is_not_a_score() -> None:
     """`bool` is an `int` in Python, so a flag would silently read as 0.0/1.0."""
     assert reward_of({"verifier_result": {"rewards": {"reward": True}}}) is None

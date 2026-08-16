@@ -145,6 +145,19 @@ pub(crate) enum ModelCallFailure {
         /// payload if this ends up surfacing terminally.
         attempt_reasons: Vec<String>,
     },
+    /// The provider refused to fund the requested output ceiling. Withheld
+    /// from the terminal channels exactly as the overflow arm is — the
+    /// caller decides between a clamp rung
+    /// (`super::output_budget_recovery`) and the terminal surfacing.
+    OutputBudgetExceeded {
+        /// The classified error's rendering, `provider output budget …`.
+        message: String,
+        /// Every failed attempt's reason, in order — the `RetriesExhausted`
+        /// payload if this ends up surfacing terminally.
+        attempt_reasons: Vec<String>,
+        /// The ceiling the provider said it could afford, when it named one.
+        affordable_output_tokens: Option<u32>,
+    },
 }
 
 impl<'a> Engine<'a> {
@@ -205,6 +218,41 @@ impl<'a> Engine<'a> {
                 message,
                 attempt_reasons,
             } => (message, attempt_reasons),
+            // The output-side mirror, settled here rather than in a parallel
+            // method so both ladders share one "withheld while recovering,
+            // terminal when spent" shape — the property that matters to an
+            // observer is that it cannot tell a spent ladder from a failure
+            // that never had one.
+            ModelCallFailure::OutputBudgetExceeded {
+                message,
+                attempt_reasons,
+                affordable_output_tokens,
+            } => {
+                self.emit_lifecycle(
+                    bus::names::MODEL_REQUEST_FAILED,
+                    || serde_json::json!({ "step": state.step, "reason": message }),
+                );
+                let asked = state.output_ceiling(self.config.max_output_tokens);
+                return match state
+                    .output_budget_recovery
+                    .arm(affordable_output_tokens, asked)
+                {
+                    Some(clamp) => {
+                        let _ = events.send(AgentEvent::Error {
+                            message: format!(
+                                "{message} — asking for at most {clamp} output tokens and \
+                                 re-issuing (output budget recovery {n} of {max})",
+                                n = state.output_budget_recovery.fired(),
+                                max = super::output_budget_recovery::MAX_RECOVERY_RUNGS,
+                            ),
+                            retryable: true,
+                        });
+                        state.step += 1;
+                        None
+                    }
+                    None => Some(self.surface_unrecovered(message, attempt_reasons, state, events)),
+                };
+            }
         };
         self.emit_lifecycle(
             bus::names::MODEL_REQUEST_FAILED,
@@ -230,30 +278,38 @@ impl<'a> Engine<'a> {
                 state.step += 1;
                 None
             }
-            None => {
-                // Ladder spent: surface exactly what the unrecovered path
-                // surfaces, so an exhausted recovery is indistinguishable
-                // downstream from a failure that never had a recovery.
-                let retryable = false;
-                let _ = events.send(AgentEvent::RetriesExhausted {
-                    turn_instance: self.config.turn_instance,
-                    attempts: attempt_reasons.len() as u32,
-                    reasons: attempt_reasons,
-                    retryable,
-                });
-                let _ = events.send(AgentEvent::Error {
-                    message: message.clone(),
-                    retryable,
-                });
-                if let Some(outcomes) = self.outcomes {
-                    outcomes.record_failure(self.active_provider().id());
-                }
-                Some(StepOutcome::Aborted {
-                    reason: format!("model call failed: {message}"),
-                    kind: AbortKind::Failure,
-                    cost_usd: state.total_cost_usd,
-                })
-            }
+            None => Some(self.surface_unrecovered(message, attempt_reasons, state, events)),
+        }
+    }
+
+    /// The terminal shape a spent recovery ladder produces — shared by both
+    /// ladders so an exhausted recovery is indistinguishable downstream from
+    /// a failure that never had a recovery to spend.
+    fn surface_unrecovered(
+        &self,
+        message: String,
+        attempt_reasons: Vec<String>,
+        state: &TurnState,
+        events: &EventSender,
+    ) -> StepOutcome {
+        let retryable = false;
+        let _ = events.send(AgentEvent::RetriesExhausted {
+            turn_instance: self.config.turn_instance,
+            attempts: attempt_reasons.len() as u32,
+            reasons: attempt_reasons,
+            retryable,
+        });
+        let _ = events.send(AgentEvent::Error {
+            message: message.clone(),
+            retryable,
+        });
+        if let Some(outcomes) = self.outcomes {
+            outcomes.record_failure(self.active_provider().id());
+        }
+        StepOutcome::Aborted {
+            reason: format!("model call failed: {message}"),
+            kind: AbortKind::Failure,
+            cost_usd: state.total_cost_usd,
         }
     }
 }

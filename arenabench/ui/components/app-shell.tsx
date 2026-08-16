@@ -8,8 +8,9 @@ import { Topbar, type ConnState } from "@/components/topbar";
 import { SetupView } from "@/components/setup/setup-view";
 import { ArenaView } from "@/components/arena/arena-view";
 import { TrendsView } from "@/components/trends/trends-view";
+import { ExperimentsView } from "@/components/experiments/experiments-view";
 
-export type View = "setup" | "arena" | "trends";
+export type View = "setup" | "arena" | "trends" | "experiments";
 
 /**
  * Owns what both views need: the catalog, which view is showing, which match
@@ -103,6 +104,9 @@ export function AppShell() {
       )}
       <main className={view === "trends" ? "block" : "hidden"}>
         <TrendsView active={view === "trends"} />
+      </main>
+      <main className={view === "experiments" ? "block" : "hidden"}>
+        <ExperimentsView active={view === "experiments"} />
       </main>
     </TooltipProvider>
   );

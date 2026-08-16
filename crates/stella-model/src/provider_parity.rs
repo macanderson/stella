@@ -27,6 +27,14 @@
 //!   `ProviderError::Terminal` — safe (the turn aborts exactly as before the
 //!   overflow-recovery path existed) but unrecovered, so which spellings are
 //!   *detected* is a declared per-provider fact, not an assumption.
+//! - [`OutputBudgetPosture`] — whether a provider refuses the *requested
+//!   output ceiling* rather than billing what is spent, and whether that
+//!   refusal is recognised. This diverges hardest at the gateways: a gateway
+//!   prices the request against the ceiling the caller asks for, so a 128K
+//!   ask is refused against a balance that would fund the real call several
+//!   times over. Unrecognised, it aborts the turn — which cost three
+//!   benchmark runs, every trial dead against a balance the provider itself
+//!   said could afford a smaller ask.
 //!
 //! **The law for new providers:** adding a provider id means adding a row on
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
@@ -448,6 +456,123 @@ pub fn overflow_posture(provider_id: &str) -> Option<&'static OverflowPosture> {
         .map(|(_, posture)| posture)
 }
 
+/// Whether a provider's refusal to fund the *requested output ceiling* is
+/// recognised as one, so the engine's clamp-and-re-ask recovery fires
+/// instead of aborting the turn.
+///
+/// The output-side twin of [`OverflowPosture`], and a separate axis for the
+/// same reason that one is: the failure is a distinct wire signature with a
+/// distinct repair, and a provider can support one and not the other. It
+/// diverges hardest at the gateways, because a gateway prices a request
+/// against the ceiling the caller *asks for* — so it is the surface that
+/// refuses a 128K ask against a balance that would fund the actual call
+/// several times over. Direct vendor APIs bill what is spent and generally
+/// do not reject on the ask at all.
+#[derive(Debug)]
+pub enum OutputBudgetPosture {
+    /// The provider's affordability rejection is matched by the shared
+    /// classifier, so it reaches the engine as
+    /// `ProviderError::OutputBudgetExceeded` and the clamp ladder fires.
+    Detected {
+        /// The wire signature, for humans reading the matrix.
+        signature: &'static str,
+        /// Name of the test function that proves this provider's exact body
+        /// shape classifies as `OutputBudgetExceeded`; checked for existence
+        /// by this module's tests.
+        witness: &'static str,
+    },
+    /// No affordability rejection verified against this provider's own wire.
+    /// Its errors still funnel through the shared classifier, so a rejection
+    /// phrased in a detected dialect is caught opportunistically; anything
+    /// else stays `Terminal` — an abort, safe but unrecovered. Verifying the
+    /// real wire shape upgrades the row to [`Detected`].
+    ///
+    /// [`Detected`]: OutputBudgetPosture::Detected
+    BestEffort { note: &'static str },
+}
+
+/// One output-budget row per provider id constructible by the CLI — same
+/// completeness contract as [`CACHE_POSTURE`] and [`OVERFLOW_POSTURE`].
+pub static OUTPUT_BUDGET_POSTURE: &[(&str, OutputBudgetPosture)] = &[
+    (
+        "openrouter",
+        OutputBudgetPosture::Detected {
+            signature: "HTTP 402, message `This request requires more credits, or fewer \
+                        max_tokens. You requested up to N tokens, but can only afford M.`",
+            witness: "classify_http_status_402_naming_an_affordable_ceiling_is_recoverable",
+        },
+    ),
+    (
+        "anthropic",
+        OutputBudgetPosture::BestEffort {
+            note: "bills what is spent rather than pricing the ask; no affordability \
+                   rejection observed on the wire",
+        },
+    ),
+    (
+        "openai",
+        OutputBudgetPosture::BestEffort {
+            note: "bills what is spent rather than pricing the ask; a hard-quota refusal \
+                   arrives as 429 insufficient_quota, which is a different failure",
+        },
+    ),
+    (
+        "gemini",
+        OutputBudgetPosture::BestEffort {
+            note: "no affordability rejection observed; quota refusals are 429",
+        },
+    ),
+    (
+        "vertex",
+        OutputBudgetPosture::BestEffort {
+            note: "billed against the GCP project, not a prepaid balance",
+        },
+    ),
+    (
+        "bedrock",
+        OutputBudgetPosture::BestEffort {
+            note: "billed against the AWS account, not a prepaid balance",
+        },
+    ),
+    (
+        "zai",
+        OutputBudgetPosture::BestEffort {
+            note: "signals balance exhaustion as a 429 with code 1113 (see `zai.rs`), which \
+                   is exhaustion rather than an unaffordable ask",
+        },
+    ),
+    (
+        "xai",
+        OutputBudgetPosture::BestEffort {
+            note: "OpenAI-compatible error dialect on the shared funnel; no affordability \
+                   rejection verified on the wire",
+        },
+    ),
+    (
+        "deepseek",
+        OutputBudgetPosture::BestEffort {
+            note: "OpenAI-compatible error dialect on the shared funnel; no affordability \
+                   rejection verified on the wire",
+        },
+    ),
+    (
+        "local",
+        OutputBudgetPosture::BestEffort {
+            note: "a local server bills nothing and has no balance to price an ask against",
+        },
+    ),
+];
+
+/// The declared output-budget posture for `provider_id`, or `None` for an id
+/// the matrix doesn't know — which the `stella-cli` completeness test turns
+/// into a hard failure for any seeded provider.
+pub fn output_budget_posture(provider_id: &str) -> Option<&'static OutputBudgetPosture> {
+    OUTPUT_BUDGET_POSTURE
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, posture)| posture)
+}
+
 /// The declared reasoning posture for `provider_id`, or `None` for an id the
 /// matrix doesn't know — which the `stella-cli` completeness test turns into a
 /// hard failure for any seeded provider.
@@ -785,6 +910,50 @@ mod tests {
         for (id, _) in OVERFLOW_POSTURE {
             assert!(seen.insert(id), "duplicate overflow-posture row for `{id}`");
         }
+    }
+
+    /// The output-budget axis, enforced exactly as its overflow twin is: a
+    /// `Detected` row names a test proving that provider's affordability
+    /// rejection reaches the engine as `OutputBudgetExceeded`, and a row
+    /// whose witness has been renamed or deleted fails here rather than in a
+    /// bench run that pays for it.
+    #[test]
+    fn every_output_budget_witness_test_exists_in_the_adapter_sources() {
+        let sources = adapter_sources();
+        for (id, posture) in OUTPUT_BUDGET_POSTURE {
+            let witness = match posture {
+                OutputBudgetPosture::Detected { witness, .. } => witness,
+                OutputBudgetPosture::BestEffort { .. } => continue,
+            };
+            let needle = format!("fn {witness}(");
+            assert!(
+                sources.iter().any(|source| source.contains(&needle)),
+                "output-budget witness for `{id}` not found in adapter sources: {witness}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_budget_provider_ids_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, _) in OUTPUT_BUDGET_POSTURE {
+            assert!(
+                seen.insert(id),
+                "duplicate output-budget-posture row for `{id}`"
+            );
+        }
+    }
+
+    /// The axes must cover the same providers: a provider declared on one
+    /// and missing from the other is the silent gap invariant 8 exists to
+    /// prevent, and checking it here means neither table can drift alone.
+    #[test]
+    fn the_output_budget_axis_covers_every_provider_the_overflow_axis_does() {
+        let overflow: std::collections::BTreeSet<_> =
+            OVERFLOW_POSTURE.iter().map(|(id, _)| *id).collect();
+        let budget: std::collections::BTreeSet<_> =
+            OUTPUT_BUDGET_POSTURE.iter().map(|(id, _)| *id).collect();
+        assert_eq!(overflow, budget, "the two axes cover different providers");
     }
 
     #[test]

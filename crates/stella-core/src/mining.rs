@@ -46,6 +46,29 @@ pub(crate) fn terms(text: &str) -> Vec<String> {
     out
 }
 
+/// The fraction of `b`'s vocabulary that `a` covers — `|a ∩ b| / |b|`, 0 when
+/// either is empty.
+///
+/// Asymmetric on purpose, and that is the whole point. [`jaccard`] divides by
+/// the UNION, so a long `a` is penalized for every term it holds that `b` does
+/// not: a 15-term skill description scored against a 50-term prompt needs 5
+/// shared terms to clear 0.08, and against a 200-term prompt it needs about
+/// 16. Prompts are long and descriptions are short, so the symmetric measure
+/// answered "are these two texts the same size and about the same thing?" when
+/// the question selection actually asks is "does this prompt cover what this
+/// skill is for?".
+///
+/// Deliberately a second function rather than a change to [`jaccard`]: the
+/// miners' near-duplicate clustering thresholds (`min_similarity`) are tuned
+/// against the symmetric measure, and re-pointing them at this one would
+/// silently re-cluster every observation.
+pub(crate) fn coverage(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / b.len() as f64
+}
+
 /// Jaccard similarity of two term sets — 0 when either is empty (TS:
 /// `jaccard`).
 pub(crate) fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {

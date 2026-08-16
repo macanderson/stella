@@ -2,9 +2,13 @@
 //! never imports a provider SDK, a filesystem call, or a terminal library —
 //! it drives through these traits, mirroring the TS engine's `ports.ts`.
 
+pub mod authz;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::{Provider, ToolOutput, ToolSchema};
+
+pub use authz::{AuthzDecision, AuthzEvalError, AuthzGate, NoAuthz, Principal, RiskCeiling};
 
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
 /// by test doubles). The engine treats it as a black box that never panics.
