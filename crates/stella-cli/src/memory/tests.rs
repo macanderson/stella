@@ -22,6 +22,9 @@ mod reflection_mining;
 // Spec §8 (#737): the seam where auto-created skill files meet what is
 // already on disk — its own module, and the reason tests.rs fits the ratchet.
 mod skill_creation;
+// #3243 D1/D2: what selection is allowed to call "relevant to this turn" —
+// per-turn domain scope, and a lexical score that can fire on a real prompt.
+mod steering_selection;
 // #2459: a lesson's `trigger` decides what recall returns. The experiment
 // needs two goals, two crossed lessons and a scripted provider to set up, so it
 // lives beside the other multi-fixture seams rather than inline here.
