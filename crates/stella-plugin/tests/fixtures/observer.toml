@@ -1,0 +1,7 @@
+# An observer subscribes to the turn event stream and cannot influence it —
+# so it declares a grade and nothing else. Hooks here would be a load error.
+name = "turn-metrics"
+description = "Watches the event stream and keeps counters; influences nothing."
+
+[loop]
+participation = "observer"
