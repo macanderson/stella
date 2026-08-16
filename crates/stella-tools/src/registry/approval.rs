@@ -56,7 +56,7 @@
 //!   bus, and the emit → park → TTL contract is honoured for that caller
 //!   too. [`ToolRegistry::approval_broker`] exposes the session's broker,
 //!   and `crate::hook_bridge::BrokerApprovalRoute` is the shipped caller:
-//!   it implements the engine's `HookApprovalRoute` port over this flow.
+//!   it implements the engine's `ApprovalRoute` port over this flow.
 
 use std::sync::Arc;
 use std::time::Duration;
