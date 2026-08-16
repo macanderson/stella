@@ -348,7 +348,7 @@ async fn silent_success_is_stamped_with_the_input_identity() {
         let dir = dir.path();
         async move {
             match run_custom(tool, &input, dir).await {
-                ToolOutput::Ok { content } => content,
+                ToolOutput::Ok { content, .. } => content,
                 ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
             }
         }
