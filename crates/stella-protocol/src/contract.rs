@@ -220,6 +220,17 @@ pub struct ToolContract {
     /// before the field round-trips byte-identically (invariant #4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<String>,
+    /// Whether one announced call may safely run twice (#3287) — the claim
+    /// retry logic and dispatch guards key on, and the contract-side home of
+    /// the MCP spec's `idempotentHint`. Distinct from
+    /// [`ToolSchema::speculation_safe`], which additionally demands the tool
+    /// tolerate re-execution *before its step commits*. `false` — the
+    /// default, and the safe direction — for every contract written before
+    /// the field existed; absent-when-`false` so those payloads round-trip
+    /// byte-identically (invariant #4). For [`Provenance::Declared`] tools
+    /// this is a *claim* like every other field here.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub idempotent: bool,
 }
 
 impl ToolContract {
@@ -234,7 +245,17 @@ impl ToolContract {
             provenance: Provenance::Builtin,
             output_schema: None,
             events: Vec::new(),
+            idempotent: false,
         }
+    }
+
+    /// The same contract, claiming one announced call may safely run twice
+    /// (#3287). Builder-shaped like its siblings: most tools do not make the
+    /// claim, and the constructors stay the pre-#3287 shape.
+    #[must_use]
+    pub fn with_idempotent(mut self, idempotent: bool) -> Self {
+        self.idempotent = idempotent;
+        self
     }
 
     /// The same contract, declaring the event names one call may emit
@@ -281,6 +302,7 @@ impl ToolContract {
             provenance: Provenance::Declared,
             output_schema: None,
             events: Vec::new(),
+            idempotent: false,
         }
     }
 
@@ -399,6 +421,24 @@ mod tests {
         assert!(
             !json.contains("events"),
             "an absent declaration must be absent bytes: {json}"
+        );
+    }
+
+    #[test]
+    fn an_idempotent_claim_roundtrips_and_its_absence_is_the_old_bytes() {
+        // Invariant #4 for #3287, same discipline as `events` and
+        // `output_schema`.
+        let claimed = ToolContract::declared(schema("mcp__x__status", true, false))
+            .with_idempotent(true);
+        let json = serde_json::to_string(&claimed).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, claimed);
+
+        let unclaimed = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&unclaimed).unwrap();
+        assert!(
+            !json.contains("idempotent"),
+            "an absent claim must be absent bytes: {json}"
         );
     }
 
