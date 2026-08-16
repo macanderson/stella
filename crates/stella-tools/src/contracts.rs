@@ -41,11 +41,11 @@ use crate::catalog;
 pub fn contract_for(schema: &ToolSchema) -> ToolContract {
     match catalog::get(&schema.name) {
         Some(entry) => {
-            let contract = ToolContract::builtin(schema.clone(), entry.risk);
-            match declared_output_schema(&schema.name) {
-                Some(output_schema) => contract.with_output_schema(output_schema),
-                None => contract,
+            let mut contract = ToolContract::builtin(schema.clone(), entry.risk);
+            if let Some(output_schema) = declared_output_schema(&schema.name) {
+                contract = contract.with_output_schema(output_schema);
             }
+            contract.with_events(declared_events(&schema.name))
         }
         None => ToolContract::declared(schema.clone()),
     }
@@ -60,6 +60,20 @@ pub fn contract_for(schema: &ToolSchema) -> ToolContract {
 /// Beside the catalog rather than a macro column because almost every row
 /// would be `None`: a promise is the exception, and each one should read as
 /// a deliberate declaration next to the tool that keeps it.
+/// The event names a reviewed tool may emit mid-execution (#3284). The
+/// registry's per-call `ToolCtx` drops anything not listed here, so this
+/// table is the allowlist. Empty — most rows — means the tool emits nothing.
+///
+/// `task` is the one long-running built-in: it announces the child it
+/// dispatched as `tool.call.progress`, so an observer can tell a slow
+/// delegation from a wedged one.
+fn declared_events(name: &str) -> Vec<String> {
+    match name {
+        "task" => vec!["tool.call.progress".to_string()],
+        _ => Vec::new(),
+    }
+}
+
 fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
     match name {
         "list_state" => Some(serde_json::json!({

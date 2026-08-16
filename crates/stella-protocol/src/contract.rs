@@ -212,6 +212,14 @@ pub struct ToolContract {
     /// (invariant #4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<serde_json::Value>,
+    /// The event names this tool may emit mid-execution (#3284). The
+    /// registry's per-call event handle drops any name not listed here, so
+    /// this declaration is the allowlist — a tool cannot improvise a
+    /// vocabulary its reviewers never saw. Empty — most tools — means the
+    /// tool emits nothing. Absent-when-empty so every contract serialized
+    /// before the field round-trips byte-identically (invariant #4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
 }
 
 impl ToolContract {
@@ -225,7 +233,17 @@ impl ToolContract {
             requires_approval: false,
             provenance: Provenance::Builtin,
             output_schema: None,
+            events: Vec::new(),
         }
+    }
+
+    /// The same contract, declaring the event names one call may emit
+    /// (#3284). Builder-shaped for the same reason as
+    /// [`Self::with_output_schema`]: most tools emit nothing.
+    #[must_use]
+    pub fn with_events(mut self, events: Vec<String>) -> Self {
+        self.events = events;
+        self
     }
 
     /// The same contract, promising that a successful call's structured half
@@ -262,6 +280,7 @@ impl ToolContract {
             requires_approval: false,
             provenance: Provenance::Declared,
             output_schema: None,
+            events: Vec::new(),
         }
     }
 
@@ -362,6 +381,25 @@ mod tests {
         );
         let old: ToolContract = serde_json::from_str(&json).unwrap();
         assert_eq!(old, bare);
+    }
+
+    #[test]
+    fn a_contract_with_events_roundtrips_and_an_eventless_one_is_the_old_bytes() {
+        // Invariant #4 for #3284, same discipline as `output_schema`: the
+        // declaration survives the wire, and its absence is the pre-#3284
+        // bytes.
+        let emitting = ToolContract::builtin(schema("task", false, false), RiskLevel::High)
+            .with_events(vec!["tool.call.progress".into()]);
+        let json = serde_json::to_string(&emitting).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, emitting);
+
+        let silent = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&silent).unwrap();
+        assert!(
+            !json.contains("events"),
+            "an absent declaration must be absent bytes: {json}"
+        );
     }
 
     #[test]

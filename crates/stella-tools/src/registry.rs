@@ -23,9 +23,11 @@ pub trait Tool: Send + Sync {
     /// Schema advertised to the model: name, description, JSON Schema.
     fn schema(&self) -> ToolSchema;
 
-    /// Execute the tool. `root` is the workspace root for path resolution;
-    /// tools must never read or write outside it without explicit opt-in.
-    async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput;
+    /// Execute the tool. `ctx` carries the workspace root for path
+    /// resolution — tools must never read or write outside it without
+    /// explicit opt-in — and the event handle scoped to this tool's
+    /// contract-declared vocabulary (#3284, `crate::ctx`).
+    async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput;
 
     /// Whether sibling calls to this tool (and to read-only tools) in one
     /// step may be dispatched concurrently despite the schema not claiming
@@ -411,7 +413,16 @@ impl ToolRegistry {
         }
 
         let output = match &tool {
-            Some(tool) => tool.execute(input, &self.root).await,
+            Some(tool) => {
+                // The per-call execution context (#3284): the workspace root
+                // as ever, plus the event handle scoped to this tool's
+                // contract-declared vocabulary — `crate::ctx` drops any
+                // undeclared name, so the contract is the allowlist.
+                let contract = crate::contracts::contract_for(&tool.schema());
+                let ctx =
+                    crate::ctx::ToolCtx::new(self.root.clone(), name, bus.clone(), contract.events);
+                tool.execute(input, &ctx).await
+            }
             None => ToolOutput::classified_error(
                 stella_protocol::ErrorClass::NotFound,
                 format!(
