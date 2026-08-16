@@ -74,6 +74,43 @@ fn steering_turned_off_injects_nothing() {
     );
 }
 
+/// **Witness (#3243 Phase 2, the pipeline leg).** With steering off, the
+/// frame query itself answers empty — not just the rendered block.
+///
+/// Fails on a gate at the block render alone: a pipeline-driven turn never
+/// renders the block, it recalls through [`ContextRecallPort`] and feeds the
+/// frames to the goal message, the planner, and the witness author — so a
+/// switch that stopped at the block would withhold the injection on exactly
+/// the surfaces that do not use it.
+#[tokio::test]
+async fn steering_turned_off_is_frameless_through_the_pipeline_port_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let mut memory = session(dir.path());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    // The control: with steering on, the port recalls the planted lesson —
+    // or the empty assertion below passes for the wrong reason.
+    assert!(
+        !ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "the port must recall the planted lesson while steering is on"
+    );
+
+    memory.set_steering_enabled(false);
+    assert!(
+        ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "the switch must reach the pipeline's recall port, not just the \
+         rendered block"
+    );
+}
+
 /// **Witness (D1).** A skill tagged with a domain this turn is not working in
 /// is not injected.
 ///
