@@ -697,9 +697,14 @@ async fn run_task(
     // transient build and commit lanes, coordinated across every writer in
     // the workspace. Same holder as the fleet's declared claims — re-entrant.
     let claims = crate::claims::ClaimTap::new(&committed, claims_store, claim_holder);
-    // A fleet worker runs the operator's tool policy, same as every other
-    // driver — an isolated worktree is not a different trust posture.
-    let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(&cfg));
+    // A fleet worker runs the operator's tool policy and the authorization
+    // gate, same as every other driver — an isolated worktree is not a
+    // different trust posture. The principal names the dispatched task.
+    let permitted = agent::tool_stack::policy_stack(
+        &claims,
+        &cfg,
+        stella_core::ports::Principal::SubAgent(task.id.to_string()),
+    );
     // Every fleet attempt owns the same durable event/accounting envelope as
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.

@@ -65,23 +65,29 @@ fn registry() -> Arc<ToolRegistry> {
 /// **The decorator-forwarding witness.**
 ///
 /// The deck stacks executors between the engine and the registry
-/// (`CustomToolSet → PolicyToolSet`, plus the taps).
+/// (`CustomToolSet → PolicyToolSet → GatedToolSet`, plus the taps).
 /// `drain_sub_agent_spend_usd` has a `0.0` default, so any
 /// one of them forgetting to forward would silently drop a child's cost out
 /// of the parent's budget — and no compiler would say so.
 ///
 /// This asserts through the *shipped* composition rather than a hypothetical
-/// one: a future decorator inserted into the real stack fails here, which is
-/// the only place that can catch it.
+/// one — `agent::tool_stack` is the assembly every driver calls (#3283) — so
+/// a future decorator inserted into the real stack fails here, which is the
+/// only place that can catch it.
 #[tokio::test]
 async fn the_production_tool_stack_forwards_sub_agent_spend() {
     let ledger: SubAgentSpendLedger = Arc::default();
     let base = LedgerBase(ledger.clone());
     push_sub_agent_spend(&ledger, 0.42);
 
-    let customs =
-        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
+    let permitted = crate::agent::tool_stack::session_stack_with_gate(
+        &base,
+        Vec::new(),
+        std::path::PathBuf::from("."),
+        Default::default(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
 
     assert!(
         (permitted.drain_sub_agent_spend_usd() - 0.42).abs() < 1e-9,
@@ -132,9 +138,14 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     };
     let base = WaitingBase(std::sync::Mutex::new(Some(request.clone())));
 
-    let customs =
-        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
+    let permitted = crate::agent::tool_stack::session_stack_with_gate(
+        &base,
+        Vec::new(),
+        std::path::PathBuf::from("."),
+        Default::default(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
 
     assert_eq!(
         permitted.drain_wait_request(),
@@ -162,9 +173,14 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
     let ledger: SubAgentSpendLedger = Arc::default();
     let base = LedgerBase(ledger);
 
-    let customs =
-        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
+    let permitted = crate::agent::tool_stack::session_stack_with_gate(
+        &base,
+        Vec::new(),
+        std::path::PathBuf::from("."),
+        Default::default(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
 
     assert!(
         permitted.parallel_safe_names().contains("task"),
@@ -207,9 +223,14 @@ async fn the_production_tool_stack_forwards_live_services() {
     }
 
     let base = ServingBase;
-    let customs =
-        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
-    let permitted = crate::agent::PolicyToolSet::new(&customs, Default::default());
+    let permitted = crate::agent::tool_stack::session_stack_with_gate(
+        &base,
+        Vec::new(),
+        std::path::PathBuf::from("."),
+        Default::default(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
 
     let services = permitted.live_services();
     assert_eq!(

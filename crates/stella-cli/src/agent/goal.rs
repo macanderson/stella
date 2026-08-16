@@ -551,12 +551,12 @@ pub(crate) async fn run_goal_turn(
     }
 
     let outcome = {
-        let customs = CustomToolSet::new(
+        let tools = super::tool_stack::session_stack(
             base_tools,
             custom_tools.to_vec(),
-            cfg.workspace_root.clone(),
+            cfg,
+            Principal::User,
         );
-        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
         let hook_runner = ShellHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
@@ -743,12 +743,12 @@ async fn run_goal_pipeline_turn(
     // Run the loop; the result is folded into `goal_result` so there is exactly
     // one teardown path (drop tx → await renderer → record execution → return).
     let goal_result = {
-        let customs = CustomToolSet::new(
+        let tools = super::tool_stack::session_stack(
             base_tools,
             custom_tools.to_vec(),
-            cfg.workspace_root.clone(),
+            cfg,
+            Principal::User,
         );
-        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);

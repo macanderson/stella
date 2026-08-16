@@ -197,12 +197,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         Pipeline(Result<stella_pipeline::PipelineOutcome, stella_pipeline::PipelineRunError>),
     }
     let end = {
-        let customs = CustomToolSet::new(
+        let tools = super::tool_stack::session_stack(
             base_tools,
             custom_tools.to_vec(),
-            cfg.workspace_root.clone(),
+            cfg,
+            Principal::User,
         );
-        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
         let hook_runner = ShellHookRunner;
         match restored {
             Some((spec, frame_config)) => {

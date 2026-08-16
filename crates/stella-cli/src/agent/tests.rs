@@ -1213,8 +1213,14 @@ async fn stack_names_and_execute(
     input: serde_json::Value,
 ) -> (Vec<String>, ToolOutput) {
     let registry = ToolRegistry::new(root.to_path_buf());
-    let customs = CustomToolSet::new(&registry, custom_tools, root.to_path_buf());
-    let tools = PolicyToolSet::new(&customs, policy);
+    let tools = tool_stack::session_stack_with_gate(
+        &registry,
+        custom_tools,
+        root.to_path_buf(),
+        policy,
+        tool_stack::session_gate(),
+        Principal::User,
+    );
     let names = tools
         .schemas()
         .into_iter()

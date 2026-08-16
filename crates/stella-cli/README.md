@@ -106,7 +106,7 @@ file), never as a planning assumption.
 | Path | What it holds |
 |---|---|
 | [`src/main.rs`](src/main.rs), [`src/tests.rs`](src/tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence guarding it. |
-| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), the `stella init` flow (`init.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`). |
+| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), the `stella init` flow (`init.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`), and the one tool-chain assembly every driver builds through (`tool_stack.rs`, #3283). |
 | [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it; `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
 | [`src/env_files.rs`](src/env_files.rs) | Project-scoped `.env` loading with shell-wins precedence and the execution-hijack refusal list. |
 | [`src/memory.rs`](src/memory.rs) + [`src/memory/`](src/memory), [`src/contextgraph.rs`](src/contextgraph.rs) | `SessionMemory` (per-turn recall, post-turn reflection, skill auto-promotion, CGP→pipeline projection) and the session's `contextgraph-host`, which serves the in-tree workspace-memory and code-graph sources as real CGP providers. |
@@ -249,10 +249,11 @@ execution on the first subprocess (#553). `STELLA_NO_ENV_FILE=1` disables it all
   both a `CachePosture` and a `ReasoningPosture` row in
   `crates/stella-model/src/provider_parity.rs`.
 - **`session_tool_policy` in [`src/agent/tools.rs`](src/agent/tools.rs) is the
-  only translation from settings `tools.*` switches to the policy layer** —
-  every session stack wraps the registry in the `PolicyToolSet` it builds.
-  Hand-assemble a registry elsewhere and the workspace's switches stop
-  applying.
+  only translation from settings `tools.*` switches to the policy layer**, and
+  [`src/agent/tool_stack.rs`](src/agent/tool_stack.rs) is the only place the
+  chain above the registry is assembled (customs → `PolicyToolSet` →
+  `GatedToolSet`, #3283). Hand-assemble a registry elsewhere and the
+  workspace's switches — and the authorization gate — stop applying.
 
 ## Testing
 
