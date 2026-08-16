@@ -70,7 +70,10 @@ async fn the_assembled_volatile_block_is_byte_identical_to_the_pinned_bytes() {
         .await
         .unwrap();
 
-    let frames = memory.recalled_frames_reporting(lesson, |_| {}).await.frames;
+    let frames = memory
+        .recalled_frames_reporting(lesson, |_| {})
+        .await
+        .frames;
     let nod = frames
         .iter()
         .find_map(|frame| frame.id.clone())
