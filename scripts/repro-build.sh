@@ -71,6 +71,9 @@
 #
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 # The workspace root, not the caller's cwd: workspace member paths are relative
 # in the binary precisely because cargo is invoked from here. `pwd -P` and not
 # plain `pwd` (the idiom in the other guard scripts) because this path is used
@@ -94,7 +97,7 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "repro-build: --glibc needs a version" >&2; exit 2; }
       glibc="$2"; shift 2 ;;
     -h | --help)
-      sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
+      print_help_header "$0"
       exit 0 ;;
     -*)
       echo "repro-build: unknown option: $1" >&2; exit 2 ;;
