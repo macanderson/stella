@@ -94,6 +94,10 @@ pub struct ToolRegistry {
     /// [`ToolRegistry::take_spawn_requests`] — a drain discipline, so no
     /// request is dispatched twice.
     spawn_queue: crate::tasks::SpawnQueue,
+    /// Whether a host will drain `spawn_queue`. Set by
+    /// [`ToolRegistry::enable_task_delegation`]; `false` here makes
+    /// `task_assign` refuse rather than confirm an undispatched request.
+    spawn_dispatch: crate::tasks::SpawnDispatch,
     /// The sub-agent dispatcher (#922), filled by the host after
     /// construction via [`ToolRegistry::attach_sub_agent_dispatcher`] — it
     /// needs this registry as the child's tool set, so taking it as a
@@ -137,6 +141,7 @@ impl ToolRegistry {
     pub fn new(root: PathBuf) -> Self {
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
+        let spawn_dispatch: crate::tasks::SpawnDispatch = Arc::default();
         let sub_agent_dispatcher: crate::subagent::DispatcherSlot = Arc::default();
         let sub_agent_spend: stella_core::subagent::SubAgentSpendLedger = Arc::default();
         let scratch = crate::scratch::ScratchDir::new().map(Arc::new);
@@ -151,6 +156,7 @@ impl ToolRegistry {
             Arc::new(crate::tasks::TaskAssign(
                 task_board.clone(),
                 spawn_queue.clone(),
+                spawn_dispatch.clone(),
             )),
             // Registered unconditionally — see `attach_sub_agent_dispatcher`
             // on why an unattached dispatcher is still the honest shape.
@@ -183,6 +189,7 @@ impl ToolRegistry {
             mcp_usage: Arc::default(),
             task_board,
             spawn_queue,
+            spawn_dispatch,
             sub_agent_dispatcher,
             sub_agent_spend,
             turn_controls: crate::subagent::TurnControlsSlot::default(),
@@ -427,6 +434,20 @@ impl ToolRegistry {
     /// to observe queued spawns without draining them.
     pub fn spawn_queue(&self) -> crate::tasks::SpawnQueue {
         self.spawn_queue.clone()
+    }
+
+    /// Declare that this host drains [`Self::take_spawn_requests`] and spawns
+    /// what it finds, which is what lets `task_assign` accept a delegation.
+    ///
+    /// Late-attached for the same reason the sub-agent dispatcher is: whether
+    /// anything will honor a queued request is a fact about the *host*, not
+    /// about the registry, and it is not known at construction. Registries
+    /// that never call this (a best-of-N candidate workspace, a bare embedding
+    /// host) get a `task_assign` that refuses rather than one that confirms a
+    /// spawn no one performs.
+    pub fn enable_task_delegation(&self) {
+        self.spawn_dispatch
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Drain the sub-agent spawn requests `task_assign` queued since the

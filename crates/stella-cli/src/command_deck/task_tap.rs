@@ -24,6 +24,32 @@ pub(crate) struct TaskTap<'a> {
     pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
 }
 
+impl<'a> TaskTap<'a> {
+    /// Build the tap and tell the registry whether delegation is real here.
+    ///
+    /// The supervisor is the only thing that turns a queued `task_assign`
+    /// request into a running sub-agent, so it is also the only honest answer
+    /// to "may `task_assign` accept?" — binding the two in one constructor is
+    /// what keeps the next tap from advertising a delegation it cannot
+    /// perform.
+    pub(crate) fn new(
+        inner: &'a dyn ToolExecutor,
+        events: UnboundedSender<AgentEvent>,
+        registry: &'a ToolRegistry,
+        supervisor: Option<UnboundedSender<SupervisorMsg>>,
+    ) -> Self {
+        if supervisor.is_some() {
+            registry.enable_task_delegation();
+        }
+        Self {
+            inner,
+            events,
+            registry,
+            supervisor,
+        }
+    }
+}
+
 #[async_trait]
 impl ToolExecutor for TaskTap<'_> {
     fn schemas(&self) -> Vec<ToolSchema> {
