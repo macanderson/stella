@@ -1065,7 +1065,7 @@ impl<'a> Engine<'a> {
             let signal = crate::steering::TurnSignal {
                 prompt,
                 recent_tool_calls: &evidence.tool_names,
-                touched_paths: &[],
+                touched_paths: &evidence.touched_paths,
                 active_domains: &[],
                 step: u32::try_from(state.step).unwrap_or(u32::MAX),
                 since_last_query: state.steps_since_requery,
