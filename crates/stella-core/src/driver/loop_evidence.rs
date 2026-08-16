@@ -71,9 +71,48 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
                 && !m.content.starts_with(LOOP_STEER_PREFIX)
                 && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
                 && !m.content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
+                // A recalled-context block is host-injected context, not a
+                // user turn. Pre-turn blocks land BEFORE the prompt and never
+                // decided this boundary; a proactive re-query (#3243 Phase 3)
+                // injects one mid-turn, where treating it as the boundary
+                // would silently reset loop-detection and confident-zero
+                // evidence on every re-query.
+                && !m.content.starts_with(crate::receipts::RECALL_MARKER)
         })
         .map(|i| i + 1)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Witness (#3243 Phase 3).** A mid-turn recalled-context block is not
+    /// a turn boundary. Fails before the `RECALL_MARKER` exclusion: the
+    /// marker message is User-role, so `rposition` picked it and the window
+    /// silently lost everything before the re-query — loop detection and
+    /// confident-zero evidence reset on every injection.
+    #[test]
+    fn a_mid_turn_recall_block_does_not_reset_the_turn_window() {
+        let mut assistant = CompletionMessage::assistant("working");
+        assistant.tool_calls = vec![];
+        let messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("fix the flaky test"),
+            assistant.clone(),
+            CompletionMessage::user(format!(
+                "{}\n\nRelevant context:\n- freshly recalled",
+                crate::receipts::RECALL_MARKER
+            )),
+            assistant,
+        ];
+
+        assert_eq!(
+            turn_start_index(&messages),
+            2,
+            "the prompt, not the injected recall block, bounds the turn window"
+        );
+    }
 }
 
 pub(super) fn recent_call_records<'a>(
