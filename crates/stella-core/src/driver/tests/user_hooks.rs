@@ -770,19 +770,54 @@ async fn pre_tool_use_payload_carries_the_schemas_read_only_bit() {
 
 // ---- #2684: the Stop gate ---------------------------------------------
 
-/// **Witness (d), #2684.** A `Stop` hook's `deny` holds the completing
-/// turn open exactly once: its reason lands as a tail user message under
-/// the stop-hook marker, the model answers again, and the once-per-turn
-/// latch lets the second completion stand — the death-spiral guard. On the
-/// base commit the `Stop` key is unknown and the turn completes on the
-/// first answer, so this fails there.
+/// Like [`RecordingHookRunner`], but each run pops the next scripted
+/// stdout — the shape a verification hook actually has: deny the first
+/// completion, watch the revision, decide again. The last entry repeats if
+/// the script runs dry, so an over-consulted gate fails an assertion
+/// rather than panicking.
+struct ScriptedHookRunner {
+    stdouts: TokioMutex<Vec<String>>,
+    payloads: Arc<TokioMutex<Vec<String>>>,
+}
+#[async_trait]
+impl HookRunner for ScriptedHookRunner {
+    async fn run(
+        &self,
+        _action: &HookAction,
+        payload_json: &str,
+        _cwd: &str,
+    ) -> Result<HookExecResult, HookExecError> {
+        self.payloads.lock().await.push(payload_json.to_string());
+        let mut stdouts = self.stdouts.lock().await;
+        let stdout = if stdouts.len() > 1 {
+            stdouts.remove(0)
+        } else {
+            stdouts[0].clone()
+        };
+        Ok(HookExecResult {
+            exit_code: 0,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+/// **Witness (d), #2684, re-pinned for #3246's bounded loop.** A `Stop`
+/// hook that always denies holds the completing turn open
+/// [`MAX_STOP_CONSULTS`](crate::driver::user_hooks::MAX_STOP_CONSULTS)
+/// times — each reason a marked tail user message, the LAST one announcing
+/// itself as final — and then the next completion stands: the death-spiral
+/// guard, now a counter. On the once-per-turn boolean this fails: the turn
+/// completed on the second answer with a single Stop fire.
 #[tokio::test]
-async fn stop_hook_deny_holds_the_turn_open_once_with_marked_feedback() {
+async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_stands() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
             Ok(text_result("first answer")),
             Ok(text_result("second answer")),
+            Ok(text_result("third answer")),
+            Ok(text_result("fourth answer")),
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
@@ -812,31 +847,49 @@ async fn stop_hook_deny_holds_the_turn_open_once_with_marked_feedback() {
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
-    // The hook held the first completion open; the second stood (latch).
+    // Three held-open rounds, then the fourth completion stands.
     assert_eq!(
         outcome,
         TurnOutcome::Completed {
-            text: "second answer".into(),
-            cost_usd: 0.0002
+            text: "fourth answer".into(),
+            cost_usd: 0.0004
         },
-        "the turn must complete on the SECOND answer — held open once, then latched"
+        "the turn must complete on the FOURTH answer — held open to the bound, then stands"
     );
-    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
-    // The feedback is a marked tail user message between the two answers.
-    let feedback = messages
+    assert_eq!(model_calls.load(Ordering::SeqCst), 4);
+    // Each deny is a marked tail user message; only the last is final-marked.
+    let feedback: Vec<&CompletionMessage> = messages
         .iter()
-        .find(|m| {
+        .filter(|m| {
             m.role == MessageRole::User
                 && m.content
                     .starts_with(crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX)
         })
-        .expect("the stop-hook feedback message is in history");
-    assert!(
-        feedback.content.contains("the checklist is not done"),
-        "the hook's reason reaches the model: {}",
-        feedback.content
+        .collect();
+    assert_eq!(
+        feedback.len(),
+        3,
+        "one feedback message per held-open round"
     );
-    // The latch: one Stop fire for the whole turn, carrying the final text.
+    assert!(
+        feedback
+            .iter()
+            .all(|m| m.content.contains("the checklist is not done")),
+        "every round carries the hook's reason"
+    );
+    assert!(
+        !feedback[0].content.contains("final verification round")
+            && !feedback[1].content.contains("final verification round"),
+        "rounds with budget left do not claim to be last"
+    );
+    assert!(
+        feedback[2]
+            .content
+            .contains(crate::driver::user_hooks::STOP_FINAL_ROUND_NOTE.trim_start()),
+        "the last permitted round announces itself (#2810): {}",
+        feedback[2].content
+    );
+    // The bound: three Stop fires, each carrying that round's final text.
     let payloads = payloads.lock().await.clone();
     let stop_fires: Vec<&String> = payloads
         .iter()
@@ -844,13 +897,93 @@ async fn stop_hook_deny_holds_the_turn_open_once_with_marked_feedback() {
         .collect();
     assert_eq!(
         stop_fires.len(),
-        1,
-        "the once-per-turn latch must stop a second fire: {payloads:?}"
+        3,
+        "the counter must stop a fourth fire: {payloads:?}"
+    );
+    for (fire, expected) in stop_fires
+        .iter()
+        .zip(["first answer", "second answer", "third answer"])
+    {
+        assert!(
+            fire.contains(&format!("\"finalText\":\"{expected}\"")),
+            "each Stop payload carries the text that round would have completed with: {fire}"
+        );
+    }
+}
+
+/// **The verification loop's own witness (#3246).** A `Stop` hook that
+/// denies the first completion and allows the second is genuinely
+/// consulted BOTH times — the fail→pass observation a verification hook
+/// exists to make. On the once-per-turn boolean this fails: the second
+/// completion was never offered to the hook (one Stop fire, not two).
+#[tokio::test]
+async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(text_result("first answer")),
+            Ok(text_result("second answer")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let model_calls = provider.calls.clone();
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let payloads = Arc::new(TokioMutex::new(Vec::new()));
+    let runner = ScriptedHookRunner {
+        stdouts: TokioMutex::new(vec![
+            r#"{"action":"deny","reason":"the witness still fails"}"#.into(),
+            r#"{"action":"allow"}"#.into(),
+        ]),
+        payloads: payloads.clone(),
+    };
+    let hooks: Hooks =
+        serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "verify" }] } ] }"#).unwrap();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_hooks(&hooks, &runner);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            text: "second answer".into(),
+            cost_usd: 0.0002
+        },
+        "the allowed second completion stands"
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    // Two consultations: the deny observed the failure, the allow observed
+    // the fix. The boolean latch never made the second observation.
+    let payloads = payloads.lock().await.clone();
+    let stop_fires: Vec<&String> = payloads
+        .iter()
+        .filter(|p| p.contains("\"event\":\"Stop\""))
+        .collect();
+    assert_eq!(
+        stop_fires.len(),
+        2,
+        "the revised completion must be re-offered to the hook: {payloads:?}"
     );
     assert!(
-        stop_fires[0].contains("\"finalText\":\"first answer\""),
-        "the Stop payload carries the text the turn would have completed with: {}",
-        stop_fires[0]
+        stop_fires[1].contains("\"finalText\":\"second answer\""),
+        "the second consultation judges the revision: {}",
+        stop_fires[1]
+    );
+    // With budget left, no round claimed to be the last.
+    assert!(
+        messages
+            .iter()
+            .all(|m| !m.content.contains("final verification round")),
+        "an under-budget loop never announces a final round"
     );
 }
 
