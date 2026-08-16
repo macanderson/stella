@@ -54,7 +54,9 @@ use stella_protocol::{
 };
 
 use crate::budget::BudgetGuard;
+use crate::driver::deadline_notice::DeadlineNotices;
 use crate::driver::loop_escalation::LoopSteerBudget;
+use crate::driver::output_budget_recovery::OutputBudgetRecovery;
 use crate::driver::overflow_recovery::OverflowRecovery;
 use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
@@ -80,6 +82,23 @@ pub const CANCELLED_REASON: &str =
 /// `Engine::handle_committed_result`: the model is told the call did not run,
 /// so the pairing is honest as well as structurally valid.
 const CANCELLED_TOOL_RESULT: &str = "not executed — turn cancelled at a step boundary";
+
+/// What one model call needs to know about the turn it belongs to.
+///
+/// Two scalars travelling together because they answer one question and
+/// because splitting them back out is what pushed `run_model_call` past
+/// clippy's argument limit — a real signal that the call had stopped taking
+/// a *request* and started taking a pile of fields.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModelCallShape {
+    /// The step index this call is, for receipts and lifecycle payloads.
+    pub(crate) step: usize,
+    /// The output ceiling to ask for. Always via
+    /// [`TurnState::model_call_shape`], never read off `EngineConfig`
+    /// directly, so a provider that refused to fund this turn's ask cannot
+    /// be asked for it again.
+    pub(crate) max_output_tokens: Option<u32>,
+}
 
 /// A cheap, clonable "stop this turn at the next safe boundary" flag.
 ///
@@ -338,6 +357,15 @@ pub struct TurnState {
     /// [`Self::length_continuations`] it is deliberately not checkpointed: a
     /// resumed turn starts the bounded allowance over.
     pub(crate) overflow_recovery: OverflowRecovery,
+    /// The reactive output-ceiling recovery latch and clamp
+    /// (`crate::driver::output_budget_recovery`) — the output-side mirror of
+    /// [`Self::overflow_recovery`], and not checkpointed for the same reason.
+    pub(crate) output_budget_recovery: OutputBudgetRecovery,
+    /// Which task-deadline notices this turn has already delivered to the
+    /// model (`crate::driver::deadline_notice`). Bounded and not
+    /// checkpointed: a resumed turn re-warning once is cheap, and being
+    /// silent about a deadline is not.
+    pub(crate) deadline_notices: DeadlineNotices,
     /// The index of the step that will run next. Advanced by a step that
     /// COMMITTED and continued — and by an overflow-recovery retry, whose
     /// re-issued call is a new step so its receipts never collide with the
@@ -394,6 +422,8 @@ impl TurnState {
             effective_budget: None,
             usage_anchor: None,
             overflow_recovery: OverflowRecovery::default(),
+            output_budget_recovery: OutputBudgetRecovery::default(),
+            deadline_notices: DeadlineNotices::default(),
             loop_steer: LoopSteerBudget::default(),
             transcript_rewrites: 0,
             step: 0,
@@ -428,6 +458,8 @@ impl TurnState {
             // Not carried either: the bounded recovery allowance starts over,
             // exactly as `length_continuations` does.
             overflow_recovery: OverflowRecovery::default(),
+            output_budget_recovery: OutputBudgetRecovery::default(),
+            deadline_notices: DeadlineNotices::default(),
             loop_steer: LoopSteerBudget::resumed(
                 checkpoint.loop_steered.then_some(LoopIdentity {
                     tools: checkpoint.loop_steered_pattern,
@@ -615,6 +647,30 @@ impl TurnState {
     /// No `Error` event: a cancellation is a decision, not a failure, exactly
     /// as the soft stop is. The `Aborted` outcome carries [`CANCELLED_REASON`]
     /// and that is what a host renders.
+    /// The per-call shape of this step: which step it is, and the output
+    /// ceiling it may ask for.
+    ///
+    /// One value rather than two parameters because they are one question —
+    /// "what is this call?" — and because the ceiling must never be read
+    /// anywhere but here (see [`Self::output_ceiling`]).
+    pub(crate) fn model_call_shape(&self, configured: Option<u32>) -> ModelCallShape {
+        ModelCallShape {
+            step: self.step,
+            max_output_tokens: self.output_ceiling(configured),
+        }
+    }
+
+    /// The output ceiling this turn's next call may ask for: the configured
+    /// value narrowed by any standing clamp
+    /// (`crate::driver::output_budget_recovery`).
+    ///
+    /// The one seam the ceiling is read through, so a provider that has
+    /// already refused to fund this turn's ask cannot be asked for it again
+    /// by some future call site reading `EngineConfig` directly.
+    pub(crate) fn output_ceiling(&self, configured: Option<u32>) -> Option<u32> {
+        self.output_budget_recovery.apply(configured)
+    }
+
     pub(crate) fn cancel_outcome(&mut self, events: &EventSender) -> Option<StepOutcome> {
         if !self.cancel.is_cancelled() {
             return None;

@@ -23,6 +23,7 @@ Also home to the pacing every snapshot test shares — see
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import time
 import zipfile
@@ -59,6 +60,32 @@ def _unpack(archive: Path) -> None:
 def pytest_configure(config) -> None:
     for archive in sorted(MATCHES.glob("*.zip")):
         _unpack(archive)
+    _isolate_dataset_corpus(config)
+
+
+def _isolate_dataset_corpus(config) -> None:
+    """Point dataset enumeration at empty directories for the whole session.
+
+    The suite names synthetic tasks (``task-a``, ``alpha``) against the real
+    ``terminal-bench-2.1`` key, which is fine — the tests are about slicing,
+    submission and scoring, not about the corpus. It stops being fine the
+    moment anything *checks* those names: #3255's phantom-task refusal reads
+    the local corpus, so on a developer machine with the dataset unpacked it
+    correctly rejected specs the tests deliberately invent, while the same
+    tests passed on a CI runner with no corpus at all.
+
+    Isolating here rather than weakening the guard keeps both truths: the
+    guard stays strict against a real submission, and the suite's outcome
+    stops depending on what happens to be in the developer's home directory.
+    A test that wants a corpus supplies one to
+    :meth:`MatchSpec.unknown_tasks` directly — it takes the names as an
+    argument for exactly this reason.
+    """
+    empty = Path(config.invocation_params.dir) / ".pytest-empty-corpus"
+    (empty / "datasets").mkdir(parents=True, exist_ok=True)
+    (empty / "harbor").mkdir(parents=True, exist_ok=True)
+    os.environ["ARENABENCH_DATASETS"] = str(empty / "datasets")
+    os.environ["HARBOR_CACHE_DIR"] = str(empty / "harbor")
 
 
 # ---------------------------------------------------------------------------

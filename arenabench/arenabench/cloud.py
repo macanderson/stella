@@ -68,7 +68,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from . import preflight
 from .model import MatchSpec, slugify
+from .registry import DEFAULT_REGISTRY
 from .sut import is_full_sha, is_safe_ref
 
 __all__ = [
@@ -1140,9 +1142,29 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
         )
         return 2
 
+    # Refuse a phantom task before it becomes a Batch job that can only abort
+    # (#3255), and price the run before the money can run out mid-flight.
+    try:
+        preflight.require_known_tasks(spec, DEFAULT_REGISTRY)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
     run_id = args.run_id or _new_run_id()
     queue = select_queue(args.burst)
     plans = plan_trials(spec)
+
+    money = preflight.balance_verdict(
+        len(plans), getattr(args, "est_cost_per_trial", None)
+    )
+    print(f"balance   : {money.message}")
+    if money.blocks and not getattr(args, "ignore_balance", False):
+        print(
+            f"error: {money.message}. Add credit, or --ignore-balance to submit "
+            "anyway.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(f"run       : {run_id}")
     print(f"match     : {spec.name}")
@@ -1409,6 +1431,18 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument("--artifacts", action="store_true",
                      help="also download the full artifact tree (can be large)")
     run.add_argument("--out", help="local directory for downloaded results")
+    run.add_argument(
+        "--est-cost-per-trial", type=float, metavar="USD",
+        help="your own estimate of what one trial costs, used to price the run "
+             "against the gateway balance before submitting. There is no "
+             "default: a trial's cost is a fact about the panel, model and arm, "
+             "and a number invented here would later be quoted as measured",
+    )
+    run.add_argument(
+        "--ignore-balance", action="store_true",
+        help="submit even when the gateway balance cannot fund the run — the "
+             "trials the money kills will score as operational aborts",
+    )
     gate_arguments(run)
     _common_aws_arguments(run)
     run.set_defaults(func=_cmd_cloud_run)
