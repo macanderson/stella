@@ -32,8 +32,8 @@ impl<'a> Engine<'a> {
     /// A completion that survives every other gate consults the `Stop`
     /// hooks last ([`Engine::stop_hook_feedback`]): a blocking decision
     /// injects the hook's reason as a marked tail user message and returns
-    /// `None`, holding the turn open for one more round. `stop_fired` is
-    /// the once-per-turn latch (`driver::user_hooks` module docs).
+    /// `None`, holding the turn open for another round. `stop_consults` is
+    /// the bounded consultation counter (`driver::user_hooks` module docs).
     #[allow(clippy::too_many_arguments)] // threaded turn-state fields, same shape as its siblings
     pub(super) async fn dispatch_completion(
         &self,
@@ -41,7 +41,7 @@ impl<'a> Engine<'a> {
         total_cost_usd: f64,
         messages: &mut Vec<CompletionMessage>,
         length_continuations: &mut u32,
-        stop_fired: &mut bool,
+        stop_consults: &mut u32,
         continuation_budget: Option<ContinuationBudget>,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
@@ -180,7 +180,7 @@ impl<'a> Engine<'a> {
             // history so the hook's feedback answers a recorded turn: a
             // blocking hook holds the turn open with its reason as the
             // model's next observation instead of finishing.
-            if let Some(reason) = self.stop_hook_feedback(&text, stop_fired, events).await {
+            if let Some(reason) = self.stop_hook_feedback(&text, stop_consults, events).await {
                 messages.push(CompletionMessage::user(format!(
                     "{STOP_HOOK_MARKER_PREFIX} — a workspace Stop hook held this turn open; \
                      address it, then finish]\n\n{reason}"

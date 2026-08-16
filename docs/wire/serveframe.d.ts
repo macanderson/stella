@@ -2564,6 +2564,10 @@ export type ProviderErrorWire = {
   kind: "context_overflow";
   message: string;
 } | {
+  affordable_output_tokens?: number | null;
+  kind: "output_budget_exceeded";
+  message: string;
+} | {
   kind: "terminal";
   message: string;
 };

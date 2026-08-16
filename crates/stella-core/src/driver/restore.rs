@@ -419,10 +419,9 @@ mod tests {
     //! neither the constant nor the behavior); `the_literal_is_the_constant`
     //! pins the spelling.
 
-    use std::sync::Mutex;
-
     use async_trait::async_trait;
     use serde_json::Value;
+    use std::sync::Mutex;
     use stella_protocol::{
         CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
         Provider, ProviderError, ToolOutput, ToolSchema,

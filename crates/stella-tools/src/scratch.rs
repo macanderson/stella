@@ -19,6 +19,14 @@
 //!   named error, which is what makes traversal impossible rather than
 //!   filtered.
 //! - `save_state` refuses content over `MAX_SAVE_BYTES` with a named error.
+//! - `save_state`'s success output embeds the saved content's `sha256/8`, so
+//!   distinct saves render distinct outputs. The engine's stagnation
+//!   detector (`stella-core`'s `loop_detect`) kills consecutive same-tool
+//!   calls whose outputs are byte-identical, and a constant-shape
+//!   `saved {key} (N bytes)` string made a legitimate checkpoint loop —
+//!   different same-length content under one key — indistinguishable from a
+//!   stuck one (#3297). The suffix is content-derived only: a timing or any
+//!   randomness would blind the detector to genuinely stuck loops (#2706).
 //! - `get_state` middle-truncates nothing: it pages (`offset`/`limit`
 //!   in bytes, clamped to a `PAGE_CAP` slice) and names the remainder, so
 //!   a partial read is always visibly partial.
@@ -133,9 +141,19 @@ impl Tool for SaveState {
             }
         };
         match std::fs::write(&path, content) {
-            Ok(()) => ToolOutput::Ok {
-                content: format!("saved {key} ({} bytes)", content.len()),
-            },
+            Ok(()) => {
+                // The digest is the output's content-derived identity: without
+                // it, different same-length saves under one key render
+                // byte-identical outputs and the stagnation detector kills the
+                // loop as stuck (#3297). Deterministic by contract — never a
+                // timing, never randomness (#2706). `sha256/8` = the first 8
+                // hex chars of the sha256; `digest` always returns 64 ASCII
+                // hex chars, so the slice cannot panic.
+                let identity = &crate::foundry_gate::digest(content.as_bytes())[..8];
+                ToolOutput::Ok {
+                    content: format!("saved {key} ({} bytes, sha256/8 {identity})", content.len()),
+                }
+            }
             Err(e) => ToolOutput::error(format!("failed to save {key}: {e}")),
         }
     }

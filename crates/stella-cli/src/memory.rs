@@ -655,7 +655,7 @@ impl SessionMemory {
         skills::select_skills(
             &self.load_skills(),
             prompt,
-            &self.domains.names(),
+            &self.active_domains(prompt),
             &SelectionConfig::default(),
         )
         .into_iter()

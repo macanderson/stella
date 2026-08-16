@@ -1249,3 +1249,109 @@ class TestInfrastructureFailuresAreNotLosses:
         assert totals["solve_rate"] == 100.0
         assert totals["infrastructure"] == 8
 
+
+class TestUnfundedTrials:
+    """#3209: a mid-run provider 402 abort is infrastructure, not a loss.
+
+    A trial that ran real steps and was then killed by a terminal provider
+    funding error measures the operator's credit balance. Harbor records it
+    ``done``/``agent_error`` with reward 0, and before the classifier these
+    cells moved solve rates: 50 of 109 Stella trials in the h2h891 series
+    were such cells, and voiding them dissolved an 11-task headline gap.
+    """
+
+    _REASON = (
+        "terminal provider error: OpenRouter rejected the request "
+        "(HTTP 402: payment required - insufficient credits)"
+    )
+
+    def _defunded(self, tmp_path: Path, *, in_stream: bool, reward: float) -> Path:
+        trial_dir = tmp_path / "job" / "t__1"
+        events: list[dict] = [
+            usage(input_tokens=4000, output_tokens=200, cost_usd=0.02)
+        ]
+        if in_stream:
+            events.append({"type": "error", "message": self._REASON})
+        write_events(trial_dir / "agent" / "stella-events.jsonl", events)
+        if not in_stream:
+            # The run record's terminal word is the fallback source: a stream
+            # torn before the final error still leaves `reason` behind.
+            (trial_dir / "agent" / "stella-run.json").write_text(
+                json.dumps({"status": "error", "reason": self._REASON}),
+                encoding="utf-8",
+            )
+        (trial_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "verifier_result": {"reward": reward},
+                    "exception_info": {
+                        "exception_type": "NonZeroAgentExitCodeError",
+                        "exception_message": "agent exited 1",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return trial_dir
+
+    def test_a_402_death_with_real_steps_lands_in_the_infrastructure_bucket(
+        self, tmp_path: Path
+    ):
+        m = MetricsReader().read(
+            self._defunded(tmp_path, in_stream=True, reward=0.0), "t"
+        )
+        assert m.steps > 0
+        assert m.resolved is None
+        assert m.infrastructure is True
+        assert m.unfunded is True
+        assert m.outcome_reason() == "void_unfunded"
+        totals = aggregate([m])
+        assert totals["judged"] == 0
+        assert totals["unfunded"] == 1
+
+    def test_the_run_records_reason_classifies_when_the_stream_is_silent(
+        self, tmp_path: Path
+    ):
+        m = MetricsReader().read(
+            self._defunded(tmp_path, in_stream=False, reward=0.0), "t"
+        )
+        assert m.unfunded is True
+        assert m.resolved is None
+        # The terminal word is surfaced where an operator reads it.
+        assert "402" in m.late_error
+
+    def test_a_402_that_nevertheless_passed_keeps_its_pass(self, tmp_path: Path):
+        """Work completed before the credit died is a measurement; the
+        contamination can only bias toward losses, so only losses void."""
+        m = MetricsReader().read(
+            self._defunded(tmp_path, in_stream=True, reward=1.0), "t"
+        )
+        assert m.resolved is True
+        assert m.unfunded is False
+
+    def test_an_ordinary_agent_error_still_scores_as_a_loss(self, tmp_path: Path):
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(input_tokens=4000, output_tokens=200, cost_usd=0.02),
+                {"type": "error", "message": "the tests still fail"},
+            ],
+        )
+        (trial_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "verifier_result": {"reward": 0.0},
+                    "exception_info": {
+                        "exception_type": "NonZeroAgentExitCodeError",
+                        "exception_message": "agent exited 1",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        m = MetricsReader().read(trial_dir, "t")
+        assert m.resolved is False
+        assert m.unfunded is False
+        assert m.outcome_reason() == "agent_error"
+

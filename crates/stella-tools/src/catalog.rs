@@ -9,13 +9,14 @@
 //! on the docs side) caught after the fact.
 //!
 //! This module is the fix. Every built-in is declared exactly once in the
-//! `catalog!` invocation below, with its read-only flag and its policy group.
-//! Everything that used to be duplicated is derived from it:
+//! `catalog!` invocation below, with its read-only flag, its risk grade and
+//! its policy group. Everything that used to be duplicated is derived from it:
 //!
 //! - the registry's expected-name set (`registry.rs` tests),
 //! - the read-only partition (same),
 //! - [`crate::custom::RESERVED_NAMES`] (aliased straight to [`ALL_NAMES`]),
-//! - the per-tool reference pages under `docs/tools/`.
+//! - the per-tool reference pages under `docs/tools/`,
+//! - every built-in's [`stella_protocol::ToolContract`] ([`crate::contracts`]).
 //!
 //! **To add a tool:** register it in
 //! [`ToolRegistry::new`](crate::registry::ToolRegistry), then add one line
@@ -23,6 +24,8 @@
 //! merge to the correct union instead of a wrong integer, and a tool
 //! registered but never declared here fails the registry tests by *name*,
 //! not by an off-by-one.
+
+use stella_protocol::RiskLevel;
 
 /// What has to be true for a tool to be registered.
 ///
@@ -64,6 +67,33 @@ pub struct ToolEntry {
     /// (#923): a failed stream attempt re-announces its prefix on retry.
     /// Meaningless (and kept false) on mutating rows.
     pub speculation_safe: bool,
+    /// How bad one honest call is — the governance grade a policy ceiling is
+    /// written against (#2716), and a **different question** from
+    /// [`Self::read_only`]: that one asks whether the workspace changes, this
+    /// one asks what the call costs the world. The two come apart in both
+    /// directions, which is why they are separate columns — `task` mutates
+    /// nothing in the workspace and spends real money, while `task_create`
+    /// mutates a board that dies with the session.
+    ///
+    /// The rubric, so the column stays consistent as tools are added:
+    ///
+    /// | Grade | Means |
+    /// |---|---|
+    /// | [`RiskLevel::Low`] | Observes, or touches only state that dies with the session |
+    /// | [`RiskLevel::Medium`] | Bounded and locally undoable: a workspace write, a metered call, a repo-declared command |
+    /// | [`RiskLevel::High`] | Leaves the workspace, spends money, or runs something nobody bounded |
+    /// | [`RiskLevel::Destructive`] | The agent cannot undo it |
+    ///
+    /// Today's twelve built-ins populate only `Low` and `High` — the surface
+    /// is the task board, the scratch plane and one environment report, and
+    /// the single interesting split is delegation versus everything else.
+    /// The upper rungs are not speculative scaffolding: every tool that is
+    /// *not* a built-in — an MCP server's, a `.stella/tools/*.toml`
+    /// manifest's — is graded [`RiskLevel::High`] by
+    /// [`stella_protocol::ToolContract::declared`] for being unreviewed, so a
+    /// `Medium` ceiling separates the reviewed surface from everything a
+    /// third party supplied without a rule being written about any of them.
+    pub risk: RiskLevel,
     /// What has to be true for it to register.
     pub availability: Availability,
     /// The family this tool belongs to, and the name an operator can switch
@@ -79,7 +109,7 @@ pub struct ToolEntry {
 /// Declares the canonical table once and derives every flat name list from it,
 /// so the two can never disagree.
 macro_rules! catalog {
-    ($($name:literal => ($read_only:expr, $speculation_safe:expr, $availability:expr, $group:literal)),* $(,)?) => {
+    ($($name:literal => ($read_only:expr, $speculation_safe:expr, $risk:expr, $availability:expr, $group:literal)),* $(,)?) => {
         /// Every tool Stella can dispatch by name, sorted, declared once.
         ///
         /// See the [module docs](self) for how to add one.
@@ -88,6 +118,7 @@ macro_rules! catalog {
                 name: $name,
                 read_only: $read_only,
                 speculation_safe: $speculation_safe,
+                risk: $risk,
                 availability: $availability,
                 group: $group,
             }),*
@@ -100,30 +131,40 @@ macro_rules! catalog {
 }
 
 use Availability::Always;
+use RiskLevel::{High, Low};
 
-// Column order: (read_only, speculation_safe, availability, group). The
+// Column order: (read_only, speculation_safe, risk, availability, group). The
 // second column only ever narrows the first: `true` means the read is pure
-// enough to run twice per step (speculation + a stream retry — #923).
+// enough to run twice per step (speculation + a stream retry — #923). The
+// third is the governance grade — see `ToolEntry::risk` for the rubric.
 catalog! {
-    // The session task board (in-memory)
-    "task_create"         => (false, false, Always, "task"),
-    "task_list"           => (true, true, Always, "task"),
-    "task_start"          => (false, false, Always, "task"),
-    "task_complete"       => (false, false, Always, "task"),
-    "task_cancel"         => (false, false, Always, "task"),
-    "task_assign"         => (false, false, Always, "task"),
+    // The session task board. In-memory and session-scoped: every row here is
+    // `Low` because what it mutates cannot outlive the process, which is the
+    // clearest demonstration that `risk` is not `read_only` spelled twice.
+    "task_create"         => (false, false, Low, Always, "task"),
+    "task_list"           => (true, true, Low, Always, "task"),
+    "task_start"          => (false, false, Low, Always, "task"),
+    "task_complete"       => (false, false, Low, Always, "task"),
+    "task_cancel"         => (false, false, Low, Always, "task"),
+    "task_assign"         => (false, false, Low, Always, "task"),
     // Sub-agent delegation (#922). NOT read_only — it spends money, and that
     // flag is also what caps nesting: children run behind `ReadOnlyTools`, so
-    // a read-only `task` would let them spawn children of their own.
-    "task"                => (false, false, Always, "task"),
-    // Session scratch state (tempfile::TempDir, self-deleting)
-    "save_state"          => (false, false, Always, "scratch"),
-    "get_state"           => (true, true, Always, "scratch"),
-    "list_state"          => (true, true, Always, "scratch"),
-    "delete_state"        => (false, false, Always, "scratch"),
+    // a read-only `task` would let them spawn children of their own. `High`
+    // for the same reason it is not read-only, and it is the one built-in
+    // that a risk ceiling meaningfully separates from the rest: it spends
+    // real money, and the child it spawns wields a whole tool surface of its
+    // own.
+    "task"                => (false, false, High, Always, "task"),
+    // Session scratch state (tempfile::TempDir, self-deleting) — the plane
+    // dies with the session, `delete_state` included, so nothing here is
+    // irreversible in any sense that outlives the run.
+    "save_state"          => (false, false, Low, Always, "scratch"),
+    "get_state"           => (true, true, Low, Always, "scratch"),
+    "list_state"          => (true, true, Low, Always, "scratch"),
+    "delete_state"        => (false, false, Low, Always, "scratch"),
     // One-shot environment report: workspace root, git/worktree bit,
     // platform, OS release, shell dialect, scratch dir (#2697).
-    "get_environment"     => (true, true, Always, "environment"),
+    "get_environment"     => (true, true, Low, Always, "environment"),
 }
 
 /// Look up a tool's canonical row by dispatch name.

@@ -615,6 +615,31 @@
               "type": "object"
             },
             {
+              "description": "The provider refused to fund the requested output ceiling. Carried\nas its own variant rather than folded into `Terminal` because a host\ndriving the engine over the wire must be able to tell a repairable\nrefusal from the end of the turn — the same split the engine-side\nrecovery keys on.",
+              "properties": {
+                "affordable_output_tokens": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "const": "output_budget_exceeded",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "kind": {
                   "const": "terminal",

@@ -245,6 +245,22 @@ impl<'a> Engine<'a> {
                         attempt_reasons: reasons,
                     });
                 }
+                // Withheld for the same reason the overflow above is: an
+                // output ceiling the account cannot fund is the engine's ask
+                // being too large, not provider ill-health, and the caller
+                // may still repair it by asking for less
+                // (`driver::output_budget_recovery`).
+                if let ProviderError::OutputBudgetExceeded {
+                    affordable_output_tokens,
+                    ..
+                } = &error
+                {
+                    return Err(ModelCallFailure::OutputBudgetExceeded {
+                        message: error.to_string(),
+                        attempt_reasons: reasons,
+                        affordable_output_tokens: *affordable_output_tokens,
+                    });
+                }
                 // Whether the FINAL attempt's error is of a retryable class,
                 // forwarded onto the eventual terminal events. `false` means
                 // every attempt (typically just one — see

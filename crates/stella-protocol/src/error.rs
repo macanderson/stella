@@ -100,6 +100,35 @@ pub enum ProviderError {
         message: String,
     },
 
+    /// The provider refused the request because the account cannot afford
+    /// the **requested output ceiling** — not because it has no credit at
+    /// all. The mirror image of [`ProviderError::ContextOverflow`] on the
+    /// output side, and split from [`ProviderError::Terminal`] for the same
+    /// reason: the two demand opposite reactions. Out of credit ends the
+    /// turn; "you asked for 128000 tokens and can afford 47365" is a
+    /// rejection the engine repairs by asking for fewer.
+    ///
+    /// Not retryable *as-is* — re-sending the identical ceiling rejects
+    /// identically, so the retry ladder must never touch it. The engine's
+    /// reactive recovery (`stella-core::driver::output_budget_recovery`)
+    /// clamps `max_output_tokens` to what the provider said it could afford
+    /// and re-runs the step.
+    ///
+    /// Born from three bench runs killed or maimed by this exact rejection:
+    /// a gateway balance that could still fund dozens of ordinary calls
+    /// terminated every trial outright, because a 128K ceiling nobody was
+    /// going to spend was priced as if it would be.
+    #[error("provider output budget exceeded: {message}")]
+    OutputBudgetExceeded {
+        /// The provider's own explanation, summarized for the user.
+        message: String,
+        /// The ceiling the provider said it *could* afford, when it named
+        /// one. `None` when the rejection was recognised by shape but
+        /// carried no number — the engine then halves its own ask rather
+        /// than inventing a figure the provider never stated.
+        affordable_output_tokens: Option<u32>,
+    },
+
     /// A failure the adapter classified as terminal without it fitting a
     /// narrower variant — a 4xx the dialect does not model, a refusal, a
     /// content-policy stop. The catch-all, so it fails closed to "do not

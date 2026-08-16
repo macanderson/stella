@@ -26,12 +26,14 @@
 
 pub mod agent_use;
 pub mod catalog;
+pub mod contracts;
 pub mod custom;
 pub mod environment;
 pub mod exec;
 pub mod foundry_author;
 pub mod foundry_gate;
 pub mod foundry_witness;
+pub mod gated;
 pub mod hook_bridge;
 pub mod hook_runner;
 pub mod input;

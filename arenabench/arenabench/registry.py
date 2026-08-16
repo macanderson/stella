@@ -38,6 +38,7 @@ __all__ = [
     "Task",
     "export_root",
     "harbor_cache_root",
+    "known_task_names",
     "sample_tasks",
 ]
 
@@ -347,6 +348,22 @@ class Registry:
             dataset.to_json(task_count=len(self.tasks(key)))
             for key, dataset in sorted(self.datasets.items())
         ]
+
+
+def known_task_names(registry: Registry, key: str) -> set[str]:
+    """Every spelling of every task in a dataset, bare and qualified.
+
+    Both forms, because a match spec may name either (``fix-git`` or
+    ``terminal-bench/fix-git``) and a membership test that knows only one
+    would reject a correct spec — the opposite of the failure #3255 is
+    about, and a worse one. Empty when the dataset is not materialised
+    locally, which callers must read as "cannot tell", never as "no tasks".
+    """
+    names: set[str] = set()
+    for task in registry.tasks(key):
+        names.add(task.name)
+        names.add(task.qualified)
+    return names
 
 
 def sample_tasks(

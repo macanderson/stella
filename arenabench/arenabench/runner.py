@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import adapter, harbor, provenance, reap, reauth, reauth_wiring, sut
+from . import adapter, harbor, preflight, provenance, reap, reauth, reauth_wiring, sut
 from .adapter import AdapterUnavailableError, seat_import_roots
 from .agents import (
     credential_env_for,
@@ -802,9 +802,7 @@ class MatchRunner:
         problems = spec.validate()
         if problems:
             raise ValueError("; ".join(problems))
-        dataset = self.registry.get(spec.dataset)
-        if dataset is None:
-            raise ValueError(f"unknown dataset: {spec.dataset}")
+        dataset = preflight.resolve_dataset(spec, self.registry)
         match = Match(spec, dataset, self.workspace / "matches" / spec.id)
         # The spec is what a restart cannot rebuild from job directories alone
         # (names, colors, task order). `to_json` serializes seats through

@@ -70,6 +70,7 @@ __all__ = [
     "TrialMetrics",
     "aggregate",
     "is_compose_failure",
+    "is_funding_failure",
     "leaders",
     "seat_manifest_path",
 ]
@@ -81,6 +82,12 @@ __all__ = [
 EVENTS_NAME = harness_mod.STELLA_EVENTS_NAME
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
+#: The Stella harbor adapter's own run record. Read only for its top-level
+#: ``reason`` — the run's terminal word — and only for a done, non-passing
+#: trial whose event stream did not already carry that word: the file embeds
+#: the full event list, so an unconditional load would tax every poll for a
+#: field most trials never need (#3209).
+RUN_RESULT_NAME = "agent/stella-run.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
 #: Where ``arenabench flip`` leaves its verdict on when the trial started
 #: passing (:func:`arenabench.replay.replay_flip`). Defined here, next to the
@@ -298,6 +305,44 @@ def is_compose_failure(exception: dict[str, Any]) -> bool:
     return _COMPOSE_FAILURE_MARKER in message.lower()
 
 
+#: Terminal provider-funding and auth-expiry signatures, classified by
+#: *message* for the same reason :func:`is_compose_failure` is: the exception
+#: name Harbor records (``NonZeroAgentExitCodeError``) covers both "the agent
+#: crashed" and "the provider stopped serving the agent", which are opposite
+#: facts about the agent. A trial that ran real steps and was then killed by
+#: OpenRouter's HTTP 402 measures the operator's credit balance, not the
+#: agent — 50 of 109 Stella trials in the h2h891 series died this way and
+#: every one scored as an ordinary loss, manufacturing an 11-task headline gap
+#: that vanished on the mutually-clean basis (#3209).
+#:
+#: Deliberately narrow: each marker names a provider's *terminal* rejection
+#: (out of money, expired auth), never a transient throttle. A 429 is absent
+#: on purpose — a rate-limited agent that times out had its time and spent it
+#: waiting, and the quota-exhausted launch shape is refused before the trial
+#: exists (#3216); classifying throttled-through trials is #2281's question.
+_FUNDING_FAILURE_MARKERS: tuple[str, ...] = (
+    "http 402",
+    "payment required",
+    "insufficient credits",
+    "api_error_status:402",
+    "oauth token has expired",
+    "oauth token expired",
+)
+
+
+def is_funding_failure(message: str) -> bool:
+    """Whether a trial's final word names a provider funding/auth-expiry death.
+
+    Matched against the run's *terminal* error only — the late error no
+    further step followed, or the run record's own ``reason`` — never against
+    any error the agent recovered from: a mid-run 402 the provider retried
+    past is ordinary weather, and voiding on it would let a real loss escape
+    the denominator.
+    """
+    lowered = message.lower()
+    return any(marker in lowered for marker in _FUNDING_FAILURE_MARKERS)
+
+
 @dataclass
 class TrialMetrics:
     """One contestant's attempt at one task, reduced to what a scoreboard needs."""
@@ -320,6 +365,12 @@ class TrialMetrics:
     #: something the agent did. Such a trial is left *unjudged* — see
     #: :data:`INFRASTRUCTURE_FAILURES` for why that is not the same as a loss.
     infrastructure: bool = False
+    #: ``True`` when the trial ran real steps and was then killed by a
+    #: terminal provider funding/auth-expiry error (:func:`is_funding_failure`).
+    #: A sub-case of :attr:`infrastructure`, carried separately so a
+    #: scoreboard can say "N trials were unfunded" instead of folding a
+    #: credit-starved run into the generic infrastructure count (#3209).
+    unfunded: bool = False
     steps: int = 0
     tools: int = 0
     tokens_in: int = 0
@@ -499,6 +550,11 @@ class TrialMetrics:
             return "void_no_fair_attempt"
         if self.resolved is None:
             # Group A: judged, no verdict — not agent performance.
+            if self.unfunded:
+                # Before the exception-name buckets: the name Harbor recorded
+                # for a defunded trial is an agent-shaped one, and the whole
+                # point of the flag is that the name lied (#3209).
+                return "void_unfunded"
             if not self.failure:
                 return "void_unjudged"
             if self.failure in VOID_SETUP:
@@ -538,6 +594,7 @@ class TrialMetrics:
             "failure": self.failure,
             "outcome_reason": self.outcome_reason(),
             "infrastructure": self.infrastructure,
+            "unfunded": self.unfunded,
             "steps": self.steps,
             "tools": self.tools,
             "tokens_in": self.tokens_in,
@@ -901,6 +958,27 @@ class MetricsReader:
             metrics.infrastructure = True
             metrics.resolved = None
 
+        # A trial that ran real steps and was then killed by a terminal
+        # provider funding or auth-expiry error was defunded, not defeated.
+        # Harbor records it `done`/`agent_error` with reward 0, and counting
+        # that as a loss lets a dead arm move the solve rate: 34 of 89 trials
+        # in run h2h891 (and 16 of 20 in its own heal run) died on OpenRouter
+        # 402s and read as an 11-task capability gap that vanished on the
+        # mutually-clean basis (#3209). A pass is never voided — work
+        # completed before the credit died is a measurement; the contamination
+        # can only bias toward losses, so only losses are voided.
+        if metrics.resolved is False and metrics.steps > 0:
+            terminal = metrics.late_error
+            if not is_funding_failure(terminal):
+                run_record = _load_json(trial_dir / RUN_RESULT_NAME)
+                terminal = str((run_record or {}).get("reason") or "")
+            if is_funding_failure(terminal):
+                metrics.infrastructure = True
+                metrics.unfunded = True
+                metrics.resolved = None
+                if not metrics.late_error:
+                    metrics.late_error = terminal[:400]
+
         # One table, both seats. See pricing.py for why self-reported cost is
         # recorded but never compared. The seat's launch record outranks every
         # model id read back from the artifacts: launch spelling varies with
@@ -1088,6 +1166,10 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
     return {
         "trials": len(trials),
         "infrastructure": sum(1 for t in trials if t.infrastructure),
+        # The funding sub-case of `infrastructure`, named on the scoreboard so
+        # a partially-funded run is visible rather than readable only by
+        # censusing run records by hand (#3209).
+        "unfunded": sum(1 for t in trials if t.unfunded),
         # Trials held out of `judged` because the agent never ran. Distinct
         # from `infrastructure`, which counts trials that never reached a
         # verdict at all: these DID get scored, and the score is what had to
