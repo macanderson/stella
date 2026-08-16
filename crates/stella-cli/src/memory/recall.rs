@@ -150,7 +150,12 @@ impl SessionMemory {
     /// answers to different questions about one request, and separating them
     /// means either re-running recall to report it or losing it entirely.
     pub async fn recall_block_reported(&self, prompt: &str) -> RecalledBlock {
-        if self.ab_suppressed {
+        // Two switches, one gate. `ab_suppressed` withholds injection for ONE
+        // turn to build a control arm; `steering_enabled` withholds it for the
+        // session because an operator or their org asked (#3243). Both stop
+        // here, before any provider is queried, so an off session pays nothing
+        // — a gate after retrieval would spend the tokens and discard them.
+        if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
         let mut sections: Vec<String> = Vec::new();
@@ -219,7 +224,7 @@ impl SessionMemory {
     /// event for a pipeline turn is the pipeline's own, and this block does
     /// no frame recall to report.
     pub async fn pipeline_recall_block(&self, prompt: &str) -> Option<String> {
-        if self.ab_suppressed {
+        if self.ab_suppressed || !self.steering_enabled {
             return None;
         }
         let mut sections: Vec<String> = Vec::new();

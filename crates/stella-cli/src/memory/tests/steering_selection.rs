@@ -52,6 +52,28 @@ fn session(root: &std::path::Path) -> SessionMemory {
         .expect("session memory opens in a temp workspace")
 }
 
+/// **Witness (#3243 Phase 2).** With steering off, the plane injects nothing —
+/// not even for a prompt that anchors squarely in a skill's own domain.
+///
+/// Fails on base, where there is no switch to turn off at all: the selection
+/// is unconditional once the skill is on disk. The control arm this buys is
+/// the point — an A/B of the whole plane needs an "off" that is one decision,
+/// not four unrelated ones.
+#[test]
+fn steering_turned_off_injects_nothing() {
+    let dir = workspace();
+    let mut memory = session(dir.path());
+    memory.set_steering_enabled(false);
+
+    let selected = memory.selected_skills("fix crates/stella-model/anthropic.rs");
+
+    assert!(
+        selected.is_empty(),
+        "the switch withholds every injection, including a domain-anchored \
+         one the same session would otherwise select: {selected:?}"
+    );
+}
+
 /// **Witness (D1).** A skill tagged with a domain this turn is not working in
 /// is not injected.
 ///

@@ -324,6 +324,18 @@ pub struct SessionMemory {
     /// turns. Set by `arm_recall_control()`, which every driver calls once per
     /// turn before it recalls anything.
     ab_suppressed: bool,
+    /// The steering plane's master switch, resolved once by `Settings::load`
+    /// and carried on [`crate::settings::AuthorityPolicy`] (#3243).
+    ///
+    /// Distinct from `ab_suppressed`, which withholds injection for ONE turn
+    /// to build a control arm; this withholds it for the session because an
+    /// operator, or their org, asked for it. Both gate the same sites, and
+    /// keeping them separate is what lets a control turn stay attributable as
+    /// an experiment rather than looking like a disabled feature.
+    ///
+    /// Defaults **on**: a `SessionMemory` opened without an authority (the
+    /// `open`/`open_with_workspace_skills` paths) behaves exactly as before.
+    steering_enabled: bool,
     /// The turn number this session last claimed from the control's schedule —
     /// normally the durable, workspace-wide count held in the context store
     /// (#1221), and a bare in-session tally only when that store could not hand
@@ -448,6 +460,7 @@ impl SessionMemory {
             warn,
             authority.project_prompts_allowed,
         )?;
+        memory.set_steering_enabled(authority.steering_allowed);
         memory.set_record_registry(active_rules.registry().clone());
         Some(memory)
     }
@@ -561,6 +574,7 @@ impl SessionMemory {
                     include_workspace_skills,
                     skills_created: 0,
                     ab_suppressed: false,
+                    steering_enabled: true,
                     ab_turn: 0,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
@@ -629,6 +643,17 @@ impl SessionMemory {
         workspace_skills_dir(&self.workspace_root)
     }
 
+    /// Set the steering plane's master switch for this session (#3243).
+    ///
+    /// Takes the already-resolved answer rather than re-deriving it: the
+    /// precedence chain (settings → `STELLA_CONTEXT_STEERING` → the org's
+    /// ceiling) is settled once in `Settings::load` and carried on
+    /// [`crate::settings::AuthorityPolicy`], so a second derivation here could
+    /// only ever disagree with the first.
+    pub(crate) fn set_steering_enabled(&mut self, enabled: bool) {
+        self.steering_enabled = enabled;
+    }
+
     /// Load the workspace's skills fresh (cheap — a handful of file reads;
     /// fresh so a just-installed or just-auto-created skill is live on the
     /// very next turn).
@@ -649,7 +674,7 @@ impl SessionMemory {
         // so it gates the report too: a control turn injects no skills, and
         // recording usage for skills that never reached the prompt would
         // corrupt the appraisal signal `skill_usage` feeds.
-        if self.ab_suppressed {
+        if self.ab_suppressed || !self.steering_enabled {
             return Vec::new();
         }
         skills::select_skills(
