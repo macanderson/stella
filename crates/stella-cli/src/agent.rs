@@ -80,8 +80,8 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    PersistOutcome, close_event_stream, persist_event, persist_event_detailed,
-    record_execution_end, spawn_renderer, warn_store_write_failed,
+    PersistOutcome, begin_execution, close_event_stream, persist_event, persist_event_detailed,
+    record_execution_end, seed_calibration, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
@@ -1569,42 +1569,6 @@ pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>>
     store
 }
 
-/// Build the session's token-drift calibration, seeded from prior sessions'
-/// telemetry for the resolved provider/model (`Store::drift_samples`) so the
-/// estimator starts already corrected. Best-effort like all persistence: no
-/// store (or a failed query) means starting uncalibrated — factor 1.0. The
-/// seeding lives in [`stella_runtime::seed_calibration`]; this wrapper only
-/// unwraps the pin out of a [`Config`], which the runtime crate deliberately
-/// does not know about.
-pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
-    stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
-}
-
-/// Begin an execution record; a failure degrades to "no persistence for this
-/// execution" rather than blocking the work.
-pub(crate) fn begin_execution(
-    store: &Option<Arc<Store>>,
-    kind: &str,
-    prompt: &str,
-    cfg: &Config,
-    session: Option<&str>,
-) -> Option<(Arc<Store>, i64)> {
-    let store = store.as_ref()?;
-    match store.begin_execution(kind, prompt, cfg.provider.id, &cfg.model_id) {
-        Ok(id) => {
-            // Link the execution to its session (store schema v8) — what
-            // lets the deck's SESSIONS overlay reassemble and replay the
-            // session's full journal later. Best-effort like every other
-            // store write: a failed link degrades replay, never the turn.
-            if let Some(session) = session {
-                let _ = store.set_execution_session(id, session);
-            }
-            Some((store.clone(), id))
-        }
-        Err(_) => None,
-    }
-}
-
 /// Run one full turn through `stella_core::Engine`, rendering its
 /// `AgentEvent` stream live via a spawned draining task. Ordinary runs
 /// enqueue to an unbounded channel; benchmark stream-json runs synchronously
@@ -1643,12 +1607,24 @@ async fn run_turn(
     // skill-version usage before the turn runs — the caller reflects with the
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
-    session_memory: Option<&mut SessionMemory>,
+    mut session_memory: Option<&mut SessionMemory>,
 ) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
-    stamp_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
+    stamp_and_record_skill_usage(
+        &execution,
+        session_memory.as_deref_mut(),
+        prompt,
+        &cfg.workspace_root,
+    );
+    // The proactive re-query (#3243 Phase 3): the engine consults this at
+    // every step boundary; the adapter's hysteresis makes an undrifted turn
+    // free. Seeded from `messages` so the turn-opening block (and any
+    // earlier turn's) is never re-injected.
+    let requery = session_memory
+        .as_deref()
+        .map(|memory| crate::memory::SessionRequery::new(memory, messages));
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
@@ -1685,10 +1661,13 @@ async fn run_turn(
         // be invoked here either.
         let permitted = tool_stack::policy_stack(registry, cfg, Principal::User);
         let config = engine::engine_config_for_kind(cfg, kind);
-        let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
+        let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)
             .with_fallback_resolver(&fallback);
+        if let Some(requery) = &requery {
+            engine = engine.with_requery(requery);
+        }
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         // Customs, the operator's switches, and the authorization gate,
@@ -1709,6 +1688,9 @@ async fn run_turn(
             engine = engine
                 .with_hooks(hooks, &hook_runner)
                 .with_hook_approval_route(&hook_approvals);
+        }
+        if let Some(requery) = &requery {
+            engine = engine.with_requery(requery);
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };

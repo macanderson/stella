@@ -5,6 +5,42 @@ use stella_core::ports::Clock;
 
 use crate::runtime::WallClock;
 
+/// Build the session's token-drift calibration, seeded from prior sessions'
+/// telemetry for the resolved provider/model (`Store::drift_samples`) so the
+/// estimator starts already corrected. Best-effort like all persistence: no
+/// store (or a failed query) means starting uncalibrated — factor 1.0. The
+/// seeding lives in [`stella_runtime::seed_calibration`]; this wrapper only
+/// unwraps the pin out of a [`Config`], which the runtime crate deliberately
+/// does not know about.
+pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
+    stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
+}
+
+/// Begin an execution record; a failure degrades to "no persistence for this
+/// execution" rather than blocking the work.
+pub(crate) fn begin_execution(
+    store: &Option<Arc<Store>>,
+    kind: &str,
+    prompt: &str,
+    cfg: &Config,
+    session: Option<&str>,
+) -> Option<(Arc<Store>, i64)> {
+    let store = store.as_ref()?;
+    match store.begin_execution(kind, prompt, cfg.provider.id, &cfg.model_id) {
+        Ok(id) => {
+            // Link the execution to its session (store schema v8) — what
+            // lets the deck's SESSIONS overlay reassemble and replay the
+            // session's full journal later. Best-effort like every other
+            // store write: a failed link degrades replay, never the turn.
+            if let Some(session) = session {
+                let _ = store.set_execution_session(id, session);
+            }
+            Some((store.clone(), id))
+        }
+        Err(_) => None,
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct RendererOutcome {
     pub(crate) events: Vec<AgentEvent>,

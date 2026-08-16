@@ -72,6 +72,103 @@ pub(super) struct GatheredSteering {
     pub source_drops: Vec<DroppedCandidate>,
 }
 
+/// The [`stella_core::ports::SteeringRequery`] implementation (#3243 Phase
+/// 3): [`super::SessionMemory`]'s plane, asked again mid-turn when the
+/// engine's signal says the work has moved.
+///
+/// The port contract puts hysteresis and dedup here, and both are cheap and
+/// deterministic:
+///
+/// - **Hysteresis** — a re-query is bought by a *changed* signal, never by a
+///   counter alone: the fingerprint is the set of touched paths and error
+///   classes (tool names deliberately excluded — they churn every step
+///   without meaning drift), and it starts at the empty set, so a turn that
+///   never drifts never queries. `MIN_STEPS_BETWEEN` spaces answers so two
+///   changes in adjacent steps cannot double-bill.
+/// - **Dedup** — the produced-set is seeded from every `RECALL_MARKER`
+///   message already in history (the turn-opening block included), mirroring
+///   `inject_recall_block`'s any-prior-marker rule: whatever this returns
+///   WILL be injected verbatim by the engine, so a byte-identical block must
+///   die here.
+pub(crate) struct SessionRequery<'m> {
+    memory: &'m super::SessionMemory,
+    state: std::sync::Mutex<RequeryState>,
+}
+
+struct RequeryState {
+    /// Blocks already in (or headed for) history, by exact bytes.
+    produced: std::collections::HashSet<String>,
+    /// The signal fingerprint the plane last answered — or the empty
+    /// fingerprint at turn open, so an unchanged signal never queries.
+    answered_fingerprint: u64,
+}
+
+/// Steps a fresh answer must wait after the previous one — spacing, not the
+/// trigger (the fingerprint is the trigger).
+const MIN_STEPS_BETWEEN: u32 = 2;
+
+impl<'m> SessionRequery<'m> {
+    /// A per-turn adapter over this session's memory, seeded with the recall
+    /// blocks `messages` already carries so none is ever re-injected.
+    pub(crate) fn new(
+        memory: &'m super::SessionMemory,
+        messages: &[stella_protocol::CompletionMessage],
+    ) -> Self {
+        let produced = messages
+            .iter()
+            .filter(|m| {
+                m.role == stella_protocol::MessageRole::User
+                    && m.content.starts_with(stella_core::receipts::RECALL_MARKER)
+            })
+            .map(|m| m.content.clone())
+            .collect();
+        Self {
+            memory,
+            state: std::sync::Mutex::new(RequeryState {
+                produced,
+                answered_fingerprint: fingerprint(&[], &[]),
+            }),
+        }
+    }
+}
+
+/// Order-free digest of the drift markers. `BTreeSet` so two signals that
+/// saw the same facts in a different order agree.
+fn fingerprint(paths: &[String], errors: &[&str]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    let paths: std::collections::BTreeSet<&str> = paths.iter().map(String::as_str).collect();
+    let errors: std::collections::BTreeSet<&str> = errors.iter().copied().collect();
+    (paths, errors).hash(&mut hasher);
+    hasher.finish()
+}
+
+#[async_trait::async_trait]
+impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
+    async fn requery(&self, signal: &stella_core::steering::TurnSignal<'_>) -> Option<String> {
+        if signal.since_last_query < MIN_STEPS_BETWEEN {
+            return None;
+        }
+        let current = fingerprint(signal.touched_paths, signal.errors_seen);
+        if self
+            .state
+            .lock()
+            .expect("requery state")
+            .answered_fingerprint
+            == current
+        {
+            return None;
+        }
+        let block = self.memory.signal_recall_block(signal).await;
+        let mut state = self.state.lock().expect("requery state");
+        // The signal is answered either way: a drift that surfaced nothing
+        // new must not be re-asked every step until it drifts again.
+        state.answered_fingerprint = current;
+        let block = block?;
+        state.produced.insert(block.clone()).then_some(block)
+    }
+}
+
 impl SteeringPlane for GatheredSteering {
     /// The signal's prompt has already shaped every candidate upstream (each
     /// selector still queries per prompt, as before the migration); the

@@ -136,7 +136,9 @@ pub(crate) mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod restore;
+// The step boundary's host consults (steering, soft stop, #3243 re-query).
 mod settlement;
+mod step_boundary;
 pub(crate) mod usage_anchor;
 pub(crate) mod user_hooks;
 mod waiting;
@@ -1014,72 +1016,13 @@ impl<'a> Engine<'a> {
         if let Some(cancelled) = state.cancel_outcome(events) {
             return cancelled;
         }
-        // Steering rides the same safe boundary as the pause gate:
-        // queued user messages land BEFORE compaction (so the pass sees
-        // them) and before the model call (so it answers them this
-        // step). Drain precedes the soft-stop check deliberately — a
-        // steer typed just before Esc is preserved in history for the
-        // next turn instead of evaporating with the per-turn tap.
+        // The boundary's host consults — steering drain, soft stop, and the
+        // #3243 Phase 3 re-query — in the order `step_boundary` documents.
         deadline_notice::push_if_due(state, std::time::Instant::now());
-        if let Some(steering) = self.steering {
-            for text in steering.drain_steering() {
-                let _ = events.send(AgentEvent::Steered { text: text.clone() });
-                state.messages.push(CompletionMessage::user(text));
-            }
-            if steering.soft_stop_requested() {
-                // A user choice, not a failure: no Error event, and the
-                // caller keeps every completed step (unlike the hard
-                // cancel, which drops the future and truncates). Open
-                // `tool_use`s are closed exactly as the cancel exit closes
-                // them: the engine's own path never leaves one open at this
-                // boundary, but history a caller handed in (or appended to)
-                // mid-turn can, and the kept transcript must stay valid for
-                // the next turn on this exit for the same reason it must on
-                // that one.
-                crate::step::close_open_tool_calls(
-                    &mut state.messages,
-                    SOFT_STOP_TOOL_RESULT,
-                    events,
-                );
-                return StepOutcome::Aborted {
-                    reason: SOFT_STOP_REASON.to_string(),
-                    kind: AbortKind::DeliberateStop,
-                    cost_usd: state.total_cost_usd,
-                };
-            }
-        }
-        // The proactive context re-query (#3243 Phase 3) rides the same
-        // committed boundary, AFTER the steering drain: a user steer landed
-        // this step is part of what the next query should answer to, not
-        // something to race. The engine brings only what the transcript
-        // witnesses — tools called, error classes seen, the step index and
-        // the steps since the port last answered; the host side merges its
-        // own ledger (touched paths, active domains) and owns hysteresis and
-        // dedup, so an unchanged signal costs nothing here.
-        if let Some(requery) = self.requery {
-            let evidence = loop_evidence::turn_evidence(&state.messages);
-            let prompt = evidence
-                .prompt_index
-                .map(|i| state.messages[i].content.as_str())
-                .unwrap_or("");
-            let signal = crate::steering::TurnSignal {
-                prompt,
-                recent_tool_calls: &evidence.tool_names,
-                touched_paths: &evidence.touched_paths,
-                active_domains: &[],
-                step: u32::try_from(state.step).unwrap_or(u32::MAX),
-                since_last_query: state.steps_since_requery,
-                errors_seen: &evidence.error_classes,
-            };
-            match requery.requery(&signal).await {
-                Some(block) => {
-                    state.messages.push(CompletionMessage::user(block));
-                    state.steps_since_requery = 0;
-                }
-                None => {
-                    state.steps_since_requery = state.steps_since_requery.saturating_add(1);
-                }
-            }
+        if let Some(outcome) =
+            step_boundary::consult_hosts(self.steering, self.requery, state, events).await
+        {
+            return outcome;
         }
         if let Some(aborted) = self.check_budget(state, events) {
             return aborted.into();
