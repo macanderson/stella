@@ -27,16 +27,16 @@ use stella_tui::{
     WorkspaceInput, run_deck,
 };
 
-/// A stand-in session tool surface for the TOOLS panel: two built-in families,
-/// one MCP server's tool, and one custom tool — enough for every section kind
-/// the panel renders.
+/// A stand-in session tool surface for the TOOLS panel: three built-in
+/// families, one MCP server's tool, and one custom tool — enough for every
+/// section kind the panel renders.
 fn demo_tool_rows() -> Vec<ToolRow> {
     [
-        ("read_file", "file"),
-        ("write_file", "file"),
-        ("bash", "bash"),
-        ("start_process", "process"),
-        ("send_stdin", "process"),
+        ("task_create", "task"),
+        ("task_list", "task"),
+        ("save_state", "scratch"),
+        ("get_state", "scratch"),
+        ("get_environment", "environment"),
         ("mcp__github__create_issue", "mcp"),
         ("deploy_to_staging", "custom"),
     ]
@@ -153,9 +153,9 @@ async fn main() -> std::io::Result<()> {
                         };
                         let _ = react_tx.send(Inbound::Event { agent, event: next });
                     }
-                    // The answer to ask_user returns as that call's
-                    // ToolResult, correlated by id — the documented path
-                    // that clears the pending question.
+                    // The answer to a pending question card returns as a
+                    // ToolResult correlated by the card's id — the
+                    // documented path that clears it.
                     UserInput::AskUserAnswer { id, answer } => {
                         let _ = react_tx.send(Inbound::Event {
                             agent,
@@ -405,7 +405,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
         ev(AgentEvent::ToolStart {
             call: ToolCall {
                 call_id: format!("{id}-c1"),
-                name: "read_file".into(),
+                name: "mcp__fs__edit_file".into(),
                 input: json!({ "path": "src/lib.rs" }),
             },
         }),

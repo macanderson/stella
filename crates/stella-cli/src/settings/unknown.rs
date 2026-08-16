@@ -40,7 +40,11 @@ use std::path::Path;
 use serde_json::Value;
 
 /// Top-level `settings.json` keys the merged [`super::Settings`] reads.
-const ROOT_FIELDS: &[&str] = &[
+///
+/// Checked against the struct in both directions by
+/// [`super::completeness`] — a missing entry reports a correct key as a typo,
+/// a stale one silences a real typo.
+pub(super) const ROOT_FIELDS: &[&str] = &[
     "providers",
     "hooks",
     "mcp",
@@ -58,14 +62,16 @@ const ROOT_FIELDS: &[&str] = &[
     "enterprise_telemetry",
 ];
 
-/// `providers.<id>` — [`super::ProviderSettings`].
-const PROVIDER_FIELDS: &[&str] = &[
+/// `providers.<id>` — [`super::ProviderSettings`]. Checked against the struct
+/// in both directions by [`super::completeness`].
+pub(super) const PROVIDER_FIELDS: &[&str] = &[
     "id",
     "name",
     "base_url",
     "api_key",
     "api_key_env",
     "default_model",
+    "upstream_pin",
     "dialect",
     "cache_ttl",
 ];

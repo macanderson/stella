@@ -73,7 +73,10 @@ use stella_core::driver::TurnHalt;
 
 use crate::verify::{FlipState, normalize_command};
 
-/// The marker the bash tool appends to a command's output.
+/// The exit-status marker convention shell-shaped tools append to a
+/// command's rendered output (`[exit code: N]`). No built-in emits it; a
+/// custom or MCP shell tool that follows the convention feeds the oracle
+/// mid-turn, and output without it never advances the latch.
 ///
 /// Parsed rather than plumbed because the exit status genuinely is not
 /// carried anywhere else: `ToolOutput::Ok` holds only the text the model
@@ -82,10 +85,10 @@ use crate::verify::{FlipState, normalize_command};
 /// perfectly successful tool call.
 const EXIT_MARKER: &str = "[exit code:";
 
-/// Reads an exit status out of a bash tool result's content.
+/// Reads an exit status out of a shell-shaped tool result's content.
 ///
 /// Returns `None` when no marker is present, which is the honest answer for
-/// every tool that is not the shell — and `None` never advances the oracle,
+/// every tool that is not a shell — and `None` never advances the oracle,
 /// so an unrecognised result can only fail to stop a turn, never stop one
 /// early.
 #[must_use]

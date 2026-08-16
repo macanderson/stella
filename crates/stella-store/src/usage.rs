@@ -67,9 +67,9 @@ pub fn project_id_for(root: &Path) -> String {
     crate::fnv_hex(&canon.to_string_lossy())
 }
 
-/// One per-tool bucket for the usage histogram (the "you grep symbols a lot but
-/// never call graph_query" signal). `calls`/`errors` for one execution; the
-/// aggregate is accumulated per (project, tool, surface, day).
+/// One per-tool bucket for the usage histogram — which tools a project
+/// actually reaches for, and how often they fail. `calls`/`errors` for one
+/// execution; the aggregate is accumulated per (project, tool, surface, day).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolBucket {
     pub tool: String,

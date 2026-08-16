@@ -122,10 +122,10 @@ pub(super) fn cap_json_leaves(value: &mut serde_json::Value) {
 }
 
 /// Format a tool-call input as a human-readable one-liner. Instead of raw
-/// JSON, this extracts the most relevant field(s) per tool name so the
+/// JSON, this extracts the most relevant field(s) by input shape so the
 /// transcript reads naturally — `path` for file tools, `cmd` for shell, the
-/// query for search tools, and so on.
-pub(super) fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
+/// query for search tools, and so on — whatever the tool's name or origin.
+pub(super) fn format_tool_input(input: &serde_json::Value) -> String {
     let str_field = |key: &str| -> Option<String> {
         input
             .get(key)
@@ -133,11 +133,12 @@ pub(super) fn format_tool_input(name: &str, input: &serde_json::Value) -> String
             .map(|s| s.to_string())
     };
 
-    // apply_edits carries its paths in a batch; surface them instead of the
+    // A batch write carries its paths inside an `edits` array (the
+    // conventional `apply_edits` shape); surface them instead of the
     // raw-JSON fallback so the transcript row reads like other file tools.
-    if name == "apply_edits"
-        && let Some(edits) = input.get("edits").and_then(|v| v.as_array())
-    {
+    // Shape-keyed, not name-keyed, so any custom or MCP tool using the
+    // batch convention renders the same way.
+    if let Some(edits) = input.get("edits").and_then(|v| v.as_array()) {
         let mut paths: Vec<&str> = Vec::new();
         for edit in edits {
             if let Some(p) = edit.get("path").and_then(|v| v.as_str())
@@ -156,19 +157,14 @@ pub(super) fn format_tool_input(name: &str, input: &serde_json::Value) -> String
         }
     }
 
-    // Primary field per tool — the one the user cares about at a glance.
+    // Primary field first — the one the user cares about at a glance. A call
+    // carrying a whole-file `content` beside its path (the conventional
+    // write shape) also reports the payload's size; the path alone says
+    // nothing about how much landed.
     if let Some(p) = str_field("path").or_else(|| str_field("file_path")) {
-        return match name {
-            // Just the path. The old/new strings used to ride along here,
-            // truncated to 40 characters each — long enough to fill the row,
-            // never long enough to read, and describing exactly the change the
-            // inline diff below renders properly.
-            "edit_file" => p,
-            "write_file" => {
-                let lines = str_field("content").map(|c| c.lines().count()).unwrap_or(0);
-                format!("{p}  ({lines} lines)")
-            }
-            _ => p,
+        return match str_field("content") {
+            Some(content) => format!("{p}  ({} lines)", content.lines().count()),
+            None => p,
         };
     }
 
@@ -189,7 +185,7 @@ pub(super) fn format_tool_input(name: &str, input: &serde_json::Value) -> String
 
     // An argument-less call has nothing to summarize. `compact_json` renders
     // `{}` for it, which the transcript then printed beside the tool name —
-    // and an empty object next to `project_overview` reads as an empty
+    // and an empty object next to `get_environment` reads as an empty
     // *result*, not as "this tool takes no arguments". Both this and the
     // renderer treat the empty string as "no argument column"; saying it here
     // as well is what keeps every consumer of `input` (the trace tab, the
@@ -218,10 +214,10 @@ pub(super) fn truncate_field(s: &str, max: usize) -> String {
     format!("{}…", s[..head_end].replace(['\n', '\r'], " "))
 }
 
-/// The workspace-relative path a file tool targets. Every built-in file tool
-/// (`read_file`/`write_file`/`edit_file`/`delete_file`) takes its path under
-/// the `path` key, and the engine emits `FileChange` for that same path — so
-/// this is the join key between a tool result and its diff.
+/// The workspace-relative path a file tool targets. Conventionally-shaped
+/// file tools take their path under the `path` key, and a `FileChange` event
+/// carries that same path — so this is the join key between a tool result
+/// and its diff.
 pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
     if let Some(path) = input
         .get("path")
@@ -230,9 +226,9 @@ pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
     {
         return Some(path);
     }
-    // apply_edits carries its paths in a batch, not at the top level; the
-    // first edit's path stands in so a single-file batch still renders an
-    // inline diff under its result row.
+    // A batch write carries its paths in an `edits` array, not at the top
+    // level; the first edit's path stands in so a single-file batch still
+    // renders an inline diff under its result row.
     input
         .get("edits")
         .and_then(serde_json::Value::as_array)
@@ -242,10 +238,10 @@ pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether a tool name is one of the file-*mutating* built-ins — the only
-/// tools whose result should carry an inline diff (reads must not). Must
-/// stay in lockstep with `file_change_of` in stella-cli's `command_deck.rs`,
-/// the `FileChange` emitter that owns this list.
+/// Whether a tool name is one of the conventional file-*mutating* names —
+/// the only tools whose result should carry an inline diff (reads must
+/// not). No built-in carries these names; a custom tool that adopts one
+/// gets its `FileChange` diff rendered inline by construction.
 pub(super) fn is_file_mutation(name: &str) -> bool {
     matches!(
         name,

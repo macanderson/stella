@@ -654,6 +654,23 @@
       "status": "proposed",
       "title": "The trace-replay learning harness \u2014 drive the learning machinery from recorded traces, with zero model calls"
     },
+    "turn-lane-assembly": {
+      "path": "docs/spec/turn-lane-assembly.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "status": "proposed",
+      "title": "One loop, seven lanes \u2014 making turn-loop capability assembly a single place"
+    },
     "verification-gate": {
       "path": "docs/spec/verification-gate.md",
       "status": "living",

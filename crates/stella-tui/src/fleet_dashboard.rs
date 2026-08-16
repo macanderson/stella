@@ -1259,22 +1259,10 @@ fn fmt_clock(d: Duration) -> String {
 
 /// A human, title-cased display name for a tool call.
 fn tool_display_name(name: &str) -> String {
-    match name {
-        "read_file" => "Read".into(),
-        "write_file" => "Write".into(),
-        "edit_file" | "apply_edits" => "Edit".into(),
-        "bash" => "Bash".into(),
-        "grep" => "Grep".into(),
-        "glob" => "Glob".into(),
-        "read_symbol" => "Symbol".into(),
-        "graph_query" => "Graph".into(),
-        other => {
-            let mut c = other.chars();
-            match c.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-                None => other.to_string(),
-            }
-        }
+    let mut c = name.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+        None => name.to_string(),
     }
 }
 

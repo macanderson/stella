@@ -222,9 +222,9 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     interrupts for a *large* plan on its own.
   </OptionCard>
   <OptionCard name="--tools <spec>" defaultValue="settings">
-    Turn tools off for this run only: `--tools '*:off,read_file:on,grep:on'` is a read-only
-    run. Same spelling as the settings `tools` table. **Can only narrow** — it never
-    switches on what a policy turned off. See [below](#--tools-narrowing-for-one-run).
+    Turn tools off for this run only: `--tools '*:off,task_list:on,get_state:on'` is a
+    read-only run. Same spelling as the settings `tools` table. **Can only narrow** — it
+    never switches on what a policy turned off. See [below](#--tools-narrowing-for-one-run).
   </OptionCard>
   <OptionCard name="-v / --verbose" defaultValue="warn">
     Diagnostics: `-v` info, `-vv` debug, `-vvv` trace. See
@@ -269,8 +269,8 @@ Reach for it when **two runs must be comparable**. A gateway otherwise picks per
 The spec is a comma-separated list of `name:on` / `name:off`, where a name is a tool, a [group](/docs/agent-tools/permissions), or `*` — the same spelling as the settings `tools` table, so you can try a policy before committing it to a file.
 
 ```bash
-stella run "audit this module" --tools '*:off,read_file:on,grep:on,glob:on'
-stella run "ship the fix"      --tools 'repo_push:off'
+stella run "triage the board" --tools '*:off,task_list:on,get_state:on,list_state:on'
+stella run "ship the fix"     --tools 'task_assign:off'
 ```
 
 The scope **composes with settings by intersection**, so it can only ever take capability away: turning something off is always permitted, and turning something on never overrides a deny from an org or project policy.

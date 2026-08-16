@@ -120,9 +120,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.91"
+version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae36dc4177970ef04fde5178d3e2429882def40e57a451f919c098f72baa6cec"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -424,7 +424,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -437,7 +437,7 @@ dependencies = [
  "contextgraph-types",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1074,11 +1074,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.11.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+checksum = "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -1444,7 +1444,7 @@ checksum = "bde5057d6143cc94e861d90f591b9303d6716c6b9602309150bd068853c10899"
 dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1493,9 +1493,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.37.0"
+version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
 dependencies = [
  "cc",
  "pkg-config",
@@ -2110,7 +2110,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "web-time",
@@ -2132,7 +2132,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tinyvec",
  "tracing",
  "web-time",
@@ -2284,7 +2284,7 @@ dependencies = [
  "palette",
  "serde",
  "strum",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width",
@@ -2501,7 +2501,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
 dependencies = [
  "hashbrown 0.16.1",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2516,9 +2516,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.39.0"
+version = "0.40.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
+checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
 dependencies = [
  "bitflags 2.13.0",
  "fallible-iterator",
@@ -2874,7 +2874,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-cli"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "clap",
@@ -2905,7 +2905,6 @@ dependencies = [
  "stella-graph",
  "stella-home",
  "stella-mcp",
- "stella-media",
  "stella-model",
  "stella-observatory",
  "stella-pipeline",
@@ -2925,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -2936,13 +2935,13 @@ dependencies = [
  "sha2 0.11.0",
  "stella-embed",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-core"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2953,14 +2952,14 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2 0.11.0",
  "stella-protocol",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
 ]
 
 [[package]]
 name = "stella-diag"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "proptest",
  "serde",
@@ -2971,38 +2970,38 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.9.44"
+version = "0.9.49"
 
 [[package]]
 name = "stella-embed"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "proptest",
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "wiremock",
 ]
 
 [[package]]
 name = "stella-engine"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
  "stella-core",
  "stella-protocol",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-fleet"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3015,13 +3014,13 @@ dependencies = [
  "stella-store",
  "stella-tools",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-graph"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3033,7 +3032,7 @@ dependencies = [
  "stella-embed",
  "stella-store",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
  "tree-sitter",
@@ -3050,11 +3049,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.9.44"
+version = "0.9.49"
 
 [[package]]
 name = "stella-mcp"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3068,7 +3067,7 @@ dependencies = [
  "stella-core",
  "stella-protocol",
  "stella-store",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
  "wiremock",
@@ -3076,7 +3075,7 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3090,7 +3089,7 @@ dependencies = [
  "stella-protocol",
  "stella-store",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "wiremock",
  "zeroize",
@@ -3098,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3113,7 +3112,7 @@ dependencies = [
  "stella-protocol",
  "stella-tty",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
  "wiremock",
@@ -3122,7 +3121,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3135,21 +3134,21 @@ dependencies = [
  "stella-protocol",
  "stella-store",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
 ]
 
 [[package]]
 name = "stella-parity"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "stella-serve",
 ]
 
 [[package]]
 name = "stella-pipeline"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3160,25 +3159,25 @@ dependencies = [
  "stella-core",
  "stella-protocol",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-protocol"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "schemars",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "stella-runtime"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "serde",
@@ -3193,13 +3192,13 @@ dependencies = [
  "stella-store",
  "stella-tools",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-serve"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3212,13 +3211,13 @@ dependencies = [
  "stella-pipeline",
  "stella-protocol",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "stella-store"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "base64 0.23.1",
  "libc",
@@ -3230,12 +3229,12 @@ dependencies = [
  "stella-home",
  "stella-protocol",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "stella-tools"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "async-trait",
  "libc",
@@ -3248,18 +3247,18 @@ dependencies = [
  "stella-protocol",
  "stella-store",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
 ]
 
 [[package]]
 name = "stella-tty"
-version = "0.9.44"
+version = "0.9.49"
 
 [[package]]
 name = "stella-tui"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "arboard",
  "crossterm",
@@ -3499,11 +3498,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.19",
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -3519,9 +3518,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3758,9 +3757,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.11"
+version = "0.26.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1c71c1c4cc0920b20d6b0f6572e7682cd07a6a2faec71067a31fa394c586df"
+checksum = "83c567a8e18ae93f20982c90370b16fd24023aeaf52f6052b96957ab253a0fec"
 dependencies = [
  "cc",
  "regex",

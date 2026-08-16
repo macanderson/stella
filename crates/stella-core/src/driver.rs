@@ -1175,7 +1175,7 @@ impl<'a> Engine<'a> {
                 state.total_cost_usd,
                 &mut state.messages,
                 &mut state.length_continuations,
-                &mut state.stop_hook_fired,
+                &mut state.stop_hook_consults,
                 continuation_budget,
                 events,
             )

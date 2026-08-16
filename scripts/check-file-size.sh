@@ -143,6 +143,11 @@ RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*')
 # while the guard watched only *.rs. Shell counts (#1563) for the same reason.
 current_sizes() {
   git ls-files -z "${RATCHET_PATHSPECS[@]}" | while IFS= read -r -d '' f; do
+    # A tracked file deleted from the working tree but not yet staged is a
+    # legitimate transient state on a working branch (#3268); judge the files
+    # that exist rather than erroring on the ones that do not. Once the
+    # deletion is staged, ls-files stops listing it and nothing changes.
+    [ -f "$f" ] || continue
     printf '%s %s\n' "$(wc -l <"$f" | tr -d ' ')" "$f"
   done
 }

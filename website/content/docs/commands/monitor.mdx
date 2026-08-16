@@ -15,7 +15,7 @@ The optional `target` is a branch or PR to watch. When omitted, it defaults to `
 
 ## What it does
 
-`stella monitor` uses the `ci_status` tool to watch the CI runs for the given `target`. It works iteratively — inspecting each failure, fixing its root cause, then **committing and pushing the fix** before re-checking — and treats the job as a goal that is met **only when the latest CI run is all-green**.
+`stella monitor` watches the CI runs for the given `target` through whatever CI tooling the session offers — a workspace [custom tool](/docs/agent-tools/custom-tools) or an [MCP server](/docs/agent-tools/mcp). It works iteratively — inspecting each failure, fixing its root cause, then **committing and pushing the fix** before re-checking — and treats the job as a goal that is met **only when the latest CI run is all-green**.
 
 Under the hood, `monitor` is [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with a fixed CI objective, so it inherits goal mode's mechanics wholesale: a cross-family verifier confirms the green run from evidence, and the same backstops apply — the default hard cap of **8** judged rounds (it stops there and reports the goal as not met even if CI is still red), the `--spend-limit` cap, and a worker-turn abort. It is not an unbounded daemon; re-run it to keep going.
 
@@ -24,7 +24,7 @@ Under the hood, `monitor` is [goal mode](/docs/agent-modes#outcome-driven-goal-m
 </Callout>
 
 <Callout type="info">
-`stella monitor` relies on the `ci_status` tool, which reads CI state through the GitHub `gh` CLI — so `gh` must be installed and authenticated on your `PATH`. See [Tools](/docs/commands/tools) for the full built-in tool list.
+`stella monitor` needs the session to offer a way to read CI state — a GitHub [MCP server](/docs/agent-tools/mcp), or a [custom tool](/docs/agent-tools/custom-tools) wrapping the `gh` CLI, are the usual shapes. Without one, the agent cannot observe the runs it is asked to drive green.
 </Callout>
 
 ## Flags

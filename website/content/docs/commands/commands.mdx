@@ -95,7 +95,7 @@ TOML is a spelling, not a feature tier. Both formats carry exactly the same fiel
 name = "review"
 description = "Review the working diff like our team does."
 argument-hint = "<pr-number>"
-allowed-tools = ["read_file", "grep", "repo_diff"]
+allowed-tools = ["task_list", "get_state"]
 disable-model-invocation = true
 prompt = """
 Review the working diff for $ARGUMENTS the way our team does:

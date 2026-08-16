@@ -473,7 +473,6 @@ pub(crate) fn session_detail(
             "supervised": record.get("supervisor").is_some_and(|s| !s.is_null()),
             "started_at_ms": record.get("started_at_ms").and_then(Value::as_u64).unwrap_or(0),
             "updated_at_ms": record.get("updated_at_ms").and_then(Value::as_u64).unwrap_or(0),
-            "exploring": record.get("exploring").cloned().unwrap_or_else(|| json!([])),
         })
     });
     let mut out = json!({
@@ -604,9 +603,7 @@ pub(crate) fn session_detail(
     )?);
     // The self-improvement residue this session left behind: mined lessons
     // (reflections whose execution the session stamped — a NULL execution_id
-    // is a cross-turn lesson and deliberately stays out of any one session),
-    // and durable memory writes, recovered from the `save_memory` tool-call
-    // log rather than a table that does not exist.
+    // is a cross-turn lesson and deliberately stays out of any one session).
     out["lessons"] = Value::Array(session_group(
         conn,
         id,
@@ -623,41 +620,6 @@ pub(crate) fn session_detail(
             }))
         },
     )?);
-    let mut writes = session_group(
-        conn,
-        id,
-        "SELECT tc.execution_id, tc.args_json, tc.ok, tc.ts FROM tool_calls tc
-         WHERE tc.name = 'save_memory'
-           AND tc.execution_id IN (SELECT id FROM executions WHERE session_id = ?1)
-         ORDER BY tc.ts ASC",
-        |r| {
-            Ok(json!({
-                "execution_id": r.get::<_, i64>(0)?,
-                "args_json": r.get::<_, String>(1)?,
-                "ok": r.get::<_, i64>(2)? != 0,
-                "ts": r.get::<_, String>(3)?,
-            }))
-        },
-    )?;
-    for write in &mut writes {
-        let slug = write
-            .get("args_json")
-            .and_then(Value::as_str)
-            .and_then(|args| serde_json::from_str::<Value>(args).ok())
-            .and_then(|args| {
-                args.get("slug")
-                    .or_else(|| args.get("title"))
-                    .or_else(|| args.get("name"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-        write["slug"] = json!(slug);
-        // The full memory text rode in on args_json; the page needs the slug
-        // and the fact of the write, not a second copy of the memory.
-        write.as_object_mut().map(|o| o.remove("args_json"));
-    }
-    out["memory_writes"] = Value::Array(writes);
     Ok(out)
 }
 

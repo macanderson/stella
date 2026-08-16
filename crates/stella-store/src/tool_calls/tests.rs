@@ -331,80 +331,6 @@ fn state_round_trips_and_degrades_safely() {
     assert!(!ToolCallState::Running.is_ok());
 }
 
-/// Helper: a minimal successful `ToolCallRow` for the reader tests.
-fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
-    ToolCallRow {
-        error_class: None,
-        call_id: call_id.into(),
-        name: "bash".into(),
-        surface: "native".into(),
-        args_json: format!(
-            "{{\"command\":{}}}",
-            serde_json::to_string(command).unwrap()
-        ),
-        args_digest: call_id.into(),
-        reason: String::new(),
-        state: if ok {
-            ToolCallState::Ok
-        } else {
-            ToolCallState::Error
-        },
-        error: String::new(),
-        bytes_out: 0,
-        duration_ms: 1,
-    }
-}
-
-#[test]
-fn recent_tool_calls_filters_by_name_and_returns_newest_first() {
-    let store = Store::in_memory().unwrap();
-    let e1 = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
-    store
-        .record_tool_calls(
-            e1,
-            &[
-                bash_row("c1", "jq '.a' a.json", true),
-                ToolCallRow {
-                    error_class: None,
-                    call_id: "c2".into(),
-                    name: "read_file".into(),
-                    surface: "native".into(),
-                    args_json: "{}".into(),
-                    args_digest: "c2".into(),
-                    reason: String::new(),
-                    state: ToolCallState::Ok,
-                    error: String::new(),
-                    bytes_out: 0,
-                    duration_ms: 1,
-                },
-                bash_row("c3", "jq '.b' b.json", true),
-            ],
-        )
-        .unwrap();
-    let e2 = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
-    store
-        .record_tool_calls(e2, &[bash_row("c4", "jq '.c' c.json", true)])
-        .unwrap();
-
-    // Newest execution first, then newest seq within an execution; read_file
-    // is filtered out.
-    let read = store.recent_tool_calls("bash", 10).unwrap();
-    let ids: Vec<&str> = read.iter().map(|r| r.call_id.as_str()).collect();
-    assert_eq!(ids, ["c4", "c3", "c1"]);
-    assert!(read.iter().all(|r| r.name == "bash"));
-    assert!(read[0].args_json.contains("jq '.c' c.json"));
-
-    // The limit caps the window; 0 is empty.
-    assert_eq!(store.recent_tool_calls("bash", 1).unwrap().len(), 1);
-    assert!(store.recent_tool_calls("bash", 0).unwrap().is_empty());
-    assert!(
-        store
-            .recent_tool_calls("nonexistent", 10)
-            .unwrap()
-            .is_empty()
-    );
-}
-
 /// The durability level is a contract, not a preference: each level must map
 /// to the exact pragma pair its documented failure model depends on. A
 /// `paranoid` store that quietly omitted `fullfsync` would claim to survive
@@ -433,100 +359,6 @@ fn every_durability_level_sets_the_pragmas_its_guarantee_rests_on() {
         .query_row("PRAGMA synchronous", [], |r| r.get(0))
         .expect("synchronous");
     assert_eq!(synchronous, 2, "the default is FULL (2), not NORMAL (1)");
-}
-
-/// #896: the projection records that a call happened, never what it answered.
-/// `bytes_out` cannot tell "found three definitions" from "found none" — both
-/// are `state = 'ok'` with a non-zero length — so any health metric whose
-/// numerator is semantic has to read the answer back out of the log.
-#[test]
-fn answers_come_back_paired_with_their_arguments_newest_first() {
-    let (store, id) = fixture();
-    store
-        .record_event(id, 0, &start("c1", "graph_query"))
-        .unwrap();
-    store
-        .record_event(id, 1, &ok_result("c1", "- lib.rs::greet", 3))
-        .unwrap();
-    store.record_event(id, 2, &start("c2", "grep")).unwrap();
-    store
-        .record_event(id, 3, &ok_result("c2", "lib.rs:1:greet", 2))
-        .unwrap();
-    store
-        .record_event(id, 4, &start("c3", "graph_query"))
-        .unwrap();
-    store
-        .record_event(
-            id,
-            5,
-            &ok_result("c3", "the code graph has no definitions for `x`", 1),
-        )
-        .unwrap();
-
-    let answers = store.tool_call_answers("graph_query", 10).expect("answers");
-    assert_eq!(answers.len(), 2, "only the named tool: {answers:?}");
-    // Newest first, so a bounded read is a read of recent behaviour.
-    assert!(answers[0].content.contains("has no definitions"));
-    assert!(answers[1].content.contains("lib.rs::greet"));
-    assert!(
-        answers[0].args_json.contains("a.rs"),
-        "arguments ride along"
-    );
-    assert!(answers.iter().all(|a| a.ok));
-
-    assert_eq!(store.tool_call_answers("graph_query", 1).unwrap().len(), 1);
-    assert!(
-        store
-            .tool_call_answers("graph_query", 0)
-            .unwrap()
-            .is_empty()
-    );
-    assert!(store.tool_call_answers("nope", 5).unwrap().is_empty());
-}
-
-/// A failed call carries its message as the answer, and a call that never
-/// returned carries nothing — an abandoned turn is not an unresolved query.
-#[test]
-fn failed_calls_carry_their_message_and_abandoned_ones_are_omitted() {
-    let (store, id) = fixture();
-    store
-        .record_event(id, 0, &start("c1", "graph_query"))
-        .unwrap();
-    store
-        .record_event(id, 1, &err_result("c1", "code-graph query failed: boom"))
-        .unwrap();
-    // Announced, never returned.
-    store
-        .record_event(id, 2, &start("c2", "graph_query"))
-        .unwrap();
-
-    let answers = store.tool_call_answers("graph_query", 10).expect("answers");
-    assert_eq!(answers.len(), 1, "{answers:?}");
-    assert!(!answers[0].ok);
-    assert!(answers[0].content.contains("boom"));
-}
-
-/// The adoption half of the metric: how often the graph was reached for at
-/// all, next to the text tools it competes with.
-#[test]
-fn tool_call_counts_group_every_call_by_name() {
-    let (store, id) = fixture();
-    store.record_event(id, 0, &start("c1", "grep")).unwrap();
-    store.record_event(id, 1, &ok_result("c1", "x", 1)).unwrap();
-    store.record_event(id, 2, &start("c2", "grep")).unwrap();
-    store.record_event(id, 3, &ok_result("c2", "y", 1)).unwrap();
-    store
-        .record_event(id, 4, &start("c3", "graph_query"))
-        .unwrap();
-    store.record_event(id, 5, &ok_result("c3", "z", 1)).unwrap();
-
-    let counts = store.tool_call_counts().expect("counts");
-    assert_eq!(
-        counts[0],
-        ("grep".to_string(), 2),
-        "busiest first: {counts:?}"
-    );
-    assert!(counts.contains(&("graph_query".to_string(), 1)));
 }
 
 /// #3145, end to end through the live writer: a classified failure lands its
@@ -604,12 +436,6 @@ fn a_classified_error_lands_its_class_in_the_projection() {
         expected,
         "the repair fold agrees with the live writer"
     );
-
-    // And the typed reader parses the stored token back to the class.
-    let read_calls = store.recent_tool_calls("read_file", 1).expect("read back");
-    assert_eq!(read_calls[0].error_class, Some(ErrorClass::InvalidInput));
-    let bash_calls = store.recent_tool_calls("bash", 1).expect("read back");
-    assert_eq!(bash_calls[0].error_class, None);
 }
 
 /// A finished turn can still hold calls that never returned (the turn-end

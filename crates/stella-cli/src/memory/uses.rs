@@ -65,9 +65,9 @@ const EXTRACTION_BATCH: u32 = 64;
 
 /// The evaluation method every verdict this module writes carries.
 ///
-/// **`agent_self_report`, and the choice matters.** `cite_memory` is a tool the
-/// *agent* calls about context the agent was given; no human and no external
-/// system is involved. Labelling that `trace_correlation` would be a category
+/// **`agent_self_report`, and the choice matters.** A citation is the
+/// *agent's own report* about context the agent was given; no human and no
+/// external system is involved. Labelling that `trace_correlation` would be a category
 /// error with teeth, because
 /// `ContextEvaluationMethod::is_pruning_eligible` reads the method to decide
 /// whether a verdict may retire a record — and a self-report that could retire

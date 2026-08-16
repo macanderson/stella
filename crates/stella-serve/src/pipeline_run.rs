@@ -258,8 +258,7 @@ pub(crate) async fn drive_pipeline(
     // `tool.call.requested` policy as an ordinary turn's. The verification
     // ladder's own process launches (`RemoteVerificationRunner`) are
     // deliberately NOT gated the same way: they are the pipeline's own
-    // deterministic diagnostics, not model-initiated tool calls, exactly as
-    // `verify_done`'s local runner bypasses `ToolRegistry` in the CLI.
+    // deterministic diagnostics, not model-initiated tool calls.
     tools: &dyn stella_core::ToolExecutor,
     engine_config: EngineConfig,
     messages: Vec<CompletionMessage>,

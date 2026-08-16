@@ -2,9 +2,13 @@
 //! never imports a provider SDK, a filesystem call, or a terminal library —
 //! it drives through these traits, mirroring the TS engine's `ports.ts`.
 
+pub mod authz;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::{Provider, ToolOutput, ToolSchema};
+
+pub use authz::{AuthzDecision, AuthzEvalError, AuthzGate, NoAuthz, Principal, RiskCeiling};
 
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
 /// by test doubles). The engine treats it as a black box that never panics.
@@ -110,9 +114,10 @@ pub trait ToolExecutor: Send + Sync {
     /// working-set restoration re-attaches it verbatim
     /// (`driver::restore`). The same "written by one object, read by
     /// another" seam as [`Self::drain_wait_request`], for the same
-    /// structural reason: the invocation tracking lives in the tool stack
-    /// (`stella-cli`'s `invoke_skill` mount), and the engine only ever sees
-    /// the stack through this trait.
+    /// structural reason: invocation tracking belongs to the tool stack,
+    /// and the engine only ever sees the stack through this trait. No
+    /// shipped executor mounts a skill-invocation plane today, so every
+    /// production implementation answers empty.
     ///
     /// # Decorators MUST forward this
     ///
@@ -168,7 +173,7 @@ pub trait ToolExecutor: Send + Sync {
 /// correct final state, so the engine must not be handed a way to end one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveService {
-    /// The handle the model holds and would pass to `restart_process`
+    /// The stable handle the model has held since the start call
     /// (`proc-3`).
     pub handle: String,
     /// The label the model gave the process at start, when it gave one.
@@ -179,10 +184,10 @@ pub struct LiveService {
 
 /// A read-only view over another executor: advertises only the schemas
 /// marked `read_only` and refuses to execute anything else. This is how a
-/// verifier gets real evidence-gathering power (read files, grep, check
-/// saved explorations) with a structural guarantee it cannot mutate the
-/// workspace it is judging — the restriction is enforced at execution
-/// time, not just by prompt.
+/// verifier gets real evidence-gathering power (`task_list`, `get_state`,
+/// `list_state`, `get_environment`, read-only MCP tools) with a structural
+/// guarantee it cannot mutate the workspace it is judging — the restriction
+/// is enforced at execution time, not just by prompt.
 pub struct ReadOnlyTools<'a> {
     inner: &'a dyn ToolExecutor,
     /// The inner executor's read-only tool names, resolved once at

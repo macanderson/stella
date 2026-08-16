@@ -29,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.44"
+version = "0.9.49"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -138,7 +138,7 @@ scraper = { version = "0.27", default-features = false, features = ["errors"] }
 # Raising `rust-version` would also fix the job, and is the wrong trade: it
 # spends a five-version jump in a public compatibility promise to satisfy a
 # transitive build script. Revisit when the MSRV moves for a reason of its own.
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
 tempfile = "3"

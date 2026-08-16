@@ -106,6 +106,7 @@ tests with them.
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
 | [`src/provider.rs`](src/provider.rs) | The `Provider` port and `ToolCallObserver`, the seam speculative tool execution hangs on. |
 | [`src/tool.rs`](src/tool.rs) | `ToolSchema`, `ToolCall`, `ToolOutput`, `ToolResult` — the engine's single internal tool dialect. |
+| [`src/contract.rs`](src/contract.rs) | `ToolContract`, `RiskLevel`, `Provenance` — the governance half of a tool's declaration (#2716): what a call costs the world, and whether the claim saying so was reviewed. It **contains** `ToolSchema` rather than restating its fields, so the bytes advertised to the model stay exactly what they were and a governance field can never perturb the prompt-cache prefix (invariant #7). |
 | [`src/attachment.rs`](src/attachment.rs) | Multimodal *input* attachments, plus `classify_media_type`, `media_type_for_path`, `human_bytes`. |
 | [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/research/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |

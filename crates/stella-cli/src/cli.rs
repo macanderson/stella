@@ -276,8 +276,8 @@ pub(crate) struct GlobalArgs {
     ///
     /// Same spelling as the settings `"tools"` table — a comma-separated list
     /// of `name:on` / `name:off`, where a name is a tool, a group, or `*`.
-    /// `--tools '*:off,read_file:on,grep:on'` is a read-only run;
-    /// `--tools 'repo_push:off'` removes one capability.
+    /// `--tools '*:off,task_list:on,get_environment:on'` is a read-only run;
+    /// `--tools 'task_assign:off'` removes one capability.
     ///
     /// This scope can only narrow. It composes with settings by intersection,
     /// so it can never switch on something an org or project policy turned

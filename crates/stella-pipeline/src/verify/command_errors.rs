@@ -96,9 +96,9 @@ fn line_reports_a_failed_command(line: &str) -> bool {
 /// Whether a shell result's captured stderr block names a failed command.
 ///
 /// The **last** marker, not the first, mirroring
-/// [`crate::flip_halt::exit_status`]: the harness appends this block after the
-/// command's stdout, so a command whose own stdout quotes the marker must not
-/// redirect the scan onto its own output.
+/// [`crate::flip_halt::exit_status`]: the convention appends this block after
+/// the command's stdout, so a command whose own stdout quotes the marker must
+/// not redirect the scan onto its own output.
 fn stderr_reports_a_failed_command(text: &str) -> bool {
     let Some(marker) = text.rfind(STDERR_MARKER) else {
         return false;

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Skill invocation — the pure half of the `invoke_skill` tool (#2682).
+//! Skill invocation — the pure half of the skill-invocation vocabulary
+//! (#2682).
 //!
 //! Skills have been *context* since they existed: selected, rendered, and
 //! followed, never executed. This module gives them an execution vocabulary
-//! while keeping every decision pure and I/O-free (invariant #2): the CLI's
-//! session layer owns the tool, the file reads, and the sub-agent dispatch;
-//! everything here is string-in/value-out and unit-tested below.
+//! while keeping every decision pure and I/O-free (invariant #2): a session
+//! layer that mounts invocation owns the file reads and the sub-agent
+//! dispatch; everything here is string-in/value-out and unit-tested below.
 //!
 //! # Behavior is the skill's, never a parameter's
 //!

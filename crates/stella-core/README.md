@@ -4,8 +4,8 @@ The step-driver. `Engine::run_turn` takes a message history, a budget guard and
 an event channel, and runs the model/tool loop to an answer: one model call per
 step, retry+backoff, context compaction, tool-output eviction, loop detection,
 USD metering. Alongside it live the workspace's other decision engines — rules,
-skills, routing, the goal loop, the task board, discovery ranking — which the
-CLI drives directly rather than through a turn.
+skills, routing, the goal loop, the task board — which the CLI drives
+directly rather than through a turn.
 
 **No I/O.** This crate never imports a provider SDK, never touches the
 filesystem, never spawns a process, never opens a socket. Anything needing the
@@ -105,6 +105,7 @@ lib.rs), never as a planning assumption.
 | [`src/restore.rs`](src/restore.rs) + [`src/driver/restore.rs`](src/driver/restore.rs) | Working-set restoration (#2685): the pure decide-what-to-restore half (span reads, active skill bodies, the budget-proven fit with named drops), and the driver's overflow summarizer plus the restoration loop that re-reads files through `ToolExecutor` with zero model calls. |
 | [`src/driver/live_services.rs`](src/driver/live_services.rs) | The end-of-turn assertion (#2764): a turn about to declare done while a service it started is still listening is asked about it once. Names handles; stops nothing. |
 | [`src/ports.rs`](src/ports.rs) | The port boundary: `ToolExecutor`, `ReadOnlyTools`, `GrantedTools`, `LiveService`, `Clock`, `TurnGate`, `TurnSteering`, `FallbackResolver`. |
+| [`src/ports/authz.rs`](src/ports/authz.rs) | The pluggable authorization seam (#2716): `AuthzGate`, `Principal`, `AuthzDecision`, `AuthzEvalError`, and the `NoAuthz`/`RiskCeiling` built-ins. An `Err` from a gate is an unconditional deny no enforcement flag can soften, folded through `hooks::decision::resolve_precedence` so the gate joins the one precedence ladder rather than forking it. |
 | [`src/budget.rs`](src/budget.rs) | `BudgetGuard` — USD spend against a turn and/or session cap. Returns `BudgetOutcome`; aborts nothing itself. |
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
@@ -119,9 +120,8 @@ lib.rs), never as a planning assumption.
 | [`src/bus.rs`](src/bus.rs) | The in-process extension bus: observers (`emit`) and policy hooks (`emit_blocking`) over a dotted event-name catalog. |
 | [`src/hooks.rs`](src/hooks.rs) | Settings-declared *shell* hooks — `SessionStart`/`PreToolUse`/`PostToolUse`/`Stop`/`PreCompact` matching and blocking decisions; [`src/hooks/decision.rs`](src/hooks/decision.rs) is the #2684 decision plane (stdout-JSON `HookDecision` fold, the `resolve_precedence` ladder, the `HookApprovalRoute` port). |
 | [`src/rules.rs`](src/rules.rs) | Rules engine: loading, precedence merge, Tier-1 rendering, Tier-2 `evaluate_guards`, candidate mining. |
-| [`src/skills.rs`](src/skills.rs), [`src/skills/invoke.rs`](src/skills/invoke.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary — plus the invocation vocabulary (#2682): the `invoke_skill` directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). |
+| [`src/skills.rs`](src/skills.rs), [`src/skills/invoke.rs`](src/skills/invoke.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary — plus the skill-invocation vocabulary (#2682): the invocation directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). |
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
-| [`src/discovery.rs`](src/discovery.rs) | The ranker behind `tool_search`/`skill_search`/`mcp_search`: `select:` lookups, `+required` terms, field-weighted scoring. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |
 | [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s verifier is one. |
 | [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. |

@@ -74,9 +74,10 @@ const WITNESS_MAX_OUTPUT_TOKENS: u32 = 16_384;
 /// characterization the research stage's own step ceiling documents for the
 /// goal verifier. Left uncapped, the author inherits the WORKER's
 /// `max_steps` (200 by default) via [`Pipeline::engine_config_for`], which is
-/// how one observed run spent 10 model calls and 20 tool calls (`glob`,
-/// `read_file` only — the closed vocabulary has no `grep`) rediscovering this
-/// repository's own test conventions, then authored nothing. On breach the
+/// how one observed run spent 10 model calls and 20 tool calls (`glob` and
+/// `read_file` only — the witness stage's own private tool surface, which
+/// carries no `grep`) rediscovering this repository's own test conventions,
+/// then authored nothing. On breach the
 /// turn aborts with a step-cap reason, which the existing match arm below
 /// already treats as `WitnessAbort::unauthorable` — the executed change
 /// stands unproven and the run still reaches a verdict; nothing new to wire.
