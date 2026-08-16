@@ -1,0 +1,2263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Turn Loop — Step by Step</title>
+<style>
+:root{
+  --bg:#0a0c10; --bg2:#11141b; --panel:#151922; --panel2:#1c2130;
+  --line:#262d3d; --line2:#333c52;
+  --ink:#e8ecf4; --ink2:#a6b0c4; --ink3:#6f7c95;
+  --gold:#e2b869; --gold2:#f2d49a;
+  --blue:#68a8f0; --green:#5fcf94; --red:#f0736a; --purple:#b28cf0; --cyan:#5fd0d0; --orange:#f0a35f;
+  --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+body{overflow-x:hidden}
+
+/* ---------- deck chrome ---------- */
+#deck{max-width:1180px;margin:0 auto;padding:0 24px 140px}
+.slide{
+  min-height:auto;padding:56px 0 24px;border-bottom:1px solid var(--line);
+  scroll-margin-top:64px;
+}
+.slide:last-child{border-bottom:none}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+h1{font-size:clamp(32px,5vw,54px);line-height:1.05;letter-spacing:-.02em;margin:0 0 16px;font-weight:680}
+h2{font-size:clamp(24px,3.4vw,36px);line-height:1.12;letter-spacing:-.015em;margin:0 0 14px;font-weight:660}
+h3{font-size:19px;margin:28px 0 10px;font-weight:640;letter-spacing:-.01em}
+h4{font-size:15px;margin:20px 0 8px;font-weight:640;color:var(--ink)}
+p{line-height:1.62;color:var(--ink2);margin:0 0 14px;max-width:74ch;font-size:15.5px}
+p.lead{font-size:18px;color:var(--ink);max-width:70ch}
+ul,ol{line-height:1.62;color:var(--ink2);max-width:74ch;font-size:15.5px;padding-left:20px}
+li{margin:0 0 8px}
+b,strong{color:var(--ink);font-weight:620}
+code{font-family:var(--mono);font-size:.9em;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--gold2)}
+a{color:var(--blue)}
+hr{border:none;border-top:1px solid var(--line);margin:28px 0}
+
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.card h4{margin-top:0}
+.card p,.card ul{font-size:14.5px;margin-bottom:0}
+.card .num{font-family:var(--mono);font-size:11px;color:var(--gold);letter-spacing:.1em}
+
+.note{border-left:3px solid var(--gold);background:rgba(226,184,105,.06);padding:12px 16px;border-radius:0 8px 8px 0;margin:18px 0}
+.note p{margin:0;color:var(--ink2);font-size:14.5px}
+.note.blue{border-color:var(--blue);background:rgba(104,168,240,.06)}
+.note.red{border-color:var(--red);background:rgba(240,115,106,.06)}
+.note.green{border-color:var(--green);background:rgba(95,207,148,.06)}
+
+table{width:100%;border-collapse:collapse;font-size:14px;margin:14px 0}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--ink3);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:500}
+td{color:var(--ink2)}
+td:first-child{color:var(--ink);font-weight:560}
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:3px 8px;border-radius:999px;border:1px solid var(--line2);color:var(--ink3);margin:0 6px 6px 0}
+.tag.gold{color:var(--gold);border-color:rgba(226,184,105,.4)}
+.tag.blue{color:var(--blue);border-color:rgba(104,168,240,.4)}
+.tag.green{color:var(--green);border-color:rgba(95,207,148,.4)}
+.tag.red{color:var(--red);border-color:rgba(240,115,106,.4)}
+.tag.purple{color:var(--purple);border-color:rgba(178,140,240,.4)}
+
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;
+  font-family:var(--mono);font-size:13px;line-height:1.55;color:var(--ink2);margin:14px 0}
+pre b{color:var(--gold2);font-weight:500}
+pre i{color:var(--ink3);font-style:normal}
+
+/* ---------- title ---------- */
+#s-title{min-height:82vh;display:flex;flex-direction:column;justify-content:center;border-bottom:none}
+.comet{width:64px;height:64px;margin-bottom:28px}
+.subtitle{font-size:19px;color:var(--ink2);max-width:62ch;line-height:1.6}
+.byline{margin-top:36px;font-family:var(--mono);font-size:12px;color:var(--ink3);letter-spacing:.06em}
+
+/* ---------- TOC ---------- */
+.toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:22px}
+.toc-part{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.toc-part>.h{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
+.toc a{display:flex;gap:10px;align-items:baseline;text-decoration:none;color:var(--ink2);padding:5px 6px;border-radius:6px;font-size:14.5px;line-height:1.4}
+.toc a:hover{background:var(--panel2);color:var(--ink)}
+.toc a .n{font-family:var(--mono);font-size:11px;color:var(--ink3);min-width:26px}
+
+/* ---------- nav bar ---------- */
+#navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,12,16,.93);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);z-index:100}
+#navbar .inner{max-width:1180px;margin:0 auto;padding:9px 24px;display:flex;align-items:center;gap:14px}
+#navbar button{background:var(--panel2);border:1px solid var(--line2);color:var(--ink2);border-radius:6px;
+  padding:6px 12px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+#navbar button:hover{color:var(--ink);border-color:var(--gold)}
+#navbar .pos{font-family:var(--mono);font-size:11.5px;color:var(--ink3);white-space:nowrap}
+#navbar .title{font-size:13px;color:var(--ink2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#progress{position:fixed;top:0;left:0;height:2px;background:var(--gold);z-index:101;width:0}
+
+/* ---------- interactive shared ---------- */
+.viz{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:20px 0}
+.viz .vhead{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:14px}
+.viz .vtitle{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.viz .hint{font-size:12px;color:var(--ink3)}
+.ctrls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{background:var(--panel2);border:1px solid var(--line2);color:var(--ink2);border-radius:6px;padding:6px 12px;
+  font-size:13px;cursor:pointer;font-family:var(--sans);transition:.12s}
+.btn:hover{color:var(--ink);border-color:var(--gold)}
+.btn.on{background:var(--gold);color:#0a0c10;border-color:var(--gold);font-weight:600}
+.btn.sm{padding:4px 9px;font-size:12px}
+svg{display:block;max-width:100%;height:auto}
+.svgwrap{overflow-x:auto}
+text{font-family:var(--sans);fill:var(--ink2)}
+.mono{font-family:var(--mono)}
+.detail{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-top:14px;min-height:96px}
+.detail h4{margin:0 0 6px;font-size:15px;color:var(--gold2)}
+.detail p{margin:0 0 8px;font-size:14px}
+.detail p:last-child{margin-bottom:0}
+.detail .meta{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:8px}
+
+@media (max-width:640px){
+  #deck{padding:0 16px 130px}
+  .slide{padding:40px 0 18px}
+}
+@media print{#navbar,#progress{display:none}.slide{page-break-after:always}}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="deck">
+
+<!-- ============ TITLE ============ -->
+<section class="slide" id="s-title" data-title="Title">
+  <svg class="comet" viewBox="0 0 64 64" fill="none">
+    <circle cx="42" cy="22" r="9" fill="#e2b869"/>
+    <path d="M35 29 L8 56" stroke="#e2b869" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+    <path d="M33 22 L6 40" stroke="#e2b869" stroke-width="2" stroke-linecap="round" opacity=".45"/>
+    <path d="M41 33 L24 58" stroke="#e2b869" stroke-width="2" stroke-linecap="round" opacity=".45"/>
+  </svg>
+  <p class="eyebrow">Stella Agent Engine · Technical Design Document</p>
+  <h1>Stella Turn Loop<br>Step by Step</h1>
+  <p class="subtitle">What actually happens, in order, from the moment someone presses Enter
+  to the moment the agent writes down what it learned. Every route, end to end.</p>
+  <div style="margin-top:26px">
+    <span class="tag gold">New-hire onboarding</span>
+    <span class="tag blue">Interactive diagrams</span>
+    <span class="tag green">Plain language</span>
+  </div>
+  <p class="byline">Read straight through, or jump from the table of contents.<br>
+  Arrow keys / <b>J</b> and <b>K</b> move between slides.</p>
+</section>
+
+<!-- ============ TOC ============ -->
+<section class="slide" id="s-toc" data-title="Table of contents">
+  <p class="eyebrow">Contents</p>
+  <h2>Where everything is</h2>
+  <p>Five parts. Part 2 is the heart of it — the twelve phases every single turn runs through,
+  no matter which door you came in by. Click anything to jump.</p>
+
+  <div class="toc">
+    <div class="toc-part">
+      <div class="h">Part 1 · Orientation</div>
+      <a href="#s-mental"><span class="n">01</span><span>The one-sentence version</span></a>
+      <a href="#s-vocab"><span class="n">02</span><span>Words we will use (and words we won't)</span></a>
+      <a href="#s-doors"><span class="n">03</span><span>Two loops, six doors — interactive map</span></a>
+      <a href="#s-shared"><span class="n">04</span><span>What every route shares</span></a>
+    </div>
+    <div class="toc-part">
+      <div class="h">Part 2 · Before the model sees anything</div>
+      <a href="#s-submit"><span class="n">05</span><span>You press Enter — what happens first</span></a>
+      <a href="#s-prompt"><span class="n">06</span><span>Building the prompt — interactive stack</span></a>
+      <a href="#s-cache"><span class="n">07</span><span>Why the order of those layers matters</span></a>
+      <a href="#s-recall"><span class="n">08</span><span>Recall: memories and skills for this prompt</span></a>
+    </div>
+    <div class="toc-part">
+      <div class="h">Part 3 · The step loop itself</div>
+      <a href="#s-loop"><span class="n">09</span><span>The twelve phases — interactive walker</span></a>
+      <a href="#s-boundary"><span class="n">10</span><span>The safe boundary rule</span></a>
+      <a href="#s-compact"><span class="n">11</span><span>Compaction — interactive simulator</span></a>
+      <a href="#s-loopdetect"><span class="n">12</span><span>Loop detection</span></a>
+      <a href="#s-model"><span class="n">13</span><span>The model call, retries, and speculation</span></a>
+      <a href="#s-dispatch"><span class="n">14</span><span>Tool dispatch — interactive scheduler</span></a>
+      <a href="#s-gates"><span class="n">15</span><span>Who is allowed to say no</span></a>
+      <a href="#s-endings"><span class="n">16</span><span>Every way a turn can end</span></a>
+      <a href="#s-trouble"><span class="n">17</span><span>When things go wrong mid-turn</span></a>
+    </div>
+    <div class="toc-part">
+      <div class="h">Part 4 · The routes, end to end</div>
+      <a href="#s-routeA"><span class="n">18</span><span>Route A — raw turn (the short one)</span></a>
+      <a href="#s-routeB"><span class="n">19</span><span>Route B — the staged pipeline</span></a>
+      <a href="#s-stages"><span class="n">20</span><span>Pipeline stages — interactive walker</span></a>
+      <a href="#s-witness"><span class="n">21</span><span>The witness — proof, not opinion</span></a>
+      <a href="#s-routeC"><span class="n">22</span><span>Route C — a turn inside a turn (sub-agents)</span></a>
+      <a href="#s-routeD"><span class="n">23</span><span>Route D — goal mode &amp; monitor</span></a>
+      <a href="#s-routeE"><span class="n">24</span><span>Route E — fleet workers</span></a>
+      <a href="#s-routeF"><span class="n">25</span><span>Route F — serve, one step at a time</span></a>
+      <a href="#s-compare"><span class="n">26</span><span>All six routes side by side</span></a>
+    </div>
+    <div class="toc-part">
+      <div class="h">Part 5 · After the turn</div>
+      <a href="#s-record"><span class="n">27</span><span>Writing the turn down</span></a>
+      <a href="#s-reflect"><span class="n">28</span><span>Reflection → memories → skills</span></a>
+      <a href="#s-foundry"><span class="n">29</span><span>The tool foundry (short version)</span></a>
+      <a href="#s-next"><span class="n">30</span><span>What the next two decks cover</span></a>
+    </div>
+    <div class="toc-part">
+      <div class="h">Appendix</div>
+      <a href="#s-map"><span class="n">A1</span><span>Code map — where each phase lives</span></a>
+      <a href="#s-cheat"><span class="n">A2</span><span>One-page cheat sheet</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 01 mental model ============ -->
+<section class="slide" id="s-mental" data-title="The one-sentence version">
+  <p class="eyebrow">Part 1 · 01</p>
+  <h2>The one-sentence version</h2>
+  <p class="lead">Stella asks a model what to do next, does it, shows the model what happened,
+  and asks again — until the model stops asking for things.</p>
+  <p>That is genuinely the whole engine. Everything else in this deck is one of two things:
+  <b>bookkeeping around that loop</b> (money, memory, safety, size) or
+  <b>extra structure wrapped around the loop</b> (planning first, proving afterward).</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">The core loop</span><span class="hint">this runs once per step</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 900 210" width="900">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#6f7c95"/>
+        </marker>
+      </defs>
+      <g>
+        <rect x="20" y="60" width="170" height="72" rx="10" fill="#1c2130" stroke="#333c52"/>
+        <text x="105" y="90" text-anchor="middle" font-size="14" fill="#e8ecf4" font-weight="600">Conversation</text>
+        <text x="105" y="110" text-anchor="middle" font-size="12" fill="#6f7c95">everything so far</text>
+
+        <path d="M195 96 L255 96" stroke="#6f7c95" stroke-width="1.6" marker-end="url(#ar)"/>
+
+        <rect x="260" y="60" width="170" height="72" rx="10" fill="#1c2130" stroke="#68a8f0"/>
+        <text x="345" y="90" text-anchor="middle" font-size="14" fill="#68a8f0" font-weight="600">Model call</text>
+        <text x="345" y="110" text-anchor="middle" font-size="12" fill="#6f7c95">“what next?”</text>
+
+        <path d="M435 96 L495 96" stroke="#6f7c95" stroke-width="1.6" marker-end="url(#ar)"/>
+
+        <rect x="500" y="60" width="170" height="72" rx="10" fill="#1c2130" stroke="#5fcf94"/>
+        <text x="585" y="90" text-anchor="middle" font-size="14" fill="#5fcf94" font-weight="600">Tools run</text>
+        <text x="585" y="110" text-anchor="middle" font-size="12" fill="#6f7c95">read, edit, run tests</text>
+
+        <path d="M675 96 L735 96" stroke="#6f7c95" stroke-width="1.6" marker-end="url(#ar)"/>
+
+        <rect x="740" y="60" width="140" height="72" rx="10" fill="#1c2130" stroke="#333c52"/>
+        <text x="810" y="90" text-anchor="middle" font-size="14" fill="#e8ecf4" font-weight="600">Results</text>
+        <text x="810" y="110" text-anchor="middle" font-size="12" fill="#6f7c95">appended</text>
+
+        <path d="M810 140 L810 175 L105 175 L105 138" stroke="#e2b869" stroke-width="1.6" fill="none"
+              stroke-dasharray="5 4" marker-end="url(#ar)"/>
+        <text x="457" y="195" text-anchor="middle" font-size="12" fill="#e2b869">repeat — this is one “step”</text>
+      </g>
+    </svg></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card"><div class="num">TURN</div><h4>One turn</h4>
+      <p>One prompt from a person, worked all the way to an answer. A turn holds many steps.</p></div>
+    <div class="card"><div class="num">STEP</div><h4>One step</h4>
+      <p>Exactly one model call, plus the tools that call asked for. Twelve phases run around it.</p></div>
+    <div class="card"><div class="num">SESSION</div><h4>One session</h4>
+      <p>One run of the program. Many turns. The conversation carries across them.</p></div>
+  </div>
+</section>
+
+<!-- ============ 02 vocabulary ============ -->
+<section class="slide" id="s-vocab" data-title="Vocabulary">
+  <p class="eyebrow">Part 1 · 02</p>
+  <h2>Words we will use</h2>
+  <p>Only these. Everything else in this deck is ordinary English on purpose.</p>
+  <div class="scroller"><table>
+    <tr><th>Word</th><th>What it means here</th><th>What it does <em>not</em> mean</th></tr>
+    <tr><td>Turn</td><td>One prompt, worked to an answer.</td><td>Not one model call.</td></tr>
+    <tr><td>Step</td><td>One model call plus its tools.</td><td>Not one plan item.</td></tr>
+    <tr><td>Tool</td><td>Something the agent can do: read a file, edit it, run a command.</td><td>Not a person's command.</td></tr>
+    <tr><td>Port</td><td>A hole the engine leaves for the outside world to plug into.</td><td>Not a network port.</td></tr>
+    <tr><td>Read-only tool</td><td>A tool that looks but never changes anything.</td><td>Not "safe" — it still costs time.</td></tr>
+    <tr><td>Compaction</td><td>Shrinking the conversation so it still fits.</td><td>Not deleting the whole history.</td></tr>
+    <tr><td>Witness</td><td>A test that fails before the change and passes after.</td><td>Not a model saying "looks good".</td></tr>
+    <tr><td>Budget</td><td>A dollar ceiling on a turn or a session.</td><td>Not a token count.</td></tr>
+    <tr><td>Door</td><td>A command you type that leads into the engine.</td><td>Not a separate engine.</td></tr>
+  </table></div>
+
+  <div class="note blue"><p><b>Rule for this whole deck.</b> If a sentence needs a diagram to be
+  believable, there is a diagram. If a claim comes from a specific file, that file is named at the
+  bottom of the slide so you can go read it yourself.</p></div>
+</section>
+
+<!-- ============ 03 doors ============ -->
+<section class="slide" id="s-doors" data-title="Two loops, six doors">
+  <p class="eyebrow">Part 1 · 03</p>
+  <h2>Two loops, six doors</h2>
+  <p class="lead">This is the answer to "how many versions of the loop do we have?"
+  The honest answer is <b>two</b>, and one of them is built on top of the other.</p>
+  <p>There is one step loop at the bottom. Above it there is one optional wrapper — the staged
+  pipeline — that adds planning before and proof after. Six commands lead in. Four go through the
+  wrapper, two go straight to the loop.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · doors into the engine</span>
+      <span class="hint">click a door to trace its path</span>
+    </div>
+    <div class="svgwrap"><svg id="doorSvg" viewBox="0 0 960 430" width="960">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#333c52"/>
+        </marker>
+        <marker id="ar2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#e2b869"/>
+        </marker>
+      </defs>
+
+      <text x="30" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">DOORS</text>
+      <g id="doors"></g>
+
+      <text x="470" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">WRAPPER (OPTIONAL)</text>
+      <rect id="pipeBox" x="470" y="46" width="215" height="230" rx="12" fill="#151922" stroke="#333c52"/>
+      <text x="577" y="76" text-anchor="middle" font-size="15" fill="#b28cf0" font-weight="600">Staged pipeline</text>
+      <text x="577" y="98" text-anchor="middle" font-size="12" fill="#6f7c95">plan first, prove after</text>
+      <g class="mono" font-size="11" fill="#a6b0c4">
+        <text x="492" y="126">triage → recall → research</text>
+        <text x="492" y="146">→ plan → scope review</text>
+        <text x="492" y="166" fill="#e2b869">→ EXECUTE ◀ calls the loop</text>
+        <text x="492" y="186">→ witness → verify</text>
+        <text x="492" y="206">→ verdict (↺ revise)</text>
+      </g>
+      <text x="577" y="240" text-anchor="middle" font-size="11" fill="#6f7c95">stella-pipeline</text>
+      <text x="577" y="258" text-anchor="middle" font-size="11" fill="#6f7c95">no I/O, no decisions in async</text>
+
+      <text x="730" y="28" font-size="11" fill="#6f7c95" class="mono" letter-spacing="1.5">THE ENGINE</text>
+      <rect id="loopBox" x="730" y="46" width="200" height="230" rx="12" fill="#151922" stroke="#e2b869"/>
+      <text x="830" y="80" text-anchor="middle" font-size="16" fill="#e2b869" font-weight="600">The step loop</text>
+      <text x="830" y="102" text-anchor="middle" font-size="12" fill="#6f7c95">run_step × N</text>
+      <g class="mono" font-size="11" fill="#a6b0c4">
+        <text x="752" y="132">12 fixed phases</text>
+        <text x="752" y="152">1 model call each</text>
+        <text x="752" y="172">tools fan out</text>
+        <text x="752" y="192">compact · detect loops</text>
+        <text x="752" y="212">meter every dollar</text>
+      </g>
+      <text x="830" y="242" text-anchor="middle" font-size="11" fill="#6f7c95">stella-core</text>
+      <text x="830" y="260" text-anchor="middle" font-size="11" fill="#6f7c95">no I/O at all</text>
+
+      <path d="M685 160 L724 160" stroke="#e2b869" stroke-width="2" marker-end="url(#ar2h)"/>
+      <g id="doorLinks"></g>
+      <text x="470" y="320" font-size="12" fill="#6f7c95" id="doorCaption">Hover or click a door on the left.</text>
+    </svg></div>
+    <div class="detail" id="doorDetail">
+      <h4>Six doors, one engine</h4>
+      <p>Every door ends in the same place. The differences are: does a plan get made first,
+      does a proof get demanded after, who is watching, and where the work is written down.</p>
+      <p class="meta">website/content/docs/agent-engine-paths.mdx</p>
+    </div>
+  </div>
+
+  <div class="note"><p><b>The one subtlety.</b> The two direct doors are not the same depth.
+  <code>stella --plain</code> calls <code>run_turn</code> and lets it loop.
+  <code>stella-serve</code> calls <code>run_step</code> itself, one step at a time — which is
+  exactly what lets a host save its place and pick up later. Same phases, different driver.</p></div>
+</section>
+
+<!-- ============ 04 shared ============ -->
+<section class="slide" id="s-shared" data-title="What every route shares">
+  <p class="eyebrow">Part 1 · 04</p>
+  <h2>What every route shares</h2>
+  <p>Before the differences, the promises. These hold no matter which door you came in by —
+  a fleet worker and a one-line question run the exact same code here.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num">01</div><h4>One step loop</h4>
+      <p>One model call per step. Tools run. Results feed back. Repeat. There is no hidden
+      swarm of agents and no coordinator process quietly running somewhere else.</p></div>
+    <div class="card"><div class="num">02</div><h4>One tool stack</h4>
+      <p>The same layered set of tools: the built-ins, wrapped by MCP server tools, wrapped by
+      custom script tools. Routes only add things <em>on top</em> — never swap the base out.</p></div>
+    <div class="card"><div class="num">03</div><h4>Memory rides along</h4>
+      <p>Relevant memories and skills are pulled in per prompt and added <em>after</em> the stable
+      part of the prompt, so the provider's cache still works.</p></div>
+    <div class="card"><div class="num">04</div><h4>Money is metered everywhere</h4>
+      <p>Every route counts dollars. <code>--spend-limit</code> makes that a hard ceiling; without
+      it, spend is still tracked for the summary.</p></div>
+    <div class="card"><div class="num">05</div><h4>Everything is written down</h4>
+      <p>Each turn opens a record: files touched, tools used, memories cited, cost, outcome.
+      That record is what <code>stella stats</code> and the dashboard read.</p></div>
+    <div class="card"><div class="num">06</div><h4>Model routing applies</h4>
+      <p>Roles — worker, triage, verifier, research, plan — can each be pinned to a different
+      model. Every route that uses a role honors the pin.</p></div>
+  </div>
+
+  <div class="note green"><p><b>Why this matters for a new hire.</b> If you find a bug in the step
+  loop, you have found it on all six routes at once. That is the point of the design — and it is
+  also why the engine crate is not allowed to touch a file, a socket, or a provider SDK directly.</p></div>
+</section>
+
+<!-- ============ 05 submit ============ -->
+<section class="slide" id="s-submit" data-title="You press Enter">
+  <p class="eyebrow">Part 2 · 05</p>
+  <h2>You press Enter</h2>
+  <p class="lead">Nothing has reached a model yet. Six things happen first, and they happen
+  in this order every time.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Before the first model call</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 940 130" width="940">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#6f7c95"/></marker></defs>
+      <g id="preSteps"></g>
+    </svg></div>
+  </div>
+
+  <ol>
+    <li><b>The text is captured.</b> In the Command Deck it may also be queued behind a turn that
+      is still running — prompts do not interrupt, they line up.</li>
+    <li><b>Session hooks fire once.</b> <code>SessionStart</code> runs when the session opens, not
+      per turn. The engine deliberately never fires it: the host owns it, because the host is the
+      one assembling the prompt.</li>
+    <li><b>The stable prompt prefix is assembled</b> — base instructions, environment facts,
+      workspace memories, published rules. Same bytes every turn.</li>
+    <li><b>Recall runs</b> — relevant memories and skills for <em>this</em> prompt, gathered
+      fresh, added as a separate volatile block afterward.</li>
+    <li><b>A budget guard is built</b> from the spend limit, and a record is opened in the store.</li>
+    <li><b>A route is chosen</b> — raw turn or staged pipeline — and the first step begins.</li>
+  </ol>
+
+  <div class="note red"><p><b>Common new-hire mistake.</b> Assuming the system prompt is built once
+  per session. It is built per turn — but built to be <em>byte-identical</em> per turn. Those are
+  different things, and the next two slides are about why the difference matters.</p></div>
+</section>
+
+<!-- ============ 06 prompt stack ============ -->
+<section class="slide" id="s-prompt" data-title="Building the prompt">
+  <p class="eyebrow">Part 2 · 06</p>
+  <h2>Building the prompt</h2>
+  <p>What the model receives is a stack of layers. The order is fixed and load-bearing.
+  Click any layer.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · prompt layers</span>
+      <span class="hint">click a layer for what it is and why it sits there</span>
+    </div>
+    <div id="layerStack"></div>
+    <div class="detail" id="layerDetail">
+      <h4>Pick a layer</h4>
+      <p>The gold layers never change between turns. The blue layer changes every turn — and it is
+      deliberately last, so changing it cannot disturb anything above it.</p>
+      <p class="meta">crates/stella-cli/src/agent/prompt.rs::assemble_system_prompt</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 07 cache ============ -->
+<section class="slide" id="s-cache" data-title="Why the order matters">
+  <p class="eyebrow">Part 2 · 07</p>
+  <h2>Why the order of those layers matters</h2>
+  <p class="lead">Model providers cache the front of your prompt. They match it byte for byte,
+  from the very first character. The moment one byte differs, the cache stops matching from
+  that point on — and you pay full price for everything after it.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · what one changed byte costs</span>
+      <span class="hint">click either arrangement</span>
+    </div>
+    <div class="ctrls" style="margin-bottom:14px">
+      <button class="btn on" data-cache="good">Volatile block last (what we do)</button>
+      <button class="btn" data-cache="bad">Volatile block first (what we must not do)</button>
+    </div>
+    <div class="svgwrap"><svg id="cacheSvg" viewBox="0 0 900 170" width="900"><g id="cacheBars"></g></svg></div>
+    <div class="detail" id="cacheDetail"></div>
+  </div>
+
+  <h3>The three rules that fall out of this</h3>
+  <div class="grid g3">
+    <div class="card"><h4>Memories load once, sorted</h4>
+      <p>Workspace memory files are read once per session and joined in sorted filename order.
+      Sorted, so the bytes cannot depend on how the filesystem felt that day.</p></div>
+    <div class="card"><h4>No clock in the prefix</h4>
+      <p>Today's date is genuinely useful — and genuinely changes. So it rides the volatile
+      recall block, never the stable prefix.</p></div>
+    <div class="card"><h4>Dropped items are named</h4>
+      <p>If pinned rules overflow the prefix budget, the ones dropped are listed by name — and the
+      list is computed the same way every time, so even the overflow message is stable.</p></div>
+  </div>
+
+  <div class="note"><p><b>Say this out loud once.</b> "Prompt caching is a feature, so anything
+  that makes the prefix wobble is a cost regression, not a style issue." That sentence is an
+  architectural invariant in this repository, not a preference.</p></div>
+</section>
+
+<!-- ============ 08 recall ============ -->
+<section class="slide" id="s-recall" data-title="Recall">
+  <p class="eyebrow">Part 2 · 08</p>
+  <h2>Recall: what this prompt needs</h2>
+  <p>Two different things get pulled in, from two different places, and they behave differently.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num">MEMORIES</div><h4>Things the agent learned before</h4>
+      <p>Stored in a local database with tags for the parts of the codebase they touch. The
+      prompt is used to find the relevant ones — not all of them.</p></div>
+    <div class="card"><div class="num">SKILLS</div><h4>Reusable how-to notes</h4>
+      <p>Markdown files under <code>.stella/skills/</code>. A selector picks the ones matching this
+      prompt and pastes their text in. Skills are never forced — they are offered.</p></div>
+  </div>
+
+  <pre><b>prompt</b>  ──▸ recall (memories) + select_skills (skills)
+          └─▸ one <b>volatile message</b>, placed AFTER the stable prefix
+<i>              …turn runs…</i>
+<b>outcome</b> ──▸ reflection ──▸ 0–3 lessons ──▸ memories + the mining log
+                                      └─▸ enough repeats ──▸ a new skill file</pre>
+
+  <div class="note blue"><p><b>Best-effort by contract.</b> If the memory store is broken, recall
+  returns nothing and the turn runs anyway. A failure here must never fail or slow down the actual
+  work. "Degraded" means "no memory this turn" — it never means an error the user sees.</p></div>
+
+  <p class="meta" style="font-family:var(--mono);font-size:12px;color:var(--ink3)">
+  crates/stella-cli/src/memory.rs — the module doc comment is the diagram above.</p>
+</section>
+
+<!-- ============ 09 THE LOOP ============ -->
+<section class="slide" id="s-loop" data-title="The twelve phases">
+  <p class="eyebrow">Part 3 · 09 · the heart of the deck</p>
+  <h2>The twelve phases of one step</h2>
+  <p class="lead">Every step runs these, in this order, always. Not "usually" — the order is
+  enforced by the code and defended by tests, because two of the orderings are bug fixes that
+  someone paid for.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · step walker</span>
+      <div class="ctrls">
+        <button class="btn sm" id="phPrev">◀ Prev</button>
+        <button class="btn sm" id="phPlay">▶ Play</button>
+        <button class="btn sm" id="phNext">Next ▶</button>
+        <button class="btn sm" id="phReset">Reset</button>
+      </div>
+    </div>
+    <div class="svgwrap"><svg id="phaseSvg" viewBox="0 0 940 300" width="940"><g id="phaseNodes"></g></svg></div>
+    <div class="detail" id="phaseDetail"></div>
+  </div>
+
+  <div class="note"><p><b>Read the walker, then read this.</b> Phases 1–6 are all "should we even
+  make a model call?" Phase 7 is the call. Phases 8–12 are "what do we do with what came back?"
+  If you remember only that shape, you can rebuild the rest from first principles.</p></div>
+</section>
+
+<!-- ============ 10 boundary ============ -->
+<section class="slide" id="s-boundary" data-title="The safe boundary rule">
+  <p class="eyebrow">Part 3 · 10</p>
+  <h2>The safe boundary rule</h2>
+  <p class="lead">Everything that ends a turn ends it <b>between steps</b>. Never in the middle
+  of a tool.</p>
+  <p>Budget aborts, the pause button, the soft stop, loop-detection aborts — all of them wait for
+  the current step to finish. Killing a tool halfway leaves the files in one state and the model's
+  picture of them in another, and the model then reasons from a picture that is wrong.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Where a turn may and may not stop</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 900 190" width="900"><g id="boundarySvg"></g></svg></div>
+  </div>
+
+  <h3>The design trick that enforces it</h3>
+  <p>The budget code is <b>structurally unable</b> to stop anything. It returns a recommendation —
+  "you should abort" — and a separate function between steps is the only thing that can turn that
+  into a stopped turn. You cannot accidentally add a mid-tool abort, because the piece that
+  notices the problem has no power to act on it.</p>
+
+  <div class="note red"><p><b>The one exception, and it is not an exception.</b> A tool that runs
+  too long (15 minutes by default) is cut off — but the result is an <em>error handed back to the
+  model as a tool result</em>, not a stopped turn. The model sees "that timed out" and routes
+  around it. The turn keeps going.</p></div>
+</section>
+
+<!-- ============ 11 compaction ============ -->
+<section class="slide" id="s-compact" data-title="Compaction">
+  <p class="eyebrow">Part 3 · 11</p>
+  <h2>Compaction: making it fit</h2>
+  <p>Conversations grow. Model context windows do not. Before every model call, Stella measures
+  the conversation and — if it is too big — shrinks it using four mechanisms, applied
+  <b>least damaging first</b>.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · compaction simulator</span>
+      <span class="hint">drag the budget down and watch which mechanism fires</span>
+    </div>
+    <div class="ctrls" style="margin-bottom:12px">
+      <label style="font-size:13px;color:var(--ink2)">Budget:
+        <input type="range" id="cBudget" min="20" max="200" value="200" style="vertical-align:middle;width:230px">
+        <span class="mono" id="cBudgetVal" style="color:var(--gold)">200</span> units
+      </label>
+    </div>
+    <div id="compactRows"></div>
+    <div class="detail" id="compactDetail"></div>
+  </div>
+
+  <h3>The four mechanisms</h3>
+  <div class="scroller"><table>
+    <tr><th>Order</th><th>Mechanism</th><th>What it does</th><th>Which copy it keeps</th></tr>
+    <tr><td>1</td><td>Dedup</td><td>Two tool results with byte-identical text — stub out the copies.</td><td class="mono">the <b>earliest</b></td></tr>
+    <tr><td>2</td><td>Supersession</td><td>The same call run again — the old result is stale.</td><td class="mono">the <b>latest</b></td></tr>
+    <tr><td>3</td><td>Aging</td><td>Old, large outputs get their middles cut out.</td><td>head + tail</td></tr>
+    <tr><td>4</td><td>Eviction</td><td>Drop old tool results entirely. The blunt one.</td><td>never the newest</td></tr>
+  </table></div>
+
+  <div class="note"><p><b>The thing that looks like a bug and is not.</b> Dedup keeps the earliest
+  copy; supersession keeps the latest. Same-looking rule, opposite direction. Dedup is about
+  <em>identical</em> content — position does not matter, so keep the earliest and the cached prefix
+  stays byte-identical. Supersession is about <em>staleness</em> — the whole point is that the new
+  one is right and the old one is wrong. Two tests pin both directions so nobody "fixes" one into
+  the other.</p></div>
+
+  <p style="font-family:var(--mono);font-size:12px;color:var(--ink3)">
+  The system message and the newest user message are never touched by any of the four.</p>
+</section>
+
+<!-- ============ 12 loop detect ============ -->
+<section class="slide" id="s-loopdetect" data-title="Loop detection">
+  <p class="eyebrow">Part 3 · 12</p>
+  <h2>Loop detection: noticing it is stuck</h2>
+  <p>Models get stuck. They run the same command, get the same answer, and try it again. Loop
+  detection watches the recent history for exact repeats and short cycles, and can end the turn
+  rather than burn the budget on it.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Interactive · is this a loop?</span><span class="hint">click a case</span></div>
+    <div class="ctrls" id="loopCases" style="margin-bottom:12px"></div>
+    <div class="svgwrap"><svg id="loopSvg" viewBox="0 0 900 150" width="900"><g id="loopRows"></g></svg></div>
+    <div class="detail" id="loopDetail"></div>
+  </div>
+
+  <h3>Two subtleties worth memorizing</h3>
+  <div class="grid g2">
+    <div class="card"><h4>The call id is ignored</h4>
+      <p>Providers mint a fresh id for every call. If the detector compared ids, no two calls
+      would ever look alike and it would <em>never fire</em>. So it compares name, input, and
+      output — and ignores the id. This is the one place in the codebase that distinction is made.</p></div>
+    <div class="card"><h4>A repeat is only a loop if the <em>output</em> repeats too</h4>
+      <p>Same command, changing output is legitimate work — polling a build, re-running a test
+      suite that is shrinking. Only same-in/same-out counts.</p></div>
+  </div>
+
+  <div class="note blue"><p><b>Why phase order matters here.</b> Compaction rewrites tool results
+  in place, and loop detection runs on the rewritten history in that same step. So Stella takes a
+  snapshot of what each result <em>really</em> was <b>before</b> compaction, and detection compares
+  against the snapshot. Without that, compaction could make two different results look identical
+  and trigger a false loop abort.</p></div>
+</section>
+
+<!-- ============ 13 model call ============ -->
+<section class="slide" id="s-model" data-title="The model call">
+  <p class="eyebrow">Part 3 · 13</p>
+  <h2>The model call, retries, and running ahead</h2>
+
+  <h3>One logical call, many attempts</h3>
+  <p>The model call is wrapped in a retry ladder with backoff. From the outside it is
+  <b>one call</b> — the "started" and "completed" events bracket the whole ladder, not each
+  attempt. Retries show up as their own separate events, so nothing is hidden, but an observer
+  counting requests counts one.</p>
+
+  <div class="note green"><p><b>The exactly-once guarantee, and its exact limit.</b> A tool that
+  <em>changes</em> things runs <b>outside</b> the retried block, after a model call has already
+  succeeded. So a retried step structurally cannot re-run an edit. Read-only calls carry no such
+  promise — they run inside the retried block. If a "read-only" tool has a side channel (a
+  rate-limited API, a write to an index) it can genuinely run more than once in a step.</p></div>
+
+  <h3>Speculation: starting early</h3>
+  <p>Model responses stream in. If the first thing announced is a read-only call, Stella can start
+  running it while the rest of the response is still arriving — hiding that work behind generation.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Interactive · how far speculation gets</span>
+      <span class="hint">click a call to flip it between read and write</span></div>
+    <div id="specRow" class="ctrls" style="margin-bottom:12px"></div>
+    <div class="svgwrap"><svg id="specSvg" viewBox="0 0 900 120" width="900"><g id="specNodes"></g></svg></div>
+    <div class="detail" id="specDetail"></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card"><h4>Fenced by the first write</h4>
+      <p>Calls stream in order. The instant a call appears that is <em>not</em> read-only,
+      speculation stops for the rest of the step. Only the all-read prefix ever runs early.</p></div>
+    <div class="card"><h4>Harvested only on an exact match</h4>
+      <p>A speculative result is used only if the committed call matches byte for byte — same id,
+      same name, same input. Anything else is thrown away and reported, so the work it already did
+      stays visible instead of vanishing.</p></div>
+  </div>
+</section>
+
+<!-- ============ 14 dispatch ============ -->
+<section class="slide" id="s-dispatch" data-title="Tool dispatch">
+  <p class="eyebrow">Part 3 · 14</p>
+  <h2>Tool dispatch: running what was asked for</h2>
+  <p class="lead">The model may ask for several tools at once. Running them all in parallel would
+  be fast and wrong. Running them all one at a time would be correct and slow. Stella does neither —
+  it groups them.</p>
+
+  <p><b>The rule:</b> consecutive read-only calls form one group and run together. Anything that
+  can change something runs <b>alone</b>, as its own barrier, in the order the model asked.</p>
+
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · the scheduler</span>
+      <span class="hint">click a call to flip read ⇄ write and watch the grouping change</span>
+    </div>
+    <div id="schedRow" class="ctrls" style="margin-bottom:14px"></div>
+    <div class="svgwrap"><svg id="schedSvg" viewBox="0 0 900 200" width="900"><g id="schedLanes"></g></svg></div>
+    <div class="detail" id="schedDetail"></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card"><h4>Why it is safe</h4>
+      <p>Anything watching changeable state cannot tell this schedule apart from running
+      everything one at a time. A read placed after a write is guaranteed to see that write,
+      because the write was its own barrier and finished first.</p></div>
+    <div class="card"><h4>Why it is fast</h4>
+      <p>The common step is "read five files" or "answer three research questions". Those get real
+      parallelism. Results come back in whatever order they finish — but the list handed back to
+      the model is always in the original order, so the conversation stays identical every run.</p></div>
+  </div>
+</section>
+
+<!-- ============ 15 gates ============ -->
+<section class="slide" id="s-gates" data-title="Who can say no">
+  <p class="eyebrow">Part 3 · 15</p>
+  <h2>Who is allowed to say no</h2>
+  <p>Between "the model asked for a tool" and "the tool runs" sit several things that can refuse.
+  They all speak the same four-word vocabulary, and they fold together in one fixed order.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">The decision ladder</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 900 240" width="900"><g id="gateSvg"></g></svg></div>
+  </div>
+
+  <div class="scroller"><table>
+    <tr><th>Verb</th><th>Meaning</th><th>Effect on the chain</th></tr>
+    <tr><td class="mono">allow</td><td>Fine by me.</td><td>Keep going down the chain.</td></tr>
+    <tr><td class="mono">modify</td><td>Fine, but change the input first.</td><td>Folds in, chain continues.</td></tr>
+    <tr><td class="mono">require_approval</td><td>Ask a human.</td><td>Short-circuits, parks for an answer.</td></tr>
+    <tr><td class="mono">deny</td><td>No.</td><td>Short-circuits immediately.</td></tr>
+  </table></div>
+
+  <div class="note red"><p><b>The failure posture is the important part.</b> A checker that crashes,
+  never runs, or prints something malformed has <em>not made a decision</em>. That counts as an
+  unconditional <b>deny</b> — and no "make enforcement lenient" flag can soften it. A broken guard
+  must never read as an open door.</p></div>
+
+  <p>Plain prose printed by a hook is treated as information, not a decision — the old contract
+  (exit zero allows, non-zero blocks) still holds for hooks that never print one.</p>
+</section>
+
+<!-- ============ 16 endings ============ -->
+<section class="slide" id="s-endings" data-title="Every way a turn ends">
+  <p class="eyebrow">Part 3 · 16</p>
+  <h2>Every way a turn can end</h2>
+  <p>There are exactly these. Anything else is a bug.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num" style="color:var(--green)">NORMAL</div><h4>The model stopped asking</h4>
+      <p>It returned an answer with no tool calls. This is the good ending, and by far the most
+      common one.</p></div>
+    <div class="card"><div class="num" style="color:var(--orange)">LIMIT</div><h4>Max steps reached</h4>
+      <p>A backstop so a confused turn cannot run forever.</p></div>
+    <div class="card"><div class="num" style="color:var(--orange)">MONEY</div><h4>Budget aborted</h4>
+      <p>The spend cap was hit. Checked between steps, twice per step — before and after
+      compaction, because compaction itself can cost money.</p></div>
+    <div class="card"><div class="num" style="color:var(--red)">STUCK</div><h4>Loop detected</h4>
+      <p>Same call, same output, over and over. Ends rather than burning the budget on it.</p></div>
+    <div class="card"><div class="num" style="color:var(--blue)">HUMAN</div><h4>Soft stop (Esc)</h4>
+      <p>A choice, not a failure. Stops at the next boundary and <b>keeps every completed step</b>.
+      No error is emitted.</p></div>
+    <div class="card"><div class="num" style="color:var(--red)">HUMAN</div><h4>Hard cancel (Esc Esc)</h4>
+      <p>Stops now. The whole turn is dropped from history by the caller — because stopping
+      mid-dispatch can leave a half-finished pair of messages the next call would reject.</p></div>
+  </div>
+
+  <div class="note"><p><b>The distinction that will bite you.</b> A soft stop <em>keeps</em> the
+  transcript, so the engine carefully closes any open tool call with a placeholder result to leave
+  the history valid for the next turn. A hard cancel <em>discards</em> the transcript, so it does
+  not bother — and a caller that keeps a hard-cancelled turn's messages anyway has to close that
+  pairing itself. That is a contract, written down, not an accident.</p></div>
+</section>
+
+<!-- ============ 17 trouble ============ -->
+<section class="slide" id="s-trouble" data-title="When things go wrong">
+  <p class="eyebrow">Part 3 · 17</p>
+  <h2>When things go wrong mid-turn</h2>
+  <p>Four recovery paths run inside the loop without the user ever seeing a failure. Each one
+  exists because a real run died of it.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num">TOO BIG</div><h4>Context overflow</h4>
+      <p>The provider says "your prompt is too long". Instead of giving up, Stella recognizes that
+      specific rejection, tightens the compaction budget, and re-runs the same step. Providers
+      phrase this differently — which is exactly why each one has to declare on paper whether its
+      phrasing is recognized.</p></div>
+    <div class="card"><div class="num">TOO MUCH</div><h4>Output ceiling refused</h4>
+      <p>Some gateways price a request against the <em>ceiling you asked for</em>, not what you
+      spend — so a big ceiling gets refused even when the balance is plenty. Stella lowers the
+      ceiling and asks again. Unrecognized, this killed three benchmark runs outright.</p></div>
+    <div class="card"><div class="num">FLAKY</div><h4>Broken stream</h4>
+      <p>A stream that hangs before its first byte, or a success code with nothing in it.
+      The retry re-issues the attempt as a plain non-streaming request.</p></div>
+    <div class="card"><div class="num">WAITING</div><h4>A parked wait</h4>
+      <p>A tool can ask the turn to pause until something changes — a file, a deadline. The engine
+      polls on its own clock through the tools it already has, spending <b>zero model calls</b>,
+      and wakes the model to the difference.</p></div>
+  </div>
+
+  <div class="note blue"><p><b>The pattern to notice.</b> Every one of these turns a hard failure
+  into a tool result or a retry the model can reason about. The engine's instinct is never "abort
+  and tell the human" while a recoverable path exists — but a recovery that <em>cannot</em> be
+  trusted always fails loudly instead of quietly guessing.</p></div>
+</section>
+
+<!-- ============ 18 route A ============ -->
+<section class="slide" id="s-routeA" data-title="Route A — raw turn">
+  <p class="eyebrow">Part 4 · 18</p>
+  <h2>Route A — the raw turn</h2>
+  <p class="lead">The shortest path. No planning, no proof — the model works until it decides it
+  is done. You are the verification.</p>
+  <p><b>Doors:</b> <code>stella run --no-pipeline "…"</code> · <code>stella --plain</code> ·
+  Command Deck with <code>/pipeline</code> off.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">End to end · raw turn</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 940 170" width="940"><g id="routeA"></g></svg></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card"><h4>Best for</h4><p>Questions, small mechanical edits, anything you were
+      going to look at yourself anyway.</p></div>
+    <div class="card"><h4>Costs</h4><p>Cheapest and fastest. One model call per step and
+      nothing else.</p></div>
+    <div class="card"><h4>Gives up</h4><p>Any structural claim that the work is correct. Nothing
+      checked it but you.</p></div>
+  </div>
+
+  <div class="note"><p><b>One tool is withheld on the one-shot door.</b> The session task board.
+  A one-shot turn has nothing to resume, so a task card costs a model round trip and buys
+  legibility nobody is watching for. Delegation to sub-agents is <em>not</em> withheld — that
+  spends money to do actual work, which is a different trade.</p></div>
+</section>
+
+<!-- ============ 19 route B ============ -->
+<section class="slide" id="s-routeB" data-title="Route B — staged pipeline">
+  <p class="eyebrow">Part 4 · 19</p>
+  <h2>Route B — the staged pipeline</h2>
+  <p class="lead">The default for <code>stella run</code> and for Command Deck turns. It wraps the
+  same step loop with planning before and proof after.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">End to end · staged pipeline</span>
+      <span class="hint">the gold box is the whole of Part 3</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 940 250" width="940"><g id="routeB"></g></svg></div>
+  </div>
+
+  <h3>Two rules that shape the whole thing</h3>
+  <div class="grid g2">
+    <div class="card"><h4>Verification buys no model call</h4>
+      <p>The verdict is not a model's opinion. It comes from measurements — did a command flip
+      from failing to passing, what does the diff say. There is exactly <b>one</b> extra model
+      call in the whole verification story, and it is the one that <em>writes the test</em>. That
+      survives because it creates the measuring stick rather than replacing it.</p></div>
+    <div class="card"><h4>The pipeline owns the ending</h4>
+      <p>The engine emits its own "complete" event, which is right for one turn and wrong for a
+      plan with a revise loop. So each turn gets a private channel; the pipeline forwards
+      everything except those, and emits the real ending itself.</p></div>
+  </div>
+</section>
+
+<!-- ============ 20 stage walker ============ -->
+<section class="slide" id="s-stages" data-title="Pipeline stages">
+  <p class="eyebrow">Part 4 · 20</p>
+  <h2>The stages, one at a time</h2>
+  <div class="viz">
+    <div class="vhead">
+      <span class="vtitle">Interactive · stage walker</span>
+      <div class="ctrls">
+        <button class="btn sm" id="stPrev">◀ Prev</button>
+        <button class="btn sm" id="stNext">Next ▶</button>
+      </div>
+    </div>
+    <div class="svgwrap"><svg id="stageSvg" viewBox="0 0 940 210" width="940"><g id="stageNodes"></g></svg></div>
+    <div class="detail" id="stageDetail"></div>
+  </div>
+  <div class="note blue"><p><b>Conditional means conditional.</b> A simple lookup skips planning
+  entirely. Research runs only when triage names actual questions. Scope review fires only above
+  a threshold. The witness is authored only when there is no test command <em>and</em> the change
+  turns out to need one. A cheap task should not pay for ceremony it cannot use.</p></div>
+</section>
+
+<!-- ============ 21 witness ============ -->
+<section class="slide" id="s-witness" data-title="The witness">
+  <p class="eyebrow">Part 4 · 21</p>
+  <h2>The witness — proof, not opinion</h2>
+  <p class="lead">Stella's definition of "done" is a test that <b>fails before the change and
+  passes after</b>. Not a model saying it looks right.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">The flip</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 900 150" width="900"><g id="flipSvg"></g></svg></div>
+  </div>
+
+  <h3>Four rules that make the proof mean something</h3>
+  <div class="grid g2">
+    <div class="card"><div class="num">01</div><h4>A different model writes the test</h4>
+      <p>Never the model that did the work. Someone marking their own homework proves nothing.</p></div>
+    <div class="card"><div class="num">02</div><h4>The author is blind to the change</h4>
+      <p>It works in a clean copy of the tree from <em>before</em> the work. It cannot see the
+      diff — so it cannot write a test that just restates the patch.</p></div>
+    <div class="card"><div class="num">03</div><h4>Three tools, and no more</h4>
+      <p>Read a file, list files by pattern, create exactly one test. No shell, no writes, no
+      network. Enforced by its executor, not by asking nicely in a prompt.</p></div>
+    <div class="card"><div class="num">04</div><h4>Tampering voids the credit</h4>
+      <p>The test file's identity is pinned. A worker that edits the witness does not get credit
+      for "passing" it.</p></div>
+  </div>
+
+  <div class="note"><p><b>Honest failure is a feature.</b> If a witness cannot be <em>produced</em>
+  — no test runner answered, the author declined — the run degrades to "unverified", with the
+  reason stated. If a witness cannot be <em>trusted</em> — tampering, wrong file, identity
+  mismatch — the candidate is stopped. Those are deliberately different outcomes.</p></div>
+</section>
+
+<!-- ============ 22 route C ============ -->
+<section class="slide" id="s-routeC" data-title="Route C — sub-agents">
+  <p class="eyebrow">Part 4 · 22</p>
+  <h2>Route C — a turn inside a turn</h2>
+  <p class="lead">A sub-agent is a child turn whose transcript is <b>thrown away</b>. Only a short
+  summary comes back.</p>
+  <p>The point is not speed — fleet mode already does parallelism. The point is <b>context
+  economy</b>. Work the parent would otherwise carry, and re-send on every future step for the
+  rest of the session, is absorbed by a conversation that simply goes out of scope.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Interactive · what the parent keeps</span>
+      <span class="hint">toggle delegation on and off</span></div>
+    <div class="ctrls" style="margin-bottom:12px">
+      <button class="btn on" id="subOff">Parent does it itself</button>
+      <button class="btn" id="subOn">Parent delegates</button>
+    </div>
+    <div class="svgwrap"><svg id="subSvg" viewBox="0 0 900 180" width="900"><g id="subNodes"></g></svg></div>
+    <div class="detail" id="subDetail"></div>
+  </div>
+
+  <h3>Four rules</h3>
+  <div class="scroller"><table>
+    <tr><th>Rule</th><th>Why</th></tr>
+    <tr><td>The budget is <b>carved</b>, not granted</td><td>The child gets the smaller of what it
+      asked for and what the parent has left, so a spend limit stays a hard ceiling once turns nest.</td></tr>
+    <tr><td>Spend settles back <b>exactly once</b>, on every path</td><td>Including failure — a
+      child that aborted still spent what it spent.</td></tr>
+    <tr><td>Failure is a value, never an error</td><td>A failed child returns a typed outcome. It
+      cannot kill the parent turn. An aborted child even salvages its last answer.</td></tr>
+    <tr><td>Steering is <b>filtered</b>, not inherited</td><td>Draining steering is destructive. A
+      child that inherited it would swallow a message the user aimed at the parent. So the child
+      forwards the stop signal and returns nothing for the drain.</td></tr>
+  </table></div>
+
+  <div class="note red"><p><b>A real bug worth knowing.</b> The public constructor cannot carry the
+  gate, steering, and hooks — those are private builder fields. So a hand-rolled child engine
+  silently drops all three. Goal mode shipped with exactly that bug. Never hand-roll a child;
+  call the sub-agent function, which builds it inside the crate with every seam attached.</p></div>
+</section>
+
+<!-- ============ 23 route D ============ -->
+<section class="slide" id="s-routeD" data-title="Route D — goal mode">
+  <p class="eyebrow">Part 4 · 23</p>
+  <h2>Route D — goal mode</h2>
+  <p class="lead">Goal mode flips the contract: you say <b>what must be true when it is done</b>,
+  not what to do. Then it works in rounds until that is true.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">End to end · goal rounds</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 940 220" width="940"><g id="routeD"></g></svg></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card"><h4>The verifier is independent</h4>
+      <p>Routed to a different model family from the worker whenever possible, and it judges from
+      <b>evidence</b> — running tests, reading CI, inspecting files — never from the worker's
+      claims about itself.</p></div>
+    <div class="card"><h4>The verifier physically cannot cheat</h4>
+      <p>It holds a <b>read-only view</b> of the same tool stack. Only tools marked read-only are
+      even visible to it. It structurally cannot edit its way to a passing verdict.</p></div>
+  </div>
+
+  <p>Each working round is a pipeline run by default; <code>--no-pipeline</code> makes rounds raw
+  turns instead. Two layers of verification is real rigor and you pay for it in money and time —
+  drop the inner one when the goal verifier alone is enough.</p>
+
+  <div class="note"><p><b><code>stella monitor</code> is not a seventh route.</b> It is goal mode
+  with the goal pinned to "the latest CI run for this target is fully green". Same machinery,
+  fixed objective. Only a green board ends the loop.</p></div>
+
+  <div class="note blue"><p><b>Ending honestly.</b> If a round cap, a spend limit, or a worker
+  abort ends the run first, it ends as <b>not met</b>. It never rounds up to success.</p></div>
+</section>
+
+<!-- ============ 24 route E ============ -->
+<section class="slide" id="s-routeE" data-title="Route E — fleet">
+  <p class="eyebrow">Part 4 · 24</p>
+  <h2>Route E — fleet workers</h2>
+  <p class="lead">For when the work is <b>many tasks</b>, not one. A dependency-ordered task graph
+  fans out to parallel workers.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">End to end · fleet</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 940 230" width="940"><g id="routeE"></g></svg></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card"><h4>Same engine per task</h4>
+      <p>Each worker drives the pipeline when available, the raw loop otherwise. Nothing new
+      below the waterline.</p></div>
+    <div class="card"><h4>Two isolation modes</h4>
+      <p>One shared tree with cooperative file claims, or a dedicated private worktree for tasks
+      marked isolated.</p></div>
+    <div class="card"><h4>Its own ledger</h4>
+      <p>Every run, task, attempt, commit, and dollar lands in a separate fleet database for
+      later review.</p></div>
+  </div>
+
+  <div class="note"><p><b>One budget difference from sub-agents.</b> A deck sub-agent's spend
+  lands in the session's <em>shared</em> guard. Fleet children each run under their <em>own
+  slice</em> of the cap. Same word — "child" — different money model.</p></div>
+  <p style="font-size:14px;color:var(--ink3)">Fleet mode gets its own deck. What matters here is
+  that it does not introduce a third loop.</p>
+</section>
+
+<!-- ============ 25 route F ============ -->
+<section class="slide" id="s-routeF" data-title="Route F — serve">
+  <p class="eyebrow">Part 4 · 25</p>
+  <h2>Route F — serve, one step at a time</h2>
+  <p class="lead">The only door that drives <code>run_step</code> itself instead of letting
+  <code>run_turn</code> loop. That single difference is what makes it durable.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Who drives the loop</span></div>
+    <div class="svgwrap"><svg viewBox="0 0 900 190" width="900"><g id="routeF"></g></svg></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card"><h4>The host holds the crank</h4>
+      <p>It calls one step, gets a state back, can save that state to disk, and can pick up later
+      — even in a different process. The engine holds no conversation state of its own, which is
+      what makes this possible at all.</p></div>
+    <div class="card"><h4>The engine holds no authority</h4>
+      <p>Every model call and every tool call is handed back out to the host to perform. The
+      engine decides; the host acts. It is its own binary and nothing in the CLI links it.</p></div>
+  </div>
+
+  <div class="note"><p><b>Careful with "resume".</b> The CLI does not resume at step granularity —
+  it resumes at <em>transcript</em> granularity, reopening the conversation at the checkpoint's
+  step boundary. Serve stores a step state and hands it back on request but accepts none in
+  return. Both of those are declared positions, written down in a parity table, not oversights.</p></div>
+</section>
+
+<!-- ============ 26 compare ============ -->
+<section class="slide" id="s-compare" data-title="All six routes">
+  <p class="eyebrow">Part 4 · 26</p>
+  <h2>All six routes side by side</h2>
+  <div class="scroller"><table>
+    <tr><th>Route</th><th>Command</th><th>Plans first?</th><th>Proves after?</th><th>Loop driver</th><th>Best for</th></tr>
+    <tr><td>A · Raw turn</td><td class="mono">run --no-pipeline<br>--plain</td><td>No</td><td>No</td><td class="mono">run_turn</td><td>Questions, small edits</td></tr>
+    <tr><td>B · Pipeline</td><td class="mono">stella run<br>stella (deck)</td><td>Yes</td><td>Yes</td><td class="mono">pipeline → run_turn</td><td>Work that must be right</td></tr>
+    <tr><td>C · Sub-agent</td><td class="mono">task_assign<br>(agent-initiated)</td><td>No</td><td>Parent reviews</td><td class="mono">run_turn (child)</td><td>Noisy side quests</td></tr>
+    <tr><td>D · Goal</td><td class="mono">stella goal<br>stella monitor</td><td>Per round</td><td>Independent verifier</td><td class="mono">rounds → pipeline/run_turn</td><td>Clear outcome, unclear steps</td></tr>
+    <tr><td>E · Fleet</td><td class="mono">stella fleet</td><td>Per task</td><td>Per task</td><td class="mono">per task → pipeline/run_turn</td><td>A backlog, not a task</td></tr>
+    <tr><td>F · Serve</td><td class="mono">stella-serve</td><td>Host's choice</td><td>Host's choice</td><td class="mono">run_step (host drives)</td><td>Durable hosts, checkpoints</td></tr>
+  </table></div>
+
+  <div class="note green"><p><b>Read the "loop driver" column top to bottom.</b> Every row ends at
+  the same two functions. That is the entire "how many loops do we have" answer, in one column.</p></div>
+
+  <h3>Each route stamps its own label on the record</h3>
+  <p>Every turn writes an execution record tagged with which door it came through —
+  <code>run</code>, <code>chat</code>, <code>deck</code>, <code>deck-sub</code>,
+  <code>goal</code>, <code>pipeline</code>. That is why a cost row in the dashboard always traces
+  back to a door. The store is ordinary SQLite; you can ask it directly.</p>
+</section>
+
+<!-- ============ 27 record ============ -->
+<section class="slide" id="s-record" data-title="Writing the turn down">
+  <p class="eyebrow">Part 5 · 27</p>
+  <h2>Writing the turn down</h2>
+  <p>When the turn settles, several things get recorded — in different places, for different
+  readers.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num">STORE</div><h4>The execution record</h4>
+      <p>Files touched, tools used, memories cited, cost, outcome, which door. Lives in the
+      workspace's local database. Feeds stats and the dashboard.</p></div>
+    <div class="card"><div class="num">EVENTS</div><h4>The event journal</h4>
+      <p>A line per thing that happened. This is ground truth — the summaries and dashboards are
+      all just projections of it. When a run's behavior is in question, this is the file to open,
+      never the summary.</p></div>
+    <div class="card"><div class="num">RECEIPTS</div><h4>Context receipts</h4>
+      <p>What went into each model call, recorded as fingerprints — never the actual text. Enough
+      to audit, not enough to leak.</p></div>
+    <div class="card"><div class="num">HUB</div><h4>The cross-project hub</h4>
+      <p>Per-call rows copied up to a user-wide database so you can ask "what did I spend across
+      every project this month".</p></div>
+  </div>
+
+  <div class="note red"><p><b>Zero telemetry leaves the machine by default.</b> Not "anonymized",
+  not "aggregated" — zero. The only network traffic is to the model provider you chose. This is
+  enforced by a reviewed allow-list plus a test harness, so adding a column that could carry
+  content fails the build until a human answers "is this content?".</p></div>
+</section>
+
+<!-- ============ 28 reflect ============ -->
+<section class="slide" id="s-reflect" data-title="Reflection → memories → skills">
+  <p class="eyebrow">Part 5 · 28</p>
+  <h2>Reflection → memories → skills</h2>
+  <p class="lead">After a turn that did real work — success <b>or</b> failure — the agent looks
+  back at what it just did and writes down what it learned.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Interactive · the learning path</span>
+      <span class="hint">click a stage</span></div>
+    <div class="svgwrap"><svg id="learnSvg" viewBox="0 0 940 170" width="940"><g id="learnNodes"></g></svg></div>
+    <div class="detail" id="learnDetail"></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card"><h4>One cheap call</h4>
+      <p>Reflection runs on the cheap tier, not the worker's model. It produces at most a few
+      lessons — never an essay.</p></div>
+    <div class="card"><h4>Failure is the best signal</h4>
+      <p>A failed turn gets a different, root-cause prompt: "why did this fail?" That is the
+      highest-value learning a session produces.</p></div>
+    <div class="card"><h4>Repetition promotes</h4>
+      <p>Lessons land in a log. When the same lesson recurs enough times, it is promoted
+      automatically into a durable skill file.</p></div>
+  </div>
+
+  <div class="note blue"><p><b>And then the loop closes.</b> That skill file is exactly what the
+  recall step at the start of the next turn can select and paste in. Slide 08 and this slide are
+  the two ends of the same circle.</p></div>
+  <p style="font-size:14px;color:var(--ink3)">The full story — skill mining, promotion tiers,
+  self-tuning — is deck two, <b>Stella Self-Improvement</b>.</p>
+</section>
+
+<!-- ============ 29 foundry ============ -->
+<section class="slide" id="s-foundry" data-title="The tool foundry">
+  <p class="eyebrow">Part 5 · 29</p>
+  <h2>The tool foundry (short version)</h2>
+  <p class="lead">If the agent keeps typing the same <em>shape</em> of shell command by hand, it
+  should be offered a real tool for it instead.</p>
+
+  <div class="viz">
+    <div class="vhead"><span class="vtitle">Interactive · from commands to a proposal</span>
+      <span class="hint">click a history to see whether it earns a tool</span></div>
+    <div class="ctrls" id="foundryCases" style="margin-bottom:12px"></div>
+    <div class="svgwrap"><svg id="foundrySvg" viewBox="0 0 900 160" width="900"><g id="foundryRows"></g></svg></div>
+    <div class="detail" id="foundryDetail"></div>
+  </div>
+
+  <h3>How it works, in three sentences</h3>
+  <ol>
+    <li>Each command is reduced to a <b>signature</b>: the parts that stay (program name,
+      subcommands, flag names) kept as-is, the parts that vary (quoted text, paths, numbers)
+      replaced by typed holes.</li>
+    <li>Two commands with the same signature are the same shape — and the holes become the
+      proposed tool's parameters.</li>
+    <li>A shape must show <b>enough variation</b> to not be an exact repeat, and <b>enough
+      reuse</b> to not be a shell wearing a costume, before anything is proposed.</li>
+  </ol>
+
+  <div class="note"><p><b>Why the upper bound exists.</b> Pointed at a real 81,684-command history
+  with only a lower bound in place, it produced 2,073 proposals — an inbox nobody would ever read.
+  A shape used 1,954 times with 1,938 different argument sets is not a tool. That is
+  <code>sed</code>, and minting a "tool" for it would be wrapping the shell in the shell.</p></div>
+
+  <div class="note blue"><p><b>Contrast with loop detection.</b> Loop detection looks for a turn
+  that is <em>stuck</em> — same call, same output, again and again. The foundry looks for the
+  opposite: the same shape reused <em>with variation</em>. They are deliberately complementary,
+  which is why an exact repeat is explicitly not a foundry proposal.</p></div>
+</section>
+
+<!-- ============ 30 next ============ -->
+<section class="slide" id="s-next" data-title="What comes next">
+  <p class="eyebrow">Part 5 · 30</p>
+  <h2>What the next two decks cover</h2>
+  <div class="grid g3">
+    <div class="card"><div class="num" style="color:var(--gold)">THIS DECK</div>
+      <h4>Stella Turn Loop — Step by Step</h4>
+      <p>The engine. Prompt in, twelve phases, six doors, answer out, lesson recorded.</p></div>
+    <div class="card"><div class="num" style="color:var(--purple)">DECK TWO</div>
+      <h4>Stella Self-Improvement</h4>
+      <p>Reflection in depth, skill mining and promotion tiers, the tool foundry's authoring and
+      adoption gates, self-tuning, and how a change is proven better rather than assumed better.</p></div>
+    <div class="card"><div class="num" style="color:var(--cyan)">DECK THREE</div>
+      <h4>Self-Driving &amp; Alternate Modes</h4>
+      <p>Goal mode and CI monitoring in depth, fleet planning and waves, worktree isolation, and
+      the self-driving missions on top of them.</p></div>
+  </div>
+
+  <h3>If you remember five things from this deck</h3>
+  <ol>
+    <li>There is <b>one</b> step loop and <b>one</b> optional wrapper. Six doors, two loops.</li>
+    <li>Twelve phases per step. Six ask "should we call the model", one calls it, five handle
+      the answer.</li>
+    <li>Turns end at <b>step boundaries</b>, never mid-tool. The budget cannot abort anything by
+      itself — that is deliberate.</li>
+    <li>Reads run in parallel; anything that writes runs alone, in order.</li>
+    <li>Done means a test <b>flipped</b>, not a model said so.</li>
+  </ol>
+</section>
+
+<!-- ============ A1 code map ============ -->
+<section class="slide" id="s-map" data-title="Code map">
+  <p class="eyebrow">Appendix · A1</p>
+  <h2>Code map — where each phase lives</h2>
+  <div class="scroller"><table>
+    <tr><th>What</th><th>File</th></tr>
+    <tr><td>The turn and the step loop</td><td class="mono">crates/stella-core/src/driver.rs</td></tr>
+    <tr><td>Budget check between steps</td><td class="mono">stella-core/src/driver/settlement.rs</td></tr>
+    <tr><td>Tool grouping and barriers</td><td class="mono">stella-core/src/driver/dispatch.rs</td></tr>
+    <tr><td>Parked waits</td><td class="mono">stella-core/src/waiting.rs + driver/waiting.rs</td></tr>
+    <tr><td>Context-overflow recovery</td><td class="mono">stella-core/src/driver/overflow_recovery.rs</td></tr>
+    <tr><td>Output-ceiling recovery</td><td class="mono">stella-core/src/driver/output_budget_recovery.rs</td></tr>
+    <tr><td>Compaction's four mechanisms</td><td class="mono">stella-core/src/compaction.rs</td></tr>
+    <tr><td>Loop detection</td><td class="mono">stella-core/src/loop_detect.rs</td></tr>
+    <tr><td>Retry and backoff</td><td class="mono">stella-core/src/retry.rs</td></tr>
+    <tr><td>Speculation</td><td class="mono">stella-core/src/speculation.rs</td></tr>
+    <tr><td>Sub-agents</td><td class="mono">stella-core/src/subagent.rs</td></tr>
+    <tr><td>The goal loop</td><td class="mono">stella-core/src/goal.rs</td></tr>
+    <tr><td>The port boundary</td><td class="mono">stella-core/src/ports.rs</td></tr>
+    <tr><td>Hook decision folding</td><td class="mono">stella-core/src/hooks/decision.rs</td></tr>
+    <tr><td>The tool foundry detector</td><td class="mono">stella-core/src/tool_foundry.rs</td></tr>
+    <tr><td>Stage sequencing</td><td class="mono">crates/stella-pipeline/src/pipeline.rs</td></tr>
+    <tr><td>Witness authoring and acceptance</td><td class="mono">stella-pipeline/src/witness.rs + pipeline/witness_stage.rs</td></tr>
+    <tr><td>The verdict ladder</td><td class="mono">stella-pipeline/src/verify.rs</td></tr>
+    <tr><td>Prompt assembly</td><td class="mono">crates/stella-cli/src/agent/prompt.rs</td></tr>
+    <tr><td>Recall, reflection, skill promotion</td><td class="mono">crates/stella-cli/src/memory.rs</td></tr>
+  </table></div>
+  <p>Two documents are worth reading in full before your first engine change:
+  <code>crates/stella-core/README.md</code> and
+  <code>website/content/docs/agent-engine-paths.mdx</code>.</p>
+</section>
+
+<!-- ============ A2 cheat ============ -->
+<section class="slide" id="s-cheat" data-title="Cheat sheet">
+  <p class="eyebrow">Appendix · A2</p>
+  <h2>One-page cheat sheet</h2>
+  <div class="grid g2">
+    <div class="card"><h4>The twelve phases, in order</h4>
+      <ol style="font-size:13.5px;margin:0;padding-left:18px">
+        <li>Cancel check</li><li>Pause gate</li><li>Steering drain</li><li>Soft-stop check</li>
+        <li>Budget check</li><li>Snapshot result identities</li><li>Compaction pass</li>
+        <li>Loop detection (+ 2nd budget check)</li><li>Model call, with retries</li>
+        <li>Committed-result bookkeeping</li><li>Tool dispatch</li><li>Parked wait, then step++</li>
+      </ol></div>
+    <div class="card"><h4>The order rules that are bug fixes</h4>
+      <ul style="font-size:13.5px;margin:0">
+        <li>Snapshot <b>before</b> compaction — compaction rewrites results in place.</li>
+        <li>Steering drains <b>before</b> compaction — so the pass sees the new message.</li>
+        <li>Steering drains <b>before</b> the soft-stop check — a note typed just before Esc survives.</li>
+        <li>Cancel check <b>before</b> the pause gate — a paused-and-cancelled turn must not park forever.</li>
+      </ul></div>
+    <div class="card"><h4>Parallel or not?</h4>
+      <ul style="font-size:13.5px;margin:0">
+        <li>Read-only, consecutive → parallel group.</li>
+        <li>Anything that writes → alone, in order.</li>
+        <li>Results always returned in original order.</li>
+      </ul></div>
+    <div class="card"><h4>Money</h4>
+      <ul style="font-size:13.5px;margin:0">
+        <li>Checked twice per step, always between steps.</li>
+        <li>Budget code cannot abort — it recommends.</li>
+        <li>Child budgets are carved from the parent's remainder.</li>
+        <li>Child spend settles back exactly once, even on failure.</li>
+      </ul></div>
+  </div>
+  <div class="note green"><p><b>The sentence to carry around.</b> "One model call per step, twelve
+  phases around it, and nothing ends a turn except at a step boundary." Everything else is
+  detail you can look up.</p></div>
+</section>
+
+</div><!-- /deck -->
+
+<div id="navbar"><div class="inner">
+  <button id="navHome">Contents</button>
+  <button id="navPrev">◀</button>
+  <button id="navNext">▶</button>
+  <span class="pos" id="navPos">1 / 1</span>
+  <span class="title" id="navTitle"></span>
+</div></div>
+
+<script>
+(function(){
+"use strict";
+var NS="http://www.w3.org/2000/svg";
+function el(tag,attrs,text){var n=document.createElementNS(NS,tag);
+  for(var k in attrs){n.setAttribute(k,attrs[k]);} if(text!=null){n.textContent=text;} return n;}
+function box(g,x,y,w,h,fill,stroke,r){g.appendChild(el("rect",{x:x,y:y,width:w,height:h,rx:r==null?9:r,
+  fill:fill,stroke:stroke,"stroke-width":1.4}));}
+function txt(g,x,y,s,size,fill,anchor,weight,cls){
+  var n=el("text",{x:x,y:y,"font-size":size||12,fill:fill||"#a6b0c4","text-anchor":anchor||"middle"},s);
+  if(weight)n.setAttribute("font-weight",weight); if(cls)n.setAttribute("class",cls); g.appendChild(n); return n;}
+function clear(n){while(n.firstChild)n.removeChild(n.firstChild);}
+function setDetail(node,title,paras,meta){
+  var h="<h4>"+title+"</h4>";
+  paras.forEach(function(p){h+="<p>"+p+"</p>";});
+  if(meta)h+='<p class="meta">'+meta+"</p>";
+  node.innerHTML=h;
+}
+
+/* ================= deck navigation ================= */
+var slides=[].slice.call(document.querySelectorAll(".slide"));
+var cur=0;
+function go(i){ i=Math.max(0,Math.min(slides.length-1,i)); cur=i;
+  slides[i].scrollIntoView({behavior:"smooth",block:"start"}); paint(); }
+function paint(){
+  document.getElementById("navPos").textContent=(cur+1)+" / "+slides.length;
+  document.getElementById("navTitle").textContent=slides[cur].dataset.title||"";
+  document.getElementById("progress").style.width=((cur+1)/slides.length*100)+"%";
+}
+document.getElementById("navNext").onclick=function(){go(cur+1);};
+document.getElementById("navPrev").onclick=function(){go(cur-1);};
+document.getElementById("navHome").onclick=function(){go(1);};
+document.addEventListener("keydown",function(e){
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName))return;
+  if(e.key==="ArrowRight"||e.key==="ArrowDown"||e.key==="j"||e.key===" "){e.preventDefault();go(cur+1);}
+  else if(e.key==="ArrowLeft"||e.key==="ArrowUp"||e.key==="k"){e.preventDefault();go(cur-1);}
+  else if(e.key==="Home"){e.preventDefault();go(0);}
+  else if(e.key==="End"){e.preventDefault();go(slides.length-1);}
+});
+var obs=new IntersectionObserver(function(es){
+  es.forEach(function(en){ if(en.isIntersecting){ var i=slides.indexOf(en.target);
+    if(i>=0&&i!==cur){cur=i;paint();} } });
+},{rootMargin:"-45% 0px -50% 0px"});
+slides.forEach(function(s){obs.observe(s);});
+paint();
+
+/* ================= 03 · doors ================= */
+var DOORS=[
+ {id:"run",label:"stella run",sub:"one-shot",pipe:true,
+  d:["The scripting workhorse. One prompt in, verified work out, an exit code back.",
+     "Goes through the full staged pipeline by default. Add <code>--test-command</code> and verification gets a real measuring stick — a change that flips a failing test to passing can finish without spending a verifier call at all."],
+  m:"execution kind: pipeline · --no-pipeline drops to the raw loop"},
+ {id:"deck",label:"stella",sub:"Command Deck",pipe:true,
+  d:["The tabbed terminal app, and what you get by default on a real terminal. Each prompt is one lead-agent turn.",
+     "Two things only deck turns get: taps that feed the live FILES and DIFF tabs, and cooperative file claims so parallel workers never fight over the same file. Mid-turn steering and soft-stop live here too."],
+  m:"execution kind: deck-pipeline / deck"},
+ {id:"goal",label:"stella goal",sub:"+ stella monitor",pipe:true,
+  d:["You state what must be true when it is done. Rounds run until an independent verifier agrees, or a backstop ends it honestly as not met.",
+     "<code>stella monitor</code> is this same door with the goal pinned to “CI is green”."],
+  m:"execution kind: goal · rounds are pipeline runs by default"},
+ {id:"fleet",label:"stella fleet",sub:"many tasks",pipe:true,
+  d:["A dependency-ordered task graph fanned out to parallel workers, in one shared tree or in private worktrees.",
+     "Each worker drives the pipeline when available and the raw loop otherwise. Every attempt, commit and dollar lands in the fleet ledger."],
+  m:"execution kind: fleet ledger"},
+ {id:"plain",label:"stella --plain",sub:"raw · direct",pipe:false,
+  d:["The line-based REPL — and what you get on any non-terminal input or output. One raw turn per prompt, sharing one conversation.",
+     "This door calls <code>run_turn</code> and lets the engine loop on its own. No stages, no verifier: you verify, live, between prompts."],
+  m:"execution kind: chat · also stella run --no-pipeline"},
+ {id:"serve",label:"stella-serve",sub:"raw · step-wise",pipe:false,
+  d:["A headless engine server a host process drives over the wire. This is the one door that calls <code>run_step</code> itself, one step at a time.",
+     "That is what lets a durable host save its place between steps and resume later. The engine holds no ambient authority — every model and tool call is handed back to the host."],
+  m:"its own binary · nothing in the CLI links it"}
+];
+(function(){
+  var g=document.getElementById("doors"), links=document.getElementById("doorLinks");
+  var svg=document.getElementById("doorSvg"), det=document.getElementById("doorDetail");
+  var cap=document.getElementById("doorCaption");
+  DOORS.forEach(function(d,i){
+    var y=46+i*60;
+    var gg=el("g",{"class":"door","data-id":d.id,style:"cursor:pointer"});
+    gg.appendChild(el("rect",{x:30,y:y,width:200,height:48,rx:9,fill:"#1c2130",stroke:"#333c52","stroke-width":1.4}));
+    var t1=el("text",{x:44,y:y+21,"font-size":13.5,fill:"#e8ecf4","font-weight":600,"class":"mono"},d.label);
+    var t2=el("text",{x:44,y:y+38,"font-size":11,fill:"#6f7c95"},d.sub);
+    gg.appendChild(t1);gg.appendChild(t2);
+    g.appendChild(gg);
+    var tx=d.pipe?470:730, mid=y+24;
+    var path=el("path",{d:"M230 "+mid+" C 330 "+mid+", 360 161, "+tx+" 161",stroke:"#333c52",
+      "stroke-width":1.4,fill:"none","marker-end":"url(#ar2)","data-link":d.id});
+    links.appendChild(path);
+    function hi(on){
+      gg.querySelector("rect").setAttribute("stroke",on?"#e2b869":"#333c52");
+      t1.setAttribute("fill",on?"#e2b869":"#e8ecf4");
+      path.setAttribute("stroke",on?"#e2b869":"#333c52");
+      path.setAttribute("stroke-width",on?2.2:1.4);
+      path.setAttribute("marker-end",on?"url(#ar2h)":"url(#ar2)");
+    }
+    gg.addEventListener("mouseenter",function(){hi(true);});
+    gg.addEventListener("mouseleave",function(){if(sel!==d.id)hi(false);});
+    gg._hi=hi;
+  });
+  var sel=null;
+  svg.addEventListener("click",function(e){
+    var n=e.target.closest?e.target.closest(".door"):null; if(!n)return;
+    var id=n.dataset.id; var d=DOORS.filter(function(x){return x.id===id;})[0];
+    [].slice.call(g.children).forEach(function(c){c._hi&&c._hi(false);});
+    sel=id; n._hi(true);
+    setDetail(det,d.label+" — "+d.sub,d.d,d.m);
+    cap.textContent=d.pipe?"→ through the staged pipeline, whose execute stage calls the step loop"
+                          :"→ straight to the step loop, no stages at all";
+  });
+})();
+
+/* ================= 05 · pre-steps ================= */
+(function(){
+  var g=document.getElementById("preSteps");
+  var S=[["Enter","text captured"],["Hooks","session start"],["Prefix","stable bytes"],
+         ["Recall","this prompt"],["Budget","+ record"],["Route","raw or staged"]];
+  S.forEach(function(s,i){
+    var x=20+i*152;
+    box(g,x,40,130,56,"#1c2130","#333c52");
+    txt(g,x+65,63,s[0],13.5,"#e8ecf4","middle",600);
+    txt(g,x+65,81,s[1],11,"#6f7c95");
+    if(i<S.length-1) g.appendChild(el("path",{d:"M"+(x+134)+" 68 L"+(x+148)+" 68",
+      stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  });
+  txt(g,470,118,"only now does anything reach a model",12,"#e2b869");
+})();
+
+/* ================= 06 · prompt layers ================= */
+var LAYERS=[
+ {n:"1",t:"Base instructions",c:"gold",
+  d:["Who the agent is and how it behaves. Can be replaced per agent kind — the worker inside the pipeline gets a different base than a plain chat turn."],
+  m:"SYSTEM_PROMPT / PIPELINE_SYSTEM_PROMPT"},
+ {n:"2",t:"Session environment",c:"gold",
+  d:["The facts the model would otherwise waste its first turns discovering: working directory, whether this is a git checkout, the platform, the OS release, the shell dialect.",
+     "The admission rule is strict — only what is <b>session-constant and free</b>. A process cannot change its OS mid-run, so those are safe. Today's date is useful and genuinely changes, so it is deliberately <em>not</em> here."],
+  m:"append_session_environment"},
+ {n:"3",t:"Workspace memories",c:"gold",
+  d:["Durable lessons kept as markdown files in the workspace. Loaded once per session and joined in <b>sorted filename order</b> — sorted so the bytes cannot depend on how the filesystem happened to list them."],
+  m:".stella/memories/*.md"},
+ {n:"4",t:"Published rules",c:"gold",
+  d:["This repository's own steering policy, one record per file, tracked in git so it travels with the repo to a teammate's machine.",
+     "Rendered grouped by force, each carrying a handle so the model can name what it followed. Capped — and if pinned records overflow the cap, the dropped ones are <b>named</b>, never silently discarded."],
+  m:".stella/rules/*.toml"},
+ {n:"5",t:"Recall block",c:"blue",
+  d:["<b>This is the volatile layer, and it is deliberately last.</b> Memories and skills selected for <em>this specific prompt</em>, plus today's date.",
+     "Because it sits after everything above, changing it every turn cannot disturb a single byte of the cached prefix."],
+  m:"crates/stella-cli/src/memory.rs"},
+ {n:"6",t:"The conversation",c:"blue",
+  d:["The actual messages: the user's prompt, the assistant's replies, and every tool result so far. This is what compaction rewrites when it grows too large."],
+  m:"borrowed &mut — the engine owns none of it"}
+];
+(function(){
+  var wrap=document.getElementById("layerStack"), det=document.getElementById("layerDetail");
+  LAYERS.forEach(function(L,i){
+    var d=document.createElement("div");
+    var stable=L.c==="gold";
+    d.style.cssText="display:flex;gap:12px;align-items:center;padding:11px 14px;margin-bottom:6px;"+
+      "border-radius:8px;cursor:pointer;transition:.12s;background:#1c2130;border:1px solid "+
+      (stable?"rgba(226,184,105,.35)":"rgba(104,168,240,.35)");
+    d.innerHTML='<span class="mono" style="font-size:11px;color:'+(stable?"#e2b869":"#68a8f0")+
+      ';min-width:16px">'+L.n+'</span>'+
+      '<span style="font-size:14.5px;color:#e8ecf4;font-weight:560;flex:1">'+L.t+'</span>'+
+      '<span class="mono" style="font-size:10.5px;letter-spacing:.08em;color:'+
+      (stable?"#e2b869":"#68a8f0")+'">'+(stable?"STABLE · CACHED":"VOLATILE")+'</span>';
+    d.onclick=function(){
+      [].slice.call(wrap.children).forEach(function(c){c.style.background="#1c2130";});
+      d.style.background="#252b3b";
+      setDetail(det,L.n+" · "+L.t,L.d,L.m);
+    };
+    wrap.appendChild(d);
+  });
+})();
+
+/* ================= 07 · cache ================= */
+(function(){
+  var g=document.getElementById("cacheBars"), det=document.getElementById("cacheDetail");
+  var btns=[].slice.call(document.querySelectorAll("[data-cache]"));
+  function draw(mode){
+    clear(g);
+    var good = mode==="good";
+    var segs = good
+      ? [["Base",150,"#e2b869"],["Environment",120,"#e2b869"],["Memories",130,"#e2b869"],
+         ["Rules",120,"#e2b869"],["Recall (changes!)",180,"#68a8f0"]]
+      : [["Recall (changes!)",180,"#68a8f0"],["Base",150,"#e2b869"],["Environment",120,"#e2b869"],
+         ["Memories",130,"#e2b869"],["Rules",120,"#e2b869"]];
+    var x=30, firstVolatile=null;
+    segs.forEach(function(s,i){
+      if(s[2]==="#68a8f0" && firstVolatile===null) firstVolatile=x;
+      var cached = firstVolatile===null;
+      g.appendChild(el("rect",{x:x,y:48,width:s[1]-4,height:46,rx:6,
+        fill:cached?"rgba(226,184,105,.18)":"rgba(240,115,106,.14)",
+        stroke:cached?"#e2b869":"#f0736a","stroke-width":1.4}));
+      txt(g,x+(s[1]-4)/2,71,s[0],11.5,cached?"#e2b869":"#f0736a",null,600);
+      txt(g,x+(s[1]-4)/2,88,cached?"cache hit":"full price",10,"#6f7c95");
+      x+=s[1];
+    });
+    txt(g,30,32,"prompt, front to back →",11,"#6f7c95","start");
+    var cachedW = firstVolatile-30, total=x-30;
+    var pct=Math.round(cachedW/total*100);
+    txt(g,30,124,"cached prefix: "+pct+"% of the prompt",13,good?"#5fcf94":"#f0736a","start",600);
+    txt(g,30,146,good
+      ? "Everything above the volatile block is byte-identical every turn, so the provider serves it from cache."
+      : "One changing block at the front breaks the match immediately — everything after it is billed in full, every turn.",
+      12,"#a6b0c4","start");
+    setDetail(det, good?"Volatile last — the arrangement we ship":"Volatile first — the mistake",
+      good?["The four gold layers never change, so the provider matches them from cache on every turn of the session. Only the small blue block at the end is fresh.",
+            "This is why memories are sorted, why the date is excluded from the environment block, and why even the overflow message is computed deterministically."]
+          :["Caches match from the very first byte. Put something that changes at the front and the match dies there — every layer after it is paid for at full price on every single turn.",
+            "The layers are <em>identical</em> in both pictures. Only the order changed. That is the whole lesson."],
+      good?"AGENTS.md invariant #7 — byte-stable prompts":"this is a cost regression, not a style question");
+  }
+  btns.forEach(function(b){b.onclick=function(){
+    btns.forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
+    draw(b.dataset.cache);};});
+  draw("good");
+})();
+
+/* ================= 09 · phase walker ================= */
+var PHASES=[
+ {n:1,t:"Cancel check",c:"#f0736a",group:"before",
+  d:["Did someone hard-cancel while the last step was settling? If so, stop here.",
+     "This runs <b>before</b> the pause gate on purpose: a turn that is both paused and cancelled must not park waiting for a resume that is never coming."]},
+ {n:2,t:"Pause gate",c:"#68a8f0",group:"before",
+  d:["If the turn is paused, it parks right here — after the previous step fully settled and before any new model call.",
+     "That is the same boundary the budget abort uses. Resuming continues the very same turn; nothing is lost."]},
+ {n:3,t:"Steering drain",c:"#68a8f0",group:"before",
+  d:["Anything the user typed while the turn was running is pulled in now and appended as a real user message.",
+     "It lands <b>before</b> compaction, so the compaction pass sees it, and <b>before</b> the model call, so the model answers it this step rather than next. It is a course correction, not an interrupt — no completed work is thrown away."]},
+ {n:4,t:"Soft-stop check",c:"#68a8f0",group:"before",
+  d:["Did the user press Esc? If so, stop — but as a <b>choice, not a failure</b>. No error is emitted and every completed step is kept.",
+     "It runs <em>after</em> the drain deliberately: a note typed just before Esc is preserved in history for the next turn instead of evaporating."]},
+ {n:5,t:"Budget check",c:"#f0a35f",group:"before",
+  d:["Have we spent past the cap? The budget code itself cannot stop anything — it returns a recommendation, and this phase is the only thing that turns that into a stopped turn.",
+     "That separation is why a mid-tool budget abort cannot accidentally be written."]},
+ {n:6,t:"Snapshot identities",c:"#5fd0d0",group:"before",
+  d:["Record what each tool result <em>really</em> was, right now, before anything rewrites it.",
+     "This exists because of the next two phases: compaction rewrites results in place, and loop detection then runs on the rewritten history <em>in this same step</em>. Without the snapshot, compaction could make two different results look identical and trigger a false loop abort."]},
+ {n:7,t:"Compaction pass",c:"#5fd0d0",group:"before",
+  d:["Measure the conversation against the effective budget and, if needed, shrink it — dedup, then supersession, then aging, then eviction.",
+     "The budget used here is not a raw constant: it is calibrated against what this model's tokenizer actually reports, re-based on the last real usage report, and tightened further if an overflow recovery is armed. The exact number used is recorded, so the receipt shows the number the decision actually used."]},
+ {n:8,t:"Loop detection",c:"#5fd0d0",group:"before",
+  d:["Are we stuck? Same call, same input, same output, over and over? If so, end the turn rather than burn the budget.",
+     "Then the budget is checked a <b>second</b> time — because compaction itself can spend money on a summarizer call."]},
+ {n:9,t:"MODEL CALL",c:"#e2b869",group:"call",
+  d:["The one model call this step buys. It is wrapped in the whole retry ladder, so from an observer's point of view this is <b>one</b> request even if it took four attempts.",
+     "Read-only calls announced early in the stream may start running before the response finishes arriving. The instant a call appears that is not read-only, that stops for the rest of the step."]},
+ {n:10,t:"Bookkeeping",c:"#b28cf0",group:"after",
+  d:["Anchor the context measurement to what the provider just attested for this exact prefix — before the reply gets appended to it.",
+     "Add the cost. Record which model actually answered. Handle a response that was cut off for length. If the budget trips here, any speculative work already done is explicitly accounted for rather than dropped silently."]},
+ {n:11,t:"Tool dispatch",c:"#5fcf94",group:"after",
+  d:["Run what the model asked for. Consecutive read-only calls run together as a group; anything that can change something runs alone, as its own barrier, in the order asked.",
+     "Results are returned in the original order no matter what order they finished in, so the conversation is identical on every run."]},
+ {n:12,t:"Park, then step++",c:"#5fcf94",group:"after",
+  d:["A tool may have asked the turn to wait — for a file to change, or a deadline. The engine polls on its own clock through the tools it already has, spending <b>zero</b> model calls, and wakes the model to the difference.",
+     "Then the step counter advances. It is advanced only by a step that committed <em>and</em> continued, so a saved checkpoint always names the step that runs next."]}
+];
+(function(){
+  var g=document.getElementById("phaseNodes"), det=document.getElementById("phaseDetail");
+  var svg=document.getElementById("phaseSvg"), sel=0, timer=null;
+  var nodes=[];
+  PHASES.forEach(function(p,i){
+    var col=i%6, row=Math.floor(i/6);
+    var x=24+col*152, y=54+row*112;
+    var gg=el("g",{"data-i":i,style:"cursor:pointer"});
+    var r=el("rect",{x:x,y:y,width:130,height:62,rx:9,fill:"#1c2130",stroke:"#333c52","stroke-width":1.4});
+    gg.appendChild(r);
+    var num=el("text",{x:x+11,y:y+18,"font-size":10.5,fill:"#6f7c95","class":"mono"},String(p.n));
+    var lab=el("text",{x:x+65,y:y+38,"font-size":12.5,fill:"#e8ecf4","text-anchor":"middle","font-weight":600},p.t);
+    gg.appendChild(num);gg.appendChild(lab);
+    var tagTxt = p.group==="before"?"before":(p.group==="call"?"the call":"after");
+    gg.appendChild(el("text",{x:x+65,y:y+54,"font-size":10,fill:"#6f7c95","text-anchor":"middle"},tagTxt));
+    g.appendChild(gg);
+    if(col<5) g.appendChild(el("path",{d:"M"+(x+134)+" "+(y+31)+" L"+(x+148)+" "+(y+31),
+      stroke:"#333c52","stroke-width":1.4}));
+    nodes.push({r:r,lab:lab,p:p});
+  });
+  g.appendChild(el("path",{d:"M154 116 L154 132 L 24 132 L 24 148",stroke:"#333c52","stroke-width":1.4,fill:"none"}));
+  var loopBack=el("path",{d:"M154 228 L154 262 L 89 262",stroke:"#e2b869","stroke-width":1.6,fill:"none",
+    "stroke-dasharray":"5 4"});
+  g.appendChild(loopBack);
+  txt(g,420,266,"↺ next step — same twelve phases, always in this order",12,"#e2b869");
+  function show(i){
+    sel=i;
+    nodes.forEach(function(n,j){
+      var on=j===i;
+      n.r.setAttribute("stroke",on?n.p.c:"#333c52");
+      n.r.setAttribute("stroke-width",on?2.4:1.4);
+      n.r.setAttribute("fill",on?"#252b3b":"#1c2130");
+      n.lab.setAttribute("fill",on?n.p.c:"#e8ecf4");
+    });
+    var p=PHASES[i];
+    setDetail(det,"Phase "+p.n+" · "+p.t,p.d,
+      p.group==="before"?"a “should we call the model?” phase"
+      :p.group==="call"?"the one model call this step buys"
+      :"handling what came back");
+  }
+  svg.addEventListener("click",function(e){
+    var n=e.target.closest?e.target.closest("g[data-i]"):null;
+    if(n){stop();show(parseInt(n.dataset.i,10));}
+  });
+  function stop(){ if(timer){clearInterval(timer);timer=null;
+    document.getElementById("phPlay").textContent="▶ Play";} }
+  document.getElementById("phNext").onclick=function(){stop();show((sel+1)%12);};
+  document.getElementById("phPrev").onclick=function(){stop();show((sel+11)%12);};
+  document.getElementById("phReset").onclick=function(){stop();show(0);};
+  document.getElementById("phPlay").onclick=function(){
+    if(timer){stop();return;}
+    this.textContent="❚❚ Pause";
+    timer=setInterval(function(){show((sel+1)%12);},1500);
+  };
+  show(0);
+})();
+
+/* ================= 10 · boundary ================= */
+(function(){
+  var g=document.getElementById("boundarySvg");
+  txt(g,20,26,"one step",12,"#6f7c95","start",600);
+  var segs=[["model call",120,"#e2b869"],["tool A",100,"#5fcf94"],["tool B",100,"#5fcf94"],
+            ["tool C",100,"#5fcf94"]];
+  var x=20;
+  segs.forEach(function(s){
+    g.appendChild(el("rect",{x:x,y:42,width:s[1]-6,height:44,rx:7,fill:"#1c2130",stroke:s[2],"stroke-width":1.4}));
+    txt(g,x+(s[1]-6)/2,69,s[0],12,s[2]);
+    x+=s[1];
+  });
+  g.appendChild(el("rect",{x:x,y:42,width:150,height:44,rx:7,fill:"#1c2130",stroke:"#333c52"}));
+  txt(g,x+75,69,"next step begins",12,"#a6b0c4");
+  // allowed markers
+  [20,x,x+150].forEach(function(px){
+    g.appendChild(el("path",{d:"M"+px+" 34 L"+px+" 96",stroke:"#5fcf94","stroke-width":2,
+      "stroke-dasharray":"4 3"}));
+  });
+  txt(g,20,116,"✓ may stop here",11,"#5fcf94","start");
+  txt(g,x,116,"✓ may stop here",11,"#5fcf94","middle");
+  // forbidden
+  [140,240,340].forEach(function(px){
+    g.appendChild(el("path",{d:"M"+px+" 34 L"+px+" 96",stroke:"#f0736a","stroke-width":2,
+      "stroke-dasharray":"2 4",opacity:.7}));
+  });
+  txt(g,240,116,"✗ never here — a half-run tool leaves files and the model’s picture of them out of sync",
+      11.5,"#f0736a");
+  txt(g,20,152,"Budget aborts · pause · soft stop · loop-detection aborts — all of them wait for the boundary.",
+      12.5,"#a6b0c4","start");
+  txt(g,20,172,"The only mid-tool interruption is a tool timeout, and that becomes a tool result, not a stopped turn.",
+      12.5,"#6f7c95","start");
+})();
+
+/* ================= 11 · compaction sim ================= */
+(function(){
+  var rows=document.getElementById("compactRows"), det=document.getElementById("compactDetail");
+  var slider=document.getElementById("cBudget"), val=document.getElementById("cBudgetVal");
+  var MSGS=[
+   {t:"system prompt",size:30,kind:"sys"},
+   {t:"user: fix the parser",size:8,kind:"user"},
+   {t:"tool: read parser.rs",size:40,kind:"tool",dup:"A",age:1},
+   {t:"tool: read parser.rs (same bytes)",size:40,kind:"tool",dup:"A",age:2},
+   {t:"tool: run tests → 3 failing",size:35,kind:"tool",sup:"T",age:3},
+   {t:"tool: read lexer.rs",size:45,kind:"tool",age:4},
+   {t:"tool: run tests → 1 failing",size:35,kind:"tool",sup:"T",age:9},
+   {t:"user: also update the docs",size:8,kind:"newuser"}
+  ];
+  function render(budget){
+    var total=MSGS.reduce(function(a,m){return a+m.size;},0);
+    var state=MSGS.map(function(m){return {m:m,mode:"keep"};});
+    var fired=[];
+    // 1 dedup: keep earliest byte-identical
+    if(total>budget){
+      var seen={};
+      state.forEach(function(s){
+        if(s.m.dup){ if(seen[s.m.dup]){s.mode="dedup";fired.push("dedup");} else seen[s.m.dup]=1; }
+      });
+      total=state.reduce(function(a,s){return a+(s.mode==="keep"?s.m.size:2);},0);
+    }
+    // 2 supersession: keep latest re-run
+    if(total>budget){
+      var lastIdx={};
+      state.forEach(function(s,i){ if(s.m.sup) lastIdx[s.m.sup]=i; });
+      state.forEach(function(s,i){
+        if(s.m.sup && lastIdx[s.m.sup]!==i && s.mode==="keep"){s.mode="superseded";fired.push("supersede");}
+      });
+      total=state.reduce(function(a,s){return a+(s.mode==="keep"?s.m.size:2);},0);
+    }
+    // 3 aging: middle-out on old large
+    if(total>budget){
+      state.forEach(function(s){
+        if(s.mode==="keep"&&s.m.kind==="tool"&&s.m.size>=40&&s.m.age<=4){s.mode="aged";fired.push("age");}
+      });
+      total=state.reduce(function(a,s){
+        return a+(s.mode==="keep"?s.m.size:(s.mode==="aged"?Math.round(s.m.size*0.35):2));},0);
+    }
+    // 4 eviction: oldest tool results first, never the newest
+    if(total>budget){
+      var tools=state.filter(function(s){return s.m.kind==="tool";});
+      for(var i=0;i<tools.length-1&&total>budget;i++){
+        if(tools[i].mode!=="evicted"){tools[i].mode="evicted";fired.push("evict");}
+        total=state.reduce(function(a,s){
+          return a+(s.mode==="keep"?s.m.size:(s.mode==="aged"?Math.round(s.m.size*0.35):2));},0);
+      }
+    }
+    rows.innerHTML="";
+    var COL={keep:["#333c52","#a6b0c4","kept"],dedup:["#5fd0d0","#5fd0d0","deduped → stub"],
+      superseded:["#b28cf0","#b28cf0","superseded → stub"],aged:["#f0a35f","#f0a35f","aged → middle cut"],
+      evicted:["#f0736a","#f0736a","evicted"]};
+    state.forEach(function(s){
+      var protectedRow = s.m.kind==="sys"||s.m.kind==="newuser";
+      var c=COL[s.mode];
+      var d=document.createElement("div");
+      d.style.cssText="display:flex;gap:10px;align-items:center;padding:8px 12px;margin-bottom:5px;"+
+        "border-radius:7px;background:#1c2130;border:1px solid "+c[0]+";"+
+        (s.mode!=="keep"?"opacity:.75;":"");
+      d.innerHTML='<span style="flex:1;font-size:13.5px;color:#e8ecf4">'+s.m.t+'</span>'+
+        (protectedRow?'<span class="mono" style="font-size:10px;color:#e2b869">NEVER TOUCHED</span>':
+        '<span class="mono" style="font-size:10.5px;color:'+c[1]+'">'+c[2]+'</span>')+
+        '<span class="mono" style="font-size:10.5px;color:#6f7c95;min-width:44px;text-align:right">'+
+        s.m.size+' u</span>';
+      rows.appendChild(d);
+    });
+    var uniq=[];fired.forEach(function(f){if(uniq.indexOf(f)<0)uniq.push(f);});
+    var names={dedup:"<b>Dedup</b> — identical outputs stubbed, keeping the <em>earliest</em>",
+      supersede:"<b>Supersession</b> — the re-run call's old result stubbed, keeping the <em>latest</em>",
+      age:"<b>Aging</b> — old large outputs had their middles cut",
+      evict:"<b>Eviction</b> — old tool results dropped entirely"};
+    setDetail(det, uniq.length?("Fired: "+uniq.length+" of 4 mechanisms"):"Nothing fired — it already fits",
+      uniq.length?[uniq.map(function(u){return names[u];}).join("<br>"),
+        "Now "+total+" units against a budget of "+budget+". Mechanisms fire least-damaging first and stop as soon as it fits."]
+      :["The conversation is "+total+" units and the budget is "+budget+". Compaction still runs — it measures every step — but it has nothing to do."],
+      "the system message and the newest user message are never touched by any mechanism");
+  }
+  slider.oninput=function(){val.textContent=slider.value;render(+slider.value);};
+  render(200);
+})();
+
+/* ================= 12 · loop detection ================= */
+var LOOPCASES=[
+ {n:"Same in, same out ×3",loop:true,rows:[["run tests","3 failing"],["run tests","3 failing"],["run tests","3 failing"]],
+  d:["Byte-identical call, byte-identical result, three times running. Nothing is changing, so continuing costs money and buys nothing.",
+     "<b>This is a loop.</b> The turn ends here rather than spending the rest of the budget on it."]},
+ {n:"Same in, changing out",loop:false,rows:[["run tests","3 failing"],["run tests","2 failing"],["run tests","1 failing"]],
+  d:["Same command every time — but the output is moving. That is a shrinking test suite, or a build being polled.",
+     "<b>Not a loop.</b> This is legitimate progress, and a detector that fired here would abort real work."]},
+ {n:"Short cycle A→B→A→B",loop:true,rows:[["edit config","ok"],["run tests","fail"],["edit config","ok"],["run tests","fail"]],
+  d:["Two calls alternating, each producing the same result it produced last time. The agent is oscillating between two states.",
+     "<b>This is a loop</b> too — the detector looks for short cycles, not just exact back-to-back repeats."]},
+ {n:"Same call, fresh ids",loop:true,rows:[["read main.rs","fn main…"],["read main.rs","fn main…"],["read main.rs","fn main…"]],
+  d:["The provider mints a brand-new id for every call, so these three look different if you compare ids.",
+     "The detector <b>ignores the id</b> and compares name, input, and output. If it did not, it would never fire on anything, ever — which is exactly the bug this rule prevents."]}
+];
+(function(){
+  var btnRow=document.getElementById("loopCases"), g=document.getElementById("loopRows");
+  var det=document.getElementById("loopDetail"), btns=[];
+  function draw(idx){
+    btns.forEach(function(b,i){b.classList.toggle("on",i===idx);});
+    var c=LOOPCASES[idx]; clear(g);
+    c.rows.forEach(function(r,i){
+      var y=20+i*30;
+      g.appendChild(el("rect",{x:20,y:y,width:250,height:24,rx:5,fill:"#1c2130",stroke:"#333c52"}));
+      txt(g,32,y+16,r[0],12,"#e8ecf4","start");
+      g.appendChild(el("rect",{x:285,y:y,width:250,height:24,rx:5,fill:"#1c2130",stroke:"#333c52"}));
+      txt(g,297,y+16,r[1],12,"#a6b0c4","start");
+    });
+    txt(g,145,14,"call",10.5,"#6f7c95");
+    txt(g,410,14,"result",10.5,"#6f7c95");
+    var yy=20+c.rows.length*30+18;
+    txt(g,20,yy,c.loop?"⟳  LOOP — end the turn":"→  not a loop — keep going",14,
+        c.loop?"#f0736a":"#5fcf94","start",600);
+    setDetail(det,c.n,c.d,"crates/stella-core/src/loop_detect.rs — same_record");
+  }
+  LOOPCASES.forEach(function(c,i){
+    var b=document.createElement("button"); b.className="btn sm"; b.textContent=c.n;
+    b.onclick=function(){draw(i);}; btnRow.appendChild(b); btns.push(b);
+  });
+  draw(0);
+})();
+
+/* ================= 13 · speculation ================= */
+(function(){
+  var row=document.getElementById("specRow"), g=document.getElementById("specNodes");
+  var det=document.getElementById("specDetail");
+  var calls=[{n:"read a.rs",ro:true},{n:"read b.rs",ro:true},{n:"edit c.rs",ro:false},{n:"read d.rs",ro:true}];
+  function draw(){
+    row.innerHTML=""; clear(g);
+    calls.forEach(function(c,i){
+      var b=document.createElement("button");
+      b.className="btn sm"+(c.ro?"":" on");
+      b.textContent=(i+1)+". "+c.n+" ("+(c.ro?"read":"write")+")";
+      b.onclick=function(){c.ro=!c.ro; c.n=c.ro?c.n.replace("edit","read"):c.n.replace("read","edit"); draw();};
+      row.appendChild(b);
+    });
+    var fence=calls.length;
+    for(var i=0;i<calls.length;i++){ if(!calls[i].ro){fence=i;break;} }
+    calls.forEach(function(c,i){
+      var x=25+i*215, early=i<fence;
+      g.appendChild(el("rect",{x:x,y:30,width:195,height:50,rx:8,fill:"#1c2130",
+        stroke:early?"#5fcf94":"#333c52","stroke-width":1.4}));
+      txt(g,x+97,52,c.n,13,early?"#5fcf94":"#e8ecf4",null,600);
+      txt(g,x+97,70,early?"started early ⚡":(c.ro?"waits — after the fence":"the fence"),11,"#6f7c95");
+    });
+    if(fence<calls.length){
+      var fx=25+fence*215-8;
+      g.appendChild(el("path",{d:"M"+fx+" 20 L"+fx+" 92",stroke:"#f0736a","stroke-width":2,"stroke-dasharray":"4 3"}));
+    }
+    txt(g,25,108,fence===calls.length
+      ? "Every call is read-only, so all four can start while the response is still streaming in."
+      : "Speculation stops permanently at call "+(fence+1)+". Only the all-read prefix ever runs early.",
+      12.5,"#a6b0c4","start");
+    setDetail(det,"Speculated: "+fence+" of "+calls.length+" calls",
+      [fence===0?"The very first call can change something, so nothing runs early at all this step."
+        :"The first "+fence+" call"+(fence>1?"s":"")+" are read-only and consecutive, so they start while the model is still talking — hiding that I/O behind generation.",
+       "Calls stream in order, so the fence is decided the instant a non-read-only call appears. A read placed <em>after</em> a write must observe that write, and running it early would break exactly that."],
+      "a speculative result is used only on a byte-for-byte match — id, name, and input");
+  }
+  draw();
+})();
+
+/* ================= 14 · dispatch scheduler ================= */
+(function(){
+  var row=document.getElementById("schedRow"), g=document.getElementById("schedLanes");
+  var det=document.getElementById("schedDetail");
+  var calls=[{n:"read a.rs",ro:true},{n:"read b.rs",ro:true},{n:"edit c.rs",ro:false},
+             {n:"read d.rs",ro:true},{n:"read e.rs",ro:true}];
+  function draw(){
+    row.innerHTML=""; clear(g);
+    calls.forEach(function(c,i){
+      var b=document.createElement("button");
+      b.className="btn sm"+(c.ro?"":" on");
+      b.textContent=(i+1)+". "+(c.ro?"read":"write");
+      b.onclick=function(){c.ro=!c.ro;draw();};
+      row.appendChild(b);
+    });
+    // group
+    var groups=[],cg=null;
+    calls.forEach(function(c,i){
+      if(c.ro){ if(!cg){cg={ro:true,items:[]};groups.push(cg);} cg.items.push(i); }
+      else { groups.push({ro:false,items:[i]}); cg=null; }
+    });
+    var x=25;
+    groups.forEach(function(gr,gi){
+      var w=gr.ro?160:150;
+      g.appendChild(el("rect",{x:x-8,y:20,width:w+16,height:26+gr.items.length*36,rx:9,
+        fill:"none",stroke:gr.ro?"rgba(95,207,148,.4)":"rgba(240,163,95,.5)","stroke-width":1.4,
+        "stroke-dasharray":gr.ro?"":"5 4"}));
+      txt(g,x+w/2,38,gr.ro?("group of "+gr.items.length+" · parallel"):"barrier · alone",
+          10.5,gr.ro?"#5fcf94":"#f0a35f");
+      gr.items.forEach(function(idx,j){
+        var y=48+j*36;
+        g.appendChild(el("rect",{x:x,y:y,width:w,height:28,rx:6,fill:"#1c2130",
+          stroke:gr.ro?"#5fcf94":"#f0a35f","stroke-width":1.3}));
+        txt(g,x+w/2,y+19,(idx+1)+". "+calls[idx].n,12,"#e8ecf4");
+      });
+      x+=w+40;
+      if(gi<groups.length-1){
+        g.appendChild(el("path",{d:"M"+(x-32)+" 62 L"+(x-14)+" 62",stroke:"#6f7c95","stroke-width":1.5,
+          "marker-end":"url(#ar3)"}));
+      }
+    });
+    txt(g,25,176,"time →",11,"#6f7c95","start");
+    var par=groups.filter(function(gr){return gr.ro&&gr.items.length>1;}).length;
+    setDetail(det,groups.length+" scheduling group"+(groups.length===1?"":"s"),
+      ["Consecutive read-only calls form one group and run together. Every call that can change something runs <b>alone</b>, as its own barrier, in the order the model asked for it.",
+       par?("This arrangement gets real parallelism in "+par+" group"+(par===1?"":"s")+" while staying indistinguishable from running everything one at a time.")
+          :"Nothing here can be parallelized — every call is a barrier, so this schedule is fully sequential."],
+      "results are always handed back in the original call order, whatever order they finished in");
+  }
+  draw();
+})();
+
+/* ================= 15 · gate ladder ================= */
+(function(){
+  var g=document.getElementById("gateSvg");
+  var steps=[["Model asks","for a tool","#68a8f0"],["Per-tool switch","turned off?","#333c52"],
+             ["In-process hooks","allow/deny/modify","#b28cf0"],["Shell hooks","same four verbs","#b28cf0"],
+             ["Authorization gate","risk ceiling","#f0a35f"],["Human approval","if asked for","#e2b869"],
+             ["Tool runs","","#5fcf94"]];
+  steps.forEach(function(s,i){
+    var x=18+i*128;
+    g.appendChild(el("rect",{x:x,y:52,width:112,height:56,rx:8,fill:"#1c2130",stroke:s[2],"stroke-width":1.4}));
+    txt(g,x+56,76,s[0],11.5,"#e8ecf4",null,600);
+    if(s[1])txt(g,x+56,93,s[1],10,"#6f7c95");
+    if(i<steps.length-1)g.appendChild(el("path",{d:"M"+(x+116)+" 80 L"+(x+126)+" 80",
+      stroke:"#6f7c95","stroke-width":1.4}));
+    if(i>0&&i<steps.length-1){
+      g.appendChild(el("path",{d:"M"+(x+56)+" 112 L"+(x+56)+" 140",stroke:"#f0736a","stroke-width":1.4,
+        "stroke-dasharray":"3 3"}));
+      txt(g,x+56,154,"deny",10,"#f0736a");
+    }
+  });
+  txt(g,18,190,"Any deny short-circuits. A modify folds in and the chain continues. An approval request parks and waits for a person.",
+      12.5,"#a6b0c4","start");
+  txt(g,18,212,"A checker that crashes or prints nonsense has made no decision — that counts as an unconditional deny.",
+      12.5,"#f0736a","start");
+})();
+
+/* ================= 18 · route A ================= */
+(function(){
+  var g=document.getElementById("routeA");
+  var S=[["prompt","",  "#68a8f0"],["prefix + recall","",  "#333c52"],
+         ["THE STEP LOOP","steps until the model stops","#e2b869"],
+         ["answer","",  "#5fcf94"],["record + reflect","",  "#b28cf0"]];
+  var x=20;
+  S.forEach(function(s,i){
+    var w=i===2?300:150;
+    g.appendChild(el("rect",{x:x,y:50,width:w,height:i===2?66:56,rx:9,fill:"#1c2130",stroke:s[2],
+      "stroke-width":i===2?2:1.4}));
+    txt(g,x+w/2,i===2?82:82,s[0],i===2?15:13,i===2?"#e2b869":"#e8ecf4",null,600);
+    if(s[1])txt(g,x+w/2,102,s[1],11,"#6f7c95");
+    if(i<S.length-1)g.appendChild(el("path",{d:"M"+(x+w+4)+" 80 L"+(x+w+16)+" 80",stroke:"#6f7c95",
+      "stroke-width":1.5,"marker-end":"url(#ar3)"}));
+    x+=w+20;
+  });
+  txt(g,20,142,"No planning stage. No verifier. No proof demanded. The model decides when it is done.",
+      12.5,"#6f7c95","start");
+})();
+
+/* ================= 19 · route B ================= */
+(function(){
+  var g=document.getElementById("routeB");
+  var top=[["triage","how much ceremony?"],["recall","(in parallel)"],["research","only if asked"],
+           ["plan","explicit steps"],["scope review","only if big"]];
+  var x=20;
+  top.forEach(function(s,i){
+    g.appendChild(el("rect",{x:x,y:36,width:168,height:52,rx:8,fill:"#1c2130",stroke:"#b28cf0","stroke-width":1.3}));
+    txt(g,x+84,60,s[0],13,"#b28cf0",null,600);
+    txt(g,x+84,77,s[1],10.5,"#6f7c95");
+    if(i<top.length-1)g.appendChild(el("path",{d:"M"+(x+172)+" 62 L"+(x+182)+" 62",stroke:"#6f7c95","stroke-width":1.4}));
+    x+=188;
+  });
+  g.appendChild(el("path",{d:"M960 62",stroke:"none"}));
+  g.appendChild(el("rect",{x:20,y:110,width:400,height:62,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":2}));
+  txt(g,220,138,"EXECUTE — the step loop",15,"#e2b869",null,600);
+  txt(g,220,158,"everything in Part 3 of this deck happens in here",11,"#6f7c95");
+  var bot=[["witness","author a failing test"],["verify","did it flip?"],["verdict","measured, not judged"]];
+  x=444;
+  bot.forEach(function(s,i){
+    g.appendChild(el("rect",{x:x,y:110,width:158,height:62,rx:8,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.3}));
+    txt(g,x+79,138,s[0],13,"#5fcf94",null,600);
+    txt(g,x+79,156,s[1],10.5,"#6f7c95");
+    if(i<bot.length-1)g.appendChild(el("path",{d:"M"+(x+162)+" 141 L"+(x+172)+" 141",stroke:"#6f7c95","stroke-width":1.4}));
+    x+=176;
+  });
+  g.appendChild(el("path",{d:"M424 141 L434 141",stroke:"#6f7c95","stroke-width":1.4}));
+  g.appendChild(el("path",{d:"M900 76 L920 76 L920 100",stroke:"#6f7c95","stroke-width":1.4,fill:"none"}));
+  g.appendChild(el("path",{d:"M20 62 L20 100",stroke:"none"}));
+  g.appendChild(el("path",{d:"M760 180 L760 206 L 220 206 L 220 178",stroke:"#f0a35f","stroke-width":1.5,
+    fill:"none","stroke-dasharray":"5 4","marker-end":"url(#ar3)"}));
+  txt(g,490,224,"↺ revise — bounded, and it lands back on execute so nothing is re-planned or re-witnessed",
+      12,"#f0a35f");
+})();
+
+/* ================= 20 · stage walker ================= */
+var STAGES=[
+ {t:"Triage",c:"#b28cf0",cond:"always",
+  d:["A fast, cheap call decides how much process this task deserves: a lookup, a single change, or genuinely multi-step.",
+     "It runs under a hard 30-second ceiling. If the model does not answer in time, the run falls through to the full path rather than waiting — and <b>says so</b>, so a task classified by a keyword fallback is never mistaken for one the model actually classified.",
+     "The classes are ordered, and the ordering is load-bearing: a keyword floor can only ever <em>add</em> ceremony, never remove it. A misjudged task must still finish — just more slowly."]},
+ {t:"Recall",c:"#68a8f0",cond:"always · runs alongside triage",
+  d:["Memories and context for this prompt. It has no data dependency on triage, so the two run at the same time — but recall's result is emitted after, so the event stream stays readable.",
+     "Recall has a latency ceiling. Triage deliberately still waits for its paid call to finish even past the ceiling, so its cost cannot vanish from the accounting by being cancelled."]},
+ {t:"Research",c:"#5fd0d0",cond:"only when triage names questions",
+  d:["Parallel read-only sub-agents answer specific questions before anything else is prompted.",
+     "Their findings ride into <b>both</b> the planner's prompt and the worker's — the work is done once and used twice."]},
+ {t:"Plan",c:"#b28cf0",cond:"skipped for a simple lookup",
+  d:["Explicit steps, produced from the goal, the recalled context, and a summary of the repository's structure.",
+     "A plan that will not parse gets exactly one repair attempt, then degrades to a single-step plan. A stubborn planner is never allowed to block the actual work."]},
+ {t:"Scope review",c:"#f0a35f",cond:"only above a threshold",
+  d:["If the plan is bigger than configured limits — too many steps, too many files, too much estimated money — it stops and asks a person before a single file changes.",
+     "The comparison is strict, so a plan sitting exactly on a limit passes. Headless runs must <b>opt in</b> to bypass this. There is no silent auto-approve: without the opt-in, an oversized plan ends the run.",
+     "No bare keystroke commits the plan, because the text box is live the whole time — a note beginning “also do X” would otherwise have approved the very plan it was arguing with."]},
+ {t:"Execute",c:"#e2b869",cond:"always · this is the step loop",
+  d:["The worker runs the step loop against the plan, with the full toolbelt. Everything in Part 3 of this deck happens inside this one box.",
+     "If a test command was supplied, it is run <b>once before</b> execution to record the failing baseline — that is the “fail” half of the flip."]},
+ {t:"Witness",c:"#5fcf94",cond:"only without a test command, and only on demand",
+  d:["A warrant reads the diff the work produced and decides whether it needs a test at all. Docs-only, a pure removal, or a test-only change gets a <em>stated reason</em> instead. Anything mixed or unreadable fails closed to “prove it”.",
+     "When a test is warranted, an independent model writes a minimal failing test — working in a clean copy of the tree from <em>before</em> the change, so it cannot simply restate the patch."]},
+ {t:"Verify",c:"#5fcf94",cond:"always",
+  d:["Run the oracle. Did the command flip from failing to passing? Was the witness file tampered with? What does the diff actually show?",
+     "This spends <b>no model call</b>. The one verifier-tier call in the whole story was writing the test, and that survives because it creates the measuring stick rather than replacing it."]},
+ {t:"Verdict",c:"#5fcf94",cond:"always · terminal",
+  d:["A deterministic ladder produces one of five outcomes: submit, revise, nothing was attempted, unverifiable, or unverified. Every one is terminal.",
+     "The pipeline does not emit a separate verdict stage — it reads the ladder's answer directly. Which is why the stage order is an ordering, not a place the run passes through."]},
+ {t:"Revise",c:"#f0a35f",cond:"bounded loop",
+  d:["A verdict of “revise” sends the run back — and it lands on <b>execute</b>, not on plan.",
+     "So re-execution never re-plans and never re-authors a witness. The loop is bounded; it cannot spin."]}
+];
+(function(){
+  var g=document.getElementById("stageNodes"), det=document.getElementById("stageDetail");
+  var svg=document.getElementById("stageSvg"), sel=0, nodes=[];
+  STAGES.forEach(function(s,i){
+    var col=i%5, row=Math.floor(i/5);
+    var x=22+col*182, y=40+row*84;
+    var gg=el("g",{"data-i":i,style:"cursor:pointer"});
+    var r=el("rect",{x:x,y:y,width:162,height:56,rx:9,fill:"#1c2130",stroke:"#333c52","stroke-width":1.4});
+    gg.appendChild(r);
+    var lab=el("text",{x:x+81,y:y+26,"font-size":13.5,fill:"#e8ecf4","text-anchor":"middle","font-weight":600},s.t);
+    gg.appendChild(lab);
+    gg.appendChild(el("text",{x:x+81,y:y+44,"font-size":10,fill:"#6f7c95","text-anchor":"middle"},
+      s.cond.length>26?s.cond.slice(0,25)+"…":s.cond));
+    g.appendChild(gg);
+    if(col<4&&i<STAGES.length-1)g.appendChild(el("path",{d:"M"+(x+166)+" "+(y+28)+" L"+(x+178)+" "+(y+28),
+      stroke:"#333c52","stroke-width":1.4}));
+    nodes.push({r:r,lab:lab,s:s});
+  });
+  function show(i){
+    sel=i;
+    nodes.forEach(function(n,j){
+      var on=j===i;
+      n.r.setAttribute("stroke",on?n.s.c:"#333c52");
+      n.r.setAttribute("stroke-width",on?2.4:1.4);
+      n.r.setAttribute("fill",on?"#252b3b":"#1c2130");
+      n.lab.setAttribute("fill",on?n.s.c:"#e8ecf4");
+    });
+    setDetail(det,STAGES[i].t,STAGES[i].d,"runs: "+STAGES[i].cond);
+  }
+  svg.addEventListener("click",function(e){
+    var n=e.target.closest?e.target.closest("g[data-i]"):null; if(n)show(parseInt(n.dataset.i,10));
+  });
+  document.getElementById("stNext").onclick=function(){show((sel+1)%STAGES.length);};
+  document.getElementById("stPrev").onclick=function(){show((sel+STAGES.length-1)%STAGES.length);};
+  show(0);
+})();
+
+/* ================= 21 · flip ================= */
+(function(){
+  var g=document.getElementById("flipSvg");
+  g.appendChild(el("rect",{x:30,y:36,width:250,height:70,rx:10,fill:"#1c2130",stroke:"#f0736a","stroke-width":1.6}));
+  txt(g,155,64,"BEFORE the change",13,"#f0736a",null,600);
+  txt(g,155,86,"the witness test FAILS",12.5,"#a6b0c4");
+  g.appendChild(el("rect",{x:340,y:36,width:220,height:70,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":1.6}));
+  txt(g,450,64,"the work happens",13,"#e2b869",null,600);
+  txt(g,450,86,"the step loop runs",12.5,"#a6b0c4");
+  g.appendChild(el("rect",{x:620,y:36,width:250,height:70,rx:10,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.6}));
+  txt(g,745,64,"AFTER the change",13,"#5fcf94",null,600);
+  txt(g,745,86,"the same test PASSES",12.5,"#a6b0c4");
+  g.appendChild(el("path",{d:"M284 71 L334 71",stroke:"#6f7c95","stroke-width":1.6,"marker-end":"url(#ar3)"}));
+  g.appendChild(el("path",{d:"M564 71 L614 71",stroke:"#6f7c95","stroke-width":1.6,"marker-end":"url(#ar3)"}));
+  txt(g,450,130,"That flip is the proof. No model is asked whether the work is done.",13,"#e2b869");
+})();
+
+/* ================= 22 · sub-agent ================= */
+(function(){
+  var g=document.getElementById("subNodes"), det=document.getElementById("subDetail");
+  var on=document.getElementById("subOn"), off=document.getElementById("subOff");
+  function draw(deleg){
+    clear(g);
+    on.classList.toggle("on",deleg); off.classList.toggle("on",!deleg);
+    txt(g,20,24,"the parent's conversation, step by step →",11,"#6f7c95","start");
+    var sizes = deleg?[10,14,18,22,26,30]:[10,26,48,70,92,114];
+    sizes.forEach(function(s,i){
+      var x=25+i*142, h=Math.min(s,110);
+      g.appendChild(el("rect",{x:x,y:130-h,width:110,height:h,rx:5,
+        fill:deleg?"rgba(95,207,148,.2)":"rgba(240,115,106,.2)",
+        stroke:deleg?"#5fcf94":"#f0736a","stroke-width":1.3}));
+      txt(g,x+55,146,"step "+(i+1),10.5,"#6f7c95");
+    });
+    if(deleg){
+      g.appendChild(el("rect",{x:310,y:22,width:250,height:44,rx:8,fill:"#151922",
+        stroke:"#b28cf0","stroke-width":1.4,"stroke-dasharray":"5 4"}));
+      txt(g,435,42,"child turn — 40 steps of noisy searching",11,"#b28cf0");
+      txt(g,435,58,"its whole transcript is thrown away",10.5,"#6f7c95");
+      g.appendChild(el("path",{d:"M435 70 L435 96",stroke:"#b28cf0","stroke-width":1.4,"marker-end":"url(#ar3)"}));
+      txt(g,435,112,"only a short summary returns",10.5,"#b28cf0");
+    }
+    txt(g,25,170,deleg
+      ? "The parent stays small. Every future step re-sends a small conversation."
+      : "The parent carries all that work forever — and pays to re-send it on every step for the rest of the session.",
+      12.5,deleg?"#5fcf94":"#f0736a","start");
+    setDetail(det,deleg?"Delegated — context stays small":"Done in-line — context grows",
+      deleg?["The child ran a full turn with its own conversation, then that conversation went out of scope. Only a length-capped summary came back.",
+             "The value here is <b>context economy</b>, not speed. Fleet mode is where parallelism lives."]
+           :["Forty steps of searching are now permanently in the parent's history. Not only did they cost money once — the parent re-sends them on every remaining step of the session.",
+             "This is the cost delegation exists to avoid."],
+      "the child's budget is carved from the parent's remainder, and its spend settles back exactly once — even on failure");
+  }
+  on.onclick=function(){draw(true);}; off.onclick=function(){draw(false);};
+  draw(false);
+})();
+
+/* ================= 23 · route D ================= */
+(function(){
+  var g=document.getElementById("routeD");
+  g.appendChild(el("rect",{x:20,y:40,width:170,height:56,rx:9,fill:"#1c2130",stroke:"#68a8f0"}));
+  txt(g,105,64,"your goal",13.5,"#68a8f0",null,600);
+  txt(g,105,82,"what must be TRUE",11,"#6f7c95");
+  g.appendChild(el("path",{d:"M194 68 L214 68",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  g.appendChild(el("rect",{x:220,y:34,width:280,height:68,rx:10,fill:"#1c2130",stroke:"#e2b869","stroke-width":2}));
+  txt(g,360,60,"a working round",14.5,"#e2b869",null,600);
+  txt(g,360,80,"pipeline run by default, raw turn with --no-pipeline",10.5,"#6f7c95");
+  g.appendChild(el("path",{d:"M504 68 L524 68",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  g.appendChild(el("rect",{x:530,y:34,width:250,height:68,rx:10,fill:"#1c2130",stroke:"#5fcf94","stroke-width":1.6}));
+  txt(g,655,58,"independent verifier",13.5,"#5fcf94",null,600);
+  txt(g,655,77,"different model family",10.5,"#6f7c95");
+  txt(g,655,93,"READ-ONLY tools only",10.5,"#f0a35f");
+  g.appendChild(el("path",{d:"M784 68 L820 68",stroke:"#5fcf94","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  txt(g,870,64,"goal met",13,"#5fcf94",null,600);
+  txt(g,870,82,"done ✓",11,"#6f7c95");
+  g.appendChild(el("path",{d:"M655 110 L655 140 L360 140 L360 108",stroke:"#f0a35f","stroke-width":1.6,
+    fill:"none","stroke-dasharray":"5 4","marker-end":"url(#ar3)"}));
+  txt(g,505,158,"not yet — feedback goes back into the next round",12,"#f0a35f");
+  txt(g,20,192,"Backstops: a round cap, the spend limit, or a worker abort. Any of them ends the run honestly as NOT MET — never rounded up to success.",
+      12.5,"#6f7c95","start");
+})();
+
+/* ================= 24 · route E ================= */
+(function(){
+  var g=document.getElementById("routeE");
+  g.appendChild(el("rect",{x:20,y:70,width:150,height:60,rx:9,fill:"#1c2130",stroke:"#68a8f0"}));
+  txt(g,95,96,"a backlog",13.5,"#68a8f0",null,600);
+  txt(g,95,114,"many tasks",11,"#6f7c95");
+  g.appendChild(el("path",{d:"M174 100 L194 100",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  g.appendChild(el("rect",{x:200,y:70,width:160,height:60,rx:9,fill:"#1c2130",stroke:"#b28cf0"}));
+  txt(g,280,96,"dependency graph",12.5,"#b28cf0",null,600);
+  txt(g,280,114,"scheduled into waves",11,"#6f7c95");
+  ["worker 1","worker 2","worker 3"].forEach(function(w,i){
+    var y=34+i*66;
+    g.appendChild(el("path",{d:"M364 100 C 400 100, 400 "+(y+26)+", 424 "+(y+26),stroke:"#6f7c95",
+      "stroke-width":1.4,fill:"none","marker-end":"url(#ar3)"}));
+    g.appendChild(el("rect",{x:430,y:y,width:250,height:52,rx:9,fill:"#1c2130",stroke:"#e2b869","stroke-width":1.5}));
+    txt(g,555,y+22,w+" — the same engine",12.5,"#e2b869",null,600);
+    txt(g,555,y+40,i===2?"private worktree (isolated task)":"shared tree, cooperative file claims",10.5,"#6f7c95");
+    g.appendChild(el("path",{d:"M684 "+(y+26)+" C 710 "+(y+26)+", 710 100, 730 100",stroke:"#6f7c95",
+      "stroke-width":1.4,fill:"none","marker-end":"url(#ar3)"}));
+  });
+  g.appendChild(el("rect",{x:736,y:70,width:180,height:60,rx:9,fill:"#1c2130",stroke:"#5fcf94"}));
+  txt(g,826,96,"the fleet ledger",13,"#5fcf94",null,600);
+  txt(g,826,114,"run · task · attempt · $",11,"#6f7c95");
+  txt(g,20,200,"No third loop. Each worker drives the pipeline when it can and the raw step loop otherwise.",
+      12.5,"#6f7c95","start");
+})();
+
+/* ================= 25 · route F ================= */
+(function(){
+  var g=document.getElementById("routeF");
+  txt(g,20,26,"every other door",12,"#6f7c95","start",600);
+  g.appendChild(el("rect",{x:20,y:38,width:180,height:48,rx:8,fill:"#1c2130",stroke:"#333c52"}));
+  txt(g,110,62,"caller: run_turn(…)",12,"#e8ecf4",null,600);
+  txt(g,110,78,"“work until done”",10.5,"#6f7c95");
+  g.appendChild(el("path",{d:"M204 62 L224 62",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+  g.appendChild(el("rect",{x:230,y:38,width:290,height:48,rx:8,fill:"#1c2130",stroke:"#e2b869"}));
+  txt(g,375,62,"the engine loops run_step internally",12,"#e2b869",null,600);
+  txt(g,375,78,"the caller waits for one answer",10.5,"#6f7c95");
+
+  txt(g,20,120,"stella-serve",12,"#6f7c95","start",600);
+  g.appendChild(el("rect",{x:20,y:132,width:180,height:48,rx:8,fill:"#1c2130",stroke:"#5fd0d0"}));
+  txt(g,110,156,"host: run_step(state)",12,"#5fd0d0",null,600);
+  txt(g,110,172,"one step, then return",10.5,"#6f7c95");
+  var x=230;
+  ["step","save","step","save","…"].forEach(function(s,i){
+    g.appendChild(el("rect",{x:x,y:132,width:66,height:48,rx:7,fill:"#1c2130",
+      stroke:s==="save"?"#b28cf0":"#e2b869"}));
+    txt(g,x+33,161,s,12,s==="save"?"#b28cf0":"#e2b869");
+    x+=76;
+  });
+  txt(g,640,120,"→ crash, restart, resume from the saved state",11.5,"#b28cf0","start");
+  txt(g,20,206,"Identical phases. The only difference is who turns the crank — and that difference is the entire feature.",
+      12.5,"#6f7c95","start");
+})();
+
+/* ================= 28 · learning ================= */
+var LEARN=[
+ {t:"the turn ends",c:"#e2b869",
+  d:["Success or failure, it does not matter — both are worth learning from. A failed turn is the <b>highest-value</b> signal a session produces, so it gets a different prompt: “why did this fail?”"],
+  m:"runs after any turn that did real work"},
+ {t:"one cheap call",c:"#68a8f0",
+  d:["Reflection runs on the cheap tier, not the worker's model, and is capped at a few lessons.",
+     "It is best-effort by contract: a failure here must never fail or slow the user's actual turn."],
+  m:"docs/prompts/reflection.md"},
+ {t:"0–3 lessons",c:"#5fd0d0",
+  d:["Short, specific, tagged with the parts of the codebase they touch. Not an essay — an essay is not recallable."],
+  m:"MemoryInput::reflection"},
+ {t:"memories + log",c:"#b28cf0",
+  d:["Each lesson goes two places: the memory database, where recall can find it next time, and an append-only mining log."],
+  m:".stella/private/reflections.jsonl"},
+ {t:"a new skill",c:"#5fcf94",
+  d:["The mining log is scanned for lessons that keep recurring. Enough repeats and a lesson is promoted into a durable skill file — capped per session, and it never clobbers an existing one.",
+     "That file is exactly what recall can select at the start of the next turn. The circle closes."],
+  m:".stella/skills/<slug>/SKILL.md"}
+];
+(function(){
+  var g=document.getElementById("learnNodes"), det=document.getElementById("learnDetail");
+  var svg=document.getElementById("learnSvg"), nodes=[];
+  LEARN.forEach(function(L,i){
+    var x=22+i*186;
+    var gg=el("g",{"data-i":i,style:"cursor:pointer"});
+    var r=el("rect",{x:x,y:44,width:166,height:56,rx:9,fill:"#1c2130",stroke:"#333c52","stroke-width":1.4});
+    gg.appendChild(r);
+    var lab=el("text",{x:x+83,y:78,"font-size":13,fill:"#e8ecf4","text-anchor":"middle","font-weight":600},L.t);
+    gg.appendChild(lab); g.appendChild(gg);
+    if(i<LEARN.length-1)g.appendChild(el("path",{d:"M"+(x+170)+" 72 L"+(x+182)+" 72",stroke:"#6f7c95",
+      "stroke-width":1.5,"marker-end":"url(#ar3)"}));
+    nodes.push({r:r,lab:lab,L:L});
+  });
+  g.appendChild(el("path",{d:"M877 106 L877 134 L105 134 L105 106",stroke:"#e2b869","stroke-width":1.5,
+    fill:"none","stroke-dasharray":"5 4","marker-end":"url(#ar3)"}));
+  txt(g,490,152,"↺ and the next turn's recall can pull it straight back in",12,"#e2b869");
+  function show(i){
+    nodes.forEach(function(n,j){
+      var on=j===i;
+      n.r.setAttribute("stroke",on?n.L.c:"#333c52");
+      n.r.setAttribute("stroke-width",on?2.4:1.4);
+      n.r.setAttribute("fill",on?"#252b3b":"#1c2130");
+      n.lab.setAttribute("fill",on?n.L.c:"#e8ecf4");
+    });
+    setDetail(det,LEARN[i].t,LEARN[i].d,LEARN[i].m);
+  }
+  svg.addEventListener("click",function(e){
+    var n=e.target.closest?e.target.closest("g[data-i]"):null; if(n)show(parseInt(n.dataset.i,10));
+  });
+  show(0);
+})();
+
+/* ================= 29 · foundry ================= */
+var FCASES=[
+ {n:"A recurring incantation",ok:true,
+  rows:["gh pr list --repo stella --state open","gh pr list --repo stella --state merged","gh pr list --repo stella --state open","gh pr list --repo stella --state closed"],
+  sig:"gh pr list --repo &lt;str&gt; --state &lt;str&gt;",
+  d:["Same shape, a handful of argument sets, retyped over and over. Two holes fall out of the normalization and become the tool's two parameters.",
+     "<b>This earns a proposal.</b> It has enough variation not to be an exact repeat, and enough reuse not to be the shell in disguise."]},
+ {n:"An exact repeat",ok:false,
+  rows:["cargo test -p stella-core","cargo test -p stella-core","cargo test -p stella-core","cargo test -p stella-core"],
+  sig:"cargo test -p stella-core",
+  d:["No variation at all. Every invocation is byte-identical.",
+     "<b>No proposal.</b> This is loop detection's territory, not the foundry's — which is why a proposal requires at least two distinct argument sets."]},
+ {n:"The shell wearing a costume",ok:false,
+  rows:["sed -i 's/a/b/' one.rs","sed -i 's/x/y/' two.rs","sed -i 's/q/r/' three.rs","…1,951 more, nearly all different"],
+  sig:"sed -i &lt;str&gt; &lt;path&gt;",
+  d:["Used 1,954 times with 1,938 different argument sets. It clears any lower bound on variation a thousand times over — and is maximally <em>un</em>-reusable.",
+     "<b>No proposal.</b> That is not a tool, that is <code>sed</code>. Minting one would be wrapping the shell in the shell. Without this upper bound, a real history produced 2,073 proposals — an inbox nobody would ever read."]}
+];
+(function(){
+  var btnRow=document.getElementById("foundryCases"), g=document.getElementById("foundryRows");
+  var det=document.getElementById("foundryDetail"), btns=[];
+  function draw(idx){
+    btns.forEach(function(b,i){b.classList.toggle("on",i===idx);});
+    var c=FCASES[idx]; clear(g);
+    c.rows.forEach(function(r,i){
+      var y=16+i*26;
+      g.appendChild(el("rect",{x:20,y:y,width:430,height:21,rx:4,fill:"#1c2130",stroke:"#333c52"}));
+      var t=el("text",{x:30,y:y+15,"font-size":11.5,fill:"#a6b0c4","class":"mono"},r);
+      g.appendChild(t);
+    });
+    g.appendChild(el("path",{d:"M460 60 L490 60",stroke:"#6f7c95","stroke-width":1.5,"marker-end":"url(#ar3)"}));
+    g.appendChild(el("rect",{x:500,y:32,width:380,height:56,rx:8,fill:"#1c2130",
+      stroke:c.ok?"#5fcf94":"#f0736a","stroke-width":1.5}));
+    txt(g,690,54,"signature",10.5,"#6f7c95");
+    var st=el("text",{x:690,y:74,"font-size":12,fill:c.ok?"#5fcf94":"#f0736a","text-anchor":"middle","class":"mono"});
+    st.innerHTML=c.sig; g.appendChild(st);
+    txt(g,500,116,c.ok?"✓ proposed as a reusable tool":"✗ no proposal",13.5,c.ok?"#5fcf94":"#f0736a","start",600);
+    txt(g,500,138,c.ok?"the holes become its parameters":"and that is the correct answer",11.5,"#6f7c95","start");
+    setDetail(det,c.n,c.d,"crates/stella-core/src/tool_foundry.rs — proposes only; installs nothing");
+  }
+  FCASES.forEach(function(c,i){
+    var b=document.createElement("button"); b.className="btn sm"; b.textContent=c.n;
+    b.onclick=function(){draw(i);}; btnRow.appendChild(b); btns.push(b);
+  });
+  draw(0);
+})();
+
+})();
+</script>
+</body>
+</html>
