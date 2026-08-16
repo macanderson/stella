@@ -671,6 +671,21 @@
       "status": "proposed",
       "title": "One loop, seven lanes \u2014 making turn-loop capability assembly a single place"
     },
+    "turn-loop-wrappers": {
+      "path": "docs/spec/turn-loop-wrappers.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "status": "proposed",
+      "title": "One loop, six doors, and wrappers are plugins"
+    },
     "verification-gate": {
       "path": "docs/spec/verification-gate.md",
       "status": "living",
