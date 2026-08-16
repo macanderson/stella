@@ -160,6 +160,16 @@ parent `fsync` — on every platform. Off Unix the hardening has no equivalent
 and is skipped rather than made a precondition: refusing to persist does not
 protect the token, it just leaves the user re-authenticating every session.
 
+**Server annotations are claims, never facts (#3287).** A server's
+`readOnlyHint` / `idempotentHint` / `destructiveHint` are ingested and ride
+each tool's declared `ToolContract` (`McpToolSet::contracts()`) — visible to
+display and policy at `Provenance::Declared`, with `destructiveHint` *raising*
+the `High` grade to `Destructive`. They never touch the advertised
+`ToolSchema`: `read_only` stays `false` there regardless of the hint, because
+that bit admits a tool into concurrent dispatch and into read-only fences,
+and a server's metadata is untrusted for the same reason its output is
+(#2689). The one retry-path derivation (`safe_to_retry`) is unchanged.
+
 ## Gotchas
 
 - **`PATH` is the only inherited variable, and it is load-bearing.** Without

@@ -393,6 +393,18 @@ impl ToolExecutor for DelegatingTools<'_> {
         schemas
     }
 
+    /// Forwarded, mirroring `schemas()` (#3287). The appended engine-side
+    /// `task` rides as a declared contract: this crate has no catalog to
+    /// vouch for it, and declared-`High` is the fail-closed reading — a host
+    /// ceiling that refuses it refuses too much, never too little.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        let mut contracts = self.inner.contracts();
+        if !contracts.iter().any(|c| c.name() == TASK_TOOL) {
+            contracts.push(stella_protocol::ToolContract::declared(Self::task_schema()));
+        }
+        contracts
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if name != TASK_TOOL || self.inner.schemas().iter().any(|s| s.name == TASK_TOOL) {
             return self.inner.execute(name, input).await;

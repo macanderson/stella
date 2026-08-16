@@ -246,6 +246,11 @@ pub struct ToolAnnotations {
     /// effect — a duplicate delivery is harmless.
     #[serde(rename = "idempotentHint", default)]
     pub idempotent_hint: bool,
+    /// The tool may perform destructive updates (#3287). Only ever used to
+    /// make the client *more* cautious — it raises the tool's declared risk
+    /// grade, never softens anything.
+    #[serde(rename = "destructiveHint", default)]
+    pub destructive_hint: bool,
 }
 
 /// `tools/call` params.

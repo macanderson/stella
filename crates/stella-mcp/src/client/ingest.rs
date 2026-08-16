@@ -109,6 +109,12 @@ pub struct McpToolInfo {
     /// error instead — the server may have already executed the call, and
     /// re-sending a mutating tool risks double execution.
     pub safe_to_retry: bool,
+    /// The server's behavior hints, retained verbatim (#3287) so the
+    /// toolset can carry them into the tool's declared
+    /// [`stella_protocol::ToolContract`] as *claims* — untrusted, exactly
+    /// as the server's output is. `safe_to_retry` above stays the one
+    /// retry-path derivation.
+    pub annotations: crate::protocol::ToolAnnotations,
 }
 
 /// Drive `tools/list` to exhaustion over `transport`, following `nextCursor`,
@@ -166,6 +172,7 @@ pub(super) async fn fetch_all_tools(
                 name: tool.name,
                 input_schema,
                 safe_to_retry: tool.annotations.read_only_hint || tool.annotations.idempotent_hint,
+                annotations: tool.annotations,
             });
         }
         match page.next_cursor {

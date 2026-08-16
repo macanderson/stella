@@ -93,10 +93,11 @@ pub(super) fn refusal(tool: Option<&dyn Tool>, input: &Value) -> Option<ToolOutp
 /// first violation in the module doc's fixed order, or `None` when the input
 /// is acceptable (or the schema declares nothing checkable).
 ///
-/// `pub(super)` because `registry/output.rs` (#3285) runs the same subset in
-/// the other direction — one checker, two seams, so the two vocabularies
-/// cannot drift.
-pub(super) fn check(schema: &Value, input: &Value) -> Option<InputError> {
+/// `pub(crate)` because `registry/output.rs` (#3285) runs the same subset in
+/// the other direction, and `custom.rs` (#3287) holds a script tool to its
+/// manifest's `[output_schema]` promise — one checker, three seams, so the
+/// vocabularies cannot drift.
+pub(crate) fn check(schema: &Value, input: &Value) -> Option<InputError> {
     let properties = schema.get("properties").and_then(Value::as_object);
 
     // `required`, in the schema's declared order.

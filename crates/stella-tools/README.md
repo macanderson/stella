@@ -137,6 +137,19 @@ manifests register only if the workspace adopted them, a human enabled them,
 and their bytes still match what their witness ran against — re-checked at
 the moment of launch, not just at scan time.
 
+**A manifest's claims are claims, never facts (#3287).** A
+`.stella/tools/*.toml` may declare `read_only`, `risk`, `idempotent` and an
+optional `[output_schema]`, and every one of them is a self-report: they ride
+the tool's `ToolContract` (via `CustomToolSet::contracts()`) at
+`Provenance::Declared`, where display and policy can see them — but the
+*advertised* `ToolSchema` keeps `read_only: false`, so a claim never buys
+concurrent dispatch or a place inside `ReadOnlyTools`' fence. A claimed risk
+may only ever *raise* the declared `High` grade (to `Destructive`), never
+lower it. The one route from claim to trust is the foundry adoption gate;
+nothing else upgrades provenance. A declared `[output_schema]` is enforced:
+the script's stdout must be JSON matching it, or the call fails as the
+tool's own `Internal` defect.
+
 ## Gotchas
 
 - **A tool's timings never go in its `ToolOutput`.** That value is what

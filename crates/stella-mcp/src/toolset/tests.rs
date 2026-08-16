@@ -1077,3 +1077,64 @@ async fn an_oversized_description_and_schema_are_bounded_at_ingest() {
         fat.description
     );
 }
+
+/// The #3287 witness (MCP half): server annotations ride the *declared
+/// contract* as claims — `readOnlyHint` preserved verbatim buying nothing,
+/// `idempotentHint` into the idempotent claim, `destructiveHint` raising the
+/// grade — while the *advertised* schema keeps `read_only: false`, so
+/// dispatch never widens on a self-report.
+#[tokio::test]
+async fn server_annotations_ride_the_declared_contract_never_the_schema() {
+    let transport = ScriptedTransport::new();
+    transport.push_ok(
+        "initialize",
+        serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+    );
+    transport.push_ok(
+        "tools/list",
+        serde_json::json!({ "tools": [
+            { "name": "peek", "inputSchema": { "type": "object" },
+              "annotations": { "readOnlyHint": true, "idempotentHint": true } },
+            { "name": "wipe", "inputSchema": { "type": "object" },
+              "annotations": { "destructiveHint": true } },
+        ] }),
+    );
+    let mut client = McpClient::new("vendor", Box::new(transport));
+    client.initialize().await.unwrap();
+    let set = McpToolSet::from_clients(vec![client]);
+
+    let advertised = set
+        .schemas()
+        .into_iter()
+        .find(|s| s.name == "mcp__vendor__peek")
+        .expect("advertised");
+    assert!(
+        !advertised.read_only,
+        "a readOnlyHint must never reach the dispatch-facing schema"
+    );
+
+    let contracts = stella_core::ports::ToolExecutor::contracts(&set);
+    let peek = contracts
+        .iter()
+        .find(|c| c.name() == "mcp__vendor__peek")
+        .expect("contracted");
+    assert_eq!(peek.provenance, stella_protocol::Provenance::Declared);
+    assert!(
+        peek.schema.read_only,
+        "the claim is preserved on the contract"
+    );
+    assert!(!peek.trusted_read_only(), "and buys no trust");
+    assert!(peek.idempotent);
+    assert_eq!(peek.risk, stella_protocol::RiskLevel::High);
+
+    let wipe = contracts
+        .iter()
+        .find(|c| c.name() == "mcp__vendor__wipe")
+        .expect("contracted");
+    assert_eq!(
+        wipe.risk,
+        stella_protocol::RiskLevel::Destructive,
+        "a destructiveHint raises the grade — self-reports only ever make a \
+         tool look more dangerous"
+    );
+}
