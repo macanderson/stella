@@ -229,7 +229,8 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                     cfg,
                     active_rules.clone(),
                     mcp.clone(),
-                    crate::agent::SessionPlane::new(events.clone()),
+                    crate::agent::SessionPlane::new(events.clone())
+                        .with_sub_agents(tools_registry.sub_agent_dispatcher()),
                 )?;
                 // The run's ORIGINAL decisions, restored from the frame — a
                 // flag environment that changed across the crash must not

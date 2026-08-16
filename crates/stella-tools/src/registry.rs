@@ -294,6 +294,24 @@ impl ToolRegistry {
             .unwrap_or_else(|p| p.into_inner()) = Some(dispatcher);
     }
 
+    /// The dispatcher this registry runs sub-agents through, if one is
+    /// attached.
+    ///
+    /// For a host building a *second* registry that should delegate through
+    /// the same runner — a best-of-N candidate workspace is the case that
+    /// motivated it. Children run read-only, so sharing the session's runner
+    /// costs the candidate nothing it needed: a research child reads to
+    /// understand the codebase, and the snapshot it would otherwise read is a
+    /// copy of the same tree.
+    pub fn sub_agent_dispatcher(
+        &self,
+    ) -> Option<std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>> {
+        self.sub_agent_dispatcher
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
     /// Publish this turn's pause gate and steering tap, until the returned
     /// guard drops.
     ///

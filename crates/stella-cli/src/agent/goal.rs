@@ -758,7 +758,8 @@ async fn run_goal_pipeline_turn(
             cfg,
             active_rules.clone(),
             mcp,
-            SessionPlane::new(stella_core::EventSender::new(tx.clone())),
+            SessionPlane::new(stella_core::EventSender::new(tx.clone()))
+                .with_sub_agents(registry.sub_agent_dispatcher()),
         )?;
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the recall port (as on the one-shot
