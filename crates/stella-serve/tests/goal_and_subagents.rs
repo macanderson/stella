@@ -65,7 +65,9 @@ fn read_tool() -> ToolSchema {
 fn base_spec(prompt: &str) -> SessionSpec {
     SessionSpec {
         provider_id: "worker-model".to_string(),
-        tools: vec![read_tool()],
+        principal: stella_core::ports::Principal::Host("test".to_string()),
+        gate: SessionSpec::default_gate(),
+        tools: vec![stella_protocol::ToolContract::declared(read_tool())],
         messages: vec![CompletionMessage::user(prompt)],
         config: EngineConfig::default(),
         budget: BudgetGuard::new(BudgetMode::Off, None, None),

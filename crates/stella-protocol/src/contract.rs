@@ -183,9 +183,28 @@ impl std::error::Error for ContractError {}
 /// engine's [`crate::ToolSchema`] half already does, and the governance half
 /// is what an embedding host reads to authorize a remoted call from metadata
 /// instead of maintaining its own name → capability side-table.
+/// The contract revision this build writes — see [`ToolContract::version`].
+pub const CONTRACT_VERSION: u32 = 1;
+
+/// [`ToolContract::version`]'s decode default: everything serialized before
+/// the field existed is revision 1 by definition.
+fn default_contract_version() -> u32 {
+    CONTRACT_VERSION
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ToolContract {
+    /// The contract-shape revision (#3286) — what an external host reading
+    /// contracts off the serve wire pins against, so a future breaking
+    /// change to this type's meaning is a number a host can branch on
+    /// rather than a silent reinterpretation. Deliberately **always
+    /// serialized** (unlike the optional claims below): a pin nobody can
+    /// see is not a pin. Absent on payloads written before the field
+    /// existed, which decode as revision 1 — the only shape that ever
+    /// existed before it.
+    #[serde(default = "default_contract_version")]
+    pub version: u32,
     /// What is advertised to the model — unchanged, and serialized by the
     /// same code that always serialized it (see the module docs on why this
     /// is composition rather than restatement).
@@ -241,6 +260,7 @@ impl ToolContract {
         Self {
             schema,
             risk,
+            version: CONTRACT_VERSION,
             requires_approval: false,
             provenance: Provenance::Builtin,
             output_schema: None,
@@ -298,6 +318,7 @@ impl ToolContract {
         Self {
             schema,
             risk: RiskLevel::High,
+            version: CONTRACT_VERSION,
             requires_approval: false,
             provenance: Provenance::Declared,
             output_schema: None,
@@ -403,6 +424,18 @@ mod tests {
         );
         let old: ToolContract = serde_json::from_str(&json).unwrap();
         assert_eq!(old, bare);
+    }
+
+    #[test]
+    fn a_pre_version_payload_decodes_as_revision_one_and_the_pin_is_always_written() {
+        // #3286: everything serialized before the field existed is revision
+        // 1 by definition, and the pin is always on the wire — a version a
+        // host cannot see is not a pin.
+        let json = r#"{"schema":{"name":"t","description":"d","input_schema":{}},"risk":"low","provenance":"builtin"}"#;
+        let back: ToolContract = serde_json::from_str(json).unwrap();
+        assert_eq!(back.version, CONTRACT_VERSION);
+        let out = serde_json::to_string(&back).unwrap();
+        assert!(out.contains("\"version\":1"), "{out}");
     }
 
     #[test]

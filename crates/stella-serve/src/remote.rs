@@ -19,7 +19,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
-use stella_core::ports::ToolExecutor;
+use stella_core::hooks::decision::{GateVerdict, OperatorPosture};
+use stella_core::ports::authz::authz_verdict;
+use stella_core::ports::{AuthzGate, Principal, ToolExecutor};
 use stella_core::retry::Sleeper;
 use stella_pipeline::ports::{
     ApprovalGate, CmdKind, CmdOutcome, DiagnosticInvocation, DiagnosticRunner, ScopeDecision,
@@ -359,7 +361,16 @@ impl Provider for RemoteProvider {
 /// so the engine's partitioned concurrency still applies); `execute` emits a
 /// [`ServerFrame::ToolRequest`] and blocks on the host's answer.
 pub(crate) struct RemoteToolExecutor {
-    schemas: Vec<ToolSchema>,
+    /// The host-declared contracts (#3286): schema plus governance metadata.
+    /// The advertised schemas derive from these; the gate below reasons over
+    /// them.
+    contracts: Vec<stella_protocol::ToolContract>,
+    /// The turn's authorization gate, applied before a request frame leaves
+    /// — same seam, same position as the CLI's `GatedToolSet`.
+    gate: std::sync::Arc<dyn AuthzGate>,
+    /// Who the calls are made as — a host-supplied opaque identity the
+    /// engine never interprets (invariant #1).
+    principal: Principal,
     /// Disambiguates this executor's request ids from every other executor
     /// sharing the turn's [`Pending`] registry (#1496) — the same guarantee,
     /// and the same mechanism, as [`RemoteProvider::instance`].
@@ -381,14 +392,18 @@ pub(crate) struct RemoteToolExecutor {
 
 impl RemoteToolExecutor {
     pub(crate) fn new(
-        schemas: Vec<ToolSchema>,
+        contracts: Vec<stella_protocol::ToolContract>,
+        gate: std::sync::Arc<dyn AuthzGate>,
+        principal: Principal,
         frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
         bus: Option<HookBus>,
     ) -> Self {
         Self {
-            schemas,
+            contracts,
+            gate,
+            principal,
             instance: TOOL_INSTANCES.fetch_add(1, Ordering::Relaxed),
             frames,
             pending,
@@ -396,6 +411,27 @@ impl RemoteToolExecutor {
             timeout,
             bus,
         }
+    }
+
+    /// The contract this executor authorizes `name` against. A name outside
+    /// the declared set resolves to an untrusted `High` contract rather than
+    /// skipping authorization — the same fail-closed reading as the CLI's
+    /// `contracts::unknown_contract`, built locally because this crate
+    /// deliberately does not depend on `stella-tools`.
+    fn contract_for(&self, name: &str) -> stella_protocol::ToolContract {
+        self.contracts
+            .iter()
+            .find(|contract| contract.name() == name)
+            .cloned()
+            .unwrap_or_else(|| {
+                stella_protocol::ToolContract::declared(ToolSchema {
+                    name: name.to_string(),
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                    read_only: false,
+                    speculation_safe: false,
+                })
+            })
     }
 
     /// Run the `tool.call.requested` blocking chain before the request frame
@@ -474,7 +510,17 @@ impl RemoteToolExecutor {
 #[async_trait]
 impl ToolExecutor for RemoteToolExecutor {
     fn schemas(&self) -> Vec<ToolSchema> {
-        self.schemas.clone()
+        self.contracts
+            .iter()
+            .map(|contract| contract.schema.clone())
+            .collect()
+    }
+
+    /// The host-declared contracts, verbatim (#3286) — what lets an outer
+    /// layer (or a parity witness) see the same governance metadata the gate
+    /// reasons over.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.contracts.clone()
     }
 
     // `live_services` keeps the empty default, declared rather than
@@ -496,6 +542,34 @@ impl ToolExecutor for RemoteToolExecutor {
             return ToolOutput::error(
                 "turn cancelled before the tool call could be dispatched".to_string(),
             );
+        }
+        // The authorization gate, before anything else (#3286) — the same
+        // seam, at the same position, as the CLI's `GatedToolSet`: a denied
+        // call costs the host nothing, no frame is ever built, and the
+        // verdict folds through the one shared ladder so an `Err` from the
+        // gate denies whatever any softening flag says.
+        let evaluation = self
+            .gate
+            .check(&self.contract_for(name), &self.principal, input);
+        match authz_verdict(&OperatorPosture::NoOpinion, evaluation, false) {
+            GateVerdict::Allow => {}
+            GateVerdict::Deny { reason } => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    reason,
+                );
+            }
+            // A served turn has no human to park on: the structured refusal
+            // is the honest answer, exactly as the CLI's headless
+            // `ApprovalBroker` refuses. Routing this through a host-side
+            // approval exchange is #3288's territory, not silently allowed
+            // here.
+            GateVerdict::RequireApproval { reason } => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!("`{name}` requires approval before it can run: {reason}"),
+                );
+            }
         }
         let Some(bus) = &self.bus else {
             return self.dispatch(name, input).await;
@@ -947,6 +1021,8 @@ mod tests {
         .detach();
         let port = RemoteToolExecutor::new(
             Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
             sink,
             pending,
             std::time::Duration::from_millis(50),
@@ -983,9 +1059,24 @@ mod tests {
         let timeout = std::time::Duration::from_millis(20);
 
         // The parent's port and the sub-agent view's, over the same registry.
-        let parent =
-            RemoteToolExecutor::new(Vec::new(), sink.clone(), pending.clone(), timeout, None);
-        let child = RemoteToolExecutor::new(Vec::new(), sink, pending, timeout, None);
+        let parent = RemoteToolExecutor::new(
+            Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
+            sink.clone(),
+            pending.clone(),
+            timeout,
+            None,
+        );
+        let child = RemoteToolExecutor::new(
+            Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
+            sink,
+            pending,
+            timeout,
+            None,
+        );
 
         let _ = parent.dispatch("parent_tool", &serde_json::json!({})).await;
         let _ = child.dispatch("child_tool", &serde_json::json!({})).await;
@@ -1061,6 +1152,8 @@ mod tests {
         .detach();
         let port = RemoteToolExecutor::new(
             Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
             sink,
             pending,
             std::time::Duration::from_millis(20),
@@ -1118,6 +1211,8 @@ mod tests {
         let (sink, mut rx, pending) = live_channel();
         let parent = RemoteToolExecutor::new(
             Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
             sink.clone(),
             pending.clone(),
             Duration::from_secs(5),
@@ -1125,6 +1220,8 @@ mod tests {
         );
         let child = RemoteToolExecutor::new(
             Vec::new(),
+            std::sync::Arc::new(stella_core::ports::NoAuthz),
+            stella_core::ports::Principal::Host("test".to_string()),
             sink,
             pending.clone(),
             Duration::from_secs(5),
@@ -1318,5 +1415,111 @@ mod tests {
             None,
             "an unimplemented verification call observed no assertion either way"
         );
+    }
+
+    /// **The #3286 serve witness**: a denying gate refuses a remoted call
+    /// *before its request frame leaves* — the host is never asked — at the
+    /// same seam position as the CLI's `GatedToolSet`. Its parity twin on
+    /// the CLI surface is `stella-cli`'s
+    /// `a_denying_gate_blocks_a_call_the_default_session_stack_allows`;
+    /// `stella-parity` names both.
+    #[tokio::test]
+    async fn a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves() {
+        struct DenyAll;
+        impl stella_core::ports::AuthzGate for DenyAll {
+            fn name(&self) -> &'static str {
+                "deny-all"
+            }
+            fn check(
+                &self,
+                contract: &stella_protocol::ToolContract,
+                _principal: &stella_core::ports::Principal,
+                _input: &serde_json::Value,
+            ) -> Result<stella_core::ports::AuthzDecision, stella_core::ports::AuthzEvalError>
+            {
+                Ok(stella_core::ports::AuthzDecision::Deny {
+                    reason: format!("`{}` is not permitted here", contract.name()),
+                })
+            }
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-authztest0"),
+        );
+        let contract = stella_protocol::ToolContract::declared(stella_protocol::ToolSchema {
+            name: "deploy".to_string(),
+            description: "d".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        });
+        let port = RemoteToolExecutor::new(
+            vec![contract],
+            Arc::new(DenyAll),
+            stella_core::ports::Principal::Host("acme".to_string()),
+            sink,
+            pending,
+            Duration::from_millis(50),
+            None,
+        );
+
+        let out = port.execute("deploy", &serde_json::json!({})).await;
+        match out {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(class, Some(stella_protocol::ErrorClass::RefusedByPolicy));
+                assert!(message.contains("deploy"), "names the tool: {message}");
+            }
+            other => panic!("the gate must refuse: {other:?}"),
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "a denied call must never reach the host — no frame may exist"
+        );
+    }
+
+    /// A `Medium` risk ceiling refuses a host-declared (untrusted, `High`)
+    /// tool from contract metadata alone — the side-table the wire change
+    /// exists to retire.
+    #[tokio::test]
+    async fn a_risk_ceiling_authorizes_from_wire_contract_metadata() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-authztest1"),
+        );
+        let contract = stella_protocol::ToolContract::declared(stella_protocol::ToolSchema {
+            name: "mcp__vendor__wipe".to_string(),
+            description: "d".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        });
+        let port = RemoteToolExecutor::new(
+            vec![contract],
+            Arc::new(stella_core::ports::RiskCeiling::new(
+                stella_protocol::RiskLevel::Medium,
+            )),
+            stella_core::ports::Principal::Host("acme".to_string()),
+            sink,
+            pending,
+            Duration::from_millis(50),
+            None,
+        );
+
+        let out = port
+            .execute("mcp__vendor__wipe", &serde_json::json!({}))
+            .await;
+        assert!(out.is_error(), "a Medium ceiling must refuse High: {out:?}");
+        assert!(rx.try_recv().is_err(), "and the host is never asked");
     }
 }

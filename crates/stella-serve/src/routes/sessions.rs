@@ -49,7 +49,11 @@ struct SessionCreated<'a> {
 struct SessionTurnRequest {
     provider_id: String,
     #[serde(default)]
-    tools: Vec<ToolSchema>,
+    tools: Vec<super::WireTool>,
+    /// The host's identity for this turn's tool calls — see `TurnRequest`'s
+    /// field of the same name (#3286).
+    #[serde(default)]
+    principal: Option<String>,
     /// This turn's new input, appended to the session history before the turn
     /// runs — typically one user message.
     input: Vec<CompletionMessage>,
@@ -258,7 +262,9 @@ pub(crate) async fn handle_session_turn(
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: request.provider_id,
-            tools: request.tools,
+            tools: super::wire_contracts(request.tools),
+            principal: super::host_principal(request.principal),
+            gate: SessionSpec::default_gate(),
             messages,
             config,
             budget,
