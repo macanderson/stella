@@ -152,7 +152,11 @@ pub fn channel_of(tier: Tier, disposition: &Disposition) -> Option<Channel> {
 }
 
 /// The force a record renders under, after any demotion.
-fn effective_force(record: &LoadedRecord, disposition: &Disposition) -> Force {
+///
+/// `pub(crate)` for the steering adapter, whose within-source rank must be the
+/// (force, precedence) pair [`survivors`] already drops by — re-deriving the
+/// demotion rule there would be a second copy that could disagree.
+pub(crate) fn effective_force(record: &LoadedRecord, disposition: &Disposition) -> Force {
     let declared = record
         .record
         .steering
@@ -290,7 +294,11 @@ fn render_volatile(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> 
 /// whose blocking was refused ([`super::BlockingRefusal`]) does not get it: telling
 /// the model a call will be blocked when it will not is the same lie the blank-guard
 /// bug used to tell.
-fn bullet(input: &RenderInput<'_>) -> String {
+/// `pub(crate)` for one caller: the steering adapter
+/// (`crate::steering::adapt::record_candidates`) estimates a record's token
+/// cost from this exact line rather than re-deriving the shape — one producer,
+/// the same discipline #3334 established for recall lines.
+pub(crate) fn bullet(input: &RenderInput<'_>) -> String {
     let statement = input.record.record.statement.trim();
     let suffix = if input.enforced { " [enforced]" } else { "" };
     format!("- {statement} ^{}{suffix}", input.record.handle)

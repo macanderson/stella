@@ -152,3 +152,146 @@ proptest! {
         prop_assert_eq!(set.selected.len() + set.dropped.len(), costs.len());
     }
 }
+
+// #3349 — the adapters: existing selector output mapped, never re-selected.
+
+/// A registry whose volatile channel renders one record and budget-drops
+/// another, for exercising both halves of the record adapter.
+fn two_record_registry() -> crate::records::Registry {
+    let file = crate::rules::RuleFile {
+        path: ".stella/rules/ctx.acme.pair.toml".to_string(),
+        contents: r#"
+schema = "context-record/v0.1"
+set_id = "acme"
+
+[[record]]
+lineage_id = "ctx.acme.staging-url"
+kind = "preference"
+statement = "The staging URL is https://stage.example."
+status = "active"
+origin = "user"
+
+[record.steering]
+force = "may"
+precedence = 40
+
+[[record]]
+lineage_id = "ctx.acme.long-tail"
+kind = "preference"
+statement = "A long low-precedence fact that will not fit a tight budget at all."
+status = "active"
+origin = "user"
+
+[record.steering]
+force = "info"
+"#
+        .to_string(),
+    };
+    crate::records::registry::load(&[], &[file], &crate::records::Facts::default())
+}
+
+/// The skill adapter's estimate is measured over the exact block the section
+/// renderer emits — one producer, so cost and bytes cannot drift.
+#[test]
+fn a_skill_candidate_costs_exactly_its_rendered_block() {
+    let sel = crate::skills::SelectedSkill {
+        skill: crate::skills::Skill {
+            name: "reviewer".into(),
+            description: "database review".into(),
+            domains: vec![],
+            body: "ALWAYS_REVIEW_DATABASES".into(),
+            source_path: ".stella/skills/reviewer/SKILL.md".into(),
+            origin: crate::skills::SkillOrigin::Workspace,
+        },
+        score: 0.42,
+        matched_terms: vec!["database".into(), "review".into()],
+        matched_domains: vec![],
+    };
+
+    let candidates = adapt::skill_candidates(std::slice::from_ref(&sel));
+
+    assert_eq!(candidates.len(), 1);
+    let c = &candidates[0];
+    assert_eq!(
+        (c.source, c.handle.as_str()),
+        (SteeringSource::Skill, "reviewer")
+    );
+    assert_eq!(c.score, 0.42);
+    assert_eq!(
+        c.est_tokens,
+        stella_protocol::estimate_tokens(&crate::skills::rendered_skill_block(&sel)),
+        "the estimate and the section renderer read the same bytes"
+    );
+    assert!(
+        c.why.contains("database"),
+        "the why carries the selector's evidence: {}",
+        c.why
+    );
+}
+
+/// The record adapter maps the channel's rendered handles to candidates and
+/// its budget-evicted handles to the drop ledger — it never re-decides either
+/// list, so the two together are exactly what the channel selected.
+#[test]
+fn record_candidates_and_drops_partition_the_channels_own_decision() {
+    let registry = two_record_registry();
+    let facts = crate::records::TurnFacts {
+        text: "anything",
+        paths: &[],
+    };
+    // A budget the first (stronger-force) record fits and the second does not.
+    let rendered = registry.render_volatile_for_turn(&facts, Some(80));
+    assert_eq!(rendered.rendered, vec!["staging-url"]);
+    assert_eq!(rendered.dropped, vec!["long-tail"]);
+
+    let candidates = adapt::record_candidates(&registry, &rendered);
+    let drops = adapt::record_drops(&registry, &rendered);
+
+    assert_eq!(candidates.len(), 1);
+    let c = &candidates[0];
+    assert_eq!(
+        (c.source, c.handle.as_str()),
+        (SteeringSource::Record, "staging-url")
+    );
+    assert!(c.est_tokens > 0, "a rendered record costs its bullet line");
+    assert!(
+        c.why.contains("^staging-url") && c.why.contains("precedence 40"),
+        "the why names the handle and the declared rank: {}",
+        c.why
+    );
+    assert_eq!(
+        drops
+            .iter()
+            .map(|d| (d.source, d.handle.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(SteeringSource::Record, "long-tail")],
+        "the channel's named drops become the generalized ledger"
+    );
+}
+
+/// Within the record source, the adapter's flattened score orders candidates
+/// exactly as the channel's own eviction rank does: force first, declared
+/// precedence within it.
+#[test]
+fn record_scores_preserve_the_channels_force_then_precedence_rank() {
+    let registry = two_record_registry();
+    let facts = crate::records::TurnFacts {
+        text: "anything",
+        paths: &[],
+    };
+    let rendered = registry.render_volatile_for_turn(&facts, None);
+    assert_eq!(rendered.rendered.len(), 2, "no budget: both render");
+
+    let candidates = adapt::record_candidates(&registry, &rendered);
+    let may = candidates
+        .iter()
+        .find(|c| c.handle == "staging-url")
+        .unwrap();
+    let info = candidates.iter().find(|c| c.handle == "long-tail").unwrap();
+    assert!(
+        may.score > info.score,
+        "`may` precedence 40 outranks `info` precedence 0: {} vs {}",
+        may.score,
+        info.score
+    );
+}
