@@ -299,4 +299,188 @@ Worth stating, so nobody reads this as bigger than it is.
 | #2701 | Signal-consumer ledger. Move one adds and re-homes an ending signal; the ledger is where that is declared. |
 | #2694 | Tool-first epic. Its "stages become tools" line and move two's "stages become manifest entries" are two different destinations; §4 of this document is the boundary. |
 | #2889 | Experiment plane. Move three's variant column is the cheap first cut. |
+
+---
+
+## 9. Design resolution
+
+§1–§8 are the vision and stand as written. This section resolves the four
+places where turning them into code hits something already decided in this
+repository, and answers §5's open question about the door tag. Written against
+`main` at `730f2286c` (the same commit §2 was verified at); every "today" claim
+below was read out of the tree, and the two inferences are labelled.
+
+### 9.1 The socket cannot live in `stella-core`
+
+§4 says core keeps "one loop, one wrapper socket, zero built-in wrappers", and
+that the socket is the existing hook surface. The first and third clauses hold.
+The middle one needs a location, and it cannot be `stella-core`:
+
+`before_turn` does recall and research; `after_turn` runs a test command or an
+oracle process. That is I/O, and invariant #2 forbids I/O in the engine. A
+socket defined in core is either a trait core never calls — which is fine but
+is not a socket — or a trait core awaits, which puts the process spawn inside
+the engine.
+
+So the trait is defined **above** core, in `stella-runtime`, which already owns
+engine assembly and reads no ambient environment by contract
+(`crates/stella-runtime/tests/no_ambient_reads.rs`). Core's share of move two is
+strictly **subtractive**:
+
+- delete the private-channel affordance move one already removes;
+- delete goal mode's round loop from `crates/stella-core/src/goal.rs`, which is
+  a route-specific supervisor sitting inside the engine crate today.
+
+That second deletion is what actually delivers "zero built-in wrappers". It
+also means move two makes `stella-core` smaller, which is a better claim than
+the one §4 makes and is worth stating in those terms.
+
+The hook surface stays exactly what §4 says it is — the *dispatch* mechanism,
+with its existing `allow`/`modify`/`deny`/`require_approval` vocabulary. What
+moves out of core is the definition of the wrapper contract and the code that
+sequences it.
+
+### 9.2 `judge` may not call a model — and goal mode's judge is a model call
+
+This is the one internal contradiction in §4, and it is load-bearing enough to
+resolve rather than paper over.
+
+The table at §4 says `judge` "may not call a model". Four lines later, "Goal
+mode is the second [plugin] … its independent verifier is `judge`". But goal
+mode's independent verifier **is** a model call, once per round, assessing the
+transcript against the goal — that is what
+`crates/stella-core/src/goal.rs` does today and the only thing it could do. For
+an open-ended goal with no test surface there is no measurement to take.
+
+Both halves are right; they are describing different stages. The resolution:
+
+> **The model call belongs to `after_turn`, never to `judge`.**
+
+A goal-mode wrapper spends its verifier call in `after_turn` and returns the
+parsed assessment *as evidence*. `judge` then maps evidence to verdict
+deterministically, and is a synchronous, I/O-free function over owned data —
+which is what makes "judge calls no model" a property of the signature instead
+of a rule someone has to remember. The pipeline's `ladder_decision` is already
+written that way, so porting it is a re-home, not a rewrite.
+
+What this preserves, exactly: "verification buys no model call" holds where
+#2584 won it — the `classic` variant's only verifier-tier spend is the witness
+author, and its `judge` reads the flip. What it stops pretending: that goal mode
+already satisfies that rule. It does not, it never did, and the spend is now
+visible on the receipt against a declared role instead of being described as a
+`judge`.
+
+### 9.3 The child-engine constructor is the whole security story
+
+§4's "bug class this deletes" is right that one blessed constructor kills it.
+Two things make that enforceable rather than aspirational:
+
+- **A wrapper is handed a `ChildTurn` port, not a provider, not an `Engine`, and
+  not a credential.** It names a *role intent* (`triage`, `planner`,
+  `witness_author`); the host resolves the intent against the user's BYOK
+  providers, carves the budget, attaches gate/steering/hooks, runs the turn, and
+  settles once. For an out-of-process wrapper this is a JSON request on stdio
+  and every model call is made by the host — invariant #3 and #3245 §3, intact.
+- **This is gated on #3274 slice 2, not merely related to it.**
+  `crates/stella-core/src/subagent.rs:61` documents in its own module doc that
+  the current fork constructor cannot carry `gate`/`steering`/`hooks`. Until
+  `TurnCapabilities` exists, "the blessed constructor attaches all three" is a
+  promise with nothing behind it. Move two should not claim the bug class is
+  dead before that slice lands.
+
+### 9.4 The manifest needs two properties the sketch does not yet have
+
+§5's TOML sketch is the right shape. Two additions, both so that "a new variant
+is a manifest file" fails at load with a reason rather than at round three:
+
+- **Typed stage input/output, checked as a graph at load.** A stage whose input
+  no prior stage produces is a load error. §5 already says each stage has a
+  typed input and output; making the *graph* load-checked is what turns that
+  from documentation into a gate.
+- **`if` is a closed predicate grammar, not an expression language.** §5's
+  `"questions > 0"` and `"no-test-command"` are two different languages in one
+  field — one an arithmetic comparison over a stage output, one a host fact. A
+  Turing-complete condition in a manifest is a second program with no gate on
+  it. The grammar should be a small closed set of named predicates over typed
+  stage outputs and host facts, evaluated by a pure function, and validated at
+  load against the stage graph. §5's existing rule — a condition naming a signal
+  the host does not publish is a load error — is exactly this rule; it just
+  needs the grammar to be closed for it to be checkable.
+
+Both fall out of the format `crates/stella-plugin/src/manifest.rs` already
+enforces, so the variant block extends that manifest rather than introducing a
+second one. `participation` stays derived from declared capability, never
+authored twice (`doc:turn-lane-assembly` §9.3).
+
+### 9.5 The door tag exists — and it already encodes the wrapper
+
+§5 says every execution row is "tagged with the door it came in by". That is
+true: `executions.kind` (`crates/stella-store/src/ddl.rs:79`) carries `run`,
+`deck`, `deck-sub`, `goal`, `fleet`, and `pipeline`.
+
+But two of those values are not doors:
+
+```
+crates/stella-cli/src/agent.rs:281          begin_execution(&store, "pipeline", …)
+crates/stella-cli/src/command_deck.rs:1514  if pipeline_on { "deck-pipeline" } else { "deck" }
+```
+
+`pipeline` and `deck-pipeline` name **the wrapper**, in the column that is
+supposed to name the door. A deck turn writes a different door depending on
+whether a wrapper ran.
+
+This matters for move three specifically, because it is the measurement surface:
+adding `pipeline_variant` beside a `kind` that already encodes the wrapper gives
+two columns answering one question, disagreeing whenever the mapping is
+imperfect — and `GROUP BY` over either one silently double-counts the deck. The
+column addition therefore has a precondition:
+
+1. `kind` becomes the door and only the door — `pipeline` → `run`,
+   `deck-pipeline` → `deck`;
+2. `pipeline_variant` becomes the sole home for which wrapper ran, NULL for an
+   unwrapped turn;
+3. the backfill is stated rather than assumed: historical `pipeline` rows are
+   `kind='run', pipeline_variant='classic'`, and any query comparing across the
+   migration boundary must say so, per §5's own confounding rule.
+
+(Inference, labelled: I read the six values at their write sites and did not
+census live values in a `store.db`, so a legacy value not written by current
+code would not appear above.)
+
+The sample query move three exists to serve, after the disentangling:
+
+```sql
+SELECT kind AS door,
+       COALESCE(pipeline_variant, 'none') AS variant,
+       COUNT(*)                           AS runs,
+       AVG(cost_usd)                      AS avg_cost
+FROM executions
+WHERE finished_at IS NOT NULL
+GROUP BY door, variant;
+```
+
+### 9.6 Two gates, and one claim not made
+
+**The flag inversion is a measured change, not a refactor.** §5 frames flipping
+the default as a signal check, and as a signal check it is a good one. It is
+also the change that reaches users: every Stella benchmark number this project
+has published was produced with the pipeline as the default. #3245 Test 2 and
+`doc:turn-lane-assembly` §10.4 already gate the *extraction* on a side-by-side
+bench on the same panel; the same gate belongs on the *default flip*, one step
+earlier, and the result gets reported even when the raw loop is worse. Whether
+to spend that bench, or to flip ungated and accept the unknown, is the
+maintainer's call — recorded here rather than decided.
+
+**The dependency cut stays gated on #2716.** Cutting `stella-cli`'s
+`stella-pipeline` dependency (169 references across 41 files) needs the
+authority vocabulary for the `granted` half of a plugin lane, per
+`doc:turn-lane-assembly` §9.4 and §10.4. Moves one through three all land
+without it.
+
+**One claim this document should not make.** "The diff deletes more
+loop-orchestration code than it adds" is a plausible outcome and not a property
+assertable in advance. Move one and the `goal.rs` deletion are strongly
+net-negative; move three adds a manifest loader, a predicate grammar, and a
+stage-graph validator that do not exist today. It is a number to measure and
+report when the work lands, not a design property to promise now.
 | #2773, #2815 | Verification-ladder and candidate-workspace work. Both keep their outcomes; both land behind the wrapper contract rather than by growing `pipeline.rs`. |
