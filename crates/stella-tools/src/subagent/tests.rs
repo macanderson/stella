@@ -77,7 +77,7 @@ async fn a_completed_child_returns_its_finding() {
     let out = tool
         .execute(
             &call("find retry policy", "Which file defines the retry policy?"),
-            std::path::Path::new("."),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
         )
         .await;
 
@@ -102,7 +102,11 @@ async fn write_access_is_never_model_settable() {
     input["write_access"] = json!(true);
     input["max_report_chars"] = json!(10_000_000);
 
-    tool.execute(&input, std::path::Path::new(".")).await;
+    tool.execute(
+        &input,
+        &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+    )
+    .await;
 
     let spec = dispatcher.spec();
     assert!(!spec.write_access, "write access must stay off");
@@ -124,7 +128,7 @@ async fn a_partial_child_returns_its_evidence_as_ok_not_as_an_error() {
     let out = tool
         .execute(
             &call("find callers", "Find every caller of X"),
-            std::path::Path::new("."),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
         )
         .await;
 
@@ -148,7 +152,10 @@ async fn a_child_that_produced_nothing_is_an_error() {
     });
 
     let out = tool
-        .execute(&call("x", "y"), std::path::Path::new("."))
+        .execute(
+            &call("x", "y"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
         .await;
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
 }
@@ -161,7 +168,10 @@ async fn a_truncated_report_says_so_to_the_model() {
         true,
     )));
     let out = tool
-        .execute(&call("x", "y"), std::path::Path::new("."))
+        .execute(
+            &call("x", "y"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
         .await;
     match out {
         ToolOutput::Ok { content, .. } => assert!(
@@ -176,7 +186,10 @@ async fn a_truncated_report_says_so_to_the_model() {
 async fn an_unattached_dispatcher_tells_the_model_to_do_the_work_itself() {
     let tool = SpawnSubAgent::new(Arc::default());
     let out = tool
-        .execute(&call("x", "y"), std::path::Path::new("."))
+        .execute(
+            &call("x", "y"),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
         .await;
     match out {
         ToolOutput::Error { message, .. } => assert!(
@@ -191,7 +204,10 @@ async fn an_unattached_dispatcher_tells_the_model_to_do_the_work_itself() {
 async fn a_missing_prompt_is_a_self_correcting_error_and_dispatches_nothing() {
     let (tool, dispatcher) = tool_with(SubAgentOutcome::Completed(report("x", 1.0, false)));
     let out = tool
-        .execute(&json!({ "description": "x" }), std::path::Path::new("."))
+        .execute(
+            &json!({ "description": "x" }),
+            &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+        )
         .await;
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
     assert!(
@@ -214,7 +230,12 @@ async fn a_child_structurally_cannot_spawn_a_grandchild() {
             vec![self.0.schema()]
         }
         async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
-            self.0.execute(input, std::path::Path::new(".")).await
+            self.0
+                .execute(
+                    input,
+                    &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+                )
+                .await
         }
     }
 
@@ -388,4 +409,39 @@ fn minting_is_a_function_of_call_order_alone() {
         "replaying the same order must replay the ids"
     );
     assert_eq!(ids(()), vec!["a-b", "a-b-2", "c", "a-b-3"]);
+}
+
+/// The #3284 witness: the one long-running built-in announces its child as
+/// `tool.call.progress` on the session bus — through a `ToolCtx` scoped to
+/// exactly the events `contracts::contract_for` declares for `task`, so this
+/// test also pins the allowlist table. Fails on `main`, where
+/// `Tool::execute` has no event handle at all.
+#[tokio::test]
+async fn dispatching_a_child_emits_declared_progress_on_the_bus() {
+    let (tool, _dispatcher) = tool_with(SubAgentOutcome::Completed(report("done", 0.0, false)));
+
+    let bus = stella_core::bus::HookBus::new("test-session");
+    let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+    let sink = seen.clone();
+    bus.on("tool.call.progress", move |event| {
+        sink.lock().unwrap().push(event.payload.clone());
+        Ok(())
+    })
+    .detach();
+
+    let declared = crate::contracts::contract_for(&tool.schema()).events;
+    assert!(
+        declared.contains(&"tool.call.progress".to_string()),
+        "the contract table must declare the event this test asserts"
+    );
+    let ctx = crate::ctx::ToolCtx::new(std::path::PathBuf::from("."), "task", Some(bus), declared);
+
+    tool.execute(&call("find retry policy", "where is retry?"), &ctx)
+        .await;
+
+    let events = seen.lock().unwrap();
+    assert_eq!(events.len(), 1, "exactly one progress event: {events:?}");
+    assert_eq!(events[0]["tool"], "task");
+    assert_eq!(events[0]["stage"], "dispatched");
+    assert_eq!(events[0]["agent_id"], "find-retry-policy");
 }

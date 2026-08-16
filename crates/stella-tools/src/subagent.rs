@@ -262,7 +262,7 @@ impl Tool for SpawnSubAgent {
         true
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let prompt = match input.get("prompt").and_then(Value::as_str) {
             Some(prompt) if !prompt.trim().is_empty() => prompt.trim(),
             _ => {
@@ -303,6 +303,16 @@ impl Tool for SpawnSubAgent {
             depth: 1,
             ..SubAgentSpec::default()
         };
+
+        // The long-running tool's heartbeat (#3284): announce the child
+        // before the potentially minutes-long await, so an observer can
+        // tell a slow delegation from a wedged one. Never in the output —
+        // the loop detector keys on output bytes.
+        ctx.progress(json!({
+            "stage": "dispatched",
+            "agent_id": spec.agent_id,
+            "description": description,
+        }));
 
         // Already settled by the time this resolves — the dispatcher charges
         // the ledger from the child's own thread, which is the only place

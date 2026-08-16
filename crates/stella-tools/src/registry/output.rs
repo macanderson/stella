@@ -70,8 +70,6 @@ pub(super) fn defect(tool: Option<&dyn Tool>, output: &ToolOutput) -> Option<Too
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use stella_protocol::tool::ToolSchema;
@@ -96,7 +94,7 @@ mod tests {
             }
         }
 
-        async fn execute(&self, _input: &Value, _root: &Path) -> ToolOutput {
+        async fn execute(&self, _input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             self.0.clone()
         }
     }
@@ -202,7 +200,7 @@ mod tests {
                 }
             }
 
-            async fn execute(&self, _input: &Value, _root: &Path) -> ToolOutput {
+            async fn execute(&self, _input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
                 ToolOutput::ok("anything")
             }
         }

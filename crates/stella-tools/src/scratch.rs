@@ -121,7 +121,7 @@ impl Tool for SaveState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let (key, content) = match (str_field(input, "key"), str_field(input, "content")) {
             (Ok(k), Ok(c)) => (k, c),
             (Err(m), _) | (_, Err(m)) => return ToolOutput::error(m),
@@ -186,7 +186,7 @@ impl Tool for GetState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {
@@ -266,7 +266,7 @@ impl Tool for ListState {
         }
     }
 
-    async fn execute(&self, _input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, _input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let mut rows = Vec::new();
         let entries = match std::fs::read_dir(self.0.path()) {
             Ok(e) => e,
@@ -324,7 +324,7 @@ impl Tool for DeleteState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {

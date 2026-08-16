@@ -631,7 +631,14 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         if output.stdout.is_empty() {
-            return ToolOutput::ok(silent_success_stamp(&tool.name, input));
+            return ToolOutput::Ok {
+                content: silent_success_stamp(&tool.name, input),
+                data: None,
+            };
+        }
+        ToolOutput::Ok {
+            content: crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES),
+            data: None,
         }
         ToolOutput::ok(crate::exec::truncate_middle_capped(
             &stdout,

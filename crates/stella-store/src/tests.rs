@@ -421,7 +421,10 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
             1,
             &AgentEvent::ToolResult {
                 call_id: "c1".into(),
-                output: ToolOutput::ok("hit\n"),
+                output: ToolOutput::Ok {
+                    content: "hit\n".into(),
+                    data: None,
+                },
                 duration_ms: 12,
                 speculated: false,
             },
@@ -547,7 +550,10 @@ fn materialize_folds_a_reemitted_tool_start_into_one_call() {
             2,
             &AgentEvent::ToolResult {
                 call_id: "c1".into(),
-                output: ToolOutput::ok("hit\n"),
+                output: ToolOutput::Ok {
+                    content: "hit\n".into(),
+                    data: None,
+                },
                 duration_ms: 12,
                 speculated: false,
             },
