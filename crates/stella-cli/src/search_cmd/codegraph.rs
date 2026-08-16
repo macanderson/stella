@@ -57,8 +57,9 @@ pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) ->
         return output;
     };
     match output {
-        ToolOutput::Ok { content } => ToolOutput::Ok {
+        ToolOutput::Ok { content, .. } => ToolOutput::Ok {
             content: format!("({warning})\n{content}"),
+            data: None,
         },
         ToolOutput::Error { message, .. } => ToolOutput::error(format!("{message}\n({warning})")),
     }
@@ -123,15 +124,16 @@ mod tests {
                 );
                 assert!(message.contains(INDEX_PASS_WARNING), "{message}");
             }
-            ToolOutput::Ok { content } => panic!("an error must stay an error: {content}"),
+            ToolOutput::Ok { content, .. } => panic!("an error must stay an error: {content}"),
         }
         // No warning, no noise: the common path is byte-identical.
         let clean = with_index_warning(
             ToolOutput::Ok {
                 content: "frames".into(),
+                data: None,
             },
             None,
         );
-        assert!(matches!(clean, ToolOutput::Ok { content } if content == "frames"));
+        assert!(matches!(clean, ToolOutput::Ok { content , .. } if content == "frames"));
     }
 }

@@ -685,7 +685,10 @@ fn tool_result_summary_is_middle_out_truncated() {
     let big = format!("HEAD{}TAIL", "x".repeat(500));
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
-        output: ToolOutput::Ok { content: big },
+        output: ToolOutput::Ok {
+            content: big,
+            data: None,
+        },
         duration_ms: 5,
         speculated: false,
     });
@@ -863,6 +866,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         call_id: "call_other".into(),
         output: ToolOutput::Ok {
             content: "x".into(),
+            data: None,
         },
         duration_ms: 1,
         speculated: false,
@@ -873,6 +877,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         call_id: "call_ask_1".into(),
         output: ToolOutput::Ok {
             content: "postgres".into(),
+            data: None,
         },
         duration_ms: 1,
         speculated: false,
@@ -930,6 +935,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         call_id: "call_other".into(),
         output: ToolOutput::Ok {
             content: "x".into(),
+            data: None,
         },
         duration_ms: 1,
         speculated: false,
@@ -941,6 +947,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         call_id: "hunk-review-1".into(),
         output: ToolOutput::Ok {
             content: "applying 1 of 2 hunk(s)".into(),
+            data: None,
         },
         duration_ms: 1,
         speculated: false,

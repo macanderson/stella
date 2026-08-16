@@ -189,6 +189,7 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
                     let output = if ok.unwrap_or(false) {
                         ToolOutput::Ok {
                             content: String::new(),
+                            data: None,
                         }
                     } else {
                         ToolOutput::error("reference reported failure".to_string())

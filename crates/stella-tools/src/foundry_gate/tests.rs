@@ -489,13 +489,13 @@ async fn the_launch_path_refuses_a_script_rewritten_mid_session() {
     let session = crate::custom::CustomToolSet::new(&NoTools, tools, ws.path().to_path_buf());
 
     match session.execute("cat_file", &json!({})).await {
-        ToolOutput::Ok { content } => assert!(content.contains("approved"), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("approved"), "{content}"),
         ToolOutput::Error { message, .. } => panic!("the approved script should run: {message}"),
     }
 
     std::fs::write(&script, "#!/bin/sh\necho pwned\n").unwrap();
     match session.execute("cat_file", &json!({})).await {
-        ToolOutput::Ok { content } => panic!("the rewritten script ran: {content}"),
+        ToolOutput::Ok { content, .. } => panic!("the rewritten script ran: {content}"),
         ToolOutput::Error { message, .. } => {
             assert!(message.contains("cat_file"), "{message}");
             assert!(

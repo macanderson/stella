@@ -1266,6 +1266,7 @@ mod tests {
                 call_id: "c".into(),
                 output: ToolOutput::Ok {
                     content: "o".into(),
+                    data: None,
                 },
                 duration_ms: 1,
                 speculated: false,

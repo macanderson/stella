@@ -479,6 +479,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
             } else {
                 report.summary.clone()
             },
+            data: None,
         },
         SubAgentOutcome::Incomplete { report, reason } if !report.summary.is_empty() => {
             ToolOutput::Ok {
@@ -487,6 +488,7 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                      the above as incomplete evidence, not a final answer.]",
                     report.summary
                 ),
+                data: None,
             }
         }
         SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
@@ -537,6 +539,7 @@ mod tests {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: String::new(),
+                data: None,
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {

@@ -175,6 +175,7 @@ fn seeded_workspace() -> (tempfile::TempDir, i64, i64) {
     };
     let output = ToolOutput::Ok {
         content: "edited src/lib.rs".into(),
+        data: None,
     };
     let call_json = serde_json::to_string(&call).expect("call json");
     let output_json = serde_json::to_string(&output).expect("output json");

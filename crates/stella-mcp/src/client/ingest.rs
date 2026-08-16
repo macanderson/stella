@@ -208,7 +208,10 @@ pub(super) fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, M
             rendered
         }))
     } else {
-        Ok(ToolOutput::Ok { content: rendered })
+        Ok(ToolOutput::Ok {
+            content: rendered,
+            data: None,
+        })
     }
 }
 
@@ -469,7 +472,7 @@ mod tests {
             }]
         });
         match decode_call_result("read_big", raw).unwrap() {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(
                     content.len() < MAX_TOOL_RESULT_BYTES + 128,
                     "kept text respects the budget: {} bytes",

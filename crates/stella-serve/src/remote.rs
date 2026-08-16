@@ -814,7 +814,7 @@ async fn dispatch_verification_call(
         }
     };
     match output {
-        ToolOutput::Ok { content } => serde_json::from_str::<CmdOutcomeWire>(&content)
+        ToolOutput::Ok { content, .. } => serde_json::from_str::<CmdOutcomeWire>(&content)
             .map(CmdOutcome::from)
             .unwrap_or_else(|_| unreachable_outcome()),
         ToolOutput::Error { .. } => unreachable_outcome(),
@@ -1160,6 +1160,7 @@ mod tests {
                 &first,
                 ToolOutput::Ok {
                     content: "for-the-parent".to_string(),
+                    data: None,
                 },
             )
             .expect("the parent's request is still registered");
@@ -1168,16 +1169,17 @@ mod tests {
                 &second,
                 ToolOutput::Ok {
                     content: "for-the-sub-agent".to_string(),
+                    data: None,
                 },
             )
             .expect("the sub-agent's request is still registered");
 
         assert!(
-            matches!(parent_call.await.unwrap(), ToolOutput::Ok { content } if content == "for-the-parent"),
+            matches!(parent_call.await.unwrap(), ToolOutput::Ok { content , .. } if content == "for-the-parent"),
             "the parent must receive the answer addressed to the parent"
         );
         assert!(
-            matches!(child_call.await.unwrap(), ToolOutput::Ok { content } if content == "for-the-sub-agent"),
+            matches!(child_call.await.unwrap(), ToolOutput::Ok { content , .. } if content == "for-the-sub-agent"),
             "the sub-agent must receive the answer addressed to the sub-agent"
         );
     }
@@ -1264,7 +1266,13 @@ mod tests {
         .unwrap();
         assert!(
             pending
-                .resolve_tool(&request_id, ToolOutput::Ok { content })
+                .resolve_tool(
+                    &request_id,
+                    ToolOutput::Ok {
+                        content,
+                        data: None
+                    }
+                )
                 .is_ok()
         );
 

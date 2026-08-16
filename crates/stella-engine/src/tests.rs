@@ -100,6 +100,7 @@ impl ToolExecutor for CountingTools {
         }
         ToolOutput::Ok {
             content: "ok".into(),
+            data: None,
         }
     }
 }

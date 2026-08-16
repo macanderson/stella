@@ -186,6 +186,7 @@ fn output_schema() -> Value {
 
     let ok = serde_json::to_value(ToolOutput::Ok {
         content: String::new(),
+        data: None,
     })
     .expect("ToolOutput is Serialize");
     let error =

@@ -28,6 +28,7 @@ fn tool_result() -> AgentEvent {
         call_id: "call-1".to_string(),
         output: stella_protocol::ToolOutput::Ok {
             content: "ok".to_string(),
+            data: None,
         },
         duration_ms: 4_200,
         speculated: false,

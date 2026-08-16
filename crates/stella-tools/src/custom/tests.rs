@@ -328,7 +328,7 @@ async fn exit_zero_captures_stdout() {
     let tool = script_tool(dir.path(), "ok.sh", "#!/bin/sh\necho custom_ran\n", 5000);
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => assert!(content.contains("custom_ran"), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("custom_ran"), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     }
 }
@@ -354,7 +354,7 @@ async fn spawn_retries_while_script_is_open_for_writing() {
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     release.await.unwrap();
     match out {
-        ToolOutput::Ok { content } => assert!(content.contains("recovered"), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("recovered"), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok after retry: {message}"),
     }
 }
@@ -371,7 +371,7 @@ async fn input_json_is_delivered_on_stdin() {
     )
     .await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("\"path\""), "{content}");
             assert!(content.contains("src/lib.rs"), "{content}");
         }
@@ -391,7 +391,7 @@ async fn scalar_inputs_are_exported_as_env_vars() {
     let input = serde_json::json!({ "path": "hello", "dry_run": true, "count": 7 });
     let out = run_custom(&tool, &input, dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("path=hello"), "{content}");
             assert!(content.contains("dry=true"), "{content}");
             assert!(content.contains("n=7"), "{content}");
@@ -412,7 +412,7 @@ async fn nested_input_is_not_exported_as_env_but_still_on_stdin() {
     let input = serde_json::json!({ "nested": { "a": 1 } });
     let out = run_custom(&tool, &input, dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(
                 content.contains("nested=[]"),
                 "object must not export env: {content}"
@@ -435,7 +435,7 @@ async fn manifest_env_is_applied() {
     tool.env.insert("LINT_PROFILE".into(), "strict".into());
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => assert!(content.contains("p=strict"), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("p=strict"), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     }
 }
@@ -456,7 +456,7 @@ async fn manifest_cannot_reintroduce_credentials_but_benign_env_survives() {
     ]);
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             crate::subprocess_env::test_support::assert_scrubbed(&content)
         }
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
@@ -478,7 +478,7 @@ async fn a_custom_tool_is_spawned_without_git_or_forced_color_env() {
     let tool = script_tool(dir.path(), "spawn-hygiene.sh", &body, 5000);
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(&content)
         }
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
@@ -496,7 +496,7 @@ async fn nonzero_exit_becomes_error_with_code_and_stderr() {
     );
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => panic!("expected error: {content}"),
+        ToolOutput::Ok { content, .. } => panic!("expected error: {content}"),
         ToolOutput::Error { message, .. } => {
             assert!(message.contains("code 3"), "{message}");
             assert!(message.contains("boom"), "{message}");
@@ -585,7 +585,7 @@ async fn missing_script_names_the_path_tried() {
     };
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => panic!("expected error: {content}"),
+        ToolOutput::Ok { content, .. } => panic!("expected error: {content}"),
         ToolOutput::Error { message, .. } => {
             assert!(message.contains("./does-not-exist.sh"), "{message}");
             assert!(message.contains("failed to spawn"), "{message}");
@@ -605,7 +605,7 @@ async fn oversized_output_is_elided_middle_out() {
     );
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("truncated"), "elision marker present");
             assert!(
                 content.len() <= MAX_OUTPUT_BYTES + 200,
@@ -636,7 +636,7 @@ async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
     );
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     let content = match out {
-        ToolOutput::Ok { content } => content,
+        ToolOutput::Ok { content, .. } => content,
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     };
     assert!(
@@ -664,7 +664,7 @@ async fn non_object_input_does_not_panic() {
     // A bare array — no top-level object, so no env vars, but still on stdin.
     let out = run_custom(&tool, &serde_json::json!(["a", "b"]), dir.path()).await;
     match out {
-        ToolOutput::Ok { content } => assert!(content.contains("\"a\""), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("\"a\""), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     }
 }
@@ -686,6 +686,7 @@ impl ToolExecutor for FakeInner {
     async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: format!("inner ran {name}"),
+            data: None,
         }
     }
 }
@@ -712,14 +713,14 @@ async fn set_routes_custom_names_and_falls_through_for_others() {
 
     let custom = set.execute("my_tool", &serde_json::json!({})).await;
     match custom {
-        ToolOutput::Ok { content } => assert!(content.contains("from_custom"), "{content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("from_custom"), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     }
 
     // Unknown-to-custom name falls through to the inner executor.
     let fell = set.execute("bash", &serde_json::json!({})).await;
     match fell {
-        ToolOutput::Ok { content } => assert_eq!(content, "inner ran bash"),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, "inner ran bash"),
         ToolOutput::Error { message, .. } => panic!("expected fallthrough: {message}"),
     }
 }
@@ -741,7 +742,7 @@ async fn owned_inner_delegates_schemas_and_fallthrough() {
     assert!(names.contains(&"my_tool".to_string()), "custom schema");
 
     match set.execute("bash", &serde_json::json!({})).await {
-        ToolOutput::Ok { content } => assert_eq!(content, "inner ran bash"),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, "inner ran bash"),
         ToolOutput::Error { message, .. } => panic!("expected owned-inner fallthrough: {message}"),
     }
 }

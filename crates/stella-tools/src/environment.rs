@@ -198,6 +198,7 @@ impl Tool for GetEnvironment {
         let identity = EnvironmentIdentity::collect(root, self.scratch_dir.clone());
         ToolOutput::Ok {
             content: identity.render(),
+            data: None,
         }
     }
 }
@@ -257,7 +258,7 @@ mod tests {
     async fn get_environment_reports_workspace_root_and_platform() {
         let dir = tempfile::tempdir().expect("tempdir");
         let tool = GetEnvironment { scratch_dir: None };
-        let ToolOutput::Ok { content } = tool.execute(&json!({}), dir.path()).await else {
+        let ToolOutput::Ok { content, .. } = tool.execute(&json!({}), dir.path()).await else {
             panic!("get_environment must succeed with zero arguments");
         };
         assert!(
@@ -305,7 +306,7 @@ mod tests {
         let tool = GetEnvironment {
             scratch_dir: Some(scratch.path().to_path_buf()),
         };
-        let ToolOutput::Ok { content } = tool.execute(&json!({}), dir.path()).await else {
+        let ToolOutput::Ok { content, .. } = tool.execute(&json!({}), dir.path()).await else {
             panic!("get_environment must succeed with zero arguments");
         };
         assert!(

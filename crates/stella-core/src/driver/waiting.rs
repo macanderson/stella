@@ -122,7 +122,7 @@ impl<'a> Engine<'a> {
         // last thing the probe saw.
         let detail = match (reason, &request.on_wake) {
             (WakeReason::Changed, Some(call)) => match self.replay(call, events).await {
-                ToolOutput::Ok { content } => Some(content),
+                ToolOutput::Ok { content, .. } => Some(content),
                 // The wake call failing must not hide that the wait ended —
                 // surface the error as the detail and let the model re-query.
                 ToolOutput::Error { message, .. } => {

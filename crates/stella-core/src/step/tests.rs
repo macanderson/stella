@@ -27,6 +27,7 @@ fn checkpoint_fixture() -> Checkpoint {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "fn main() {}".into(),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),

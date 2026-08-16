@@ -40,8 +40,39 @@ use crate::catalog;
 #[must_use]
 pub fn contract_for(schema: &ToolSchema) -> ToolContract {
     match catalog::get(&schema.name) {
-        Some(entry) => ToolContract::builtin(schema.clone(), entry.risk),
+        Some(entry) => {
+            let contract = ToolContract::builtin(schema.clone(), entry.risk);
+            match declared_output_schema(&schema.name) {
+                Some(output_schema) => contract.with_output_schema(output_schema),
+                None => contract,
+            }
+        }
         None => ToolContract::declared(schema.clone()),
+    }
+}
+
+/// The output promise a reviewed tool makes, when it makes one (#3285): what
+/// a successful call's structured half (`ToolOutput::Ok.data`) must look
+/// like, in the same JSON-Schema subset `registry/validate.rs` enforces for
+/// inputs. `None` — most rows — means the tool's output is prose only, and
+/// the registry checks nothing.
+///
+/// Beside the catalog rather than a macro column because almost every row
+/// would be `None`: a promise is the exception, and each one should read as
+/// a deliberate declaration next to the tool that keeps it.
+fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
+    match name {
+        "list_state" => Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": { "type": "object" }
+                }
+            },
+            "required": ["entries"]
+        })),
+        _ => None,
     }
 }
 

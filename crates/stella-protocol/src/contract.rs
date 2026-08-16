@@ -201,6 +201,17 @@ pub struct ToolContract {
     pub requires_approval: bool,
     /// Whether the claims above were reviewed or merely asserted.
     pub provenance: Provenance,
+    /// What a successful call's structured half ([`crate::tool::ToolOutput`]'s
+    /// `Ok.data`) must look like, when the tool promises one (#3285). `None`
+    /// means the tool's output is prose only — every tool written before
+    /// this field existed. Deliberately *not* part of [`Self::schema`]: the
+    /// model never reads it (it feeds the registry's post-execution check,
+    /// not the prompt), so keeping it here is what keeps invariant #7
+    /// structural. Optional and absent-when-`None` so every contract
+    /// serialized before the field round-trips byte-identically
+    /// (invariant #4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
 }
 
 impl ToolContract {
@@ -213,7 +224,18 @@ impl ToolContract {
             risk,
             requires_approval: false,
             provenance: Provenance::Builtin,
+            output_schema: None,
         }
+    }
+
+    /// The same contract, promising that a successful call's structured half
+    /// matches `output_schema` (#3285). Builder-shaped because most tools
+    /// make no such promise, and the two constructors above should stay
+    /// exactly the pre-#3285 shape.
+    #[must_use]
+    pub fn with_output_schema(mut self, output_schema: serde_json::Value) -> Self {
+        self.output_schema = Some(output_schema);
+        self
     }
 
     /// A contract for a tool that described *itself* — an MCP server's
@@ -239,6 +261,7 @@ impl ToolContract {
             risk: RiskLevel::High,
             requires_approval: false,
             provenance: Provenance::Declared,
+            output_schema: None,
         }
     }
 
@@ -313,6 +336,32 @@ mod tests {
         let json = serde_json::to_string(&contract).unwrap();
         let back: ToolContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back, contract);
+    }
+
+    #[test]
+    fn a_contract_with_an_output_schema_roundtrips_and_a_bare_one_is_the_old_bytes() {
+        // Invariant #4 for #3285, both directions: the new field survives
+        // the wire, and its absence is byte-identical to the pre-#3285
+        // serialization so no stored contract changes shape underneath a
+        // reader.
+        let promised = ToolContract::builtin(schema("list_state", true, true), RiskLevel::Low)
+            .with_output_schema(serde_json::json!({
+                "type": "object",
+                "properties": { "keys": { "type": "array" } },
+                "required": ["keys"]
+            }));
+        let json = serde_json::to_string(&promised).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, promised);
+
+        let bare = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&bare).unwrap();
+        assert!(
+            !json.contains("output_schema"),
+            "an absent promise must be absent bytes: {json}"
+        );
+        let old: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(old, bare);
     }
 
     #[test]

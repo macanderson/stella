@@ -50,6 +50,7 @@ fn answers(call_id: &str, output: ToolOutput) -> CompletionMessage {
 fn ok(content: &str) -> ToolOutput {
     ToolOutput::Ok {
         content: content.into(),
+        data: None,
     }
 }
 

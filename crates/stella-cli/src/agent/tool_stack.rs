@@ -153,6 +153,7 @@ mod tests {
             self.reached.lock().unwrap().push(name.to_string());
             ToolOutput::Ok {
                 content: format!("ran {name}"),
+                data: None,
             }
         }
     }

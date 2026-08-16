@@ -982,7 +982,10 @@ pub(crate) fn render(
 
     if answer.hits.is_empty() {
         content.push_str("\nno file matched. Widen the description, or grep for an exact literal.");
-        return ToolOutput::Ok { content };
+        return ToolOutput::Ok {
+            content,
+            data: None,
+        };
     }
 
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
@@ -998,5 +1001,8 @@ pub(crate) fn render(
         ));
     }
 
-    ToolOutput::Ok { content }
+    ToolOutput::Ok {
+        content,
+        data: None,
+    }
 }

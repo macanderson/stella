@@ -173,6 +173,7 @@ async fn run_turn(session: &mut Session) -> Vec<(String, serde_json::Value)> {
                         &request_id,
                         ToolOutput::Ok {
                             content: "echoed".to_string(),
+                            data: None,
                         },
                     )
                     .unwrap();

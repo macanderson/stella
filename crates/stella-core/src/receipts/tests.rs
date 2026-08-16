@@ -46,6 +46,7 @@ fn convo() -> Vec<CompletionMessage> {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "fn a() {}".into(),
+                    data: None,
                 },
             }],
             attachments: vec![],
@@ -102,6 +103,7 @@ fn identical_output_from_two_calls_keeps_both_call_ids_on_the_manifest() {
             call_id: call_id.into(),
             output: ToolOutput::Ok {
                 content: "nothing to commit".into(),
+                data: None,
             },
         }],
         attachments: vec![],
@@ -623,6 +625,7 @@ fn identical_tool_output_resolves_to_the_same_block_id() {
     // id — the property dedup/supersession identities rely on.
     let a = serde_json::to_string(&ToolOutput::Ok {
         content: "same".into(),
+        data: None,
     })
     .unwrap();
     let id1 = block_id(BlockKind::ToolResult, &a);
@@ -684,6 +687,7 @@ fn a_receipts_two_numbers_reconcile_the_same_way_in_any_language() {
                     call_id: "c1".into(),
                     output: ToolOutput::Ok {
                         content: out.into(),
+                        data: None,
                     },
                 }],
                 attachments: vec![],

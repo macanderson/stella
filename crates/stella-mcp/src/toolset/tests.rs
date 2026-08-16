@@ -31,6 +31,7 @@ impl ToolExecutor for FakeNative {
     async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: format!("native ran {name}"),
+            data: None,
         }
     }
     fn parallel_safe_names(&self) -> HashSet<String> {
@@ -288,7 +289,8 @@ async fn execute_routes_by_prefix_and_falls_through_to_native() {
     assert_eq!(
         mcp,
         ToolOutput::Ok {
-            content: "mcp ran".into()
+            content: "mcp ran".into(),
+            data: None
         }
     );
 
@@ -297,7 +299,8 @@ async fn execute_routes_by_prefix_and_falls_through_to_native() {
     assert_eq!(
         native,
         ToolOutput::Ok {
-            content: "native ran bash".into()
+            content: "native ran bash".into(),
+            data: None
         }
     );
 }
@@ -344,7 +347,8 @@ async fn a_hung_server_times_out_naming_the_server_without_poisoning_native() {
     assert_eq!(
         native,
         ToolOutput::Ok {
-            content: "native ran bash".into()
+            content: "native ran bash".into(),
+            data: None
         }
     );
 }
@@ -397,7 +401,8 @@ async fn duplicate_tool_names_from_one_server_are_advertised_once_first_wins() {
     assert_eq!(
         set.execute("mcp__files__read", &Value::Null).await,
         ToolOutput::Ok {
-            content: "routed".into()
+            content: "routed".into(),
+            data: None
         }
     );
 }
@@ -456,7 +461,8 @@ async fn a_trailing_underscore_server_name_is_rejected_not_silently_shadowing() 
     assert_eq!(
         set.execute("mcp__acme___status", &Value::Null).await,
         ToolOutput::Ok {
-            content: "mcp ran".into()
+            content: "mcp ran".into(),
+            data: None
         }
     );
 }
@@ -620,14 +626,16 @@ async fn candidate_view_executes_an_allowlisted_tool_and_falls_through_to_native
     assert_eq!(
         mcp_out,
         ToolOutput::Ok {
-            content: "mcp ran".into()
+            content: "mcp ran".into(),
+            data: None
         }
     );
     let native_out = view.execute("bash", &Value::Null).await;
     assert_eq!(
         native_out,
         ToolOutput::Ok {
-            content: "native ran bash".into()
+            content: "native ran bash".into(),
+            data: None
         }
     );
 }
@@ -742,7 +750,7 @@ async fn an_oversized_tool_result_is_capped_middle_out_with_a_marker() {
     let set = McpToolSet::from_clients(vec![client_answering("flood", "dump", &flood).await]);
 
     let out = set.execute("mcp__flood__dump", &Value::Null).await;
-    let ToolOutput::Ok { content } = out else {
+    let ToolOutput::Ok { content, .. } = out else {
         panic!("expected a successful call, got {out:?}");
     };
     assert!(
@@ -884,7 +892,8 @@ async fn an_under_budget_result_is_byte_identical() {
     assert_eq!(
         set.execute("mcp__files__read", &Value::Null).await,
         ToolOutput::Ok {
-            content: "small, exact, unmodified".into()
+            content: "small, exact, unmodified".into(),
+            data: None
         }
     );
 }
@@ -895,7 +904,7 @@ async fn a_multibyte_result_is_capped_without_slicing_a_codepoint() {
     let flood = "漢".repeat(MAX_TOOL_RESULT_BYTES);
     let set = McpToolSet::from_clients(vec![client_answering("cjk", "dump", &flood).await]);
 
-    let ToolOutput::Ok { content } = set.execute("mcp__cjk__dump", &Value::Null).await else {
+    let ToolOutput::Ok { content, .. } = set.execute("mcp__cjk__dump", &Value::Null).await else {
         panic!("expected a successful call");
     };
     assert!(content.len() < MAX_TOOL_RESULT_BYTES + 128);
@@ -953,7 +962,8 @@ async fn tools_past_the_per_server_cap_are_dropped_recorded_and_the_server_still
     assert_eq!(
         set.execute("mcp__greedy__t0", &Value::Null).await,
         ToolOutput::Ok {
-            content: "still routing".into()
+            content: "still routing".into(),
+            data: None
         }
     );
 }

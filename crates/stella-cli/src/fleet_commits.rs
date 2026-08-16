@@ -355,6 +355,7 @@ mod tests {
             }
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
     }

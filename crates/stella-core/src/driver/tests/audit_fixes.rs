@@ -204,6 +204,7 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
             call_id: call_id.into(),
             output: ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             },
         }],
         attachments: Vec::new(),
@@ -240,7 +241,8 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     assert!(
         records.iter().all(|r| r.output.as_deref()
             == Some(&ToolOutput::Ok {
-                content: "ok".into()
+                content: "ok".into(),
+                data: None
             })),
         "records must pair each call with its result: {records:?}"
     );
@@ -604,6 +606,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
     // texts so neither span bound walks onto a Tool message.
     let folded_output = ToolOutput::Ok {
         content: "read 4096 bytes from src/main.rs".into(),
+        data: None,
     };
     let expected_block = crate::receipts::tool_result_block_id(&folded_output);
     let mut messages = vec![
@@ -937,7 +940,10 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         tool_calls: Vec::new(),
         tool_results: vec![ToolResult {
             call_id: id.into(),
-            output: ToolOutput::Ok { content },
+            output: ToolOutput::Ok {
+                content,
+                data: None,
+            },
         }],
         attachments: Vec::new(),
     };
@@ -1065,7 +1071,10 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
         tool_calls: Vec::new(),
         tool_results: vec![ToolResult {
             call_id: call_id.into(),
-            output: ToolOutput::Ok { content },
+            output: ToolOutput::Ok {
+                content,
+                data: None,
+            },
         }],
         attachments: Vec::new(),
     };
@@ -1114,7 +1123,8 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
         )),
         Some(&Some(crate::receipts::tool_result_block_id(
             &ToolOutput::Ok {
-                content: payload.clone()
+                content: payload.clone(),
+                data: None
             }
         ))),
         "the repeated read's identity must survive an unrelated call at the same ordinal"
@@ -1202,6 +1212,7 @@ impl ToolExecutor for CountingReadTools {
         self.executions.fetch_add(1, Ordering::SeqCst);
         ToolOutput::Ok {
             content: "contents".into(),
+            data: None,
         }
     }
 }
@@ -1332,6 +1343,7 @@ impl ToolExecutor for BulkyTools {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: "output line\n".repeat(400),
+            data: None,
         }
     }
 }

@@ -1133,6 +1133,7 @@ mod tests {
                     call_id: "c1".into(),
                     output: ToolOutput::Ok {
                         content: "fn x() {}".into(),
+                        data: None,
                     },
                     duration_ms: 12,
                     speculated: false,

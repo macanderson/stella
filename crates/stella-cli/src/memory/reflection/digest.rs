@@ -669,7 +669,7 @@ fn render(message: &CompletionMessage, names: &HashMap<&str, &str>, cap: usize) 
             .unwrap_or("tool");
         parts.push(match &result.output {
             ToolOutput::Error { message, .. } => format!("{name} FAILED: {}", clip(message, share)),
-            ToolOutput::Ok { content } => format!("{name} ok: {}", clip(content, share)),
+            ToolOutput::Ok { content, .. } => format!("{name} ok: {}", clip(content, share)),
         });
     }
     prefixed(role_label(message.role), parts)

@@ -159,6 +159,7 @@ impl ToolExecutor for NoTools {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: String::new(),
+            data: None,
         }
     }
 }

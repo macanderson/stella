@@ -26,6 +26,7 @@ fn ok_result(call_id: &str, content: &str, duration_ms: u64) -> AgentEvent {
         call_id: call_id.into(),
         output: ToolOutput::Ok {
             content: content.into(),
+            data: None,
         },
         duration_ms,
         speculated: false,

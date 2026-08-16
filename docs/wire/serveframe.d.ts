@@ -2039,6 +2039,18 @@ export type ToolOutput = {
      * What the tool produced, as the model will read it.
      */
     content: string;
+    /**
+     * The structured half of the result, when the tool has one (#3285).
+     * `content` is prose for the model; `data` is the same facts as a
+     * value a contract's `output_schema` can check — "references, not
+     * payloads" (#2694 §4) is unenforceable over prose. `None` means
+     * the tool produces no structured output, which is every tool
+     * written before this field existed. Optional and absent-when-`None`
+     * so every payload written before the field round-trips
+     * byte-identically (invariant #4), and so the content bytes the
+     * model sees are never perturbed by structure.
+     */
+    data?: unknown;
   };
 } | {
   error: {
@@ -2333,6 +2345,18 @@ export type ToolOutput = {
      * What the tool produced, as the model will read it.
      */
     content: string;
+    /**
+     * The structured half of the result, when the tool has one (#3285).
+     * `content` is prose for the model; `data` is the same facts as a
+     * value a contract's `output_schema` can check — "references, not
+     * payloads" (#2694 §4) is unenforceable over prose. `None` means
+     * the tool produces no structured output, which is every tool
+     * written before this field existed. Optional and absent-when-`None`
+     * so every payload written before the field round-trips
+     * byte-identically (invariant #4), and so the content bytes the
+     * model sees are never perturbed by structure.
+     */
+    data?: unknown;
   };
 } | {
   error: {

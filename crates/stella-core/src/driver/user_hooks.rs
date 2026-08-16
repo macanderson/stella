@@ -244,7 +244,7 @@ impl<'a> Engine<'a> {
         let output = self.tools.execute(&call.name, &input).await;
 
         let result_str = match &output {
-            ToolOutput::Ok { content } => content.clone(),
+            ToolOutput::Ok { content, .. } => content.clone(),
             ToolOutput::Error { message, .. } => message.clone(),
         };
         // Observation only — a non-zero PostToolUse exit never blocks or

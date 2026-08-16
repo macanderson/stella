@@ -1183,6 +1183,7 @@ mod verifier_tools_tests {
         async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: format!("ran {name}"),
+                data: None,
             }
         }
     }

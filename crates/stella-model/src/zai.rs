@@ -1022,7 +1022,7 @@ fn to_zai_messages(messages: &[CompletionMessage], model: &str) -> Vec<ZaiMessag
             MessageRole::Tool => {
                 for result in &message.tool_results {
                     let content = match &result.output {
-                        stella_protocol::ToolOutput::Ok { content } => content.clone(),
+                        stella_protocol::ToolOutput::Ok { content, .. } => content.clone(),
                         stella_protocol::ToolOutput::Error { message, .. } => {
                             format!("ERROR: {message}")
                         }

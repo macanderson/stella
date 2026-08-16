@@ -254,6 +254,7 @@ mod tests {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
     }

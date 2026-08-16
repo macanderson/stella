@@ -388,7 +388,7 @@ impl DomainBridge {
                 // debug-level call record that was filtered out (#3149).
                 let tool = self.take_in_flight(call_id);
                 let (ok, bytes) = match output {
-                    ToolOutput::Ok { content } => (true, content.len()),
+                    ToolOutput::Ok { content, .. } => (true, content.len()),
                     ToolOutput::Error { message, .. } => (false, message.len()),
                 };
                 self.emit(
@@ -987,6 +987,7 @@ mod tests {
             call_id: "call-never-seen".into(),
             output: ToolOutput::Ok {
                 content: "x".into(),
+                data: None,
             },
             duration_ms: 1,
             speculated: false,
@@ -1004,7 +1005,10 @@ mod tests {
         bridge.observe(&tool_call("list_state", serde_json::json!({})));
         bridge.observe(&AgentEvent::ToolResult {
             call_id: "call-1".into(),
-            output: ToolOutput::Ok { content: "".into() },
+            output: ToolOutput::Ok {
+                content: "".into(),
+                data: None,
+            },
             duration_ms: 1,
             speculated: false,
         });

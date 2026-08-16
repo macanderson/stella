@@ -563,6 +563,7 @@ mod tests {
         };
         let output = ToolOutput::Ok {
             content: "fn a() {}".into(),
+            data: None,
         };
         let call_json = serde_json::to_string(&call).unwrap();
         let output_json = serde_json::to_string(&output).unwrap();
@@ -691,9 +692,11 @@ mod tests {
         // produced, as a digest mismatch).
         let original = ToolOutput::Ok {
             content: "a".repeat(4_000),
+            data: None,
         };
         let stubbed = ToolOutput::Ok {
             content: "[tool output evicted to fit context]".into(),
+            data: None,
         };
         let stubbed_json = serde_json::to_string(&stubbed).unwrap();
 
@@ -785,9 +788,11 @@ mod tests {
     fn seed_mismatching_block(store: &Store) -> i64 {
         let journaled = ToolOutput::Ok {
             content: "the original tool output".into(),
+            data: None,
         };
         let sent = ToolOutput::Ok {
             content: "[tool output evicted to fit context]".into(),
+            data: None,
         };
         let sent_json = serde_json::to_string(&sent).unwrap();
 
