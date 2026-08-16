@@ -357,7 +357,13 @@ async fn run_pipeline_one_shot(
     let result = {
         // Customs, the operator's switches, and the authorization gate,
         // outermost-last (#3283) — one assembly for every driver.
-        let tools = tool_stack::session_stack(base_tools, custom_tools, cfg, Principal::User);
+        let tools = tool_stack::session_stack(
+            base_tools,
+            custom_tools,
+            cfg,
+            Principal::User,
+            registry.hook_bus(),
+        );
 
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
@@ -1683,7 +1689,8 @@ async fn run_turn(
         // and the authorization gate must still hold above the session tool
         // stack — mirroring every other driver path, so disabled tools cannot
         // be invoked here either.
-        let permitted = tool_stack::policy_stack(registry, cfg, Principal::User);
+        let permitted =
+            tool_stack::policy_stack(registry, cfg, Principal::User, registry.hook_bus());
         let config = engine::engine_config_for_kind(cfg, kind);
         let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
@@ -1693,8 +1700,13 @@ async fn run_turn(
     } else {
         // Customs, the operator's switches, and the authorization gate,
         // outermost-last (#3283) — one assembly for every driver.
-        let tools =
-            tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User);
+        let tools = tool_stack::session_stack(
+            base_tools,
+            custom_tools.to_vec(),
+            cfg,
+            Principal::User,
+            registry.hook_bus(),
+        );
         let hook_runner = ShellHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any

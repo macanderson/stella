@@ -556,6 +556,7 @@ pub(crate) async fn run_goal_turn(
             custom_tools.to_vec(),
             cfg,
             Principal::User,
+            registry.hook_bus(),
         );
         let hook_runner = ShellHookRunner;
         let mut engine =
@@ -748,6 +749,7 @@ async fn run_goal_pipeline_turn(
             custom_tools.to_vec(),
             cfg,
             Principal::User,
+            registry.hook_bus(),
         );
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));

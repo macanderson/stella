@@ -84,7 +84,7 @@ use stella_core::hooks::decision::{
     ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, GateVerdict, OperatorPosture,
 };
 use stella_core::ports::authz::authz_verdict;
-use stella_core::ports::{AuthzGate, Principal, ToolExecutor};
+use stella_core::ports::{AuthzDecision, AuthzEvalError, AuthzGate, Principal, ToolExecutor};
 use stella_protocol::tool::{ErrorClass, ToolOutput, ToolSchema};
 
 use crate::contracts;
@@ -126,6 +126,16 @@ pub struct GatedToolSet<'a> {
     /// `stella-tty::human_can_answer` derivation, made once where the
     /// responder is attached — this decorator never re-derives presence.
     approvals: Option<Arc<dyn ApprovalRoute>>,
+    /// The session's hook bus, when the assembly attached one (#3289) —
+    /// where each evaluation's `(principal, tool, decision, trace)` is
+    /// emitted as a `policy.evaluated` event. The registry's
+    /// `bridge_policy_plane` already forwards that name into the journal as
+    /// [`stella_protocol::AgentEvent::PolicyDecision`], carrying the
+    /// `decision` payload verbatim — so the rule-by-rule account is
+    /// reconstructable after the fact without a second event vocabulary.
+    /// Optional like [`Self::approvals`]: a stack with no bus journals
+    /// nothing, it never fails a call over telemetry.
+    bus: Option<stella_core::bus::HookBus>,
     /// Contracts for everything the inner stack advertised at construction,
     /// resolved once. `execute` is on the hot path of every call and
     /// re-materializing the full schema list per call would re-serialize
@@ -155,6 +165,7 @@ impl<'a> GatedToolSet<'a> {
             gate,
             principal,
             approvals: None,
+            bus: None,
             contracts,
         }
     }
@@ -170,6 +181,63 @@ impl<'a> GatedToolSet<'a> {
     pub fn with_approval_route(mut self, route: Arc<dyn ApprovalRoute>) -> Self {
         self.approvals = Some(route);
         self
+    }
+
+    /// Attach the session bus this gate journals its evaluations onto
+    /// (#3289) — see the `bus` field for the route into the journal. Opt-in
+    /// like [`Self::with_approval_route`], attached by `agent::tool_stack`
+    /// wherever the session carries a bus.
+    #[must_use]
+    pub fn with_bus(mut self, bus: stella_core::bus::HookBus) -> Self {
+        self.bus = Some(bus);
+        self
+    }
+
+    /// Emit one evaluation's full account onto the attached bus, if any:
+    /// who asked, for what, what the gate said, and rule by rule why. The
+    /// `decision` field is what `bridge_policy_plane` copies verbatim into
+    /// the journaled `PolicyDecision`, so the trace rides it.
+    fn journal_evaluation(
+        &self,
+        name: &str,
+        evaluation: &Result<stella_core::ports::AuthzEvaluation, AuthzEvalError>,
+    ) {
+        let Some(bus) = &self.bus else { return };
+        let decision = match evaluation {
+            Ok(evaluation) => {
+                let verdict = match &evaluation.decision {
+                    AuthzDecision::Allow => serde_json::json!({ "verdict": "allow" }),
+                    AuthzDecision::Deny { reason } => {
+                        serde_json::json!({ "verdict": "deny", "reason": reason })
+                    }
+                    AuthzDecision::RequireApproval { reason } => {
+                        serde_json::json!({ "verdict": "require_approval", "reason": reason })
+                    }
+                };
+                let mut decision = verdict;
+                decision["trace"] =
+                    serde_json::to_value(&evaluation.trace).unwrap_or(serde_json::Value::Null);
+                decision
+            }
+            // An errored evaluation is journaled too — it is the arm the
+            // fail-closed rule exists for, and the audit trail must show it
+            // as "could not tell", never as a silent deny.
+            Err(error) => serde_json::json!({
+                "verdict": "error",
+                "gate": error.gate,
+                "detail": error.detail,
+            }),
+        };
+        bus.emit_named(
+            stella_core::bus::names::POLICY_EVALUATED,
+            serde_json::json!({
+                "event_name": "authz.gate",
+                "tool": name,
+                "principal": self.principal.label(),
+                "gate": self.gate.name(),
+                "decision": decision,
+            }),
+        );
     }
 
     /// Own the inner executor by value — for an assembly function that builds
@@ -188,6 +256,7 @@ impl<'a> GatedToolSet<'a> {
             gate,
             principal,
             approvals: None,
+            bus: None,
             contracts,
         }
     }
@@ -231,6 +300,7 @@ impl GatedToolSet<'static> {
             gate,
             principal,
             approvals: None,
+            bus: None,
             contracts,
         }
     }
@@ -252,7 +322,11 @@ impl ToolExecutor for GatedToolSet<'_> {
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let contract = self.contract(name);
-        let evaluation = self.gate.check(&contract, &self.principal, input);
+        let evaluation = self.gate.check_traced(&contract, &self.principal, input);
+        // Journal before folding (#3289): the trace must survive whatever the
+        // verdict is, and the fold consumes the evaluation.
+        self.journal_evaluation(name, &evaluation);
+        let evaluation = evaluation.map(|evaluation| evaluation.decision);
 
         // Routed through the shared fold rather than matched here, so the
         // fail-closed rule (an `Err` denies whatever any softening flag says)
@@ -704,5 +778,72 @@ mod tests {
             ToolOutput::Ok { .. }
         ));
         assert!(route.asked().is_empty(), "no approval was ever requested");
+    }
+
+    /// **The #3289 consumer witness**: with a bus attached, every evaluation
+    /// lands as a `policy.evaluated` event whose `decision` payload carries
+    /// the rule-by-rule trace — the exact field `bridge_policy_plane` copies
+    /// verbatim into the journaled `PolicyDecision`, so "why was this
+    /// denied" is reconstructable after the fact.
+    #[tokio::test]
+    async fn an_attached_bus_journals_the_decision_with_its_trace() {
+        let bus = stella_core::bus::HookBus::new("test-session");
+        let seen: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        bus.on(stella_core::bus::names::POLICY_EVALUATED, move |event| {
+            sink.lock().unwrap().push(event.payload.clone());
+            Ok(())
+        })
+        .detach();
+
+        let leaf = Leaf::new();
+        let gated = GatedToolSet::new(
+            &leaf,
+            Arc::new(RiskCeiling::new(RiskLevel::Medium)),
+            Principal::SubAgent("lane-1".into()),
+        )
+        .with_bus(bus);
+
+        // A refused call and an allowed one both journal.
+        assert!(gated.execute(THIRD_PARTY, &input()).await.is_error());
+        assert!(matches!(
+            gated.execute(READ, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 2, "one account per evaluation: {events:?}");
+
+        let denied = &events[0];
+        assert_eq!(denied["event_name"], "authz.gate");
+        assert_eq!(denied["tool"], THIRD_PARTY);
+        assert_eq!(denied["principal"], "subagent:lane-1");
+        assert_eq!(denied["gate"], "risk-ceiling");
+        assert_eq!(denied["decision"]["verdict"], "deny");
+        let rules = denied["decision"]["trace"]["rules"]
+            .as_array()
+            .expect("the trace rides the decision payload");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["rule"], "risk-ceiling");
+        assert_eq!(rules[0]["deciding"], true);
+
+        assert_eq!(events[1]["decision"]["verdict"], "allow");
+    }
+
+    /// With no bus attached — the default every constructor produces —
+    /// nothing is journaled and nothing fails: the account is telemetry,
+    /// never a toll on the call.
+    #[tokio::test]
+    async fn no_bus_means_no_journal_and_no_failure() {
+        let leaf = Leaf::new();
+        let gated = GatedToolSet::new(&leaf, session_default(), Principal::User);
+        assert!(matches!(
+            gated.execute(READ, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+    }
+
+    fn session_default() -> Arc<dyn AuthzGate> {
+        Arc::new(NoAuthz)
     }
 }

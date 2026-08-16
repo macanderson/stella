@@ -441,6 +441,11 @@ impl GitCandidateWorkspaces {
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
                 let board = registry.task_board();
+                // Captured while `registry` is still concrete, like the
+                // attachments above: the gate journals its evaluations onto
+                // the same bus `attach_rule_guards` gave this candidate
+                // (#3289).
+                let candidate_bus = registry.hook_bus();
                 let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
                 // `canon_root`, not `self.root`: the frame screen compares
                 // spellings, and the goal's paths are phrased against the
@@ -469,6 +474,7 @@ impl GitCandidateWorkspaces {
                         tools,
                         self.policy.clone(),
                         stella_core::ports::Principal::Role("worker".into()),
+                        candidate_bus,
                     ));
                 // Outside even the policy wrap, like the deck's session tap
                 // (#1719) — see `task_events`'s module doc.

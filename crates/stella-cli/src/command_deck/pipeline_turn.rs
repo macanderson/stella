@@ -89,6 +89,7 @@ pub(super) async fn run_lead_pipeline_turn(
             custom_tools.to_vec(),
             cfg,
             stella_core::ports::Principal::User,
+            registry.hook_bus(),
         );
         let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
 

@@ -33,6 +33,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use stella_core::bus::HookBus;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal, ToolExecutor};
 use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::gated::GatedToolSet;
@@ -59,15 +60,30 @@ pub(crate) fn session_stack<'a>(
     custom_tools: Vec<CustomTool>,
     cfg: &Config,
     principal: Principal,
+    bus: Option<HookBus>,
 ) -> GatedToolSet<'a> {
-    session_stack_with_gate(
-        base,
-        custom_tools,
-        cfg.workspace_root.clone(),
-        session_tool_policy(cfg),
-        session_gate(),
-        principal,
+    with_journal(
+        session_stack_with_gate(
+            base,
+            custom_tools,
+            cfg.workspace_root.clone(),
+            session_tool_policy(cfg),
+            session_gate(),
+            principal,
+        ),
+        bus,
     )
+}
+
+/// Attach the session bus the gate journals its evaluations onto (#3289),
+/// when the driver carries one — `registry.hook_bus()` at every shipped call
+/// site, so the authorization plane's `(principal, tool, decision, trace)`
+/// lands in the same journal the rest of the policy plane already rides.
+fn with_journal(stack: GatedToolSet<'_>, bus: Option<HookBus>) -> GatedToolSet<'_> {
+    match bus {
+        Some(bus) => stack.with_bus(bus),
+        None => stack,
+    }
 }
 
 /// [`session_stack`] with every dependency explicit — the seam the witness
@@ -108,9 +124,13 @@ pub(crate) fn policy_stack<'a>(
     base: &'a dyn ToolExecutor,
     cfg: &Config,
     principal: Principal,
+    bus: Option<HookBus>,
 ) -> GatedToolSet<'a> {
     let permitted = PolicyToolSet::new(base, session_tool_policy(cfg));
-    GatedToolSet::new_boxed(Box::new(permitted), session_gate(), principal)
+    with_journal(
+        GatedToolSet::new_boxed(Box::new(permitted), session_gate(), principal),
+        bus,
+    )
 }
 
 /// [`policy_stack`] owning its base by `Arc` — for a best-of-N candidate
@@ -121,9 +141,13 @@ pub(crate) fn policy_stack_owned(
     base: Arc<dyn ToolExecutor>,
     policy: ToolPolicy,
     principal: Principal,
+    bus: Option<HookBus>,
 ) -> GatedToolSet<'static> {
     let permitted = PolicyToolSet::new_owned(base, policy);
-    GatedToolSet::new_owned(Arc::new(permitted), session_gate(), principal)
+    with_journal(
+        GatedToolSet::new_owned(Arc::new(permitted), session_gate(), principal),
+        bus,
+    )
 }
 
 #[cfg(test)]
@@ -245,6 +269,7 @@ mod tests {
             Arc::new(Leaf::new()),
             ToolPolicy::allow_all(),
             Principal::Role("worker".into()),
+            None,
         );
         assert!(matches!(
             stack.execute("get_state", &json!({})).await,
