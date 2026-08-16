@@ -934,10 +934,7 @@ mod tests {
         let (board, queue) = handles();
         board.lock().unwrap().create("do a thing", None);
         let out = TaskAssign(board.clone(), queue.clone(), dispatch_off())
-            .execute(
-                &serde_json::json!({"id": "1", "briefing": "b"}),
-                &root(),
-            )
+            .execute(&serde_json::json!({"id": "1", "briefing": "b"}), &root())
             .await;
         let msg = format!("{out:?}");
         assert!(out.is_error(), "{msg}");
