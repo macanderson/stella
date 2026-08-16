@@ -356,6 +356,62 @@ impl AuthzGate for RiskCeiling {
     }
 }
 
+/// The `policy.evaluated` payload one gate evaluation journals (#3362): who
+/// asked, for what, what the gate said, and — inside the `decision` field,
+/// which `bus::bridge_policy_plane` copies verbatim into the journaled
+/// [`stella_protocol::AgentEvent::PolicyDecision`] — the rule-by-rule
+/// [`AuthzTrace`].
+///
+/// One pure builder, called by the CLI's `GatedToolSet` and the serve wire's
+/// `RemoteToolExecutor` alike. The two surfaces evaluate the same gate at the
+/// same position and must therefore journal the same account; a second copy
+/// of this shape is a second place for it to drift, and the parity row
+/// `tools.contracts` would not catch a divergence in the payload's *fields*.
+///
+/// An errored evaluation is journaled too, as `verdict: "error"` — it is the
+/// arm the fail-closed rule exists for, and an audit trail must show *could
+/// not tell* distinctly from *refused*.
+///
+/// Content-free by construction (invariant #3): tool name, principal label,
+/// gate name, verdict, gate-authored reasons, and rule identifiers. The
+/// call's `input` is deliberately not a parameter — this payload can ride an
+/// audit surface, and tool arguments must never follow it there.
+#[must_use]
+pub fn evaluation_journal_payload(
+    tool: &str,
+    principal: &Principal,
+    gate: &str,
+    evaluation: &Result<AuthzEvaluation, AuthzEvalError>,
+) -> Value {
+    let decision = match evaluation {
+        Ok(evaluation) => {
+            let mut decision = match &evaluation.decision {
+                AuthzDecision::Allow => serde_json::json!({ "verdict": "allow" }),
+                AuthzDecision::Deny { reason } => {
+                    serde_json::json!({ "verdict": "deny", "reason": reason })
+                }
+                AuthzDecision::RequireApproval { reason } => {
+                    serde_json::json!({ "verdict": "require_approval", "reason": reason })
+                }
+            };
+            decision["trace"] = serde_json::to_value(&evaluation.trace).unwrap_or(Value::Null);
+            decision
+        }
+        Err(error) => serde_json::json!({
+            "verdict": "error",
+            "gate": error.gate,
+            "detail": error.detail,
+        }),
+    };
+    serde_json::json!({
+        "event_name": "authz.gate",
+        "tool": tool,
+        "principal": principal.label(),
+        "gate": gate,
+        "decision": decision,
+    })
+}
+
 /// Fold an operator posture and a gate evaluation into the verdict dispatch
 /// acts on.
 ///
