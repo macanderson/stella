@@ -290,8 +290,8 @@ impl SessionMemory {
     /// Two deliberate omissions against the pre-turn block: no date section
     /// (the turn-opening block already carries today, and repeating it
     /// mid-turn buys nothing), and no `ContextRecall` telemetry — the
-    /// mid-turn event channel this would report into is the re-query
-    /// residue tracked with the drop-ledger gaps (#3358). `None` when
+    /// mid-turn event channel this would report into is a declared gap,
+    /// tracked as #3366. `None` when
     /// nothing surfaced, when the turn is an A/B control, or when steering
     /// is off — the same gates, for the same reasons.
     pub async fn signal_recall_block(
