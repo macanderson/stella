@@ -169,6 +169,7 @@ impl Tool for TaskCreate {
                     created.len(),
                     Value::Array(created)
                 ),
+                data: None,
             };
         }
 
@@ -186,6 +187,7 @@ impl Tool for TaskCreate {
         });
         ToolOutput::Ok {
             content: format!("created task {payload}"),
+            data: None,
         }
     }
 }
@@ -218,6 +220,7 @@ impl Tool for TaskList {
                 content: "no tasks yet — create the plan with task_create before starting \
                           multi-step work"
                     .into(),
+                data: None,
             };
         }
         let content = board
@@ -226,7 +229,10 @@ impl Tool for TaskList {
             .map(render_line)
             .collect::<Vec<_>>()
             .join("\n");
-        ToolOutput::Ok { content }
+        ToolOutput::Ok {
+            content,
+            data: None,
+        }
     }
 }
 
@@ -267,6 +273,7 @@ impl Tool for TaskStart {
         match board.set_status(id, TaskStatus::InProgress) {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` is now in_progress", item.id, item.subject),
+                data: None,
             },
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -309,6 +316,7 @@ impl Tool for TaskComplete {
         match board.set_status(id, TaskStatus::Completed) {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` completed", item.id, item.subject),
+                data: None,
             },
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -353,7 +361,10 @@ impl Tool for TaskCancel {
                 if let Some(reason) = reason {
                     content.push_str(&format!(" — {reason}"));
                 }
-                ToolOutput::Ok { content }
+                ToolOutput::Ok {
+                    content,
+                    data: None,
+                }
             }
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -443,6 +454,7 @@ impl Tool for TaskAssign {
                  it with your briefing passed verbatim; its results will land back in this \
                  session"
             ),
+            data: None,
         }
     }
 }
@@ -477,7 +489,7 @@ mod tests {
 
     fn content(output: ToolOutput) -> String {
         match output {
-            ToolOutput::Ok { content } => content,
+            ToolOutput::Ok { content, .. } => content,
             ToolOutput::Error { message, .. } => panic!("expected ok, got error: {message}"),
         }
     }
@@ -485,7 +497,7 @@ mod tests {
     fn error(output: ToolOutput) -> String {
         match output {
             ToolOutput::Error { message, .. } => message,
-            ToolOutput::Ok { content } => panic!("expected error, got ok: {content}"),
+            ToolOutput::Ok { content, .. } => panic!("expected error, got ok: {content}"),
         }
     }
 

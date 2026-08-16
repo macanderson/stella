@@ -4074,6 +4074,7 @@ impl AskUserIo for DeckAskUserIo {
                 call_id: id,
                 output: ToolOutput::Ok {
                     content: answer.clone(),
+                    data: None,
                 },
                 duration_ms: 0,
                 speculated: false,

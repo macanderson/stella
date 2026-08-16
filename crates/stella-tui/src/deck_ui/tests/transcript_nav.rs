@@ -37,6 +37,7 @@ fn tool_call(m: &mut WorkspaceModel, agent: &str, id: &str, body: &str, ok: bool
             output: if ok {
                 ToolOutput::Ok {
                     content: body.into(),
+                    data: None,
                 }
             } else {
                 ToolOutput::error(body)

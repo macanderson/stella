@@ -109,6 +109,7 @@ impl ToolExecutor for BarrierSpawns {
         self.barrier.wait().await;
         ToolOutput::Ok {
             content: "finding".into(),
+            data: None,
         }
     }
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
@@ -220,6 +221,7 @@ impl ToolExecutor for BarrierSpawnsAndEdit {
         }
         ToolOutput::Ok {
             content: "ok".into(),
+            data: None,
         }
     }
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {

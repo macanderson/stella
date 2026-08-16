@@ -48,6 +48,7 @@ impl ToolExecutor for Chain {
         match &self.answers {
             Some(content) => ToolOutput::Ok {
                 content: content.clone(),
+                data: None,
             },
             None => ToolOutput::error(format!("unknown tool `{name}`")),
         }
@@ -143,7 +144,7 @@ async fn the_witness_fails_without_the_tool_and_passes_with_it() {
     let with_tool = CustomToolSet::new(&chain, vec![tool.clone()], root.to_path_buf());
     let after = with_tool.execute(&tool.name, &input).await;
     match &after {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content.contains("alpha-contents"),
             "the tool must produce the capability's answer: {content}"
         ),

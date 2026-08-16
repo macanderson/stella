@@ -13,6 +13,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 pub mod approval;
 mod executor;
+mod output;
 mod validate;
 
 /// One tool the agent can call. Input arrives as the model-produced JSON;
@@ -409,7 +410,7 @@ impl ToolRegistry {
             );
         }
 
-        let output = match tool {
+        let output = match &tool {
             Some(tool) => tool.execute(input, &self.root).await,
             None => ToolOutput::classified_error(
                 stella_protocol::ErrorClass::NotFound,
@@ -418,6 +419,14 @@ impl ToolRegistry {
                     self.available_names()
                 ),
             ),
+        };
+        // Post-execution output validation (#3285): a success whose
+        // structured half breaks the tool's declared `output_schema` is a
+        // tool defect, surfaced as a classified `Internal` error rather than
+        // passed silently to the model — see `registry/output.rs`.
+        let output = match output::defect(tool.as_deref(), &output) {
+            Some(defect) => defect,
+            None => output,
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;

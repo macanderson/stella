@@ -482,6 +482,7 @@ impl ToolExecutor for EmptyTools {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: String::new(),
+            data: None,
         }
     }
 }
@@ -549,6 +550,7 @@ impl ToolExecutor for OneWritingTool {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: "written".into(),
+            data: None,
         }
     }
 }

@@ -636,7 +636,7 @@ impl SessionModel {
                 // stripped per frame, and ratatui renders everything after
                 // the ESC byte literally (#934).
                 let (ok, summary, full) = match output {
-                    ToolOutput::Ok { content } => {
+                    ToolOutput::Ok { content , .. } => {
                         let content = strip_ansi(content);
                         (
                             true,

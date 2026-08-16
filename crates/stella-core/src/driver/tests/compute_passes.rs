@@ -190,6 +190,7 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
             async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
                 ToolOutput::Ok {
                     content: format!("ran {input}"),
+                    data: None,
                 }
             }
         }
@@ -260,6 +261,7 @@ async fn a_rewritten_block_is_never_served_from_the_digest_memo() {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "the original, uncompacted output".into(),
+                    data: None,
                 },
             }],
             attachments: vec![],
@@ -289,6 +291,7 @@ async fn a_rewritten_block_is_never_served_from_the_digest_memo() {
     // in place, leaving its position untouched.
     messages[2].tool_results[0].output = ToolOutput::Ok {
         content: "[evicted to fit context]".into(),
+        data: None,
     };
     let mut revision = TranscriptRevision::default();
     revision.rewritten();
@@ -346,6 +349,7 @@ impl ToolExecutor for BigOutputTools {
         let seed = input.get("cmd").and_then(Value::as_str).unwrap_or("?");
         ToolOutput::Ok {
             content: format!("{seed}: {}", "x".repeat(self.filler)),
+            data: None,
         }
     }
 }
@@ -590,6 +594,7 @@ fn every_rewrite_compaction_performs_is_recognized_as_compacted() {
                     // every aged result would be evicted afterwards and its
                     // elision marker would never survive to be checked.
                     content: format!("result {i}: {}", "y".repeat(20_000)),
+                    data: None,
                 },
             }],
             attachments: vec![],

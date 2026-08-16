@@ -246,6 +246,7 @@ fn a_credential_in_the_event_stream_never_reaches_the_transcript() {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: format!("echoed {secret}"),
+                    data: None,
                 },
                 duration_ms: 10,
                 speculated: false,
@@ -430,7 +431,10 @@ fn an_oversized_payload_is_cut_and_says_that_it_was() {
             },
             AgentEvent::ToolResult {
                 call_id: "c1".into(),
-                output: ToolOutput::Ok { content: huge },
+                output: ToolOutput::Ok {
+                    content: huge,
+                    data: None,
+                },
                 duration_ms: 10,
                 speculated: false,
             },

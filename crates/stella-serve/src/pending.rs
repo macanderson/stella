@@ -412,7 +412,8 @@ mod tests {
                 .resolve_tool(
                     "nope-1",
                     ToolOutput::Ok {
-                        content: String::new()
+                        content: String::new(),
+                        data: None
                     }
                 )
                 .is_err()
@@ -423,7 +424,8 @@ mod tests {
                 .resolve_tool(
                     "prov-0",
                     ToolOutput::Ok {
-                        content: String::new()
+                        content: String::new(),
+                        data: None
                     }
                 )
                 .is_err()
@@ -455,7 +457,8 @@ mod tests {
                 .resolve_tool(
                     hostile,
                     ToolOutput::Ok {
-                        content: String::new()
+                        content: String::new(),
+                        data: None
                     }
                 )
                 .is_err()

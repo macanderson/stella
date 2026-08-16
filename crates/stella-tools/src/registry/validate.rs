@@ -92,7 +92,11 @@ pub(super) fn refusal(tool: Option<&dyn Tool>, input: &Value) -> Option<ToolOutp
 /// Validate `input` against `schema` over the enforced subset. Returns the
 /// first violation in the module doc's fixed order, or `None` when the input
 /// is acceptable (or the schema declares nothing checkable).
-fn check(schema: &Value, input: &Value) -> Option<InputError> {
+///
+/// `pub(super)` because `registry/output.rs` (#3285) runs the same subset in
+/// the other direction — one checker, two seams, so the two vocabularies
+/// cannot drift.
+pub(super) fn check(schema: &Value, input: &Value) -> Option<InputError> {
     let properties = schema.get("properties").and_then(Value::as_object);
 
     // `required`, in the schema's declared order.
@@ -321,7 +325,7 @@ mod tests {
         );
         let listed = reg.execute("list_state", &serde_json::json!({})).await;
         match listed {
-            ToolOutput::Ok { content } => assert!(
+            ToolOutput::Ok { content, .. } => assert!(
                 !content.contains("seam_probe"),
                 "the tool must not run on refused input — the entry was saved: {content}"
             ),

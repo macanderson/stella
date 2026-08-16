@@ -595,6 +595,7 @@ fn ask_user_marks_waiting_then_a_later_event_resumes_running() {
             call_id: "q".into(),
             output: ToolOutput::Ok {
                 content: "sqlite".into(),
+                data: None,
             },
             duration_ms: 1,
             speculated: false,
@@ -825,6 +826,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
         call_id: call_id.into(),
         output: ToolOutput::Ok {
             content: out.into(),
+            data: None,
         },
         duration_ms: 1,
         speculated: false,

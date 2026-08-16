@@ -158,7 +158,7 @@ impl WakeReason {
 #[must_use]
 pub fn probe_fingerprint(output: &ToolOutput) -> Option<String> {
     match output {
-        ToolOutput::Ok { content } => Some(content.trim().to_string()),
+        ToolOutput::Ok { content, .. } => Some(content.trim().to_string()),
         ToolOutput::Error { .. } => None,
     }
 }
@@ -279,7 +279,8 @@ mod tests {
     fn fingerprints_trim_whitespace_so_a_newline_is_not_a_change() {
         assert_eq!(
             probe_fingerprint(&ToolOutput::Ok {
-                content: "pending\n".into()
+                content: "pending\n".into(),
+                data: None
             })
             .as_deref(),
             Some("pending")

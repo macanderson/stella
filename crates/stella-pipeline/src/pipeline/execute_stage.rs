@@ -514,7 +514,7 @@ impl<'a> Pipeline<'a> {
                             .ok()
                             .and_then(|mut pending| pending.remove(call_id));
                         if let Some(command) = command
-                            && let ToolOutput::Ok { content } = output
+                            && let ToolOutput::Ok { content, .. } = output
                         {
                             // Nothing is emitted on the transition: this is a
                             // success, and the only event available in this

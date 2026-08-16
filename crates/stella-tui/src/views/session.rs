@@ -990,9 +990,7 @@ mod tests {
         });
         model.apply(&AgentEvent::ToolResult {
             call_id: "c1".into(),
-            output: ToolOutput::Ok {
-                content: "ok".into(),
-            },
+            output: ToolOutput::ok("ok"),
             duration_ms: 3,
             speculated: false,
         });
@@ -1340,9 +1338,7 @@ mod tests {
                 output: if i < failures {
                     ToolOutput::error("exit status 1")
                 } else {
-                    ToolOutput::Ok {
-                        content: "folded_away_body".into(),
-                    }
+                    ToolOutput::ok("folded_away_body")
                 },
                 duration_ms: 20,
                 speculated: false,

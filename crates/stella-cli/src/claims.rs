@@ -384,6 +384,7 @@ mod tests {
                 .push(name.to_string());
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
@@ -493,6 +494,7 @@ mod tests {
                 *self.1.lock().unwrap() = self.0.file_lock_holder(COMMIT_CLAIM).unwrap();
                 ToolOutput::Ok {
                     content: "committed".into(),
+                    data: None,
                 }
             }
         }

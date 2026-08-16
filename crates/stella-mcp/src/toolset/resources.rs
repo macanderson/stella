@@ -217,6 +217,7 @@ async fn run_list(client: &McpClient, input: &Value) -> ToolOutput {
     match client.list_resources(cursor).await {
         Ok(page) => ToolOutput::Ok {
             content: bounded(render_listing(client.name(), &page)),
+            data: None,
         },
         Err(err) => ToolOutput::error(format!(
             "mcp server `{}` failed listing resources: {}",
@@ -240,6 +241,7 @@ async fn run_read(client: &McpClient, input: &Value) -> ToolOutput {
     match client.read_resource(uri).await {
         Ok(read) => ToolOutput::Ok {
             content: bounded(render_read(client.name(), uri, &read)),
+            data: None,
         },
         Err(err) => ToolOutput::error(format!(
             "mcp server `{}` failed reading resource `{uri}`: {}",
@@ -492,7 +494,7 @@ mod tests {
             .execute("mcp__docs__list_resources", &serde_json::Value::Null)
             .await
         {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(
                     content.contains(
                         "- file:///guide.md — guide.md (text/markdown, 1234 bytes): the user guide"
@@ -543,7 +545,7 @@ mod tests {
             )
             .await
         {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert_eq!(content, "[resource: file:///a.txt]\nhello");
             }
             other => panic!("expected the text inline, got {other:?}"),
@@ -556,7 +558,7 @@ mod tests {
             )
             .await
         {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert_eq!(
                     content,
                     "[resource: file:///b.png — binary image/png, not inlined]"
@@ -635,7 +637,7 @@ mod tests {
             )
             .await
         {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(
                     content.len() < MAX_TOOL_RESULT_BYTES + 128,
                     "kept text respects the budget: {} bytes",

@@ -126,6 +126,7 @@ mod tests {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: String::new(),
+                data: None,
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {

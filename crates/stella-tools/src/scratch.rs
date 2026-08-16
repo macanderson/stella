@@ -152,6 +152,7 @@ impl Tool for SaveState {
                 let identity = &crate::foundry_gate::digest(content.as_bytes())[..8];
                 ToolOutput::Ok {
                     content: format!("saved {key} ({} bytes, sha256/8 {identity})", content.len()),
+                    data: None,
                 }
             }
             Err(e) => ToolOutput::error(format!("failed to save {key}: {e}")),
@@ -243,6 +244,7 @@ impl Tool for GetState {
         };
         ToolOutput::Ok {
             content: format!("{header}{body}"),
+            data: None,
         }
     }
 }
@@ -275,17 +277,27 @@ impl Tool for ListState {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            rows.push(format!("{name}  {len} bytes"));
+            rows.push((name, len));
         }
         rows.sort();
+        // The structured half the contract's `output_schema` checks (#3285):
+        // the same facts as the prose, as values. `list_state` is the first
+        // declarer because the scratch plane is the reference tool shape.
+        let data = json!({
+            "entries": rows
+                .iter()
+                .map(|(key, bytes)| json!({ "key": key, "bytes": bytes }))
+                .collect::<Vec<_>>()
+        });
         if rows.is_empty() {
-            return ToolOutput::Ok {
-                content: "no scratch state saved this session".into(),
-            };
+            return ToolOutput::ok_with_data("no scratch state saved this session", data);
         }
-        ToolOutput::Ok {
-            content: rows.join("\n"),
-        }
+        let content = rows
+            .iter()
+            .map(|(key, bytes)| format!("{key}  {bytes} bytes"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        ToolOutput::ok_with_data(content, data)
     }
 }
 
@@ -328,6 +340,7 @@ impl Tool for DeleteState {
         match std::fs::remove_file(&path) {
             Ok(()) => ToolOutput::Ok {
                 content: format!("deleted {key}"),
+                data: None,
             },
             Err(_) => ToolOutput::error(format!("no state saved under {key:?} — nothing deleted")),
         }

@@ -223,6 +223,7 @@ pub(crate) fn all_tool_outputs() -> Vec<ToolOutput> {
     vec![
         ToolOutput::Ok {
             content: "hello".into(),
+            data: None,
         },
         // The unclassified error — the shape every payload written before
         // #3145 has, and the one whose `class` key must stay absent.

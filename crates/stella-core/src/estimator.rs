@@ -78,7 +78,7 @@ pub fn estimate_message_tokens(message: &CompletionMessage) -> u64 {
     for result in &message.tool_results {
         bytes += result.call_id.len();
         bytes += match &result.output {
-            stella_protocol::ToolOutput::Ok { content } => content.len(),
+            stella_protocol::ToolOutput::Ok { content, .. } => content.len(),
             stella_protocol::ToolOutput::Error { message, .. } => message.len(),
         };
     }
@@ -620,6 +620,7 @@ mod tests {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "x".repeat(7000),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),

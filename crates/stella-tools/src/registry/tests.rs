@@ -154,12 +154,13 @@ async fn state_tools_round_trip_through_registry_dispatch() {
         .await;
     assert!(!out.is_error(), "{out:?}");
 
-    let ToolOutput::Ok { content } = reg.execute("list_state", &serde_json::json!({})).await else {
+    let ToolOutput::Ok { content, .. } = reg.execute("list_state", &serde_json::json!({})).await
+    else {
         panic!("list_state must succeed");
     };
     assert!(content.contains("probe"), "{content}");
 
-    let ToolOutput::Ok { content } = reg
+    let ToolOutput::Ok { content, .. } = reg
         .execute("get_state", &serde_json::json!({"key": "probe"}))
         .await
     else {
@@ -190,7 +191,7 @@ async fn save_state_outputs_differ_for_different_same_length_content() {
     let (_root, reg) = bare_registry();
     let mut outputs = Vec::new();
     for content in ["counter=1", "counter=2"] {
-        let ToolOutput::Ok { content } = reg
+        let ToolOutput::Ok { content, .. } = reg
             .execute(
                 "save_state",
                 &serde_json::json!({"key": "checkpoint", "content": content}),
@@ -224,10 +225,13 @@ async fn save_state_outputs_differ_for_different_same_length_content() {
 async fn save_state_output_is_identical_for_identical_content() {
     let (_root, reg) = bare_registry();
     let save = serde_json::json!({"key": "checkpoint", "content": "counter=1"});
-    let ToolOutput::Ok { content: first } = reg.execute("save_state", &save).await else {
+    let ToolOutput::Ok { content: first, .. } = reg.execute("save_state", &save).await else {
         panic!("save_state must succeed");
     };
-    let ToolOutput::Ok { content: second } = reg.execute("save_state", &save).await else {
+    let ToolOutput::Ok {
+        content: second, ..
+    } = reg.execute("save_state", &save).await
+    else {
         panic!("save_state must succeed");
     };
     assert_eq!(
@@ -243,7 +247,8 @@ async fn save_state_output_is_identical_for_identical_content() {
 #[tokio::test]
 async fn get_environment_reports_the_registrys_scratch_directory() {
     let (_root, reg) = bare_registry();
-    let ToolOutput::Ok { content } = reg.execute("get_environment", &serde_json::json!({})).await
+    let ToolOutput::Ok { content, .. } =
+        reg.execute("get_environment", &serde_json::json!({})).await
     else {
         panic!("get_environment must succeed with zero arguments");
     };

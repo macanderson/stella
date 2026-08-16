@@ -869,7 +869,7 @@ pub(crate) fn message_body(message: &CompletionMessage) -> String {
         out.push_str(&result.call_id);
         out.push('\n');
         match &result.output {
-            ToolOutput::Ok { content } => out.push_str(content),
+            ToolOutput::Ok { content, .. } => out.push_str(content),
             ToolOutput::Error { message, .. } => out.push_str(&format!("error: {message}")),
         }
     }
@@ -1156,6 +1156,7 @@ mod tests {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "fn main() {}".into(),
+                    data: None,
                 },
             }],
             attachments: vec![],
@@ -1178,6 +1179,7 @@ mod tests {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "fn main() {\n    println!(\"hi\");\n}".into(),
+                    data: None,
                 },
             }],
             attachments: vec![],

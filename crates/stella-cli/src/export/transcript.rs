@@ -429,7 +429,7 @@ impl<'a> Fold<'a> {
         // never has, so branching on the enum is the only correct read.
         let failed = output.is_error();
         let body = match output {
-            ToolOutput::Ok { content } => content.clone(),
+            ToolOutput::Ok { content, .. } => content.clone(),
             ToolOutput::Error { message, .. } => message.clone(),
         };
         let body = self.clean(&body);

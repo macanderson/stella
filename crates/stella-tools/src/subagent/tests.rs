@@ -82,7 +82,7 @@ async fn a_completed_child_returns_its_finding() {
         .await;
 
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert_eq!(content, "the retry policy is in stella-core/src/retry.rs")
         }
         other => panic!("expected Ok, got {other:?}"),
@@ -129,7 +129,7 @@ async fn a_partial_child_returns_its_evidence_as_ok_not_as_an_error() {
         .await;
 
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("found three callers so far"));
             assert!(
                 content.contains("partial") && content.contains("step cap reached"),
@@ -164,7 +164,7 @@ async fn a_truncated_report_says_so_to_the_model() {
         .execute(&call("x", "y"), std::path::Path::new("."))
         .await;
     match out {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content.contains("truncated"),
             "a clipped answer must never look exhaustive: {content}"
         ),

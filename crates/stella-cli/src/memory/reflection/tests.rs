@@ -448,6 +448,7 @@ async fn a_fact_in_the_middle_of_a_long_turn_reaches_the_reflection_prompt() {
             "read_file",
             ToolOutput::Ok {
                 content: format!("routine step {step}, nothing to learn here"),
+                data: None,
             },
         ));
     }
@@ -532,6 +533,7 @@ async fn the_billed_prompt_size_is_reported_and_bounded() {
             "bash",
             ToolOutput::Ok {
                 content: format!("step {step}: {}", "running 412 tests ... ok ".repeat(30)),
+                data: None,
             },
         ));
     }

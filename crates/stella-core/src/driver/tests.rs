@@ -40,6 +40,7 @@ impl ToolExecutor for CountingTools {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ToolOutput::Ok {
             content: "ok".into(),
+            data: None,
         }
     }
 }
@@ -222,6 +223,7 @@ impl ToolExecutor for NotifyingReadTools {
         self.executed.notify_one();
         ToolOutput::Ok {
             content: "contents".into(),
+            data: None,
         }
     }
 }
@@ -248,6 +250,7 @@ impl ToolExecutor for MeteredReadTools {
         self.executed.notify_one();
         ToolOutput::Ok {
             content: "contents".into(),
+            data: None,
         }
     }
 }
@@ -1268,6 +1271,7 @@ async fn summarization_never_orphans_tool_results_at_the_span_edge() {
             call_id: "edge".into(),
             output: ToolOutput::Ok {
                 content: "small".into(),
+                data: None,
             },
         }],
         attachments: Vec::new(),
@@ -1856,6 +1860,7 @@ impl ToolExecutor for PollingTools {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         ToolOutput::Ok {
             content: format!("[{n}s] still running..."),
+            data: None,
         }
     }
 }
@@ -2108,6 +2113,7 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
             let tag = input.get("cmd").and_then(|v| v.as_str()).unwrap_or("?");
             ToolOutput::Ok {
                 content: format!("{tag}: {}", "x".repeat(600)),
+                data: None,
             }
         }
     }
@@ -2217,6 +2223,7 @@ impl ToolExecutor for BarrierTools {
         self.barrier.wait().await;
         ToolOutput::Ok {
             content: "read".into(),
+            data: None,
         }
     }
 }
@@ -2308,6 +2315,7 @@ impl ToolExecutor for RecordingTools {
         }
         ToolOutput::Ok {
             content: "done".into(),
+            data: None,
         }
     }
 }

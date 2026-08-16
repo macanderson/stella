@@ -410,7 +410,7 @@ impl McpToolSet {
                 continue;
             }
             let empty = Value::Object(serde_json::Map::new());
-            if let ToolOutput::Ok { content } = self.execute(&schema.name, &empty).await
+            if let ToolOutput::Ok { content, .. } = self.execute(&schema.name, &empty).await
                 && !content.trim().is_empty()
             {
                 sections.push(format!("### {}\n{}", schema.name, content.trim()));

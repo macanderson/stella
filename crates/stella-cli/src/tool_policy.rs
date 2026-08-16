@@ -191,6 +191,7 @@ mod tests {
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: format!("ran {name}"),
+                data: None,
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {

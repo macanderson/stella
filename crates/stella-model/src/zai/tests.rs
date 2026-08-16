@@ -39,6 +39,7 @@ fn to_zai_messages_frames_tool_results_with_call_ids() {
                 call_id: "call_9".into(),
                 output: ToolOutput::Ok {
                     content: "fn main(){}".into(),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),
