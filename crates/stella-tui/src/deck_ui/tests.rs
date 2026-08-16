@@ -73,6 +73,7 @@ fn with_tool_exchange(m: &mut WorkspaceModel, agent: &str) {
             call_id: "c1".into(),
             output: ToolOutput::Ok {
                 content: "line one\nline two\nline three".into(),
+                data: None,
             },
             duration_ms: 7,
             speculated: false,

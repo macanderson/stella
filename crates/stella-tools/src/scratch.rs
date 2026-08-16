@@ -121,7 +121,7 @@ impl Tool for SaveState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let (key, content) = match (str_field(input, "key"), str_field(input, "content")) {
             (Ok(k), Ok(c)) => (k, c),
             (Err(m), _) | (_, Err(m)) => return ToolOutput::error(m),
@@ -152,6 +152,7 @@ impl Tool for SaveState {
                 let identity = &crate::foundry_gate::digest(content.as_bytes())[..8];
                 ToolOutput::Ok {
                     content: format!("saved {key} ({} bytes, sha256/8 {identity})", content.len()),
+                    data: None,
                 }
             }
             Err(e) => ToolOutput::error(format!("failed to save {key}: {e}")),
@@ -185,7 +186,7 @@ impl Tool for GetState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {
@@ -243,6 +244,7 @@ impl Tool for GetState {
         };
         ToolOutput::Ok {
             content: format!("{header}{body}"),
+            data: None,
         }
     }
 }
@@ -264,7 +266,7 @@ impl Tool for ListState {
         }
     }
 
-    async fn execute(&self, _input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, _input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let mut rows = Vec::new();
         let entries = match std::fs::read_dir(self.0.path()) {
             Ok(e) => e,
@@ -275,17 +277,27 @@ impl Tool for ListState {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            rows.push(format!("{name}  {len} bytes"));
+            rows.push((name, len));
         }
         rows.sort();
+        // The structured half the contract's `output_schema` checks (#3285):
+        // the same facts as the prose, as values. `list_state` is the first
+        // declarer because the scratch plane is the reference tool shape.
+        let data = json!({
+            "entries": rows
+                .iter()
+                .map(|(key, bytes)| json!({ "key": key, "bytes": bytes }))
+                .collect::<Vec<_>>()
+        });
         if rows.is_empty() {
-            return ToolOutput::Ok {
-                content: "no scratch state saved this session".into(),
-            };
+            return ToolOutput::ok_with_data("no scratch state saved this session", data);
         }
-        ToolOutput::Ok {
-            content: rows.join("\n"),
-        }
+        let content = rows
+            .iter()
+            .map(|(key, bytes)| format!("{key}  {bytes} bytes"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        ToolOutput::ok_with_data(content, data)
     }
 }
 
@@ -312,7 +324,7 @@ impl Tool for DeleteState {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {
@@ -328,6 +340,7 @@ impl Tool for DeleteState {
         match std::fs::remove_file(&path) {
             Ok(()) => ToolOutput::Ok {
                 content: format!("deleted {key}"),
+                data: None,
             },
             Err(_) => ToolOutput::error(format!("no state saved under {key:?} — nothing deleted")),
         }

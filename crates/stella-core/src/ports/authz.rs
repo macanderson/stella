@@ -121,6 +121,82 @@ impl From<AuthzDecision> for HookDecision {
     }
 }
 
+/// What one rule inside a gate contributed to a decision (#3289).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthzContribution {
+    /// The rule matched and would allow the call.
+    Allow,
+    /// The rule matched and would refuse the call.
+    Deny,
+    /// The rule matched and would park the call on a human.
+    RequireApproval,
+    /// The rule was evaluated and did not match — recorded so "was this
+    /// rule even consulted" is answerable after the fact.
+    None,
+}
+
+/// One evaluated rule inside an [`AuthzTrace`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuthzRuleTrace {
+    /// The rule's identifier, as its gate spells it. An identifier, never
+    /// content: no tool inputs, no paths, no model output (the trace may
+    /// ride audit surfaces, and invariant #3 governs what those carry).
+    pub rule: String,
+    /// Whether the rule matched this call.
+    pub matched: bool,
+    /// What the rule contributed when it matched.
+    pub contribution: AuthzContribution,
+    /// Whether this rule's contribution is the one that decided the call.
+    /// At most one entry per trace carries `true`.
+    pub deciding: bool,
+}
+
+/// The rule-by-rule account of one authorization decision (#3289): which
+/// rules were evaluated, in order, which matched, and which one decided.
+///
+/// "Why was this denied" as a **value** — serde-first, so it survives into
+/// the journal and a test can assert on it, instead of a log line somebody
+/// greps. Built by pure resolvers over prefetched data (invariant #2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuthzTrace {
+    /// The evaluated rules, in evaluation order.
+    pub rules: Vec<AuthzRuleTrace>,
+}
+
+impl AuthzTrace {
+    /// The honest trace for a gate that is itself one rule — [`NoAuthz`],
+    /// [`RiskCeiling`], any gate that does not override
+    /// [`AuthzGate::check_traced`]: one entry, named after the gate,
+    /// matched and deciding, contributing whatever the gate decided.
+    #[must_use]
+    pub fn single(rule: impl Into<String>, decision: &AuthzDecision) -> Self {
+        let contribution = match decision {
+            AuthzDecision::Allow => AuthzContribution::Allow,
+            AuthzDecision::Deny { .. } => AuthzContribution::Deny,
+            AuthzDecision::RequireApproval { .. } => AuthzContribution::RequireApproval,
+        };
+        Self {
+            rules: vec![AuthzRuleTrace {
+                rule: rule.into(),
+                matched: true,
+                contribution,
+                deciding: true,
+            }],
+        }
+    }
+}
+
+/// A decision together with its rule-by-rule account (#3289) — what
+/// [`AuthzGate::check_traced`] returns, and what a call site journals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthzEvaluation {
+    /// What the gate decided.
+    pub decision: AuthzDecision,
+    /// How it got there.
+    pub trace: AuthzTrace,
+}
+
 /// A gate that could not reach a decision.
 ///
 /// Named and typed rather than a bare `String` (invariant #5) because the
@@ -181,6 +257,27 @@ pub trait AuthzGate: Send + Sync {
         principal: &Principal,
         input: &Value,
     ) -> Result<AuthzDecision, AuthzEvalError>;
+
+    /// [`Self::check`], returning the decision together with its
+    /// rule-by-rule [`AuthzTrace`] (#3289) — what the dispatch seams call,
+    /// so every journaled decision carries its account.
+    ///
+    /// The default derives the honest trace for a gate that is itself one
+    /// rule: a single entry named after the gate, matched and deciding. A
+    /// gate with internal rule structure overrides this — and keeps the
+    /// `Result` split exactly as [`Self::check`] has it: the trace is not
+    /// an excuse to soften an evaluation failure into a partial answer.
+    fn check_traced(
+        &self,
+        contract: &ToolContract,
+        principal: &Principal,
+        input: &Value,
+    ) -> Result<AuthzEvaluation, AuthzEvalError> {
+        self.check(contract, principal, input).map(|decision| {
+            let trace = AuthzTrace::single(self.name(), &decision);
+            AuthzEvaluation { decision, trace }
+        })
+    }
 }
 
 /// The explicit "no authorization plane is installed" gate.
@@ -257,6 +354,62 @@ impl AuthzGate for RiskCeiling {
             ),
         })
     }
+}
+
+/// The `policy.evaluated` payload one gate evaluation journals (#3362): who
+/// asked, for what, what the gate said, and — inside the `decision` field,
+/// which `bus::bridge_policy_plane` copies verbatim into the journaled
+/// [`stella_protocol::AgentEvent::PolicyDecision`] — the rule-by-rule
+/// [`AuthzTrace`].
+///
+/// One pure builder, called by the CLI's `GatedToolSet` and the serve wire's
+/// `RemoteToolExecutor` alike. The two surfaces evaluate the same gate at the
+/// same position and must therefore journal the same account; a second copy
+/// of this shape is a second place for it to drift, and the parity row
+/// `tools.contracts` would not catch a divergence in the payload's *fields*.
+///
+/// An errored evaluation is journaled too, as `verdict: "error"` — it is the
+/// arm the fail-closed rule exists for, and an audit trail must show *could
+/// not tell* distinctly from *refused*.
+///
+/// Content-free by construction (invariant #3): tool name, principal label,
+/// gate name, verdict, gate-authored reasons, and rule identifiers. The
+/// call's `input` is deliberately not a parameter — this payload can ride an
+/// audit surface, and tool arguments must never follow it there.
+#[must_use]
+pub fn evaluation_journal_payload(
+    tool: &str,
+    principal: &Principal,
+    gate: &str,
+    evaluation: &Result<AuthzEvaluation, AuthzEvalError>,
+) -> Value {
+    let decision = match evaluation {
+        Ok(evaluation) => {
+            let mut decision = match &evaluation.decision {
+                AuthzDecision::Allow => serde_json::json!({ "verdict": "allow" }),
+                AuthzDecision::Deny { reason } => {
+                    serde_json::json!({ "verdict": "deny", "reason": reason })
+                }
+                AuthzDecision::RequireApproval { reason } => {
+                    serde_json::json!({ "verdict": "require_approval", "reason": reason })
+                }
+            };
+            decision["trace"] = serde_json::to_value(&evaluation.trace).unwrap_or(Value::Null);
+            decision
+        }
+        Err(error) => serde_json::json!({
+            "verdict": "error",
+            "gate": error.gate,
+            "detail": error.detail,
+        }),
+    };
+    serde_json::json!({
+        "event_name": "authz.gate",
+        "tool": tool,
+        "principal": principal.label(),
+        "gate": gate,
+        "decision": decision,
+    })
 }
 
 /// Fold an operator posture and a gate evaluation into the verdict dispatch
@@ -400,6 +553,119 @@ mod tests {
                 other => panic!("softened={softened} must still deny, got {other:?}"),
             }
         }
+    }
+
+    /// **The #3289 witness.** A gate with three rules, of which the second
+    /// denies: the emitted trace names all three in evaluation order, marks
+    /// exactly the second as deciding, and survives a serde round trip —
+    /// "why was this denied" is a value, not a log grep.
+    #[test]
+    fn a_three_rule_gate_traces_all_three_and_marks_the_decider() {
+        struct ThreeRules;
+
+        impl AuthzGate for ThreeRules {
+            fn name(&self) -> &'static str {
+                "three-rules"
+            }
+            fn check(
+                &self,
+                contract: &ToolContract,
+                principal: &Principal,
+                input: &Value,
+            ) -> Result<AuthzDecision, AuthzEvalError> {
+                self.check_traced(contract, principal, input)
+                    .map(|evaluation| evaluation.decision)
+            }
+            fn check_traced(
+                &self,
+                contract: &ToolContract,
+                _principal: &Principal,
+                _input: &Value,
+            ) -> Result<AuthzEvaluation, AuthzEvalError> {
+                // A pure resolver over prefetched data (invariant #2): every
+                // rule is evaluated, the first matching non-allow decides.
+                let trace = AuthzTrace {
+                    rules: vec![
+                        AuthzRuleTrace {
+                            rule: "allow-reads".into(),
+                            matched: false,
+                            contribution: AuthzContribution::None,
+                            deciding: false,
+                        },
+                        AuthzRuleTrace {
+                            rule: "deny-mutations".into(),
+                            matched: true,
+                            contribution: AuthzContribution::Deny,
+                            deciding: true,
+                        },
+                        AuthzRuleTrace {
+                            rule: "default-allow".into(),
+                            matched: true,
+                            contribution: AuthzContribution::Allow,
+                            deciding: false,
+                        },
+                    ],
+                };
+                Ok(AuthzEvaluation {
+                    decision: AuthzDecision::Deny {
+                        reason: format!("`{}` mutates and mutations are denied", contract.name()),
+                    },
+                    trace,
+                })
+            }
+        }
+
+        let evaluation = ThreeRules
+            .check_traced(
+                &contract("write_file", RiskLevel::Medium),
+                &Principal::User,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(matches!(evaluation.decision, AuthzDecision::Deny { .. }));
+
+        let trace = &evaluation.trace;
+        assert_eq!(
+            trace
+                .rules
+                .iter()
+                .map(|rule| rule.rule.as_str())
+                .collect::<Vec<_>>(),
+            ["allow-reads", "deny-mutations", "default-allow"],
+            "every evaluated rule is named, in order"
+        );
+        let deciders: Vec<&str> = trace
+            .rules
+            .iter()
+            .filter(|rule| rule.deciding)
+            .map(|rule| rule.rule.as_str())
+            .collect();
+        assert_eq!(deciders, ["deny-mutations"], "exactly one rule decides");
+
+        let json = serde_json::to_string(trace).unwrap();
+        let back: AuthzTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(&back, trace, "the trace survives a serde round trip");
+    }
+
+    /// A gate that does not override `check_traced` still produces an honest
+    /// account: itself, as the one rule, deciding.
+    #[test]
+    fn an_untraced_gate_derives_its_single_rule_trace() {
+        let evaluation = RiskCeiling::new(RiskLevel::Medium)
+            .check_traced(
+                &contract("bash", RiskLevel::High),
+                &Principal::User,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(matches!(evaluation.decision, AuthzDecision::Deny { .. }));
+        assert_eq!(evaluation.trace.rules.len(), 1);
+        assert_eq!(evaluation.trace.rules[0].rule, "risk-ceiling");
+        assert_eq!(
+            evaluation.trace.rules[0].contribution,
+            AuthzContribution::Deny
+        );
+        assert!(evaluation.trace.rules[0].deciding);
     }
 
     /// The other half: an operator deny outranks a gate that allows.

@@ -992,6 +992,7 @@ mod tests {
             call_id: "c1".into(),
             output: ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             },
             duration_ms: 3,
             speculated: false,
@@ -1342,6 +1343,7 @@ mod tests {
                 } else {
                     ToolOutput::Ok {
                         content: "folded_away_body".into(),
+                        data: None,
                     }
                 },
                 duration_ms: 20,

@@ -47,6 +47,7 @@ mod managed;
 mod merge;
 pub(crate) mod migrate;
 mod private;
+mod steering;
 mod toml_config;
 mod toml_io;
 mod unknown;
@@ -63,6 +64,7 @@ pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use engine::*;
 pub use merge::ToolScopePolicies;
+pub(crate) use steering::SteeringCeiling;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -253,20 +255,6 @@ pub struct Settings {
     /// could not tell that case apart from the org having forbidden it.
     #[serde(skip)]
     steering_ceiling: SteeringCeiling,
-}
-
-/// The managed scope's answer to "may this workspace steer at all?".
-///
-/// A named type rather than a bare `bool` for the reason `Toggle` is not a
-/// `bool` either: `true` here means "the org expressed no objection", which
-/// is the default and is *not* the same fact as "the org enabled it".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SteeringCeiling(bool);
-
-impl Default for SteeringCeiling {
-    fn default() -> Self {
-        Self(true)
-    }
 }
 
 /// `create_worktrees`: whether a run does its work in a throwaway git worktree
@@ -646,37 +634,6 @@ pub struct McpSettings {
 }
 
 impl Settings {
-    /// Whether the steering plane may inject anything this session (#3243).
-    ///
-    /// The precedence, which is the house convention plus the one deliberate
-    /// inversion the tool ceiling already uses:
-    ///
-    /// ```text
-    /// built-in default (ON)
-    ///   < user settings < org-managed < project settings
-    ///   < STELLA_CONTEXT_STEERING        ← env wins the ordinary chain
-    ///   ⟂ managed ceiling applied LAST   ← the org's "off" is final
-    /// ```
-    ///
-    /// Two sentences: **anyone may turn steering off; only the org may
-    /// prevent it being turned back on.** That is exactly `apply_tool_ceiling`'s
-    /// shape, so this needs no new concept — and it is why the ceiling is a
-    /// separate field rather than folded into the merged block. Folded in,
-    /// "the project turned it off" and "the org forbade it" would be the same
-    /// value, and the env var could not be allowed to override the first
-    /// without also overriding the second.
-    pub fn steering_enabled(&self) -> bool {
-        if !self.steering_ceiling.0 {
-            return false;
-        }
-        if let Some(from_env) = env_toggle("STELLA_CONTEXT_STEERING") {
-            return from_env;
-        }
-        self.context
-            .as_ref()
-            .is_none_or(|context| context.steering.enabled)
-    }
-
     /// The merged `tools` section as the policy the runtime enforces. The
     /// managed ceiling is already folded in by [`Settings::load`], so this is
     /// the whole answer — no caller needs to re-apply authority.

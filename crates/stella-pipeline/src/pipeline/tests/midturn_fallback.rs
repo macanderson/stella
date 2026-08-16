@@ -50,6 +50,7 @@ impl ToolExecutor for OneSchemaTools {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: String::new(),
+            data: None,
         }
     }
 }

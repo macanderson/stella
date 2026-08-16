@@ -607,6 +607,7 @@ mod tests {
                 call_id: "call_1".to_string(),
                 output: ToolOutput::Ok {
                     content: "fn login() {}".to_string(),
+                    data: None,
                 },
                 duration_ms: 42,
                 speculated: false,

@@ -17,7 +17,10 @@ fn compactable_history() -> Vec<CompletionMessage> {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: call_id.into(),
-            output: ToolOutput::Ok { content },
+            output: ToolOutput::Ok {
+                content,
+                data: None,
+            },
         }],
         attachments: Vec::new(),
     };

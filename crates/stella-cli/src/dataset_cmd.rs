@@ -770,7 +770,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
 /// the other, and a training record should see the same thing it did.
 fn tool_text(output: &stella_protocol::ToolOutput) -> String {
     match output {
-        stella_protocol::ToolOutput::Ok { content } => content.clone(),
+        stella_protocol::ToolOutput::Ok { content, .. } => content.clone(),
         stella_protocol::ToolOutput::Error { message, .. } => message.clone(),
     }
 }

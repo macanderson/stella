@@ -64,7 +64,9 @@ fn echo_tool() -> ToolSchema {
 fn spec_for(prompt: &str) -> SessionSpec {
     SessionSpec {
         provider_id: "mock".to_string(),
-        tools: vec![echo_tool()],
+        principal: stella_core::ports::Principal::Host("test".to_string()),
+        gate: SessionSpec::default_gate(),
+        tools: vec![stella_protocol::ToolContract::declared(echo_tool())],
         messages: vec![CompletionMessage::user(prompt)],
         config: EngineConfig::default(),
         budget: BudgetGuard::new(BudgetMode::Off, None, None),
@@ -150,6 +152,7 @@ async fn tool_round_trip_completes_the_turn() {
                         &request_id,
                         ToolOutput::Ok {
                             content: "echoed".to_string(),
+                            data: None,
                         },
                     )
                     .unwrap();

@@ -202,6 +202,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             custom_tools.to_vec(),
             cfg,
             Principal::User,
+            tools_registry.hook_bus(),
         );
         let hook_runner = ShellHookRunner;
         match restored {
@@ -590,6 +591,7 @@ mod tests {
             call_id: "call_0".into(),
             output: ToolOutput::Ok {
                 content: "the file's contents".into(),
+                data: None,
             },
         }];
         Checkpoint {
@@ -662,7 +664,7 @@ mod tests {
                 transcript.iter().any(|m| m
                     .tool_results
                     .iter()
-                    .any(|r| matches!(&r.output, ToolOutput::Ok { content } if content == "the file's contents"))),
+                    .any(|r| matches!(&r.output, ToolOutput::Ok { content , .. } if content == "the file's contents"))),
                 "the completed step's tool result must arrive as transcript, not be re-executed"
             );
             assert_eq!(

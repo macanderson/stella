@@ -383,6 +383,7 @@ mod tests {
                 call_id: call_id.into(),
                 output: ToolOutput::Ok {
                     content: content.into(),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),

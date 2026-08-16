@@ -23,6 +23,16 @@ impl ToolExecutor for ToolRegistry {
         ToolRegistry::schemas(self)
     }
 
+    /// Resolve each advertised tool's reviewed contract (#3287) — this
+    /// override is what turns the port's fail-closed declared-`High` default
+    /// into the catalog's reviewed rows for the built-ins.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        ToolRegistry::schemas(self)
+            .iter()
+            .map(crate::contracts::contract_for)
+            .collect()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         ToolRegistry::execute(self, name, input).await
     }

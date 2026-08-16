@@ -243,6 +243,12 @@ impl ToolExecutor for ClaimTap<'_> {
         self.inner.schemas()
     }
 
+    /// Forwarded unfiltered, like `schemas()` (#3287): the tap coordinates
+    /// writes, it does not change what exists.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner.contracts()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let Some(store) = &self.store else {
             return self.inner.execute(name, input).await;
@@ -384,6 +390,7 @@ mod tests {
                 .push(name.to_string());
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
         fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
@@ -493,6 +500,7 @@ mod tests {
                 *self.1.lock().unwrap() = self.0.file_lock_holder(COMMIT_CLAIM).unwrap();
                 ToolOutput::Ok {
                     content: "committed".into(),
+                    data: None,
                 }
             }
         }

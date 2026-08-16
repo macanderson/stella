@@ -50,7 +50,7 @@ async fn an_embedded_text_resource_renders_its_text_not_a_placeholder() {
         .execute("mcp__fx__make_resource", &serde_json::json!({}))
         .await
     {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(
                 content.contains("hi"),
                 "the resource's text must render inline: {content}"
@@ -99,7 +99,7 @@ async fn resources_list_and_read_round_trip() {
         .execute("mcp__fx__list_resources", &serde_json::json!({}))
         .await
     {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("file:///r.txt"), "{content}");
             assert!(content.contains("file:///data.bin"), "{content}");
         }
@@ -113,7 +113,7 @@ async fn resources_list_and_read_round_trip() {
         )
         .await
     {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(
                 content.contains("hello from the fixture resource"),
                 "text contents render inline: {content}"
@@ -129,7 +129,7 @@ async fn resources_list_and_read_round_trip() {
         )
         .await
     {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("file:///data.bin"), "{content}");
             assert!(
                 !content.contains("QUFBQQ=="),

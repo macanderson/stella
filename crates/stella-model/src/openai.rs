@@ -523,7 +523,7 @@ fn to_openai_input(messages: &[CompletionMessage]) -> (Option<String>, Vec<OpenA
             MessageRole::Tool => {
                 for result in &message.tool_results {
                     let output = match &result.output {
-                        stella_protocol::ToolOutput::Ok { content } => content.clone(),
+                        stella_protocol::ToolOutput::Ok { content, .. } => content.clone(),
                         stella_protocol::ToolOutput::Error { message, .. } => {
                             format!("ERROR: {message}")
                         }
@@ -1111,6 +1111,7 @@ mod tests {
                     call_id: "call_9".into(),
                     output: ToolOutput::Ok {
                         content: "fn main(){}".into(),
+                        data: None,
                     },
                 }],
                 attachments: Vec::new(),

@@ -12,6 +12,7 @@
 #     --min-idle-secs   age threshold before a process is even considered
 #                       (default 1200 = 20 minutes)
 #     --sample-secs     CPU-activity sampling window (default 5)
+# --help text ends here.
 #
 # Two things this hunts, both left behind the same way: a hard kill of the
 # parent (crash, OOM, closed terminal) reparents its children to launchd
@@ -64,6 +65,9 @@
 
 set -uo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 MIN_IDLE_SECS=1200
 SAMPLE_SECS=5
 ASSUME_YES=0
@@ -71,7 +75,7 @@ DRY_RUN=0
 VERBOSE=0
 
 usage() {
-  sed -n '2,15p' "$0"
+  print_help_header "$0"
 }
 
 while [[ $# -gt 0 ]]; do

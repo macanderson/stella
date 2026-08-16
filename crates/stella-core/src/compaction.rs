@@ -122,7 +122,7 @@ const AGE_ELISION_MARKER: &str =
 /// outputs — the behavior before #554, never a false loop.
 pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
     let payload = match output {
-        ToolOutput::Ok { content } => content,
+        ToolOutput::Ok { content, .. } => content,
         ToolOutput::Error { message, .. } => message,
     };
     payload == EVICTION_STUB
@@ -290,7 +290,7 @@ fn age_stale_tool_results(
                 .iter()
                 .map(|result| {
                     let payload = match &result.output {
-                        ToolOutput::Ok { content } => content,
+                        ToolOutput::Ok { content, .. } => content,
                         ToolOutput::Error { message, .. } => message,
                     };
                     if payload.len() > AGE_THRESHOLD_CHARS {
@@ -315,7 +315,7 @@ fn age_stale_tool_results(
         let mut touched = false;
         for result in message.tool_results.iter_mut() {
             let (payload, is_error) = match &result.output {
-                ToolOutput::Ok { content } => (content, false),
+                ToolOutput::Ok { content, .. } => (content, false),
                 ToolOutput::Error { message, .. } => (message, true),
             };
             if payload.len() > AGE_THRESHOLD_CHARS {
@@ -326,6 +326,7 @@ fn age_stale_tool_results(
                 } else {
                     ToolOutput::Ok {
                         content: aged_payload,
+                        data: None,
                     }
                 };
                 rewrites.push(tool_result_rewrite(&result.output));
@@ -492,7 +493,7 @@ pub fn compact_measured(
                 continue;
             }
             for (ridx, result) in message.tool_results.iter().enumerate() {
-                if let ToolOutput::Ok { content } = &result.output
+                if let ToolOutput::Ok { content, .. } = &result.output
                     && content.len() > 200
                 {
                     // `id_at` yields "" only for an out-of-range position; an
@@ -513,7 +514,7 @@ pub fn compact_measured(
                 continue;
             }
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
-                if let ToolOutput::Ok { content } = &result.output
+                if let ToolOutput::Ok { content, .. } = &result.output
                     && content.len() > 200
                 {
                     let id = id_at(idx, ridx);
@@ -522,6 +523,7 @@ pub fn compact_measured(
                         deduped_blocks.push(id);
                         result.output = ToolOutput::Ok {
                             content: DEDUP_STUB.to_string(),
+                            data: None,
                         };
                         deduped += 1;
                     }
@@ -601,7 +603,7 @@ pub fn compact_measured(
                 // left to aging/eviction below, which reclaim it by size
                 // rather than by staleness — a still-small diagnostic survives
                 // whole, only a large one is truncated head+tail.
-                let ToolOutput::Ok { content } = &result.output else {
+                let ToolOutput::Ok { content, .. } = &result.output else {
                     continue;
                 };
                 let Some(&(latest_idx, latest_ridx)) = latest.get(key) else {
@@ -625,6 +627,7 @@ pub fn compact_measured(
                 superseded_blocks.push(id_at(idx, ridx));
                 result.output = ToolOutput::Ok {
                     content: SUPERSESSION_STUB.to_string(),
+                    data: None,
                 };
                 superseded += 1;
             }
@@ -644,7 +647,7 @@ pub fn compact_measured(
             let before = estimate_message_tokens(message);
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload, is_error) = match &result.output {
-                    ToolOutput::Ok { content } => (content, false),
+                    ToolOutput::Ok { content, .. } => (content, false),
                     ToolOutput::Error { message, .. } => (message, true),
                 };
                 if payload.len() > AGE_THRESHOLD_CHARS {
@@ -654,6 +657,7 @@ pub fn compact_measured(
                     } else {
                         ToolOutput::Ok {
                             content: aged_payload,
+                            data: None,
                         }
                     };
                     aged_blocks.push(id_at(idx, ridx));
@@ -684,7 +688,7 @@ pub fn compact_measured(
             let before = estimate_message_tokens(message);
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload_len, is_error) = match &result.output {
-                    ToolOutput::Ok { content } => (content.len(), false),
+                    ToolOutput::Ok { content, .. } => (content.len(), false),
                     ToolOutput::Error { message, .. } => (message.len(), true),
                 };
                 if payload_len > 400 {
@@ -694,6 +698,7 @@ pub fn compact_measured(
                     } else {
                         ToolOutput::Ok {
                             content: EVICTION_STUB.to_string(),
+                            data: None,
                         }
                     };
                     evicted += 1;

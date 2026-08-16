@@ -54,6 +54,7 @@ impl ToolExecutor for Serving {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: "started proc-1".into(),
+            data: None,
         }
     }
 

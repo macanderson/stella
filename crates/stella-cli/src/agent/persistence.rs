@@ -207,7 +207,7 @@ pub(crate) fn spawn_renderer(
                             .map(String::as_str)
                             .unwrap_or("tool");
                         let content = match output {
-                            ToolOutput::Ok { content } => content.clone(),
+                            ToolOutput::Ok { content, .. } => content.clone(),
                             ToolOutput::Error { message, .. } => message.clone(),
                         };
                         plain::tool_result_card(
@@ -947,6 +947,7 @@ mod stream_tests {
         };
         let output = ToolOutput::Ok {
             content: "fn a() {}".into(),
+            data: None,
         };
         // The step-1 input: system, user, assistant (text + tool call), result.
         let original = vec![

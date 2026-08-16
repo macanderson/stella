@@ -183,9 +183,28 @@ impl std::error::Error for ContractError {}
 /// engine's [`crate::ToolSchema`] half already does, and the governance half
 /// is what an embedding host reads to authorize a remoted call from metadata
 /// instead of maintaining its own name → capability side-table.
+/// The contract revision this build writes — see [`ToolContract::version`].
+pub const CONTRACT_VERSION: u32 = 1;
+
+/// [`ToolContract::version`]'s decode default: everything serialized before
+/// the field existed is revision 1 by definition.
+fn default_contract_version() -> u32 {
+    CONTRACT_VERSION
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ToolContract {
+    /// The contract-shape revision (#3286) — what an external host reading
+    /// contracts off the serve wire pins against, so a future breaking
+    /// change to this type's meaning is a number a host can branch on
+    /// rather than a silent reinterpretation. Deliberately **always
+    /// serialized** (unlike the optional claims below): a pin nobody can
+    /// see is not a pin. Absent on payloads written before the field
+    /// existed, which decode as revision 1 — the only shape that ever
+    /// existed before it.
+    #[serde(default = "default_contract_version")]
+    pub version: u32,
     /// What is advertised to the model — unchanged, and serialized by the
     /// same code that always serialized it (see the module docs on why this
     /// is composition rather than restatement).
@@ -201,6 +220,36 @@ pub struct ToolContract {
     pub requires_approval: bool,
     /// Whether the claims above were reviewed or merely asserted.
     pub provenance: Provenance,
+    /// What a successful call's structured half ([`crate::tool::ToolOutput`]'s
+    /// `Ok.data`) must look like, when the tool promises one (#3285). `None`
+    /// means the tool's output is prose only — every tool written before
+    /// this field existed. Deliberately *not* part of [`Self::schema`]: the
+    /// model never reads it (it feeds the registry's post-execution check,
+    /// not the prompt), so keeping it here is what keeps invariant #7
+    /// structural. Optional and absent-when-`None` so every contract
+    /// serialized before the field round-trips byte-identically
+    /// (invariant #4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+    /// The event names this tool may emit mid-execution (#3284). The
+    /// registry's per-call event handle drops any name not listed here, so
+    /// this declaration is the allowlist — a tool cannot improvise a
+    /// vocabulary its reviewers never saw. Empty — most tools — means the
+    /// tool emits nothing. Absent-when-empty so every contract serialized
+    /// before the field round-trips byte-identically (invariant #4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
+    /// Whether one announced call may safely run twice (#3287) — the claim
+    /// retry logic and dispatch guards key on, and the contract-side home of
+    /// the MCP spec's `idempotentHint`. Distinct from
+    /// [`ToolSchema::speculation_safe`], which additionally demands the tool
+    /// tolerate re-execution *before its step commits*. `false` — the
+    /// default, and the safe direction — for every contract written before
+    /// the field existed; absent-when-`false` so those payloads round-trip
+    /// byte-identically (invariant #4). For [`Provenance::Declared`] tools
+    /// this is a *claim* like every other field here.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub idempotent: bool,
 }
 
 impl ToolContract {
@@ -211,9 +260,41 @@ impl ToolContract {
         Self {
             schema,
             risk,
+            version: CONTRACT_VERSION,
             requires_approval: false,
             provenance: Provenance::Builtin,
+            output_schema: None,
+            events: Vec::new(),
+            idempotent: false,
         }
+    }
+
+    /// The same contract, claiming one announced call may safely run twice
+    /// (#3287). Builder-shaped like its siblings: most tools do not make the
+    /// claim, and the constructors stay the pre-#3287 shape.
+    #[must_use]
+    pub fn with_idempotent(mut self, idempotent: bool) -> Self {
+        self.idempotent = idempotent;
+        self
+    }
+
+    /// The same contract, declaring the event names one call may emit
+    /// (#3284). Builder-shaped for the same reason as
+    /// [`Self::with_output_schema`]: most tools emit nothing.
+    #[must_use]
+    pub fn with_events(mut self, events: Vec<String>) -> Self {
+        self.events = events;
+        self
+    }
+
+    /// The same contract, promising that a successful call's structured half
+    /// matches `output_schema` (#3285). Builder-shaped because most tools
+    /// make no such promise, and the two constructors above should stay
+    /// exactly the pre-#3285 shape.
+    #[must_use]
+    pub fn with_output_schema(mut self, output_schema: serde_json::Value) -> Self {
+        self.output_schema = Some(output_schema);
+        self
     }
 
     /// A contract for a tool that described *itself* — an MCP server's
@@ -237,8 +318,12 @@ impl ToolContract {
         Self {
             schema,
             risk: RiskLevel::High,
+            version: CONTRACT_VERSION,
             requires_approval: false,
             provenance: Provenance::Declared,
+            output_schema: None,
+            events: Vec::new(),
+            idempotent: false,
         }
     }
 
@@ -313,6 +398,81 @@ mod tests {
         let json = serde_json::to_string(&contract).unwrap();
         let back: ToolContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back, contract);
+    }
+
+    #[test]
+    fn a_contract_with_an_output_schema_roundtrips_and_a_bare_one_is_the_old_bytes() {
+        // Invariant #4 for #3285, both directions: the new field survives
+        // the wire, and its absence is byte-identical to the pre-#3285
+        // serialization so no stored contract changes shape underneath a
+        // reader.
+        let promised = ToolContract::builtin(schema("list_state", true, true), RiskLevel::Low)
+            .with_output_schema(serde_json::json!({
+                "type": "object",
+                "properties": { "keys": { "type": "array" } },
+                "required": ["keys"]
+            }));
+        let json = serde_json::to_string(&promised).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, promised);
+
+        let bare = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&bare).unwrap();
+        assert!(
+            !json.contains("output_schema"),
+            "an absent promise must be absent bytes: {json}"
+        );
+        let old: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(old, bare);
+    }
+
+    #[test]
+    fn a_pre_version_payload_decodes_as_revision_one_and_the_pin_is_always_written() {
+        // #3286: everything serialized before the field existed is revision
+        // 1 by definition, and the pin is always on the wire — a version a
+        // host cannot see is not a pin.
+        let json = r#"{"schema":{"name":"t","description":"d","input_schema":{}},"risk":"low","provenance":"builtin"}"#;
+        let back: ToolContract = serde_json::from_str(json).unwrap();
+        assert_eq!(back.version, CONTRACT_VERSION);
+        let out = serde_json::to_string(&back).unwrap();
+        assert!(out.contains("\"version\":1"), "{out}");
+    }
+
+    #[test]
+    fn a_contract_with_events_roundtrips_and_an_eventless_one_is_the_old_bytes() {
+        // Invariant #4 for #3284, same discipline as `output_schema`: the
+        // declaration survives the wire, and its absence is the pre-#3284
+        // bytes.
+        let emitting = ToolContract::builtin(schema("task", false, false), RiskLevel::High)
+            .with_events(vec!["tool.call.progress".into()]);
+        let json = serde_json::to_string(&emitting).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, emitting);
+
+        let silent = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&silent).unwrap();
+        assert!(
+            !json.contains("events"),
+            "an absent declaration must be absent bytes: {json}"
+        );
+    }
+
+    #[test]
+    fn an_idempotent_claim_roundtrips_and_its_absence_is_the_old_bytes() {
+        // Invariant #4 for #3287, same discipline as `events` and
+        // `output_schema`.
+        let claimed =
+            ToolContract::declared(schema("mcp__x__status", true, false)).with_idempotent(true);
+        let json = serde_json::to_string(&claimed).unwrap();
+        let back: ToolContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, claimed);
+
+        let unclaimed = ToolContract::builtin(schema("read_file", true, true), RiskLevel::Low);
+        let json = serde_json::to_string(&unclaimed).unwrap();
+        assert!(
+            !json.contains("idempotent"),
+            "an absent claim must be absent bytes: {json}"
+        );
     }
 
     #[test]

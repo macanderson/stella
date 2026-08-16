@@ -117,7 +117,10 @@ impl WitnessToolExecutor {
         if truncated {
             content.push_str("\n… [truncated: the file continues past the read ceiling]");
         }
-        ToolOutput::Ok { content }
+        ToolOutput::Ok {
+            content,
+            data: None,
+        }
     }
 
     /// The stage-private lister: candidate files whose paths match a glob
@@ -172,13 +175,17 @@ impl WitnessToolExecutor {
         if matches.is_empty() {
             return ToolOutput::Ok {
                 content: format!("no files match `{pattern}`"),
+                data: None,
             };
         }
         let mut content = matches.join("\n");
         if overflow > 0 {
             content.push_str(&format!("\n… and {overflow} more (narrow the pattern)"));
         }
-        ToolOutput::Ok { content }
+        ToolOutput::Ok {
+            content,
+            data: None,
+        }
     }
 
     fn create_test(&self, input: &serde_json::Value) -> ToolOutput {
@@ -304,6 +311,7 @@ impl WitnessToolExecutor {
         *claimed = Some(path.clone());
         ToolOutput::Ok {
             content: format!("created witness test `{path}`"),
+            data: None,
         }
     }
 }
@@ -1133,7 +1141,7 @@ mod tests {
         let output = tools
             .execute("glob", &serde_json::json!({"pattern": "**/*"}))
             .await;
-        let ToolOutput::Ok { content } = output else {
+        let ToolOutput::Ok { content, .. } = output else {
             panic!("glob must be available to the witness author: {output:?}");
         };
         assert!(
@@ -1180,7 +1188,7 @@ mod tests {
                     &serde_json::json!({"pattern": "**/*", "path": path}),
                 )
                 .await;
-            let ToolOutput::Ok { content } = output else {
+            let ToolOutput::Ok { content, .. } = output else {
                 panic!("`path: {path:?}` names the root and must be allowed: {output:?}");
             };
             assert!(

@@ -447,7 +447,7 @@ pub(crate) fn to_gemini_request_parts(
                             .cloned()
                             .unwrap_or_else(|| result.call_id.clone());
                         let response = match &result.output {
-                            stella_protocol::ToolOutput::Ok { content } => {
+                            stella_protocol::ToolOutput::Ok { content, .. } => {
                                 serde_json::json!({ "output": content })
                             }
                             stella_protocol::ToolOutput::Error { message, .. } => {

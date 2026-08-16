@@ -140,6 +140,7 @@ fn to_bedrock_messages_hoists_system_and_frames_tool_round_trips() {
                 call_id: "tooluse_abc".into(),
                 output: ToolOutput::Ok {
                     content: "fn main(){}".into(),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),

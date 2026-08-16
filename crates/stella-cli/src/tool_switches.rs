@@ -188,6 +188,7 @@ mod tests {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: String::new(),
+                data: None,
             }
         }
     }
@@ -202,6 +203,10 @@ mod tests {
             env: Default::default(),
             source: std::path::PathBuf::from("/tmp/x.toml"),
             foundry: None,
+            claimed_read_only: false,
+            claimed_risk: None,
+            claimed_idempotent: false,
+            output_schema: None,
         }
     }
 

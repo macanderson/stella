@@ -68,6 +68,7 @@ impl ToolExecutor for ConstantTools {
                 "grep" => "stella-tui/src/deck.rs:118: /// Cumulative prompt-cache".into(),
                 other => format!("contents of {other}"),
             },
+            data: None,
         }
     }
 }

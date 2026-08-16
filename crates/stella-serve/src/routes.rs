@@ -19,8 +19,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use stella_core::ports::Principal;
 use stella_core::{BudgetGuard, EngineConfig};
-use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
+use stella_protocol::{BudgetMode, CompletionMessage, ToolContract, ToolSchema};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::engine_overrides::{ClampedKnob, EngineOverrides, apply_engine_overrides};
@@ -47,7 +48,13 @@ pub(crate) use sessions::{
 struct TurnRequest {
     provider_id: String,
     #[serde(default)]
-    tools: Vec<ToolSchema>,
+    tools: Vec<WireTool>,
+    /// The host's own identity for this turn's tool calls, opaque to the
+    /// engine (#3286) — it reaches the authorization gate as
+    /// `Principal::Host(id)` and nothing engine-side interprets it
+    /// (invariant #1). Omitted reads as an unnamed host.
+    #[serde(default)]
+    principal: Option<String>,
     messages: Vec<CompletionMessage>,
     #[serde(default)]
     budget: BudgetSpec,
@@ -77,6 +84,38 @@ struct TurnRequest {
     /// rather than silently picking one.
     #[serde(default)]
     pipeline: Option<PipelineSpec>,
+}
+
+/// One tool as a host may declare it (#3286): the full [`ToolContract`], or
+/// the bare [`ToolSchema`] every pre-contract host has always sent.
+///
+/// Untagged, and the ambiguity is decidable: a contract's required `schema`
+/// / `risk` / `provenance` keys never appear on a bare schema, whose own
+/// required `name` never appears at a contract's top level. A bare schema
+/// upgrades to [`ToolContract::declared`] — untrusted, `High` — which is the
+/// fail-closed reading of a host that told us nothing about governance.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum WireTool {
+    Contract(ToolContract),
+    Schema(ToolSchema),
+}
+
+/// Lower the wire's tools onto the engine's contracts.
+pub(crate) fn wire_contracts(tools: Vec<WireTool>) -> Vec<ToolContract> {
+    tools
+        .into_iter()
+        .map(|tool| match tool {
+            WireTool::Contract(contract) => contract,
+            WireTool::Schema(schema) => ToolContract::declared(schema),
+        })
+        .collect()
+}
+
+/// The [`Principal`] a host-supplied identity lowers to — an unnamed host is
+/// still a host, so the label stays honest when the field is omitted.
+pub(crate) fn host_principal(id: Option<String>) -> Principal {
+    Principal::Host(id.unwrap_or_else(|| "host".to_string()))
 }
 
 /// `pipeline` on `POST /v1/turns` (#1288). See [`crate::PipelineRun`] for
@@ -478,7 +517,9 @@ pub(crate) async fn handle_create(
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: turn.provider_id,
-            tools: turn.tools,
+            tools: wire_contracts(turn.tools),
+            principal: host_principal(turn.principal),
+            gate: SessionSpec::default_gate(),
             messages: turn.messages,
             config,
             budget: BudgetGuard::new(
@@ -1292,5 +1333,43 @@ mod tests {
             "a caller must not be able to restore the unbounded wait the \
              deadline exists to remove"
         );
+    }
+
+    /// The wire keeps every pre-contract host working (#3286): a bare schema
+    /// upgrades to a declared (untrusted, `High`) contract, and a full
+    /// contract passes through verbatim — version pin included.
+    #[test]
+    fn a_bare_schema_upgrades_to_a_declared_contract_and_a_full_one_passes_through() {
+        let bare: WireTool = serde_json::from_value(serde_json::json!({
+            "name": "echo",
+            "description": "d",
+            "input_schema": { "type": "object" }
+        }))
+        .unwrap();
+        let full: WireTool = serde_json::from_value(serde_json::json!({
+            "schema": {
+                "name": "peek",
+                "description": "d",
+                "input_schema": { "type": "object" },
+                "read_only": true
+            },
+            "risk": "low",
+            "provenance": "builtin",
+            "version": 1
+        }))
+        .unwrap();
+
+        let contracts = wire_contracts(vec![bare, full]);
+        assert_eq!(contracts.len(), 2);
+        assert_eq!(contracts[0].name(), "echo");
+        assert_eq!(
+            contracts[0].provenance,
+            stella_protocol::Provenance::Declared,
+            "an undeclared host tool is untrusted, not unchecked"
+        );
+        assert_eq!(contracts[0].risk, stella_protocol::RiskLevel::High);
+        assert_eq!(contracts[1].name(), "peek");
+        assert_eq!(contracts[1].risk, stella_protocol::RiskLevel::Low);
+        assert_eq!(contracts[1].version, 1);
     }
 }

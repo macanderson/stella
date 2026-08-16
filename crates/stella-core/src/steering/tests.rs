@@ -100,6 +100,33 @@ fn an_unaffordable_candidate_does_not_starve_the_cheap_ones_behind_it() {
     assert_eq!(set.dropped[0].handle, "^huge");
 }
 
+/// An estimate near `u64::MAX` must read as "does not fit", not wrap the
+/// running sum back under the budget. With wrapping arithmetic the second
+/// candidate below computes `10 + u64::MAX = 9`, "fits" a budget of 100, and
+/// the budgeter selects the one candidate least able to afford — while the
+/// cheap candidate behind it is squeezed out by the corrupted counter.
+#[test]
+fn a_token_estimate_near_u64_max_cannot_wrap_into_the_budget() {
+    let set = pack_to_budget(
+        vec![
+            candidate(SteeringSource::Record, "^first", 0.9, 10),
+            candidate(SteeringSource::Skill, "absurd", 0.5, u64::MAX),
+            candidate(SteeringSource::Memory, "nod_cheap", 0.5, 10),
+        ],
+        100,
+    );
+
+    assert_eq!(
+        set.selected
+            .iter()
+            .map(|c| c.handle.as_str())
+            .collect::<Vec<_>>(),
+        vec!["^first", "nod_cheap"],
+        "the overflowing estimate is dropped and the cheap one still lands"
+    );
+    assert_eq!(set.dropped[0].handle, "absurd");
+}
+
 /// The block a selection renders into is prompt bytes, and prompt bytes feed
 /// the cache — so the same candidates must pack to the same order every time,
 /// including when scores tie. A tie broken by hash order would reorder the

@@ -96,6 +96,8 @@ number_word() {
   20) echo twenty ;; 21) echo twenty-one ;; 22) echo twenty-two ;;
   23) echo twenty-three ;; 24) echo twenty-four ;; 25) echo twenty-five ;;
   26) echo twenty-six ;; 27) echo twenty-seven ;; 28) echo twenty-eight ;;
+  29) echo twenty-nine ;; 30) echo thirty ;; 31) echo thirty-one ;;
+  32) echo thirty-two ;;
   *) echo "" ;;
   esac
 }

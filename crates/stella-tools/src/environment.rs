@@ -194,10 +194,11 @@ impl Tool for GetEnvironment {
         }
     }
 
-    async fn execute(&self, _input: &Value, root: &Path) -> ToolOutput {
-        let identity = EnvironmentIdentity::collect(root, self.scratch_dir.clone());
+    async fn execute(&self, _input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+        let identity = EnvironmentIdentity::collect(ctx.root(), self.scratch_dir.clone());
         ToolOutput::Ok {
             content: identity.render(),
+            data: None,
         }
     }
 }
@@ -257,7 +258,13 @@ mod tests {
     async fn get_environment_reports_workspace_root_and_platform() {
         let dir = tempfile::tempdir().expect("tempdir");
         let tool = GetEnvironment { scratch_dir: None };
-        let ToolOutput::Ok { content } = tool.execute(&json!({}), dir.path()).await else {
+        let ToolOutput::Ok { content, .. } = tool
+            .execute(
+                &json!({}),
+                &crate::ctx::ToolCtx::bare(dir.path().to_path_buf()),
+            )
+            .await
+        else {
             panic!("get_environment must succeed with zero arguments");
         };
         assert!(
@@ -305,7 +312,13 @@ mod tests {
         let tool = GetEnvironment {
             scratch_dir: Some(scratch.path().to_path_buf()),
         };
-        let ToolOutput::Ok { content } = tool.execute(&json!({}), dir.path()).await else {
+        let ToolOutput::Ok { content, .. } = tool
+            .execute(
+                &json!({}),
+                &crate::ctx::ToolCtx::bare(dir.path().to_path_buf()),
+            )
+            .await
+        else {
             panic!("get_environment must succeed with zero arguments");
         };
         assert!(

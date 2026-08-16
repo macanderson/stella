@@ -36,13 +36,21 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     diagnostic-codes
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
+# The cargo steps that resolve or parse but never build. They are not in
+# GATE_GUARDS_FAST because that variable's contract is literally "a shell script
+# over the tree" and these two shell out to cargo — but they cost about a second
+# between them and compile nothing, so every rung from guards-fast up can afford
+# them. Named once here rather than restated on each tier line, which is the
+# drift this file's tiering exists to prevent (#3332).
+GATE_NO_BUILD := lockfile-sync format-check
+
 # The whole gate, in order, as one name. `gate` below is defined *from* this
 # variable rather than restating it, and `make print-gate-steps` prints it —
 # which is what lets scripts/check-gate-parity.sh hold AGENTS.md and
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test tool-docs \
+GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
                self-driving-test
 
 .PHONY: help
@@ -285,7 +293,7 @@ doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included 
 
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
-	shellcheck install.sh scripts/*.sh .githooks/*
+	shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
 
 # Deliberately not part of `gate`: it needs a Docker daemon, which the gate
 # must not. CI runs the same two commands (.github/workflows/docker-serve.yml).
@@ -297,7 +305,8 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 # The four tiers of the gate, from cheapest to dearest. Each is a superset of
 # the one above it, and only the compile tiers honour CARGO_SCOPE.
 #
-#   guards-fast  the toolchain-free guards + rustfmt. Nothing compiles at all.
+#   guards-fast  the toolchain-free guards + the lock resolve + rustfmt.
+#                Nothing compiles at all.
 #   guards       ...plus wire-schema, whose two schema exporters do compile.
 #   check        ...plus clippy. The graduated fallback: a reduced gate, not no gate.
 #   gate         ...plus rustdoc and the test suite. What CI runs, unscoped.
@@ -305,15 +314,16 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 # `guards-fast` exists for the one push shape where `guards` is provably
 # wasted work: a diff that reaches no crate AND cannot have touched the wire
 # contract — a website-only or workflow-only push. Every guard in
-# GATE_GUARDS_FAST is a shell script over the tree, and `cargo fmt --check`
-# parses rather than builds, so this rung needs no build at all. The pre-push
+# GATE_GUARDS_FAST is a shell script over the tree, and GATE_NO_BUILD resolves
+# (`cargo metadata --locked`) or parses (`cargo fmt --check`) rather than
+# building, so this rung needs no build at all. The pre-push
 # hook picks between the two by grepping the pushed diff (#1439); wire-schema
 # is not optional, it is *conditional*, and the condition is in one place.
 .PHONY: guards-fast
-guards-fast: $(GATE_GUARDS_FAST) format-check ## Toolchain-free guards + fmt (no cargo build at all)
+guards-fast: $(GATE_GUARDS_FAST) $(GATE_NO_BUILD) ## Toolchain-free guards + lock resolve + fmt (no cargo build at all)
 
 .PHONY: guards
-guards: $(GATE_GUARDS) format-check ## Global guards + fmt only (nothing compiles beyond the wire-schema exporters; nothing to scope)
+guards: $(GATE_GUARDS) $(GATE_NO_BUILD) ## Global guards + lock resolve + fmt only (nothing compiles beyond the wire-schema exporters; nothing to scope)
 
 .PHONY: gate
 gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
@@ -357,8 +367,27 @@ module-reachability-test: ## Test the module-reachability walker (hermetic; not 
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)
 	@./scripts/check-god-files.sh
 
+.PHONY: lockfile-sync
+lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed (#3332)
+	@./scripts/check-lockfile-sync.sh
+
+.PHONY: lockfile-sync-test
+lockfile-sync-test: ## Test the lockfile guard against synthetic skewed workspaces (hermetic; not part of `gate`)
+	./scripts/test-lockfile-sync.sh
+
+# Deliberately not a gate step: it judges the MERGED tree, which is a question
+# no pre-merge run can answer. .github/workflows/main-canary.yml is where it
+# runs for real; this target is here so the logic can be exercised by hand.
+.PHONY: main-canary
+main-canary: ## Ask whether main still composes green (check only; no issue is filed)
+	@./scripts/main-canary.sh
+
+.PHONY: main-canary-test
+main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
+	./scripts/test-main-canary.sh
+
 .PHONY: check
-check: $(GATE_GUARDS) format-check lint ## Reduced pre-push gate: every guard + fmt + clippy, no rustdoc and no tests
+check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
 
 .PHONY: impacted
 impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)

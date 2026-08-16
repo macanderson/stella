@@ -62,7 +62,7 @@ async fn search_answer_in(root: &Path, query: &str) -> SearchAnswer {
     let report = engine::report(root, query, engine::SearchConfig::from_env()).await;
 
     let (ok, content, error) = match report.rendered {
-        stella_protocol::tool::ToolOutput::Ok { content } => (true, content, None),
+        stella_protocol::tool::ToolOutput::Ok { content, .. } => (true, content, None),
         stella_protocol::tool::ToolOutput::Error { message, .. } => {
             (false, String::new(), Some(message))
         }

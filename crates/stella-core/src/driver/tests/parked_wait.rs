@@ -54,16 +54,19 @@ impl ToolExecutor for ParkingTools {
                 } else {
                     "pending".into()
                 },
+                data: None,
             };
         }
         if input.get("wait").and_then(Value::as_bool).unwrap_or(false) {
             return ToolOutput::Ok {
                 content: "2 runs in progress — parking".into(),
+                data: None,
             };
         }
         self.wake_calls.fetch_add(1, Ordering::SeqCst);
         ToolOutput::Ok {
             content: "fresh status: all green".into(),
+            data: None,
         }
     }
 
@@ -174,7 +177,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
         .flat_map(|m| {
             std::iter::once(m.content.trim().to_string()).chain(m.tool_results.iter().map(|r| {
                 match &r.output {
-                    ToolOutput::Ok { content } => content.trim().to_string(),
+                    ToolOutput::Ok { content, .. } => content.trim().to_string(),
                     ToolOutput::Error { message, .. } => message.trim().to_string(),
                 }
             }))

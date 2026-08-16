@@ -301,8 +301,11 @@ impl ToolRegistry {
 
     /// The session's attached hook bus, if any (cheap clone — shared
     /// inner). For the #2684 bridge, whose approval flow emits its
-    /// `approval.*` audit events on the same bus the registry's gates use.
-    pub(crate) fn hook_bus(&self) -> Option<HookBus> {
+    /// `approval.*` audit events on the same bus the registry's gates use —
+    /// and `pub` since #3289 so the tool-chain assembly (`stella-cli`'s
+    /// `agent::tool_stack`) can hand the same bus to the authorization
+    /// gate's evaluation journal without a second attachment path.
+    pub fn hook_bus(&self) -> Option<HookBus> {
         self.bus.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 

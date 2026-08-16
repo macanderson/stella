@@ -283,7 +283,8 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     assert_eq!(
         tool_message.tool_results[0].output,
         ToolOutput::Ok {
-            content: "ok".into()
+            content: "ok".into(),
+            data: None
         }
     );
 }
@@ -436,6 +437,7 @@ impl ToolExecutor for InputRecordingTools {
             .push((name.to_string(), input.clone()));
         ToolOutput::Ok {
             content: "ok".into(),
+            data: None,
         }
     }
 }

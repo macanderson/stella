@@ -34,6 +34,7 @@ fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
         call_id: "call_1".into(),
         output: ToolOutput::Ok {
             content: "x".into(),
+            data: None,
         },
         duration_ms: 42,
         speculated: true,

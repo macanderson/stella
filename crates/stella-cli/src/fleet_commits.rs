@@ -106,6 +106,12 @@ impl ToolExecutor for CommitObserver<'_> {
         self.inner.schemas()
     }
 
+    /// Forwarded unfiltered, like `schemas()` (#3287): the observer records
+    /// commits, it does not change what exists.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner.contracts()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if crate::claims::transient_lane(name) != Some(crate::claims::COMMIT_CLAIM) {
             return self.inner.execute(name, input).await;
@@ -355,6 +361,7 @@ mod tests {
             }
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
     }

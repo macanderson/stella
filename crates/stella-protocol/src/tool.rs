@@ -163,6 +163,17 @@ pub enum ToolOutput {
     Ok {
         /// What the tool produced, as the model will read it.
         content: String,
+        /// The structured half of the result, when the tool has one (#3285).
+        /// `content` is prose for the model; `data` is the same facts as a
+        /// value a contract's `output_schema` can check — "references, not
+        /// payloads" (#2694 §4) is unenforceable over prose. `None` means
+        /// the tool produces no structured output, which is every tool
+        /// written before this field existed. Optional and absent-when-`None`
+        /// so every payload written before the field round-trips
+        /// byte-identically (invariant #4), and so the content bytes the
+        /// model sees are never perturbed by structure.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
     },
     /// The tool failed.
     Error {
@@ -188,6 +199,29 @@ impl ToolOutput {
     #[must_use]
     pub fn is_error(&self) -> bool {
         matches!(self, ToolOutput::Error { .. })
+    }
+
+    /// A success carrying prose only — [`ToolOutput::Ok`] with `data: None`.
+    ///
+    /// The migration-friendly constructor, exactly as [`Self::error`] is for
+    /// the other arm: a tool that produces no structured output uses this
+    /// and stays exactly as it was before the field existed.
+    #[must_use]
+    pub fn ok(content: impl Into<String>) -> Self {
+        ToolOutput::Ok {
+            content: content.into(),
+            data: None,
+        }
+    }
+
+    /// A success carrying both halves — the prose the model reads and the
+    /// structured value a contract's `output_schema` checks (#3285).
+    #[must_use]
+    pub fn ok_with_data(content: impl Into<String>, data: serde_json::Value) -> Self {
+        ToolOutput::Ok {
+            content: content.into(),
+            data: Some(data),
+        }
     }
 
     /// An unclassified failure — [`ToolOutput::Error`] with `class: None`.
@@ -230,12 +264,11 @@ mod tests {
 
     #[test]
     fn tool_output_roundtrips_ok_and_error() {
-        let ok = ToolOutput::Ok {
-            content: "hi".into(),
-        };
+        let ok = ToolOutput::ok("hi");
+        let structured = ToolOutput::ok_with_data("hi", serde_json::json!({"count": 2}));
         let err = ToolOutput::error("boom");
         let classified = ToolOutput::classified_error(ErrorClass::NotFound, "no such tool");
-        for variant in [ok, err, classified] {
+        for variant in [ok, structured, err, classified] {
             let json = serde_json::to_string(&variant).unwrap();
             let back: ToolOutput = serde_json::from_str(&json).unwrap();
             assert_eq!(back, variant);
@@ -249,6 +282,23 @@ mod tests {
         // unclassified one written after — is the same bytes.
         let json = serde_json::to_string(&ToolOutput::error("boom")).unwrap();
         assert_eq!(json, r#"{"error":{"message":"boom"}}"#);
+    }
+
+    #[test]
+    fn dataless_ok_serializes_byte_identically_to_the_pre_data_shape() {
+        // Invariant #4 for #3285: `data: None` must be absent on the wire,
+        // so every payload written before the field existed — and every
+        // prose-only one written after — is the same bytes.
+        let json = serde_json::to_string(&ToolOutput::ok("hi")).unwrap();
+        assert_eq!(json, r#"{"ok":{"content":"hi"}}"#);
+    }
+
+    #[test]
+    fn old_ok_payload_without_data_decodes_as_prose_only() {
+        // A journal written before #3285 carries no `data` key at all.
+        let json = r#"{"ok":{"content":"hi"}}"#;
+        let back: ToolOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(back, ToolOutput::ok("hi"));
     }
 
     #[test]
@@ -302,7 +352,8 @@ mod tests {
     fn is_error_reports_correctly() {
         assert!(
             !ToolOutput::Ok {
-                content: String::new()
+                content: String::new(),
+                data: None
             }
             .is_error()
         );

@@ -25,9 +25,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use stella_core::EngineConfig;
+use stella_core::ports::{AuthzGate, NoAuthz, Principal};
 use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionResult, ProviderError, ToolOutput, ToolSchema,
+    AgentEvent, CompletionMessage, CompletionResult, ProviderError, ToolContract, ToolOutput,
 };
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
@@ -51,8 +52,24 @@ pub struct SessionSpec {
     /// Stable provider id echoed on `Provider::id()` (telemetry/labeling only —
     /// the model call itself is remoted to the host).
     pub provider_id: String,
-    /// Tool schemas the model may call, including `read_only` flags.
-    pub tools: Vec<ToolSchema>,
+    /// The full contracts for the tools the model may call (#3286): the
+    /// advertised schema plus the governance metadata (risk, provenance,
+    /// approval, claims) an authorization plane reasons over — so a host no
+    /// longer needs a name → capability side-table. The route layer accepts
+    /// a bare schema from older hosts and upgrades it to
+    /// [`ToolContract::declared`], the fail-closed reading.
+    pub tools: Vec<ToolContract>,
+    /// Who this turn's tool calls are made *as*, as far as [`Self::gate`] is
+    /// concerned. A host supplies its own opaque identity
+    /// ([`Principal::Host`]); the engine deliberately does not interpret it
+    /// (invariant #1).
+    pub principal: Principal,
+    /// The authorization gate every remoted tool call passes before its
+    /// request frame leaves (#3286) — the same seam, at the same position,
+    /// as the CLI's `GatedToolSet`. [`NoAuthz`] **by name** when the host
+    /// configures none: a decision somebody typed, never a nullable slot
+    /// defaulting open.
+    pub gate: Arc<dyn AuthzGate>,
     /// The already-assembled conversation to run this turn.
     pub messages: Vec<CompletionMessage>,
     /// Engine knobs (step cap, compaction budget, sampling). `Default` is a
@@ -167,6 +184,17 @@ impl SessionSpec {
     /// The default [`SessionSpec::reverse_request_timeout`]: five minutes. See
     /// the constant's own docs in `remote.rs` for how that number was picked.
     pub const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = DEFAULT_REVERSE_REQUEST_TIMEOUT;
+
+    /// The [`SessionSpec::gate`] a served turn runs under when the embedding
+    /// host configures none: [`NoAuthz`], **chosen by name** — "this
+    /// deployment does not authorize tool calls" is a decision a reviewer
+    /// can see, never the absence of a value (#2716). The CLI's
+    /// `agent::tool_stack::session_gate` is the same one function on the
+    /// other surface.
+    #[must_use]
+    pub fn default_gate() -> Arc<dyn AuthzGate> {
+        Arc::new(NoAuthz)
+    }
 }
 
 /// A running session. The host drives it by reading [`ServerFrame`]s with
@@ -571,12 +599,16 @@ fn run_session(
             pending.clone(),
             spec.reverse_request_timeout,
         );
-        // Kept before the executor takes ownership: a sub-agent gets its own
-        // remoted executor over the same advertised set, so the schemas have
-        // to survive the move.
-        let advertised = spec.tools.clone();
+        // Bound before the executor takes ownership: a sub-agent gets its own
+        // remoted executor over the same declared contracts, gate, and
+        // principal, so all three have to survive the move.
+        let contracts = spec.tools;
+        let authz_gate = spec.gate;
+        let principal = spec.principal;
         let tools = RemoteToolExecutor::new(
-            spec.tools,
+            contracts.clone(),
+            Arc::clone(&authz_gate),
+            principal.clone(),
             frame_tx.clone(),
             pending.clone(),
             spec.reverse_request_timeout,
@@ -637,7 +669,9 @@ fn run_session(
                 // remotes to the same host, on the same account, through the
                 // same reverse-RPC — so it meets the same gate.
                 Arc::new(RemoteToolExecutor::new(
-                    advertised.clone(),
+                    contracts.clone(),
+                    Arc::clone(&authz_gate),
+                    principal.clone(),
                     frame_tx.clone(),
                     pending.clone(),
                     spec.reverse_request_timeout,
@@ -807,6 +841,7 @@ mod tests {
     use stella_core::driver::TurnHalt;
     use stella_protocol::{
         BudgetMode, CompletionRequestRef, CompletionUsage, Provider, ProviderError, ToolCall,
+        ToolSchema,
     };
 
     use super::*;
@@ -869,6 +904,7 @@ mod tests {
         async fn execute(&self, _name: &str, _input: &serde_json::Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }
         }
     }

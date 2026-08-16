@@ -28,6 +28,7 @@ impl ToolExecutor for BigOutputTools {
                 "OUT{n}-HEAD\n{}\nOUT{n}-TAIL",
                 format!("{n}x").repeat(2_500)
             ),
+            data: None,
         }
     }
 }
@@ -84,7 +85,7 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("tool messages survive");
     match &first_tool.tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.starts_with("OUT0-HEAD"), "head lost: {content:.40}");
             assert!(content.ends_with("OUT0-TAIL"), "tail lost");
             assert!(content.contains("middle elided"), "expected aged content");
@@ -98,7 +99,7 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
         .find(|m| m.role == MessageRole::Tool)
         .expect("tool messages survive");
     match &last_tool.tool_results[0].output {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content.len() > 5_000,
             "the newest result must stay verbatim"
         ),

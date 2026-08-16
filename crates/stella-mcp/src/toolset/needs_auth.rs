@@ -95,6 +95,7 @@ pub(super) fn login_required_output(server: &str) -> ToolOutput {
              on the server in the deck's MCP tab). Once they have logged in, the server \
              connects and its real tools replace this one on the next session start."
         ),
+        data: None,
     }
 }
 
@@ -177,7 +178,7 @@ mod tests {
             .execute("mcp__github__login_required", &serde_json::Value::Null)
             .await
         {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(content.contains("stella mcp login github"), "{content}");
             }
             other => panic!("the instruction is a result, not an error: {other:?}"),

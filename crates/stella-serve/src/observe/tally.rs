@@ -154,6 +154,7 @@ mod tests {
             call_id: "b".to_string(),
             output: ToolOutput::Ok {
                 content: "fine".to_string(),
+                data: None,
             },
             duration_ms: 4,
             speculated: false,

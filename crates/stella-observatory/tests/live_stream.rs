@@ -144,6 +144,7 @@ fn a_tool_call_made_now_reaches_a_connected_client_now() {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "x".into(),
+                    data: None,
                 },
                 duration_ms: 4,
                 speculated: false,
@@ -228,6 +229,7 @@ fn completing_a_call_moves_the_cursor() {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "done".into(),
+                    data: None,
                 },
                 duration_ms: 2,
                 speculated: false,

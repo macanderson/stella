@@ -532,6 +532,26 @@ pub static CAPABILITIES: &[Capability] = &[
         },
     },
     Capability {
+        id: "tools.contracts",
+        engine_home: "stella-core ports: ToolExecutor::contracts (#3287) and the AuthzGate seam \
+                      evaluated ahead of dispatch on both surfaces (#2716); contracts and the \
+                      shared verdict fold live in stella-protocol / stella-core::hooks::decision",
+        engine_entries: &[],
+        cli: SurfacePosture::Shipped {
+            mechanism: "GatedToolSet assembled into every session chain by agent::tool_stack \
+                        (#3283) — the gate sees each tool's resolved contract before the \
+                        registry is reached",
+            witness: "a_denying_gate_blocks_a_call_the_default_session_stack_allows",
+        },
+        api: SurfacePosture::Shipped {
+            mechanism: "POST /v1/turns, POST /v1/sessions/{id}/turns — `tools` carries full \
+                        ToolContracts (a bare schema upgrades to declared), and \
+                        RemoteToolExecutor evaluates the gate before a ToolRequest frame \
+                        leaves (#3286)",
+            witness: "a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves",
+        },
+    },
+    Capability {
         id: "provider.calls",
         engine_home: "stella-protocol Provider port — model calls, streamed and observed",
         engine_entries: &[],
@@ -636,9 +656,12 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 8] {
+    fn cli_sources() -> [&'static str; 9] {
         [
             include_str!("../../stella-cli/src/agent/tests.rs"),
+            // The tool-chain assembly seam (#3283) — home of the
+            // `tools.contracts` witness.
+            include_str!("../../stella-cli/src/agent/tool_stack.rs"),
             // `agent/tests.rs` is split into submodules by the file-size
             // ratchet, so its children have to be listed too — a witness that
             // moved into one of them is not missing, it is one `include_str!`
@@ -655,9 +678,17 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 14] {
+    fn api_sources() -> [&'static str; 16] {
         [
             include_str!("../../stella-serve/src/server.rs"),
+            // The remoted ports — home of the `tools.contracts` witness
+            // (#3286). The witness tests live in the split-out submodule
+            // file, which `include_str!` of the parent does not pull in.
+            include_str!("../../stella-serve/src/remote.rs"),
+            // `remote.rs` split its tests into a sibling submodule under the
+            // file-size gate, so the witnesses live here — the same reason
+            // `agent/tests.rs`'s children are listed above.
+            include_str!("../../stella-serve/src/remote/tests.rs"),
             include_str!("../../stella-serve/tests/calibration.rs"),
             include_str!("../../stella-serve/tests/checkpoint.rs"),
             include_str!("../../stella-serve/tests/hooks.rs"),

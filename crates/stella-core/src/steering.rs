@@ -207,7 +207,8 @@ pub trait SteeringPlane {
 /// "the volatile block is too big" is a question no single piece of code can
 /// answer.
 ///
-/// Ordering is `source_rank` first, then `score` descending, then `handle`
+/// Ordering is the fixed `source_rank` precedence first, then `score`
+/// descending, then `handle`
 /// — the last is not a nicety. Selection feeds a prompt, prompt bytes feed
 /// the cache, and a tie broken by hash order would reorder the block between
 /// two otherwise identical turns and re-bill the tail (invariant 7).
@@ -227,8 +228,14 @@ pub fn pack_to_budget(mut candidates: Vec<SteeringCandidate>, budget_tokens: u64
     let mut set = SteeringSet::default();
     let mut spent: u64 = 0;
     for candidate in candidates {
-        if spent + candidate.est_tokens <= budget_tokens {
-            spent += candidate.est_tokens;
+        // `checked_add`, not `+`: an estimate near `u64::MAX` would wrap the
+        // sum back under the budget and select the one candidate that fits
+        // least. Overflow and "does not fit" are the same answer — dropped.
+        if let Some(total) = spent
+            .checked_add(candidate.est_tokens)
+            .filter(|total| *total <= budget_tokens)
+        {
+            spent = total;
             set.selected.push(candidate);
         } else {
             set.dropped.push(DroppedCandidate {

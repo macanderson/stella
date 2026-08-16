@@ -699,11 +699,15 @@ async fn run_task(
     let claims = crate::claims::ClaimTap::new(&committed, claims_store, claim_holder);
     // A fleet worker runs the operator's tool policy and the authorization
     // gate, same as every other driver — an isolated worktree is not a
-    // different trust posture. The principal names the dispatched task.
+    // different trust posture. Deliberately NOT `session_stack`:
+    // `.stella/tools` customs are withheld from autonomous workers on
+    // purpose (#3339, see `policy_stack`'s docs). The principal names the
+    // dispatched task.
     let permitted = agent::tool_stack::policy_stack(
         &claims,
         &cfg,
         stella_core::ports::Principal::SubAgent(task.id.to_string()),
+        registry.hook_bus(),
     );
     // Every fleet attempt owns the same durable event/accounting envelope as
     // a one-shot or deck turn. The store is rooted in the task worktree so

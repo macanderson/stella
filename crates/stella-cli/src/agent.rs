@@ -357,7 +357,8 @@ async fn run_pipeline_one_shot(
     let result = {
         // Customs, the operator's switches, and the authorization gate,
         // outermost-last (#3283) — one assembly for every driver.
-        let tools = tool_stack::session_stack(base_tools, custom_tools, cfg, Principal::User);
+        let bus = registry.hook_bus();
+        let tools = tool_stack::session_stack(base_tools, custom_tools, cfg, Principal::User, bus);
 
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
@@ -1438,7 +1439,7 @@ pub fn run_tools_listing() -> Result<(), String> {
             "    {} {} — {}",
             "·".green(),
             tool.name.bright_magenta(),
-            tool.description.dimmed()
+            format!("{}{}", tool.claims_label(), tool.description).dimmed()
         );
     }
     for diagnostic in &report.diagnostics {
@@ -1659,7 +1660,8 @@ async fn run_turn(
         // and the authorization gate must still hold above the session tool
         // stack — mirroring every other driver path, so disabled tools cannot
         // be invoked here either.
-        let permitted = tool_stack::policy_stack(registry, cfg, Principal::User);
+        let bus = registry.hook_bus();
+        let permitted = tool_stack::policy_stack(registry, cfg, Principal::User, bus);
         let config = engine::engine_config_for_kind(cfg, kind);
         let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
@@ -1672,8 +1674,9 @@ async fn run_turn(
     } else {
         // Customs, the operator's switches, and the authorization gate,
         // outermost-last (#3283) — one assembly for every driver.
+        let bus = registry.hook_bus();
         let tools =
-            tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User);
+            tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User, bus);
         let hook_runner = ShellHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any

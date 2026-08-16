@@ -410,7 +410,7 @@ impl McpToolSet {
                 continue;
             }
             let empty = Value::Object(serde_json::Map::new());
-            if let ToolOutput::Ok { content } = self.execute(&schema.name, &empty).await
+            if let ToolOutput::Ok { content, .. } = self.execute(&schema.name, &empty).await
                 && !content.trim().is_empty()
             {
                 sections.push(format!("### {}\n{}", schema.name, content.trim()));
@@ -750,6 +750,37 @@ impl McpToolSet {
     /// returns the counts. Deriving the counts from the already-budgeted list
     /// would report zero every time — the honest input to both questions is
     /// what the servers advertised, not what survived.
+    /// The declared contract for one advertised schema (#3287). A routed MCP
+    /// tool carries its server's annotation claims: the `readOnlyHint` rides
+    /// the contract's embedded schema verbatim (display and policy see it;
+    /// `ToolContract::trusted_read_only` stays false, and the *advertised*
+    /// schema in [`Self::mcp_segment`] keeps `read_only: false`, so dispatch
+    /// never widens on a self-report); `idempotentHint` fills the contract's
+    /// `idempotent` claim; `destructiveHint` **raises** the grade from the
+    /// declared default `High` to `Destructive` — a self-report may only
+    /// ever make a tool look more dangerous. An unrouted schema (a
+    /// needs-auth or resources placeholder) is plainly declared.
+    fn declared_contract(&self, schema: ToolSchema) -> stella_protocol::ToolContract {
+        let annotations = self.routes.get(&schema.name).and_then(|(idx, raw)| {
+            self.clients[*idx]
+                .tools()
+                .iter()
+                .find(|tool| &tool.name == raw)
+                .map(|tool| tool.annotations.clone())
+        });
+        let Some(annotations) = annotations else {
+            return stella_protocol::ToolContract::declared(schema);
+        };
+        let mut claimed = schema;
+        claimed.read_only = annotations.read_only_hint;
+        let mut contract = stella_protocol::ToolContract::declared(claimed)
+            .with_idempotent(annotations.idempotent_hint);
+        if annotations.destructive_hint {
+            contract.risk = stella_protocol::RiskLevel::Destructive;
+        }
+        contract
+    }
+
     fn mcp_segment(&self) -> Vec<ToolSchema> {
         let mut mcp = Vec::new();
         for (idx, client) in self.clients.iter().enumerate() {
@@ -819,6 +850,28 @@ impl ToolExecutor for McpToolSet {
         // `read_resource` (#2678) — same live disable, real tools win a name.
         resources::extend_schemas(self, &mut schemas);
         schemas
+    }
+
+    /// The native layer's own contracts, plus one **declared** contract per
+    /// advertised MCP tool carrying the server's annotation claims (#3287) —
+    /// `readOnlyHint`/`idempotentHint` preserved verbatim at untrusted
+    /// provenance, `destructiveHint` *raising* the grade. The placeholder
+    /// tools (needs-auth, resources) resolve through the same declared path
+    /// via `Self::declared_contract`'s route miss.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        let mut contracts = Vec::new();
+        if let Some(native) = &self.native {
+            contracts.extend(native.contracts());
+        }
+        let mut advertised = budget_segment(self.mcp_segment()).0;
+        needs_auth::extend_schemas(self, &mut advertised);
+        resources::extend_schemas(self, &mut advertised);
+        contracts.extend(
+            advertised
+                .into_iter()
+                .map(|schema| self.declared_contract(schema)),
+        );
+        contracts
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
@@ -926,6 +979,19 @@ impl ToolExecutor for CandidateMcpView {
                 .filter(|s| self.inner.is_candidate_safe_tool(&s.name)),
         );
         schemas
+    }
+
+    /// Forwarded with exactly the filter `schemas()` applies — the candidate
+    /// view must not advertise a contract for a tool it withholds.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        let mut contracts = self.native.contracts();
+        contracts.extend(
+            self.inner
+                .contracts()
+                .into_iter()
+                .filter(|c| self.inner.is_candidate_safe_tool(c.name())),
+        );
+        contracts
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {

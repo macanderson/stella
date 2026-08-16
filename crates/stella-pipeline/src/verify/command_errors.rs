@@ -122,7 +122,7 @@ fn stderr_reports_a_failed_command(text: &str) -> bool {
 #[must_use]
 pub fn exited_zero_with_a_failed_command(output: &ToolOutput) -> bool {
     let text = match output {
-        ToolOutput::Ok { content } => content,
+        ToolOutput::Ok { content, .. } => content,
         ToolOutput::Error { message, .. } => message,
     };
     exit_status(text) == Some(0) && stderr_reports_a_failed_command(text)
@@ -152,6 +152,7 @@ mod tests {
     fn shell(content: &str) -> ToolOutput {
         ToolOutput::Ok {
             content: content.to_string(),
+            data: None,
         }
     }
 

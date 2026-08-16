@@ -65,7 +65,9 @@ fn read_tool() -> ToolSchema {
 fn base_spec(prompt: &str) -> SessionSpec {
     SessionSpec {
         provider_id: "worker-model".to_string(),
-        tools: vec![read_tool()],
+        principal: stella_core::ports::Principal::Host("test".to_string()),
+        gate: SessionSpec::default_gate(),
+        tools: vec![stella_protocol::ToolContract::declared(read_tool())],
         messages: vec![CompletionMessage::user(prompt)],
         config: EngineConfig::default(),
         budget: BudgetGuard::new(BudgetMode::Off, None, None),
@@ -162,6 +164,7 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
                         &request_id,
                         ToolOutput::Ok {
                             content: String::new(),
+                            data: None,
                         },
                     )
                     .unwrap();
@@ -336,6 +339,7 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
                         &request_id,
                         ToolOutput::Ok {
                             content: String::new(),
+                            data: None,
                         },
                     )
                     .unwrap();

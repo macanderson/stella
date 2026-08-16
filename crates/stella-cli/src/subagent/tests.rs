@@ -29,6 +29,7 @@ impl ToolExecutor for LedgerBase {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: String::new(),
+            data: None,
         }
     }
     fn drain_sub_agent_spend_usd(&self) -> f64 {
@@ -118,6 +119,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: String::new(),
+                data: None,
             }
         }
         fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
@@ -211,6 +213,7 @@ async fn the_production_tool_stack_forwards_live_services() {
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: String::new(),
+                data: None,
             }
         }
         fn live_services(&self) -> Vec<stella_core::LiveService> {

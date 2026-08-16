@@ -250,6 +250,7 @@ mod tests {
         // guessing, and why the digest is what proves it re-derived correctly.
         let output = stella_protocol::ToolOutput::Ok {
             content: "結果です".into(),
+            data: None,
         };
         let tool_preimage = serde_json::to_string(&output).expect("serialize output");
         let tool_digest = {
@@ -405,6 +406,7 @@ mod tests {
         // The journal holds the full result of call `c1`.
         let full = stella_protocol::ToolOutput::Ok {
             content: "a very long tool result ".repeat(40),
+            data: None,
         };
         let full_preimage = serde_json::to_string(&full).expect("serialize");
         conn.execute(

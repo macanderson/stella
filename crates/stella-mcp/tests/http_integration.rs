@@ -98,7 +98,8 @@ async fn json_handshake_replays_the_session_id() {
     assert_eq!(
         out,
         ToolOutput::Ok {
-            content: "remote ok".into()
+            content: "remote ok".into(),
+            data: None
         }
     );
 }

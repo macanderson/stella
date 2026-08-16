@@ -108,12 +108,14 @@ impl ToolExecutor for MixedTools {
                     // identical output from identical arguments is a stuck
                     // loop, and `crate::loop_detect` is right to abort it.
                     content: format!("{input}{}", "x".repeat(4_000)),
+                    data: None,
                 }
             }
             "write_file" => {
                 self.writes.fetch_add(1, Ordering::SeqCst);
                 ToolOutput::Ok {
                     content: "written".into(),
+                    data: None,
                 }
             }
             other => ToolOutput::error(format!("no such tool {other}")),
@@ -1145,6 +1147,7 @@ impl ToolExecutor for SpendingTools {
         push_sub_agent_spend(&self.ledger, self.per_call_usd);
         ToolOutput::Ok {
             content: "child says: it is in retry.rs".into(),
+            data: None,
         }
     }
 

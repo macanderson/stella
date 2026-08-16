@@ -84,6 +84,7 @@ fn tool_results_become_function_response_parts_named_via_the_calling_turn() {
                 call_id: "call_0".into(),
                 output: ToolOutput::Ok {
                     content: "fn main(){}".into(),
+                    data: None,
                 },
             }],
             attachments: Vec::new(),

@@ -83,6 +83,7 @@ impl ToolExecutor for WedgedTool {
         tokio::time::sleep(Duration::from_secs(3600)).await;
         ToolOutput::Ok {
             content: "unreachable".into(),
+            data: None,
         }
     }
 }

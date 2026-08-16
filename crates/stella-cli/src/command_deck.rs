@@ -3957,8 +3957,13 @@ async fn run_lead_turn(
     let outcome = {
         // Customs, the operator's switches, and the authorization gate
         // (#3283) — the deck's lead turn acts as the human at the keyboard.
-        let permitted =
-            agent::tool_stack::session_stack(&claims, custom_tools.to_vec(), cfg, Principal::User);
+        let permitted = agent::tool_stack::session_stack(
+            &claims,
+            custom_tools.to_vec(),
+            cfg,
+            Principal::User,
+            registry.hook_bus(),
+        );
         let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
         let hook_runner = ShellHookRunner;
         let mut engine = Engine::with_sleeper(
@@ -4080,6 +4085,7 @@ impl AskUserIo for DeckAskUserIo {
                 call_id: id,
                 output: ToolOutput::Ok {
                     content: answer.clone(),
+                    data: None,
                 },
                 duration_ms: 0,
                 speculated: false,
