@@ -36,6 +36,14 @@ pub struct ToolScopePolicies {
 
 /// Append `extra`'s matchers onto `base`, per event. `None + None` stays
 /// `None` so a hook-free session carries no hooks handle at all.
+///
+/// EVERY event in [`Hooks`] gets a line. `Stop` and `PreCompact` shipped in
+/// #2684 without one, so a matcher for either was parsed from every scope and
+/// then dropped here — `stop_hook_feedback`'s completion gate could not be
+/// reached from a settings file at all. The #2684 witnesses did not see it
+/// because they build `Hooks` with `serde_json::from_str` and never merge a
+/// scope, which is the same blind spot that let `enable_recap` ship inert.
+/// [`super::completeness`] now fails the build for the next one.
 fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
     let target = base.get_or_insert_with(Hooks::default);
     let join = |dst: &mut Option<Vec<_>>, src: &Option<Vec<_>>| {
@@ -46,6 +54,8 @@ fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
     join(&mut target.session_start, &extra.session_start);
     join(&mut target.pre_tool_use, &extra.pre_tool_use);
     join(&mut target.post_tool_use, &extra.post_tool_use);
+    join(&mut target.stop, &extra.stop);
+    join(&mut target.pre_compact, &extra.pre_compact);
 }
 
 impl Settings {
@@ -150,7 +160,11 @@ impl Settings {
     }
 
     /// Overlay one already-parsed scope without touching the filesystem.
-    fn overlay_scope(&mut self, scope: &Settings) {
+    ///
+    /// Every field this forgets is a key that parses in all three scopes and
+    /// configures nothing. [`super::completeness`] is the guard that turns
+    /// forgetting one into a failing test instead of a silent `None`.
+    pub(super) fn overlay_scope(&mut self, scope: &Settings) {
         for (id, entry) in &scope.providers {
             self.providers.entry(id.clone()).or_default().overlay(entry);
         }
@@ -226,6 +240,18 @@ impl Settings {
         // and efficacy thresholds). It carries no credential or egress
         // authority, so no trust restoration is needed — but it IS honored
         // from an untrusted project scope; revisit if a knob ever gains one.
+        //
+        // #3243 asked whether the steering switch (`context.steering`) may sit
+        // here, and the answer is yes, on a stated condition. Every knob in
+        // this block selects among sources that are ALREADY gated one tier
+        // down — `context_providers` above is trust-restored, custom tools ride
+        // `project_custom_tools_allowed`, hooks ride `trust.hooks` — so a knob
+        // that only decides *whether to consult* them grants no authority the
+        // repository does not already have. What would break that is a
+        // steering source whose selection is itself the act of execution: the
+        // plugin source #3246 sequences last. When that lands, `context` moves
+        // behind the same code-execution boundary as `context_providers`, and
+        // the move belongs in that PR rather than this comment.
         if let Some(context) = &scope.context {
             self.context = Some(context.clone());
         }
