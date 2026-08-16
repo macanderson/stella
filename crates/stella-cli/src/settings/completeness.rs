@@ -101,6 +101,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         managed_authority,
         enterprise_telemetry,
         authority_policy,
+        steering_ceiling,
     } = s;
     vec![
         keyed("providers", Posture::Merged, providers != &d.providers),
@@ -154,6 +155,15 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             key: None,
             posture: Posture::Computed,
             populated: authority_policy != &d.authority_policy,
+        },
+        // Derived from the MANAGED snapshot by `merge_captured_scopes`, not
+        // from the merged view — `context` is honored from an untrusted
+        // project scope, so a ceiling that rode the ordinary chain could be
+        // lifted by the repository it constrains (#3243 §5).
+        Field {
+            key: None,
+            posture: Posture::Computed,
+            populated: steering_ceiling != &d.steering_ceiling,
         },
     ]
 }
@@ -387,6 +397,56 @@ fn every_provider_field_survives_the_entry_overlay() {
              to `None` in all three scopes. Add a `take!({key})` line in settings.rs."
         );
     }
+}
+
+/// **Witness (#3243 Phase 2).** The org's "off" is final: a managed scope
+/// that disables steering cannot be overridden by the project scope, and the
+/// two halves of the precedence rule compose in one direction only.
+///
+/// Deliberately exercises `merge_captured_scopes` rather than the env var —
+/// `STELLA_CONTEXT_STEERING` is process-global state and the concurrent test
+/// runner makes `set_var` a race (POSIX setenv/getenv is undefined under
+/// threads, which is why `truthy_flag` exists as a pure predicate). The env
+/// leg is a one-line `env_toggle` read over that same predicate; what is
+/// worth a test is the ceiling, which is the part with a trust boundary in
+/// it.
+#[test]
+fn a_managed_steering_ceiling_cannot_be_lifted_by_the_project() {
+    let off: Settings = serde_json::from_str(r#"{"context":{"steering":{"enabled":false}}}"#)
+        .expect("managed scope parses");
+    let on: Settings = serde_json::from_str(r#"{"context":{"steering":{"enabled":true}}}"#)
+        .expect("project scope parses");
+
+    let merged = Settings::merge_captured_scopes(
+        &Settings::default(),
+        &off,
+        &on,
+        ProjectTrust {
+            credentials: true,
+            hooks: true,
+        },
+    );
+
+    assert!(
+        !merged.steering_enabled(),
+        "the project re-declared the block and must not have lifted the org's ceiling"
+    );
+    assert!(
+        !merged.authority_policy.steering_allowed,
+        "and the resolved authority every injection site reads agrees"
+    );
+
+    // The control: with no managed objection, the project's own answer stands.
+    let permitted = Settings::merge_captured_scopes(
+        &Settings::default(),
+        &Settings::default(),
+        &on,
+        ProjectTrust {
+            credentials: true,
+            hooks: true,
+        },
+    );
+    assert!(permitted.steering_enabled());
 }
 
 /// The unrecognized-key vocabulary agrees with the structs, both ways.

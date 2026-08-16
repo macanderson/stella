@@ -52,6 +52,65 @@ fn session(root: &std::path::Path) -> SessionMemory {
         .expect("session memory opens in a temp workspace")
 }
 
+/// **Witness (#3243 Phase 2).** With steering off, the plane injects nothing —
+/// not even for a prompt that anchors squarely in a skill's own domain.
+///
+/// Fails on base, where there is no switch to turn off at all: the selection
+/// is unconditional once the skill is on disk. The control arm this buys is
+/// the point — an A/B of the whole plane needs an "off" that is one decision,
+/// not four unrelated ones.
+#[test]
+fn steering_turned_off_injects_nothing() {
+    let dir = workspace();
+    let mut memory = session(dir.path());
+    memory.set_steering_enabled(false);
+
+    let selected = memory.selected_skills("fix crates/stella-model/anthropic.rs");
+
+    assert!(
+        selected.is_empty(),
+        "the switch withholds every injection, including a domain-anchored \
+         one the same session would otherwise select: {selected:?}"
+    );
+}
+
+/// **Witness (#3243 Phase 2, the pipeline leg).** With steering off, the
+/// frame query itself answers empty — not just the rendered block.
+///
+/// Fails on a gate at the block render alone: a pipeline-driven turn never
+/// renders the block, it recalls through [`ContextRecallPort`] and feeds the
+/// frames to the goal message, the planner, and the witness author — so a
+/// switch that stopped at the block would withhold the injection on exactly
+/// the surfaces that do not use it.
+#[tokio::test]
+async fn steering_turned_off_is_frameless_through_the_pipeline_port_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let mut memory = session(dir.path());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    // The control: with steering on, the port recalls the planted lesson —
+    // or the empty assertion below passes for the wrong reason.
+    assert!(
+        !ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "the port must recall the planted lesson while steering is on"
+    );
+
+    memory.set_steering_enabled(false);
+    assert!(
+        ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "the switch must reach the pipeline's recall port, not just the \
+         rendered block"
+    );
+}
+
 /// **Witness (D1).** A skill tagged with a domain this turn is not working in
 /// is not injected.
 ///

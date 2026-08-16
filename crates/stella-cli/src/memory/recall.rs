@@ -150,7 +150,12 @@ impl SessionMemory {
     /// answers to different questions about one request, and separating them
     /// means either re-running recall to report it or losing it entirely.
     pub async fn recall_block_reported(&self, prompt: &str) -> RecalledBlock {
-        if self.ab_suppressed {
+        // Two switches, one gate. `ab_suppressed` withholds injection for ONE
+        // turn to build a control arm; `steering_enabled` withholds it for the
+        // session because an operator or their org asked (#3243). Both stop
+        // here, before any provider is queried, so an off session pays nothing
+        // — a gate after retrieval would spend the tokens and discard them.
+        if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
         let mut sections: Vec<String> = Vec::new();
@@ -219,7 +224,7 @@ impl SessionMemory {
     /// event for a pipeline turn is the pipeline's own, and this block does
     /// no frame recall to report.
     pub async fn pipeline_recall_block(&self, prompt: &str) -> Option<String> {
-        if self.ab_suppressed {
+        if self.ab_suppressed || !self.steering_enabled {
             return None;
         }
         let mut sections: Vec<String> = Vec::new();
@@ -362,14 +367,17 @@ impl SessionMemory {
         goal: &str,
         mut report: impl FnMut(String),
     ) -> Recall {
-        // The control turn's suppression lives HERE, at the frame query both
-        // the rendered block and the pipeline's `ContextRecallPort` go through
-        // — not at the block render alone. A control turn whose port still
-        // answered would feed frames to the goal message, the planner, and the
-        // witness author while the block above showed none, which is not a
-        // control arm at all: the turn would be measured as frameless while
-        // running on recalled context (#1221).
-        if self.ab_suppressed {
+        // Both suppressions live HERE, at the frame query both the rendered
+        // block and the pipeline's `ContextRecallPort` go through — not at
+        // the block render alone. A control turn whose port still answered
+        // would feed frames to the goal message, the planner, and the witness
+        // author while the block above showed none, which is not a control
+        // arm at all: the turn would be measured as frameless while running
+        // on recalled context (#1221). The steering switch stops here for the
+        // same reason: a steering-off session whose port still answered would
+        // leak the exact non-prefix injection the switch withholds — through
+        // the surface (a pipeline turn) that never renders the block (#3243).
+        if self.ab_suppressed || !self.steering_enabled {
             return Recall::default();
         }
         let query = ContextQuery {

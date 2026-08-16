@@ -43,6 +43,7 @@ mod managed;
 mod merge;
 pub(crate) mod migrate;
 mod private;
+mod steering;
 mod toml_config;
 mod toml_io;
 mod unknown;
@@ -58,6 +59,7 @@ pub(crate) use unknown::{
 pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use merge::ToolScopePolicies;
+pub(crate) use steering::SteeringCeiling;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -236,6 +238,18 @@ pub struct Settings {
     /// when parsing individual scopes so repository text cannot supply it.
     #[serde(skip)]
     pub authority_policy: AuthorityPolicy,
+    /// Whether the ORG's managed scope permits steering at all, captured from
+    /// the managed snapshot alone by [`Settings::merge_captured_scopes`].
+    ///
+    /// Separate from `context.steering.enabled` because the two answer
+    /// different questions and compose in one direction only: the block is
+    /// the ordinary last-wins chain that any scope — and the environment —
+    /// may move, while this is the ceiling over it. Folding the ceiling into
+    /// the block would make them indistinguishable, and then an env var that
+    /// is *supposed* to re-enable steering after a project turned it off
+    /// could not tell that case apart from the org having forbidden it.
+    #[serde(skip)]
+    steering_ceiling: SteeringCeiling,
 }
 
 /// `create_worktrees`: whether a run does its work in a throwaway git worktree

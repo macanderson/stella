@@ -350,6 +350,26 @@ impl Settings {
         apply_tool_ceiling(&mut merged, &ceiling);
         merged.managed_authority = managed.managed_authority;
         merged.enterprise_telemetry = managed.enterprise_telemetry.clone();
+        // The steering ceiling, from the MANAGED snapshot alone (#3243 §5).
+        // `context` is a whole-block last-wins merge honored from an untrusted
+        // project scope, so without this a repository could re-enable steering
+        // its org had switched off simply by declaring the block. Captured
+        // here, beside the tool ceiling, for the same reason and with the same
+        // rule: absence is not an objection, so the default is permissive.
+        merged.steering_ceiling = SteeringCeiling(
+            managed
+                .context
+                .as_ref()
+                .is_none_or(|context| context.steering.enabled),
+        );
+        // Resolve the whole steering chain ONCE, here, where the ceiling has
+        // just landed — every injection site then reads one answered question
+        // instead of re-deriving it from settings plus an env var and drifting
+        // from the next site that does the same.
+        let authority = AuthorityPolicy {
+            steering_allowed: merged.steering_enabled(),
+            ..authority
+        };
         merged.authority_policy = authority;
         merged
     }

@@ -46,6 +46,7 @@ pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;
 pub mod starvation;
+pub mod steering;
 pub mod step;
 pub mod subagent;
 mod summarize;
