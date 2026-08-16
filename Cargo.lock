@@ -3165,11 +3165,11 @@ dependencies = [
 
 [[package]]
 name = "stella-plugin"
-version = "0.9.47"
+version = "0.9.49"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "toml",
 ]
 
