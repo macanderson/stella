@@ -94,6 +94,16 @@ impl ToolExecutor for PolicyToolSet<'_> {
         schemas
     }
 
+    /// Forwarded with exactly the filter `schemas()` applies (#3287) — a
+    /// withheld tool has no advertised contract, and a decorator that let
+    /// the port's declared-`High` default stand would degrade every built-in
+    /// underneath it to untrusted.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        let mut contracts = self.inner.get().contracts();
+        contracts.retain(|contract| self.policy.allows(contract.name()));
+        contracts
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if !self.policy.allows(name) {
             // Same wording shape as an unknown tool: a disabled tool must not

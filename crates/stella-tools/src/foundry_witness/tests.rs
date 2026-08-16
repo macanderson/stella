@@ -82,6 +82,10 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
             witness_input,
             approved: None,
         }),
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     }
 }
 
@@ -362,6 +366,10 @@ fn a_hand_written_manifest_has_no_witness_input() {
         env: Default::default(),
         source: PathBuf::from("/x/deploy.toml"),
         foundry: None,
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     };
     assert!(witness_input(&tool).is_err());
 }

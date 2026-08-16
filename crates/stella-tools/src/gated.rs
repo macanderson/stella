@@ -152,11 +152,17 @@ impl<'a> GatedToolSet<'a> {
         }
     }
 
+    /// Snapshot the inner stack's own contract resolution (#3287): the
+    /// registry answers with reviewed catalog rows, and a decorator carrying
+    /// third-party tools (customs, an MCP view) answers with declared
+    /// contracts that keep those tools' self-reported claims attached — so
+    /// the gate sees the claims, at untrusted provenance, instead of a
+    /// bare re-derivation from the schema that would drop them.
     fn snapshot(inner: &dyn ToolExecutor) -> HashMap<String, stella_protocol::ToolContract> {
         inner
-            .schemas()
+            .contracts()
             .into_iter()
-            .map(|schema| (schema.name.clone(), contracts::contract_for(&schema)))
+            .map(|contract| (contract.name().to_string(), contract))
             .collect()
     }
 
@@ -194,6 +200,13 @@ impl ToolExecutor for GatedToolSet<'_> {
     /// Unfiltered — see the module docs on why this decorator is one-sided.
     fn schemas(&self) -> Vec<ToolSchema> {
         self.inner.get().schemas()
+    }
+
+    /// Forwarded live rather than served from the construction snapshot:
+    /// the snapshot exists to keep `execute` off the re-materialization
+    /// cost, not to freeze what an outer caller sees.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner.get().contracts()
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
@@ -302,6 +315,12 @@ mod tests {
                     speculation_safe: false,
                 })
                 .collect()
+        }
+        /// The registry's override, mirrored (#3287): this double stands in
+        /// for the session base, and the port's declared-`High` default
+        /// would grade the reviewed built-ins untrusted.
+        fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+            self.schemas().iter().map(contracts::contract_for).collect()
         }
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
             self.reached.lock().unwrap().push(name.to_string());

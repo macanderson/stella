@@ -37,6 +37,10 @@ fn on_disk(root: &Path, name: &str, foundry: Option<FoundryProvenance>) -> Custo
         env: Default::default(),
         source: manifest_path,
         foundry,
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     }
 }
 

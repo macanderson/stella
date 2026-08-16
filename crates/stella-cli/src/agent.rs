@@ -1438,7 +1438,7 @@ pub fn run_tools_listing() -> Result<(), String> {
             "    {} {} — {}",
             "·".green(),
             tool.name.bright_magenta(),
-            tool.description.dimmed()
+            format!("{}{}", tool.claims_label(), tool.description).dimmed()
         );
     }
     for diagnostic in &report.diagnostics {

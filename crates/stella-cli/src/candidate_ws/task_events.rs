@@ -139,6 +139,12 @@ impl ToolExecutor for CandidateTaskTap {
         self.inner.schemas()
     }
 
+    /// Forwarded unfiltered, like `schemas()` (#3287): the tap observes
+    /// board writes, it does not change what exists.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner.contracts()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let output = self.inner.execute(name, input).await;
         if name.starts_with("task_") && self.announce.load(Ordering::Relaxed) {

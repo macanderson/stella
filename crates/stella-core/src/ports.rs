@@ -17,6 +17,30 @@ pub trait ToolExecutor: Send + Sync {
     /// Schemas advertised to the model.
     fn schemas(&self) -> Vec<ToolSchema>;
 
+    /// The governance contract for every advertised tool (#3287): what the
+    /// authorization plane reasons over, and where a third-party tool's
+    /// self-declared claims (an MCP server's annotations, a
+    /// `.stella/tools/*.toml` manifest's fields) ride without ever touching
+    /// the advertised [`ToolSchema`] — the dispatch consumers of
+    /// `read_only` read the schema bit directly, so a claim that rode the
+    /// schema would buy concurrency privileges nobody reviewed.
+    ///
+    /// The default wraps every schema in
+    /// [`stella_protocol::ToolContract::declared`] — untrusted, graded
+    /// `High`. That is fail-closed: an executor that does not override this
+    /// has its tools *over*-refused by a risk ceiling, never under-checked.
+    /// The registry overrides it to resolve reviewed catalog rows; a
+    /// decorator forwards (filtered exactly as its `schemas()` filters), for
+    /// the same reason every other method here documents: a wrapper that
+    /// forgets degrades built-ins to untrusted, which refuses too much
+    /// rather than too little.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.schemas()
+            .into_iter()
+            .map(stella_protocol::ToolContract::declared)
+            .collect()
+    }
+
     /// Execute a tool by name. Unknown names return an error `ToolOutput`,
     /// never an Err — tool failures are model-visible data, not engine
     /// failures.
@@ -225,6 +249,17 @@ impl ToolExecutor for ReadOnlyTools<'_> {
             .collect()
     }
 
+    /// Forwarded with exactly the filter `schemas()` applies, keyed on the
+    /// same trusted-at-construction name set — the two advertisements must
+    /// not disagree about which tools exist here.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner
+            .contracts()
+            .into_iter()
+            .filter(|c| self.read_only_names.contains(c.name()))
+            .collect()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let allowed = self.read_only_names.contains(name);
         if !allowed {
@@ -310,6 +345,16 @@ impl ToolExecutor for GrantedTools<'_> {
             .schemas()
             .into_iter()
             .filter(|s| self.granted.contains(&s.name))
+            .collect()
+    }
+
+    /// Forwarded with exactly the filter `schemas()` applies — the two
+    /// advertisements must not disagree about which tools exist here.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner
+            .contracts()
+            .into_iter()
+            .filter(|c| self.granted.contains(c.name()))
             .collect()
     }
 

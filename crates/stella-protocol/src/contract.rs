@@ -428,8 +428,8 @@ mod tests {
     fn an_idempotent_claim_roundtrips_and_its_absence_is_the_old_bytes() {
         // Invariant #4 for #3287, same discipline as `events` and
         // `output_schema`.
-        let claimed = ToolContract::declared(schema("mcp__x__status", true, false))
-            .with_idempotent(true);
+        let claimed =
+            ToolContract::declared(schema("mcp__x__status", true, false)).with_idempotent(true);
         let json = serde_json::to_string(&claimed).unwrap();
         let back: ToolContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back, claimed);

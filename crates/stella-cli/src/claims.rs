@@ -243,6 +243,12 @@ impl ToolExecutor for ClaimTap<'_> {
         self.inner.schemas()
     }
 
+    /// Forwarded unfiltered, like `schemas()` (#3287): the tap coordinates
+    /// writes, it does not change what exists.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner.contracts()
+    }
+
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let Some(store) = &self.store else {
             return self.inner.execute(name, input).await;

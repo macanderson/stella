@@ -14,7 +14,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 pub mod approval;
 mod executor;
 mod output;
-mod validate;
+pub(crate) mod validate;
 
 /// One tool the agent can call. Input arrives as the model-produced JSON;
 /// output is always a typed `ToolOutput` (never a bare string).

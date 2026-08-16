@@ -319,6 +319,10 @@ fn script_tool(root: &Path, file: &str, body: &str, timeout_ms: u64) -> CustomTo
         env: HashMap::new(),
         source: path,
         foundry: None,
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     }
 }
 
@@ -582,6 +586,10 @@ async fn missing_script_names_the_path_tried() {
         env: HashMap::new(),
         source: dir.path().join("t.toml"),
         foundry: None,
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     };
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
     match out {
@@ -752,4 +760,166 @@ fn env_var_name_uppercases_and_sanitizes() {
     assert_eq!(env_var_name("path"), "STELLA_INPUT_PATH");
     assert_eq!(env_var_name("dry_run"), "STELLA_INPUT_DRY_RUN");
     assert_eq!(env_var_name("weird-key.x"), "STELLA_INPUT_WEIRD_KEY_X");
+}
+
+// #3287 — manifest claims are recorded, displayed, and buy nothing.
+
+#[test]
+fn manifest_claims_parse_into_the_declared_contract_and_buy_nothing() {
+    let manifest = r#"
+name = "peek"
+description = "look at things"
+command = ["./peek.sh"]
+read_only = true
+risk = "low"
+idempotent = true
+"#;
+    let tool = parse_manifest(manifest, Path::new("peek.toml")).unwrap();
+    assert!(tool.claimed_read_only);
+    assert_eq!(tool.claimed_risk, Some(stella_protocol::RiskLevel::Low));
+    assert!(tool.claimed_idempotent);
+
+    // The advertised schema never carries the claim: dispatch trusts the
+    // bit directly, and a self-report must not buy concurrency.
+    assert!(!tool.schema().read_only);
+
+    // The contract carries the claim verbatim, at untrusted provenance —
+    // visible to policy, vouched for by nobody.
+    let contract = tool.contract();
+    assert_eq!(contract.provenance, stella_protocol::Provenance::Declared);
+    assert!(contract.schema.read_only, "the claim is preserved");
+    assert!(!contract.trusted_read_only(), "and buys no trust");
+    assert!(contract.idempotent);
+    assert_eq!(
+        contract.risk,
+        stella_protocol::RiskLevel::High,
+        "a claimed `low` never lowers the declared grade"
+    );
+    assert_eq!(
+        tool.claims_label(),
+        "[claims read-only, risk: low, idempotent] "
+    );
+}
+
+#[test]
+fn a_claimed_destructive_risk_raises_the_grade_and_a_claimless_manifest_is_unchanged() {
+    let destructive = r#"
+name = "wipe"
+description = "deletes things"
+command = ["./wipe.sh"]
+risk = "destructive"
+"#;
+    let tool = parse_manifest(destructive, Path::new("wipe.toml")).unwrap();
+    assert_eq!(
+        tool.contract().risk,
+        stella_protocol::RiskLevel::Destructive,
+        "a self-report may make a tool look more dangerous"
+    );
+
+    let plain = r#"
+name = "plain"
+description = "no claims"
+command = ["./plain.sh"]
+"#;
+    let tool = parse_manifest(plain, Path::new("plain.toml")).unwrap();
+    assert_eq!(tool.contract().risk, stella_protocol::RiskLevel::High);
+    assert_eq!(tool.claims_label(), "");
+}
+
+/// The #3287 witness (manifest half): a `read_only = true` claim is carried
+/// on the contract, refused by a `Medium` risk ceiling, and absent from the
+/// read-only dispatch set — while a genuinely read-only *built-in* passes
+/// all three the other way (that half lives in `contracts.rs`'s
+/// `a_builtin_resolves_to_its_reviewed_row`).
+#[tokio::test]
+async fn a_claimed_read_only_custom_tool_is_ceiling_refused_and_outside_the_read_only_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tool = script_tool(dir.path(), "peek.sh", "#!/bin/sh\necho ok\n", 5000);
+    tool.name = "peek".into();
+    tool.claimed_read_only = true;
+    let set = CustomToolSet::new(&FakeInner, vec![tool], dir.path().to_path_buf());
+
+    // Not in the read-only dispatch set: the claim never touches the
+    // advertised schema, so `ReadOnlyTools` (which trusts the bit) excludes
+    // the tool entirely.
+    let read_only = stella_core::ports::ReadOnlyTools::new(&set);
+    assert!(
+        !stella_core::ports::ToolExecutor::schemas(&read_only)
+            .iter()
+            .any(|s| s.name == "peek"),
+        "an unreviewed claim must not admit a tool to the read-only set"
+    );
+
+    // Refused by a Medium risk ceiling: the contract snapshot the gate takes
+    // carries the declared High grade.
+    let gated = crate::gated::GatedToolSet::new(
+        &set,
+        std::sync::Arc::new(stella_core::ports::RiskCeiling::new(
+            stella_protocol::RiskLevel::Medium,
+        )),
+        stella_core::ports::Principal::User,
+    );
+    let out = gated.execute("peek", &serde_json::json!({})).await;
+    assert!(out.is_error(), "a Medium ceiling must refuse it: {out:?}");
+
+    // And the claim IS visible where policy looks: the composed contracts.
+    let contract = stella_core::ports::ToolExecutor::contracts(&set)
+        .into_iter()
+        .find(|c| c.name() == "peek")
+        .expect("advertised");
+    assert!(contract.schema.read_only && !contract.trusted_read_only());
+}
+
+/// The `[output_schema]` promise (#3287): JSON stdout matching the schema
+/// flows into the structured half; non-JSON stdout is the tool's own defect.
+#[tokio::test]
+async fn a_declared_output_schema_holds_a_script_to_its_promise() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "count": { "type": "integer" } },
+        "required": ["count"]
+    });
+
+    let mut honest = script_tool(
+        dir.path(),
+        "honest.sh",
+        "#!/bin/sh\necho '{\"count\": 3}'\n",
+        5000,
+    );
+    honest.output_schema = Some(schema.clone());
+    match run_custom(&honest, &serde_json::json!({}), dir.path()).await {
+        ToolOutput::Ok { data, .. } => {
+            assert_eq!(data, Some(serde_json::json!({ "count": 3 })));
+        }
+        other => panic!("a kept promise must pass: {other:?}"),
+    }
+
+    let mut liar = script_tool(dir.path(), "liar.sh", "#!/bin/sh\necho 'not json'\n", 5000);
+    liar.output_schema = Some(schema.clone());
+    match run_custom(&liar, &serde_json::json!({}), dir.path()).await {
+        ToolOutput::Error { message, class } => {
+            assert_eq!(class, Some(stella_protocol::ErrorClass::Internal));
+            assert!(message.contains("output contract"), "{message}");
+        }
+        other => panic!("a broken promise is a tool defect: {other:?}"),
+    }
+
+    let mut wrong = script_tool(
+        dir.path(),
+        "wrong.sh",
+        "#!/bin/sh\necho '{\"count\": \"three\"}'\n",
+        5000,
+    );
+    wrong.output_schema = Some(schema);
+    match run_custom(&wrong, &serde_json::json!({}), dir.path()).await {
+        ToolOutput::Error { message, class } => {
+            assert_eq!(class, Some(stella_protocol::ErrorClass::Internal));
+            assert!(
+                message.contains("field `count`"),
+                "names the field: {message}"
+            );
+        }
+        other => panic!("a schema breach is a tool defect: {other:?}"),
+    }
 }
