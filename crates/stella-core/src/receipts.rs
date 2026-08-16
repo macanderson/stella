@@ -412,6 +412,62 @@ fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
         .collect()
 }
 
+/// One recalled item, in the shape the renderer writes and the parser reads.
+///
+/// The two halves of the write→citation loop used to be three: `stella-cli`
+/// rendered one format, `stella-pipeline` rendered another, and
+/// `parse_recall_item` understood only the first. A pipeline turn therefore
+/// produced no `memory_citations` at all, because the id it wrote sat in a
+/// position the parser never looked (#3243 D4). A rendered line is a wire
+/// format between two crates, so it gets one producer and one consumer, and
+/// this module's tests hold the round-trip property that keeps them
+/// honest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecallLine<'a> {
+    /// The stable id joining this line back to the record it came from — a
+    /// `nod_…` memory id or a record `^handle`. This is the join key the
+    /// write→citation loop reads; `None` for a frame with no durable
+    /// identity, which is legitimate (a not-yet-materialized frame).
+    pub id: Option<&'a str>,
+    /// Human label, rendered only when it says something the body does not
+    /// (#2476) — memory nodes mint their label FROM their content, and
+    /// rendering both ships the same sentence twice.
+    pub label: Option<&'a str>,
+    /// The recalled content itself.
+    pub body: &'a str,
+    /// Where the frame came from, shown to the model as provenance. Rendered
+    /// last so it lands in the body half of the label/body split rather than
+    /// corrupting the label the receipt records.
+    pub source: Option<&'a str>,
+}
+
+/// Render one recalled item as the `- …` line `split_recall` cuts on and
+/// `parse_recall_item` reads back.
+///
+/// The id leads, because that is the only position the parser inspects for
+/// one; the label is separated from the body by the em-dash the parser splits
+/// on. A caller with no label passes `None` rather than an empty string — an
+/// empty label would render a leading separator and parse back as a body.
+pub fn render_recall_line(line: &RecallLine<'_>) -> String {
+    let mut out = String::from("- ");
+    if let Some(id) = line.id {
+        out.push('[');
+        out.push_str(id);
+        out.push_str("] ");
+    }
+    if let Some(label) = line.label {
+        out.push_str(label);
+        out.push_str(" — ");
+    }
+    out.push_str(line.body);
+    if let Some(source) = line.source {
+        out.push_str(" (");
+        out.push_str(source);
+        out.push(')');
+    }
+    out
+}
+
 /// The `nod_…` id (or record `^handle`) and human label a rendered recall
 /// line declares.
 ///

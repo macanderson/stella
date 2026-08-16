@@ -749,3 +749,96 @@ fn a_receipts_two_numbers_reconcile_the_same_way_in_any_language() {
         "the residual must be a function of message structure, not content size"
     );
 }
+
+// ---- #3243 D4: the rendered recall line is a wire format ------------------
+
+// The round trip that keeps the renderer and the parser from drifting.
+//
+// A rendered recall line crosses a crate boundary — `stella-cli` and
+// `stella-pipeline` write it, `receipts` reads it — so it is a wire format,
+// and invariant 4's serde-first discipline applies: it round-trips, or it is
+// a defect. It had already drifted once, silently, which is exactly #3243
+// D4: the pipeline wrote its id in a position the parser never inspected, so
+// `stella run` produced no `memory_citations` at all.
+//
+// The id is asserted unconditionally because it is the join key the
+// write→citation loop reads — a lost id is a lost citation. The label is
+// asserted only when the caller supplied one: with no label the parser
+// correctly reads the body's head as the label, which is the documented
+// shape of a frame that has nothing to add beyond its content.
+proptest::proptest! {
+    #[test]
+    fn a_rendered_recall_line_parses_back_to_what_it_declared(
+        id in proptest::option::of("nod_[a-z0-9]{1,12}"),
+        label in proptest::option::of("[a-zA-Z0-9]{1,20}"),
+        body in "[a-zA-Z0-9]{1,40}",
+        source in proptest::option::of("[a-z_]{1,12}"),
+    ) {
+        let line = RecallLine {
+            id: id.as_deref(),
+            label: label.as_deref(),
+            body: &body,
+            source: source.as_deref(),
+        };
+
+        let rendered = render_recall_line(&line);
+        let (parsed_id, parsed_label) = parse_recall_item(&rendered);
+
+        proptest::prop_assert_eq!(
+            parsed_id.as_deref(),
+            id.as_deref(),
+            "the join key must survive the round trip: {}",
+            rendered
+        );
+        if let Some(label) = label.as_deref() {
+            proptest::prop_assert_eq!(
+                parsed_label.as_deref(),
+                Some(label),
+                "a declared label must survive the round trip: {}",
+                rendered
+            );
+        }
+    }
+}
+
+/// A rendered line is also the unit [`split_recall`] cuts on, so a block built
+/// from rendered lines decomposes into one segment per line — the property the
+/// receipt's per-frame attribution depends on.
+#[test]
+fn a_block_of_rendered_lines_splits_one_segment_per_line() {
+    let lines = [
+        RecallLine {
+            id: Some("nod_alpha"),
+            label: Some("prefers tables"),
+            body: "use a table for comparisons",
+            source: None,
+        },
+        RecallLine {
+            id: Some("nod_beta"),
+            label: None,
+            body: "the staging url is example.test",
+            source: Some("workspace"),
+        },
+    ];
+    let block = format!(
+        "{RECALL_MARKER}\n\nRelevant context:\n{}",
+        lines
+            .iter()
+            .map(render_recall_line)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let segments = split_recall(&block);
+
+    assert_eq!(
+        segments.iter().filter(|s| s.memory_id.is_some()).count(),
+        2,
+        "both ids are recovered from the assembled block"
+    );
+    assert_eq!(
+        segments.iter().map(|s| s.text).collect::<String>(),
+        block,
+        "the segments still concatenate back byte for byte"
+    );
+}
