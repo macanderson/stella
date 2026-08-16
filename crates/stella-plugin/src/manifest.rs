@@ -24,7 +24,7 @@
 //! and binding the grants to the engine's gates are all the host's job
 //! (#3245 §3: no plugin code in-process, and this crate holds no I/O either).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +87,20 @@ impl std::fmt::Display for Participation {
 /// The host maps between the two by name; keeping the sets identical is a
 /// review obligation on any PR that grows either (#3310 tracks unifying the
 /// two in a shared home so the mirror stops being manual).
+///
+/// **The PascalCase is load-bearing, and the casing split from
+/// [`Participation`] is deliberate.** These five strings are not this
+/// crate's to choose: `"PreToolUse"` is already what a user types in
+/// `.stella/settings.json` to register a shell hook (README.md §Lifecycle
+/// hooks), because `stella-core`'s enum carries no `rename_all`. Spelling
+/// the same event `"pre_tool_use"` in a plugin manifest would fork one
+/// concept's name across two files a user edits — strictly worse than the
+/// inconsistency it would resolve. [`Participation`] is lowercase because
+/// its vocabulary is this crate's own invention (#3245 §2) and nothing
+/// outside spells it. The rule for a future block: **a value that mirrors
+/// an existing user-facing string keeps that string's casing; a value this
+/// crate coins is lowercase.** `wire_strings_are_pinned_on_both_sides`
+/// fails if either half drifts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HookEvent {
     /// Once, before the turn begins.
@@ -295,8 +309,13 @@ impl PluginManifest {
         let grant = &self.loop_grant;
         let participation = grant.participation;
 
-        for (index, hook) in grant.hooks.iter().enumerate() {
-            if grant.hooks[..index].contains(hook) {
+        // A set rather than a prefix scan, so a long declaration stays linear.
+        // `insert` returning false on the first repeat *is* the prefix scan's
+        // answer — the earliest element that some earlier element equals — so
+        // which duplicate gets named is unchanged.
+        let mut seen_hooks = HashSet::with_capacity(grant.hooks.len());
+        for hook in &grant.hooks {
+            if !seen_hooks.insert(*hook) {
                 return Err(ManifestError::DuplicateHook { hook: *hook });
             }
         }
@@ -360,11 +379,16 @@ impl PluginManifest {
             if subloop.stages.is_empty() {
                 return Err(ManifestError::EmptyStages);
             }
-            for (index, stage) in subloop.stages.iter().enumerate() {
+            // Same set-instead-of-prefix-scan as the hooks above. The two
+            // checks stay interleaved in one pass on purpose: hoisting the
+            // blank check into a pass of its own would re-order the two
+            // errors for a list that contains both.
+            let mut seen_stages = HashSet::with_capacity(subloop.stages.len());
+            for stage in &subloop.stages {
                 if stage.trim().is_empty() {
                     return Err(ManifestError::EmptyStageName);
                 }
-                if subloop.stages[..index].contains(stage) {
+                if !seen_stages.insert(stage) {
                     return Err(ManifestError::DuplicateStage {
                         stage: stage.clone(),
                     });
@@ -446,6 +470,89 @@ mod tests {
                 hook: HookEvent::PreToolUse
             }
         ));
+    }
+
+    /// The set-based duplicate checks must name the same offender the prefix
+    /// scan they replaced did — the *first element that repeats an earlier
+    /// one*, in declaration order — and must keep the blank-stage check
+    /// interleaved with them. Both are order-sensitive, so both are pinned
+    /// by a list that would answer differently under a re-ordered pass.
+    #[test]
+    fn the_first_repeat_in_declaration_order_is_the_one_reported() {
+        let hooks = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\nhooks = [\"PreToolUse\", \"PostToolUse\", \"PostToolUse\", \"PreToolUse\"]",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                hooks,
+                ManifestError::DuplicateHook {
+                    hook: HookEvent::PostToolUse
+                }
+            ),
+            "the earlier-repeating PreToolUse pair must not preempt the \
+             PostToolUse repeat that occurs first, got {hooks:?}"
+        );
+
+        let head = "name = \"x\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\n";
+
+        // A duplicate before a blank: the duplicate wins, which only holds
+        // while the two checks share one pass.
+        let dupe_first = parse(&format!("{head}stages = [\"plan\", \"plan\", \" \"]")).unwrap_err();
+        assert!(
+            matches!(dupe_first, ManifestError::DuplicateStage { ref stage } if stage == "plan"),
+            "got {dupe_first:?}"
+        );
+
+        // A blank before a duplicate: the blank wins, for the same reason.
+        let blank_first =
+            parse(&format!("{head}stages = [\"plan\", \" \", \"plan\"]")).unwrap_err();
+        assert!(
+            matches!(blank_first, ManifestError::EmptyStageName),
+            "got {blank_first:?}"
+        );
+    }
+
+    /// The casing split documented on [`HookEvent`] is a decision, so it is
+    /// pinned: `HookEvent` mirrors the PascalCase a user already types in
+    /// `.stella/settings.json`, `Participation` is lowercase because this
+    /// crate coined it. A `rename_all` added to either — the tidying this
+    /// spelling invites — fails here rather than silently invalidating every
+    /// shipped manifest.
+    #[test]
+    fn wire_strings_are_pinned_on_both_sides() {
+        for (hook, wire) in [
+            (HookEvent::SessionStart, "SessionStart"),
+            (HookEvent::PreToolUse, "PreToolUse"),
+            (HookEvent::PostToolUse, "PostToolUse"),
+            (HookEvent::Stop, "Stop"),
+            (HookEvent::PreCompact, "PreCompact"),
+        ] {
+            assert_eq!(serde_json::to_value(hook).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<HookEvent>(wire.into()).unwrap(),
+                hook
+            );
+            assert_eq!(hook.to_string(), wire, "Display must match the wire string");
+        }
+
+        for (grade, wire) in [
+            (Participation::None, "none"),
+            (Participation::Observer, "observer"),
+            (Participation::Steering, "steering"),
+            (Participation::Arbiter, "arbiter"),
+        ] {
+            assert_eq!(serde_json::to_value(grade).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<Participation>(wire.into()).unwrap(),
+                grade
+            );
+            assert_eq!(
+                grade.to_string(),
+                wire,
+                "Display must match the wire string"
+            );
+        }
     }
 
     #[test]
