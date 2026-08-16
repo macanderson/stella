@@ -68,6 +68,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + typed-errors
                          #   + diagnostic-codes
                          #   + wire-schema
+                         #   + lockfile-sync (cargo metadata --locked)
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
@@ -126,7 +127,7 @@ Four rungs, each a superset of the one above:
 
 | Target | Runs | Honours `CARGO_SCOPE` |
 | --- | --- | --- |
-| `make guards-fast` | the toolchain-free guards + `fmt --check` — nothing compiles at all | — |
+| `make guards-fast` | the toolchain-free guards + `lockfile-sync` + `fmt --check` — nothing compiles at all | — |
 | `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
@@ -788,7 +789,19 @@ seconds; `cargo test --workspace` rebuilds everything.
 ## Gotchas
 
 - **`Cargo.lock` is tracked.** Stella ships a binary and `install.sh` builds
-  with `--locked`, so the lockfile must be committed and reproducible.
+  with `--locked`, so the lockfile must be committed and reproducible. Nothing
+  you run day to day passes `--locked`, which is what makes a stale lock
+  invisible until release time — so `lockfile-sync`
+  (`scripts/check-lockfile-sync.sh`) resolves it on every gate run, including
+  the `guards-fast` rung the pre-push hook picks. It compiles nothing.
+
+  It catches the lock you forgot to regenerate. It cannot catch the other
+  shape: two branches that are each correct and collide only once both land —
+  the lockfile is one shared cell every version-bumping PR writes, exactly like
+  `scripts/file-size-baseline.txt` above. That happened twice on 2026-08-16
+  (#3311, then the 0.9.50 sync against it) and left `main` red for every
+  `--locked` build. Nothing pre-merge can see it, because neither author's tree
+  is wrong; #3332 tracks the post-merge half.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
