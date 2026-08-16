@@ -39,6 +39,7 @@ pub struct PolicyToolSet<'a> {
 /// next to each other in the same stacks.
 enum Inner<'a> {
     Borrowed(&'a dyn ToolExecutor),
+    Boxed(Box<dyn ToolExecutor + 'a>),
     Owned(std::sync::Arc<dyn ToolExecutor>),
 }
 
@@ -46,6 +47,7 @@ impl Inner<'_> {
     fn get(&self) -> &dyn ToolExecutor {
         match self {
             Inner::Borrowed(inner) => *inner,
+            Inner::Boxed(inner) => inner.as_ref(),
             Inner::Owned(inner) => inner.as_ref(),
         }
     }
@@ -55,6 +57,17 @@ impl<'a> PolicyToolSet<'a> {
     pub fn new(inner: &'a dyn ToolExecutor, policy: ToolPolicy) -> Self {
         Self {
             inner: Inner::Borrowed(inner),
+            policy,
+        }
+    }
+
+    /// Own the inner executor by value — for [`crate::agent::tool_stack`],
+    /// which builds the custom layer below this one and returns the whole
+    /// chain as a single value. The lifetime rides along, so the boxed chain
+    /// may still borrow the session's registry at its base.
+    pub fn new_boxed(inner: Box<dyn ToolExecutor + 'a>, policy: ToolPolicy) -> Self {
+        Self {
+            inner: Inner::Boxed(inner),
             policy,
         }
     }
