@@ -1352,6 +1352,8 @@ mod tests {
         SessionSpec {
             provider_id: "mock".to_string(),
             tools: Vec::new(),
+            principal: stella_core::ports::Principal::Host("test".to_string()),
+            gate: SessionSpec::default_gate(),
             messages: vec![CompletionMessage::user("hi")],
             config: EngineConfig::default(),
             budget: BudgetGuard::new(BudgetMode::Off, None, None),

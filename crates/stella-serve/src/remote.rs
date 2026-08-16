@@ -19,7 +19,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
-use stella_core::ports::ToolExecutor;
+use stella_core::hooks::decision::{GateVerdict, OperatorPosture};
+use stella_core::ports::authz::authz_verdict;
+use stella_core::ports::{AuthzGate, Principal, ToolExecutor};
 use stella_core::retry::Sleeper;
 use stella_pipeline::ports::{
     ApprovalGate, CmdKind, CmdOutcome, DiagnosticInvocation, DiagnosticRunner, ScopeDecision,
@@ -359,7 +361,16 @@ impl Provider for RemoteProvider {
 /// so the engine's partitioned concurrency still applies); `execute` emits a
 /// [`ServerFrame::ToolRequest`] and blocks on the host's answer.
 pub(crate) struct RemoteToolExecutor {
-    schemas: Vec<ToolSchema>,
+    /// The host-declared contracts (#3286): schema plus governance metadata.
+    /// The advertised schemas derive from these; the gate below reasons over
+    /// them.
+    contracts: Vec<stella_protocol::ToolContract>,
+    /// The turn's authorization gate, applied before a request frame leaves
+    /// — same seam, same position as the CLI's `GatedToolSet`.
+    gate: std::sync::Arc<dyn AuthzGate>,
+    /// Who the calls are made as — a host-supplied opaque identity the
+    /// engine never interprets (invariant #1).
+    principal: Principal,
     /// Disambiguates this executor's request ids from every other executor
     /// sharing the turn's [`Pending`] registry (#1496) — the same guarantee,
     /// and the same mechanism, as [`RemoteProvider::instance`].
@@ -381,14 +392,18 @@ pub(crate) struct RemoteToolExecutor {
 
 impl RemoteToolExecutor {
     pub(crate) fn new(
-        schemas: Vec<ToolSchema>,
+        contracts: Vec<stella_protocol::ToolContract>,
+        gate: std::sync::Arc<dyn AuthzGate>,
+        principal: Principal,
         frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
         bus: Option<HookBus>,
     ) -> Self {
         Self {
-            schemas,
+            contracts,
+            gate,
+            principal,
             instance: TOOL_INSTANCES.fetch_add(1, Ordering::Relaxed),
             frames,
             pending,
@@ -396,6 +411,27 @@ impl RemoteToolExecutor {
             timeout,
             bus,
         }
+    }
+
+    /// The contract this executor authorizes `name` against. A name outside
+    /// the declared set resolves to an untrusted `High` contract rather than
+    /// skipping authorization — the same fail-closed reading as the CLI's
+    /// `contracts::unknown_contract`, built locally because this crate
+    /// deliberately does not depend on `stella-tools`.
+    fn contract_for(&self, name: &str) -> stella_protocol::ToolContract {
+        self.contracts
+            .iter()
+            .find(|contract| contract.name() == name)
+            .cloned()
+            .unwrap_or_else(|| {
+                stella_protocol::ToolContract::declared(ToolSchema {
+                    name: name.to_string(),
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                    read_only: false,
+                    speculation_safe: false,
+                })
+            })
     }
 
     /// Run the `tool.call.requested` blocking chain before the request frame
@@ -474,7 +510,17 @@ impl RemoteToolExecutor {
 #[async_trait]
 impl ToolExecutor for RemoteToolExecutor {
     fn schemas(&self) -> Vec<ToolSchema> {
-        self.schemas.clone()
+        self.contracts
+            .iter()
+            .map(|contract| contract.schema.clone())
+            .collect()
+    }
+
+    /// The host-declared contracts, verbatim (#3286) — what lets an outer
+    /// layer (or a parity witness) see the same governance metadata the gate
+    /// reasons over.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.contracts.clone()
     }
 
     // `live_services` keeps the empty default, declared rather than
@@ -496,6 +542,34 @@ impl ToolExecutor for RemoteToolExecutor {
             return ToolOutput::error(
                 "turn cancelled before the tool call could be dispatched".to_string(),
             );
+        }
+        // The authorization gate, before anything else (#3286) — the same
+        // seam, at the same position, as the CLI's `GatedToolSet`: a denied
+        // call costs the host nothing, no frame is ever built, and the
+        // verdict folds through the one shared ladder so an `Err` from the
+        // gate denies whatever any softening flag says.
+        let evaluation = self
+            .gate
+            .check(&self.contract_for(name), &self.principal, input);
+        match authz_verdict(&OperatorPosture::NoOpinion, evaluation, false) {
+            GateVerdict::Allow => {}
+            GateVerdict::Deny { reason } => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    reason,
+                );
+            }
+            // A served turn has no human to park on: the structured refusal
+            // is the honest answer, exactly as the CLI's headless
+            // `ApprovalBroker` refuses. Routing this through a host-side
+            // approval exchange is #3288's territory, not silently allowed
+            // here.
+            GateVerdict::RequireApproval { reason } => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!("`{name}` requires approval before it can run: {reason}"),
+                );
+            }
         }
         let Some(bus) = &self.bus else {
             return self.dispatch(name, input).await;
@@ -899,424 +973,4 @@ impl DiagnosticRunner for RemoteVerificationRunner {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    use stella_core::bus::{HookBus, HookEvent, names as hook_names};
-    use stella_core::ports::ToolExecutor;
-    use stella_pipeline::ports::{
-        ApprovalGate, CmdKind, DiagnosticInvocation, DiagnosticRunner, ScopeDecision,
-        TestInvocation, TestRunner,
-    };
-    use stella_protocol::{ScopeProposal, ToolOutput};
-
-    use super::{
-        CmdOutcomeWire, PIPELINE_DIAGNOSTIC_TOOL, PIPELINE_TEST_TOOL, RemoteApprovalGate,
-        RemoteToolExecutor, RemoteVerificationRunner,
-    };
-    use crate::frame::ServerFrame;
-    use crate::observe::event::TurnRef;
-    use crate::pending::Pending;
-
-    /// A tool port whose frame sink is already dead — the host-disconnected
-    /// path — plus a bus recording every event it sees.
-    fn disconnected_port() -> (RemoteToolExecutor, Arc<Mutex<Vec<String>>>) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        // Dropping the receiver is what makes `send` fail, which is exactly
-        // what a subscriber's connection going away does in production.
-        drop(rx);
-        let sink = crate::backlog::FrameSink::new(
-            tx,
-            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
-        );
-        let pending = Pending::new(
-            crate::observe::null_observer(),
-            TurnRef::new("turn-remotetest"),
-        );
-        let bus = HookBus::new("turn-remotetest");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Arc::clone(&seen);
-        bus.on("tool.call.*", move |event: &HookEvent| {
-            recorder
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push(event.name.clone());
-            Ok(())
-        })
-        .detach();
-        let port = RemoteToolExecutor::new(
-            Vec::new(),
-            sink,
-            pending,
-            std::time::Duration::from_millis(50),
-            Some(bus),
-        );
-        (port, seen)
-    }
-
-    /// Two executors sharing one registry never mint the same request id.
-    ///
-    /// This is the sub-agent boundary (#1496). `run_session` builds a second
-    /// [`RemoteToolExecutor`] over a **clone** of the parent's [`Pending`] —
-    /// and cloning shares the map — so before the instance tag both counters
-    /// started at zero and both first calls were `tool-0`.
-    /// [`Pending::register_tool`] inserts with `HashMap::insert`, which
-    /// replaces rather than rejects, so the collision was silent in the worst
-    /// way: the parent's parked sender dropped, its waiter woke claiming the
-    /// host had abandoned the call, and the host's single answer for `tool-0`
-    /// resolved whichever request registered second.
-    ///
-    /// Both dispatches here time out — the point is the ids on the frames that
-    /// went out, not the answers that never come back.
-    #[tokio::test]
-    async fn two_executors_over_one_registry_mint_distinct_request_ids() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let sink = crate::backlog::FrameSink::new(
-            tx,
-            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
-        );
-        let pending = Pending::new(
-            crate::observe::null_observer(),
-            TurnRef::new("turn-subagent-boundary"),
-        );
-        let timeout = std::time::Duration::from_millis(20);
-
-        // The parent's port and the sub-agent view's, over the same registry.
-        let parent =
-            RemoteToolExecutor::new(Vec::new(), sink.clone(), pending.clone(), timeout, None);
-        let child = RemoteToolExecutor::new(Vec::new(), sink, pending, timeout, None);
-
-        let _ = parent.dispatch("parent_tool", &serde_json::json!({})).await;
-        let _ = child.dispatch("child_tool", &serde_json::json!({})).await;
-
-        let mut ids = Vec::new();
-        while let Ok(frame) = rx.try_recv() {
-            if let ServerFrame::ToolRequest { request_id, .. } = frame {
-                ids.push(request_id);
-            }
-        }
-
-        assert_eq!(
-            ids.len(),
-            2,
-            "both dispatches emit a request frame: {ids:?}"
-        );
-        assert_ne!(
-            ids[0], ids[1],
-            "a sub-agent's tool call collided with its parent's in the shared \
-             Pending registry — one of these two answers would resolve the \
-             wrong request"
-        );
-    }
-
-    /// A `tool.call.started` with no outcome after it leaves an observer
-    /// holding a call that never closes — and it would do so on precisely the
-    /// paths worth watching, the ones where the host went away. The bracket is
-    /// structural (`execute` wraps `dispatch`), and this is what keeps it so.
-    #[tokio::test]
-    async fn a_tool_call_the_host_never_receives_still_reports_an_outcome() {
-        let (port, seen) = disconnected_port();
-        let output = port
-            .execute("echo", &serde_json::json!({ "text": "hi" }))
-            .await;
-        assert!(
-            matches!(&output, ToolOutput::Error { message, .. } if message.contains("disconnected")),
-            "expected the host-disconnected error, got {output:?}"
-        );
-        assert_eq!(
-            seen.lock().unwrap().as_slice(),
-            [
-                hook_names::TOOL_CALL_STARTED.to_string(),
-                hook_names::TOOL_CALL_FAILED.to_string(),
-            ],
-            "every `started` must be closed by an outcome, however the call ended"
-        );
-    }
-
-    /// The same bracket, on the path the host *does* answer badly: a deadline
-    /// nobody meets. Distinct from the case above because it exits from the
-    /// other end of `dispatch`.
-    #[tokio::test]
-    async fn a_tool_call_the_host_never_answers_still_reports_an_outcome() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let sink = crate::backlog::FrameSink::new(
-            tx,
-            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
-        );
-        let pending = Pending::new(
-            crate::observe::null_observer(),
-            TurnRef::new("turn-remotetest"),
-        );
-        let bus = HookBus::new("turn-remotetest");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Arc::clone(&seen);
-        bus.on("tool.call.*", move |event: &HookEvent| {
-            recorder
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push(event.name.clone());
-            Ok(())
-        })
-        .detach();
-        let port = RemoteToolExecutor::new(
-            Vec::new(),
-            sink,
-            pending,
-            std::time::Duration::from_millis(20),
-            Some(bus),
-        );
-        let output = port.execute("echo", &serde_json::json!({})).await;
-        assert!(
-            matches!(&output, ToolOutput::Error { message, .. } if message.contains("deadline")),
-            "expected the reverse-request deadline error, got {output:?}"
-        );
-        assert_eq!(
-            seen.lock().unwrap().as_slice(),
-            [
-                hook_names::TOOL_CALL_STARTED.to_string(),
-                hook_names::TOOL_CALL_FAILED.to_string(),
-            ],
-            "a wedged host is exactly when an observer must not be left waiting"
-        );
-    }
-
-    /// A fresh, connected reverse-RPC channel triple: the pending registry, a
-    /// frame receiver a test can drain, and the sink both new ports
-    /// (#1288) are constructed over.
-    fn live_channel() -> (
-        crate::backlog::FrameSink,
-        tokio::sync::mpsc::UnboundedReceiver<ServerFrame>,
-        Pending,
-    ) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let sink = crate::backlog::FrameSink::new(
-            tx,
-            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
-        );
-        let pending = Pending::new(
-            crate::observe::null_observer(),
-            TurnRef::new("turn-remotetest"),
-        );
-        (sink, rx, pending)
-    }
-
-    /// The parent's tool port and a sub-agent's, over one turn's registry,
-    /// must not mint the same request id (#1496).
-    ///
-    /// `run_session` builds exactly this pair — `session.rs` constructs one
-    /// executor for the turn and a second for the sub-agent view, both over
-    /// the same [`Pending`]. With a bare per-instance counter both start at
-    /// zero, `register_tool`'s `HashMap::insert` replaces the first entry, and
-    /// the host's answer for `tool-0` resolves whichever registered last while
-    /// the displaced waiter wakes to a dropped sender. The assertion that
-    /// fails first on the old code is the id inequality; the two that follow
-    /// are the consequence worth naming — each caller gets *its own* answer,
-    /// not the other's.
-    #[tokio::test]
-    async fn two_tool_ports_sharing_a_turn_do_not_collide_on_request_ids() {
-        let (sink, mut rx, pending) = live_channel();
-        let parent = RemoteToolExecutor::new(
-            Vec::new(),
-            sink.clone(),
-            pending.clone(),
-            Duration::from_secs(5),
-            None,
-        );
-        let child = RemoteToolExecutor::new(
-            Vec::new(),
-            sink,
-            pending.clone(),
-            Duration::from_secs(5),
-            None,
-        );
-
-        let parent_call =
-            tokio::spawn(async move { parent.execute("echo", &serde_json::json!({})).await });
-        let ServerFrame::ToolRequest {
-            request_id: first, ..
-        } = rx.recv().await.unwrap()
-        else {
-            panic!("expected the parent's tool request frame");
-        };
-        let child_call =
-            tokio::spawn(async move { child.execute("echo", &serde_json::json!({})).await });
-        let ServerFrame::ToolRequest {
-            request_id: second, ..
-        } = rx.recv().await.unwrap()
-        else {
-            panic!("expected the sub-agent's tool request frame");
-        };
-
-        assert_ne!(
-            first, second,
-            "two executors over one Pending minted the same request id, so one \
-             registration silently replaced the other"
-        );
-
-        // Answer each by its own id, distinguishably.
-        pending
-            .resolve_tool(
-                &first,
-                ToolOutput::Ok {
-                    content: "for-the-parent".to_string(),
-                    data: None,
-                },
-            )
-            .expect("the parent's request is still registered");
-        pending
-            .resolve_tool(
-                &second,
-                ToolOutput::Ok {
-                    content: "for-the-sub-agent".to_string(),
-                    data: None,
-                },
-            )
-            .expect("the sub-agent's request is still registered");
-
-        assert!(
-            matches!(parent_call.await.unwrap(), ToolOutput::Ok { content , .. } if content == "for-the-parent"),
-            "the parent must receive the answer addressed to the parent"
-        );
-        assert!(
-            matches!(child_call.await.unwrap(), ToolOutput::Ok { content , .. } if content == "for-the-sub-agent"),
-            "the sub-agent must receive the answer addressed to the sub-agent"
-        );
-    }
-
-    /// A scope review the host approves round-trips into
-    /// [`ScopeDecision::Approve`] — the pipeline's `ApprovalGate::review`,
-    /// remoted (#1288).
-    #[tokio::test]
-    async fn a_host_answered_scope_review_reaches_the_pipeline_as_the_hosts_decision() {
-        let (sink, mut rx, pending) = live_channel();
-        let gate = RemoteApprovalGate::new(sink, pending.clone(), Duration::from_secs(5));
-        let proposal = ScopeProposal {
-            summary: "do the thing".to_string(),
-            steps: vec!["step one".to_string()],
-            estimated_files: 1,
-            estimated_cost_usd: None,
-            ..Default::default()
-        };
-
-        let review = tokio::spawn(async move { gate.review(&proposal).await });
-
-        let ServerFrame::ScopeReviewRequest { request_id, .. } = rx.recv().await.unwrap() else {
-            panic!("expected a scope review request frame");
-        };
-        assert!(
-            pending
-                .resolve_scope_review(&request_id, ScopeDecision::Approve)
-                .is_ok()
-        );
-        assert_eq!(review.await.unwrap(), ScopeDecision::Approve);
-    }
-
-    /// A scope review the host never answers fails closed
-    /// ([`ScopeDecision::Abort`]) rather than defaulting to running the plan
-    /// unattended — the same fail-closed contract
-    /// [`stella_pipeline::ports::StdioApprovalGate`] gives a read error.
-    #[tokio::test]
-    async fn an_unanswered_scope_review_fails_closed() {
-        let (sink, _rx, pending) = live_channel();
-        let gate = RemoteApprovalGate::new(sink, pending, Duration::from_millis(20));
-        let proposal = ScopeProposal {
-            summary: "do the thing".to_string(),
-            steps: vec!["step one".to_string()],
-            estimated_files: 1,
-            estimated_cost_usd: None,
-            ..Default::default()
-        };
-        assert_eq!(gate.review(&proposal).await, ScopeDecision::Abort);
-    }
-
-    /// A well-formed [`CmdOutcomeWire`] the host answers with round-trips into
-    /// the matching [`CmdOutcome`], for both the test-runner and the
-    /// diagnostic-runner traits [`RemoteVerificationRunner`] answers (#1288).
-    #[tokio::test]
-    async fn a_hosts_cmd_outcome_reaches_the_ladder_as_the_matching_typed_result() {
-        let (sink, mut rx, pending) = live_channel();
-        let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
-
-        let call = tokio::spawn(async move {
-            runner
-                .run_test(&TestInvocation {
-                    program: "cargo".to_string(),
-                    args: vec!["test".to_string()],
-                })
-                .await
-        });
-
-        let ServerFrame::ToolRequest {
-            request_id,
-            name,
-            input,
-        } = rx.recv().await.unwrap()
-        else {
-            panic!("expected a tool request frame");
-        };
-        assert_eq!(name, PIPELINE_TEST_TOOL);
-        assert_eq!(input["program"], "cargo");
-
-        let content = serde_json::to_string(&CmdOutcomeWire::Completed {
-            exit_code: 1,
-            stdout_tail: "FAILED".to_string(),
-            stderr_tail: String::new(),
-        })
-        .unwrap();
-        assert!(
-            pending
-                .resolve_tool(
-                    &request_id,
-                    ToolOutput::Ok {
-                        content,
-                        data: None
-                    }
-                )
-                .is_ok()
-        );
-
-        let outcome = call.await.unwrap();
-        assert_eq!(outcome.kind, CmdKind::Completed);
-        assert_eq!(outcome.exit_code, 1);
-        assert_eq!(outcome.stdout_tail, "FAILED");
-        assert_eq!(outcome.assertion_result(), Some(false));
-    }
-
-    /// A host that has not implemented the reserved verification tool names
-    /// answers as it would any unknown tool — an error — and the ladder must
-    /// read that as "no toolchain" ([`CmdKind::Infra`]), never as a failing
-    /// assertion: an infra outcome and a genuine test failure must not be
-    /// confused, per [`CmdOutcome::assertion_result`]'s own contract.
-    #[tokio::test]
-    async fn a_host_that_does_not_implement_verification_degrades_to_infra_not_a_failure() {
-        let (sink, mut rx, pending) = live_channel();
-        let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
-
-        let call =
-            tokio::spawn(
-                async move { runner.run_diagnostic(&DiagnosticInvocation::GitDiff).await },
-            );
-
-        let ServerFrame::ToolRequest {
-            request_id, name, ..
-        } = rx.recv().await.unwrap()
-        else {
-            panic!("expected a tool request frame");
-        };
-        assert_eq!(name, PIPELINE_DIAGNOSTIC_TOOL);
-        assert!(
-            pending
-                .resolve_tool(&request_id, ToolOutput::error("unknown tool".to_string()),)
-                .is_ok()
-        );
-
-        let outcome = call.await.unwrap();
-        assert_eq!(outcome.kind, CmdKind::Infra);
-        assert_eq!(
-            outcome.assertion_result(),
-            None,
-            "an unimplemented verification call observed no assertion either way"
-        );
-    }
-}
+mod tests;
