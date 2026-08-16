@@ -109,6 +109,20 @@ would launch a browser on nearly every PR — the same disjoint-paths reasoning
 that gave `wire-schema.yml` its own file. It is deliberately not a required
 check yet (#2425).
 
+A fifth, `main-canary.yml`, is the only one that runs **after** the merge, and
+it exists because some guards cannot be settled before one. A guard enforced
+against a *shared cell* — one file every PR of a shape must write, like
+`Cargo.lock` or `scripts/file-size-baseline.txt` — can be satisfied correctly by
+two branches that still compose into a broken tree once both land. No pre-merge
+run can catch that: neither author's tree is wrong. So the canary re-asks the
+composition questions on `main` itself (push, plus a daily backstop for the
+breakage no commit caused, such as a yanked dependency), and reports by opening
+one labelled issue — closing it again when `main` recovers, because a monitor
+that only ever files gets muted and is then worse than none (#1464 is what
+silent failure costs here). `make main-canary` runs the same check locally
+without filing anything; `scripts/main-canary.sh`'s header carries the full
+argument, including why it deliberately does not open a fix PR (#3332).
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -801,7 +815,10 @@ seconds; `cargo test --workspace` rebuilds everything.
   `scripts/file-size-baseline.txt` above. That happened twice on 2026-08-16
   (#3311, then the 0.9.50 sync against it) and left `main` red for every
   `--locked` build. Nothing pre-merge can see it, because neither author's tree
-  is wrong; #3332 tracks the post-merge half.
+  is wrong — which is why `main-canary.yml` re-asks the same question after the
+  merge and files an issue when the answer changed (#3332). The two halves are
+  deliberately separate: one stops you shipping a stale lock, the other bounds
+  how long `main` stays broken when nobody did.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →

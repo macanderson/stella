@@ -375,6 +375,17 @@ lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed 
 lockfile-sync-test: ## Test the lockfile guard against synthetic skewed workspaces (hermetic; not part of `gate`)
 	./scripts/test-lockfile-sync.sh
 
+# Deliberately not a gate step: it judges the MERGED tree, which is a question
+# no pre-merge run can answer. .github/workflows/main-canary.yml is where it
+# runs for real; this target is here so the logic can be exercised by hand.
+.PHONY: main-canary
+main-canary: ## Ask whether main still composes green (check only; no issue is filed)
+	@./scripts/main-canary.sh
+
+.PHONY: main-canary-test
+main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
+	./scripts/test-main-canary.sh
+
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
 
