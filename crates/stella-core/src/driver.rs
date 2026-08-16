@@ -493,7 +493,7 @@ pub struct Engine<'a> {
     /// (#2684), off by default. Attached via
     /// [`Engine::with_hook_approval_route`] (`driver::user_hooks`); when
     /// `None` such a decision is refused with a grant-path message.
-    pub(crate) hook_approvals: Option<&'a dyn crate::hooks::decision::HookApprovalRoute>,
+    pub(crate) hook_approvals: Option<&'a dyn crate::hooks::decision::ApprovalRoute>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
     /// the map across turns (seeded from persisted telemetry at session

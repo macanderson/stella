@@ -218,7 +218,7 @@ pub struct TurnCapabilities<'a> {
     pub gate: Option<&'a dyn TurnGate>,
     pub steering: Option<&'a dyn TurnSteering>,
     pub hooks: Option<HooksHandle<'a>>,
-    pub hook_approvals: Option<&'a dyn HookApprovalRoute>,
+    pub hook_approvals: Option<&'a dyn ApprovalRoute>,
     pub calibration: Option<&'a CalibrationMap>,
     pub bus: Option<&'a HookBus>,
     pub outcomes: Option<&'a dyn ProviderOutcomes>,

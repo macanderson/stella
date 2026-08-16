@@ -287,6 +287,61 @@ fn a_long_prompt_still_selects_an_untagged_skill_it_names() {
     assert_eq!(selected[0].skill.name, "sql-style");
 }
 
+/// **Witness (#3298).** A non-Latin prompt whose wording matches a skill's
+/// description selects that skill.
+///
+/// Fails on base, where selection scored in `mining::terms`'s ASCII-only
+/// space: a Cyrillic prompt tokenized to the empty set, scored 0 against
+/// every skill, and — after #3296 correctly narrowed the domain path to
+/// prompts naming an existing file — had no selection path left at all.
+/// Selection now scores in `mining::score_terms`'s Unicode-aware space;
+/// the miners' id space is deliberately unchanged (see
+/// `id_space_terms_is_still_ascii_only` in `crate::mining`'s tests).
+#[test]
+fn a_cyrillic_prompt_selects_the_skill_whose_wording_it_shares() {
+    let skills = vec![skill(
+        "sql-style",
+        "Форматировать SQL запросы прописными ключевыми словами",
+        &[],
+        SkillOrigin::Workspace,
+    )];
+    let selected = select_skills(
+        &skills,
+        "пожалуйста, форматировать все SQL запросы в этом модуле",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selected.len(),
+        1,
+        "a non-Latin prompt sharing a skill's wording must select it: {selected:?}"
+    );
+    assert!(selected[0].matched_terms.contains(&"запросы".to_string()));
+}
+
+/// **Witness (#3298), CJK half.** No spaces to split on, so both sides
+/// tokenize to character bigrams and overlap on shared wording.
+#[test]
+fn a_cjk_prompt_selects_the_skill_whose_wording_it_shares() {
+    let skills = vec![skill(
+        "sql-style",
+        "数据库查询格式化规范",
+        &[],
+        SkillOrigin::Workspace,
+    )];
+    let selected = select_skills(
+        &skills,
+        "请把这个模块里的数据库查询按规范格式化",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selected.len(),
+        1,
+        "a CJK prompt sharing a skill's wording must select it: {selected:?}"
+    );
+}
+
 #[test]
 fn domain_boost_wins_over_a_weak_lexical_match() {
     let skills = vec![
