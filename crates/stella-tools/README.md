@@ -101,7 +101,7 @@ landing in `registry.rs`.
 | [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the two spawn paths this crate owns (custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
 | [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
-| [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `HookApprovalRoute` port over the #2676 `ApprovalBroker`. |
+| [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `ApprovalRoute` port over the #2676 `ApprovalBroker`. |
 | [`src/input.rs`](src/input.rs) | Typed reads of a tool's JSON input (#1267) — the "absent" vs "present but wrong type" distinction the dispatch validator and the tools share. |
 | [`src/agent_use.rs`](src/agent_use.rs) | The per-session agent-invocation ledger. |
 

@@ -573,23 +573,20 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
         // bytes: memory (and episode) nodes mint theirs FROM the content, so
         // rendering both shipped the same sentence twice into a recall budget
         // the packer had already spent on the content alone (#2476).
-        let body = match f.distinct_label() {
-            Some(label) => format!("{label} — {}", f.content.trim()),
-            None => f.content.trim().to_string(),
-        };
-        match (f.kind.as_str(), &f.id) {
-            // A memory with an id keeps the id visible — it names the record.
-            ("memory", Some(id)) => {
-                lines.push(format!("- [{id}] {body}"));
-            }
-            // A memory WITHOUT an id still has content worth recalling, and
-            // the recall budget has already been spent fetching it.
-            // `RecalledFrame` documents `id: None` as a legitimate state for
-            // a not-yet-materialized frame
-            // (`crates/stella-pipeline/src/ports.rs`). Render it as grounding.
-            ("memory", None) => lines.push(format!("- {body}")),
-            _ => lines.push(format!("- {body}")),
-        }
+        // A memory with an id keeps the id visible — it names the record, and
+        // it is the join key `receipts::parse_recall_item` reads back. A
+        // memory WITHOUT one still has content worth recalling and the budget
+        // has already been spent fetching it; `RecalledFrame` documents
+        // `id: None` as a legitimate state for a not-yet-materialized frame
+        // (`crates/stella-pipeline/src/ports.rs`), so it renders as grounding.
+        lines.push(stella_core::receipts::render_recall_line(
+            &stella_core::receipts::RecallLine {
+                id: (f.kind == "memory").then_some(f.id.as_deref()).flatten(),
+                label: f.distinct_label(),
+                body: f.content.trim(),
+                source: None,
+            },
+        ));
     }
     if lines.is_empty() {
         return None;

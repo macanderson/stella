@@ -55,7 +55,14 @@
 //! Outcome mapping:
 //!
 //! - **Exit 0** → [`ToolOutput::Ok`] with captured stdout (middle-out truncated
-//!   past a byte cap, tail budget ≥ head budget per lesson L-S3).
+//!   past a byte cap, tail budget ≥ head budget per lesson L-S3). A **silent**
+//!   success (exit 0, empty stdout) does not render as the empty string: it
+//!   renders a deterministic input-stamped line — `` custom tool `name` exited
+//!   0 with no output (input sha256/8 xxxxxxxx) `` — because an
+//!   every-call-identical output is the exact shape the engine's stagnation
+//!   detector kills a loop over, whatever the arguments (#3303). The digest is
+//!   over the same JSON document the child received on stdin, so an
+//!   identical-input repeat still renders identically.
 //! - **Non-zero exit** → [`ToolOutput::Error`] carrying the exit code and the
 //!   stderr tail (also truncated).
 //! - **Timeout** → the process group is killed (SIGKILL to `-pid`) and a
@@ -761,6 +768,30 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             tool.name
         ))
     }
+}
+
+/// The line a **silent** success (exit 0, empty stdout) renders instead of the
+/// empty string. A silent success is byte-identical on every call, whatever
+/// the arguments — the stagnation detector keys on exactly that shape and
+/// would kill a legitimate work loop as stuck (#3303, the surviving half of
+/// #3176). There is no content to digest (the content is the child's stdout
+/// by contract), so the stamp is input-derived: the sha256/8 of the same JSON
+/// document the child received on stdin. Deterministic by contract — never a
+/// timing, never randomness (#2706) — so an identical-input repeat still
+/// renders identically and genuine stagnation is still caught.
+///
+/// Named (rather than inlined at the render site) so
+/// [`crate::foundry_witness`] can recognize the harness's own stamp and keep
+/// classifying a silent tool's evidence as [no
+/// output](crate::foundry_witness::VacuousWitness::EmptyOutput): the stamp
+/// exists for the loop detector, and must not double as something a
+/// capability witness can assert on — it would hold for any process that
+/// exits 0.
+pub(crate) fn silent_success_stamp(name: &str, input: &Value) -> String {
+    let payload = serde_json::to_vec(input).unwrap_or_default();
+    // `digest` always returns 64 ASCII hex chars, so the slice cannot panic.
+    let identity = &crate::foundry_gate::digest(&payload)[..8];
+    format!("custom tool `{name}` exited 0 with no output (input sha256/8 {identity})")
 }
 
 /// A [`ToolExecutor`] that adds discovered custom tools on top of an inner

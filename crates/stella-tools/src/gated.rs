@@ -62,13 +62,27 @@
 //! inventing a name, and a cached view going stale all land here, and the only
 //! defensible answer to "I have never heard of this tool" is to treat it as
 //! the least trustworthy thing in the session.
+//!
+//! # `RequireApproval` reaches a human through the #2676 flow (#3288)
+//!
+//! A gate's third verb parks the call on an attached
+//! [`stella_core::hooks::decision::ApprovalRoute`] — the same port the
+//! engine parks a shell hook's `require_approval` on, implemented in
+//! production by [`crate::hook_bridge::BrokerApprovalRoute`] over the
+//! session's `ApprovalBroker` (emit-before-park, bounded TTL,
+//! `approval.granted`/`denied`/`expired` audit events). One flow, two
+//! producers, zero copies. With no route attached the verdict refuses with
+//! a grant-path message: an engine that cannot ask must not silently
+//! allow, and this is the same headless posture the broker itself takes.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::hooks::decision::{GateVerdict, OperatorPosture};
+use stella_core::hooks::decision::{
+    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, GateVerdict, OperatorPosture,
+};
 use stella_core::ports::authz::authz_verdict;
 use stella_core::ports::{AuthzGate, Principal, ToolExecutor};
 use stella_protocol::tool::{ErrorClass, ToolOutput, ToolSchema};
@@ -101,6 +115,17 @@ pub struct GatedToolSet<'a> {
     inner: Inner<'a>,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
+    /// Where a `RequireApproval` verdict goes to become a human answer
+    /// (#3288) — the same [`ApprovalRoute`] port the engine parks shell-hook
+    /// `require_approval`s on, so the gate joins the #2676 flow
+    /// (emit-before-park, bounded TTL, `approval.*` audit events) instead of
+    /// growing a second approval path. Optional and attached explicitly:
+    /// with no route, a `RequireApproval` refuses with a grant-path
+    /// message, because an engine that cannot ask must not silently allow.
+    /// Whether a human exists to answer is the responder's own
+    /// `stella-tty::human_can_answer` derivation, made once where the
+    /// responder is attached — this decorator never re-derives presence.
+    approvals: Option<Arc<dyn ApprovalRoute>>,
     /// Contracts for everything the inner stack advertised at construction,
     /// resolved once. `execute` is on the hot path of every call and
     /// re-materializing the full schema list per call would re-serialize
@@ -129,8 +154,22 @@ impl<'a> GatedToolSet<'a> {
             inner: Inner::Borrowed(inner),
             gate,
             principal,
+            approvals: None,
             contracts,
         }
+    }
+
+    /// Attach the route a `RequireApproval` verdict resolves through —
+    /// `stella-tools::hook_bridge`'s broker-backed implementation in
+    /// production, stamped with this gate's `name()` via
+    /// [`crate::hook_bridge::BrokerApprovalRoute::with_gate_name`] so the
+    /// audit trail names the producer. Opt-in like the engine's
+    /// `with_hook_approval_route`; a set without one refuses such calls
+    /// with a grant-path message instead of asking.
+    #[must_use]
+    pub fn with_approval_route(mut self, route: Arc<dyn ApprovalRoute>) -> Self {
+        self.approvals = Some(route);
+        self
     }
 
     /// Own the inner executor by value — for an assembly function that builds
@@ -148,6 +187,7 @@ impl<'a> GatedToolSet<'a> {
             inner: Inner::Boxed(inner),
             gate,
             principal,
+            approvals: None,
             contracts,
         }
     }
@@ -190,6 +230,7 @@ impl GatedToolSet<'static> {
             inner: Inner::Owned(inner),
             gate,
             principal,
+            approvals: None,
             contracts,
         }
     }
@@ -226,13 +267,35 @@ impl ToolExecutor for GatedToolSet<'_> {
             GateVerdict::Deny { reason } => {
                 ToolOutput::classified_error(ErrorClass::RefusedByPolicy, reason)
             }
-            GateVerdict::RequireApproval { reason } => ToolOutput::classified_error(
-                ErrorClass::RefusedByPolicy,
-                format!(
-                    "`{name}` needs a human's approval ({reason}), and this session has no \
-                     approval route attached — it cannot be asked from here"
-                ),
-            ),
+            GateVerdict::RequireApproval { reason } => {
+                let Some(route) = &self.approvals else {
+                    return ToolOutput::classified_error(
+                        ErrorClass::RefusedByPolicy,
+                        format!(
+                            "`{name}` needs a human's approval ({reason}), and this session has \
+                             no approval route attached — it cannot be asked from here; grant \
+                             the call via policy or rerun on an interactive surface"
+                        ),
+                    );
+                };
+                let request = ApprovalRouteRequest {
+                    tool: name.to_string(),
+                    // The reviewed contract's claim, not the tool's raw
+                    // advertisement — for an unknown name this is the
+                    // untrusted contract's `false`, the cautious direction.
+                    read_only: contract.schema.read_only,
+                    reason,
+                };
+                match route.resolve(&request).await {
+                    ApprovalRouteResolution::Approved => {
+                        self.inner.get().execute(name, input).await
+                    }
+                    ApprovalRouteResolution::Denied { reason } => ToolOutput::classified_error(
+                        ErrorClass::RefusedByPolicy,
+                        format!("`{name}` needs a human's approval — {reason}"),
+                    ),
+                }
+            }
         }
     }
 
@@ -507,5 +570,139 @@ mod tests {
             3,
             "this decorator narrows execution, not the advertised set"
         );
+    }
+
+    /// A gate whose only verb is "ask a human".
+    struct AskGate;
+
+    impl AuthzGate for AskGate {
+        fn name(&self) -> &'static str {
+            "ask-always"
+        }
+        fn check(
+            &self,
+            contract: &ToolContract,
+            _principal: &Principal,
+            _input: &Value,
+        ) -> Result<AuthzDecision, AuthzEvalError> {
+            Ok(AuthzDecision::RequireApproval {
+                reason: format!("`{}` is approval-gated here", contract.name()),
+            })
+        }
+    }
+
+    /// An [`ApprovalRoute`] with a scripted answer, recording every question
+    /// it was asked.
+    struct ScriptedRoute {
+        resolution: ApprovalRouteResolution,
+        asked: std::sync::Mutex<Vec<ApprovalRouteRequest>>,
+    }
+
+    impl ScriptedRoute {
+        fn new(resolution: ApprovalRouteResolution) -> Self {
+            Self {
+                resolution,
+                asked: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn asked(&self) -> Vec<ApprovalRouteRequest> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ApprovalRoute for ScriptedRoute {
+        async fn resolve(&self, request: &ApprovalRouteRequest) -> ApprovalRouteResolution {
+            self.asked.lock().unwrap().push(request.clone());
+            self.resolution.clone()
+        }
+    }
+
+    /// **The #3288 witness, granting half.** A `RequireApproval` verdict
+    /// parks on the attached route, and a human's yes runs the call — on
+    /// `main` before this change the same composition refused without asking.
+    #[tokio::test]
+    async fn an_approving_route_turns_require_approval_into_a_run() {
+        let leaf = Leaf::new();
+        let route = Arc::new(ScriptedRoute::new(ApprovalRouteResolution::Approved));
+        let gated = GatedToolSet::new(&leaf, Arc::new(AskGate), Principal::User)
+            .with_approval_route(route.clone());
+
+        assert!(matches!(
+            gated.execute(SPENDS, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+        assert_eq!(leaf.reached(), vec![SPENDS.to_string()]);
+        let asked = route.asked();
+        assert_eq!(asked.len(), 1, "exactly one question per call");
+        assert_eq!(asked[0].tool, SPENDS);
+        assert!(
+            asked[0].reason.contains(SPENDS),
+            "the gate's reason survives to the human verbatim: {}",
+            asked[0].reason
+        );
+    }
+
+    /// **The #3288 witness, refusing half.** The same gate with a denying
+    /// route refuses without executing, and the human's reason reaches the
+    /// model.
+    #[tokio::test]
+    async fn a_denying_route_refuses_without_executing() {
+        let leaf = Leaf::new();
+        let route = Arc::new(ScriptedRoute::new(ApprovalRouteResolution::Denied {
+            reason: "a human refused this call".into(),
+        }));
+        let gated =
+            GatedToolSet::new(&leaf, Arc::new(AskGate), Principal::User).with_approval_route(route);
+
+        match gated.execute(SPENDS, &input()).await {
+            ToolOutput::Error { message, class } => {
+                assert!(message.contains("a human refused this call"), "{message}");
+                assert_eq!(class, Some(ErrorClass::RefusedByPolicy));
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert!(leaf.reached().is_empty());
+    }
+
+    /// The headless posture is unchanged: no route attached means the
+    /// refusal names the grant path rather than silently allowing — and
+    /// nothing runs.
+    #[tokio::test]
+    async fn no_route_still_refuses_with_a_grant_path_message() {
+        let leaf = Leaf::new();
+        let gated = GatedToolSet::new(&leaf, Arc::new(AskGate), Principal::User);
+
+        match gated.execute(SPENDS, &input()).await {
+            ToolOutput::Error { message, class } => {
+                assert!(message.contains("no approval route attached"), "{message}");
+                assert!(
+                    message.contains("grant the call via policy"),
+                    "names the grant path: {message}"
+                );
+                assert_eq!(class, Some(ErrorClass::RefusedByPolicy));
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert!(leaf.reached().is_empty());
+    }
+
+    /// Anti-vacuity: with `NoAuthz` the call runs and the attached route is
+    /// never consulted — approval is the gate's verdict reaching a human,
+    /// not a toll on every dispatch.
+    #[tokio::test]
+    async fn no_authz_never_asks_an_attached_route() {
+        let leaf = Leaf::new();
+        let route = Arc::new(ScriptedRoute::new(ApprovalRouteResolution::Denied {
+            reason: "must never be consulted".into(),
+        }));
+        let gated = GatedToolSet::new(&leaf, Arc::new(NoAuthz), Principal::User)
+            .with_approval_route(route.clone());
+
+        assert!(matches!(
+            gated.execute(SPENDS, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+        assert!(route.asked().is_empty(), "no approval was ever requested");
     }
 }

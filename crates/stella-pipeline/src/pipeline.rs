@@ -140,7 +140,7 @@ mod unproven;
 /// verification contract) — pure text assembly, in its own module because
 /// `pipeline.rs` is closed to growth.
 mod user_message;
-use user_message::{VerificationContract, assemble_user_message};
+use user_message::{VerificationContract, assemble_recall_message, assemble_user_message};
 mod verify_probes;
 use verify_probes::DiffProbe;
 mod witness_stage;
@@ -1166,8 +1166,17 @@ impl<'a> Pipeline<'a> {
         let research = self
             .research_stage(goal, &research_questions, budget, &mut total_cost)
             .await;
+        // Recall rides as its OWN marked message, ahead of the goal — the
+        // shape the interactive path has always used, and the only one the
+        // receipts plane can attribute (#3243 D4). Folded into the goal
+        // message it carried no `RECALL_MARKER`, so the whole thing filed as
+        // one `BlockKind::UserGoal` with `memory_id: None` and `stella run`
+        // produced no `memory_citations` at all.
+        if let Some(recall) = assemble_recall_message(&frames) {
+            messages.push(CompletionMessage::user(recall));
+        }
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames, &research, contract,
+            goal, &research, contract,
         )));
 
         // --- Conversational fast path. -------------------------------------

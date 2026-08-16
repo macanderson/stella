@@ -683,7 +683,6 @@ async fn no_findings_leaves_the_worker_message_byte_identical() {
         assemble_user_message(
             "Refactor the retry layer end to end",
             &[],
-            &[],
             VerificationContract::Oracle("cargo test -p x"),
         ),
         "an empty findings list must not change a single byte"

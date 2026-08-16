@@ -25,7 +25,8 @@ const STOPWORDS: &[&str] = &[
 /// see, but it does mean an accented or non-Latin observation tokenizes to
 /// nothing and therefore never clusters. Widening this would change every
 /// mined `<slug>-<hash8>` id, so it is a deliberate migration, not a
-/// drive-by tweak.
+/// drive-by tweak. This is the **id space**; ephemeral relevance scoring runs
+/// in [`score_terms`]'s Unicode-aware space instead (#3298).
 pub(crate) fn terms(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -43,6 +44,84 @@ pub(crate) fn terms(text: &str) -> Vec<String> {
     if current.len() > 2 && !STOPWORDS.contains(&current.as_str()) {
         out.push(current);
     }
+    out
+}
+
+/// `true` for a character of an unsegmented CJK script (Han ideographs,
+/// hiragana, katakana) — scripts that put no spaces between words, so a
+/// word-accumulating tokenizer would collapse a whole sentence into one
+/// exact-match-only term. [`score_terms`] emits character bigrams for runs of
+/// these instead. Hangul is deliberately absent: Korean is space-separated,
+/// so the ordinary word path handles it.
+fn is_unsegmented_cjk(ch: char) -> bool {
+    matches!(u32::from(ch),
+        0x3040..=0x30FF          // hiragana + katakana
+        | 0x31F0..=0x31FF        // katakana phonetic extensions
+        | 0x3400..=0x4DBF        // CJK unified ideographs extension A
+        | 0x4E00..=0x9FFF        // CJK unified ideographs
+        | 0xF900..=0xFAFF        // CJK compatibility ideographs
+        | 0x20000..=0x2EBEF     // CJK unified ideographs extensions B–F
+    )
+}
+
+/// Split text into lowercased, de-stopped terms for **ephemeral relevance
+/// scoring only** — skill selection (`crate::skills::select_skills`). Scores
+/// are recomputed from scratch every turn and mint no ids, so this tokenizer
+/// can be Unicode-aware without the migration [`terms`]'s doc warns about.
+///
+/// **Two token spaces, on purpose (#3298).** [`terms`] is the *id space*: it
+/// feeds clustering, dedup, and the minted `<slug>-<hash8>` ids, so widening
+/// it re-tokenizes every stored artifact's provenance. This function is the
+/// *scoring space*: nothing durable derives from it. The module history (two
+/// byte-identical private copies that risked drifting) is why this split is
+/// named so loudly — these two are **not** copies of each other, and
+/// reconciling them means the id migration, never editing one to match the
+/// other.
+///
+/// Shape: space-separated scripts (Latin with diacritics, Cyrillic, Greek,
+/// Hangul, …) accumulate word characters (`char::is_alphanumeric` plus `_`)
+/// into words kept when longer than two **characters** (not bytes) and not
+/// stopwords. Runs of unsegmented CJK have no spaces to split on, so they are
+/// emitted as character bigrams — the standard cheap approximation for CJK
+/// retrieval — with a one-character run kept as-is (each ideograph carries
+/// word-level meaning, so the >2 gate does not apply). Other unsegmented
+/// scripts (Thai, Khmer, …) fall through the word path and become one long
+/// term: exact-phrase matching only, which is still strictly more than the
+/// zero terms the ASCII tokenizer yields for them.
+pub(crate) fn score_terms(text: &str) -> Vec<String> {
+    fn flush_word(word: &mut String, out: &mut Vec<String>) {
+        if word.chars().count() > 2 && !STOPWORDS.contains(&word.as_str()) {
+            out.push(std::mem::take(word));
+        } else {
+            word.clear();
+        }
+    }
+    fn flush_cjk(run: &mut Vec<char>, out: &mut Vec<String>) {
+        match run.len() {
+            0 => {}
+            1 => out.push(run[0].to_string()),
+            _ => out.extend(run.windows(2).map(|pair| pair.iter().collect::<String>())),
+        }
+        run.clear();
+    }
+
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut run: Vec<char> = Vec::new();
+    for ch in text.to_lowercase().chars() {
+        if is_unsegmented_cjk(ch) {
+            flush_word(&mut word, &mut out);
+            run.push(ch);
+        } else if ch.is_alphanumeric() || ch == '_' {
+            flush_cjk(&mut run, &mut out);
+            word.push(ch);
+        } else {
+            flush_word(&mut word, &mut out);
+            flush_cjk(&mut run, &mut out);
+        }
+    }
+    flush_word(&mut word, &mut out);
+    flush_cjk(&mut run, &mut out);
     out
 }
 
@@ -195,4 +274,68 @@ pub(crate) fn cluster_observations<T>(
         }
     }
     clusters.into_iter().map(|(_, members)| members).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The id space stays ASCII-only until the #3298 migration: this behavior
+    /// is bad but stable, and every minted `<slug>-<hash8>` id depends on it.
+    /// If this test breaks, an id migration is in flight — reconcile
+    /// `migration_contract` too.
+    #[test]
+    fn id_space_terms_is_still_ascii_only() {
+        // A non-ASCII char is only a boundary, so an accented word degrades
+        // to its ASCII fragments…
+        assert_eq!(terms("café serveur"), vec!["caf", "serveur"]);
+        // …and fully non-Latin text tokenizes to nothing at all.
+        assert!(terms("форматировать запросы").is_empty());
+        assert!(terms("数据库查询格式化").is_empty());
+        assert_eq!(
+            terms("format sql queries"),
+            vec!["format", "sql", "queries"]
+        );
+    }
+
+    #[test]
+    fn score_terms_matches_terms_on_ascii() {
+        let text = "please format the sql_query for me in main.rs";
+        assert_eq!(score_terms(text), terms(text));
+    }
+
+    #[test]
+    fn score_terms_keeps_accented_latin_cyrillic_and_greek_words() {
+        assert_eq!(score_terms("Café serveur"), vec!["café", "serveur"]);
+        assert_eq!(
+            score_terms("форматировать запросы SQL"),
+            vec!["форматировать", "запросы", "sql"]
+        );
+        assert_eq!(score_terms("βάση δεδομένων"), vec!["βάση", "δεδομένων"]);
+    }
+
+    /// The length gate counts characters, not bytes: a two-character Cyrillic
+    /// token is 4 bytes and must still be dropped like a two-letter ASCII one.
+    #[test]
+    fn score_terms_length_gate_counts_chars_not_bytes() {
+        assert!(score_terms("до").is_empty());
+    }
+
+    #[test]
+    fn score_terms_emits_cjk_character_bigrams() {
+        assert_eq!(
+            score_terms("数据库查询"),
+            vec!["数据", "据库", "库查", "查询"]
+        );
+        // A lone ideograph is a word on its own — kept, not length-gated.
+        assert_eq!(score_terms("查"), vec!["查"]);
+    }
+
+    #[test]
+    fn score_terms_splits_mixed_cjk_and_latin_runs() {
+        assert_eq!(
+            score_terms("格式化 SQL 查询"),
+            vec!["格式", "式化", "sql", "查询"]
+        );
+    }
 }

@@ -337,6 +337,38 @@ async fn exit_zero_captures_stdout() {
     }
 }
 
+/// Witness for #3303: a silent success (exit 0, empty stdout) must NOT render
+/// as the empty string on every call — that is byte-identical output whatever
+/// the arguments, the exact shape the stagnation detector kills a legitimate
+/// work loop over. Distinct inputs must render distinct outputs, while an
+/// identical-input repeat must still render identically so genuine stagnation
+/// is still caught.
+#[tokio::test]
+async fn silent_success_is_stamped_with_the_input_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = script_tool(dir.path(), "silent.sh", "#!/bin/sh\nexit 0\n", 5000);
+    let render = |input: Value| {
+        let tool = &tool;
+        let dir = dir.path();
+        async move {
+            match run_custom(tool, &input, dir).await {
+                ToolOutput::Ok { content, .. } => content,
+                ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
+            }
+        }
+    };
+    let a = render(serde_json::json!({ "path": "a.rs" })).await;
+    let b = render(serde_json::json!({ "path": "b.rs" })).await;
+    let a_again = render(serde_json::json!({ "path": "a.rs" })).await;
+    assert_ne!(a, b, "distinct inputs rendered byte-identical output");
+    assert_eq!(
+        a, a_again,
+        "an identical-input repeat must render identically"
+    );
+    assert!(a.contains("`t` exited 0 with no output"), "{a}");
+    assert!(a.contains("input sha256/8 "), "{a}");
+}
+
 /// Witness for #749: a script that is transiently open for writing spawns
 /// anyway once the writer goes away. Holding a write descriptor anywhere
 /// in the system — here, in the test process itself — makes `exec` fail
