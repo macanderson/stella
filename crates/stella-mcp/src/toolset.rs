@@ -857,9 +857,7 @@ impl ToolExecutor for McpToolSet {
     /// `readOnlyHint`/`idempotentHint` preserved verbatim at untrusted
     /// provenance, `destructiveHint` *raising* the grade. The placeholder
     /// tools (needs-auth, resources) resolve through the same declared path
-    /// via `Self::declared_contract`'s route miss (a private helper, so no
-    /// intra-doc link — rustdoc's `-D private-intra-doc-links` would reject
-    /// one from this public doc).
+    /// via `Self::declared_contract`'s route miss.
     fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
         let mut contracts = Vec::new();
         if let Some(native) = &self.native {
