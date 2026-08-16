@@ -427,6 +427,10 @@ impl TomlConfig {
             enterprise_telemetry: enterprise_telemetry
                 .and_then(|value| serde_json::to_value(value).ok()),
             authority_policy: Default::default(),
+            // Both computed after the merge, never carried by a document —
+            // this is one scope's parse, and the ceiling is a fact about the
+            // managed scope alone.
+            steering_ceiling: Default::default(),
         };
 
         (settings, McpConfig { servers })

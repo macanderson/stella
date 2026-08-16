@@ -288,6 +288,7 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
     // malformed value can't make this load fail (setenv races any getenv).
     let _env = crate::test_env::lock();
     let authority = crate::settings::AuthorityPolicy {
+        steering_allowed: true,
         project_prompts_allowed: true,
         project_custom_tools_allowed: false,
         media_requires_host_approval: true,

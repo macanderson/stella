@@ -35,6 +35,27 @@ pub struct ContextSettings {
     pub efficacy: EfficacySettings,
     pub retention: RetentionSettings,
     pub retrieval: RetrievalSettings,
+    pub steering: SteeringSettings,
+}
+
+/// The steering plane's master switch (#3243).
+///
+/// Ships **on**: the four selection planes it will absorb are all on today,
+/// so a default of `false` would be a silent capability removal dressed as a
+/// new feature. Setting it `false` withholds every non-prefix injection —
+/// recalled frames, the volatile record channel, and skills — and leaves the
+/// byte-stable system prefix untouched, which is what makes it a clean
+/// control arm rather than a different agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SteeringSettings {
+    pub enabled: bool,
+}
+
+impl Default for SteeringSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Master switch for the whole adaptive-context lifecycle.

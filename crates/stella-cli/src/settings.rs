@@ -236,6 +236,32 @@ pub struct Settings {
     /// when parsing individual scopes so repository text cannot supply it.
     #[serde(skip)]
     pub authority_policy: AuthorityPolicy,
+    /// Whether the ORG's managed scope permits steering at all, captured from
+    /// the managed snapshot alone by [`Settings::merge_captured_scopes`].
+    ///
+    /// Separate from `context.steering.enabled` because the two answer
+    /// different questions and compose in one direction only: the block is
+    /// the ordinary last-wins chain that any scope — and the environment —
+    /// may move, while this is the ceiling over it. Folding the ceiling into
+    /// the block would make them indistinguishable, and then an env var that
+    /// is *supposed* to re-enable steering after a project turned it off
+    /// could not tell that case apart from the org having forbidden it.
+    #[serde(skip)]
+    steering_ceiling: SteeringCeiling,
+}
+
+/// The managed scope's answer to "may this workspace steer at all?".
+///
+/// A named type rather than a bare `bool` for the reason `Toggle` is not a
+/// `bool` either: `true` here means "the org expressed no objection", which
+/// is the default and is *not* the same fact as "the org enabled it".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SteeringCeiling(bool);
+
+impl Default for SteeringCeiling {
+    fn default() -> Self {
+        Self(true)
+    }
 }
 
 /// `create_worktrees`: whether a run does its work in a throwaway git worktree
@@ -1336,6 +1362,37 @@ pub struct McpSettings {
 }
 
 impl Settings {
+    /// Whether the steering plane may inject anything this session (#3243).
+    ///
+    /// The precedence, which is the house convention plus the one deliberate
+    /// inversion the tool ceiling already uses:
+    ///
+    /// ```text
+    /// built-in default (ON)
+    ///   < user settings < org-managed < project settings
+    ///   < STELLA_CONTEXT_STEERING        ← env wins the ordinary chain
+    ///   ⟂ managed ceiling applied LAST   ← the org's "off" is final
+    /// ```
+    ///
+    /// Two sentences: **anyone may turn steering off; only the org may
+    /// prevent it being turned back on.** That is exactly `apply_tool_ceiling`'s
+    /// shape, so this needs no new concept — and it is why the ceiling is a
+    /// separate field rather than folded into the merged block. Folded in,
+    /// "the project turned it off" and "the org forbade it" would be the same
+    /// value, and the env var could not be allowed to override the first
+    /// without also overriding the second.
+    pub fn steering_enabled(&self) -> bool {
+        if !self.steering_ceiling.0 {
+            return false;
+        }
+        if let Some(from_env) = env_toggle("STELLA_CONTEXT_STEERING") {
+            return from_env;
+        }
+        self.context
+            .as_ref()
+            .map_or(true, |context| context.steering.enabled)
+    }
+
     /// The merged `tools` section as the policy the runtime enforces. The
     /// managed ceiling is already folded in by [`Settings::load`], so this is
     /// the whole answer — no caller needs to re-apply authority.
@@ -1419,6 +1476,20 @@ struct ProjectTrust {
 
 pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
+}
+
+/// The tri-state reading of the same variable: unset, explicitly on, or
+/// explicitly off.
+///
+/// [`env_flag`] collapses "unset" and "set to something falsy" into `false`,
+/// which is right for a flag that only ever turns something ON. A switch that
+/// defaults on needs the third state, because "unset" must mean "defer to
+/// settings" and not "off". Same strict truthy vocabulary, so
+/// `STELLA_CONTEXT_STEERING=false` turns steering off rather than opening it
+/// — the `STELLA_TRUST_PROJECT` defect that gave [`truthy_flag`] its
+/// allowlist.
+pub(crate) fn env_toggle(name: &str) -> Option<bool> {
+    std::env::var_os(name).map(|v| truthy_flag(&v))
 }
 
 /// The pure predicate behind [`env_flag`], split out so it is testable

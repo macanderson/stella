@@ -37,6 +37,12 @@ pub struct ManagedAuthoritySettings {
 /// The monotonic authority available to runtime adapters after settings load.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorityPolicy {
+    /// Whether the steering plane may inject anything this session (#3243).
+    /// Resolved once by [`Settings::load`] from the whole precedence chain —
+    /// settings, `STELLA_CONTEXT_STEERING`, and the org's ceiling — so every
+    /// injection site asks one already-answered question instead of
+    /// re-deriving it and drifting.
+    pub steering_allowed: bool,
     pub project_prompts_allowed: bool,
     pub project_custom_tools_allowed: bool,
     pub media_requires_host_approval: bool,
@@ -45,6 +51,7 @@ pub struct AuthorityPolicy {
 impl Default for AuthorityPolicy {
     fn default() -> Self {
         Self {
+            steering_allowed: true,
             project_prompts_allowed: false,
             project_custom_tools_allowed: false,
             media_requires_host_approval: true,
@@ -59,6 +66,11 @@ impl AuthorityPolicy {
     ) -> Self {
         let permits = |toggle: Option<Toggle>| toggle != Some(Toggle::Off);
         Self {
+            // Permissive here and resolved in `merge_captured_scopes`, which
+            // is the only place that holds the managed snapshot AND the merged
+            // block the chain needs. `compute` sees the managed authority
+            // block alone, and steering is not one of its keys.
+            steering_allowed: true,
             project_prompts_allowed: project_trusted
                 && permits(managed.and_then(|policy| policy.project_prompts)),
             project_custom_tools_allowed: project_trusted
