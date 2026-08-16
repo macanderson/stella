@@ -4,6 +4,7 @@
 #
 #   ./scripts/check-releases-published.sh [--grace-secs N]
 #   ./scripts/check-releases-published.sh --select --now <unix> --grace-secs <n>   # pure: JSON on stdin
+# --help text ends here.
 #
 # ── The silence ──────────────────────────────────────────────────────────────
 #
@@ -41,6 +42,9 @@
 # silence it exists to break lasts that much longer.
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 grace_secs=$((90 * 60))
 select_only=0
 update=0
@@ -60,7 +64,7 @@ while [ $# -gt 0 ]; do
     --now) now="${2:?--now needs a unix timestamp}"; shift 2 ;;
     --select) select_only=1; shift ;;
     --update) update=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    -h|--help) print_help_header "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done

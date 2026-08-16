@@ -22,13 +22,16 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/lib/help-header.sh
+. "$(dirname "$0")/lib/help-header.sh"
+
 LOOPS=3
 CLEAN=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --loops)    LOOPS="$2"; shift 2 ;;
     --no-clean) CLEAN=0; shift ;;
-    -h|--help)  sed -n '2,22p' "$0" | sed 's/^#//; s/^ //'; exit 0 ;;
+    -h|--help)  print_help_header "$0"; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
