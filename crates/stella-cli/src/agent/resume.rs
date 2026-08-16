@@ -249,14 +249,31 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 // that never existed.
                 pipeline_config.roster = frame_config.roster();
                 pipeline_config.max_revisions = frame_config.max_revisions;
+                // #3243 Phase 3 (D5): a resumed run recalls again. The
+                // original leg's context died with its process — the frame
+                // restores goal, roster and revisions, but frames were never
+                // checkpointed — so re-querying the store is recovery, not a
+                // double-bill: nothing of the first recall survives to
+                // duplicate. Degrades to no frames exactly as before when the
+                // workspace has no memory.
+                let memory = crate::memory::SessionMemory::open_for_session(
+                    &cfg.workspace_root,
+                    false,
+                    &cfg.authority,
+                    &active_rules,
+                );
                 let no_recall = NoContextRecall;
+                let recall: &dyn stella_pipeline::ContextRecallPort = match memory.as_ref() {
+                    Some(m) => m,
+                    None => &no_recall,
+                };
                 let approval_gate =
                     approval_gate_for(cfg, approval_capability_for(true, true, false, false));
                 let ports = PipelinePorts {
                     router: &router,
                     providers: &resolver,
                     tools: &tools,
-                    recall: &no_recall,
+                    recall,
                     repo: &ws_ports.repo_structure,
                     repo_status: &ws_ports.repo_status,
                     diagnostics: &ws_ports.diagnostic_runner,

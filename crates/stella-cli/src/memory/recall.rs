@@ -185,7 +185,11 @@ impl SessionMemory {
         // this prompt names a matching path, task, or keyword.
         let record = self.turn_record_rendered(prompt);
 
-        let set = query_gathered_plane(prompt, &recall.frames, &selected, record.as_ref());
+        let signal = stella_core::steering::TurnSignal {
+            prompt,
+            ..Default::default()
+        };
+        let set = query_gathered_plane(&signal, &recall.frames, &selected, record.as_ref());
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let mut sections: Vec<String> = Vec::new();
@@ -252,7 +256,11 @@ impl SessionMemory {
         );
         let record = self.turn_record_rendered(prompt);
 
-        let set = query_gathered_plane(prompt, &[], &selected, record.as_ref());
+        let signal = stella_core::steering::TurnSignal {
+            prompt,
+            ..Default::default()
+        };
+        let set = query_gathered_plane(&signal, &[], &selected, record.as_ref());
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let mut sections: Vec<String> = Vec::new();
@@ -264,6 +272,88 @@ impl SessionMemory {
             sections.push(section);
         }
         sections.push(render_today_section(now_unix_secs()));
+        (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
+    }
+
+    /// The volatile block for a turn that has DRIFTED from its opening
+    /// prompt (#3243 Phase 3) — the same three selectors as
+    /// [`Self::recall_block_reported`], queried against what the turn has
+    /// become instead of what it was asked.
+    ///
+    /// The signal's touched paths do the work the prompt could not: they
+    /// join the recall anchors (when they resolve to real files — a created
+    /// file qualifies the moment it exists), they widen the domain scope
+    /// skills are selected in, and they join the record channel's
+    /// `applies_to` path facts. The prompt still carries the lexical query —
+    /// drift changes *where* the turn is, not what it was asked to do.
+    ///
+    /// Two deliberate omissions against the pre-turn block: no date section
+    /// (the turn-opening block already carries today, and repeating it
+    /// mid-turn buys nothing), and no `ContextRecall` telemetry — the
+    /// mid-turn event channel this would report into is a declared gap,
+    /// tracked as #3366. `None` when
+    /// nothing surfaced, when the turn is an A/B control, or when steering
+    /// is off — the same gates, for the same reasons.
+    pub async fn signal_recall_block(
+        &self,
+        signal: &stella_core::steering::TurnSignal<'_>,
+    ) -> Option<String> {
+        if self.ab_suppressed || !self.steering_enabled {
+            return None;
+        }
+        let prompt = signal.prompt;
+
+        // Anchors: what the goal names, then what the turn touched — capped
+        // so a busy turn cannot turn one re-query into a full-graph walk.
+        const MAX_SIGNAL_ANCHORS: usize = 8;
+        let mut anchors = goal_path_anchors(prompt, &self.workspace_root);
+        for path in signal.touched_paths {
+            if anchors.len() >= MAX_SIGNAL_ANCHORS {
+                break;
+            }
+            if !anchors.contains(path) && self.workspace_root.join(path).is_file() {
+                anchors.push(path.clone());
+            }
+        }
+        let domains = crate::contextgraph::query_domain_scope(&self.domains, &anchors);
+
+        let recall = self.recalled_frames_anchored(prompt, anchors, |_| {}).await;
+
+        let all_skills = self.load_skills();
+        let selected =
+            skills::select_skills(&all_skills, prompt, &domains, &SelectionConfig::default());
+
+        let mut paths = turn_path_tokens(prompt);
+        for path in signal.touched_paths {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        let record = self.record_registry.as_ref().map(|registry| {
+            let facts = stella_core::records::TurnFacts {
+                text: prompt,
+                paths: &paths,
+            };
+            (
+                registry,
+                registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET)),
+            )
+        });
+
+        let set = query_gathered_plane(signal, &recall.frames, &selected, record.as_ref());
+        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+
+        let mut sections: Vec<String> = Vec::new();
+        if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
+            sections.push(section);
+        }
+        let kept = kept_skills(&selected, &set);
+        if !kept.is_empty() {
+            sections.push(skills::render_skills_section(&kept));
+        }
+        if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
+            sections.push(section);
+        }
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
 
@@ -387,18 +477,33 @@ impl SessionMemory {
     pub(super) async fn recalled_frames_reporting(
         &self,
         goal: &str,
+        report: impl FnMut(String),
+    ) -> Recall {
+        let anchors = goal_path_anchors(goal, &self.workspace_root);
+        self.recalled_frames_anchored(goal, anchors, report).await
+    }
+
+    /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
+    /// caller — the seam the proactive re-query (#3243 Phase 3) queries
+    /// through, because a drifted turn's best anchors are the paths it has
+    /// TOUCHED, which the goal string cannot name.
+    pub(super) async fn recalled_frames_anchored(
+        &self,
+        goal: &str,
+        anchors: Vec<String>,
         mut report: impl FnMut(String),
     ) -> Recall {
-        // Both suppressions live HERE, at the frame query both the rendered
-        // block and the pipeline's `ContextRecallPort` go through — not at
-        // the block render alone. A control turn whose port still answered
-        // would feed frames to the goal message, the planner, and the witness
-        // author while the block above showed none, which is not a control
-        // arm at all: the turn would be measured as frameless while running
-        // on recalled context (#1221). The steering switch stops here for the
-        // same reason: a steering-off session whose port still answered would
-        // leak the exact non-prefix injection the switch withholds — through
-        // the surface (a pipeline turn) that never renders the block (#3243).
+        // Both withholding switches live HERE, at the frame query the rendered
+        // block, the pipeline's `ContextRecallPort`, and the mid-turn re-query
+        // all go through — not at the block renders alone. A control turn
+        // whose port still answered would feed frames to the goal message, the
+        // planner, and the witness author while the block above showed none,
+        // which is not a control arm at all: the turn would be measured as
+        // frameless while running on recalled context (#1221). Steering off is
+        // the same leak with an operator behind it instead of an experiment:
+        // gated only at the renders, the port kept injecting recalled frames
+        // into pipeline, fleet, and resumed turns after the org said no
+        // (#3243).
         if self.ab_suppressed || !self.steering_enabled {
             return Recall::default();
         }
@@ -407,14 +512,15 @@ impl SessionMemory {
             query_text: Some(goal.to_string()),
             embedding: None,
             kinds: vec![],
-            // Workspace files the goal names verbatim, as anchors: the
-            // code-graph provider answers anchors with each file's graph
-            // NEIGHBORHOOD (symbols + imports + importers), not just
-            // goal-token definition lookups — deterministic localization
-            // into both the planner prompt and the worker's recall block,
-            // instead of hoping the model's first move is a graph_query
-            // (#342 seam 3).
-            anchors: goal_path_anchors(goal, &self.workspace_root),
+            // Workspace files as anchors: the code-graph provider answers
+            // anchors with each file's graph NEIGHBORHOOD (symbols + imports
+            // + importers), not just goal-token definition lookups —
+            // deterministic localization into both the planner prompt and
+            // the worker's recall block, instead of hoping the model's first
+            // move is a graph_query (#342 seam 3). The default set is what
+            // the goal names verbatim; a re-query passes the paths the turn
+            // has since touched.
+            anchors,
             // Settings-backed since #712 deliverable 8; the defaults are the
             // literals that used to be here.
             max_frames: self.retrieval.max_frames,
@@ -634,7 +740,7 @@ pub(super) fn frame_recall_line(f: &RecalledFrame) -> String {
 /// goes through (#3349). The frame slice is empty on pipeline-driven turns,
 /// whose frames travel on the pipeline's own recall port.
 fn query_gathered_plane(
-    prompt: &str,
+    signal: &stella_core::steering::TurnSignal<'_>,
     frames: &[RecalledFrame],
     selected: &[skills::SelectedSkill],
     record: Option<&(&stella_core::records::Registry, RenderedChannel)>,
@@ -652,10 +758,7 @@ fn query_gathered_plane(
         candidates,
         source_drops,
     };
-    plane.query(&stella_core::steering::TurnSignal {
-        prompt,
-        ..Default::default()
-    })
+    plane.query(signal)
 }
 
 /// The frames the plane kept, in recall's own order, ready for

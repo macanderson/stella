@@ -1607,6 +1607,7 @@ pub async fn run_deck_session(
                         &steering,
                         &lead_pause,
                         recall_event,
+                        memory.as_ref(),
                     )
                     .await
                 }
@@ -3917,8 +3918,10 @@ async fn run_lead_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
+    session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
+    let requery = session_memory.map(|memory| crate::memory::SessionRequery::new(memory, messages));
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let forwarder = spawn_forwarder(
@@ -3974,6 +3977,9 @@ async fn run_lead_turn(
         .with_gate(pause.turn_gate());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
+        }
+        if let Some(requery) = &requery {
+            engine = engine.with_requery(requery); // #3243 Phase 3
         }
         engine.run_turn(messages, budget, &tx).await
     };
