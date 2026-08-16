@@ -39,7 +39,8 @@ use crate::settings::{Toggle, ToolScopePolicies, ToolsSettings};
 /// landed) and the workspace's custom tools.
 ///
 /// `base` must be the executor from BELOW
-/// [`crate::agent::PolicyToolSet`]: the panel lists what could be switched on,
+/// [`crate::tool_policy::PolicyToolSet`]: the panel lists what could be
+/// switched on,
 /// not what currently is, so reading a filtered surface would make every tool
 /// an operator turned off disappear from the editor that turns it back on.
 pub(crate) fn session_tool_names(
