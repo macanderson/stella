@@ -121,7 +121,7 @@ pub struct SteeringCandidate {
     /// candidate's identity and never its rendered text.
     pub handle: String,
     /// Relevance, comparable **only within a source**. Cross-source ranking
-    /// reads [`SteeringCandidate::priority`], never this: four engines that
+    /// reads the fixed `source_rank` precedence, never this: four engines that
     /// each normalize differently do not produce one number, and pretending
     /// they do is how a rule loses to a tool schema.
     pub score: f64,
@@ -207,7 +207,7 @@ pub trait SteeringPlane {
 /// "the volatile block is too big" is a question no single piece of code can
 /// answer.
 ///
-/// Ordering is [`source_rank`] first, then `score` descending, then `handle`
+/// Ordering is `source_rank` first, then `score` descending, then `handle`
 /// — the last is not a nicety. Selection feeds a prompt, prompt bytes feed
 /// the cache, and a tie broken by hash order would reorder the block between
 /// two otherwise identical turns and re-bill the tail (invariant 7).
