@@ -54,13 +54,13 @@ Thumbs.db
 .oxagen/
 .memories/
 
-# The ultra-audit skill ships in source (#847, #832): re-include just the
-# skills subtree of the root .stella/, while the rest stays per-workspace
-# scratch. Audit reports still land in the ignored .ultra-audit/ (below).
+# The root .stella/ is per-workspace scratch and stays ignored, with the one
+# tracked exception below (rules/). Skills are deliberately NOT tracked:
+# Stella ships with no bundled skills -- personal skills live in the user
+# scope (~/.stella/skills/), and anything auto-promoted into the local
+# .stella/skills/ stays on this machine.
 !/.stella/
 /.stella/*
-!/.stella/skills/
-!/.stella/skills/**
 
 # Published context records and their governance (#994, docs/context-pr.md).
 # These are the one part of `.stella/` that is deliberately NOT per-workspace
