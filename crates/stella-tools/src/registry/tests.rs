@@ -177,6 +177,66 @@ async fn state_tools_round_trip_through_registry_dispatch() {
     assert!(out.is_error(), "a deleted key must not read back");
 }
 
+/// Witness for #3297: two `save_state` calls writing *different same-length*
+/// content under one key must render distinct success outputs. The engine's
+/// stagnation detector (`stella-core`'s `loop_detect`, rung 3) kills
+/// consecutive same-tool calls whose outputs are byte-identical — whatever
+/// their arguments — so the old constant-shape `saved {key} (N bytes)`
+/// string let a legitimate checkpoint loop (a fixed-width counter updated
+/// under one key) be killed as stagnant mid-solve. The `sha256/8` suffix is
+/// the content-derived identity that makes the outputs distinct.
+#[tokio::test]
+async fn save_state_outputs_differ_for_different_same_length_content() {
+    let (_root, reg) = bare_registry();
+    let mut outputs = Vec::new();
+    for content in ["counter=1", "counter=2"] {
+        let ToolOutput::Ok { content } = reg
+            .execute(
+                "save_state",
+                &serde_json::json!({"key": "checkpoint", "content": content}),
+            )
+            .await
+        else {
+            panic!("save_state must succeed");
+        };
+        outputs.push(content);
+    }
+    assert!(
+        outputs[0].starts_with("saved checkpoint (9 bytes"),
+        "the `saved {{key}} ({{N}} bytes` prefix is stable — the identity is \
+         appended, never restructured: {:?}",
+        outputs[0]
+    );
+    assert_ne!(
+        outputs[0], outputs[1],
+        "different same-length content under one key must render distinct \
+         outputs, or the stagnation detector kills a legitimate checkpoint \
+         loop as stagnant (#3297)"
+    );
+}
+
+/// The complement that guards the detector's contract: re-saving *identical*
+/// bytes must still render byte-identical output. A loop genuinely stuck
+/// re-saving the same state is exactly what the detector exists to catch,
+/// and only a content-derived suffix — never a timing, never randomness
+/// (#2706) — keeps that catch intact.
+#[tokio::test]
+async fn save_state_output_is_identical_for_identical_content() {
+    let (_root, reg) = bare_registry();
+    let save = serde_json::json!({"key": "checkpoint", "content": "counter=1"});
+    let ToolOutput::Ok { content: first } = reg.execute("save_state", &save).await else {
+        panic!("save_state must succeed");
+    };
+    let ToolOutput::Ok { content: second } = reg.execute("save_state", &save).await else {
+        panic!("save_state must succeed");
+    };
+    assert_eq!(
+        first, second,
+        "re-saving identical bytes must render byte-identical output — the \
+         stagnation detector's catch of a genuinely stuck loop depends on it"
+    );
+}
+
 /// `get_environment` dispatches through the registry and reports the scratch
 /// directory the registry created — the one fact the CLI's prompt block
 /// cannot carry (#3102).
