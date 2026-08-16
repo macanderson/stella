@@ -93,7 +93,11 @@ expect "a synced lock passes" 0 "OK — Cargo.lock resolves" --manifest-dir "$tm
 # twice in a day (#3311 then #3323 x #3311); it is the reason the guard exists,
 # so it is the first thing proven.
 make_workspace "$tmp/skewed" "0.1.0"
-perl -0pi -e 's/^version = "0\.1\.0"$/version = "0.2.0"/m' "$tmp/skewed/Cargo.toml"
+# sed-to-temp rather than `sed -i` (BSD and GNU disagree on -i's argument) or
+# perl (an extra toolchain dependency for one substitution).
+sed 's/^version = "0\.1\.0"$/version = "0.2.0"/' "$tmp/skewed/Cargo.toml" \
+  >"$tmp/skewed/Cargo.toml.new"
+mv "$tmp/skewed/Cargo.toml.new" "$tmp/skewed/Cargo.toml"
 expect "a version bump without a relock fails" 1 "out of sync with the manifests" \
   --manifest-dir "$tmp/skewed"
 

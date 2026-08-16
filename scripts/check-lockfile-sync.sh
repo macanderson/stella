@@ -60,7 +60,10 @@ while [ $# -gt 0 ]; do
     shift 2
     ;;
   -h | --help)
-    sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
+    # The whole comment block after the shebang, bounded by its first
+    # non-comment line — hardcoded line numbers truncate silently the first
+    # time the header grows.
+    awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
     exit 0
     ;;
   *)

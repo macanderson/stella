@@ -55,6 +55,15 @@
 #   scripts/main-canary.sh --manifest-dir DIR   # check a fixture tree (tests)
 set -euo pipefail
 
+# A decided verdict must survive a reader that closes the pipe early (#1815).
+# Unlike the buffered guards, this script prints per check, so a `| head -1`
+# reader can close the pipe while writes are still coming. `trap '' PIPE`
+# turns the resulting SIGPIPE into a failed write instead of a kill, and every
+# progress write below carries `|| true` so `set -e` cannot promote that
+# failed write into the exit status. The exit status is the verdict, never
+# the fate of a printf.
+trap '' PIPE
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 announce=0
@@ -102,7 +111,10 @@ while [ $# -gt 0 ]; do
     shift 2
     ;;
   -h | --help)
-    sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
+    # The whole comment block after the shebang, bounded by its first
+    # non-comment line — hardcoded line numbers truncate silently the first
+    # time the header grows.
+    awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
     exit 0
     ;;
   *)
@@ -143,9 +155,9 @@ for row in "${checks[@]}"; do
   name="${row%%|*}"
   cmd="${row#*|}"
   if out="$(eval "$cmd" 2>&1)"; then
-    printf 'main-canary: ok   %s\n' "$name"
+    printf 'main-canary: ok   %s\n' "$name" || true
   else
-    printf 'main-canary: FAIL %s\n' "$name" >&2
+    printf 'main-canary: FAIL %s\n' "$name" >&2 || true
     failed_names="${failed_names}${failed_names:+, }${name}"
     failures="${failures}### \`${name}\`
 
@@ -164,10 +176,16 @@ green=1
 
 gh_run() {
   if [ "$dry_run" -eq 1 ]; then
-    printf 'main-canary: [dry-run] gh %s\n' "$*"
+    printf 'main-canary: [dry-run] gh %s\n' "$*" || true
     return 0
   fi
-  gh "$@"
+  # Best-effort, like the lookup below: the verdict is already decided, and a
+  # gh outage while announcing must not turn a green main red under `set -e`.
+  # The failure still lands in the workflow log, where a broken announcer is
+  # an operational problem — not a statement about the tree.
+  if ! gh "$@"; then
+    printf 'main-canary: WARN — "gh %s" failed; the verdict is unaffected\n' "$*" >&2 || true
+  fi
 }
 
 # The open canary issue, or empty. Best-effort by design: a gh outage must not
@@ -192,7 +210,7 @@ Checked: $(printf '%s ' "${checks[@]%%|*}")"
       gh_run issue close "$open_issue" \
         --reason completed \
         --comment "Closed by the post-merge canary at ${short_sha}."
-      printf 'main-canary: main recovered — closed #%s\n' "$open_issue"
+      printf 'main-canary: main recovered — closed #%s\n' "$open_issue" || true
     fi
   else
     body="The post-merge canary found \`main\` broken at \`${short_sha}\`.
@@ -229,7 +247,7 @@ PR, so the next contributor inherits a failure they did not cause.
 
     if [ -n "$open_issue" ]; then
       gh_run issue comment "$open_issue" --body "Still red at \`${short_sha}\` — failing: ${failed_names}."
-      printf 'main-canary: still red — commented on #%s\n' "$open_issue"
+      printf 'main-canary: still red — commented on #%s\n' "$open_issue" || true
     else
       # Ensure the label first: `gh issue create --label` fails outright on a
       # label that does not exist, which would break the canary at the exact
@@ -243,15 +261,15 @@ PR, so the next contributor inherits a failure they did not cause.
         --title "main is red: ${failed_names} fails on the merged tree" \
         --label "$label" \
         --body "$body"
-      printf 'main-canary: opened an issue for %s\n' "$failed_names"
+      printf 'main-canary: opened an issue for %s\n' "$failed_names" || true
     fi
   fi
 fi
 
 if [ "$green" -eq 1 ]; then
-  printf 'main-canary: OK — main composes green at %s.\n' "$short_sha"
+  printf 'main-canary: OK — main composes green at %s.\n' "$short_sha" || true
   exit 0
 fi
 
-printf 'main-canary: FAIL — main is red at %s (%s).\n' "$short_sha" "$failed_names" >&2
+printf 'main-canary: FAIL — main is red at %s (%s).\n' "$short_sha" "$failed_names" >&2 || true
 exit 1
