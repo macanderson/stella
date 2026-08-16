@@ -682,7 +682,8 @@ mod tests {
         [
             include_str!("../../stella-serve/src/server.rs"),
             // The remoted ports — home of the `tools.contracts` witness
-            // (#3286).
+            // (#3286). The witness tests live in the split-out submodule
+            // file, which `include_str!` of the parent does not pull in.
             include_str!("../../stella-serve/src/remote.rs"),
             // `remote.rs` split its tests into a sibling submodule under the
             // file-size gate, so the witnesses live here — the same reason
