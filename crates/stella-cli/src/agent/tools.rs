@@ -346,6 +346,11 @@ pub(crate) struct SessionPlane {
     /// The turn's event sink, used to bridge each candidate registry's policy
     /// plane into the journal (#441).
     events: Option<stella_core::EventSender>,
+    /// The session's sub-agent runner, so candidates can delegate through it
+    /// (#3318). `None` leaves a candidate's `task` tool reporting sub-agents
+    /// as unavailable — which, with no command-executing built-in, leaves a
+    /// worker there unable to act at all.
+    sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
 }
 
 impl SessionPlane {
@@ -354,7 +359,20 @@ impl SessionPlane {
     pub(crate) fn new(events: stella_core::EventSender) -> Self {
         Self {
             events: Some(events),
+            sub_agents: None,
         }
+    }
+
+    /// Share the session's sub-agent runner with every candidate workspace
+    /// this plane builds. Pass `registry.sub_agent_dispatcher()` straight
+    /// through: `None` is the honest answer when the session itself has no
+    /// dispatcher attached.
+    pub(crate) fn with_sub_agents(
+        mut self,
+        dispatcher: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
+    ) -> Self {
+        self.sub_agents = dispatcher;
+        self
     }
 }
 
@@ -370,7 +388,7 @@ pub(crate) fn workspace_ports(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     session: SessionPlane,
 ) -> Result<WorkspacePorts, String> {
-    let SessionPlane { events } = session;
+    let SessionPlane { events, sub_agents } = session;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::WorkspacePorts,
     )?;
@@ -404,6 +422,9 @@ pub(crate) fn workspace_ports(
     }
     if let Some(events) = events {
         candidate_workspaces = candidate_workspaces.with_events(events);
+    }
+    if let Some(dispatcher) = sub_agents {
+        candidate_workspaces = candidate_workspaces.with_sub_agents(dispatcher);
     }
     Ok(WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },

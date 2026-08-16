@@ -367,7 +367,7 @@ async fn run_pipeline_one_shot(
             cfg,
             active_rules.clone(),
             mcp.clone(),
-            SessionPlane::new(tx.clone()),
+            SessionPlane::new(tx.clone()).with_sub_agents(registry.sub_agent_dispatcher()),
         )?;
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));

@@ -108,6 +108,78 @@ pub(super) fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
+/// A dispatcher that answers without running anything, so the assertion is
+/// about *reachability* — did the `task` tool find a runner — and not about
+/// what a child would do.
+struct StubDispatcher;
+
+#[async_trait::async_trait]
+impl stella_core::subagent::SubAgentDispatcher for StubDispatcher {
+    async fn dispatch(
+        &self,
+        _spec: stella_core::subagent::SubAgentSpec,
+    ) -> stella_core::subagent::SubAgentOutcome {
+        stella_core::subagent::SubAgentOutcome::Completed(stella_core::subagent::SubAgentReport {
+            summary: "STUB_CHILD_ANSWERED".into(),
+            truncated: false,
+            cost_usd: 0.0,
+            steps: 1,
+            absorbed_messages: 0,
+        })
+    }
+}
+
+/// The witness for #3318.
+///
+/// A candidate registry attached no sub-agent dispatcher, so `task` answered
+/// "sub-agents are unavailable in this session — do the work directly with
+/// your own tools" — advice a candidate cannot take, because the built-in
+/// surface has no command-executing tool. And since an authored witness
+/// forces a candidate even at N=1, ordinary single-candidate runs reached
+/// that state: one spent eleven minutes and $1.52 and did nothing at all.
+///
+/// Both halves are asserted, because only the pair shows the wiring is what
+/// carries the capability rather than something else in the harness.
+#[tokio::test]
+async fn a_candidate_delegates_through_the_session_runner_only_when_it_is_shared() {
+    let root = scaffold("subagents");
+    let call = serde_json::json!({"prompt": "what does this crate do", "description": "probe"});
+
+    let bare = GitCandidateWorkspaces::new(
+        root.clone(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    );
+    let ws = bare.create_workspace().await.unwrap();
+    let out = ws.tools().execute("task", &call).await;
+    let rendered = format!("{out:?}");
+    assert!(
+        rendered.contains("sub-agents are unavailable"),
+        "without a shared runner the candidate cannot delegate — if this stops \
+         being true the positive half below proves nothing: {rendered}"
+    );
+
+    let shared = GitCandidateWorkspaces::new(
+        root.clone(),
+        Default::default(),
+        Vec::new(),
+        crate::rules::ResolvedRules::default(),
+    )
+    .with_sub_agents(Arc::new(StubDispatcher));
+    let ws = shared.create_workspace().await.unwrap();
+    let out = ws.tools().execute("task", &call).await;
+    let rendered = format!("{out:?}");
+    assert!(
+        !rendered.contains("sub-agents are unavailable"),
+        "a candidate given the session's runner must be able to delegate: {rendered}"
+    );
+    assert!(
+        rendered.contains("STUB_CHILD_ANSWERED"),
+        "the call must reach the shared dispatcher, not merely stop erroring: {rendered}"
+    );
+}
+
 #[tokio::test]
 async fn snapshot_mirrors_dirty_staged_and_untracked_state_without_touching_the_real_tree() {
     let root = scaffold("snap");

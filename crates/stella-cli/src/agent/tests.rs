@@ -437,6 +437,36 @@ fn the_cached_prefix_carries_no_wall_clock_or_per_process_bytes() {
 }
 
 #[test]
+fn the_prefix_never_promises_a_shell_it_cannot_provide() {
+    // The built-in surface registers no command-executing tool, so nothing
+    // here can promise one: execution arrives only as an MCP or custom tool.
+    // The prompt already tells the model to "never assume a capability no
+    // schema names", and an unconditional "write commands in its dialect"
+    // contradicts that to its face. A real session read the shell line,
+    // found no tool that could run one, and had nowhere to go (#3319).
+    let root = tempfile::tempdir().expect("tempdir");
+    let cfg = cfg_for("zai");
+    let rules = crate::rules::ResolvedRules::default();
+    let prompt = build_system_prompt(&cfg, root.path(), &rules);
+
+    assert!(
+        !prompt.contains("write commands in its dialect"),
+        "the environment block must state the shell as a constant, never \
+         instruct the model to write commands for a tool that may not \
+         exist:\n{prompt}"
+    );
+    // The git-delta rule is the same promise in another voice: it names four
+    // commands to run, so it has to be conditioned on being able to run one.
+    if prompt.contains("git status") {
+        assert!(
+            prompt.contains("if a tool in your schema list can run a command"),
+            "the git-delta rule prescribes commands and must say what it \
+             depends on:\n{prompt}"
+        );
+    }
+}
+
+#[test]
 fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     let workspace = tempfile::tempdir().expect("workspace");
     let home = tempfile::tempdir().expect("home");

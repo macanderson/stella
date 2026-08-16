@@ -399,10 +399,52 @@ fn is_bare_greeting(goal: &str) -> bool {
 /// Everything else keeps the existing contract exactly — triage's explicit call
 /// if it made one, otherwise what the class implies.
 pub fn resolve_witness(model_opinion: Option<bool>, class: TaskClass, goal: &str) -> bool {
-    if is_pure_deletion(goal) {
+    if is_pure_deletion(goal) || acts_on_pull_requests(goal) {
         return false;
     }
     model_opinion.unwrap_or_else(|| class.verifies_unconditionally())
+}
+
+/// Whether the goal's end state is a pull request's state on a hosted forge —
+/// `merge all open prs to main`, `close the stale pull requests`.
+///
+/// The second thing allowed to overrule an explicit `WITNESS: yes`, and for
+/// the same reason as [`is_pure_deletion`]: a witness must fail on the old
+/// state and pass on the new, and these change no file in the workspace, so
+/// there is no local before-and-after for one to straddle.
+///
+/// The cost of getting this wrong was not merely a wasted authoring call.
+/// `authored_witness` forces the run into a disposable candidate workspace
+/// even at N=1, and a candidate attaches no sub-agent dispatcher — so asking
+/// for a witness that could not exist also took away the worker's last way to
+/// act. One observed run spent eleven minutes and $1.52 and merged nothing
+/// (#3320, #3318).
+///
+/// Deliberately scoped to the pull-request family rather than to hosted work
+/// in general. The wider rule ("the end state lives outside this workspace")
+/// is guidance in the triage prompt, where a wrong call costs one model's
+/// opinion; here a false positive ships a real code change with no authored
+/// witness, so it is bought with two narrow conditions: the goal names a pull
+/// request *and* a verb that acts on one, and it names no local file-shaped
+/// object — `fix scripts/automerge-nudge.sh so prs land cleanly` is ordinary
+/// code work and keeps its witness.
+fn acts_on_pull_requests(goal: &str) -> bool {
+    let lower = goal.to_ascii_lowercase();
+    if names_a_file_shaped_object(&lower) {
+        return false;
+    }
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    // Whole words only: `prepare` must never read as `pr`.
+    const PR_VERBS: &[&str] = &["merge", "close", "reopen", "approve", "land"];
+    let acts = words.iter().any(|w| PR_VERBS.contains(w));
+    let names_pr = words.iter().any(|w| *w == "pr" || *w == "prs")
+        || words
+            .windows(2)
+            .any(|w| w[0] == "pull" && w[1].starts_with("request"));
+    acts && names_pr
 }
 
 /// Whether the goal is an unmistakable removal of a named code artifact —
@@ -1078,8 +1120,12 @@ const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and deci
      executable could distinguish success from failure. Always say no \
      when the ask is to DELETE something — a witness must fail on the old \
      code and pass on the new, and a removal leaves nothing to write that \
-     against. Prefer `no` on small, self-evident work — ceremony that \
-     proves nothing costs the user time and money.\n\
+     against. Always say no when the end state lives OUTSIDE this \
+     workspace — merging pull requests, deploying, sending mail, changing \
+     a hosted setting. Those change no file here, so there is no local \
+     before-and-after for a witness to straddle. Prefer `no` on small, \
+     self-evident work — ceremony that proves nothing costs the user time \
+     and money.\n\
      VERIFIER is whether a separate model should review the result. It is \
      only consulted when no test settled the outcome, so say no ONLY \
      when a test will already prove the change or the result is \

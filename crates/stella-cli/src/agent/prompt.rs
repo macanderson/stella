@@ -257,7 +257,7 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"
 
 Rules:
-- When the task text claims something was DONE to this repository — introduced, planted, broke, leaked, removed, changed — read that delta first: `git status` and `git diff` (then `git diff --staged`), and `git log -p` only once the working tree is clean. A task with no claimed change gets no history probe; orient from the task's own subject.
+- When the task text claims something was DONE to this repository — introduced, planted, broke, leaked, removed, changed — read that delta first, if a tool in your schema list can run a command: `git status` and `git diff` (then `git diff --staged`), and `git log -p` only once the working tree is clean. A task with no claimed change gets no history probe; orient from the task's own subject.
 - After changing behavior, run the relevant test or build and read its output.
 - Before finishing, re-read the task and check every requirement it states.
 - Be concise. End with what changed and the evidence it works.
@@ -468,8 +468,16 @@ fn append_session_environment(
         prompt.push_str(&format!(" ({release})"));
     }
     if let Some(shell) = stella_tools::environment::login_shell() {
+        // Stated as a constant, never as an instruction to write commands.
+        // Nothing here can promise a tool that runs one: the built-in surface
+        // registers none, so command execution arrives only as an MCP or
+        // custom tool — which is exactly what `tool_steering!` tells the model
+        // to check its schema list for. A prompt that says "write commands in
+        // its dialect" contradicts that rule outright, and in a session with
+        // no such tool it advertises a capability that does not exist (#3319).
+        // The dialect is still worth knowing for whichever tool does turn up.
         prompt.push_str(&format!(
-            "\nShell: {shell} — write commands in its dialect rather than guessing"
+            "\nShell dialect (for whichever tool runs one): {shell}"
         ));
     }
     if let Some(worker) = worker {

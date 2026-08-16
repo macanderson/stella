@@ -306,6 +306,10 @@ pub(crate) struct GitCandidateWorkspaces {
     /// rule denials evaluating and blocking exactly as before — they simply
     /// never land as typed `PolicyDecision` events.
     events: Option<stella_core::EventSender>,
+    /// The session's sub-agent runner, shared into every candidate registry.
+    /// `None` leaves the `task` tool reporting sub-agents as unavailable —
+    /// see [`GitCandidateWorkspaces::with_sub_agents`].
+    sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
 }
 
 impl GitCandidateWorkspaces {
@@ -322,7 +326,29 @@ impl GitCandidateWorkspaces {
             active_rules,
             candidate_mcp: None,
             events: None,
+            sub_agents: None,
         }
+    }
+
+    /// Let every candidate delegate through the session's sub-agent runner.
+    ///
+    /// Without this a candidate's `task` tool answers "sub-agents are
+    /// unavailable in this session — do the work directly with your own
+    /// tools", advice a candidate cannot take: the built-in surface has no
+    /// command-executing tool, so a worker there could move the task board
+    /// and nothing else. Since an authored witness forces a candidate even at
+    /// N=1, that state was reached by ordinary single-candidate runs (#3318).
+    ///
+    /// Sharing the session's runner rather than building a candidate-rooted
+    /// one is deliberate and costs the candidate nothing: children run behind
+    /// `ReadOnlyTools`, so a child reads to understand the codebase and the
+    /// snapshot it would otherwise read is a copy of the same tree.
+    pub(crate) fn with_sub_agents(
+        mut self,
+        dispatcher: Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+    ) -> Self {
+        self.sub_agents = Some(dispatcher);
+        self
     }
 
     /// Journal the policy decisions made inside every candidate this port
@@ -402,6 +428,13 @@ impl GitCandidateWorkspaces {
                 // before the `Arc<dyn ToolExecutor>` coercion below erases it.
                 if let Some(events) = &self.events {
                     registry.bridge_policy_plane(events.clone());
+                }
+                // Same late-attachment window as the two above, and for the
+                // same reason: while `registry` is still a concrete
+                // `ToolRegistry`. Without it the candidate's `task` tool is
+                // dead schema (#3318).
+                if let Some(dispatcher) = &self.sub_agents {
+                    registry.attach_sub_agent_dispatcher(dispatcher.clone());
                 }
                 // The candidate's tool surface: the snapshot-rooted registry
                 // plus the session's custom script tools, owned as one value
