@@ -678,12 +678,16 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 15] {
+    fn api_sources() -> [&'static str; 16] {
         [
             include_str!("../../stella-serve/src/server.rs"),
             // The remoted ports — home of the `tools.contracts` witness
             // (#3286).
             include_str!("../../stella-serve/src/remote.rs"),
+            // `remote.rs` split its tests into a sibling submodule under the
+            // file-size gate, so the witnesses live here — the same reason
+            // `agent/tests.rs`'s children are listed above.
+            include_str!("../../stella-serve/src/remote/tests.rs"),
             include_str!("../../stella-serve/tests/calibration.rs"),
             include_str!("../../stella-serve/tests/checkpoint.rs"),
             include_str!("../../stella-serve/tests/hooks.rs"),
