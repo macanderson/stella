@@ -95,6 +95,24 @@ fn every_seeded_provider_declares_an_overflow_posture() {
     }
 }
 
+/// The output-budget-axis sibling: every seeded provider must declare
+/// whether its refusal to fund the *requested output ceiling* is recognised.
+/// Without a row, such a rejection silently misses the engine's clamp ladder
+/// and kills the turn — which is what happened to three benchmark runs
+/// against a balance that could still fund the work at a smaller ask.
+#[test]
+fn every_seeded_provider_declares_an_output_budget_posture() {
+    for provider in PROVIDERS.iter().chain(std::iter::once(&LOCAL_PROVIDER)) {
+        assert!(
+            stella_model::provider_parity::output_budget_posture(provider.id).is_some(),
+            "provider `{}` has no OutputBudgetPosture row in \
+             stella-model/src/provider_parity.rs — add it (with a witness test for a \
+             Detected signature, or a note for a BestEffort row) in this PR",
+            provider.id
+        );
+    }
+}
+
 #[test]
 fn alias_env_var_resolves_when_the_primary_is_unset() {
     // Synthetic provider with unique var names so parallel tests can't

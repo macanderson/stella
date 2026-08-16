@@ -910,6 +910,33 @@ class MatchSpec:
         """
         return self.sut_ref if contestant.sut_ref is None else contestant.sut_ref
 
+    def unknown_tasks(self, known: Iterable[str]) -> list[str]:
+        """Named tasks this dataset does not contain, in the order named.
+
+        Kept separate from :meth:`validate` and taking the corpus as an
+        argument because ``validate`` is pure over the spec while this
+        question needs the dataset on disk — the same split
+        :mod:`arenabench.registry` already draws. A caller that cannot
+        enumerate the corpus passes an empty ``known`` and gets an empty
+        answer: an unreadable dataset must not invent a problem, only fail
+        to detect one.
+
+        This exists because nothing checked (#3255). Three consecutive
+        89-task cloud runs each lost their index-000 job to
+        ``Essential container exited (exit 1)``, because the task list they
+        were submitted with began with the literal string ``"89"`` — the
+        count where a task slug belongs. ``plan_trials`` fanned it out like
+        any other name, Batch dispatched a container for a task Harbor has
+        never heard of, and the trial died and scored as an operational
+        abort. The phantom is visible in the job label
+        (``<run>-000-<seat>-89``) and nowhere else, which is why it survived
+        three runs.
+        """
+        corpus = set(known)
+        if not corpus:
+            return []
+        return [task for task in self.tasks if task not in corpus]
+
     def validate(self) -> list[str]:
         """Every problem with this spec, so the UI can show them all at once."""
         problems: list[str] = []

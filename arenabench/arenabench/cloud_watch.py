@@ -25,7 +25,9 @@ Two honesty rules it inherits from the rest of the harness:
   records a non-zero agent exit as a loss and Stella's verdict exits non-zero
   by design, so reading the exit code instead of the reward systematically
   under-counts Stella. Only an attempted, finished-or-errored trial with no
-  reward at all is a zero.
+  reward at all is a zero — and only when the exception does not name a
+  harness fault: an absent reward under a ``VerifierTimeoutError`` is a
+  **void**, because nothing graded the trial (#3264).
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ __all__ = [
     "cell_for",
     "reward_of",
     "render_html",
+    "void_reason",
 ]
+
+from .telemetry import INFRASTRUCTURE_FAILURES
 
 #: Batch states that mean the trial will produce nothing further.
 TERMINAL_STATES: frozenset[str] = frozenset({"SUCCEEDED", "FAILED"})
@@ -58,8 +63,13 @@ def reward_of(results: Any) -> float | None:
     ``None`` means *unknown*, and unknown is never rendered as zero. The path
     is ``verifier_result.rewards.reward`` — the verifier's number, which is
     the official leaderboard's score. A trial that finished or raised with no
-    reward is a real 0.0 and is reported as such; a trial with neither is
-    still in flight and reports nothing.
+    reward is a real 0.0 **unless the exception names a harness fault**: a
+    ``VerifierTimeoutError`` means the *grader* ran out of time on a trial
+    the agent may well have solved, and scoring that absence as 0.0 blames
+    the agent for the harness — selectively on the heaviest tasks, which is
+    exactly where it reads as a capability finding (#3264). Those trials
+    return ``None`` and :func:`void_reason` names why. A trial with neither
+    a reward nor an attempt is still in flight and reports nothing.
 
     Accepts either a single result object or Harbor's ``{"results": [...]}``
     envelope, because both shapes have been written to this key.
@@ -79,9 +89,29 @@ def reward_of(results: Any) -> float | None:
         return None
     if isinstance(raw, (int, float)):
         return float(raw)
+    if void_reason(results) is not None:
+        return None
     exception = results.get("exception_info")
     attempted = bool(exception) or bool(results.get("finished_at"))
     return 0.0 if attempted else None
+
+
+def void_reason(results: Any) -> str | None:
+    """Why an absent reward is a void rather than a zero, or ``None``.
+
+    The classification is :data:`telemetry.INFRASTRUCTURE_FAILURES` — the
+    same reviewed set the offline scorer uses — so the live scoreboard and
+    the assembled match can never disagree about which absences are the
+    harness's fault. Returns the exception name, because that *is* the
+    reason string an operator acts on.
+    """
+    if not isinstance(results, dict):
+        return None
+    exception = results.get("exception_info")
+    if not isinstance(exception, dict):
+        return None
+    name = str(exception.get("exception_type") or "")
+    return name if name in INFRASTRUCTURE_FAILURES else None
 
 
 @dataclass(frozen=True)
@@ -89,7 +119,7 @@ class Cell:
     """One (task, contestant) square of the grid."""
 
     state: str
-    """``won`` | ``lost`` | ``scored`` | ``running`` | ``queued`` | ``unknown``."""
+    """``won`` | ``lost`` | ``scored`` | ``void`` | ``running`` | ``queued`` | ``unknown``."""
     reward: float | None = None
     detail: str = ""
 
@@ -113,6 +143,11 @@ def cell_for(batch_state: str | None, results: Any, detail: str = "") -> Cell:
     if reward is not None:
         state = "won" if reward >= 1.0 else "lost" if reward <= 0.0 else "scored"
         return Cell(state=state, reward=reward, detail=detail)
+    voided = void_reason(results)
+    if voided is not None:
+        # Graded by nobody: the harness broke before a verdict existed. Its
+        # own state, never a zero — see `reward_of` (#3264).
+        return Cell(state="void", detail=detail or voided)
     if batch_state in QUEUED_STATES:
         return Cell(state="queued", detail=detail)
     if batch_state == "RUNNING":
@@ -215,7 +250,7 @@ th {{ color:#8A8A8A; font-weight:500; }}
 td.t {{ color:#C8C8C8; }}
 td.tot {{ color:#FFB000; font-weight:600; }}
 .s-won {{ color:#4ADE80; }} .s-lost {{ color:#F87171; }} .s-scored {{ color:#FBBF24; }}
-.s-running {{ color:#60A5FA; }} .s-queued,.s-unknown {{ color:#6B7280; }}
+.s-running {{ color:#60A5FA; }} .s-queued,.s-unknown,.s-void {{ color:#6B7280; }}
 tr.totals td {{ border-top:2px solid #1E1E20; border-bottom:none; }}
 </style>
 <h1>{html.escape(board.run_id)}</h1>

@@ -1475,4 +1475,3 @@ class TestSutPinTemplates:
         again = MatchSpec.from_json(spec.to_json())
         assert again.contestants[1].sut_ref == "branch-b"
         assert again.sut_ref == "branch-a"
-

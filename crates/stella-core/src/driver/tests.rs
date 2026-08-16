@@ -100,6 +100,13 @@ fn clone_provider_error(e: &ProviderError) -> ProviderError {
         ProviderError::ContextOverflow { message } => ProviderError::ContextOverflow {
             message: message.clone(),
         },
+        ProviderError::OutputBudgetExceeded {
+            message,
+            affordable_output_tokens,
+        } => ProviderError::OutputBudgetExceeded {
+            message: message.clone(),
+            affordable_output_tokens: *affordable_output_tokens,
+        },
         ProviderError::Terminal(m) => ProviderError::Terminal(m.clone()),
     }
 }
@@ -2603,10 +2610,12 @@ mod calibration;
 mod compute_passes;
 mod context_efficiency;
 mod context_overflow;
+mod deadline_notice;
 mod lifecycle_bus;
 mod live_services;
 mod loop_abort;
 mod model_fallback;
+mod output_budget;
 mod parked_wait;
 mod provider_outcomes;
 mod steer_midturn;

@@ -243,6 +243,50 @@ fn selection_populates_the_why_fields() {
     assert_eq!(selected[0].matched_domains, vec!["sql"]);
 }
 
+/// **Witness (#3243 D2).** An untagged skill whose description the prompt
+/// plainly covers is selected even when the prompt is the length of a real
+/// one.
+///
+/// Fails on base, where the score was symmetric Jaccard. The prompt below
+/// carries ~31 content terms and shares two of the skill's five (`sql`,
+/// `format`), which is what a real goal mentioning a skill's subject looks
+/// like. Jaccard divides by the UNION and so charges the skill for all 29
+/// terms the prompt holds and its description does not: 2/34 ≈ 0.059, under
+/// the 0.08 floor, and it is dropped. Coverage asks the question selection
+/// actually has — what fraction of THIS skill's vocabulary did the prompt
+/// cover — and answers 2/5 = 0.4.
+///
+/// The asymmetry is the entire fix: under Jaccard a skill's score falls as
+/// the *prompt* grows, so the longer someone explains what they want, the
+/// less likely they are to get the skill for it.
+#[test]
+fn a_long_prompt_still_selects_an_untagged_skill_it_names() {
+    let skills = vec![skill(
+        "sql-style",
+        "format sql queries nicely",
+        &[],
+        SkillOrigin::Workspace,
+    )];
+    // No domain tag anywhere, so the lexical score is the only thing that can
+    // select this — which is what makes it a test of the score.
+    let prompt = "I have been staring at this reporting module for a while and \
+                  the thing that keeps bothering me is that nobody can read the \
+                  generated statements, so before we ship the migration please \
+                  clean up every sql fragment you find, keep the format \
+                  consistent across the repository, then run the suite and tell \
+                  me what broke";
+
+    let selected = select_skills(&skills, prompt, &[], &SelectionConfig::default());
+
+    assert_eq!(
+        selected.len(),
+        1,
+        "a goal that names the skill's subject must select it however long \
+         the goal is: {selected:?}"
+    );
+    assert_eq!(selected[0].skill.name, "sql-style");
+}
+
 #[test]
 fn domain_boost_wins_over_a_weak_lexical_match() {
     let skills = vec![

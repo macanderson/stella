@@ -97,6 +97,16 @@ export function Topbar({
             >
               Trends
             </Tabs.Tab>
+            <Tabs.Tab
+              value="experiments"
+              className={cn(
+                "cursor-pointer px-3.5 py-[7px] text-[13px] text-muted",
+                "hover:bg-panel hover:text-foreground",
+                "data-[active]:bg-accent data-[active]:font-semibold data-[active]:text-on-accent",
+              )}
+            >
+              Experiments
+            </Tabs.Tab>
           </Tabs.List>
         </Tabs.Root>
         <div className="ml-auto flex items-center gap-2 text-xs">

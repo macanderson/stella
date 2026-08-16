@@ -32,16 +32,27 @@ afterthought of doing so:
 ``arenabench cloud fetch`` calls it at the end, so the operator still types one
 command.
 
-**Nothing is copied and nothing is moved.** The assembled match is a directory
-of **relative symlinks** into the per-trial artifact trees the fetch wrote —
-so ``agent/stella-events.jsonl``, ``result.json``, ``verifier/`` and the rest
-stay exactly where they landed, reachable both by their original path and
-through the match. That is deliberate: every bench conclusion this project
-makes comes from the traces, and an assembler that summarised them into a
-merged JSON and left the originals behind would be the summary layer CLAUDE.md
-forbids concluding from. ``assembly.json`` records, per link, which Batch job
-and which attempt it came from, so the provenance of a cell is one file lookup
-rather than an inference from a directory name.
+**By default nothing is copied and nothing is moved.** The assembled match is
+a directory of **relative symlinks** into the per-trial artifact trees the
+fetch wrote — so ``agent/stella-events.jsonl``, ``result.json``, ``verifier/``
+and the rest stay exactly where they landed, reachable both by their original
+path and through the match. That is deliberate: every bench conclusion this
+project makes comes from the traces, and an assembler that summarised them
+into a merged JSON and left the originals behind would be the summary layer
+CLAUDE.md forbids concluding from. ``assembly.json`` records, per link, which
+Batch job and which attempt it came from, so the provenance of a cell is one
+file lookup rather than an inference from a directory name.
+
+**A match meant to outlive its fetch directory is assembled with ``--copy``.**
+Nothing owns a fetch directory — it is scratch output — and a symlink-only
+match dies silently and totally when it is cleaned up: two loaded matches were
+found with every one of their 85/88/122 trial links dangling, still *listing*
+their arms so every read returned nothing rather than an error (#3261).
+``--copy`` materialises the trial trees inside the match itself, spending disk
+to buy a match that is actually a match; either way ``assembly.json`` records
+the source run directory and run id, so a dangling match can name its own
+recovery (`arenabench cloud fetch <run-id> --artifacts` + re-assemble — the
+artifacts stay in S3).
 
 The result is the **local** layout (``<workspace>/matches/<id>/``), which means
 ``arenabench serve`` opens it with no new server code: ``MatchRunner.restore_
@@ -236,6 +247,44 @@ def _job_id_of(run_dir: Path, trial: Path) -> str:
     return trial.relative_to(run_dir).parts[0]
 
 
+#: Batch states that mean a job may yet upload the artifact it is missing.
+#: Mirrored from :mod:`.cloud`'s split rather than imported: assembly is a
+#: pure local fold and must keep working on a machine with no cloud module
+#: concerns at all — and these strings are Batch's public contract, not ours.
+_LIVE_BATCH_STATES = frozenset(
+    {"SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"}
+)
+
+
+def _sidecar_task_states(run_dir: Path) -> dict[str, list[str]]:
+    """Per-task Batch states from the fetch's ``jobs.json`` sidecar.
+
+    Empty on a fetch that predates the sidecar — the warning then degrades to
+    its old, state-blind wording rather than failing the fold (#3218).
+    """
+    try:
+        record = json.loads((run_dir / "jobs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    states: dict[str, list[str]] = {}
+    for job in record.get("jobs", []) if isinstance(record, dict) else []:
+        task = job.get("task") if isinstance(job, dict) else None
+        if task:
+            states.setdefault(str(task), []).append(str(job.get("state") or ""))
+    return states
+
+
+def _missing_note(task: str, states: dict[str, list[str]]) -> str:
+    """Why this task has no artifact, as far as the fetch-time states can say."""
+    observed = [state for state in states.get(task, []) if state]
+    if not observed:
+        return ""
+    live = sorted({s for s in observed if s in _LIVE_BATCH_STATES})
+    if live:
+        return f" (still {'/'.join(live)} in Batch at fetch time — re-fetch)"
+    return " (terminal, no artifact uploaded)"
+
+
 # --------------------------------------------------------------------------
 # the filesystem side
 # --------------------------------------------------------------------------
@@ -288,11 +337,37 @@ def _link(source: Path, destination: Path, symlink: Callable[..., None]) -> None
     symlink(target, destination)
 
 
+def _materialise(source: Path, destination: Path) -> None:
+    """Copy ``source`` into the match instead of linking to it (#3261).
+
+    A destination that already exists as a real entry is left alone — it was
+    materialised by a previous assembly of the same run, and re-copying would
+    only spend disk to overwrite it with itself. Internal symlinks are
+    preserved as symlinks: the copy's job is to own the trial tree, not to
+    reinterpret it.
+    """
+    if destination.exists() and not destination.is_symlink():
+        return
+    if destination.is_symlink():
+        # A previous symlink-mode assembly of the same cell: the copy takes
+        # its place, upgrading the match to a durable one.
+        destination.unlink()
+    if source.is_dir():
+        import shutil
+
+        shutil.copytree(source, destination, symlinks=True)
+    else:
+        import shutil
+
+        shutil.copy2(source, destination, follow_symlinks=False)
+
+
 def assemble_run(
     run_dir: Path,
     *,
     workspace: Path | None = None,
     match_id: str | None = None,
+    copy: bool = False,
     symlink: Callable[..., None] = os.symlink,
 ) -> Assembly:
     """Assemble one fetched cloud run into a single match under ``workspace``.
@@ -342,7 +417,16 @@ def assemble_run(
         for trial in seat_trials:
             name = link_name(taken, trial.path.name)
             taken.add(name)
-            _link(trial.path, job_dir / name, symlink)
+            target = job_dir / name
+            if copy:
+                _materialise(trial.path, target)
+            elif target.exists() and not target.is_symlink():
+                # A previous --copy assembly already owns this cell; a
+                # symlink re-assembly must not fail on it, and must not
+                # replace a durable copy with a link that can dangle.
+                pass
+            else:
+                _link(trial.path, target, symlink)
             cells.append(
                 {
                     "seat": slug,
@@ -362,7 +446,9 @@ def assemble_run(
             link = jobs_root / f"{match_id}-{slug}{SEAT_MANIFEST_SUFFIX}"
             if link.is_symlink():
                 link.unlink()
-            if not link.exists():
+            if copy:
+                _materialise(manifest, link)
+            elif not link.exists():
                 _link(manifest, link, symlink)
         for trial in seat_trials:
             if trial.provenance is not None:
@@ -385,11 +471,32 @@ def assemble_run(
 
     missing = sorted(set(spec.tasks) - {cell["task"] for cell in cells})
     if missing:
+        # "No artifact" is two different facts wearing one warning: a trial
+        # that will never produce one, and a trial that has not finished yet.
+        # The h2h891 head-to-head was analyzed on a match missing two Claude
+        # Code results that were still RUNNING at fetch time, and the short
+        # match read as complete (#3218). The fetch leaves the per-job Batch
+        # state it observed in a `jobs.json` sidecar, so assembly — still a
+        # pure local fold — can name which kind each miss is.
+        states = _sidecar_task_states(run_dir)
+        described = [task + _missing_note(task, states) for task in missing[:8]]
         assembly.warnings.append(
             f"{len(missing)} task(s) produced no trial artifact: "
-            + ", ".join(missing[:8])
+            + ", ".join(described)
             + (" …" if len(missing) > 8 else "")
         )
+
+    # The recovery record (#3261): a symlink-mode match whose fetch directory
+    # is later deleted still lists its arms while every read returns nothing,
+    # so the manifest names where the cells came from and — when the fetch
+    # left its `jobs.json` sidecar — the run id whose S3 artifacts restore
+    # them (`arenabench cloud fetch <run-id> --artifacts`, then re-assemble).
+    source_run_id = ""
+    try:
+        sidecar = json.loads((run_dir / "jobs.json").read_text(encoding="utf-8"))
+        source_run_id = str(sidecar.get("run_id") or "")
+    except (OSError, ValueError):
+        pass
 
     (match_dir / ASSEMBLY_NAME).write_text(
         json.dumps(
@@ -397,6 +504,16 @@ def assemble_run(
                 "schema": 1,
                 "match_id": match_id,
                 "run_dir": os.path.relpath(run_dir, match_dir),
+                "copied": copy,
+                "source": {
+                    "run_dir": str(run_dir),
+                    "run_id": source_run_id,
+                    "recover": (
+                        f"arenabench cloud fetch {source_run_id} --artifacts"
+                        if source_run_id
+                        else ""
+                    ),
+                },
                 "tasks": list(spec.tasks),
                 "seats": {slug: assembly.linked[slug] for slug in slugs},
                 "cells": cells,
@@ -424,6 +541,7 @@ def _cmd_assemble(args: Any) -> int:
             run_dir,
             workspace=Path(args.workspace) if args.workspace else None,
             match_id=args.match_id,
+            copy=args.copy,
         )
     except AssembleError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -456,5 +574,12 @@ def register_cli(subparsers: Any) -> None:
     parser.add_argument(
         "--match-id",
         help="id for the assembled match (default: the run directory's name)",
+    )
+    parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="materialise trial trees inside the match instead of symlinking "
+             "into the fetch directory — costs disk, survives the fetch "
+             "directory being cleaned up",
     )
     parser.set_defaults(func=_cmd_assemble)
