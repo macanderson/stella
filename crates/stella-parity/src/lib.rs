@@ -685,6 +685,9 @@ mod tests {
             // (#3286). The witness tests live in the split-out submodule
             // file, which `include_str!` of the parent does not pull in.
             include_str!("../../stella-serve/src/remote.rs"),
+            // `remote.rs` split its tests into a sibling submodule under the
+            // file-size gate, so the witnesses live here — the same reason
+            // `agent/tests.rs`'s children are listed above.
             include_str!("../../stella-serve/src/remote/tests.rs"),
             include_str!("../../stella-serve/tests/calibration.rs"),
             include_str!("../../stella-serve/tests/checkpoint.rs"),
