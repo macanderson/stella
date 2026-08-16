@@ -723,6 +723,16 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
+        // A silent success (exit 0, empty stdout) renders the input-identity
+        // stamp, never the empty string — see [`silent_success_stamp`] (#3303).
+        // Only for schema-less tools: a declared `[output_schema]` promises
+        // JSON on stdout, so empty stdout falls through to the contract
+        // breach below. Restored after the #3345 rewrite of this branch
+        // merged past #3335 and silently dropped the call — the two were
+        // developed in parallel and composed red (#3359).
+        if output.stdout.is_empty() && tool.output_schema.is_none() {
+            return ToolOutput::ok(silent_success_stamp(&tool.name, input));
+        }
         let content = crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES);
         // A manifest that declares `[output_schema]` promises its stdout is
         // JSON matching it (#3287): the whole stdout is parsed into the
