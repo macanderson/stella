@@ -9,6 +9,7 @@
 //! are `Arc<Mutex<…>>` handles shared between the tool instances and the
 //! [`crate::ToolRegistry`] that exposes/drains them.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -28,6 +29,14 @@ pub type TaskBoardHandle = Arc<Mutex<TaskBoard>>;
 /// driver via [`crate::ToolRegistry::take_spawn_requests`] — the tool only
 /// records intent; the driver owns the actual spawn.
 pub type SpawnQueue = Arc<Mutex<Vec<SpawnRequest>>>;
+
+/// Whether a host is wired to drain [`SpawnQueue`] and actually spawn what
+/// `task_assign` queues. `false` until
+/// [`crate::ToolRegistry::enable_task_delegation`] runs — the same
+/// late-attachment shape as the sub-agent dispatcher slot, and gated for the
+/// same reason: queuing intent nothing will honor is not delegation, and a
+/// tool that confirms it teaches the model it delegated work that never ran.
+pub type SpawnDispatch = Arc<AtomicBool>;
 
 /// Extract a required non-empty string field from model-supplied JSON.
 /// Model input is runtime data: missing or mistyped fields return a tool
@@ -354,7 +363,11 @@ impl Tool for TaskCancel {
 /// `task_assign` — delegate a task: mark it in progress under an owner lane
 /// AND queue a [`SpawnRequest`] for the driver to spawn a dedicated
 /// sub-agent from.
-pub struct TaskAssign(pub TaskBoardHandle, pub SpawnQueue);
+///
+/// Refuses when no host is wired to drain the queue ([`SpawnDispatch`]), and
+/// refuses *before* touching the board: a delegation that will never run must
+/// leave neither a queued request nor a task parked under a phantom owner.
+pub struct TaskAssign(pub TaskBoardHandle, pub SpawnQueue, pub SpawnDispatch);
 
 #[async_trait]
 impl Tool for TaskAssign {
@@ -391,6 +404,18 @@ impl Tool for TaskAssign {
             Err(e) => return e,
         };
         let owner = optional_str(input, "owner").unwrap_or_else(|| format!("sub:{id}"));
+        // Ahead of the board mutation: with nothing draining the queue this
+        // call cannot delegate, and the honest answer is the one `task` already
+        // gives for an unattached dispatcher. Confirming instead is how a
+        // session came to believe six sub-agents were working for it while its
+        // queue grew and nothing ran.
+        if !self.2.load(Ordering::Acquire) {
+            return ToolOutput::error(
+                "delegation is unavailable in this session — nothing will run the \
+                 sub-agent, so the task would sit unstarted; do the work directly \
+                 with your own tools",
+            );
+        }
         // Validate the transition on the board first; only a successful
         // assignment may queue a spawn (a terminal/unknown task must never
         // spawn a worker).
@@ -428,6 +453,18 @@ mod tests {
 
     fn handles() -> (TaskBoardHandle, SpawnQueue) {
         (Arc::default(), Arc::default())
+    }
+
+    /// A host that drains the queue — what every `task_assign` test below
+    /// assumes, and what [`dispatch_off`] is the counterpart to.
+    fn dispatch_on() -> SpawnDispatch {
+        Arc::new(AtomicBool::new(true))
+    }
+
+    /// A host that does not. `SpawnDispatch::default()` is already this, but
+    /// naming it is what makes the refusal tests read as deliberate.
+    fn dispatch_off() -> SpawnDispatch {
+        Arc::new(AtomicBool::new(false))
     }
 
     fn root() -> std::path::PathBuf {
@@ -531,7 +568,7 @@ mod tests {
             Box::new(TaskStart(board.clone())),
             Box::new(TaskComplete(board.clone())),
             Box::new(TaskCancel(board.clone())),
-            Box::new(TaskAssign(board, queue)),
+            Box::new(TaskAssign(board, queue, dispatch_on())),
         ];
         let schemas: Vec<ToolSchema> = tools.iter().map(|t| t.schema()).collect();
         let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
@@ -695,7 +732,7 @@ mod tests {
         );
         let assigned = content(
             exec(
-                &TaskAssign(board.clone(), queue.clone()),
+                &TaskAssign(board.clone(), queue.clone(), dispatch_on()),
                 serde_json::json!({"id": "1", "briefing": "Port src/parse.rs to the new AST"}),
             )
             .await,
@@ -740,7 +777,7 @@ mod tests {
 
         let ok = content(
             exec(
-                &TaskAssign(board.clone(), queue.clone()),
+                &TaskAssign(board.clone(), queue.clone(), dispatch_on()),
                 serde_json::json!({"id": "1", "briefing": "go", "owner": "worker-7"}),
             )
             .await,
@@ -754,7 +791,7 @@ mod tests {
         // Assigning a cancelled task fails on the board and must not queue.
         let bad = error(
             exec(
-                &TaskAssign(board, queue.clone()),
+                &TaskAssign(board, queue.clone(), dispatch_on()),
                 serde_json::json!({"id": "2", "briefing": "go"}),
             )
             .await,
@@ -785,7 +822,7 @@ mod tests {
         // Assign without a briefing must not touch board or queue.
         let assign = error(
             exec(
-                &TaskAssign(board.clone(), queue.clone()),
+                &TaskAssign(board.clone(), queue.clone(), dispatch_on()),
                 serde_json::json!({"id": "1"}),
             )
             .await,
@@ -799,6 +836,10 @@ mod tests {
     async fn registry_dispatches_task_tools_and_drains_spawn_requests() {
         let dir = tempfile::tempdir().unwrap();
         let reg = crate::ToolRegistry::new(dir.path().to_path_buf());
+        // This test is about the drain, so it plays the host that performs
+        // one. Without this the assignment is refused — see
+        // `task_assign_refuses_when_no_host_will_dispatch`.
+        reg.enable_task_delegation();
 
         let out = reg
             .execute(
@@ -830,5 +871,77 @@ mod tests {
             "a drained spawn request must never be dispatched twice"
         );
         assert!(reg.spawn_queue().lock().unwrap().is_empty());
+    }
+
+    /// The witness for the defect this guard exists to prevent.
+    ///
+    /// A registry no host wired for dispatch — a best-of-N candidate
+    /// workspace is the real one — used to accept `task_assign`, answer "a
+    /// dedicated sub-agent will be spawned for it ... its results will land
+    /// back in this session", and queue a request nothing would ever drain.
+    /// A session took that at its word six times, reported the delegated work
+    /// as done, and merged nothing.
+    ///
+    /// Three things must hold, and the middle one is the one that bites: the
+    /// call fails, the board is left alone (no task parked in_progress under
+    /// a sub-agent that does not exist), and nothing is queued.
+    #[tokio::test]
+    async fn task_assign_refuses_when_no_host_will_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = crate::ToolRegistry::new(dir.path().to_path_buf());
+        // Deliberately NO `enable_task_delegation`.
+
+        let out = reg
+            .execute(
+                "task_create",
+                &serde_json::json!({"subject": "merge the open PRs"}),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+
+        let out = reg
+            .execute(
+                "task_assign",
+                &serde_json::json!({"id": "1", "briefing": "run `gh pr merge`"}),
+            )
+            .await;
+        assert!(
+            out.is_error(),
+            "task_assign must refuse when nothing will spawn the sub-agent, not confirm: {out:?}"
+        );
+
+        let board = reg.task_board();
+        assert_eq!(
+            board.lock().unwrap().items()[0].status,
+            TaskStatus::Pending,
+            "a refused delegation must leave the task claimable, not parked under a \
+             sub-agent that will never run"
+        );
+        assert!(
+            board.lock().unwrap().items()[0].owner.is_none(),
+            "a refused delegation must not name an owner"
+        );
+        assert!(
+            reg.take_spawn_requests().is_empty(),
+            "a refused delegation must queue nothing"
+        );
+    }
+
+    /// The tool-level half: same refusal, and the message points the model at
+    /// the only thing left that can work — doing it itself.
+    #[tokio::test]
+    async fn task_assign_refusal_tells_the_model_to_do_the_work_itself() {
+        let (board, queue) = handles();
+        board.lock().unwrap().create("do a thing", None);
+        let out = TaskAssign(board.clone(), queue.clone(), dispatch_off())
+            .execute(&serde_json::json!({"id": "1", "briefing": "b"}), &root())
+            .await;
+        let msg = format!("{out:?}");
+        assert!(out.is_error(), "{msg}");
+        assert!(
+            msg.contains("do the work directly"),
+            "the refusal must say what to do instead: {msg}"
+        );
+        assert!(queue.lock().unwrap().is_empty(), "{msg}");
     }
 }

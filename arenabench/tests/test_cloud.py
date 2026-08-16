@@ -14,28 +14,40 @@ billed real compute first.
 
 These tests are the witness for #2099: none of them can pass on a tree
 without ``arenabench/arenabench/cloud.py``.
+
+The ``_cmd_cloud_*`` CLI path lives in ``test_cloud_commands.py`` and the
+fakes both halves share live in ``cloud_fakes.py``.
 """
 
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import tomllib
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
+from cloud_fakes import (
+    BUCKET,
+    GIT_URL,
+    FakeBatch,
+    FakeCodeBuild,
+    FakeDynamo,
+    FakeLsRemote,
+    FakeS3,
+    FakeSsm,
+    _executor,
+    _seat,
+    _spec,
+    _sut,
+)
 
 from arenabench.cloud import (
     BURST_QUEUE,
     JOB_DEFINITION,
     MEASURE_QUEUE,
     CloudError,
-    CloudExecutor,
-    _cmd_cloud_fetch,
     _cmd_cloud_merge,
-    _cmd_cloud_run,
     is_moving_ref,
     job_name,
     pin_slice_to_commit,
@@ -50,218 +62,11 @@ from arenabench.cloud import (
     sut_seats,
     tip_from_ls_remote,
     trial_environment,
+    unknown_tasks,
 )
+from arenabench.cloud_ops import _cmd_cloud_fetch
 from arenabench.config import match_from_toml
-from arenabench.model import Contestant, Engine, MatchSpec
-
-ACCOUNT = "123456789012"
-BUCKET = f"arenabench-artifacts-{ACCOUNT}"
-#: What ``infra/core.yaml``'s ``SutGitUrl`` defaults to, as the SUT build
-#: project reports it back.
-GIT_URL = "https://github.com/macanderson/stella.git"
-
-
-# --------------------------------------------------------------------------
-# recorded-call fakes — small on purpose; moto would be a heavyweight
-# dependency for what is a handful of parameter-shape assertions
-# --------------------------------------------------------------------------
-
-
-class _NoSuchKeyError(Exception):
-    pass
-
-
-class FakeS3:
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
-        self.objects: dict[str, bytes] = dict(objects or {})
-        self.calls: list[tuple] = []
-        # boto3 spells it NoSuchKey; the adapter catches it by that name.
-        self.exceptions = SimpleNamespace(NoSuchKey=_NoSuchKeyError)
-
-    # The keyword casing is the AWS SDK's, not PEP 8's: the adapter calls
-    # with Bucket=/Key=/Body=, so the fakes must accept those spellings.
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> dict:  # noqa: N803
-        self.calls.append(("put_object", Bucket, Key))
-        self.objects[Key] = Body
-        return {}
-
-    def get_object(self, *, Bucket: str, Key: str) -> dict:  # noqa: N803
-        self.calls.append(("get_object", Bucket, Key))
-        if Key not in self.objects:
-            raise _NoSuchKeyError(Key)
-        return {"Body": io.BytesIO(self.objects[Key])}
-
-    def list_objects_v2(self, **kwargs: object) -> dict:
-        self.calls.append(("list_objects_v2", kwargs.get("Prefix")))
-        prefix = str(kwargs.get("Prefix") or "")
-        keys = sorted(k for k in self.objects if k.startswith(prefix))
-        return {
-            "Contents": [{"Key": k} for k in keys],
-            "IsTruncated": False,
-        }
-
-
-class FakeBatch:
-    """Records submissions; serves job states from a per-sweep script."""
-
-    def __init__(self, state_script: list[dict[str, str]] | None = None) -> None:
-        self.submitted: list[dict] = []
-        self.describe_calls: list[list[str]] = []
-        self.state_script = list(state_script or [])
-        self._counter = 0
-
-    def submit_job(self, **kwargs: object) -> dict:
-        self.submitted.append(kwargs)
-        self._counter += 1
-        return {"jobId": f"job-{self._counter:03d}", "jobName": kwargs["jobName"]}
-
-    def describe_jobs(self, *, jobs: list[str]) -> dict:
-        self.describe_calls.append(list(jobs))
-        states = self.state_script[0] if self.state_script else {}
-        return {"jobs": [{"jobId": j, "status": states.get(j, "SUCCEEDED")} for j in jobs]}
-
-    def advance(self) -> None:
-        if len(self.state_script) > 1:
-            self.state_script.pop(0)
-
-
-class FakeSsm:
-    def __init__(self, parameters: list[str]) -> None:
-        self.parameters = parameters
-        self.calls: list[dict] = []
-
-    def get_parameters_by_path(self, **kwargs: object) -> dict:
-        self.calls.append(dict(kwargs))
-        # Two pages, to prove the paginator loop follows NextToken.
-        first, rest = self.parameters[:1], self.parameters[1:]
-        if "NextToken" not in kwargs:
-            page = {"Parameters": [{"Name": n} for n in first]}
-            if rest:
-                page["NextToken"] = "page-2"
-            return page
-        return {"Parameters": [{"Name": n} for n in rest]}
-
-
-class FakeCodeBuild:
-    def __init__(self, statuses: list[str] | None = None) -> None:
-        self.statuses = list(statuses or ["SUCCEEDED"])
-        self.started: list[dict] = []
-        self.project_calls: list[list[str]] = []
-        self.polls = 0
-
-    def start_build(self, **kwargs: object) -> dict:
-        self.started.append(dict(kwargs))
-        return {"build": {"id": "arenabench-sut-build:1234"}}
-
-    def batch_get_builds(self, *, ids: list[str]) -> dict:
-        status = self.statuses[min(self.polls, len(self.statuses) - 1)]
-        self.polls += 1
-        return {"builds": [{"id": ids[0], "buildStatus": status}]}
-
-    def batch_get_projects(self, *, names: list[str]) -> dict:
-        """The project's own ``GIT_URL`` — the remote a freshness check must
-        consult, since it is the one the buildspec clones."""
-        self.project_calls.append(list(names))
-        return {
-            "projects": [
-                {
-                    "name": names[0],
-                    "environment": {
-                        "environmentVariables": [
-                            {"name": "GIT_URL", "value": GIT_URL},
-                            {"name": "GIT_REF", "value": "main"},
-                        ]
-                    },
-                }
-            ]
-        }
-
-
-class FakeLsRemote:
-    """``git ls-remote`` as a recorded call over a fixed remote ref table."""
-
-    def __init__(self, refs: dict[str, str] | None = None) -> None:
-        self.refs = dict(refs or {})
-        self.calls: list[tuple[str, list[str]]] = []
-
-    def __call__(self, url: str, patterns) -> str:
-        patterns = list(patterns)
-        self.calls.append((url, patterns))
-        return "".join(
-            f"{self.refs[p]}\t{p}\n" for p in patterns if p in self.refs
-        )
-
-
-def _refuse_ls_remote(url: str, patterns) -> str:
-    """The seam a test uses to prove the remote is never consulted."""
-    raise AssertionError(f"git ls-remote must not run: {url} {list(patterns)}")
-
-
-class FakeSts:
-    def get_caller_identity(self) -> dict:
-        return {"Account": ACCOUNT}
-
-
-class FakeDynamo:
-    def __init__(self, pages: list[dict]) -> None:
-        self.pages = list(pages)
-        self.calls: list[dict] = []
-
-    def query(self, **kwargs: object) -> dict:
-        self.calls.append(dict(kwargs))
-        return self.pages[min(len(self.calls) - 1, len(self.pages) - 1)]
-
-
-def _executor(ls_remote=None, **clients: object) -> CloudExecutor:
-    defaults: dict[str, object] = {"sts": FakeSts()}
-    defaults.update(clients)
-    return CloudExecutor(
-        clients=defaults,
-        ls_remote=ls_remote if ls_remote is not None else _refuse_ls_remote,
-    )
-
-
-# --------------------------------------------------------------------------
-# spec helpers
-# --------------------------------------------------------------------------
-
-
-def _seat(seat_id: str, agent: str = "stella", api: str = "openrouter") -> Contestant:
-    return Contestant(
-        id=seat_id,
-        name=seat_id,
-        agent=agent,
-        engine=Engine(api=api, model="z-ai/glm-5.2"),
-        required_env=("OPENROUTER_API_KEY",),
-    )
-
-
-def _spec(
-    tasks: tuple[str, ...] = ("task-a", "task-b"),
-    seats: tuple[Contestant, ...] | None = None,
-    attempts: int = 1,
-) -> MatchSpec:
-    return MatchSpec(
-        id="m1",
-        name="cloud match",
-        dataset="terminal-bench-2.1",
-        tasks=tasks,
-        contestants=seats or (_seat("stella"), _seat("cc", agent="claude-code")),
-        attempts=attempts,
-    )
-
-
-SUT = None  # filled per-test via resolve_sut or built directly
-
-
-def _sut():
-    from arenabench.cloud import SutBinary
-
-    commit = "c" * 40
-    return SutBinary(
-        ref="main", commit=commit, uri=f"s3://{BUCKET}/binaries/main/{commit}/stella"
-    )
-
+from arenabench.model import MatchSpec
 
 # --------------------------------------------------------------------------
 # pure decisions
@@ -323,6 +128,25 @@ class TestPlanTrials:
         plans = plan_trials(_spec(tasks=()))
         assert len(plans) == 2
         assert all(p.task is None for p in plans)
+
+    def test_an_89_task_match_labels_every_slice_with_its_real_task(self) -> None:
+        """#3255's fingerprint, pinned from the slicer side: three cloud runs
+        each lost job 000 to a slice whose task slot held the literal string
+        "89" — the task COUNT — and suspicion landed on an off-by-one here.
+        The slicer is faithful: given 89 real names, slice 000 carries the
+        first task, slice 088 the last, and no slice's task slot ever holds
+        the count. The count reached those runs inside ``spec.tasks`` itself
+        (a task-listing capture swept in the "89 tasks" trailer, which sorts
+        ahead of every real name), which is what the submit-time refusal in
+        ``_cmd_cloud_run`` exists to stop."""
+        tasks = tuple(sorted(f"task-{i:02d}" for i in range(89)))
+        plans = plan_trials(_spec(tasks=tasks, seats=(_seat("stella"),)))
+        assert len(plans) == 89
+        assert plans[0].label == f"000-stella-{tasks[0]}"
+        assert plans[-1].label == f"088-stella-{tasks[-1]}"
+        count = str(len(tasks))
+        assert all(p.task != count for p in plans)
+        assert all(not p.label.endswith(f"-{count}") for p in plans)
 
 
 class TestSliceSpec:
@@ -455,6 +279,38 @@ class TestRefusedSeats:
 
     def test_a_seat_declaring_nothing_is_never_refused(self) -> None:
         assert refused_seats({"free": []}, {}, set()) == {}
+
+
+class TestUnknownTasks:
+    """A declared task the dataset does not contain must be refused at submit
+    time (#3255) — never sliced into a Batch container that fetches nothing
+    and dies as an operational abort."""
+
+    def test_a_count_entry_is_named(self) -> None:
+        """The exact #3255 shape: a task-listing capture swept the "89 tasks"
+        trailer into the list, where it sorted ahead of every real name."""
+        known = [f"task-{i:02d}" for i in range(89)]
+        declared = sorted(["89", *known[:-1]])
+        assert declared[0] == "89"
+        assert unknown_tasks(declared, known) == ["89"]
+
+    def test_a_clean_match_is_clean(self) -> None:
+        assert unknown_tasks(("task-a", "task-b"), ("task-a", "task-b")) == []
+
+    def test_an_unmaterialised_dataset_checks_nothing(self) -> None:
+        """An empty enumeration means the dataset is not on disk, not that it
+        has no tasks — refusing here would make local materialisation a
+        submit prerequisite, which it deliberately is not."""
+        assert unknown_tasks(("89", "task-a"), ()) == []
+
+    def test_duplicates_are_reported_once_in_declared_order(self) -> None:
+        assert unknown_tasks(("bogus-b", "bogus-a", "bogus-b"), ("task-a",)) == [
+            "bogus-b",
+            "bogus-a",
+        ]
+
+    def test_a_whole_dataset_match_declares_nothing_to_check(self) -> None:
+        assert unknown_tasks((), ("task-a",)) == []
 
 
 class TestProgress:
@@ -987,11 +843,12 @@ class TestFetchMergesIntoOneTrial:
             {"id": "job-stella", "label": "000-stella-task-a"},
             {"id": "job-cc", "label": "001-cc-task-a"},
         ]
-        executor = _executor(s3=s3, dynamodb=dynamo)
+        executor = _executor(s3=s3, dynamodb=dynamo, batch=FakeBatch())
         executor.load_jobs = lambda run_id: {"jobs": jobs}  # type: ignore[method-assign]
 
         args = argparse.Namespace(
-            run_id="r1", artifacts=False, out=str(tmp_path), region=None, bucket=None
+            run_id="r1", artifacts=False, out=str(tmp_path), region=None,
+            bucket=None, partial=False,
         )
         rc = _cmd_cloud_fetch(args, executor=executor)
 
@@ -1039,7 +896,9 @@ class TestFetchMergesIntoOneTrial:
                 ),
             }
         )
-        executor = _executor(s3=s3, dynamodb=FakeDynamo([{"Items": []}]))
+        executor = _executor(
+            s3=s3, dynamodb=FakeDynamo([{"Items": []}]), batch=FakeBatch()
+        )
         executor.load_jobs = lambda run_id: {  # type: ignore[method-assign]
             "jobs": [
                 {"id": "job-stella", "label": "000-stella-task-a"},
@@ -1048,7 +907,8 @@ class TestFetchMergesIntoOneTrial:
         }
 
         args = argparse.Namespace(
-            run_id="r1", artifacts=True, out=str(tmp_path), region=None, bucket=None
+            run_id="r1", artifacts=True, out=str(tmp_path), region=None,
+            bucket=None, partial=False,
         )
         rc = _cmd_cloud_fetch(args, executor=executor)
 
@@ -1093,118 +953,3 @@ class TestCloudMerge:
         rc = _cmd_cloud_merge(args)
         assert rc == 1
         assert "no results.json found" in capsys.readouterr().out
-
-
-# --------------------------------------------------------------------------
-# the CLI path
-# --------------------------------------------------------------------------
-
-TEMPLATE = """\
-[match]
-name = "cloud smoke"
-dataset = "terminal-bench-2.1"
-tasks = ["task-a"]
-
-[[contestant]]
-id = "stella"
-agent = "stella"
-
-  [contestant.engine]
-  api = "openrouter"
-  model = "z-ai/glm-5.2"
-
-  [contestant.env]
-  required = ["OPENROUTER_API_KEY"]
-"""
-
-
-def _run_args(template, **overrides) -> argparse.Namespace:
-    defaults = dict(
-        template=str(template),
-        ref=None,
-        run_id="r-test",
-        burst=False,
-        poll=0.0,
-        vcpus=4,
-        memory_mb=15360,
-        no_wait=True,
-        no_fetch=True,
-        artifacts=False,
-        out=None,
-        region=None,
-        bucket=None,
-        # These tests are about submission, not about the banned-behavior
-        # gate, so they take the explicit waiver — `_cmd_cloud_run` refuses to
-        # start a run that is neither gated nor deliberately ungated, and that
-        # refusal has its own witness in tests/test_gate.py.
-        gate=None,
-        no_gate=True,
-        gate_allow=None,
-    )
-    defaults.update(overrides)
-    return argparse.Namespace(**defaults)
-
-
-class TestCloudRunCommand:
-    def test_a_seat_without_ssm_credentials_is_refused_before_any_submit(
-        self, tmp_path, capsys
-    ) -> None:
-        """The refusal half of the witness: nothing is uploaded and no job is
-        submitted when a seat's declared credentials will not exist in the
-        trial environment (#1827)."""
-        template = tmp_path / "match.toml"
-        template.write_text(TEMPLATE, encoding="utf-8")
-        s3, batch = FakeS3(), FakeBatch()
-        executor = _executor(s3=s3, batch=batch, ssm=FakeSsm([]))
-
-        rc = _cmd_cloud_run(_run_args(template), executor=executor)
-
-        assert rc == 2
-        assert batch.submitted == [], "a refused match must submit nothing"
-        assert s3.calls == [], "a refused match must upload nothing"
-        err = capsys.readouterr().err
-        assert "OPENROUTER_API_KEY" in err
-        assert "refusing to submit" in err
-
-    def test_a_credentialled_match_submits_with_the_matchs_own_ref(
-        self, tmp_path, capsys, monkeypatch
-    ) -> None:
-        """End to end through the CLI glue: SSM credentials present, the SUT
-        resolved from the match's default ref (main), one job per trial."""
-        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
-        commit = "d" * 40
-        template = tmp_path / "match.toml"
-        template.write_text(TEMPLATE, encoding="utf-8")
-        s3 = FakeS3(
-            {
-                "binaries/main/latest.json": json.dumps(
-                    {"git_ref": "main", "commit": commit}
-                ).encode()
-            }
-        )
-        batch = FakeBatch()
-        executor = _executor(
-            s3=s3,
-            batch=batch,
-            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
-            codebuild=FakeCodeBuild(),
-            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
-        )
-
-        rc = _cmd_cloud_run(_run_args(template), executor=executor)
-
-        assert rc == 0
-        (submitted,) = batch.submitted
-        env = {
-            e["name"]: e["value"]
-            for e in submitted["containerOverrides"]["environment"]
-        }
-        assert env["SUT_COMMIT"] == commit
-        assert env["RUN_ID"] == "r-test"
-        assert "runs/r-test/jobs.json" in s3.objects
-        out = capsys.readouterr().out
-        assert "cloud status r-test" in out
-        assert f"sut       : main -> {commit}" in out, (
-            "submit-time output must name ref -> commit, so a reader can see "
-            "which commit 'main' meant on this run (#2388)"
-        )

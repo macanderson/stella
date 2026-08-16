@@ -86,12 +86,7 @@ pub(super) async fn run_lead_pipeline_turn(
         // The operator's switches, applied over the complete surface — MCP
         // and custom tools included.
         let permitted = agent::PolicyToolSet::new(&customs, agent::session_tool_policy(cfg));
-        let tapped = TaskTap {
-            inner: &permitted,
-            events: tx.clone(),
-            registry,
-            supervisor: Some(sup_tx.clone()),
-        };
+        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
 
         let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
         // Role wiring from `agent_engine_config`: worker/triage/verifier pins +
@@ -114,7 +109,8 @@ pub(super) async fn run_lead_pipeline_turn(
             cfg,
             active_rules.clone(),
             mcp,
-            agent::SessionPlane::new(stella_core::EventSender::new(tx.clone())),
+            agent::SessionPlane::new(stella_core::EventSender::new(tx.clone()))
+                .with_sub_agents(registry.sub_agent_dispatcher()),
         )?;
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = match memory {

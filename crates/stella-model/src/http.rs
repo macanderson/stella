@@ -415,6 +415,37 @@ fn forbidden_hint(haystack: &str) -> &'static str {
     }
 }
 
+/// The output ceiling a 402 says the account *can* afford, when the body is
+/// the affordability rejection rather than a bare out-of-credits one.
+///
+/// OpenRouter's exact wire text, recorded off a bench trial that died of it:
+///
+/// ```text
+/// This request requires more credits, or fewer max_tokens. You requested
+/// up to 128000 tokens, but can only afford 117676. To increase, visit …
+/// ```
+///
+/// Matched on the two clauses that carry the meaning — "fewer max_tokens"
+/// (this is about the ceiling, not the balance) and "afford N" (the number)
+/// — rather than on the sentence as a whole, so a reworded prefix or a
+/// changed URL does not silently turn a recoverable rejection back into a
+/// dead turn. Returns `None` for a 402 that is genuinely out of credit,
+/// which must stay terminal: no ceiling is small enough to fund it.
+fn affordable_output_tokens(body: &str, reason: Option<&str>) -> Option<u32> {
+    let haystack = reason.unwrap_or(body).to_lowercase();
+    if !haystack.contains("max_tokens") {
+        return None;
+    }
+    let (_, tail) = haystack.split_once("afford")?;
+    let digits: String = tail
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == ',')
+        .filter(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok().filter(|n| *n > 0)
+}
+
 /// Whether a non-success body appears to be about the model the caller
 /// configured — either literally (the gateway echoes back the rejected
 /// slug, e.g. OpenRouter's `"{slug} is not a valid model ID"`) or generically
@@ -489,10 +520,32 @@ pub(crate) fn classify_http_status(
                 "{label} rejected the credential (HTTP 403){reason_suffix} — {hint}"
             ))
         }
-        StatusCode::PAYMENT_REQUIRED => ProviderError::Terminal(format!(
-            "{label} rejected the request (HTTP 402: payment required){reason_suffix} — the \
-             account is out of credits; add credit or switch to a funded provider/model"
-        )),
+        StatusCode::PAYMENT_REQUIRED => {
+            // Two different failures share this status, and only one is
+            // terminal. "Out of credit" ends the turn; "you asked for a
+            // ceiling you cannot afford" is repaired by asking for less,
+            // and terminating on it is what killed three bench runs whose
+            // balance could still have funded dozens of ordinary calls.
+            if affordable_output_tokens(body, reason.as_deref()).is_some()
+                || reason
+                    .as_deref()
+                    .unwrap_or(body)
+                    .to_lowercase()
+                    .contains("fewer max_tokens")
+            {
+                return ProviderError::OutputBudgetExceeded {
+                    message: format!(
+                        "{label} cannot afford the requested output ceiling (HTTP \
+                         402){reason_suffix}"
+                    ),
+                    affordable_output_tokens: affordable_output_tokens(body, reason.as_deref()),
+                };
+            }
+            ProviderError::Terminal(format!(
+                "{label} rejected the request (HTTP 402: payment required){reason_suffix} — the \
+                 account is out of credits; add credit or switch to a funded provider/model"
+            ))
+        }
         StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimited {
             message: format!("{label} rate limit"),
             retry_after_ms,
@@ -1130,6 +1183,75 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("payment required"), "{msg}");
         assert!(msg.contains("out of credits"), "{msg}");
+    }
+
+    /// The 402 that killed three benchmark runs, replayed verbatim off the
+    /// trial that died of it. A gateway prices the request against the
+    /// ceiling the caller *asks for*, so a 128K ask is refused while the
+    /// balance still funds dozens of ordinary calls — and terminating on it
+    /// threw away every one of them. It must classify as the recoverable
+    /// output-budget rejection, carrying the figure the provider named so
+    /// the engine can ask for less.
+    #[test]
+    fn classify_http_status_402_naming_an_affordable_ceiling_is_recoverable() {
+        let body = r#"{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 128000 tokens, but can only afford 117676. To increase, visit https://openrouter.ai/settings/credits and add more credits","code":402}}"#;
+        let err = classify_http_status(
+            "OpenRouter",
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            None,
+            body,
+            "anthropic/claude-sonnet-5",
+        );
+        let ProviderError::OutputBudgetExceeded {
+            affordable_output_tokens,
+            ..
+        } = &err
+        else {
+            panic!("expected OutputBudgetExceeded, got {err:?}");
+        };
+        assert_eq!(*affordable_output_tokens, Some(117_676));
+        // Never retried as-is: the identical ceiling rejects identically.
+        assert!(!err.is_retryable());
+    }
+
+    /// The other 402, which must stay terminal: no ceiling is small enough
+    /// to fund an account with no credit at all, so clamping and re-issuing
+    /// would only spend rungs on a request that cannot succeed.
+    #[test]
+    fn classify_http_status_402_out_of_credit_stays_terminal() {
+        let body = r#"{"error":{"message":"Insufficient credits. Add more credits to continue."}}"#;
+        let err = classify_http_status(
+            "OpenRouter",
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            None,
+            body,
+            "anthropic/claude-sonnet-5",
+        );
+        assert!(matches!(err, ProviderError::Terminal(_)), "{err:?}");
+    }
+
+    /// The rejection is recognised by shape even when the provider states no
+    /// figure — the engine then halves its own ask rather than treating a
+    /// repairable refusal as the end of the turn.
+    #[test]
+    fn classify_http_status_402_without_a_figure_is_still_recoverable() {
+        let err = classify_http_status(
+            "OpenRouter",
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            None,
+            r#"{"error":{"message":"This request requires more credits, or fewer max_tokens."}}"#,
+            "m",
+        );
+        assert!(
+            matches!(
+                err,
+                ProviderError::OutputBudgetExceeded {
+                    affordable_output_tokens: None,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     /// A provider fronted by a CDN answers a 5xx with a multi-kilobyte HTML

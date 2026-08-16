@@ -128,9 +128,11 @@ use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
 mod completion;
+pub(crate) mod deadline_notice;
 mod dispatch;
 mod drive;
 mod model_fallback;
+pub(crate) mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod restore;
@@ -1001,6 +1003,7 @@ impl<'a> Engine<'a> {
         // step). Drain precedes the soft-stop check deliberately — a
         // steer typed just before Esc is preserved in history for the
         // next turn instead of evaporating with the per-turn tap.
+        deadline_notice::push_if_due(state, std::time::Instant::now());
         if let Some(steering) = self.steering {
             for text in steering.drain_steering() {
                 let _ = events.send(AgentEvent::Steered { text: text.clone() });
@@ -1103,7 +1106,7 @@ impl<'a> Engine<'a> {
         let step_started = std::time::Instant::now();
         let committed = match self
             .run_model_call(
-                state.step,
+                state.model_call_shape(self.config.max_output_tokens),
                 &state.messages,
                 &mut state.budget,
                 &mut state.memos.receipts,
@@ -1172,7 +1175,7 @@ impl<'a> Engine<'a> {
                 state.total_cost_usd,
                 &mut state.messages,
                 &mut state.length_continuations,
-                &mut state.stop_hook_fired,
+                &mut state.stop_hook_consults,
                 continuation_budget,
                 events,
             )
@@ -1393,13 +1396,14 @@ impl<'a> Engine<'a> {
     /// pass.
     async fn run_model_call(
         &self,
-        step: usize,
+        call: crate::step::ModelCallShape,
         messages: &[CompletionMessage],
         budget: &mut BudgetGuard,
         receipts: &mut ReceiptLedger,
         warnings: &mut BudgetWarnings,
         events: &EventSender,
     ) -> Result<CommittedStep, ModelCallFailure> {
+        let step = call.step;
         let tools_schema = self.tools.schemas();
         let read_only_tools: HashSet<String> = tools_schema
             .iter()
@@ -1448,7 +1452,7 @@ impl<'a> Engine<'a> {
         // bound used to force on an owning request (#921).
         let req = CompletionRequestRef {
             messages,
-            max_output_tokens: req_config.max_output_tokens,
+            max_output_tokens: call.max_output_tokens,
             temperature: req_config.temperature,
             effort: req_config.effort,
             reasoning: req_config.reasoning,
