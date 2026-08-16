@@ -84,7 +84,7 @@ use stella_core::hooks::decision::{
     ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, GateVerdict, OperatorPosture,
 };
 use stella_core::ports::authz::authz_verdict;
-use stella_core::ports::{AuthzDecision, AuthzEvalError, AuthzGate, Principal, ToolExecutor};
+use stella_core::ports::{AuthzEvalError, AuthzGate, Principal, ToolExecutor};
 use stella_protocol::tool::{ErrorClass, ToolOutput, ToolSchema};
 
 use crate::contracts;
@@ -203,40 +203,18 @@ impl<'a> GatedToolSet<'a> {
         evaluation: &Result<stella_core::ports::AuthzEvaluation, AuthzEvalError>,
     ) {
         let Some(bus) = &self.bus else { return };
-        let decision = match evaluation {
-            Ok(evaluation) => {
-                let verdict = match &evaluation.decision {
-                    AuthzDecision::Allow => serde_json::json!({ "verdict": "allow" }),
-                    AuthzDecision::Deny { reason } => {
-                        serde_json::json!({ "verdict": "deny", "reason": reason })
-                    }
-                    AuthzDecision::RequireApproval { reason } => {
-                        serde_json::json!({ "verdict": "require_approval", "reason": reason })
-                    }
-                };
-                let mut decision = verdict;
-                decision["trace"] =
-                    serde_json::to_value(&evaluation.trace).unwrap_or(serde_json::Value::Null);
-                decision
-            }
-            // An errored evaluation is journaled too — it is the arm the
-            // fail-closed rule exists for, and the audit trail must show it
-            // as "could not tell", never as a silent deny.
-            Err(error) => serde_json::json!({
-                "verdict": "error",
-                "gate": error.gate,
-                "detail": error.detail,
-            }),
-        };
+        // The shape lives in `stella-core` (#3362), not here: the serve
+        // wire's `RemoteToolExecutor` journals the same account from the
+        // same gate at the same position, and two copies of this payload
+        // would be two places for it to drift.
         bus.emit_named(
             stella_core::bus::names::POLICY_EVALUATED,
-            serde_json::json!({
-                "event_name": "authz.gate",
-                "tool": name,
-                "principal": self.principal.label(),
-                "gate": self.gate.name(),
-                "decision": decision,
-            }),
+            stella_core::ports::authz::evaluation_journal_payload(
+                name,
+                &self.principal,
+                self.gate.name(),
+                evaluation,
+            ),
         );
     }
 

@@ -550,7 +550,24 @@ impl ToolExecutor for RemoteToolExecutor {
         // gate denies whatever any softening flag says.
         let evaluation = self
             .gate
-            .check(&self.contract_for(name), &self.principal, input);
+            .check_traced(&self.contract_for(name), &self.principal, input);
+        // The rule-by-rule account (#3362), journaled before the fold
+        // consumes the evaluation — same builder, same event name, same
+        // payload shape as the CLI's `GatedToolSet`, so a host reading the
+        // policy plane sees one vocabulary across both surfaces. Telemetry:
+        // a session with no bus journals nothing and the call is unaffected.
+        if let Some(bus) = &self.bus {
+            bus.emit_named(
+                hook_names::POLICY_EVALUATED,
+                stella_core::ports::authz::evaluation_journal_payload(
+                    name,
+                    &self.principal,
+                    self.gate.name(),
+                    &evaluation,
+                ),
+            );
+        }
+        let evaluation = evaluation.map(|evaluation| evaluation.decision);
         match authz_verdict(&OperatorPosture::NoOpinion, evaluation, false) {
             GateVerdict::Allow => {}
             GateVerdict::Deny { reason } => {

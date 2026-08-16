@@ -488,6 +488,20 @@ async fn a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves() {
         read_only: false,
         speculation_safe: false,
     });
+    // A bus recording `policy.evaluated`: the served surface must journal
+    // the same rule-by-rule account the CLI's `GatedToolSet` does (#3362).
+    let bus = HookBus::new("turn-authztest0");
+    let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+    let journal = Arc::clone(&seen);
+    bus.on(hook_names::POLICY_EVALUATED, move |event: &HookEvent| {
+        journal
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(event.payload.clone());
+        Ok(())
+    })
+    .detach();
+
     let port = RemoteToolExecutor::new(
         vec![contract],
         Arc::new(DenyAll),
@@ -495,7 +509,7 @@ async fn a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves() {
         sink,
         pending,
         Duration::from_millis(50),
-        None,
+        Some(bus),
     );
 
     let out = port.execute("deploy", &serde_json::json!({})).await;
@@ -509,6 +523,29 @@ async fn a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves() {
     assert!(
         rx.try_recv().is_err(),
         "a denied call must never reach the host — no frame may exist"
+    );
+
+    // **The #3362 witness**: the account reaches the policy plane, carrying
+    // the trace inside `decision` — the field `bridge_policy_plane` copies
+    // verbatim into the journaled `PolicyDecision`. Byte-parallel with the
+    // CLI surface's, because both come from `evaluation_journal_payload`.
+    let events = seen.lock().unwrap_or_else(|p| p.into_inner());
+    assert_eq!(events.len(), 1, "one account per evaluation: {events:?}");
+    let account = &events[0];
+    assert_eq!(account["event_name"], "authz.gate");
+    assert_eq!(account["tool"], "deploy");
+    assert_eq!(account["principal"], "host:acme");
+    assert_eq!(account["gate"], "deny-all");
+    assert_eq!(account["decision"]["verdict"], "deny");
+    let rules = account["decision"]["trace"]["rules"]
+        .as_array()
+        .expect("the trace rides the decision payload");
+    assert_eq!(rules.len(), 1, "the default single-rule trace: {rules:?}");
+    assert_eq!(rules[0]["rule"], "deny-all");
+    assert_eq!(rules[0]["deciding"], true);
+    assert!(
+        account["input"].is_null() && account["decision"]["input"].is_null(),
+        "the call's arguments must never ride an audit payload (invariant #3)"
     );
 }
 
