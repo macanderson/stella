@@ -166,3 +166,43 @@ fn the_same_skill_is_selected_once_the_prompt_anchors_in_its_domain() {
         "a prompt anchored in the domain still selects its skill: {selected:?}"
     );
 }
+
+/// **Witness.** Steering off is frameless through the pipeline's recall port,
+/// not just the rendered blocks.
+///
+/// Fails on the first phase-3 cut, where the switch gated only the block
+/// renders: `ContextRecallPort::recall` went straight to the frame query, so
+/// pipeline, fleet, and resumed turns kept injecting recalled frames after an
+/// operator or their org turned steering off. The gate belongs at the shared
+/// seam for the same reason the A/B control's does (#1221): a port that still
+/// answers feeds the goal message, the planner, and the witness author behind
+/// the switch's back.
+#[tokio::test]
+async fn steering_turned_off_is_frameless_through_the_pipeline_port_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let mut memory =
+        SessionMemory::open(dir.path(), false).expect("session memory opens in a temp workspace");
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    // The control arm: with steering on, the port recalls the planted lesson —
+    // or the assertion below would pass for the wrong reason.
+    assert!(
+        !ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "the port must recall the planted lesson while steering is on"
+    );
+
+    memory.set_steering_enabled(false);
+    assert!(
+        ContextRecallPort::recall(&memory, lesson).await.is_empty(),
+        "steering off must reach the pipeline's recall port, not just the \
+         rendered blocks"
+    );
+}

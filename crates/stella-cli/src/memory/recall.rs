@@ -493,14 +493,18 @@ impl SessionMemory {
         anchors: Vec<String>,
         mut report: impl FnMut(String),
     ) -> Recall {
-        // The control turn's suppression lives HERE, at the frame query both
-        // the rendered block and the pipeline's `ContextRecallPort` go through
-        // — not at the block render alone. A control turn whose port still
-        // answered would feed frames to the goal message, the planner, and the
-        // witness author while the block above showed none, which is not a
-        // control arm at all: the turn would be measured as frameless while
-        // running on recalled context (#1221).
-        if self.ab_suppressed {
+        // Both withholding switches live HERE, at the frame query the rendered
+        // block, the pipeline's `ContextRecallPort`, and the mid-turn re-query
+        // all go through — not at the block renders alone. A control turn
+        // whose port still answered would feed frames to the goal message, the
+        // planner, and the witness author while the block above showed none,
+        // which is not a control arm at all: the turn would be measured as
+        // frameless while running on recalled context (#1221). Steering off is
+        // the same leak with an operator behind it instead of an experiment:
+        // gated only at the renders, the port kept injecting recalled frames
+        // into pipeline, fleet, and resumed turns after the org said no
+        // (#3243).
+        if self.ab_suppressed || !self.steering_enabled {
             return Recall::default();
         }
         let query = ContextQuery {
