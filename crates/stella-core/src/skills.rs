@@ -413,23 +413,28 @@ pub struct SelectedSkill {
 }
 
 /// Select the skills most relevant to `prompt`, given the currently active
-/// `active_domains`. Pure scoring: lexical Jaccard overlap between the prompt
-/// and each skill's name+description, plus a per-matched-domain boost, plus
+/// `active_domains`. Pure scoring: lexical coverage of each skill's
+/// name+description by the prompt, plus a per-matched-domain boost, plus
 /// the small `AutoCreated` tie-break. Only skills scoring at least
 /// `config.min_score` are returned, top-k by `config.max_skills`, highest
 /// first (ties broken by name for determinism).
+///
+/// Scoring runs in `crate::mining::score_terms`'s Unicode-aware space, not
+/// the miners' ASCII id space — selection is ephemeral and mints no ids, so a
+/// non-Latin prompt can match here without the id migration widening
+/// `mining::terms` would take (#3298).
 pub fn select_skills(
     skills: &[Skill],
     prompt: &str,
     active_domains: &[String],
     config: &SelectionConfig,
 ) -> Vec<SelectedSkill> {
-    let prompt_terms: HashSet<String> = terms(prompt).into_iter().collect();
+    let prompt_terms: HashSet<String> = score_terms(prompt).into_iter().collect();
 
     let mut selected: Vec<SelectedSkill> = Vec::new();
     for skill in skills {
         let haystack = format!("{} {}", skill.name, skill.description);
-        let skill_terms: HashSet<String> = terms(&haystack).into_iter().collect();
+        let skill_terms: HashSet<String> = score_terms(&haystack).into_iter().collect();
 
         let mut matched_terms: Vec<String> =
             prompt_terms.intersection(&skill_terms).cloned().collect();
@@ -915,7 +920,7 @@ pub enum InstallDecision {
 
 // Lexical helpers — shared with the rules miner via `crate::mining`
 
-use crate::mining::{coverage, terms};
+use crate::mining::{coverage, score_terms};
 
 /// Union of every domain across a cluster, dedup'd case-insensitively,
 /// first-seen casing preserved, order stable.
