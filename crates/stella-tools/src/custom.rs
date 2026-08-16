@@ -633,6 +633,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         if output.stdout.is_empty() {
             return ToolOutput::Ok {
                 content: silent_success_stamp(&tool.name, input),
+                data: None,
             };
         }
         ToolOutput::Ok {
