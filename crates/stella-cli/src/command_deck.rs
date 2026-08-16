@@ -68,7 +68,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::router::CircuitBreaker;
 use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
 use stella_model::provider::Provider;
@@ -82,7 +82,7 @@ use stella_protocol::{
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
-use stella_tools::custom::{CustomTool, CustomToolSet};
+use stella_tools::custom::CustomTool;
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound,
@@ -3952,11 +3952,10 @@ async fn run_lead_turn(
     // Same structural drop-order rule as `agent::run_turn`: every tx clone
     // lives in this scope so dropping `tx` after it closes the channel.
     let outcome = {
-        let customs =
-            CustomToolSet::new(&claims, custom_tools.to_vec(), cfg.workspace_root.clone());
-        // The operator's switches, applied over the complete surface — MCP
-        // and custom tools included.
-        let permitted = agent::PolicyToolSet::new(&customs, agent::session_tool_policy(cfg));
+        // Customs, the operator's switches, and the authorization gate
+        // (#3283) — the deck's lead turn acts as the human at the keyboard.
+        let permitted =
+            agent::tool_stack::session_stack(&claims, custom_tools.to_vec(), cfg, Principal::User);
         let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
         let hook_runner = ShellHookRunner;
         let mut engine = Engine::with_sleeper(

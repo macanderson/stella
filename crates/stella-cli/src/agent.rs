@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
     BudgetGuard, CalibrationMap, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router,
@@ -29,7 +29,7 @@ use stella_pipeline::{
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
-use stella_tools::custom::{self, CustomTool, CustomToolSet};
+use stella_tools::custom::{self, CustomTool};
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
@@ -61,6 +61,7 @@ mod prompt;
 mod reflect;
 pub(crate) mod resume;
 mod skill_usage;
+pub(crate) mod tool_stack;
 mod tools;
 mod turn_close;
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
@@ -87,9 +88,6 @@ pub(crate) use prompt::*;
 pub(crate) use reflect::{FrictionTap, surface_reflection};
 use reflect::{reflect_on_interactive_turn, reflection_json};
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
-// `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
-// session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
-pub(crate) use crate::tool_policy::PolicyToolSet;
 pub(crate) use tools::*;
 
 /// Whether this process may touch durable workspace state, as the
@@ -357,10 +355,9 @@ async fn run_pipeline_one_shot(
     let friction = FrictionTap::default();
 
     let result = {
-        let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
-        // Outermost: the operator's switches, applied over the complete
-        // surface — MCP and custom tools included.
-        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
+        // Customs, the operator's switches, and the authorization gate,
+        // outermost-last (#3283) — one assembly for every driver.
+        let tools = tool_stack::session_stack(base_tools, custom_tools, cfg, Principal::User);
 
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
@@ -1683,10 +1680,10 @@ async fn run_turn(
     let outcome = if crate::enterprise_telemetry::process_free_authority_active() {
         // Even when process-free authority strips the MCP/custom/interactive
         // layers, the `"tools"` policy (operator/managed-org tool switches)
-        // must still be enforced above the session tool stack — mirroring
-        // every other driver path. Wrap the raw registry in `PolicyToolSet`
-        // so disabled tools cannot be invoked here either.
-        let permitted = PolicyToolSet::new(registry, session_tool_policy(cfg));
+        // and the authorization gate must still hold above the session tool
+        // stack — mirroring every other driver path, so disabled tools cannot
+        // be invoked here either.
+        let permitted = tool_stack::policy_stack(registry, cfg, Principal::User);
         let config = engine::engine_config_for_kind(cfg, kind);
         let engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
@@ -1694,14 +1691,10 @@ async fn run_turn(
             .with_fallback_resolver(&fallback);
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
-        let customs = CustomToolSet::new(
-            base_tools,
-            custom_tools.to_vec(),
-            cfg.workspace_root.clone(),
-        );
-        // Outermost: the operator's switches, applied over the complete
-        // surface — MCP and custom tools included.
-        let tools = PolicyToolSet::new(&customs, session_tool_policy(cfg));
+        // Customs, the operator's switches, and the authorization gate,
+        // outermost-last (#3283) — one assembly for every driver.
+        let tools =
+            tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User);
         let hook_runner = ShellHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any

@@ -259,6 +259,15 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
             };
         }
     };
+    // A silent success renders the harness's own input-derived stamp instead
+    // of the empty string (#3303, for the stagnation detector). As evidence
+    // it is still nothing: the stamp holds for any process that exits 0, so
+    // asserting on it would prove exactly what `EmptyOutput` exists to
+    // refuse. Recognize the stamp by recomputing it — exact bytes, no
+    // pattern-matching on prose.
+    if first == crate::custom::silent_success_stamp(&tool.name, &input) {
+        return WitnessVerdict::Vacuous(VacuousWitness::EmptyOutput);
+    }
     let expect = match assertable_value(&first, &input) {
         Ok(expect) => expect,
         Err(reason) => return WitnessVerdict::Vacuous(reason),

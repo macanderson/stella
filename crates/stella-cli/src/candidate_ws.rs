@@ -460,10 +460,16 @@ impl GitCandidateWorkspaces {
                     Some(mcp) => Arc::new(mcp.for_candidates(Arc::new(native))),
                     None => Arc::new(native),
                 };
-                // Outermost, over registry + customs + candidate MCP alike.
-                let tools: Box<dyn stella_core::ToolExecutor> = Box::new(
-                    crate::agent::PolicyToolSet::new_owned(tools, self.policy.clone()),
-                );
+                // Policy then gate, over registry + customs + candidate MCP
+                // alike (#3283) — best-of-N must not be a way around either.
+                // The principal is the pipeline's worker role: a candidate's
+                // tools act for the execute stage, never the human directly.
+                let tools: Box<dyn stella_core::ToolExecutor> =
+                    Box::new(crate::agent::tool_stack::policy_stack_owned(
+                        tools,
+                        self.policy.clone(),
+                        stella_core::ports::Principal::Role("worker".into()),
+                    ));
                 // Outside even the policy wrap, like the deck's session tap
                 // (#1719) — see `task_events`'s module doc.
                 let (tools, task_board) = task_events::tap(tools, board, self.events.clone());
