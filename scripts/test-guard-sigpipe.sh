@@ -102,6 +102,16 @@ else
   echo "skip check-wire-schema.sh — no cargo toolchain on PATH"
 fi
 
+# check-lockfile-sync.sh shells out to cargo too, but only to resolve — it
+# compiles nothing, so unlike the exporter above it is cheap enough for the
+# deterministic pair. Same skip rule for the same reason.
+if command -v cargo >/dev/null 2>&1; then
+  want check-lockfile-sync.sh true
+  want check-lockfile-sync.sh head -1
+else
+  echo "skip check-lockfile-sync.sh — no cargo toolchain on PATH"
+fi
+
 # ── The original repro (#1815) ───────────────────────────────────────────────
 # The `printf | grep -qx` membership race fired only intermittently — a
 # different innocent crate blamed on each piped run — so this case gets room

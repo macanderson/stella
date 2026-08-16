@@ -68,6 +68,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + typed-errors
                          #   + diagnostic-codes
                          #   + wire-schema
+                         #   + lockfile-sync (cargo metadata --locked)
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
@@ -108,6 +109,20 @@ would launch a browser on nearly every PR — the same disjoint-paths reasoning
 that gave `wire-schema.yml` its own file. It is deliberately not a required
 check yet (#2425).
 
+A fifth, `main-canary.yml`, is the only one that runs **after** the merge, and
+it exists because some guards cannot be settled before one. A guard enforced
+against a *shared cell* — one file every PR of a shape must write, like
+`Cargo.lock` or `scripts/file-size-baseline.txt` — can be satisfied correctly by
+two branches that still compose into a broken tree once both land. No pre-merge
+run can catch that: neither author's tree is wrong. So the canary re-asks the
+composition questions on `main` itself (push, plus a daily backstop for the
+breakage no commit caused, such as a yanked dependency), and reports by opening
+one labelled issue — closing it again when `main` recovers, because a monitor
+that only ever files gets muted and is then worse than none (#1464 is what
+silent failure costs here). `make main-canary` runs the same check locally
+without filing anything; `scripts/main-canary.sh`'s header carries the full
+argument, including why it deliberately does not open a fix PR (#3332).
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -126,7 +141,7 @@ Four rungs, each a superset of the one above:
 
 | Target | Runs | Honours `CARGO_SCOPE` |
 | --- | --- | --- |
-| `make guards-fast` | the toolchain-free guards + `fmt --check` — nothing compiles at all | — |
+| `make guards-fast` | the toolchain-free guards + `lockfile-sync` + `fmt --check` — nothing compiles at all | — |
 | `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
@@ -788,7 +803,22 @@ seconds; `cargo test --workspace` rebuilds everything.
 ## Gotchas
 
 - **`Cargo.lock` is tracked.** Stella ships a binary and `install.sh` builds
-  with `--locked`, so the lockfile must be committed and reproducible.
+  with `--locked`, so the lockfile must be committed and reproducible. Nothing
+  you run day to day passes `--locked`, which is what makes a stale lock
+  invisible until release time — so `lockfile-sync`
+  (`scripts/check-lockfile-sync.sh`) resolves it on every gate run, including
+  the `guards-fast` rung the pre-push hook picks. It compiles nothing.
+
+  It catches the lock you forgot to regenerate. It cannot catch the other
+  shape: two branches that are each correct and collide only once both land —
+  the lockfile is one shared cell every version-bumping PR writes, exactly like
+  `scripts/file-size-baseline.txt` above. That happened twice on 2026-08-16
+  (#3311, then the 0.9.50 sync against it) and left `main` red for every
+  `--locked` build. Nothing pre-merge can see it, because neither author's tree
+  is wrong — which is why `main-canary.yml` re-asks the same question after the
+  merge and files an issue when the answer changed (#3332). The two halves are
+  deliberately separate: one stops you shipping a stale lock, the other bounds
+  how long `main` stays broken when nobody did.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
