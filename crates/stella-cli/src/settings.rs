@@ -674,7 +674,7 @@ impl Settings {
         }
         self.context
             .as_ref()
-            .map_or(true, |context| context.steering.enabled)
+            .is_none_or(|context| context.steering.enabled)
     }
 
     /// The merged `tools` section as the policy the runtime enforces. The
