@@ -35,6 +35,8 @@
 //! sentence. [`TurnSignal`] is what those selectors never had: what the turn
 //! has *become*.
 
+pub mod adapt;
+
 use std::collections::BTreeMap;
 
 /// What is happening in this turn, as a selector needs to see it.

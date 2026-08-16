@@ -720,6 +720,12 @@ impl Engine<'_> {
             calibration: self.calibration,
             gate: self.gate,
             steering,
+            // Not inherited: the re-query plane belongs to the session's own
+            // turn. A child queries against ITS goal at dispatch (its prompt
+            // is fresh by construction), and a parent-scoped plane answering
+            // a child's signal would inject the parent's context into a
+            // delegated transcript. Wiring children is its own decision.
+            requery: None,
             // The child rides the parent's bus. A sub-agent's steps and model
             // calls are work the session really did — billed to it, visible
             // in its spend — so hiding them from an observer would make the

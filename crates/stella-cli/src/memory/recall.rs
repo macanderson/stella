@@ -9,6 +9,7 @@
 
 use colored::Colorize;
 use stella_context::ContextQuery;
+use stella_core::records::RenderedChannel;
 use stella_core::skills::{self, SelectionConfig};
 use stella_pipeline::{ContextRecallPort, Recall, RecalledFrame};
 use stella_protocol::{CompletionMessage, MessageRole};
@@ -69,29 +70,18 @@ impl SessionMemory {
         self.record_registry = (!registry.entries.is_empty()).then_some(registry);
     }
 
-    /// This turn's volatile record section: the registry's volatile channel,
-    /// selected by `applies_to` against the turn's prompt and the paths it
-    /// names. `None` when nothing applies — an empty section would only burn
-    /// tokens (the channel is opt-out by emptiness, not by flag).
-    fn turn_record_section(&self, prompt: &str) -> Option<String> {
-        self.turn_record_section_reporting(prompt, |message| {
-            eprintln!("  {} {message}", "!".yellow())
-        })
-    }
-
-    /// [`Self::turn_record_section`] with an injectable diagnostic sink, the
-    /// same split as [`Self::recalled_frames_reporting`] and for the same
-    /// reason: the eviction report must be testable without capturing global
-    /// stderr. A record reported here MATCHED this turn's facts — the
-    /// selector chose it and the budget evicted it — which is the coverage
-    /// gap #2709 requires to be observable rather than silent: a scoped rule
-    /// that systematically loses its seat looks exactly like a rule that
-    /// never applied, unless someone says otherwise.
-    pub(super) fn turn_record_section_reporting(
+    /// This turn's volatile record channel, rendered: the registry's volatile
+    /// channel, selected by `applies_to` against the turn's prompt and the
+    /// paths it names. `None` when this session has no records at all.
+    ///
+    /// Returns the registry alongside the render because the steering
+    /// adapters (`stella_core::steering::adapt`) resolve the rendered handles
+    /// back through it for their token estimates — the render and the ledger
+    /// must come from one selection pass, not two.
+    fn turn_record_rendered(
         &self,
         prompt: &str,
-        mut report: impl FnMut(String),
-    ) -> Option<String> {
+    ) -> Option<(&stella_core::records::Registry, RenderedChannel)> {
         let registry = self.record_registry.as_ref()?;
         let paths = turn_path_tokens(prompt);
         let facts = stella_core::records::TurnFacts {
@@ -99,15 +89,35 @@ impl SessionMemory {
             paths: &paths,
         };
         let rendered = registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET));
-        for handle in &rendered.dropped {
-            report(format!(
-                "a record applying to this turn did not fit the {RECORD_CHANNEL_BUDGET}-char \
-                 record budget: ^{handle} — raise its precedence, or trim the records that \
-                 outrank it"
-            ));
+        Some((registry, rendered))
+    }
+
+    /// The record channel's section and eviction report, with an injectable
+    /// diagnostic sink — the same split as
+    /// [`Self::recalled_frames_reporting`] and for the same reason: the
+    /// eviction report must be testable without capturing global stderr. A
+    /// record reported here MATCHED this turn's facts — the selector chose it
+    /// and the budget evicted it — which is the coverage gap #2709 requires
+    /// to be observable rather than silent: a scoped rule that systematically
+    /// loses its seat looks exactly like a rule that never applied, unless
+    /// someone says otherwise.
+    ///
+    /// Since #3349 this is a composition over the same pieces the steering
+    /// plane uses — and test-gated like [`Self::recall_block`], because the
+    /// production path is now the plane's: a production caller reaching for
+    /// the record section alone would be a fifth selector the migration just
+    /// removed.
+    #[cfg(test)]
+    pub(super) fn turn_record_section_reporting(
+        &self,
+        prompt: &str,
+        mut report: impl FnMut(String),
+    ) -> Option<String> {
+        let (registry, rendered) = self.turn_record_rendered(prompt)?;
+        for drop in stella_core::steering::adapt::record_drops(registry, &rendered) {
+            report(record_drop_message(&drop.handle));
         }
-        let text = rendered.text;
-        (!text.trim().is_empty()).then(|| text.trim_start().to_string())
+        record_section_text(rendered)
     }
 
     /// Build the volatile recalled-context block for a prompt: relevant
@@ -158,11 +168,7 @@ impl SessionMemory {
         if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
-        let mut sections: Vec<String> = Vec::new();
         let recall = self.recalled_frames(prompt).await;
-        if let Some(section) = render_context_section(&recall.frames) {
-            sections.push(section);
-        }
 
         let all_skills = self.load_skills();
         let selected = skills::select_skills(
@@ -171,16 +177,30 @@ impl SessionMemory {
             &self.active_domains(prompt),
             &SelectionConfig::default(),
         );
-        if !selected.is_empty() {
-            sections.push(skills::render_skills_section(&selected));
-        }
 
         // The volatile context-record channel (epic #897). Same channel as the
         // memories above and for the same reason: a fact about a staging URL costs
         // tokens on every turn and is worth them on almost none — which is why it
         // is selected per turn: a record scoped by `applies_to` renders only when
         // this prompt names a matching path, task, or keyword.
-        if let Some(section) = self.turn_record_section(prompt) {
+        let record = self.turn_record_rendered(prompt);
+
+        let signal = stella_core::steering::TurnSignal {
+            prompt,
+            ..Default::default()
+        };
+        let set = query_gathered_plane(&signal, &recall.frames, &selected, record.as_ref());
+        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+
+        let mut sections: Vec<String> = Vec::new();
+        if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
+            sections.push(section);
+        }
+        let kept = kept_skills(&selected, &set);
+        if !kept.is_empty() {
+            sections.push(skills::render_skills_section(&kept));
+        }
+        if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
             sections.push(section);
         }
 
@@ -227,7 +247,6 @@ impl SessionMemory {
         if self.ab_suppressed || !self.steering_enabled {
             return None;
         }
-        let mut sections: Vec<String> = Vec::new();
         let all_skills = self.load_skills();
         let selected = skills::select_skills(
             &all_skills,
@@ -235,13 +254,106 @@ impl SessionMemory {
             &self.active_domains(prompt),
             &SelectionConfig::default(),
         );
-        if !selected.is_empty() {
-            sections.push(skills::render_skills_section(&selected));
+        let record = self.turn_record_rendered(prompt);
+
+        let signal = stella_core::steering::TurnSignal {
+            prompt,
+            ..Default::default()
+        };
+        let set = query_gathered_plane(&signal, &[], &selected, record.as_ref());
+        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+
+        let mut sections: Vec<String> = Vec::new();
+        let kept = kept_skills(&selected, &set);
+        if !kept.is_empty() {
+            sections.push(skills::render_skills_section(&kept));
         }
-        if let Some(section) = self.turn_record_section(prompt) {
+        if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
             sections.push(section);
         }
         sections.push(render_today_section(now_unix_secs()));
+        (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
+    }
+
+    /// The volatile block for a turn that has DRIFTED from its opening
+    /// prompt (#3243 Phase 3) — the same three selectors as
+    /// [`Self::recall_block_reported`], queried against what the turn has
+    /// become instead of what it was asked.
+    ///
+    /// The signal's touched paths do the work the prompt could not: they
+    /// join the recall anchors (when they resolve to real files — a created
+    /// file qualifies the moment it exists), they widen the domain scope
+    /// skills are selected in, and they join the record channel's
+    /// `applies_to` path facts. The prompt still carries the lexical query —
+    /// drift changes *where* the turn is, not what it was asked to do.
+    ///
+    /// Two deliberate omissions against the pre-turn block: no date section
+    /// (the turn-opening block already carries today, and repeating it
+    /// mid-turn buys nothing), and no `ContextRecall` telemetry — the
+    /// mid-turn event channel this would report into is a declared gap,
+    /// tracked as #3366. `None` when
+    /// nothing surfaced, when the turn is an A/B control, or when steering
+    /// is off — the same gates, for the same reasons.
+    pub async fn signal_recall_block(
+        &self,
+        signal: &stella_core::steering::TurnSignal<'_>,
+    ) -> Option<String> {
+        if self.ab_suppressed || !self.steering_enabled {
+            return None;
+        }
+        let prompt = signal.prompt;
+
+        // Anchors: what the goal names, then what the turn touched — capped
+        // so a busy turn cannot turn one re-query into a full-graph walk.
+        const MAX_SIGNAL_ANCHORS: usize = 8;
+        let mut anchors = goal_path_anchors(prompt, &self.workspace_root);
+        for path in signal.touched_paths {
+            if anchors.len() >= MAX_SIGNAL_ANCHORS {
+                break;
+            }
+            if !anchors.contains(path) && self.workspace_root.join(path).is_file() {
+                anchors.push(path.clone());
+            }
+        }
+        let domains = crate::contextgraph::query_domain_scope(&self.domains, &anchors);
+
+        let recall = self.recalled_frames_anchored(prompt, anchors, |_| {}).await;
+
+        let all_skills = self.load_skills();
+        let selected =
+            skills::select_skills(&all_skills, prompt, &domains, &SelectionConfig::default());
+
+        let mut paths = turn_path_tokens(prompt);
+        for path in signal.touched_paths {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        let record = self.record_registry.as_ref().map(|registry| {
+            let facts = stella_core::records::TurnFacts {
+                text: prompt,
+                paths: &paths,
+            };
+            (
+                registry,
+                registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET)),
+            )
+        });
+
+        let set = query_gathered_plane(signal, &recall.frames, &selected, record.as_ref());
+        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+
+        let mut sections: Vec<String> = Vec::new();
+        if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
+            sections.push(section);
+        }
+        let kept = kept_skills(&selected, &set);
+        if !kept.is_empty() {
+            sections.push(skills::render_skills_section(&kept));
+        }
+        if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
+            sections.push(section);
+        }
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
 
@@ -365,18 +477,33 @@ impl SessionMemory {
     pub(super) async fn recalled_frames_reporting(
         &self,
         goal: &str,
+        report: impl FnMut(String),
+    ) -> Recall {
+        let anchors = goal_path_anchors(goal, &self.workspace_root);
+        self.recalled_frames_anchored(goal, anchors, report).await
+    }
+
+    /// [`Self::recalled_frames_reporting`] with the anchor set chosen by the
+    /// caller — the seam the proactive re-query (#3243 Phase 3) queries
+    /// through, because a drifted turn's best anchors are the paths it has
+    /// TOUCHED, which the goal string cannot name.
+    pub(super) async fn recalled_frames_anchored(
+        &self,
+        goal: &str,
+        anchors: Vec<String>,
         mut report: impl FnMut(String),
     ) -> Recall {
-        // Both suppressions live HERE, at the frame query both the rendered
-        // block and the pipeline's `ContextRecallPort` go through — not at
-        // the block render alone. A control turn whose port still answered
-        // would feed frames to the goal message, the planner, and the witness
-        // author while the block above showed none, which is not a control
-        // arm at all: the turn would be measured as frameless while running
-        // on recalled context (#1221). The steering switch stops here for the
-        // same reason: a steering-off session whose port still answered would
-        // leak the exact non-prefix injection the switch withholds — through
-        // the surface (a pipeline turn) that never renders the block (#3243).
+        // Both withholding switches live HERE, at the frame query the rendered
+        // block, the pipeline's `ContextRecallPort`, and the mid-turn re-query
+        // all go through — not at the block renders alone. A control turn
+        // whose port still answered would feed frames to the goal message, the
+        // planner, and the witness author while the block above showed none,
+        // which is not a control arm at all: the turn would be measured as
+        // frameless while running on recalled context (#1221). Steering off is
+        // the same leak with an operator behind it instead of an experiment:
+        // gated only at the renders, the port kept injecting recalled frames
+        // into pipeline, fleet, and resumed turns after the org said no
+        // (#3243).
         if self.ab_suppressed || !self.steering_enabled {
             return Recall::default();
         }
@@ -385,14 +512,15 @@ impl SessionMemory {
             query_text: Some(goal.to_string()),
             embedding: None,
             kinds: vec![],
-            // Workspace files the goal names verbatim, as anchors: the
-            // code-graph provider answers anchors with each file's graph
-            // NEIGHBORHOOD (symbols + imports + importers), not just
-            // goal-token definition lookups — deterministic localization
-            // into both the planner prompt and the worker's recall block,
-            // instead of hoping the model's first move is a graph_query
-            // (#342 seam 3).
-            anchors: goal_path_anchors(goal, &self.workspace_root),
+            // Workspace files as anchors: the code-graph provider answers
+            // anchors with each file's graph NEIGHBORHOOD (symbols + imports
+            // + importers), not just goal-token definition lookups —
+            // deterministic localization into both the planner prompt and
+            // the worker's recall block, instead of hoping the model's first
+            // move is a graph_query (#342 seam 3). The default set is what
+            // the goal names verbatim; a re-query passes the paths the turn
+            // has since touched.
+            anchors,
             // Settings-backed since #712 deliverable 8; the defaults are the
             // literals that used to be here.
             max_frames: self.retrieval.max_frames,
@@ -575,31 +703,129 @@ impl ContextRecallPort for SessionMemory {
 /// label form: they are grounding, not memories. `None` when no frame has a
 /// citation label (L-C4 filters the rest).
 pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for f in frames {
-        // Only a label that says something the content does not earns its
-        // bytes: memory (and episode) nodes mint theirs FROM the content, so
-        // rendering both shipped the same sentence twice into a recall budget
-        // the packer had already spent on the content alone (#2476).
-        // A memory with an id keeps the id visible — it names the record, and
-        // it is the join key `receipts::parse_recall_item` reads back. A
-        // memory WITHOUT one still has content worth recalling and the budget
-        // has already been spent fetching it; `RecalledFrame` documents
-        // `id: None` as a legitimate state for a not-yet-materialized frame
-        // (`crates/stella-pipeline/src/ports.rs`), so it renders as grounding.
-        lines.push(stella_core::receipts::render_recall_line(
-            &stella_core::receipts::RecallLine {
-                id: (f.kind == "memory").then_some(f.id.as_deref()).flatten(),
-                label: f.distinct_label(),
-                body: f.content.trim(),
-                source: None,
-            },
-        ));
-    }
+    let lines: Vec<String> = frames.iter().map(frame_recall_line).collect();
     if lines.is_empty() {
         return None;
     }
     Some(format!("Relevant context:\n{}", lines.join("\n")))
+}
+
+/// The recall line ONE frame contributes to the section above.
+///
+/// Only a label that says something the content does not earns its bytes:
+/// memory (and episode) nodes mint theirs FROM the content, so rendering both
+/// shipped the same sentence twice into a recall budget the packer had
+/// already spent on the content alone (#2476). A memory with an id keeps the
+/// id visible — it names the record, and it is the join key
+/// `receipts::parse_recall_item` reads back. A memory WITHOUT one still has
+/// content worth recalling and the budget has already been spent fetching it;
+/// `RecalledFrame` documents `id: None` as a legitimate state for a
+/// not-yet-materialized frame (`crates/stella-pipeline/src/ports.rs`), so it
+/// renders as grounding.
+///
+/// Split out of the section loop so the steering plane's frame adapter
+/// (`super::steering::frame_candidates`) estimates cost over these exact
+/// bytes — one producer, per #3334.
+pub(super) fn frame_recall_line(f: &RecalledFrame) -> String {
+    stella_core::receipts::render_recall_line(&stella_core::receipts::RecallLine {
+        id: (f.kind == "memory").then_some(f.id.as_deref()).flatten(),
+        label: f.distinct_label(),
+        body: f.content.trim(),
+        source: None,
+    })
+}
+
+/// One turn's gathered candidates, packed once — the production
+/// [`stella_core::steering::SteeringPlane`] query every context source now
+/// goes through (#3349). The frame slice is empty on pipeline-driven turns,
+/// whose frames travel on the pipeline's own recall port.
+fn query_gathered_plane(
+    signal: &stella_core::steering::TurnSignal<'_>,
+    frames: &[RecalledFrame],
+    selected: &[skills::SelectedSkill],
+    record: Option<&(&stella_core::records::Registry, RenderedChannel)>,
+) -> stella_core::steering::SteeringSet {
+    use stella_core::steering::{SteeringPlane, adapt};
+
+    let mut candidates = super::steering::frame_candidates(frames);
+    candidates.extend(adapt::skill_candidates(selected));
+    let mut source_drops = Vec::new();
+    if let Some((registry, rendered)) = record {
+        candidates.extend(adapt::record_candidates(registry, rendered));
+        source_drops.extend(adapt::record_drops(registry, rendered));
+    }
+    let plane = super::steering::GatheredSteering {
+        candidates,
+        source_drops,
+    };
+    plane.query(signal)
+}
+
+/// The frames the plane kept, in recall's own order, ready for
+/// [`render_context_section`]. Identity under this slice's authorized budget
+/// — the filter is where a *bound* budget's decision will land, so the render
+/// follows the ledger rather than trusting it.
+fn kept_frames(
+    frames: &[RecalledFrame],
+    set: &stella_core::steering::SteeringSet,
+) -> Vec<RecalledFrame> {
+    frames
+        .iter()
+        .filter(|frame| {
+            let handle = super::steering::frame_handle(frame);
+            set.selected.iter().any(|c| {
+                c.source == stella_core::steering::SteeringSource::Memory && c.handle == handle
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The skills the plane kept, in selection order — same contract as
+/// [`kept_frames`].
+fn kept_skills(
+    selected: &[skills::SelectedSkill],
+    set: &stella_core::steering::SteeringSet,
+) -> Vec<skills::SelectedSkill> {
+    selected
+        .iter()
+        .filter(|sel| {
+            set.selected.iter().any(|c| {
+                c.source == stella_core::steering::SteeringSource::Skill
+                    && c.handle == sel.skill.name
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The record channel's section, from its rendered bytes. `None` for a blank
+/// render — an empty section would only burn tokens.
+fn record_section_text(rendered: RenderedChannel) -> Option<String> {
+    let text = rendered.text;
+    (!text.trim().is_empty()).then(|| text.trim_start().to_string())
+}
+
+/// The eviction report for one budget-dropped record — the single producer
+/// both the plane path and the test-side section entry emit through.
+fn record_drop_message(handle: &str) -> String {
+    format!(
+        "a record applying to this turn did not fit the {RECORD_CHANNEL_BUDGET}-char \
+         record budget: ^{handle} — raise its precedence, or trim the records that \
+         outrank it"
+    )
+}
+
+/// Report every record the ledger says was dropped. Records only, today:
+/// frames and skills kept their sources' existing (silent) drop behavior
+/// through the migration — generalizing the report to them is real new
+/// surface, not a refactor.
+fn report_record_drops(set: &stella_core::steering::SteeringSet, mut report: impl FnMut(String)) {
+    for drop in &set.dropped {
+        if drop.source == stella_core::steering::SteeringSource::Record {
+            report(record_drop_message(&drop.handle));
+        }
+    }
 }
 
 /// The wall clock's current instant, in Unix seconds. The one `SystemTime`

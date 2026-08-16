@@ -136,7 +136,9 @@ pub(crate) mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
 mod rate_limit;
 mod restore;
+// The step boundary's host consults (steering, soft stop, #3243 re-query).
 mod settlement;
+mod step_boundary;
 pub(crate) mod usage_anchor;
 pub(crate) mod user_hooks;
 mod waiting;
@@ -512,6 +514,12 @@ pub struct Engine<'a> {
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
     pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
+    /// Step-boundary context re-query ([`crate::ports::SteeringRequery`]),
+    /// off by default (#3243 Phase 3). Attached via [`Engine::with_requery`];
+    /// consulted once per step at the same boundary as steering, with the
+    /// TurnSignal assembled from this turn's transcript. `None` adds zero
+    /// work.
+    pub(crate) requery: Option<&'a dyn crate::ports::SteeringRequery>,
     /// Extension hook bus ([`crate::bus::HookBus`]), off by default.
     /// Attached via [`Engine::with_bus`]; receives the turn/step/model-call
     /// lifecycle events an out-of-process host uses to observe and, per
@@ -625,6 +633,7 @@ impl<'a> Engine<'a> {
             calibration: None,
             gate: None,
             steering: None,
+            requery: None,
             bus: None,
             outcomes: None,
             fallback: None,
@@ -677,6 +686,7 @@ impl<'a> Engine<'a> {
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
+            requery: self.requery,
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
@@ -715,6 +725,7 @@ impl<'a> Engine<'a> {
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
+            requery: self.requery,
             bus: self.bus,
             outcomes: self.outcomes,
             fallback: self.fallback,
@@ -782,6 +793,14 @@ impl<'a> Engine<'a> {
     /// stop, at step granularity, never mid-tool.
     pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
         self.steering = Some(steering);
+        self
+    }
+
+    /// Attach the step-boundary context re-query (#3243 Phase 3) — the
+    /// steering plane asked again when the turn's own evidence says the work
+    /// has moved, at step granularity, never mid-tool.
+    pub fn with_requery(mut self, requery: &'a dyn crate::ports::SteeringRequery) -> Self {
+        self.requery = Some(requery);
         self
     }
 
@@ -997,39 +1016,13 @@ impl<'a> Engine<'a> {
         if let Some(cancelled) = state.cancel_outcome(events) {
             return cancelled;
         }
-        // Steering rides the same safe boundary as the pause gate:
-        // queued user messages land BEFORE compaction (so the pass sees
-        // them) and before the model call (so it answers them this
-        // step). Drain precedes the soft-stop check deliberately — a
-        // steer typed just before Esc is preserved in history for the
-        // next turn instead of evaporating with the per-turn tap.
+        // The boundary's host consults — steering drain, soft stop, and the
+        // #3243 Phase 3 re-query — in the order `step_boundary` documents.
         deadline_notice::push_if_due(state, std::time::Instant::now());
-        if let Some(steering) = self.steering {
-            for text in steering.drain_steering() {
-                let _ = events.send(AgentEvent::Steered { text: text.clone() });
-                state.messages.push(CompletionMessage::user(text));
-            }
-            if steering.soft_stop_requested() {
-                // A user choice, not a failure: no Error event, and the
-                // caller keeps every completed step (unlike the hard
-                // cancel, which drops the future and truncates). Open
-                // `tool_use`s are closed exactly as the cancel exit closes
-                // them: the engine's own path never leaves one open at this
-                // boundary, but history a caller handed in (or appended to)
-                // mid-turn can, and the kept transcript must stay valid for
-                // the next turn on this exit for the same reason it must on
-                // that one.
-                crate::step::close_open_tool_calls(
-                    &mut state.messages,
-                    SOFT_STOP_TOOL_RESULT,
-                    events,
-                );
-                return StepOutcome::Aborted {
-                    reason: SOFT_STOP_REASON.to_string(),
-                    kind: AbortKind::DeliberateStop,
-                    cost_usd: state.total_cost_usd,
-                };
-            }
+        if let Some(outcome) =
+            step_boundary::consult_hosts(self.steering, self.requery, state, events).await
+        {
+            return outcome;
         }
         if let Some(aborted) = self.check_budget(state, events) {
             return aborted.into();
@@ -1919,3 +1912,8 @@ pub const SOFT_STOP_REASON: &str = "stopped at step boundary by user — complet
 
 #[cfg(test)]
 mod tests;
+
+// #3243 Phase 3: the step-boundary re-query port's witnesses. A separate
+// file because `tests.rs` is closed to growth under the file-size ratchet.
+#[cfg(test)]
+mod requery_tests;

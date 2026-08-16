@@ -71,9 +71,189 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
                 && !m.content.starts_with(LOOP_STEER_PREFIX)
                 && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
                 && !m.content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
+                // A recalled-context block is host-injected context, not a
+                // user turn. Pre-turn blocks land BEFORE the prompt and never
+                // decided this boundary; a proactive re-query (#3243 Phase 3)
+                // injects one mid-turn, where treating it as the boundary
+                // would silently reset loop-detection and confident-zero
+                // evidence on every re-query.
+                && !m.content.starts_with(crate::receipts::RECALL_MARKER)
         })
         .map(|i| i + 1)
         .unwrap_or(0)
+}
+
+/// The transcript evidence a steering re-query reads (#3243 Phase 3): the
+/// prompt that opened this turn, the tools it has called (most recent last),
+/// and the error classes it has seen — assembled fresh each step from the
+/// same window [`turn_start_index`] gives loop detection, so the two planes
+/// cannot disagree about what "this turn" means.
+pub(super) struct TurnEvidence {
+    /// Index of the real user message that bounds this turn, when one exists.
+    pub prompt_index: Option<usize>,
+    /// Tool names in call order, most recent last.
+    pub tool_names: Vec<String>,
+    /// Stable error-class tokens for every failed tool result, in order. An
+    /// unclassified failure reads as `"error"` — still evidence of being
+    /// stuck, just not audited into a class yet.
+    pub error_classes: Vec<&'static str>,
+    /// Path-shaped tokens the turn's tool-call INPUTS named, first mention
+    /// first, deduplicated and capped. Signal, never evidence — the same
+    /// caveat `AgentEvent::FileChange` carries: a `bash` heredoc mutates the
+    /// tree and names nothing here. Unlike a file ledger this includes a
+    /// path the turn is about to *create*, which is exactly the anchor the
+    /// prompt could not contribute (`TurnSignal::touched_paths`).
+    pub touched_paths: Vec<String>,
+}
+
+/// Cap on [`TurnEvidence::touched_paths`]: enough to move a domain scope,
+/// small enough that a pathological turn cannot turn every re-query into a
+/// full-graph walk — the same reasoning as recall's own anchor cap.
+const MAX_TOUCHED_PATHS: usize = 16;
+
+pub(super) fn turn_evidence(messages: &[CompletionMessage]) -> TurnEvidence {
+    let start = turn_start_index(messages);
+    let mut evidence = TurnEvidence {
+        prompt_index: start.checked_sub(1),
+        tool_names: Vec::new(),
+        error_classes: Vec::new(),
+        touched_paths: Vec::new(),
+    };
+    let mut seen_paths = std::collections::HashSet::new();
+    for message in &messages[start..] {
+        match message.role {
+            MessageRole::Assistant => {
+                for call in &message.tool_calls {
+                    evidence.tool_names.push(call.name.clone());
+                    collect_path_tokens(&call.input, &mut seen_paths, &mut evidence.touched_paths);
+                }
+            }
+            MessageRole::Tool => {
+                for result in &message.tool_results {
+                    if let stella_protocol::ToolOutput::Error { class, .. } = &result.output {
+                        evidence.error_classes.push(
+                            class
+                                .map(stella_protocol::ErrorClass::as_str)
+                                .unwrap_or("error"),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    evidence
+}
+
+/// Walk one tool input for path-shaped string values: a token qualifies with
+/// a `/` or an interior `.` (a file name), escapes (`..`) and absolute paths
+/// are rejected, and a `./` prefix is normalized off — the same shape rule
+/// the CLI's record selector applies to prompts. Only whole string values
+/// are considered, never substrings of prose: a tool input's `path`-like
+/// field IS the path, while free text inside a `command` string is noise
+/// this deliberately under-collects. (`bash -c "cat a.rs"` contributes
+/// nothing — signal, not evidence.)
+fn collect_path_tokens(
+    input: &serde_json::Value,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    if out.len() >= MAX_TOUCHED_PATHS {
+        return;
+    }
+    match input {
+        serde_json::Value::String(s) => {
+            let token = s.strip_prefix("./").unwrap_or(s);
+            let path_shaped = token.contains('/')
+                || token
+                    .find('.')
+                    .is_some_and(|at| at > 0 && at + 1 < token.len());
+            if path_shaped
+                && !token.contains(char::is_whitespace)
+                && token.len() <= 256
+                && !token.starts_with('/')
+                && !token.split('/').any(|seg| seg == "..")
+                && seen.insert(token.to_string())
+            {
+                out.push(token.to_string());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_path_tokens(item, seen, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for value in map.values() {
+                collect_path_tokens(value, seen, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Witness (#3243 Phase 3).** A mid-turn recalled-context block is not
+    /// a turn boundary. Fails before the `RECALL_MARKER` exclusion: the
+    /// marker message is User-role, so `rposition` picked it and the window
+    /// silently lost everything before the re-query — loop detection and
+    /// confident-zero evidence reset on every injection.
+    #[test]
+    fn a_mid_turn_recall_block_does_not_reset_the_turn_window() {
+        let mut assistant = CompletionMessage::assistant("working");
+        assistant.tool_calls = vec![];
+        let messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("fix the flaky test"),
+            assistant.clone(),
+            CompletionMessage::user(format!(
+                "{}\n\nRelevant context:\n- freshly recalled",
+                crate::receipts::RECALL_MARKER
+            )),
+            assistant,
+        ];
+
+        assert_eq!(
+            turn_start_index(&messages),
+            2,
+            "the prompt, not the injected recall block, bounds the turn window"
+        );
+    }
+
+    /// The evidence walk reads whole path-shaped string values out of tool
+    /// inputs — a `path` field is a path; prose (whitespace) and escapes are
+    /// not — and includes a file the turn is about to create.
+    #[test]
+    fn touched_paths_come_from_tool_inputs_whole_values_only() {
+        let mut call = CompletionMessage::assistant("");
+        call.tool_calls = vec![stella_protocol::ToolCall {
+            call_id: "c1".into(),
+            name: "write_file".into(),
+            input: serde_json::json!({
+                "path": "crates/stella-model/src/mistral.rs",
+                "content": "run cat ./a.rs first",
+                "escape": "../etc/passwd",
+                "absolute": "/etc/hosts",
+            }),
+        }];
+        let messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("add a mistral adapter"),
+            call,
+        ];
+
+        let evidence = turn_evidence(&messages);
+
+        assert_eq!(
+            evidence.touched_paths,
+            vec!["crates/stella-model/src/mistral.rs".to_string()],
+            "one whole path-shaped value; prose, escapes and absolutes drop"
+        );
+        assert_eq!(evidence.tool_names, vec!["write_file".to_string()]);
+    }
 }
 
 pub(super) fn recent_call_records<'a>(
