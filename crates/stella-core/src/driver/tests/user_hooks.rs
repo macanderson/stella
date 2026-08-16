@@ -523,19 +523,19 @@ async fn pre_tool_use_modify_decision_rewrites_the_input_the_tool_receives() {
     );
 }
 
-/// A scripted [`crate::hooks::decision::HookApprovalRoute`]: one fixed
+/// A scripted [`crate::hooks::decision::ApprovalRoute`]: one fixed
 /// answer, invocation-counted.
 struct ScriptedRoute {
-    resolution: crate::hooks::decision::HookApprovalResolution,
+    resolution: crate::hooks::decision::ApprovalRouteResolution,
     calls: Arc<AtomicU32>,
-    seen: Arc<TokioMutex<Vec<crate::hooks::decision::HookApprovalRequest>>>,
+    seen: Arc<TokioMutex<Vec<crate::hooks::decision::ApprovalRouteRequest>>>,
 }
 #[async_trait]
-impl crate::hooks::decision::HookApprovalRoute for ScriptedRoute {
+impl crate::hooks::decision::ApprovalRoute for ScriptedRoute {
     async fn resolve(
         &self,
-        request: &crate::hooks::decision::HookApprovalRequest,
-    ) -> crate::hooks::decision::HookApprovalResolution {
+        request: &crate::hooks::decision::ApprovalRouteRequest,
+    ) -> crate::hooks::decision::ApprovalRouteResolution {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.seen.lock().await.push(request.clone());
         self.resolution.clone()
@@ -602,7 +602,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
     } = require_approval_fixture(ask);
     let sleeper = NoopSleeper;
     let route = ScriptedRoute {
-        resolution: crate::hooks::decision::HookApprovalResolution::Approved,
+        resolution: crate::hooks::decision::ApprovalRouteResolution::Approved,
         calls: Arc::new(AtomicU32::new(0)),
         seen: Arc::new(TokioMutex::new(Vec::new())),
     };
@@ -636,7 +636,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         hooks,
     } = require_approval_fixture(ask);
     let route = ScriptedRoute {
-        resolution: crate::hooks::decision::HookApprovalResolution::Denied {
+        resolution: crate::hooks::decision::ApprovalRouteResolution::Denied {
             reason: "not on my watch".into(),
         },
         calls: Arc::new(AtomicU32::new(0)),

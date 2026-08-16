@@ -1,6 +1,6 @@
 //! The shell-hook → approval-flow bridge (#2684): the production
 //! implementation of the engine's
-//! [`stella_core::hooks::decision::HookApprovalRoute`] port, over the #2676
+//! [`stella_core::hooks::decision::ApprovalRoute`] port, over the #2676
 //! [`ApprovalBroker`].
 //!
 //! When a settings-declared `PreToolUse` hook prints
@@ -27,9 +27,7 @@
 
 use async_trait::async_trait;
 use stella_core::bus::HookBus;
-use stella_core::hooks::decision::{
-    HookApprovalRequest, HookApprovalResolution, HookApprovalRoute,
-};
+use stella_core::hooks::decision::{ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution};
 
 use crate::ToolRegistry;
 use crate::registry::approval::{ApprovalBroker, ApprovalOutcome, ApprovalRequest};
@@ -40,19 +38,32 @@ use crate::registry::approval::{ApprovalBroker, ApprovalOutcome, ApprovalRequest
 /// find the hook that raised it.
 pub const PRE_TOOL_USE_GATE: &str = "PreToolUse";
 
-/// [`HookApprovalRoute`] over the session's [`ApprovalBroker`]: every
-/// shell-hook `require_approval` runs the same emit → park → TTL flow as
-/// the registry's own gates, on the same bus.
+/// [`ApprovalRoute`] over the session's [`ApprovalBroker`]: every routed
+/// `require_approval` runs the same emit → park → TTL flow as the
+/// registry's own gates, on the same bus.
 pub struct BrokerApprovalRoute {
     broker: ApprovalBroker,
     bus: Option<HookBus>,
+    /// The `gate` name stamped on this route's [`ApprovalRequest`]s.
+    /// Per-route rather than a constant because the route now has two
+    /// producers — the shell-hook surface and the #3288 authorization
+    /// gate — and an `approval.requested` payload blaming `PreToolUse`
+    /// for a question an [`stella_core::ports::AuthzGate`] raised would
+    /// send the operator to the wrong config.
+    gate: String,
 }
 
 impl BrokerApprovalRoute {
     /// A route over an explicit broker + bus — the seam tests use, and
-    /// what a host without a full registry composes by hand.
+    /// what a host without a full registry composes by hand. Stamps
+    /// [`PRE_TOOL_USE_GATE`], the original producer; a route serving a
+    /// different producer renames itself via [`Self::with_gate_name`].
     pub fn new(broker: ApprovalBroker, bus: Option<HookBus>) -> Self {
-        Self { broker, bus }
+        Self {
+            broker,
+            bus,
+            gate: PRE_TOOL_USE_GATE.to_string(),
+        }
     }
 
     /// The session's route: the registry's broker (interactive if
@@ -64,27 +75,38 @@ impl BrokerApprovalRoute {
         Self::new(registry.approval_broker(), registry.hook_bus())
     }
 
-    fn approval_request(request: &HookApprovalRequest) -> ApprovalRequest {
+    /// Stamp this route's audit events with `gate` instead of
+    /// [`PRE_TOOL_USE_GATE`] — for a producer that is not the shell-hook
+    /// surface (an [`stella_core::ports::AuthzGate`] passes its own
+    /// `name()`), so the `approval.requested` payload names the thing
+    /// that actually asked.
+    #[must_use]
+    pub fn with_gate_name(mut self, gate: impl Into<String>) -> Self {
+        self.gate = gate.into();
+        self
+    }
+
+    fn approval_request(&self, request: &ApprovalRouteRequest) -> ApprovalRequest {
         ApprovalRequest {
             tool: request.tool.clone(),
             read_only: request.read_only,
             reason: request.reason.clone(),
-            gate: PRE_TOOL_USE_GATE.to_string(),
+            gate: self.gate.clone(),
             subject: None,
         }
     }
 }
 
 #[async_trait]
-impl HookApprovalRoute for BrokerApprovalRoute {
-    async fn resolve(&self, request: &HookApprovalRequest) -> HookApprovalResolution {
+impl ApprovalRoute for BrokerApprovalRoute {
+    async fn resolve(&self, request: &ApprovalRouteRequest) -> ApprovalRouteResolution {
         let outcome = self
             .broker
-            .resolve(self.bus.as_ref(), &Self::approval_request(request))
+            .resolve(self.bus.as_ref(), &self.approval_request(request))
             .await;
         match outcome {
-            ApprovalOutcome::Approved => HookApprovalResolution::Approved,
-            ApprovalOutcome::Denied { reason } => HookApprovalResolution::Denied { reason },
+            ApprovalOutcome::Approved => ApprovalRouteResolution::Approved,
+            ApprovalOutcome::Denied { reason } => ApprovalRouteResolution::Denied { reason },
         }
     }
 }
@@ -130,8 +152,8 @@ mod tests {
         seen
     }
 
-    fn hook_request() -> HookApprovalRequest {
-        HookApprovalRequest {
+    fn hook_request() -> ApprovalRouteRequest {
+        ApprovalRouteRequest {
             tool: "bash".into(),
             read_only: false,
             reason: "hook wants a human".into(),
@@ -157,7 +179,7 @@ mod tests {
         );
 
         let resolution = route.resolve(&hook_request()).await;
-        assert_eq!(resolution, HookApprovalResolution::Approved);
+        assert_eq!(resolution, ApprovalRouteResolution::Approved);
         assert_eq!(
             responder.calls.load(Ordering::SeqCst),
             1,
@@ -186,6 +208,39 @@ mod tests {
         );
     }
 
+    /// **The #3288 attribution witness.** A route serving a producer that is
+    /// not the shell-hook surface stamps that producer's name on the audit
+    /// trail — an `approval.requested` blaming `PreToolUse` for a question
+    /// an authorization gate raised would send the operator to the wrong
+    /// config.
+    #[tokio::test]
+    async fn a_renamed_route_stamps_its_producer_on_the_audit_trail() {
+        let bus = HookBus::new("hook-bridge-test");
+        let events = collect_approval_events(&bus);
+        let route = BrokerApprovalRoute::new(
+            ApprovalBroker::interactive(
+                Arc::new(Scripted {
+                    answer: ApprovalResponse::Approve,
+                    calls: AtomicUsize::new(0),
+                }),
+                Duration::from_secs(5),
+            ),
+            Some(bus),
+        )
+        .with_gate_name("risk-ceiling");
+
+        route.resolve(&hook_request()).await;
+        let events = events.lock().unwrap();
+        let requested = events
+            .iter()
+            .find(|(n, p)| n == hook_names::APPROVAL_REQUESTED && p.get("tool").is_some())
+            .expect("the rich approval.requested emission");
+        assert_eq!(
+            requested.1["event_name"], "risk-ceiling",
+            "the audit trail names the producer that asked"
+        );
+    }
+
     /// A refusing human's words come back through the bridge, and the
     /// denial is audited.
     #[tokio::test]
@@ -205,7 +260,7 @@ mod tests {
             Some(bus),
         );
         match route.resolve(&hook_request()).await {
-            HookApprovalResolution::Denied { reason } => {
+            ApprovalRouteResolution::Denied { reason } => {
                 assert!(reason.contains("not on my watch"), "{reason}");
             }
             other => panic!("a refused hook approval must deny: {other:?}"),
@@ -228,7 +283,7 @@ mod tests {
     async fn a_headless_broker_refuses_through_the_bridge_naming_the_grant_path() {
         let route = BrokerApprovalRoute::new(ApprovalBroker::default(), None);
         match route.resolve(&hook_request()).await {
-            HookApprovalResolution::Denied { reason } => {
+            ApprovalRouteResolution::Denied { reason } => {
                 assert!(reason.contains("no interactive surface"), "{reason}");
                 assert!(reason.contains("tools.bash"), "{reason}");
             }

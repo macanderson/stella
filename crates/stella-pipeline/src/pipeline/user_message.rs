@@ -16,6 +16,8 @@
 //! upstream (recall, research) are allowed to produce nothing, and "produced
 //! nothing" has to be indistinguishable from "was never wired in".
 
+use stella_core::receipts::{RECALL_MARKER, RecallLine, render_recall_line};
+
 use crate::ports::RecalledFrame;
 use crate::research::ResearchFinding;
 
@@ -45,8 +47,46 @@ fn citable_id(frame: &RecalledFrame) -> Option<&str> {
         .flatten()
 }
 
-/// The worker's first user message: the recalled frames and research findings
-/// that ground the turn, the goal, and how this run will be verified.
+/// The volatile recalled-context message, as its own marked message.
+///
+/// Recall used to be a `## Recalled context` section *inside* the goal
+/// message, which cost the pipeline its entire write→citation loop (#3243
+/// D4). `receipts::user_block_kind` recognizes a recall block by the
+/// [`RECALL_MARKER`] prefix, and a marker cannot prefix a message that also
+/// carries the goal without misattributing the person's words to the context
+/// plane. So recall rides where the interactive path has always put it — its
+/// own volatile message after the stable prefix (L-E8) — and the goal message
+/// keeps carrying only what the operator and the pipeline authored.
+///
+/// Lines are rendered by [`render_recall_line`], the one producer for the
+/// format `receipts::parse_recall_item` consumes; the pipeline's own spelling
+/// put the id last, where the parser never looked, so every id was dropped.
+pub(super) fn assemble_recall_message(frames: &[RecalledFrame]) -> Option<String> {
+    if frames.is_empty() {
+        return None;
+    }
+    let mut s = String::from(RECALL_MARKER);
+    s.push_str("\n\nRelevant context:\n");
+    for frame in frames {
+        // Cite by human label (L-C4); include content as grounding. A
+        // materialized memory ALSO carries its stable id, so a receipt can
+        // join the rendered block back to the record it came from.
+        // Memory-minted labels ARE the content (its head, `…`-marked when
+        // truncated), so only a label that adds information renders —
+        // otherwise the same sentence ships twice per frame (#2476).
+        s.push_str(&render_recall_line(&RecallLine {
+            id: citable_id(frame),
+            label: frame.distinct_label(),
+            body: frame.content.trim(),
+            source: Some(&frame.source),
+        }));
+        s.push('\n');
+    }
+    Some(s)
+}
+
+/// The worker's first user message: the research findings that ground the
+/// turn, the goal, and how this run will be verified.
 ///
 /// `research` is the second sink for the pre-plan stage's findings (#2415).
 /// Before it, [`crate::plan::build_planner_prompt`] was the only one — so a
@@ -61,11 +101,10 @@ fn citable_id(frame: &RecalledFrame) -> Option<&str> {
 /// is what the early return and the `is_empty` guard below are for.
 pub(super) fn assemble_user_message(
     goal: &str,
-    frames: &[RecalledFrame],
     research: &[ResearchFinding],
     contract: VerificationContract<'_>,
 ) -> String {
-    if frames.is_empty() && research.is_empty() && contract == VerificationContract::None {
+    if research.is_empty() && contract == VerificationContract::None {
         return goal.to_string();
     }
     let mut s = String::new();
@@ -83,38 +122,6 @@ pub(super) fn assemble_user_message(
             s.push_str(finding.answer.trim());
             s.push_str("\n\n");
         }
-    }
-    if !frames.is_empty() {
-        s.push_str("## Recalled context\n");
-        for f in frames {
-            // Cite by human label (L-C4); include content as grounding. A
-            // materialized memory ALSO carries its stable id, so a receipt
-            // can join the rendered block back to the record it came from.
-            // Memory-minted labels ARE the content (its head, `…`-marked when
-            // truncated), so only a label that adds information renders —
-            // otherwise the same sentence shipped twice per frame (#2476).
-            s.push_str("- ");
-            if let Some(label) = f.distinct_label() {
-                s.push('[');
-                s.push_str(label);
-                s.push_str("] ");
-            }
-            s.push('(');
-            s.push_str(&f.source);
-            s.push(')');
-            if let Some(id) = citable_id(f) {
-                s.push_str(" [");
-                s.push_str(id);
-                s.push(']');
-            }
-            s.push('\n');
-            if !f.content.trim().is_empty() {
-                s.push_str("  ");
-                s.push_str(f.content.trim());
-                s.push('\n');
-            }
-        }
-        s.push('\n');
     }
     s.push_str("## Task\n");
     s.push_str(goal.trim());
@@ -178,30 +185,44 @@ mod tests {
         }
     }
 
+    /// **Witness (#3243 D4).** The recall block carries [`RECALL_MARKER`], so
+    /// `receipts::user_block_kind` files it as a `RecalledFrame` instead of
+    /// folding it into the operator's goal.
+    ///
+    /// Fails on base twice over: the marker was absent entirely, and recall
+    /// was a `## Recalled context` section inside the goal message, where a
+    /// marker could not have been added without misattributing the person's
+    /// words to the context plane.
     #[test]
-    fn assemble_user_message_puts_recall_before_the_task() {
-        let frames = vec![RecalledFrame {
-            citation_label: "driver.rs".into(),
-            provider: "code-graph".into(),
-            source: "code-graph".into(),
-            kind: "symbol".into(),
-            uri: None,
-            method: None,
-            content: "run_turn".into(),
-            token_cost: 5,
-            id: None,
-            content_digest: None,
-        }];
-        let msg = assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
-        let recall_idx = msg.find("Recalled context").unwrap();
-        let task_idx = msg.find("do the thing").unwrap();
-        assert!(recall_idx < task_idx, "recall rides before the goal");
+    fn the_recall_block_is_its_own_marked_message() {
+        let frames = vec![frame("driver.rs", "run_turn")];
+
+        let recall = assemble_recall_message(&frames).expect("frames produce a recall message");
+
+        assert!(
+            recall.starts_with(RECALL_MARKER),
+            "the receipts plane recognizes a recall block by this prefix: {recall}"
+        );
+        assert!(
+            !recall.contains("## Task"),
+            "the goal never rides inside the recall block: {recall}"
+        );
+        assert!(
+            !assemble_user_message("do the thing", &[], VerificationContract::None)
+                .contains("run_turn"),
+            "and recall no longer rides inside the goal message"
+        );
+    }
+
+    #[test]
+    fn no_frames_produce_no_recall_message() {
+        assert_eq!(assemble_recall_message(&[]), None);
     }
 
     #[test]
     fn assemble_user_message_is_just_the_goal_when_no_recall() {
         assert_eq!(
-            assemble_user_message("hello", &[], &[], VerificationContract::None),
+            assemble_user_message("hello", &[], VerificationContract::None),
             "hello"
         );
     }
@@ -227,19 +248,20 @@ mod tests {
     #[test]
     fn a_recalled_memory_reaches_the_worker_with_its_id_handle() {
         const NOD: &str = "nod_0123456789abcdef01234567";
-        let msg = assemble_user_message(
-            "fix the cache posture",
-            &[memory_frame(Some(NOD))],
-            &[],
-            VerificationContract::None,
-        );
-        assert!(
-            msg.contains(NOD),
-            "the record's stable handle must reach the model: {msg}"
-        );
+        let msg = assemble_recall_message(&[memory_frame(Some(NOD))]).expect("a frame renders");
         assert!(
             msg.contains("prompt caching"),
             "the human label still leads the line (L-C4): {msg}"
+        );
+        // **Witness (#3243 D4), the second half.** The id must sit in the
+        // leading bracket, which is the ONLY position
+        // `receipts::parse_recall_item` inspects for one. The pipeline used to
+        // write it last (`- [label] (source) [nod_…]`), so every id was
+        // dropped and `stella run` recorded no citation for any memory it had
+        // already paid to recall.
+        assert!(
+            msg.contains(&format!("- [{NOD}] ")),
+            "the handle must lead the line, where the parser reads it: {msg}"
         );
     }
 
@@ -251,15 +273,11 @@ mod tests {
     fn a_content_minted_label_renders_its_sentence_once() {
         const NOD: &str = "nod_0123456789abcdef01234567";
         let lesson = "Anthropic's prompt cache is explicit opt-in.";
-        let msg = assemble_user_message(
-            "fix the cache posture",
-            &[RecalledFrame {
-                citation_label: lesson.into(),
-                ..memory_frame(Some(NOD))
-            }],
-            &[],
-            VerificationContract::None,
-        );
+        let msg = assemble_recall_message(&[RecalledFrame {
+            citation_label: lesson.into(),
+            ..memory_frame(Some(NOD))
+        }])
+        .expect("a frame renders");
         assert_eq!(
             msg.matches(lesson).count(),
             1,
@@ -281,7 +299,6 @@ mod tests {
         let msg = assemble_user_message(
             "fix the parser",
             &[],
-            &[],
             VerificationContract::Oracle("cargo test -p parser"),
         );
         let task_idx = msg.find("fix the parser").unwrap();
@@ -300,12 +317,7 @@ mod tests {
     /// proceeds, but test-first is now the worker's job and the message says so.
     #[test]
     fn assemble_user_message_demands_test_first_when_nothing_else_verifies() {
-        let msg = assemble_user_message(
-            "add retries",
-            &[],
-            &[],
-            VerificationContract::WorkerTestFirst,
-        );
+        let msg = assemble_user_message("add retries", &[], VerificationContract::WorkerTestFirst);
         let task_idx = msg.find("add retries").unwrap();
         let contract_idx = msg.find("write the failing test").unwrap();
         assert!(
@@ -316,36 +328,35 @@ mod tests {
         assert!(msg.contains("only deterministic evidence"));
     }
 
-    /// #2415: findings are their own section, ahead of both recall and the
-    /// goal — grounding leads, the ask follows.
+    /// #2415: findings are their own section, ahead of the goal — grounding
+    /// leads, the ask follows. Recall is no longer in this message at all
+    /// (#3243 D4), and the two provenances stay separable because they now
+    /// arrive as separate messages rather than adjacent headings.
     #[test]
-    fn research_findings_lead_the_message_and_stay_apart_from_recall() {
+    fn research_findings_lead_the_goal_and_stay_apart_from_recall() {
         let msg = assemble_user_message(
             "add retries",
-            &[frame("driver.rs", "run_turn")],
             &[finding("who owns retries?", "stella-core::retry")],
             VerificationContract::None,
         );
         let findings_at = msg.find("## Research findings").unwrap();
-        let recall_at = msg.find("## Recalled context").unwrap();
         let task_at = msg.find("## Task").unwrap();
-        assert!(findings_at < recall_at && recall_at < task_at, "{msg}");
+        assert!(findings_at < task_at, "{msg}");
+        assert!(
+            !msg.contains("## Recalled context"),
+            "recall rides its own marked message now: {msg}"
+        );
         assert!(msg.contains("who owns retries?"));
         assert!(msg.contains("stella-core::retry"));
     }
 
-    /// The advisory contract at its narrowest: adding an empty findings list
-    /// to a message that has recall changes nothing about it.
+    /// The advisory contract at its narrowest: an empty findings list leaves
+    /// the goal message exactly the bare goal.
     #[test]
     fn an_empty_findings_list_adds_no_heading() {
-        let frames = [frame("driver.rs", "run_turn")];
         assert_eq!(
-            assemble_user_message("add retries", &frames, &[], VerificationContract::None),
-            assemble_user_message("add retries", &frames, &[], VerificationContract::None),
-        );
-        assert!(
-            !assemble_user_message("add retries", &frames, &[], VerificationContract::None)
-                .contains("Research findings")
+            assemble_user_message("add retries", &[], VerificationContract::None),
+            "add retries"
         );
     }
 }

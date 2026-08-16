@@ -1,0 +1,88 @@
+---
+title: Multimodal input
+description: Attach images, PDFs, audio, and video to any prompt — paste a screenshot with Ctrl-V or just mention the file's path. stella sends what your model can see, and tells it what it can't.
+---
+
+Prompts are not text-only. A screenshot of a broken layout, a PDF spec, a
+recording of a bug — any of them can ride into the model alongside your words,
+on every input surface: the interactive deck, `stella run`, and `stella chat`.
+
+## Three ways to attach
+
+**Paste an image — Ctrl-V.** In the deck, **Ctrl-V** reads the system
+clipboard directly. An image (a screenshot, a copied figure) is stored and
+attached to your prompt as a chip in the composer; plain text pastes like any
+other paste, so Ctrl-V is safe as a universal paste key.
+
+Terminals cannot deliver a bitmap through a normal paste — Cmd-V of a
+screenshot arrives as nothing at all, which is why the explicit shortcut
+exists. Pasted images are PNG-encoded into `.stella/attachments/` in your
+workspace so the session transcript has a stable file to replay from; the
+store keeps the most recent hundred pastes and prunes older ones.
+
+**Mention a path.** Name a media file in your prompt and stella attaches the
+file itself as model input:
+
+```bash
+stella run "the header overlaps the nav on mobile — see shots/header.png"
+```
+
+**`@`-mention a file.** `@` is a stronger signal than a bare path: media
+files attach, and text-like files (source, markdown, JSON) are **inlined** as
+text. A bare path-shaped token never inlines a text file — prose mentions
+paths all the time, and inlining every one would bloat context. A mention
+that does not resolve to a real file is left alone as plain text.
+
+```bash
+stella run "implement the retry policy described in @docs/rfc-042.pdf"
+```
+
+## What each kind becomes
+
+| You attach | The model receives |
+| --- | --- |
+| Image (`image/*`) | A native image block — the model sees the pixels |
+| PDF | A native document block |
+| Audio, video | Native media where the provider ingests it (see below) |
+| Text-like file (via `@`) | Its contents, inlined as text |
+| Any other binary | A text note describing what was attached |
+
+There is no stella-side size cap — payloads live on disk and are only
+base64-encoded at the moment a request is built, so only your provider's own
+request limits apply. Attachments are capped at 32 per prompt as a
+runaway-token backstop.
+
+## What each provider can see
+
+Providers diverge here, and stella tracks the divergence per wire dialect
+rather than assuming parity:
+
+| Provider | Images | PDFs | Audio | Video |
+| --- | --- | --- | --- | --- |
+| `anthropic` | yes | yes | — | — |
+| `openai` | yes | yes | — | — |
+| `gemini`, `vertex` | yes | yes | yes | yes |
+| `bedrock` | yes | yes | — | yes |
+| OpenAI-compatible (`zai`, `openrouter`, `xai`, `deepseek`, `local`) | vision models only | — | — | — |
+
+On the OpenAI-compatible dialect, image support is per-model: GLM vision
+variants (the `v` in `glm-4.5v`) take images, plain GLM text models do not,
+and other vendors' models reached through a gateway are assumed
+vision-capable rather than having an image silently withheld.
+
+## When the model can't see it
+
+An attachment a model cannot ingest **never errors the turn**. Sending an
+image to a text-only model would be a hard API failure that loses your
+prompt; stella instead replaces the payload with a short text note telling
+the model exactly what was attached — the filename, the kind, and that it
+cannot view it. The model can then say so honestly, or open the file with a
+tool where that makes sense (a text-extractable PDF, a file worth
+inspecting), instead of hallucinating contents it never saw.
+
+The practical consequence: you can paste a screenshot without first checking
+which model is resolved. On a vision model it is seen; on anything else the
+model knows what it missed and tells you.
+
+Video is currently understood natively on Gemini, Vertex, and Bedrock;
+elsewhere it degrades to the descriptive note.
