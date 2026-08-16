@@ -581,7 +581,7 @@ pub fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
         // (`crates/stella-pipeline/src/ports.rs`), so it renders as grounding.
         lines.push(stella_core::receipts::render_recall_line(
             &stella_core::receipts::RecallLine {
-                id: (f.kind == "memory").then(|| f.id.as_deref()).flatten(),
+                id: (f.kind == "memory").then_some(f.id.as_deref()).flatten(),
                 label: f.distinct_label(),
                 body: f.content.trim(),
                 source: None,

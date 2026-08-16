@@ -416,11 +416,11 @@ fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
 ///
 /// The two halves of the write→citation loop used to be three: `stella-cli`
 /// rendered one format, `stella-pipeline` rendered another, and
-/// [`parse_recall_item`] understood only the first. A pipeline turn therefore
+/// `parse_recall_item` understood only the first. A pipeline turn therefore
 /// produced no `memory_citations` at all, because the id it wrote sat in a
 /// position the parser never looked (#3243 D4). A rendered line is a wire
 /// format between two crates, so it gets one producer and one consumer, and
-/// [`crate::receipts::tests`] holds the round-trip property that keeps them
+/// this module's tests hold the round-trip property that keeps them
 /// honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RecallLine<'a> {
@@ -441,8 +441,8 @@ pub struct RecallLine<'a> {
     pub source: Option<&'a str>,
 }
 
-/// Render one recalled item as the `- …` line [`split_recall`] cuts on and
-/// [`parse_recall_item`] reads back.
+/// Render one recalled item as the `- …` line `split_recall` cuts on and
+/// `parse_recall_item` reads back.
 ///
 /// The id leads, because that is the only position the parser inspects for
 /// one; the label is separated from the body by the em-dash the parser splits
