@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Documentation site for the Stella CLI — stella.oxagen.sh",
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=20"
   },
