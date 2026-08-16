@@ -1,0 +1,4 @@
+# A content bundle (#1400's "an app is data"): skills, commands, agents,
+# custom tools. No [loop] block at all — undeclared = "none".
+name = "prettier-skills"
+description = "A bundle of formatting skills and commands; no say in the loop."
