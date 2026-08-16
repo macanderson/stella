@@ -551,6 +551,22 @@ fn floor_char_boundary(text: &str, max: usize) -> usize {
 /// `SKILLS_SECTION_TOKEN_BUDGET` the remaining (lower-ranked) skills are
 /// dropped with a note. At least the top skill always renders. Empty input ⇒
 /// empty string (inject nothing).
+/// The block ONE selected skill contributes to the section: name, description,
+/// and the (budget-truncated) body.
+///
+/// Split out of [`render_skills_section`]'s loop so the steering adapter
+/// (`crate::steering::adapt::skill_candidates`) estimates its token cost from
+/// the exact bytes the section will carry — a second copy of this format
+/// string would be a second producer of the same line shape, the defect #3334
+/// closed for recall lines.
+pub fn rendered_skill_block(sel: &SelectedSkill) -> String {
+    let body = truncate_to_tokens(&sel.skill.body, SKILL_BODY_TOKEN_BUDGET);
+    format!(
+        "\n### {}\n{}\n\n{}\n",
+        sel.skill.name, sel.skill.description, body
+    )
+}
+
 pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
     if selected.is_empty() {
         return String::new();
@@ -561,11 +577,7 @@ pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
     let mut rendered_any = false;
 
     for sel in selected {
-        let body = truncate_to_tokens(&sel.skill.body, SKILL_BODY_TOKEN_BUDGET);
-        let block = format!(
-            "\n### {}\n{}\n\n{}\n",
-            sel.skill.name, sel.skill.description, body
-        );
+        let block = rendered_skill_block(sel);
         let block_tokens = stella_protocol::estimate_tokens(&block);
         if rendered_any && used_tokens + block_tokens > SKILLS_SECTION_TOKEN_BUDGET {
             out.push_str(SKILLS_SECTION_OMISSION_MARKER);
