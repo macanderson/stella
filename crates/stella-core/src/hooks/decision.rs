@@ -39,7 +39,7 @@
 //! # What stays outside
 //!
 //! Spawning the hook is still the [`HookRunner`] port's job, and resolving
-//! a `require_approval` to a human answer is the [`HookApprovalRoute`]
+//! a `require_approval` to a human answer is the [`ApprovalRoute`]
 //! port's — implemented by `stella-tools::hook_bridge` over the #2676
 //! `ApprovalBroker` (emit-before-park, TTL, `approval.*` audit events).
 //! This module is pure fold and vocabulary; no I/O (invariant #2).
@@ -359,12 +359,19 @@ pub fn resolve_precedence(
     }
 }
 
-/// One shell-hook approval question, as the route sees it: the parked
-/// tool call plus the metadata the asking surface renders. Crosses the
-/// crate boundary (`stella-tools::hook_bridge` implements the route), so
-/// it is serde round-trippable by contract (invariant #4).
+/// One parked approval question, as the route sees it: the parked tool
+/// call plus the metadata the asking surface renders. Crosses the crate
+/// boundary (`stella-tools::hook_bridge` implements the route), so it is
+/// serde round-trippable by contract (invariant #4).
+///
+/// Two producers build one of these today: a shell hook's
+/// `require_approval` decision (`driver::user_hooks`) and an
+/// [`crate::ports::AuthzGate`]'s `RequireApproval` (#3288, resolved by
+/// `stella-tools`' gated tool set). Named for the route, not for either
+/// producer — the type was `ApprovalRouteRequest` until the gate became
+/// its second feeder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HookApprovalRequest {
+pub struct ApprovalRouteRequest {
     /// The tool whose dispatch is parked.
     pub tool: String,
     /// The tool's advertised `read_only` bit.
@@ -376,7 +383,7 @@ pub struct HookApprovalRequest {
 /// How a routed approval resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum HookApprovalResolution {
+pub enum ApprovalRouteResolution {
     /// A human granted this single call.
     Approved,
     /// The call must not run — a human refused, the flow timed out, or no
@@ -384,22 +391,27 @@ pub enum HookApprovalResolution {
     Denied { reason: String },
 }
 
-/// How a shell hook's `require_approval` reaches the #2676 approval flow —
-/// the port `driver::user_hooks` parks on, so `stella-core` never touches
-/// the broker (which lives in `stella-tools`, above it in the dependency
-/// graph). The production implementation
+/// How a parked approval question reaches the #2676 approval flow — the
+/// port `driver::user_hooks` parks a shell hook's `require_approval` on,
+/// and the one an [`crate::ports::AuthzGate`]'s `RequireApproval` resolves
+/// through (#3288) — so `stella-core` never touches the broker (which
+/// lives in `stella-tools`, above it in the dependency graph). The
+/// production implementation
 /// (`stella-tools::hook_bridge::BrokerApprovalRoute`) calls
 /// `ApprovalBroker::resolve`: emit-before-park, bounded TTL wait,
 /// `approval.granted`/`denied`/`expired` audit events. An engine with no
 /// route attached refuses the call with a grant-path message instead of
-/// asking — the same headless posture the broker itself takes.
+/// asking — the same headless posture the broker itself takes. Whether a
+/// human exists to ask is the responder's derivation
+/// (`stella-tty::human_can_answer`, read once at assembly time by the
+/// surface that attaches a responder), never re-derived per producer.
 #[async_trait]
-pub trait HookApprovalRoute: Send + Sync {
+pub trait ApprovalRoute: Send + Sync {
     /// Resolve one parked question. Implementations must bound their own
     /// wait (the broker's TTL does); the engine awaits this without a
     /// timeout of its own, exactly as the registry's gates await the
     /// broker.
-    async fn resolve(&self, request: &HookApprovalRequest) -> HookApprovalResolution;
+    async fn resolve(&self, request: &ApprovalRouteRequest) -> ApprovalRouteResolution;
 }
 
 #[cfg(test)]
@@ -715,23 +727,23 @@ mod tests {
 
     #[test]
     fn approval_request_and_resolution_round_trip_through_serde_json() {
-        let request = HookApprovalRequest {
+        let request = ApprovalRouteRequest {
             tool: "bash".into(),
             read_only: false,
             reason: "hook wants a human".into(),
         };
         let json = serde_json::to_string(&request).unwrap();
-        let back: HookApprovalRequest = serde_json::from_str(&json).unwrap();
+        let back: ApprovalRouteRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(request, back);
 
         for resolution in [
-            HookApprovalResolution::Approved,
-            HookApprovalResolution::Denied {
+            ApprovalRouteResolution::Approved,
+            ApprovalRouteResolution::Denied {
                 reason: "ask my lead".into(),
             },
         ] {
             let json = serde_json::to_string(&resolution).unwrap();
-            let back: HookApprovalResolution = serde_json::from_str(&json).unwrap();
+            let back: ApprovalRouteResolution = serde_json::from_str(&json).unwrap();
             assert_eq!(resolution, back);
         }
     }

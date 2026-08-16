@@ -16,7 +16,7 @@
 //!   model sent);
 //! - `deny` blocks with the hook's reason;
 //! - `require_approval` parks the dispatch on the
-//!   [`HookApprovalRoute`] port — implemented over the #2676
+//!   [`ApprovalRoute`] port — implemented over the #2676
 //!   `ApprovalBroker` by `stella-tools::hook_bridge`, so the emit-before-
 //!   park / TTL / audit-event contract is the broker's, not a copy. With
 //!   no route attached the call is refused with a grant-path message, the
@@ -76,7 +76,7 @@ use super::{Engine, HooksHandle};
 use crate::bus::names as bus_names;
 use crate::event_sender::EventSender;
 use crate::hooks::decision::{
-    GateVerdict, HookApprovalRequest, HookApprovalResolution, HookApprovalRoute, OperatorPosture,
+    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, GateVerdict, OperatorPosture,
     run_decision_hooks,
 };
 use crate::hooks::{HookEvent, HookPayload, run_hooks};
@@ -122,7 +122,7 @@ impl<'a> Engine<'a> {
     /// implementation in production. Opt-in like every other seam on this
     /// builder; an engine without one refuses such calls with a grant-path
     /// message instead of asking.
-    pub fn with_hook_approval_route(mut self, route: &'a dyn HookApprovalRoute) -> Self {
+    pub fn with_hook_approval_route(mut self, route: &'a dyn ApprovalRoute) -> Self {
         self.hook_approvals = Some(route);
         self
     }
@@ -218,14 +218,14 @@ impl<'a> Engine<'a> {
                         call.name
                     ));
                 };
-                let request = HookApprovalRequest {
+                let request = ApprovalRouteRequest {
                     tool: call.name.clone(),
                     read_only,
                     reason,
                 };
                 match route.resolve(&request).await {
-                    HookApprovalResolution::Approved => {}
-                    HookApprovalResolution::Denied { reason } => {
+                    ApprovalRouteResolution::Approved => {}
+                    ApprovalRouteResolution::Denied { reason } => {
                         return ToolOutput::error(format!(
                             "tool `{}` requires approval — {reason}",
                             call.name
