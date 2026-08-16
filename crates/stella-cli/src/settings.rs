@@ -719,20 +719,6 @@ pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
 }
 
-/// The tri-state reading of the same variable: unset, explicitly on, or
-/// explicitly off.
-///
-/// [`env_flag`] collapses "unset" and "set to something falsy" into `false`,
-/// which is right for a flag that only ever turns something ON. A switch that
-/// defaults on needs the third state, because "unset" must mean "defer to
-/// settings" and not "off". Same strict truthy vocabulary, so
-/// `STELLA_CONTEXT_STEERING=false` turns steering off rather than opening it
-/// — the `STELLA_TRUST_PROJECT` defect that gave [`truthy_flag`] its
-/// allowlist.
-pub(crate) fn env_toggle(name: &str) -> Option<bool> {
-    std::env::var_os(name).map(|v| truthy_flag(&v))
-}
-
 /// The pure predicate behind [`env_flag`], split out so it is testable
 /// without mutating the process environment (POSIX setenv/getenv races are
 /// undefined under the concurrent test runner). Same truthy vocabulary as
