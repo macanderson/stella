@@ -8,7 +8,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::{Provider, ToolOutput, ToolSchema};
 
-pub use authz::{AuthzDecision, AuthzEvalError, AuthzGate, NoAuthz, Principal, RiskCeiling};
+pub use authz::{
+    AuthzContribution, AuthzDecision, AuthzEvalError, AuthzEvaluation, AuthzGate, AuthzRuleTrace,
+    AuthzTrace, NoAuthz, Principal, RiskCeiling,
+};
 
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
 /// by test doubles). The engine treats it as a black box that never panics.

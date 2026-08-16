@@ -202,6 +202,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             custom_tools.to_vec(),
             cfg,
             Principal::User,
+            tools_registry.hook_bus(),
         );
         let hook_runner = ShellHookRunner;
         match restored {

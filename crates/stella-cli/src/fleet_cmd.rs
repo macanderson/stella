@@ -707,6 +707,7 @@ async fn run_task(
         &claims,
         &cfg,
         stella_core::ports::Principal::SubAgent(task.id.to_string()),
+        registry.hook_bus(),
     );
     // Every fleet attempt owns the same durable event/accounting envelope as
     // a one-shot or deck turn. The store is rooted in the task worktree so

@@ -723,6 +723,7 @@ async fn run_worker(
         &claims,
         cfg,
         stella_core::ports::Principal::SubAgent(format!("{session_id}/{}", spec.lane)),
+        registry.hook_bus(),
     );
     // Registry-born events (task board, sub-agent lifecycle) ride this
     // lane's own channel, so the lane's live view and its journal agree.
