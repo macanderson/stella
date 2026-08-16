@@ -607,6 +607,7 @@ mod tests {
             call_id: "call_1".into(),
             output: ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             },
             duration_ms: 3,
             speculated: false,
@@ -684,6 +685,7 @@ mod tests {
                 call_id: "call_2".into(),
                 output: ToolOutput::Ok {
                     content: "ok".into(),
+                    data: None,
                 },
                 duration_ms: 3,
                 speculated: false,

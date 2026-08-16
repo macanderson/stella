@@ -445,7 +445,7 @@ impl FleetBoard {
             }
             AgentEvent::ToolResult { output, .. } => {
                 let preview = match output {
-                    ToolOutput::Ok { content } => first_line(content),
+                    ToolOutput::Ok { content, .. } => first_line(content),
                     ToolOutput::Error { message, .. } => format!("error: {}", first_line(message)),
                 };
                 if !preview.is_empty() {

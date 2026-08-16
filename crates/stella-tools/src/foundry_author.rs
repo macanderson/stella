@@ -508,7 +508,7 @@ mod tests {
             .execute(&name, &serde_json::json!({ "p1": "delivered.txt" }))
             .await;
         match out {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert!(content.contains("built delivered.txt"), "{content}")
             }
             ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),

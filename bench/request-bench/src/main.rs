@@ -166,7 +166,10 @@ fn transcript() -> Vec<CompletionMessage> {
             tool_calls: Vec::new(),
             tool_results: vec![ToolResult {
                 call_id,
-                output: ToolOutput::Ok { content: output },
+                output: ToolOutput::Ok {
+                    content: output,
+                    data: None,
+                },
             }],
             attachments: Vec::new(),
         });
@@ -256,7 +259,7 @@ fn main() {
                 + m.tool_results
                     .iter()
                     .map(|r| match &r.output {
-                        ToolOutput::Ok { content } => content.len(),
+                        ToolOutput::Ok { content, .. } => content.len(),
                         ToolOutput::Error { message, .. } => message.len(),
                     })
                     .sum::<usize>()

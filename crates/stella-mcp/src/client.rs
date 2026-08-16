@@ -863,7 +863,8 @@ mod tests {
         assert_eq!(
             ok,
             ToolOutput::Ok {
-                content: "done".into()
+                content: "done".into(),
+                data: None
             }
         );
 
@@ -939,7 +940,8 @@ mod tests {
         assert_eq!(
             out,
             ToolOutput::Ok {
-                content: "healed".into()
+                content: "healed".into(),
+                data: None
             }
         );
 
@@ -1130,7 +1132,8 @@ mod tests {
         assert_eq!(
             out,
             ToolOutput::Ok {
-                content: "second call".into()
+                content: "second call".into(),
+                data: None
             }
         );
     }

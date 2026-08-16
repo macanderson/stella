@@ -1137,6 +1137,7 @@ mod tests {
             } else {
                 ToolOutput::Ok {
                     content: "ok".into(),
+                    data: None,
                 }
             },
             duration_ms: 12,

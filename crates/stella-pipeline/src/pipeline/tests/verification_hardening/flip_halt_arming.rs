@@ -65,6 +65,7 @@ impl ToolExecutor for PassingShell {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: "ok\n[exit code: 0]".into(),
+            data: None,
         }
     }
 }

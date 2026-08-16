@@ -90,6 +90,20 @@ pub(crate) fn session_stack_with_gate<'a>(
 /// over a base that already carries the complete surface — a subsession
 /// lane's claim tap, a fleet worker's, or the bare registry under
 /// process-free authority (which strips the custom layer deliberately).
+///
+/// # Customs are withheld from dispatched workers on purpose (#3339)
+///
+/// A `.stella/tools/*.toml` tool is an unreviewed local script
+/// (`ToolContract::declared`, graded `High`), and the surfaces that carry it
+/// — the deck, a one-shot turn, the goal loop — all have the human at the
+/// keyboard as their principal. A subsession lane or fleet worker runs
+/// *autonomously*, and its writes are coordinated through the claim tap it
+/// uses as its base; a custom script's side effects are invisible to that
+/// coordination (no `FileChange` events, no claim acquisition), so handing
+/// an unreviewed script to an unattended worker would soften #2716's trust
+/// posture twice over. A worker that needs a custom tool argues for
+/// promoting the tool through the foundry adoption gate, not for widening
+/// this chain.
 pub(crate) fn policy_stack<'a>(
     base: &'a dyn ToolExecutor,
     cfg: &Config,
@@ -153,6 +167,7 @@ mod tests {
             self.reached.lock().unwrap().push(name.to_string());
             ToolOutput::Ok {
                 content: format!("ran {name}"),
+                data: None,
             }
         }
     }

@@ -52,6 +52,7 @@ fn edit_events() -> Vec<AgentEvent> {
             call_id: "c1".into(),
             output: ToolOutput::Ok {
                 content: "edited".into(),
+                data: None,
             },
             duration_ms: 7,
             speculated: false,

@@ -161,7 +161,10 @@ async fn main() -> std::io::Result<()> {
                             agent,
                             event: AgentEvent::ToolResult {
                                 call_id: id,
-                                output: ToolOutput::Ok { content: answer },
+                                output: ToolOutput::Ok {
+                                    content: answer,
+                                    data: None,
+                                },
                                 duration_ms: 0,
                                 speculated: false,
                             },
@@ -176,6 +179,7 @@ async fn main() -> std::io::Result<()> {
                                 call_id: id,
                                 output: ToolOutput::Ok {
                                     content: format!("applied {} hunk(s)", accepted.len()),
+                                    data: None,
                                 },
                                 duration_ms: 0,
                                 speculated: false,
@@ -413,6 +417,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             call_id: format!("{id}-c1"),
             output: ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             },
             duration_ms: 30,
             speculated: false,

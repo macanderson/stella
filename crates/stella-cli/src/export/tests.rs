@@ -589,6 +589,7 @@ fn the_archive_carries_the_session_transcript_and_only_that_session() {
                     call_id: format!("{session}-c1"),
                     output: ToolOutput::Ok {
                         content: format!("output of {marker}"),
+                        data: None,
                     },
                     duration_ms: 12,
                     speculated: false,

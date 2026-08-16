@@ -43,7 +43,7 @@ async fn full_round_trip_initialize_list_call() {
         .await
         .unwrap();
     match out {
-        ToolOutput::Ok { content } => assert!(content.contains("echo:"), "got {content}"),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("echo:"), "got {content}"),
         other => panic!("expected Ok, got {other:?}"),
     }
     client.close().await.unwrap();
@@ -92,7 +92,8 @@ async fn environment_is_scrubbed_but_configured_vars_and_path_pass_through() {
     assert_eq!(
         allowed,
         ToolOutput::Ok {
-            content: "yes".into()
+            content: "yes".into(),
+            data: None
         }
     );
 
@@ -107,7 +108,8 @@ async fn environment_is_scrubbed_but_configured_vars_and_path_pass_through() {
     assert_eq!(
         manifest,
         ToolOutput::Ok {
-            content: "unset".into()
+            content: "unset".into(),
+            data: None
         },
         "ambient non-PATH env must stay scrubbed"
     );
@@ -122,7 +124,8 @@ async fn environment_is_scrubbed_but_configured_vars_and_path_pass_through() {
     assert_eq!(
         configured_secret,
         ToolOutput::Ok {
-            content: "manifest-must-not-reintroduce-secret".into()
+            content: "manifest-must-not-reintroduce-secret".into(),
+            data: None
         },
         "explicit MCP auth env must survive the ambient env_clear boundary"
     );
@@ -134,7 +137,7 @@ async fn environment_is_scrubbed_but_configured_vars_and_path_pass_through() {
         .await
         .unwrap();
     match path {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content != "unset" && content.contains('/'),
             "PATH must be inherited into the MCP child, got {content:?}"
         ),
@@ -158,7 +161,8 @@ async fn non_text_content_is_summarized() {
     assert_eq!(
         image,
         ToolOutput::Ok {
-            content: "[image]".into()
+            content: "[image]".into(),
+            data: None
         }
     );
 
@@ -172,7 +176,8 @@ async fn non_text_content_is_summarized() {
     assert_eq!(
         resource,
         ToolOutput::Ok {
-            content: "[resource: file:///r.txt]\nhi".into()
+            content: "[resource: file:///r.txt]\nhi".into(),
+            data: None
         }
     );
     client.close().await.unwrap();
@@ -402,7 +407,7 @@ async fn a_chatty_stderr_never_corrupts_the_json_rpc_stream() {
         .await
         .expect("stderr noise must not break a call");
     match out {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("echo:"), "got {content}");
             assert!(
                 !content.contains("[info] handling request"),

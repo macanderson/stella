@@ -227,7 +227,7 @@ fn write_fixture_at_the_real_workspace_path(workspace: &Path) -> std::path::Path
 
 fn content_of(output: &ToolOutput) -> String {
     match output {
-        ToolOutput::Ok { content } => content.clone(),
+        ToolOutput::Ok { content, .. } => content.clone(),
         ToolOutput::Error { message, .. } => panic!("expected an answer, got an error: {message}"),
     }
 }
@@ -1196,6 +1196,7 @@ fn the_report_preserves_rank_order_and_strategy_labels() {
     };
     let rendered = ToolOutput::Ok {
         content: "the rendered answer".into(),
+        data: None,
     };
     let report = SearchReport::of(&answer, rendered.clone());
 

@@ -141,10 +141,35 @@ pub struct CustomTool {
     /// itself. `None` for every hand-written manifest, which is what keeps
     /// [`crate::foundry_gate`] governing self-authored tools and nothing else.
     pub foundry: Option<crate::foundry_gate::FoundryProvenance>,
+    /// The manifest's `read_only` claim (#3287). A **claim**, not a fact:
+    /// it rides the tool's [`stella_protocol::ToolContract`] (via
+    /// [`CustomToolSet`]'s `contracts()`), never the advertised
+    /// [`ToolSchema`] — the dispatch consumers of `read_only` trust the
+    /// schema bit directly, and an unreviewed script must not buy concurrent
+    /// dispatch or a place inside a verifier's fence with a field it filled
+    /// in itself.
+    pub claimed_read_only: bool,
+    /// The manifest's `risk` claim (#3287). Recorded for display/policy; the
+    /// effective grade stays [`stella_protocol::RiskLevel::High`] unless the
+    /// claim is `Destructive`, which *raises* it — self-reports may only
+    /// ever make a tool look more dangerous, never less.
+    pub claimed_risk: Option<stella_protocol::RiskLevel>,
+    /// The manifest's `idempotent` claim (#3287) — carried into the
+    /// contract's `idempotent` field with declared provenance.
+    pub claimed_idempotent: bool,
+    /// The manifest's optional `[output_schema]` (#3287) — carried into the
+    /// contract so the registry-side output check (#3285) can hold a script
+    /// tool to its own promise.
+    pub output_schema: Option<Value>,
 }
 
 impl CustomTool {
     /// The schema advertised to the model — the same shape a built-in emits.
+    ///
+    /// `read_only`/`speculation_safe` stay `false` **regardless of the
+    /// manifest's claims**: this schema feeds the engine's dispatch
+    /// grouping and the read-only fences, which trust the bit directly. The
+    /// claims live on [`Self::contract`].
     pub fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: self.name.clone(),
@@ -153,6 +178,51 @@ impl CustomTool {
             read_only: false,
             speculation_safe: false,
         }
+    }
+
+    /// The manifest's self-reported claims as a short display prefix
+    /// (#3287): `"[claims read-only] "`, `"[claims risk: destructive] "`, a
+    /// combination, or `""` when the manifest claims nothing. The word
+    /// "claims" is the point — a listing must show the self-report as a
+    /// self-report, never as a fact Stella vouches for.
+    pub fn claims_label(&self) -> String {
+        let mut claims = Vec::new();
+        if self.claimed_read_only {
+            claims.push("read-only".to_string());
+        }
+        if let Some(risk) = self.claimed_risk {
+            claims.push(format!("risk: {}", risk.as_str()));
+        }
+        if self.claimed_idempotent {
+            claims.push("idempotent".to_string());
+        }
+        if claims.is_empty() {
+            String::new()
+        } else {
+            format!("[claims {}] ", claims.join(", "))
+        }
+    }
+
+    /// The governance contract for this tool (#3287):
+    /// [`stella_protocol::Provenance::Declared`] with the manifest's claims
+    /// attached. The contract's embedded schema carries the `read_only`
+    /// *claim* verbatim — preserved for display and policy, buying nothing
+    /// (`ToolContract::trusted_read_only` stays false) — while the
+    /// *advertised* schema from [`Self::schema`] keeps the bit off.
+    pub fn contract(&self) -> stella_protocol::ToolContract {
+        let mut claimed_schema = self.schema();
+        claimed_schema.read_only = self.claimed_read_only;
+        let mut contract = stella_protocol::ToolContract::declared(claimed_schema)
+            .with_idempotent(self.claimed_idempotent);
+        // Raise-only: a self-report may make a tool look more dangerous,
+        // never less. `declared` already graded it High.
+        if self.claimed_risk == Some(stella_protocol::RiskLevel::Destructive) {
+            contract.risk = stella_protocol::RiskLevel::Destructive;
+        }
+        if let Some(output_schema) = &self.output_schema {
+            contract = contract.with_output_schema(output_schema.clone());
+        }
+        contract
     }
 }
 
@@ -282,6 +352,17 @@ struct RawManifest {
     // it — a `[foundry]` table only ever *adds* the gate's constraints.
     #[serde(default)]
     foundry: Option<crate::foundry_gate::FoundryProvenance>,
+    // The #3287 claims. All default-absent so every pre-#3287 manifest
+    // parses unchanged; each is a self-report the contract records with
+    // declared provenance, never a fact the dispatch plane acts on.
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    risk: Option<stella_protocol::RiskLevel>,
+    #[serde(default)]
+    idempotent: bool,
+    #[serde(default)]
+    output_schema: Option<Value>,
 }
 
 /// `true` iff `name` matches `^[a-z][a-z0-9_]{1,63}$` (a lowercase letter then
@@ -337,6 +418,14 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         Some(t) => t.min(MAX_TIMEOUT_MS),
     };
 
+    let output_schema = match raw.output_schema {
+        Some(v) if v.is_object() => Some(v),
+        Some(_) => {
+            return Err("`output_schema` must be a table (JSON Schema object)".to_string());
+        }
+        None => None,
+    };
+
     Ok(CustomTool {
         name: raw.name,
         description: raw.description,
@@ -346,6 +435,10 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         env: raw.env,
         source: source.to_path_buf(),
         foundry: raw.foundry,
+        claimed_read_only: raw.read_only,
+        claimed_risk: raw.risk,
+        claimed_idempotent: raw.idempotent,
+        output_schema,
     })
 }
 
@@ -630,14 +723,47 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
-        if output.stdout.is_empty() {
-            return ToolOutput::Ok {
-                content: silent_success_stamp(&tool.name, input),
-            };
+        let content = crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES);
+        // A manifest that declares `[output_schema]` promises its stdout is
+        // JSON matching it (#3287): the whole stdout is parsed into the
+        // structured half (`Ok.data`) and checked with the same subset
+        // checker the registry runs (#3285). A breach is the tool's own
+        // defect — `Internal`, never model misuse.
+        let Some(expected) = &tool.output_schema else {
+            // A silent success (exit 0, empty stdout) renders the
+            // deterministic input-stamped line, never the empty string —
+            // an every-call-identical output is what the stagnation
+            // detector kills a loop over (#3303). A schema-declaring
+            // manifest never takes this arm: its empty stdout is a
+            // contract breach reported below.
+            if output.stdout.is_empty() {
+                return ToolOutput::ok(silent_success_stamp(&tool.name, input));
+            }
+            return ToolOutput::ok(content);
+        };
+        let parsed: Value = match serde_json::from_str(stdout.trim()) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Internal,
+                    format!(
+                        "custom tool `{}` violated its output contract: it declares an \
+                         output_schema but its stdout is not JSON ({e})",
+                        tool.name
+                    ),
+                );
+            }
+        };
+        if let Some(violation) = crate::registry::validate::check(expected, &parsed) {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Internal,
+                format!(
+                    "custom tool `{}` violated its output contract: {violation}",
+                    tool.name
+                ),
+            );
         }
-        ToolOutput::Ok {
-            content: crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES),
-        }
+        ToolOutput::ok_with_data(content, parsed)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let code = output
@@ -744,6 +870,15 @@ impl ToolExecutor for CustomToolSet<'_> {
         let mut schemas = self.inner.get().schemas();
         schemas.extend(self.tools.iter().map(CustomTool::schema));
         schemas
+    }
+
+    /// The inner surface's contracts plus one declared contract per custom
+    /// tool (#3287) — the manifest's claims ride here, with untrusted
+    /// provenance, never on the advertised schemas above.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        let mut contracts = self.inner.get().contracts();
+        contracts.extend(self.tools.iter().map(CustomTool::contract));
+        contracts
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {

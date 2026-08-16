@@ -239,7 +239,7 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
     // Then the call itself. Because the name is unadvertised, an error here
     // is an *absence* error by construction — the flip fails for the right
     // reason without this module having to pattern-match an error string.
-    if let ToolOutput::Ok { content } = inner.execute(&tool.name, &input).await {
+    if let ToolOutput::Ok { content, .. } = inner.execute(&tool.name, &input).await {
         return WitnessVerdict::NoFlip {
             how: format!(
                 "the existing tool surface already answers `{}`: {}",
@@ -252,7 +252,7 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
     // ── World B: with the tool ───────────────────────────────────────────
     let candidate = CustomToolSet::new(inner, vec![tool.clone()], root.to_path_buf());
     let first = match candidate.execute(&tool.name, &input).await {
-        ToolOutput::Ok { content } => content,
+        ToolOutput::Ok { content, .. } => content,
         ToolOutput::Error { message, .. } => {
             return WitnessVerdict::Refuted {
                 why: one_line(&message),
@@ -276,7 +276,7 @@ pub async fn prove(inner: &dyn ToolExecutor, tool: &CustomTool, root: &Path) -> 
     // The recorded expectation has to be a standing claim, not a one-time
     // observation, or nothing can ever re-check it.
     let second = match candidate.execute(&tool.name, &input).await {
-        ToolOutput::Ok { content } => content,
+        ToolOutput::Ok { content, .. } => content,
         ToolOutput::Error { message, .. } => {
             return WitnessVerdict::Unstable {
                 expected: expect,

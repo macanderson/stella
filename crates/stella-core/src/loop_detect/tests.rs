@@ -34,6 +34,7 @@ fn call(name: &str, input: serde_json::Value, output: &str) -> CallRecord<'stati
         input,
         Some(ToolOutput::Ok {
             content: output.into(),
+            data: None,
         }),
     )
 }
@@ -933,6 +934,7 @@ fn arb_call_record() -> impl Strategy<Value = CallRecord<'static>> {
         let outputs = [
             Some(ToolOutput::Ok {
                 content: "ok".into(),
+                data: None,
             }),
             Some(ToolOutput::error("boom")),
             None,
@@ -1000,7 +1002,7 @@ proptest! {
             .into_iter()
             .enumerate()
             .map(|(i, mut record)| {
-                record.output = Some(Cow::Owned(ToolOutput::Ok { content: format!("output {i}") }));
+                record.output = Some(Cow::Owned(ToolOutput::Ok { content: format!("output {i}") , data: None }));
                 record
             })
             .collect();

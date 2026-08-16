@@ -711,10 +711,14 @@ async fn run_worker(
         execution.as_ref().map(|(store, _)| store.clone()),
         format!("{session_id}/{}", spec.lane),
     );
-    // A worker's tool surface is the session's, so the operator's switches
-    // and the authorization gate apply to it identically — a sub-agent must
-    // not be a way to reach a tool the lead was denied. The principal names
-    // the lane, not the human, so a gate can tell the two apart.
+    // A worker's tool surface is the session's built-in/MCP surface, so the
+    // operator's switches and the authorization gate apply to it identically
+    // — a sub-agent must not be a way to reach a tool the lead was denied.
+    // Deliberately NOT `session_stack`: `.stella/tools` customs are withheld
+    // from autonomous lanes on purpose (#3339, see `policy_stack`'s docs) —
+    // an unreviewed script's writes would bypass the claim coordination this
+    // tap exists to enforce. The principal names the lane, not the human, so
+    // a gate can tell the two apart.
     let permitted = agent::tool_stack::policy_stack(
         &claims,
         cfg,

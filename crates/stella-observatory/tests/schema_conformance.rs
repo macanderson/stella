@@ -186,6 +186,7 @@ fn real_store_workspace() -> tempfile::TempDir {
     };
     let output = ToolOutput::Ok {
         content: "fn a() {}".into(),
+        data: None,
     };
     for (seq, event) in tool_round_trip(&call, &output).into_iter().enumerate() {
         store
@@ -682,6 +683,7 @@ fn an_unfinished_execution_reports_its_tool_calls() {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "fn a() {}".into(),
+                    data: None,
                 },
                 duration_ms: 5,
                 speculated: false,

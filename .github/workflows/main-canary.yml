@@ -1,0 +1,72 @@
+name: main-canary
+
+# Is `main` still green *after* the merge? (#3332)
+#
+# Some guards in this repository are enforced against a shared cell — one file
+# every PR of a given shape must write. `Cargo.lock` is one; AGENTS.md already
+# names `scripts/file-size-baseline.txt` as the biggest single cause of a red
+# `main`. Two branches can each write that cell correctly, pass every required
+# check, and compose into a broken tree the moment both land. The defect is in
+# the composition, so no pre-merge check can see it: neither author's tree is
+# wrong.
+#
+# On 2026-08-16 it fired twice in one day. #3311 added a crate while the 0.9.50
+# release sync (#3323) regenerated the lock; the merge left 23 crates at 0.9.50
+# and stella-plugin alone at 0.9.49, and every `--locked` build on `main` failed
+# — the MSRV job, the container build, and install.sh, which is the one that
+# reaches people installing from source. It was found by the next contributor's
+# PR going red, which is the expensive way.
+#
+# ── Why this is a separate workflow ──────────────────────────────────────────
+#
+# ci.yml runs on `pull_request` and ignores `docs/**`; this must run on the
+# merged tree, unconditionally, on every path. Same disjoint-trigger reasoning
+# that gave wire-schema.yml its own file.
+#
+# ── Why it writes an issue ───────────────────────────────────────────────────
+#
+# A scheduled workflow that fails quietly into the Actions tab is the shape of
+# #1464, where release.yml failed on 31 consecutive tags across two days while
+# every surface a maintainer glances at stayed green. The canary's output is an
+# issue, because that is the thing people read — and it closes that issue when
+# `main` recovers, so it never becomes a stale-issue generator worth muting.
+
+on:
+  push:
+    branches: [main]
+  # A backstop for the breakage no push caused: a yanked dependency can make a
+  # previously-fine lock unresolvable without a single commit landing.
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # To open, comment on, and close the one tracking issue, and to provision its
+  # label on first use.
+  issues: write
+
+# Deliberately cancel-in-progress: this reconciles state rather than reacting to
+# an event, so under a burst of merges the only tree worth judging is the last
+# one. Every action it takes is idempotent (one issue, found by label), so a
+# cancelled run costs nothing the next run does not redo.
+concurrency:
+  group: main-canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: main still composes green
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+
+      - name: Reconcile main against the composition checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/main-canary.sh --announce

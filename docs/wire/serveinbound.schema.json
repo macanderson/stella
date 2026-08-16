@@ -875,6 +875,9 @@
                     "content": {
                       "description": "What the tool produced, as the model will read it.",
                       "type": "string"
+                    },
+                    "data": {
+                      "description": "The structured half of the result, when the tool has one (#3285).\n`content` is prose for the model; `data` is the same facts as a\nvalue a contract's `output_schema` can check — \"references, not\npayloads\" (#2694 §4) is unenforceable over prose. `None` means\nthe tool produces no structured output, which is every tool\nwritten before this field existed. Optional and absent-when-`None`\nso every payload written before the field round-trips\nbyte-identically (invariant #4), and so the content bytes the\nmodel sees are never perturbed by structure."
                     }
                   },
                   "required": [

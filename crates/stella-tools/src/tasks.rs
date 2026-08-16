@@ -129,7 +129,7 @@ impl Tool for TaskCreate {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         // The batch form exists because the per-call form was being billed a
         // model round trip per card. Across nine solved Terminal-Bench trials,
         // 26% of every tool call Stella made was board bookkeeping and 14% of
@@ -169,6 +169,7 @@ impl Tool for TaskCreate {
                     created.len(),
                     Value::Array(created)
                 ),
+                data: None,
             };
         }
 
@@ -186,6 +187,7 @@ impl Tool for TaskCreate {
         });
         ToolOutput::Ok {
             content: format!("created task {payload}"),
+            data: None,
         }
     }
 }
@@ -211,13 +213,14 @@ impl Tool for TaskList {
         }
     }
 
-    async fn execute(&self, _input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, _input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let board = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if board.is_empty() {
             return ToolOutput::Ok {
                 content: "no tasks yet — create the plan with task_create before starting \
                           multi-step work"
                     .into(),
+                data: None,
             };
         }
         let content = board
@@ -226,7 +229,10 @@ impl Tool for TaskList {
             .map(render_line)
             .collect::<Vec<_>>()
             .join("\n");
-        ToolOutput::Ok { content }
+        ToolOutput::Ok {
+            content,
+            data: None,
+        }
     }
 }
 
@@ -258,7 +264,7 @@ impl Tool for TaskStart {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let id = match require_str(input, "id") {
             Ok(s) => s,
             Err(e) => return e,
@@ -267,6 +273,7 @@ impl Tool for TaskStart {
         match board.set_status(id, TaskStatus::InProgress) {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` is now in_progress", item.id, item.subject),
+                data: None,
             },
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -300,7 +307,7 @@ impl Tool for TaskComplete {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let id = match require_str(input, "id") {
             Ok(s) => s,
             Err(e) => return e,
@@ -309,6 +316,7 @@ impl Tool for TaskComplete {
         match board.set_status(id, TaskStatus::Completed) {
             Ok(item) => ToolOutput::Ok {
                 content: format!("task #{} `{}` completed", item.id, item.subject),
+                data: None,
             },
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -340,7 +348,7 @@ impl Tool for TaskCancel {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let id = match require_str(input, "id") {
             Ok(s) => s,
             Err(e) => return e,
@@ -353,7 +361,10 @@ impl Tool for TaskCancel {
                 if let Some(reason) = reason {
                     content.push_str(&format!(" — {reason}"));
                 }
-                ToolOutput::Ok { content }
+                ToolOutput::Ok {
+                    content,
+                    data: None,
+                }
             }
             Err(e) => ToolOutput::error(e.to_string()),
         }
@@ -394,7 +405,7 @@ impl Tool for TaskAssign {
         }
     }
 
-    async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+    async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let id = match require_str(input, "id") {
             Ok(s) => s,
             Err(e) => return e,
@@ -443,6 +454,7 @@ impl Tool for TaskAssign {
                  it with your briefing passed verbatim; its results will land back in this \
                  session"
             ),
+            data: None,
         }
     }
 }
@@ -472,12 +484,13 @@ mod tests {
     }
 
     async fn exec(tool: &dyn Tool, input: Value) -> ToolOutput {
-        tool.execute(&input, &root()).await
+        tool.execute(&input, &crate::ctx::ToolCtx::bare(root()))
+            .await
     }
 
     fn content(output: ToolOutput) -> String {
         match output {
-            ToolOutput::Ok { content } => content,
+            ToolOutput::Ok { content, .. } => content,
             ToolOutput::Error { message, .. } => panic!("expected ok, got error: {message}"),
         }
     }
@@ -485,7 +498,7 @@ mod tests {
     fn error(output: ToolOutput) -> String {
         match output {
             ToolOutput::Error { message, .. } => message,
-            ToolOutput::Ok { content } => panic!("expected error, got ok: {content}"),
+            ToolOutput::Ok { content, .. } => panic!("expected error, got ok: {content}"),
         }
     }
 
@@ -934,7 +947,10 @@ mod tests {
         let (board, queue) = handles();
         board.lock().unwrap().create("do a thing", None);
         let out = TaskAssign(board.clone(), queue.clone(), dispatch_off())
-            .execute(&serde_json::json!({"id": "1", "briefing": "b"}), &root())
+            .execute(
+                &serde_json::json!({"id": "1", "briefing": "b"}),
+                &crate::ctx::ToolCtx::bare(root()),
+            )
             .await;
         let msg = format!("{out:?}");
         assert!(out.is_error(), "{msg}");

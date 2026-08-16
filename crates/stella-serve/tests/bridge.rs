@@ -150,6 +150,7 @@ async fn tool_round_trip_completes_the_turn() {
                         &request_id,
                         ToolOutput::Ok {
                             content: "echoed".to_string(),
+                            data: None,
                         },
                     )
                     .unwrap();

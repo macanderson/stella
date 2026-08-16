@@ -268,7 +268,7 @@ impl SettledOutcome {
     /// which is exactly why it carries no class.
     fn from_output(output: &ToolOutput, duration_ms: i64) -> Self {
         let (state, error, error_class, bytes_out) = match output {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 (ToolCallState::Ok, String::new(), None, content.len() as i64)
             }
             ToolOutput::Error { message, class } => {

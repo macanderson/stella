@@ -12,7 +12,10 @@ fn tool_msg(call_id: &str, content: String) -> CompletionMessage {
         tool_calls: vec![],
         tool_results: vec![ToolResult {
             call_id: call_id.into(),
-            output: ToolOutput::Ok { content },
+            output: ToolOutput::Ok {
+                content,
+                data: None,
+            },
         }],
         attachments: Vec::new(),
     }
@@ -112,7 +115,7 @@ fn retention_ages_results_past_the_horizon_with_no_budget_pressure() {
     assert_eq!(report.evicted, 0, "retention never drops whole outputs");
     // The oldest result is aged to head+tail…
     match &messages[3].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.starts_with("STEP0-HEAD"), "head lost");
             assert!(content.ends_with("STEP0-TAIL"), "tail lost");
             assert!(content.contains("middle elided"));
@@ -122,7 +125,7 @@ fn retention_ages_results_past_the_horizon_with_no_budget_pressure() {
     // …and every result inside the horizon is untouched.
     for i in 8..12 {
         match &messages[3 + 2 * i].tool_results[0].output {
-            ToolOutput::Ok { content } => assert!(
+            ToolOutput::Ok { content, .. } => assert!(
                 content.len() > 5_000,
                 "recent step {i} must keep its verbatim output"
             ),
@@ -294,7 +297,7 @@ fn retention_never_touches_the_newest_tool_message_even_at_horizon_zero() {
         }),
     );
     match &messages[13].tool_results[0].output {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content.len() > 5_000,
             "the result answering the latest call survives every pass"
         ),
@@ -333,7 +336,7 @@ fn evicts_oldest_large_output_first_and_reports() {
     assert!(report.after_tokens < report.before_tokens);
     // The OLD output (idx 3) was evicted…
     match &messages[3].tool_results[0].output {
-        ToolOutput::Ok { content } => assert!(content.contains("evicted")),
+        ToolOutput::Ok { content, .. } => assert!(content.contains("evicted")),
         _ => panic!("expected stub"),
     }
 }
@@ -345,6 +348,7 @@ fn eviction_reports_the_block_identity_the_manifest_cited() {
     // later pass can prove that block was dropped before it was ever used.
     let old_output = ToolOutput::Ok {
         content: "old ".repeat(2000),
+        data: None,
     };
     let expected = crate::receipts::tool_result_block_id(&old_output);
     let mut messages = vec![
@@ -383,7 +387,7 @@ fn never_evicts_the_most_recent_tool_result() {
     ];
     compact(&mut messages, 1); // impossible budget
     match &messages[4].tool_results[0].output {
-        ToolOutput::Ok { content } => assert_eq!(content, &latest),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, &latest),
         _ => panic!("latest tool result must survive"),
     }
 }
@@ -411,12 +415,12 @@ fn dedups_identical_outputs_keeping_the_earliest() {
     // The EARLIEST copy (idx 2) survives byte-identical, so the prompt
     // prefix — and the provider cache built over it — is untouched (#372).
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => assert_eq!(content, &repeated),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, &repeated),
         _ => panic!("earliest copy must be intact"),
     }
     // The later copy (idx 4) is stubbed with a pointer to the earlier one.
     match &messages[4].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("earlier tool result"), "got: {content}")
         }
         _ => panic!("expected dedup stub"),
@@ -460,12 +464,14 @@ fn duplicates_within_one_tool_message_are_deduped() {
                     call_id: "c1".into(),
                     output: ToolOutput::Ok {
                         content: repeated.clone(),
+                        data: None,
                     },
                 },
                 ToolResult {
                     call_id: "c2".into(),
                     output: ToolOutput::Ok {
                         content: repeated.clone(),
+                        data: None,
                     },
                 },
             ],
@@ -480,11 +486,11 @@ fn duplicates_within_one_tool_message_are_deduped() {
     let report = compact(&mut messages, 700).expect("should compact");
     assert!(report.deduped >= 1, "{report:?}");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => assert_eq!(content, &repeated, "first copy survives"),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, &repeated, "first copy survives"),
         _ => panic!("earliest copy must be intact"),
     }
     match &messages[2].tool_results[1].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(
                 content.contains("earlier tool result"),
                 "the same-message sibling must be stubbed, got: {content}"
@@ -514,11 +520,11 @@ fn identical_rerun_is_deduped_not_superseded() {
     assert_eq!(report.superseded, 0, "{report:?}");
     assert!(report.deduped >= 1, "{report:?}");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => assert_eq!(content, &repeated),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, &repeated),
         _ => panic!("earliest copy must survive intact"),
     }
     match &messages[4].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("earlier tool result"), "got: {content}")
         }
         _ => panic!("expected a dedup stub on the later copy"),
@@ -565,7 +571,7 @@ fn recurring_call_id_never_dedups_distinct_outputs() {
     );
     for (idx, tag) in [(2usize, 'a'), (4, 'b'), (6, 'c')] {
         match &messages[idx].tool_results[0].output {
-            ToolOutput::Ok { content } => {
+            ToolOutput::Ok { content, .. } => {
                 assert_eq!(content, &out(tag), "message {idx} lost its output")
             }
             _ => panic!("message {idx}: expected its untouched Ok output"),
@@ -596,18 +602,19 @@ fn byte_identical_outputs_still_dedup_under_a_recurring_call_id() {
     assert_eq!(
         report.deduped_blocks,
         vec![tool_result_block_id(&ToolOutput::Ok {
-            content: repeated.clone()
+            content: repeated.clone(),
+            data: None
         })],
         "the receipt must cite the identity of the block it stubbed"
     );
     // The EARLIEST copy survives byte-identical (#372)…
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => assert_eq!(content, &repeated),
+        ToolOutput::Ok { content, .. } => assert_eq!(content, &repeated),
         _ => panic!("earliest copy must survive intact"),
     }
     // …and only the later duplicate is stubbed.
     match &messages[4].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("earlier tool result"), "got: {content}")
         }
         _ => panic!("expected a dedup stub on the later copy"),
@@ -700,21 +707,21 @@ fn repeated_identical_call_supersedes_older_differing_results() {
     let report = compact(&mut messages, 1_250).expect("should compact");
     assert!(report.superseded >= 1, "{report:?}");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.contains("stale result"), "got: {content}")
         }
         _ => panic!("expected supersession stub"),
     }
     // The different-target read keeps its full content…
     match &messages[4].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.starts_with("unrelated file"), "got: {content}")
         }
         _ => panic!("different invocation must not be superseded"),
     }
     // …and the superseding (latest) result is intact.
     match &messages[6].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.starts_with("post-edit"), "got: {content}")
         }
         _ => panic!("latest result must survive"),
@@ -737,7 +744,7 @@ fn aging_shrinks_old_outputs_keeping_head_and_tail_before_eviction() {
     assert!(report.aged >= 1, "{report:?}");
     assert_eq!(report.evicted, 0, "aging must run before eviction");
     match &messages[2].tool_results[0].output {
-        ToolOutput::Ok { content } => {
+        ToolOutput::Ok { content, .. } => {
             assert!(content.starts_with("HEADLINE"), "head lost: {content:.40}");
             assert!(content.ends_with("TAILLINE"), "tail lost");
             assert!(content.contains("middle elided"));

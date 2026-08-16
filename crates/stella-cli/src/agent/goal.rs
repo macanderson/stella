@@ -990,6 +990,17 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
             .collect()
     }
 
+    /// Forwarded with exactly the filter `schemas()` applies (#3287) — the
+    /// verifier's narrowed surface must not advertise contracts for tools it
+    /// refuses.
+    fn contracts(&self) -> Vec<stella_protocol::ToolContract> {
+        self.inner
+            .contracts()
+            .into_iter()
+            .filter(|contract| VERIFIER_TOOL_ALLOWLIST.contains(&contract.name()))
+            .collect()
+    }
+
     async fn execute(&self, name: &str, input: &serde_json::Value) -> stella_protocol::ToolOutput {
         if !VERIFIER_TOOL_ALLOWLIST.contains(&name) {
             return stella_protocol::ToolOutput::error(format!(
@@ -1183,6 +1194,7 @@ mod verifier_tools_tests {
         async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
             ToolOutput::Ok {
                 content: format!("ran {name}"),
+                data: None,
             }
         }
     }

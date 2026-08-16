@@ -140,7 +140,7 @@ async fn a_suppressed_server_advertises_the_login_tool_and_answers_the_instructi
     );
 
     match second.execute(&tool, &serde_json::Value::Null).await {
-        stella_protocol::ToolOutput::Ok { content } => {
+        stella_protocol::ToolOutput::Ok { content, .. } => {
             assert!(
                 content.contains(&format!("stella mcp login {SERVER}")),
                 "{content}"

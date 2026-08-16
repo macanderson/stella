@@ -40,8 +40,53 @@ use crate::catalog;
 #[must_use]
 pub fn contract_for(schema: &ToolSchema) -> ToolContract {
     match catalog::get(&schema.name) {
-        Some(entry) => ToolContract::builtin(schema.clone(), entry.risk),
+        Some(entry) => {
+            let mut contract = ToolContract::builtin(schema.clone(), entry.risk);
+            if let Some(output_schema) = declared_output_schema(&schema.name) {
+                contract = contract.with_output_schema(output_schema);
+            }
+            contract.with_events(declared_events(&schema.name))
+        }
         None => ToolContract::declared(schema.clone()),
+    }
+}
+
+/// The output promise a reviewed tool makes, when it makes one (#3285): what
+/// a successful call's structured half (`ToolOutput::Ok.data`) must look
+/// like, in the same JSON-Schema subset `registry/validate.rs` enforces for
+/// inputs. `None` — most rows — means the tool's output is prose only, and
+/// the registry checks nothing.
+///
+/// Beside the catalog rather than a macro column because almost every row
+/// would be `None`: a promise is the exception, and each one should read as
+/// a deliberate declaration next to the tool that keeps it.
+/// The event names a reviewed tool may emit mid-execution (#3284). The
+/// registry's per-call `ToolCtx` drops anything not listed here, so this
+/// table is the allowlist. Empty — most rows — means the tool emits nothing.
+///
+/// `task` is the one long-running built-in: it announces the child it
+/// dispatched as `tool.call.progress`, so an observer can tell a slow
+/// delegation from a wedged one.
+fn declared_events(name: &str) -> Vec<String> {
+    match name {
+        "task" => vec!["tool.call.progress".to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn declared_output_schema(name: &str) -> Option<serde_json::Value> {
+    match name {
+        "list_state" => Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": { "type": "object" }
+                }
+            },
+            "required": ["entries"]
+        })),
+        _ => None,
     }
 }
 

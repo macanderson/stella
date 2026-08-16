@@ -349,6 +349,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 call_id: "c1".into(),
                 output: ToolOutput::Ok {
                     content: "312 lines".into(),
+                    data: None,
                 },
                 duration_ms: 42,
                 speculated: false,

@@ -341,6 +341,7 @@ mod tests {
                     self.flag.store(true, Ordering::SeqCst);
                     ToolOutput::Ok {
                         content: "1 passed".into(),
+                        data: None,
                     }
                 }
                 _ => {
@@ -349,6 +350,7 @@ mod tests {
                     }
                     ToolOutput::Ok {
                         content: "eternal finished".into(),
+                        data: None,
                     }
                 }
             }
@@ -503,7 +505,8 @@ mod tests {
         assert_eq!(
             eternal_output,
             Some(ToolOutput::Ok {
-                content: "eternal finished".into()
+                content: "eternal finished".into(),
+                data: None
             }),
             "with no halt, the sibling's real result is untouched"
         );

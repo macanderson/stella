@@ -162,6 +162,7 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
                         &request_id,
                         ToolOutput::Ok {
                             content: String::new(),
+                            data: None,
                         },
                     )
                     .unwrap();
@@ -336,6 +337,7 @@ async fn a_served_turn_can_delegate_to_a_sub_agent() {
                         &request_id,
                         ToolOutput::Ok {
                             content: String::new(),
+                            data: None,
                         },
                     )
                     .unwrap();

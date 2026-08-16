@@ -48,6 +48,7 @@ impl ToolExecutor for Chain {
         match &self.answers {
             Some(content) => ToolOutput::Ok {
                 content: content.clone(),
+                data: None,
             },
             None => ToolOutput::error(format!("unknown tool `{name}`")),
         }
@@ -81,6 +82,10 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
             witness_input,
             approved: None,
         }),
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     }
 }
 
@@ -143,7 +148,7 @@ async fn the_witness_fails_without_the_tool_and_passes_with_it() {
     let with_tool = CustomToolSet::new(&chain, vec![tool.clone()], root.to_path_buf());
     let after = with_tool.execute(&tool.name, &input).await;
     match &after {
-        ToolOutput::Ok { content } => assert!(
+        ToolOutput::Ok { content, .. } => assert!(
             content.contains("alpha-contents"),
             "the tool must produce the capability's answer: {content}"
         ),
@@ -361,6 +366,10 @@ fn a_hand_written_manifest_has_no_witness_input() {
         env: Default::default(),
         source: PathBuf::from("/x/deploy.toml"),
         foundry: None,
+        claimed_read_only: false,
+        claimed_risk: None,
+        claimed_idempotent: false,
+        output_schema: None,
     };
     assert!(witness_input(&tool).is_err());
 }

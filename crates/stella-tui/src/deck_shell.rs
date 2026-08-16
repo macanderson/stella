@@ -241,7 +241,10 @@ fn spawn_shell_command(
             Err(e) => (false, format!("failed to spawn `sh -c`: {e}")),
         };
         let output = if ok {
-            ToolOutput::Ok { content }
+            ToolOutput::Ok {
+                content,
+                data: None,
+            }
         } else {
             ToolOutput::error(content)
         };
