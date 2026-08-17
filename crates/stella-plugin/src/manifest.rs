@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
+use crate::wrapper::Wrapper;
 
 /// How much of a say in the turn loop a plugin has declared (#3245 §2).
 ///
@@ -276,6 +277,11 @@ pub struct PluginManifest {
     /// Routing intents for subloop stages. Requires `[subloop]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<BTreeMap<String, Role>>,
+    /// Steering and above: the wrapper's stage order and the conditions
+    /// under which each stage runs (#3381). Absent = this plugin is not a
+    /// turn-loop wrapper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapper: Option<Wrapper>,
 }
 
 /// `skip_serializing_if` needs a named predicate; "the grant is the default"
@@ -394,6 +400,13 @@ impl PluginManifest {
                     });
                 }
             }
+        }
+
+        if let Some(wrapper) = &self.wrapper {
+            if !participation.includes(Participation::Steering) {
+                return Err(ManifestError::WrapperRequiresSteering { participation });
+            }
+            wrapper.validate()?;
         }
 
         if let Some(roles) = &self.roles {

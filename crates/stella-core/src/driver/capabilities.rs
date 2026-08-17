@@ -109,6 +109,114 @@ impl<'a> TurnCapabilities<'a> {
     }
 }
 
+/// [`TurnCapabilities`] for a caller that **owns** its seams instead of
+/// borrowing them (#3387, `doc:turn-lane-assembly` §9.5).
+///
+/// # Why this exists
+///
+/// [`Engine`] holds `&'a dyn` ports, which is right for every in-tree lane:
+/// they all have something longer-lived to borrow from. A lane driven from
+/// out of process has not — it builds its seams, and there is no stack frame
+/// above it holding them. A borrow-only [`TurnCapabilities`] would therefore
+/// push plugin lanes into a second, parallel way of describing the same
+/// twelve slots, which is the exact disease this epic diagnoses: three
+/// vocabularies for one decision.
+///
+/// # Why it is a separate struct rather than a generic
+///
+/// Generic-over-ownership (a `Cow`-shaped slot, or a `Borrow` bound per
+/// field) was the other candidate. It was rejected because it makes the
+/// *borrowed* case — the one every builtin lane uses, on the hot path — pay
+/// in type noise and inference failures for a case none of them have. The
+/// pair here keeps the common path exactly as it was and gives the rare path
+/// its own name.
+///
+/// The totality guarantee is preserved and is not weakened by the split:
+/// this struct has no `Default` and no `#[non_exhaustive]` either, and
+/// [`Self::as_borrowed`] destructures itself exhaustively — so a new slot on
+/// [`TurnCapabilities`] fails to compile here as well, rather than silently
+/// reaching an owned lane as `None`.
+pub struct OwnedTurnCapabilities {
+    /// Lifecycle hooks and the port that executes them. Both or neither.
+    pub hooks: Option<(Arc<Hooks>, Arc<dyn HookRunner>)>,
+    /// Where a `PreToolUse` hook's `require_approval` decision parks (#2684).
+    pub hook_approvals: Option<Arc<dyn crate::hooks::decision::ApprovalRoute>>,
+    /// Token-drift calibration.
+    pub calibration: Option<Arc<CalibrationMap>>,
+    /// Boundary pause gate — Pause/Resume at step granularity.
+    pub gate: Option<Arc<dyn TurnGate>>,
+    /// Step-boundary steering — mid-turn messages and the soft stop.
+    pub steering: Option<Arc<dyn TurnSteering>>,
+    /// Step-boundary context re-query (#3243 Phase 3).
+    pub requery: Option<Arc<dyn SteeringRequery>>,
+    /// Extension hook bus — observer-only.
+    pub bus: Option<Arc<crate::bus::HookBus>>,
+    /// Call-outcome feedback for a router's circuit breaker (#2673).
+    pub outcomes: Option<Arc<dyn ProviderOutcomes>>,
+    /// Mid-turn provider fallback at the retries-exhausted boundary (#2679).
+    pub fallback: Option<Arc<dyn FallbackResolver>>,
+    /// What this engine's model calls are attributed to.
+    pub call_role: ModelCallRole,
+}
+
+impl OwnedTurnCapabilities {
+    /// The bare loop, owned. Written as an exhaustive literal for the same
+    /// reason [`TurnCapabilities::none`] is.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            hooks: None,
+            hook_approvals: None,
+            calibration: None,
+            gate: None,
+            steering: None,
+            requery: None,
+            bus: None,
+            outcomes: None,
+            fallback: None,
+            call_role: ModelCallRole::Worker,
+        }
+    }
+
+    /// Borrow every owned slot as the engine's [`TurnCapabilities`].
+    ///
+    /// The returned value borrows from `self`, so the caller keeps the owned
+    /// handles alive for as long as the engine exists — which is precisely
+    /// the lifetime relationship an out-of-process lane needs and cannot get
+    /// from a stack frame it does not have.
+    #[must_use]
+    pub fn as_borrowed(&self) -> TurnCapabilities<'_> {
+        // Destructured, never field-accessed: a slot added to either struct
+        // and forgotten here is a compile error, so the owned form cannot
+        // silently carry less than the borrowed one.
+        let Self {
+            hooks,
+            hook_approvals,
+            calibration,
+            gate,
+            steering,
+            requery,
+            bus,
+            outcomes,
+            fallback,
+            call_role,
+        } = self;
+
+        TurnCapabilities {
+            hooks: hooks.as_ref().map(|(hooks, runner)| (&**hooks, &**runner)),
+            hook_approvals: hook_approvals.as_deref(),
+            calibration: calibration.as_deref(),
+            gate: gate.as_deref(),
+            steering: steering.as_deref(),
+            requery: requery.as_deref(),
+            bus: bus.as_deref(),
+            outcomes: outcomes.as_deref(),
+            fallback: fallback.as_deref(),
+            call_role: *call_role,
+        }
+    }
+}
+
 impl<'a> HooksHandle<'a> {
     /// The pair back out, for a caller assembling a child engine from a
     /// parent's already-bound handle (`crate::subagent`). Lives here rather
@@ -211,6 +319,57 @@ mod tests {
         assert!(outcomes.is_none());
         assert!(fallback.is_none());
         assert_eq!(call_role, ModelCallRole::Worker);
+    }
+
+    /// The owned-slot witness (#3387): a lane that **owns** its seams can
+    /// assemble an engine.
+    ///
+    /// The shape matters more than the assertions. `caps` is built inside a
+    /// helper and returned by value — there is no stack frame above holding
+    /// the seams, which is the situation an out-of-process plugin lane is in
+    /// and the one a `&'a dyn`-only [`TurnCapabilities`] cannot serve. This
+    /// does not compile before `OwnedTurnCapabilities` exists.
+    #[test]
+    fn an_owned_capability_set_outlives_the_frame_that_built_it() {
+        fn built_elsewhere() -> OwnedTurnCapabilities {
+            let mut caps = OwnedTurnCapabilities::none();
+            caps.call_role = ModelCallRole::Verdict;
+            caps
+        }
+
+        let provider = crate::subagent::tests::ScriptedProvider::new(vec![]);
+        let tools = crate::subagent::tests::MixedTools::default();
+        let sleeper = crate::subagent::tests::NoSleep;
+
+        let owned = built_elsewhere();
+        let engine = Engine::assemble(
+            &provider,
+            &tools,
+            EngineConfig::default(),
+            &sleeper,
+            owned.as_borrowed(),
+        );
+
+        assert_eq!(engine.call_role, ModelCallRole::Verdict);
+    }
+
+    /// The owned form must not be able to carry *less* than the borrowed one.
+    ///
+    /// `as_borrowed` destructures exhaustively, so this is really a
+    /// compile-time property; the assertions just pin that a seam set on the
+    /// owned struct actually arrives.
+    #[test]
+    fn as_borrowed_carries_every_slot_it_was_given() {
+        let bus = Arc::new(crate::bus::HookBus::new("owned-caps-test"));
+        let mut owned = OwnedTurnCapabilities::none();
+        owned.bus = Some(Arc::clone(&bus));
+
+        let borrowed = owned.as_borrowed();
+        assert!(
+            borrowed.bus.is_some(),
+            "an owned seam reached the borrowed view"
+        );
+        assert!(borrowed.gate.is_none(), "a seam not set stays unset");
     }
 
     /// The second half: `assemble` must actually wire what it is handed.

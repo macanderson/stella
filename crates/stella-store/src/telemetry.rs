@@ -283,6 +283,45 @@ impl Store {
         Ok(())
     }
 
+    /// Open an execution row for a **standalone system model call** — one
+    /// that is not a turn: no prompt the user wrote, and no door they came in
+    /// by (`reflection`, `skill_author`, `domain_inference`, `agent_author`,
+    /// `ingest_extraction`).
+    ///
+    /// The counterpart of [`Store::begin_execution`](crate::Store::begin_execution),
+    /// and the reason this is a second constructor rather than a parameter on
+    /// that one: these rows differ in *what the columns mean*, not in a
+    /// setting. Callers used to reach `begin_execution` with the role in the
+    /// `kind` argument, which is precisely how the door column came to hold
+    /// four role values (#3395).
+    ///
+    /// `kind` is written as the non-door sentinel and `role` carries the
+    /// role, so a caller cannot write a role into the door column by
+    /// mistake — the door is not theirs to choose.
+    pub fn begin_standalone_execution(
+        &self,
+        role: &str,
+        prompt: &str,
+        provider: &str,
+        model: &str,
+    ) -> Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO executions \
+               (kind, role, prompt, provider, model, usage_complete, usage_status, journal_era) \
+             VALUES (?, ?, ?, ?, ?, 0, 'pending', ?)",
+            params![
+                crate::migrations::SYSTEM_NON_DOOR,
+                role,
+                prompt,
+                provider,
+                model,
+                crate::JournalEra::CURRENT.code()
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
     /// The spend one execution has already SETTLED: the sum of the durable
     /// per-call receipts it wrote as it ran.
     ///

@@ -3828,9 +3828,8 @@ async fn run_lead_turn(
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
-    let requery = session_memory.map(|memory| crate::memory::SessionRequery::new(memory, messages));
-
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let requery = crate::memory::requery_for_turn(session_memory, messages, tx.clone().into());
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -3896,6 +3895,11 @@ async fn run_lead_turn(
     // is still reading user input — so latch the flag that tells its prompt
     // arm to treat what arrives as the next turn, not a sidecar request.
     steering.mark_settling();
+    // The re-query adapter holds an `EventSender` clone of this turn's channel
+    // (#3366 telemetry), so it is one of the sender clones `close_turn_stream`
+    // requires gone; otherwise the forwarder's `recv()` stays pending forever
+    // and the turn future wedges after the deck painted the turn done (#2290).
+    drop(requery);
     let persistence_complete = close_turn_stream(registry, tx, forwarder).await;
     claims.release_all();
 

@@ -62,7 +62,7 @@ pub use accounted_call::{AccountedCall, AccountedCallError, ReceiptContext, run_
 pub use bus::{
     ExtensionFailure, HookBus, HookDecision, HookEventDraft, HookSubscription, PolicyOutcome,
 };
-pub use driver::capabilities::TurnCapabilities;
+pub use driver::capabilities::{OwnedTurnCapabilities, TurnCapabilities};
 pub use driver::{Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome};
 pub use estimator::{Calibration, CalibrationMap};
 pub use event_sender::{EventSendError, EventSender};

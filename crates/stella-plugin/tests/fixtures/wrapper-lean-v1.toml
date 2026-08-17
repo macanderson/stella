@@ -1,0 +1,33 @@
+# A deliberately cheaper second variant.
+#
+# #3381's definition of done asks for a second variant "even a trivially
+# cheaper one", because one manifest describing one path proves nothing: it
+# is a description of the code, not a declaration the code reads. This one
+# drops recall, research, plan and scope — a cheap task should not pay for
+# ceremony it cannot use — and keeps only the stages that produce or grade
+# work.
+#
+# It differs from `wrapper-staged-v1.toml` in nothing but the manifest, which
+# is the whole claim being made.
+name = "lean"
+description = "Triage, do the work, grade it. No planning ceremony."
+
+[loop]
+participation = "steering"
+
+[wrapper]
+id = "lean-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "execute"
+
+[[wrapper.stages]]
+name = "witness"
+if = "no-test-command"
+
+[[wrapper.stages]]
+name = "verify"
+if = "verifies"

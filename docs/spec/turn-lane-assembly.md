@@ -372,8 +372,8 @@ whichever site was edited last.
 
 | # | PR | Closes | Size |
 |---|---|---|---|
-| 1 | `TurnLane` + lane-tagged turn events | — | S |
-| 2 | `TurnCapabilities` + `Engine::assemble`, `with_*` as deprecated shims | — | L |
+| 1 | `TurnLane` + lane-tagged turn events | #3386 (vocabulary landed; stamping is #3410) | S |
+| 2 | `TurnCapabilities` + `Engine::assemble`, `with_*` as deprecated shims | #3387 (landed, incl. the owned form) | L |
 | 3 | Migrate all seven sites; delete shims; no `Default` | — | M |
 | 4 | Lane matrix in `stella-parity`, both-sides enforced | — | M |
 | 5 | `ResumeAuthority` + terminal-frame write side | #3232, #3233 | M |
@@ -508,6 +508,15 @@ Two constraints follow, and both bite Move 2 *now* rather than later:
   that is `&'a dyn`-only forces plugin lanes into a second, parallel
   vocabulary — which is the exact disease §3 diagnoses. Either the struct is
   generic over ownership or the owned form is defined in the same PR.
+
+  **Answered (#3387): the owned form, not the generic.** `OwnedTurnCapabilities`
+  holds `Arc` slots and lends them through `as_borrowed()`
+  (`crates/stella-core/src/driver/capabilities.rs`). Generic-over-ownership was
+  rejected because it makes the borrowed case — the one every builtin lane uses
+  — pay in type noise for a case none of them have. The totality guarantee is
+  not weakened by the split: the owned struct has no `Default` either, and
+  `as_borrowed` destructures itself exhaustively, so a new slot fails to compile
+  on both halves rather than reaching an owned lane as a silent `None`.
 - **A blocking plugin cannot live on the `HookBus`.** Its handlers are sync
   closures (`Fn(&HookEvent) -> HookDecision`, `bus.rs:190`) and cannot await.
   An arbiter lane whose definition of done involves running a test suite

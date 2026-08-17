@@ -181,7 +181,7 @@ pub(crate) async fn complete_standalone(
     workspace_root: &Path,
     provider: &dyn Provider,
     role: ModelCallRole,
-    kind: &str,
+    role_name: &str,
     model_hint: &str,
     budget_limit: Option<f64>,
     request: CompletionRequest,
@@ -196,9 +196,13 @@ pub(crate) async fn complete_standalone(
         cost_usd: 0.0,
         events: Vec::new(),
     })?;
+    // Not `begin_execution`: this call is not a turn, so it has no door.
+    // Passing the role here as a `kind` is exactly how four role values came
+    // to live in the door column (#3395); `begin_standalone_execution` writes
+    // the non-door sentinel itself, so the door is not this caller's to pick.
     let execution_id = store
-        .begin_execution(
-            kind,
+        .begin_standalone_execution(
+            role_name,
             "content-free system operation",
             provider.id(),
             model_hint,

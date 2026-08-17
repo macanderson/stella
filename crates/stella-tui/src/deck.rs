@@ -1027,8 +1027,8 @@ pub struct FileRecord {
 /// of the event's diff text, which made the panel's numbers a count of whatever
 /// the emitter had synthesized — for a bulk edit or a worker lane, nothing at
 /// all, rendering as `+0 -0` over real work. The emitter
-/// (`ToolRegistry::record_touch`) computes the delta from the actual pre- and
-/// post-images and sends it; this fold just accumulates.
+/// (`Pipeline::deliver_winner`) sends the delta adoption measured against the
+/// real tree; this fold just accumulates.
 #[derive(Clone, Debug, Default)]
 pub struct FileLedger {
     pub records: Vec<FileRecord>,

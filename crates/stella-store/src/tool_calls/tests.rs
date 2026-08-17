@@ -338,7 +338,7 @@ fn state_round_trips_and_degrades_safely() {
 /// power loss while not doing the one thing that makes that true.
 #[test]
 fn every_durability_level_sets_the_pragmas_its_guarantee_rests_on() {
-    use crate::migrations::Durability;
+    use crate::migrations::pragmas::Durability;
 
     // Empty and unrecognized both land on Full — a typo in an environment
     // variable must never silently downgrade a durability guarantee.

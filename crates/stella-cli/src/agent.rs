@@ -1619,16 +1619,13 @@ async fn run_turn(
         prompt,
         &cfg.workspace_root,
     );
+    let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
-    // free. Seeded from `messages` so the turn-opening block (and any
-    // earlier turn's) is never re-injected.
-    let requery = session_memory
-        .as_deref()
-        .map(|memory| crate::memory::SessionRequery::new(memory, messages));
-
-    let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_raw_run(raw_tx, format);
+    // free. Seeded from `messages` so the turn-opening block is never
+    // re-injected, and given `tx` so its own recall is metered (#3366).
+    let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
@@ -1697,6 +1694,10 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
+    // The re-query adapter holds an `EventSender` clone of this run's channel
+    // (#3366 telemetry), so it must be released here too — otherwise it keeps
+    // the channel open and the renderer's `recv()` loop never ends (#2290).
+    drop(requery);
     // Releasing every sender — the registry's clones included — closes the
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
     // already-queued event has actually printed before this function returns
