@@ -372,6 +372,61 @@ mode this project exists to end.
 
 ---
 
+## 9. Track C — proving three languages in `stella-examples`
+
+`macanderson/stella-examples` is public and already organised by capability —
+`agents/`, `commands/`, `fleet/`, `hooks/`, `mcp/`, `memory/`, `rules/`,
+`scripting/`, `settings/`, `skills/`, `tools/`. A `plugins/` directory slots in
+beside them.
+
+Today every executable example in that repo is a shell script
+(`hooks/scripts/{guard-bash,log-tool-use,session-context}.sh`,
+`scripting/{ci-autofix,nightly-goal}.sh`). So a Python plugin and a TypeScript
+plugin are genuinely new artefacts, and that is the point: they are the proof,
+not the documentation.
+
+### The three reference plugins
+
+All three implement the **same** plugin so they can be diffed against each
+other — a verification plugin that runs a test command in `after_turn`, reports
+the flip as evidence, and declares its verdict rule as data. Small enough to
+read in one sitting, real enough to be non-trivial.
+
+| Path | Language | Demonstrates |
+|---|---|---|
+| `plugins/verify-rs/` | Rust | the reference implementation, and the in-process fast path |
+| `plugins/verify-py/` | Python | no SDK beyond stdlib; `argv = ["python3", "${plugin_dir}/main.py"]` |
+| `plugins/verify-ts/` | TypeScript | `argv = ["node", "${plugin_dir}/dist/main.js"]`, with the build step shown |
+
+Each directory carries its manifest, its entrypoint, a README explaining what
+the plugin does and how to install it, and a test.
+
+### The rules that keep it honest
+
+1. **Identical manifests except `[runtime].argv`.** If the Python plugin needs a
+   different manifest shape than the Rust one, the abstraction has leaked and
+   that is a bug in Track A, discovered here.
+2. **The Rust example uses the wire path in CI.** It may additionally have an
+   in-process path, but if only Rust can reach a capability, the wire contract
+   is second-class and will rot (§5.2).
+3. **No SDK in the first cut.** Python and TypeScript should work with the
+   standard library and a JSON parser. An SDK is a convenience added once the
+   protocol is stable — if a plugin *cannot* be written without an SDK, the
+   protocol is too complicated.
+4. **CI runs all three on every PR**, in `stella-examples` and as a smoke check
+   in `stella` itself, so a protocol change that breaks a non-Rust plugin fails
+   the PR that made it rather than being discovered by a user.
+
+### Why this is a hard requirement rather than a nice-to-have
+
+A plugin surface exercised only by its authors' language is a library with
+extra steps. The adoption case is explicit: developers who do not write Rust
+will not adopt a Rust-only extension surface, and the marketplace has nothing to
+sell if every listing must be compiled from Rust. Track C is the test that
+Track A actually delivered a platform.
+
+---
+
 ## 10. Definition of done for the whole plan
 
 - `stella-cli/Cargo.toml` does not declare `stella-pipeline`.
