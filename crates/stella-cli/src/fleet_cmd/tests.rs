@@ -370,3 +370,71 @@ async fn watch_branch_treats_a_ci_timeout_as_red() {
         })
     ));
 }
+
+/// A raw fleet worker frames its turn on both sides (#3428).
+///
+/// #3416 moved stage boundaries out of the engine and into each run owner. The
+/// fleet lane took only the opening half: it sent `Stage(Execute)` and never a
+/// closer, so a worker's journal ended on `TurnComplete` with the run still
+/// nominally executing — where every other run owner's ends with the pair.
+/// Nothing caught it, because the fleet renders lanes from the ledger rather
+/// than from a stage HUD, so no consumer that exists today reads the boundary
+/// it was missing. That is exactly the shape a test has to hold.
+///
+/// The ordering is the substance, not a detail: the closer must arrive AHEAD
+/// of the terminal event it annotates, because `TurnComplete` is emitted from
+/// inside the turn and a consumer that stops there would never see a boundary
+/// appended afterwards.
+#[test]
+fn a_raw_worker_closes_the_stage_it_opened() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let worker = worker_event_sender(&tx);
+    worker
+        .send(AgentEvent::TurnComplete {
+            model: "opus".to_string(),
+            cost_usd: 0.5,
+        })
+        .expect("the receiver is alive");
+
+    let mut seen = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        seen.push(event);
+    }
+    assert!(
+        matches!(
+            seen.as_slice(),
+            [
+                AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Complete,
+                    scope: stella_protocol::StageScope::Run,
+                },
+                AgentEvent::TurnComplete { .. },
+            ]
+        ),
+        "the closing boundary rides ahead of the terminal event it annotates: {seen:?}"
+    );
+}
+
+/// ...and only for a turn that finished. An aborted worker reached no
+/// completion, and a boundary claiming otherwise would be the journal's last
+/// word on a run that failed.
+#[test]
+fn an_unfinished_worker_turn_claims_no_closing_boundary() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let worker = worker_event_sender(&tx);
+    worker
+        .send(AgentEvent::Error {
+            message: "the turn aborted".to_string(),
+            retryable: false,
+        })
+        .expect("the receiver is alive");
+
+    let mut seen = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        seen.push(event);
+    }
+    assert!(
+        matches!(seen.as_slice(), [AgentEvent::Error { .. }]),
+        "a turn that never completed gets no closing boundary: {seen:?}"
+    );
+}

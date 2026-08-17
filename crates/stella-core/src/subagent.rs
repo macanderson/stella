@@ -111,8 +111,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use stella_protocol::{
-    AgentEvent, CompletionMessage, MessageRole, ModelCallRole, Provider, SubAgentPhase,
-    SubAgentStatus,
+    AgentEvent, BuiltinLane, CompletionMessage, MessageRole, ModelCallRole, Provider,
+    SubAgentPhase, SubAgentStatus, TurnLane,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -720,6 +720,10 @@ impl Engine<'_> {
             // read identically to an oversight.
             TurnCapabilities {
                 call_role: spec.role,
+                // This fork is the subagent-fork lane, and now says so
+                // (#3410). Naming it here is what lets a reader group a
+                // child's turns apart from the parent's.
+                lane: Some(TurnLane::Builtin(BuiltinLane::SubagentFork)),
                 hooks: self.hooks.map(HooksHandle::parts),
                 // The child's hooks route approvals the same way the parent's
                 // do: a hook asking for a human is asking about the session's

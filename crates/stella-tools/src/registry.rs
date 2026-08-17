@@ -150,7 +150,20 @@ impl ToolRegistry {
         let scratch = crate::scratch::ScratchDir::new().map(Arc::new);
         let scratch_path = scratch.as_ref().ok().map(|s| s.path().to_path_buf());
 
+        // The read ledger is shared by `read_file`, `write_file` and
+        // `edit_file`: it records what this session has actually seen, which
+        // is what lets a failed edit tell "the file drifted under you" from
+        // "you never read it" instead of reporting one needle-not-found for
+        // both.
+        let read_ledger: Arc<crate::read::ReadLedger> = Arc::default();
+
         let mut entries: Vec<Arc<dyn Tool>> = vec![
+            Arc::new(crate::bash::Bash::new(scratch_path.clone())),
+            Arc::new(crate::read::ReadFile::with_ledger(read_ledger.clone())),
+            Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
+            Arc::new(crate::edit::EditFile::with_ledger(read_ledger)),
+            Arc::new(crate::delete::DeleteFile),
+            Arc::new(crate::search::Search::from_env()),
             Arc::new(crate::tasks::TaskCreate(task_board.clone())),
             Arc::new(crate::tasks::TaskList(task_board.clone())),
             Arc::new(crate::tasks::TaskStart(task_board.clone())),

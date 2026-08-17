@@ -681,21 +681,31 @@ mod tests {
 
         // The guard gates by NAME at the dispatch hook, ahead of tool
         // resolution — so an armed guard would answer with its own Blocked
-        // error here. Unarmed, the name simply resolves as unknown.
+        // error here. Unarmed, the write simply happens.
+        //
+        // This used to assert `unknown tool`, which was a proxy: `write_file`
+        // was not a registered name at all, so the call could not have been
+        // blocked by anything. With the file tools back the assertion tests
+        // the thing it was always about — a project-authored guard on a path
+        // this write targets does not stop the write, because an untrusted
+        // project rule is not enforcement.
         let result = registry
             .execute(
                 "write_file",
                 &serde_json::json!({"path": "blocked/allowed.txt", "content": "ok\n"}),
             )
             .await;
-        let ToolOutput::Error { message, .. } = result else {
-            panic!("an unknown name answers with the unknown-tool error");
-        };
+        if let ToolOutput::Error { message, .. } = &result {
+            assert!(
+                !message.contains("Project guard"),
+                "untrusted guard was armed at the tool boundary: {message}"
+            );
+            panic!("the write must succeed with no guard armed: {message}");
+        }
         assert!(
-            !message.contains("Project guard"),
-            "untrusted guard was armed at the tool boundary: {message}"
+            root.path().join("blocked/allowed.txt").exists(),
+            "the write must actually reach the disk"
         );
-        assert!(message.contains("unknown tool"), "{message}");
     }
 
     #[tokio::test]

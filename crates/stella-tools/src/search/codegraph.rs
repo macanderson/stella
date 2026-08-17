@@ -11,24 +11,49 @@ use std::path::{Path, PathBuf};
 use stella_protocol::tool::ToolOutput;
 
 /// The index location `stella init` writes and every graph reader resolves.
-pub(crate) fn graph_db_path(root: &Path) -> PathBuf {
+pub fn graph_db_path(root: &Path) -> PathBuf {
     root.join(".stella").join("private").join("codegraph.db")
+}
+
+/// Why a code-graph door did not open (invariant #5).
+///
+/// The three variants are the three different things a caller may want to do
+/// about it, which is the test for whether a variant earns its place: a
+/// workspace whose private state cannot be resolved is a *setup* problem the
+/// operator must fix (an unsafe legacy layout, bad permissions) and is worth
+/// surfacing loudly; a store that cannot be prepared or a graph that cannot
+/// be opened are index problems a query may degrade past — which is exactly
+/// what `super::engine::dispatch` does, dropping to a lexical rung rather
+/// than failing the search. Before this was typed, telling those apart meant
+/// matching on prose.
+#[derive(Debug, thiserror::Error)]
+pub enum IndexError {
+    /// The workspace's private state directory could not be resolved or
+    /// migrated — a setup problem, not an index problem.
+    #[error("cannot resolve private code graph state: {0}")]
+    PrivateState(String),
+    /// The index's backing store could not be prepared for writing.
+    #[error("cannot prepare the code graph store: {0}")]
+    Prepare(String),
+    /// The index exists but could not be opened.
+    #[error("could not open the code graph: {0}")]
+    Open(String),
 }
 
 /// Fallible storage-map assembly for every governance caller. The graph
 /// crate's lower loader remains format-focused and best-effort; this boundary
 /// performs private-state migration and rejects unsafe legacy layouts before
 /// delegating.
-pub(crate) fn load_storage_snapshot(root: &Path) -> Result<stella_graph::StorageSnapshot, String> {
+pub fn load_storage_snapshot(root: &Path) -> Result<stella_graph::StorageSnapshot, IndexError> {
     stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
-        .map_err(|error| format!("cannot resolve private code graph state: {error}"))?;
+        .map_err(|error| IndexError::PrivateState(error.to_string()))?;
     Ok(stella_graph::load_storage_snapshot(root))
 }
 
 /// The single phrasing of the non-fatal index-pass diagnostic, shared by
 /// every surface that reports it so the operator always reads the same words
 /// (and a test can assert on it without pinning the store's error text).
-pub(crate) const INDEX_PASS_WARNING: &str = "warning: the code graph index pass \
+pub const INDEX_PASS_WARNING: &str = "warning: the code graph index pass \
      failed — answering from what the index already holds, which may be stale";
 
 /// An open graph handle **plus** whatever non-fatal diagnostic its opening
@@ -39,11 +64,11 @@ pub(crate) const INDEX_PASS_WARNING: &str = "warning: the code graph index pass 
 /// (issue #643). So the warning travels back to the caller as data instead,
 /// and every caller has somewhere to put it. It is never dropped on the
 /// floor.
-pub(crate) struct OpenedGraph {
-    pub(crate) graph: stella_graph::CodeGraph,
+pub struct OpenedGraph {
+    pub graph: stella_graph::CodeGraph,
     /// `Some(message)` when the `index_all` catch-up pass failed and the
     /// answer therefore comes from whatever the index already held.
-    pub(crate) index_warning: Option<String>,
+    pub index_warning: Option<String>,
 }
 
 /// Attach a non-fatal index warning to a rendered answer.
@@ -52,7 +77,7 @@ pub(crate) struct OpenedGraph {
 /// caveat before the possibly-stale frames it qualifies — and below a
 /// failure, where the named error is the headline and the failed index pass
 /// is context for it.
-pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOutput {
+pub fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOutput {
     let Some(warning) = warning else {
         return output;
     };
@@ -82,14 +107,14 @@ pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) ->
 ///
 /// **Synchronous — an async caller must wrap it in `spawn_blocking`**, the
 /// same contract `stella_graph::CodeGraph::index_all` states.
-pub(crate) fn open_or_build(root: &Path) -> Result<OpenedGraph, String> {
+pub fn open_or_build(root: &Path) -> Result<OpenedGraph, IndexError> {
     // The WRITABLE path (creates `.stella/private/`), not the read-only
     // `existing_...` probe — this is the one place a query is allowed to
     // create the index it needs.
     let db_path = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
-        .map_err(|error| format!("cannot prepare the code graph store: {error}"))?;
+        .map_err(|error| IndexError::Prepare(error.to_string()))?;
     let graph = stella_graph::CodeGraph::open(root, &db_path)
-        .map_err(|error| format!("could not open the code graph: {error}"))?;
+        .map_err(|error| IndexError::Open(error.to_string()))?;
     // A build/refresh failure is not fatal to a query: an existing index
     // still answers from its last good state, and a brand-new one answers
     // empty rather than aborting the search. It is still reported —

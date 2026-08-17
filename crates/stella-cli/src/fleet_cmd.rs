@@ -643,6 +643,26 @@ async fn stop_or_abandoned(
     }
 }
 
+/// The sender a **raw** fleet worker hands the engine.
+///
+/// `StageKind` is the run owner's vocabulary — the engine emits no boundary of
+/// its own (#3416) — and this lane is the owner. The opener is sent outright at
+/// the turn's start; the closer cannot be, because it must arrive *ahead of*
+/// the `TurnComplete` it annotates, and that event is emitted from inside the
+/// turn. So it rides a combinator instead of a send after the race
+/// ([`stella_core::EventSender::pairing_stage_complete`], which also holds the
+/// completed-only rule: a cancelled or aborted worker gets no boundary claiming
+/// its run finished).
+///
+/// A named seam rather than an inline `.pairing_stage_complete()` so the wiring
+/// has something to test. It went missing once already: the lane emitted an
+/// opener and no closer, framing half a turn, and nothing failed — the fleet
+/// renders lanes from the ledger rather than a stage HUD, so the asymmetry was
+/// invisible to every consumer that exists today (#3428).
+fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::EventSender {
+    stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
+}
+
 /// One worker turn in `root`, on the calling thread's runtime. When
 /// `use_pipeline` is true (the default), the turn runs through the staged
 /// pipeline (triage → recall → plan → execute → witness → verify → verdict);
@@ -948,12 +968,9 @@ async fn run_task(
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
                 // A fleet worker owns its lane's stage vocabulary; the engine
-                // emits no `Stage` of its own (#3416). Opening boundary only:
-                // the closing one pairs onto the engine's `TurnComplete`
-                // through `EventSender::pairing_stage_complete`, and this lane
-                // hands the engine a sender built here rather than a wrapped
-                // seam — the fleet renders lanes from the ledger, not from a
-                // stage HUD, so the gap costs nothing here.
+                // emits no `Stage` of its own (#3416). The opener is here; the
+                // closer rides `worker_event_sender` below, ahead of the
+                // engine's `TurnComplete` (#3428).
                 let _ = tx.send(AgentEvent::Stage {
                     name: stella_protocol::StageKind::Execute,
                     scope: stella_protocol::StageScope::Run,
@@ -964,7 +981,7 @@ async fn run_task(
                 // than sealed on drop here: a cancelled or aborted worker must
                 // end on `Error` alone, and only the code after the race knows
                 // which of the three ways this lane ended.
-                let worker = stella_core::EventSender::new(tx.clone());
+                let worker = worker_event_sender(&tx);
                 tokio::select! {
                     outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
                         Raced::Outcome(outcome)

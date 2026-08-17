@@ -332,6 +332,28 @@ pub fn scrub_spawn_env_except(command: &mut tokio::process::Command, preserved_n
     scrub_spawn_std_env_except(command.as_std_mut(), preserved_names);
 }
 
+/// The environment variable naming the session scratch directory, so a
+/// command the model runs can put a working file somewhere that is neither
+/// the workspace (where it would land in the turn's diff) nor `/tmp` (where
+/// it outlives the session).
+pub const SCRATCH_DIR_ENV: &str = "STELLA_SCRATCH";
+
+/// Inject the session scratch directory path into a command's environment.
+///
+/// Call this **after** [`scrub_spawn_env`], never before: the scrub is a
+/// deny-list pass over the inherited environment, so a value set first is a
+/// value the scrub can remove. Does nothing when the session has no scratch
+/// directory — an absent capability is absent, not an empty string the child
+/// would treat as a valid path.
+pub fn inject_scratch_env(
+    command: &mut tokio::process::Command,
+    scratch: Option<&std::path::Path>,
+) {
+    if let Some(path) = scratch {
+        command.env(SCRATCH_DIR_ENV, path);
+    }
+}
+
 /// Synchronous counterpart of [`scrub_spawn_env`] — the COMPLETE policy, not
 /// just the credential half.
 ///

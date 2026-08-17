@@ -131,10 +131,16 @@ to plug in, and nothing else:
 | `judge` | after `after_turn` | turn the evidence into a verdict | call a model |
 | `again?` | after `judge` | say "another turn, here is the correction" or "stop, here is the outcome" | fake an ending the engine did not emit |
 
-`judge` calls no model on purpose. That is already the rule in the pipeline
-(`ladder_decision` in `crates/stella-pipeline/src/verify.rs` is terminal at all
-five outcomes, and #2584 removed the model verdict structurally). The wrapper
-contract keeps that rule instead of re-arguing it.
+`judge` calls no model on purpose. That is already the rule in the pipeline:
+`ladder_decision` in `crates/stella-pipeline/src/verify.rs` is terminal at every
+arm of `LadderDecision` — that enum is the enumeration, and this document
+deliberately does not restate it or its count, because a number copied into a
+second file drifts (#3473) — and #2584 removed the model verdict structurally.
+The wrapper contract keeps that rule instead of re-arguing it.
+
+The arm a plugin author most needs from that enum is `WitnessUnsatisfiable`: the
+witness was authored and its red does not discriminate, so `judge` must be able
+to say "the instrument is broken", not only "the work failed".
 
 `before_turn` is where the steering plane (#3243) is asked its one question —
 "what could help here?" — for a wrapped run. It is not a fifth plane.

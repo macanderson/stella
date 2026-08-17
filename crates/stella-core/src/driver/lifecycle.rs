@@ -43,17 +43,25 @@
 use super::{StepOutcome, TurnOutcome};
 
 /// What `agent.turn.started` carries: how much conversation the turn opened
-/// with, the loop bound it runs under, and which role is driving it. No
-/// message *content* — see the module docs.
+/// with, the loop bound it runs under, which role is driving it, and which
+/// lane assembled it. No message *content* — see the module docs.
+///
+/// `lane` is `null` for an engine built through the legacy
+/// [`Engine::with_sleeper`](super::Engine::with_sleeper) path, which names no
+/// lane. That null is a positive statement — "this engine was not assembled
+/// by a named lane" — and an observer grouping by lane must read it as its
+/// own bucket rather than dropping the turn (#3410).
 pub fn turn_started_payload(
     message_count: usize,
     max_steps: usize,
     role: stella_protocol::ModelCallRole,
+    lane: Option<&stella_protocol::TurnLane>,
 ) -> serde_json::Value {
     serde_json::json!({
         "message_count": message_count,
         "max_steps": max_steps,
         "role": role,
+        "lane": lane,
     })
 }
 

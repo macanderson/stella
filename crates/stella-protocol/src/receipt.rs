@@ -57,6 +57,16 @@ pub enum BlockKind {
     /// before relaying a stream whose kinds matter downstream.
     #[default]
     #[serde(other)]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "A kind this reader does not recognize (written by a newer emitter).\n\nTolerant on the way in, lossy on the way out: the original token is not \
+preserved, so re-serializing an event that arrived with a future kind writes \
+`\"other\"`. Unlike the `unknown` event, which keeps the whole original object, \
+a proxy that round-trips a newer emitter's `block_registered` rewrites the \
+kind. Widen this enum before relaying a stream whose kinds matter downstream."
+        )
+    )]
     Other,
 }
 
@@ -240,6 +250,12 @@ pub struct ContextProviderUsage {
 /// without this type ever carrying one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "The per-request roll-up of what one context recall cost: the envelope a metering pipeline bills from, and the answer to \"what did this turn's context cost, and which sources drove it?\". Per-provider detail rides in `providers`; `budget_consumed` is the total the host admitted."
+    )
+)]
 pub struct ContextUsage {
     /// The query's `max_tokens` — the budget this recall was allowed.
     pub budget_requested: u32,
