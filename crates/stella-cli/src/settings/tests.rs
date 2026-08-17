@@ -1077,8 +1077,17 @@ fn managed_authority_settings_round_trip() {
 /// directly-deserialized `Settings` — which is exactly the one path where the
 /// field was never lost. This test goes through `Settings::load`, the way the
 /// binary does.
+///
+/// `Settings::load` reads the process-global `STELLA_MANAGED_SETTINGS`, so
+/// this test must join the env lock even though it mutates nothing: a
+/// bystander read of that global races the sibling tests above between their
+/// `set_var` and their `EnvRestore` drop, and briefly sees another test's
+/// scratch fixture — which fails the managed-settings ownership check and
+/// turns this assertion into a flake (#3312).
 #[test]
 fn enable_recap_survives_the_scope_merge() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path();
     std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
@@ -1087,6 +1096,14 @@ fn enable_recap_survives_the_scope_merge() {
         r#"{"enable_recap": "on"}"#,
     )
     .expect("write settings");
+    // SAFETY: env lock held for the whole mutate-read-cleanup window; the
+    // `EnvRestore` guard above undoes this even on an unwinding assertion.
+    unsafe {
+        std::env::set_var(
+            "STELLA_MANAGED_SETTINGS",
+            workspace.join("no-such-managed.json"),
+        );
+    }
 
     let merged = Settings::load(workspace).expect("settings load");
     assert!(
@@ -1106,11 +1123,21 @@ fn enable_recap_survives_the_scope_merge() {
 /// had yet written `enable_recap` into its scratch home.
 #[test]
 fn enable_recap_defaults_off_when_no_scope_sets_it() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path();
     std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
     std::fs::write(workspace.join(".stella/settings.json"), r#"{}"#).expect("write settings");
     let _home = crate::paths::test_user_home(workspace.join("empty-home"));
+    // SAFETY: env lock held for the whole mutate-read-cleanup window; the
+    // `EnvRestore` guard above undoes this even on an unwinding assertion.
+    unsafe {
+        std::env::set_var(
+            "STELLA_MANAGED_SETTINGS",
+            workspace.join("no-such-managed.json"),
+        );
+    }
 
     let merged = Settings::load(workspace).expect("settings load");
     assert!(!merged.recap_enabled(), "recap defaults off");
@@ -1126,8 +1153,15 @@ fn enable_recap_defaults_off_when_no_scope_sets_it() {
 /// said. The direct-deserialization tests below never caught it because the
 /// merge is the only place the field was lost. This test goes through
 /// `Settings::load`, the way the binary does.
+///
+/// It joins the env lock for the same reason
+/// [`enable_recap_survives_the_scope_merge`] does: reading the ambient
+/// `STELLA_MANAGED_SETTINGS` without the lock races the mutating tests above
+/// (#3312).
 #[test]
 fn create_worktrees_survives_the_scope_merge() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path();
     std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
@@ -1136,6 +1170,14 @@ fn create_worktrees_survives_the_scope_merge() {
         r#"{"create_worktrees": "never"}"#,
     )
     .expect("write settings");
+    // SAFETY: env lock held for the whole mutate-read-cleanup window; the
+    // `EnvRestore` guard above undoes this even on an unwinding assertion.
+    unsafe {
+        std::env::set_var(
+            "STELLA_MANAGED_SETTINGS",
+            workspace.join("no-such-managed.json"),
+        );
+    }
 
     let merged = Settings::load(workspace).expect("settings load");
     assert_eq!(
