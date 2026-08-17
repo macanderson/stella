@@ -3,7 +3,7 @@
 //! joined the completion path. A child module of `driver` so the engine
 //! internals stay reachable.
 
-use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole, StageKind};
+use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole};
 
 use super::truncation::{self, ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL};
 use super::user_hooks::STOP_HOOK_MARKER_PREFIX;
@@ -187,10 +187,13 @@ impl<'a> Engine<'a> {
                 )));
                 return None;
             }
-            let _ = events.send(AgentEvent::Stage {
-                name: StageKind::Complete,
-                scope: stella_protocol::StageScope::Turn,
-            });
+            // No `Stage(Complete)` here: `StageKind` is the run owner's
+            // vocabulary, not the loop's (#3416). A turn is one step of a run
+            // that may have six stages left to go, so an engine-emitted
+            // terminal boundary was a claim about a caller it cannot see — and
+            // the staged pipeline could only survive it by dropping the event.
+            // Every run owner emits its own. `TurnComplete` is the engine's
+            // own ending (#3417) and stays.
             let _ = events.send(AgentEvent::TurnComplete {
                 model: result.model.clone(),
                 cost_usd: total_cost_usd,

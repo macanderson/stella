@@ -8,14 +8,12 @@
 {"type":"stage","name":"context_recall","scope":"run"}
 {"type":"proof","step":{"kind":"oracle","command":"cargo test -p x","passed":false,"tree":"baseline"}}
 {"type":"stage","name":"execute","scope":"run"}
-{"type":"stage","name":"execute","scope":"turn"}
 {"type":"budget_tick","spent_usd":0.0002,"limit_usd":null,"mode":"off","session_spent_usd":0.0002,"session_limit_usd":null,"deadline_remaining_ms":null}
 {"type":"block_registered","block_id":"blk_2496dfcf7ecfbc59286039dc","kind":"system_prefix","origin":{"turn_instance":0,"step":0},"token_cost":1,"content_digest":"sha256:518b67e652531c5fe7e25d6b2c3b4ef6224e7d90da2091967dd47eb082b26a19","content":"sys"}
 {"type":"block_registered","block_id":"blk_07c3867c493b4e1f52b4a7f2","kind":"user_goal","origin":{"turn_instance":0,"step":0},"token_cost":89,"content_digest":"sha256:dc96ce867ae065ef80af2d71f4edee7c65cb9c63073a98e30bd56a72d2f4974a","content":"## Task\nFix the failing test\n\n## Verification\nThis run's primary verification is `cargo test -p x`: the accepted deterministic evidence is this command failing before your change and passing after it. Reproduce the failure with it before editing; make it pass before finishing. Do not modify the tests it runs."}
 {"type":"step_manifest","turn_instance":0,"step":0,"call_seq":0,"role":"worker","provider":"scripted","model":"scripted","blocks":[{"block_id":"blk_2496dfcf7ecfbc59286039dc","cache_zone":"stable_prefix","token_cost":1,"resident_since_step":0,"message_index":0},{"block_id":"blk_07c3867c493b4e1f52b4a7f2","cache_zone":"volatile","token_cost":89,"resident_since_step":0,"message_index":1}],"effective_budget_tokens":150000,"calibration_factor":1.0,"estimated_input_tokens":98}
 {"type":"step_usage","step":0,"role":"worker","provider":"scripted","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":98,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
 {"type":"text","text":"done"}
-{"type":"stage","name":"complete","scope":"turn"}
 {"type":"turn_complete","model":"scripted","cost_usd":0.0001}
 {"type":"proof","step":{"kind":"warrant","required":true,"diff_lines":2}}
 {"type":"stage","name":"verify","scope":"run"}

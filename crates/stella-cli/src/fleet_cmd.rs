@@ -947,6 +947,17 @@ async fn run_task(
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // A fleet worker owns its lane's stage vocabulary; the engine
+                // emits no `Stage` of its own (#3416). Opening boundary only:
+                // the closing one pairs onto the engine's `TurnComplete`
+                // through `EventSender::pairing_stage_complete`, and this lane
+                // hands the engine a sender built here rather than a wrapped
+                // seam — the fleet renders lanes from the ledger, not from a
+                // stage HUD, so the gap costs nothing here.
+                let _ = tx.send(AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Execute,
+                    scope: stella_protocol::StageScope::Run,
+                });
                 // A fleet worker owns its run (#3379) — no pipeline above it,
                 // so the run's terminator is this lane's to emit. It is sent
                 // once below, gated on the worker's own `success` flag, rather
