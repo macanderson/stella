@@ -27,6 +27,7 @@
 //! | [`live_tool_calls`], [`abandoned_state`], [`error_class`] | v17 → v18, v23 → v25 | `tool_calls` as a live projection and its `state`/`error_class` columns |
 //! | [`token_unit`] | v18 → v19 | the one-token-rule reconciliation |
 //! | [`pipeline_variant`] | v25 → v26 | the door/wrapper split |
+//! | [`execution_role`] | v26 → v27 | the door/role split |
 //!
 //! A new step gets a new module (or joins the group whose shape it shares),
 //! declares itself here, and takes the next slot in the ladder. It does not
