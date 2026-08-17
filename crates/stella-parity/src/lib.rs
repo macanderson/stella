@@ -97,6 +97,11 @@ pub struct Capability {
 /// ever expose them directly. Anything swept from the engine sources that is
 /// neither claimed by a row nor listed here fails the completeness test.
 pub const COMPOSITION_SEAMS: &[&str] = &[
+    // The blessed constructor (#3390): required ports plus one
+    // `TurnCapabilities` answering every optional seam. Assembly in the same
+    // sense `with_sleeper` is — a host builds a stack with it, and no surface
+    // exposes it — so it belongs here rather than in a capability row.
+    "assemble",
     "with_sleeper",
     "with_call_role",
     // The reader for `with_call_role`, and an assembly detail for the same
@@ -877,6 +882,48 @@ mod tests {
         sources
     }
 
+    /// Whether a column-zero `impl` line opens an inherent `Engine` block.
+    ///
+    /// Handles the three spellings these modules use — `impl<'a> Engine<'a>`,
+    /// `impl Engine<'_>`, and `impl super::Engine<'_>` — and answers `false`
+    /// for a trait impl (`impl Trait for T`), whose items are not entry
+    /// points a caller reaches through `Engine`.
+    fn opens_engine_impl(line: &str) -> bool {
+        let rest = line.trim_end_matches(" {").trim_end();
+        let Some(rest) = rest.strip_prefix("impl") else {
+            return false;
+        };
+        // Skip the generic parameter list, if any: `<'a>` in `impl<'a> …`.
+        let mut chars = rest.char_indices();
+        let mut start = 0;
+        if rest.starts_with('<') {
+            let mut depth = 0usize;
+            for (idx, ch) in chars.by_ref() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            start = idx + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if start == 0 {
+                return false;
+            }
+        }
+        let target = rest[start..].trim();
+        // A trait impl names the trait first; its items are not `Engine`'s.
+        if target.split_whitespace().any(|word| word == "for") {
+            return false;
+        }
+        let path = target.split('<').next().unwrap_or("").trim();
+        path.rsplit("::").next() == Some("Engine")
+    }
+
     /// Engine-side completeness: every public `Engine` entry point in the
     /// driver and goal modules must be claimed by a row's `engine_entries`
     /// or by [`COMPOSITION_SEAMS`]. A new engine capability added without a
@@ -885,12 +932,33 @@ mod tests {
     /// The sweep reads source text for four-space-indented `pub fn` /
     /// `pub async fn` lines — `impl` items — which deliberately skips
     /// `pub(crate)` internals and module-level free functions.
+    ///
+    /// It is scoped to `impl … Engine…` blocks, which is what makes the
+    /// question the one the doc comment asks. These modules also hold
+    /// ordinary helper types, and a constructor on one of those is not an
+    /// engine entry point: `TurnCapabilities::none` (#3390) is a parameter
+    /// bundle's own `none`, and sweeping it demanded a matrix decision about
+    /// a type the matrix does not describe.
     #[test]
     fn every_public_engine_entry_point_is_claimed() {
         let sources = engine_sources();
         let mut swept: Vec<&str> = Vec::new();
         for source in &sources {
+            // Column-zero `impl` opens a block and column-zero `}` closes it,
+            // which is exactly how rustfmt lays these files out.
+            let mut in_engine_impl = false;
             for line in source.lines() {
+                if line.starts_with("impl") {
+                    in_engine_impl = opens_engine_impl(line);
+                    continue;
+                }
+                if line == "}" {
+                    in_engine_impl = false;
+                    continue;
+                }
+                if !in_engine_impl {
+                    continue;
+                }
                 let Some(rest) = line
                     .strip_prefix("    pub fn ")
                     .or_else(|| line.strip_prefix("    pub async fn "))
@@ -919,6 +987,34 @@ mod tests {
                  COMPOSITION_SEAMS — decide where it ships (Deferred is a legal answer) and \
                  record it"
             );
+        }
+    }
+
+    /// The sweep's scoping rule, pinned directly.
+    ///
+    /// Without this the rule is only observable through the sweep's verdict,
+    /// where "no entry point is unclaimed" and "no entry point was looked at"
+    /// read identically — the failure mode a completeness test cannot afford.
+    #[test]
+    fn the_sweep_reads_engine_impls_and_skips_every_other_block() {
+        for line in [
+            "impl<'a> Engine<'a> {",
+            "impl Engine<'_> {",
+            "impl super::Engine<'_> {",
+        ] {
+            assert!(opens_engine_impl(line), "{line} opens an Engine block");
+        }
+        for line in [
+            // Helper types sharing these modules — `TurnCapabilities::none`
+            // is the one that turned #3390 into a red main.
+            "impl<'a> TurnCapabilities<'a> {",
+            "impl<'a> HooksHandle<'a> {",
+            "impl Continuation {",
+            // A trait impl's items are reached through the trait, not Engine.
+            "impl ParkSupervisor for RateLimitPark<'_, '_> {",
+            "impl Default for EngineConfig {",
+        ] {
+            assert!(!opens_engine_impl(line), "{line} is not an Engine block");
         }
     }
 
