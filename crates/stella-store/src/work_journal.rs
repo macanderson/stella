@@ -52,12 +52,21 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{Result, StoreError};
 
+pub mod snapshot;
+
+pub use snapshot::{JournalChange, JournalChangeKind};
+
 /// A session's handle on the workspace's durable history.
 #[derive(Debug, Clone)]
 pub struct WorkJournal {
     git_dir: PathBuf,
     work_tree: PathBuf,
     index_file: PathBuf,
+    /// The index the whole-tree snapshot lineage owns ([`snapshot`]). Separate
+    /// from `index_file` on purpose: that one is `read-tree`-seeded on every
+    /// write, which discards git's stat cache, and a snapshot that re-hashed
+    /// the whole work tree every turn would not be affordable.
+    snapshot_index: PathBuf,
     session: String,
     /// The directory the whole store lives in — this workspace's git dir and
     /// every session's index file. Kept because [`WorkJournal::prune`] reaches
@@ -80,6 +89,13 @@ fn turn_ref(session: &str, turn: u32) -> String {
     format!("refs/stella/{session}/turn/{turn}")
 }
 
+/// Where the whole-tree snapshot lineage accumulates ([`snapshot`]). Inside
+/// the session's namespace, so [`WorkJournal::session_refs`] already reaches it
+/// and retention needs no special case.
+fn snapshot_ref(session: &str) -> String {
+    format!("refs/stella/{session}/tree")
+}
+
 /// The reserved directory stella's own records live under, so a blob can
 /// never collide with a real workspace path — and so a per-turn diff can
 /// filter the records back out ([`WorkJournal::changed_paths_at_turn`]).
@@ -94,6 +110,12 @@ fn journal_blob_path(name: &str) -> String {
 /// and named after the same workspace id.
 fn index_file_path(store_root: &Path, workspace_id: &str, session: &str) -> PathBuf {
     store_root.join(format!("{workspace_id}.{session}.index"))
+}
+
+/// Where one session's snapshot index lives — beside [`index_file_path`]'s and
+/// named the same way, so retention can find and remove both.
+fn snapshot_index_file_path(store_root: &Path, workspace_id: &str, session: &str) -> PathBuf {
+    store_root.join(format!("{workspace_id}.{session}.snapshot.index"))
 }
 
 /// A prune that removes at least this many refs runs `gc` on its own, so a
@@ -224,6 +246,7 @@ impl WorkJournal {
             git_dir: root.join(format!("{}.git", identity.id)),
             work_tree: identity.path,
             index_file: index_file_path(&root, &identity.id, session),
+            snapshot_index: snapshot_index_file_path(&root, &identity.id, session),
             session: session.to_string(),
             store_root: root,
             workspace_id: identity.id,
@@ -711,6 +734,15 @@ impl WorkJournal {
             if std::fs::remove_file(&index).is_ok() {
                 report.indexes_removed += 1;
             }
+            // The snapshot lineage's sidecar, removed on the same terms. A
+            // session can have one without the other (a turn that snapshotted
+            // but never checkpointed, or the reverse), so neither removal may
+            // be conditioned on the other having succeeded.
+            let snapshot_index =
+                snapshot_index_file_path(&self.store_root, &self.workspace_id, session);
+            if std::fs::remove_file(&snapshot_index).is_ok() {
+                report.indexes_removed += 1;
+            }
         }
 
         if !policy.dry_run
@@ -726,10 +758,18 @@ impl WorkJournal {
     /// Every session this store holds history for, oldest tip first, paired
     /// with that tip's committer time.
     ///
-    /// Read off `head` rather than the turn marks: a turn mark points at an
-    /// ancestor, so the head is the session's most recent moment, and a
-    /// session whose refname does not have the shape this module writes is
-    /// skipped rather than guessed at.
+    /// Read off the session's two lineage tips — `head` and the snapshot
+    /// lineage's `tree` — rather than the turn marks: a turn mark points at an
+    /// ancestor, so a tip is the session's most recent moment, and a session
+    /// whose refname does not have the shape this module writes is skipped
+    /// rather than guessed at.
+    ///
+    /// Both tips, not just `head`, because the two lineages are independent:
+    /// a session that only ever snapshotted the work tree (the ordinary
+    /// engine-only turn — nothing calls [`Self::record`], and it takes a
+    /// resume point to write a checkpoint) has a `tree` ref and no `head`, and
+    /// reading `head` alone would leave it permanently unreachable by
+    /// retention. A session with both is listed once, at its later tip.
     fn recorded_sessions(&self) -> Result<Vec<(String, i64)>> {
         let listing = self.git(&[
             "for-each-ref",
@@ -741,17 +781,25 @@ impl WorkJournal {
             let Some((at, refname)) = line.trim().split_once(' ') else {
                 continue;
             };
-            let Some(session) = refname
-                .strip_prefix("refs/stella/")
-                .and_then(|rest| rest.strip_suffix("/head"))
-                .filter(|session| !session.is_empty() && !session.contains('/'))
-            else {
+            let Some(session) = refname.strip_prefix("refs/stella/").and_then(|rest| {
+                rest.strip_suffix("/head")
+                    .or_else(|| rest.strip_suffix("/tree"))
+            }) else {
                 continue;
             };
+            if session.is_empty() || session.contains('/') {
+                continue;
+            }
             let Ok(at) = at.parse::<i64>() else {
                 continue;
             };
-            sessions.push((session.to_string(), at));
+            // Later tip wins: the session's most recent moment is what an age
+            // cutoff must judge, so a stale `head` must never age out a
+            // session whose snapshots are current.
+            match sessions.iter_mut().find(|(name, _)| name == session) {
+                Some((_, seen)) => *seen = (*seen).max(at),
+                None => sessions.push((session.to_string(), at)),
+            }
         }
         sessions.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
         Ok(sessions)
