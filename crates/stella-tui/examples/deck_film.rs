@@ -33,7 +33,7 @@
 //! per output frame at [`FPS`], in order:
 //!
 //! ```text
-//! {"kind":"header","fps":60,"cols":160,"rows":30,"frames":3006}
+//! {"kind":"header","fps":60,"cols":114,"rows":29,"frames":2982}
 //! {"kind":"frame","i":0,"cam":[1.42,0.5,0.46],"fade":0.0,"grid":7,"rows":[[…]]}
 //! {"kind":"frame","i":1,"cam":[1.41,0.5,0.46],"fade":0.05,"grid":7}
 //! ```
@@ -86,29 +86,46 @@ use stella_tui::{
 /// judders visibly on text, which is the one thing this film is made of.
 const FPS: u32 = 60;
 
-/// The recorded grid, measured rather than chosen.
+/// The recorded grid. Both numbers are load-bearing, and both are solved
+/// rather than chosen.
 ///
-/// **160 columns** keeps the AGENTS dashboard above its compact threshold, so
-/// the dense column set renders — the same reason the goldens use 160.
+/// A monospace face pins two ratios, and both are measurements: JetBrains Mono
+/// advances **0.600 em** per column and stands **1.32 em** per line box
+/// (ascent + descent — not the 1.0 em an em-square suggests). A terminal cell
+/// must be at least as tall as that line box or consecutive rows draw into each
+/// other, so the cell's shape is not free: `cell_h >= 2.2 x cell_w`. Put that
+/// against a 1920x1080 frame the deck should fill and the grid's proportions
+/// fall out of it:
 ///
-/// **30 rows** is a measurement, not a preference — `--extents` prints the
-/// row-density profile this was picked from. The obvious choice was 54, which
-/// makes a 160-column grid exactly 16:9 at JetBrains Mono's 0.6 em advance and
-/// fills a 1080p frame edge to edge. It also composes a hole: the scripted
-/// session is three agents and a twenty-line transcript, and at 54 rows nine of
-/// the fourteen shots draw nothing at all below row 9 — a void across two
-/// thirds of the frame that no camera move can hide. Going the other way, 26
-/// squeezes the SESSION transcript, which is the most worth seeing. 30 is where
-/// the transcript still has a body and the sparse tabs still read as screens.
+/// ```text
+/// 16/9 = (cols x 0.600 S) / (rows x k S)   ->   cols/rows = 2.963 k
+/// ```
 ///
-/// The cost is that 160x30 is a 3.2:1 strip, not a 16:9 frame, so at the wide
-/// end of the camera it sits letterboxed on the deck's own ink. That turns out
-/// to be the better composition: the bands close as the camera pushes in and
-/// are gone by ~1.8x (see the renderer's fit-and-pad), so the strip *grows
-/// into* the frame rather than the frame being padded around a grid nothing
-/// filled.
-const COLS: u16 = 160;
-const ROWS: u16 = 30;
+/// where `k` is the leading in ems — so a grid that fills the frame is one with
+/// roughly **four columns per row**. `scripts/render-deck-film.py` solves the
+/// rest: the row count fixes the cell height, the largest size whose line box
+/// fits fixes the font, and its advance fixes the cell width.
+///
+/// **114x29** is that solution at the width the deck itself needs (below), and
+/// lands within 0.14% of 16:9 — cell 42x93 px at the renderer's 2.5x
+/// supersample, font size 70, line box 92 px inside a 93 px cell, advance
+/// exactly 42 px. The residual is about a pixel and a half of ground at the top
+/// and bottom, in the deck's own ink.
+///
+/// **Why not narrower.** Narrower is bigger type, and 100x25 is an exact 0.00%
+/// fit — but the deck's composer footer does not budget its `esc / > steer this
+/// turn` hint against the right-aligned counter, so below ~108 columns the two
+/// abut and the row reads `steer thturn $0.0390`. That is a real defect
+/// (#3591), not a film problem, and the film must not ship a frame that
+/// displays it. 114 clears it with room.
+///
+/// **Why not wider.** 160 was the first cut's answer and it is what produced
+/// the video this replaced: a 3.2:1 strip stranded in a 16:9 frame, the deck
+/// squeezed into a band with the rest of the frame empty. At 114 the AGENTS
+/// dashboard still renders its compact column set, which is what a viewer on a
+/// normal terminal sees anyway.
+const COLS: u16 = 114;
+const ROWS: u16 = 29;
 
 /// `--extents` only: try a different grid without rebuilding. The film itself
 /// always uses [`COLS`]x[`ROWS`] — a grid is a geometry decision with an aspect
@@ -118,6 +135,14 @@ fn probe_rows() -> u16 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(ROWS)
+}
+
+/// `--extents` only, as [`probe_rows`] — the width half.
+fn probe_cols() -> u16 {
+    std::env::var("DECK_FILM_COLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(COLS)
 }
 
 /// The fixed pid every agent is stamped with. Never `std::process::id()`: the
@@ -133,14 +158,15 @@ const FADE: f64 = 0.45;
 // ───────────────────────────── the camera ─────────────────────────────
 
 /// One camera keyframe: at `at` (seconds into the shot), the grid is drawn at
-/// `zoom` times fit-to-width, centred on `(cx, cy)` in normalised grid
+/// `zoom` times fit-to-frame, centred on `(cx, cy)` in normalised grid
 /// coordinates.
 ///
-/// Zoom 1.0 is the whole strip across the frame; above it the view narrows and
-/// the letterbox bands close, until at ~2.08 the strip is taller than the frame
-/// and starts cropping vertically too. `cy` therefore does nothing below that
-/// point — the whole height is already in shot — and the tracks below use it
-/// only where they pass it.
+/// Zoom 1.0 is the whole deck filling the frame, because the grid is exactly
+/// 16:9 (see [`COLS`]). Above it the view narrows on **both** axes, so `cx` and
+/// `cy` both bite — which is why the tracks below pick a corner with
+/// [`left`]/[`top`] rather than drifting around the middle, and why no shot
+/// here needs the big 1.9x pushes the letterboxed cut used to need to fill the
+/// frame.
 #[derive(Clone, Copy, Debug)]
 struct Key {
     at: f64,
@@ -162,6 +188,17 @@ const fn key(at: f64, zoom: f64, cx: f64, cy: f64) -> Key {
 /// than as a camera move — so a shot that wants to be *in* on left-anchored
 /// content asks for `left(zoom)` rather than guessing a centre.
 fn left(zoom: f64) -> f64 {
+    0.5 / zoom
+}
+
+/// The camera centre that puts the grid's **top** edge on the frame's top edge
+/// at `zoom` — the vertical half of [`left`].
+///
+/// This is what a push-in on a sparse tab needs. The deck draws its chrome and
+/// its lists from row 0 down and its status block along the bottom; the rows in
+/// between are what the scripted fixture leaves empty. A centred push frames
+/// exactly those, so a shot that goes close goes close on the *top*.
+fn top(zoom: f64) -> f64 {
     0.5 / zoom
 }
 
@@ -275,76 +312,78 @@ fn shots() -> Vec<Shot> {
         // (ASSEMBLE + UNHELD_HOLD, 1.66s) rounded up by a frame — longer and it
         // hands off to an empty deck, shorter and the assemble is cut.
         shot("splash", Scene::Splash, 1.7,
-             vec![key(0.0, 1.9, left(1.9), 0.5), key(1.7, 1.35, left(1.35), 0.5)],
+             vec![key(0.0, 1.30, 0.5, 0.5), key(1.7, 1.0, 0.5, 0.5)],
              (0, 0), (0.0, 0.0)),
 
-        // The session doing work: the transcript builds while the camera pushes
-        // into it, then pulls back to the whole strip. This is the one tab that
-        // fills every row, so it is the one that earns a full-width beat.
+        // The session doing work. The whole deck is in frame and stays there
+        // while the transcript builds: this is the shot that has to establish
+        // what the thing *is*, and a camera move during it competes with the
+        // one thing on screen that is already moving.
         shot("session · streaming", Scene::Tab(DeckTab::Session), 5.2,
-             vec![key(0.0, 1.35, left(1.35), 0.5), key(1.6, 1.0, 0.5, 0.5),
-                  key(5.2, 1.0, 0.5, 0.5)], (0, 0), (0.12, 0.62)),
+             vec![key(0.0, 1.0, 0.5, 0.5), key(5.2, 1.0, 0.5, 0.5)],
+             (0, 0), (0.12, 0.62)),
+        // Now in, on the transcript itself — tool calls, stages, the diff.
         shot("session · the transcript", Scene::Tab(DeckTab::Session), 4.4,
              vec![key(0.0, 1.0, 0.5, 0.5), key(1.0, 1.0, 0.5, 0.5),
-                  key(4.4, 1.7, left(1.7), 0.5)], (0, 0), (0.62, 1.0)),
+                  key(4.4, 1.45, left(1.45), top(1.45))], (0, 0), (0.62, 1.0)),
 
-        // The fan-out. Content is rows 0..8, so the push stays on the table's
-        // left half — agent, goal, status, ctx, cost — rather than the sparse
-        // right end of the row.
+        // The fan-out. Out to the whole dashboard, then in on the rows.
         shot("agents · fan-out", Scene::Tab(DeckTab::Agents), 4.0,
-             vec![key(0.0, 1.7, left(1.7), 0.5), key(0.8, 1.0, 0.5, 0.5),
-                  key(4.0, 1.9, left(1.9), 0.5)], (0, 2), (1.0, 1.0)),
+             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(1.0, 1.0, 0.5, 0.5),
+                  key(4.0, 1.35, left(1.35), top(1.35))], (0, 2), (1.0, 1.0)),
 
-        // The proof plane. `--extents` reports it drawing to the bottom of the
-        // grid, so it is the second shot that earns a full-width beat.
+        // The proof plane. `--extents` reports it drawing to every row, so it
+        // takes the deepest push of the tabs and loses nothing to a void.
         shot("traces · the proof tree", Scene::Tab(DeckTab::Traces), 3.6,
-             vec![key(0.0, 1.9, left(1.9), 0.5), key(1.0, 1.6, left(1.6), 0.5),
+             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.2, 1.55, left(1.55), top(1.55)),
                   key(3.6, 1.0, 0.5, 0.5)], (0, 0), (1.0, 1.0)),
 
         // The code graph: the longest take after the engine editor. It is the
         // surface a screenshot explains worst and the camera helps most, so the
-        // shot crosses the neighborhood left to right at reading size.
+        // shot holds wide, comes in on the node list, then crosses to the
+        // relations panel beside it.
         shot("graph · the neighborhood", Scene::Tab(DeckTab::Graph), 6.0,
              vec![key(0.0, 1.0, 0.5, 0.5), key(1.4, 1.0, 0.5, 0.5),
-                  key(3.4, 1.85, left(1.85), 0.5), key(6.0, 1.85, left(1.85) + 0.22, 0.5)],
-             (0, 4), (1.0, 1.0)),
+                  key(3.4, 1.40, left(1.40), top(1.40)),
+                  key(6.0, 1.40, left(1.40) + 0.28, top(1.40))], (0, 4), (1.0, 1.0)),
 
-        // What changed on disk. Deliberately the shallowest push in the film:
-        // the fixture touches two files, and the panel's own columns (path,
-        // agent, op, +/-) span the full width — so a close shot finds two rows
-        // and a lot of empty panel, while the wide one reads as a screen.
+        // What changed on disk. The shallowest push in the film: the fixture
+        // touches two files, and the panel's columns span the full width, so a
+        // close shot finds two rows and a lot of empty panel.
         shot("files · what changed", Scene::Tab(DeckTab::Files), 3.2,
-             vec![key(0.0, 1.85, left(1.85) + 0.22, 0.5), key(1.0, 1.3, left(1.3), 0.5),
+             vec![key(0.0, 1.40, left(1.40) + 0.28, top(1.40)),
+                  key(1.0, 1.20, left(1.20), top(1.20)),
                   key(3.2, 1.0, 0.5, 0.5)], (0, 1), (1.0, 1.0)),
 
         shot("skills", Scene::Tab(DeckTab::Skills), 3.0,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(3.0, 1.7, left(1.7), 0.5)],
+             vec![key(0.0, 1.0, 0.5, 0.5), key(3.0, 1.35, left(1.35), top(1.35))],
              (0, 3), (1.0, 1.0)),
 
         shot("mcp · connected servers", Scene::Tab(DeckTab::Mcp), 3.2,
-             vec![key(0.0, 1.7, left(1.7), 0.5), key(1.0, 1.65, left(1.65), 0.5),
+             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.0, 1.30, left(1.30), top(1.30)),
                   key(3.2, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
 
         shot("issues", Scene::Tab(DeckTab::Issues), 2.6,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(2.6, 1.7, left(1.7), 0.5)],
+             vec![key(0.0, 1.0, 0.5, 0.5), key(2.6, 1.35, left(1.35), top(1.35))],
              (0, 2), (1.0, 1.0)),
 
         // The agent config: global routing, then two role tabs, so the film
         // shows that per-role model / effort / reasoning is a real editor and
-        // not a settings blurb. Held at reading size throughout — these rows
-        // are the point, and they are unreadable at the wide end.
+        // not a settings blurb. Held close throughout — these rows are the
+        // point, and the role tabs draw down to row 17, so close costs nothing.
         shot("engine config · global", Scene::EngineConfig(EngineTab::Global), 3.2,
-             vec![key(0.0, 1.7, left(1.7), 0.5), key(1.0, 1.6, left(1.6), 0.5),
-                  key(3.2, 1.7, left(1.7), 0.5)], (0, 2), (1.0, 1.0)),
+             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.0, 1.30, left(1.30), top(1.30)),
+                  key(3.2, 1.45, left(1.45), top(1.45))], (0, 2), (1.0, 1.0)),
         shot("engine config · worker", Scene::EngineConfig(EngineTab::Agent(EngineRole::Worker)), 3.2,
-             vec![key(0.0, 1.7, left(1.7), 0.5), key(3.2, 1.9, left(1.9), 0.5)], (0, 3), (1.0, 1.0)),
+             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(3.2, 1.60, left(1.60), top(1.60))],
+             (0, 3), (1.0, 1.0)),
         shot("engine config · verifier", Scene::EngineConfig(EngineTab::Agent(EngineRole::Verifier)), 3.0,
-             vec![key(0.0, 1.9, left(1.9), 0.5), key(1.0, 1.85, left(1.85), 0.5),
+             vec![key(0.0, 1.60, left(1.60), top(1.60)), key(1.2, 1.55, left(1.55), top(1.55)),
                   key(3.0, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
 
         // The tool surface, and out on the whole deck.
         shot("settings · tools", Scene::SettingsTools, 3.4,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(1.0, 1.65, left(1.65), 0.5),
+             vec![key(0.0, 1.0, 0.5, 0.5), key(1.2, 1.40, left(1.40), top(1.40)),
                   key(3.4, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
     ]
 }
@@ -937,15 +976,15 @@ fn fade_at(t: f64, total: f64) -> f64 {
 /// `--extents` prints this per shot; every camera track below is set from what
 /// it reported rather than from taste.
 fn row_density(model: &WorkspaceModel, ui: &mut DeckUi) -> Vec<u16> {
-    let rows = probe_rows();
-    let mut terminal = Terminal::new(TestBackend::new(COLS, rows)).expect("TestBackend");
+    let (cols, rows) = (probe_cols(), probe_rows());
+    let mut terminal = Terminal::new(TestBackend::new(cols, rows)).expect("TestBackend");
     terminal
         .draw(|f| render_deck(model, ui, f))
         .expect("render_deck");
     let buf = terminal.backend().buffer();
     (0..rows)
         .map(|y| {
-            (0..COLS)
+            (0..cols)
                 .filter(|&x| {
                     buf.cell((x, y))
                         .is_some_and(|c| !c.symbol().trim().is_empty())

@@ -9,9 +9,10 @@ into pixels. Output is 1920x1080, 60 fps, H.264 High / yuv420p, `faststart`,
 **no audio track at all** — the shape a hero `<video autoplay loop muted>`
 wants.
 
-The deck's grid is wider than 16:9, so at the wide end of the camera it is
-centred as a strip on the deck's own ground and the bands close as the shot
-pushes in. `framing` carries that argument.
+The film's grid is picked to fill 16:9 (see `deck_film.rs::COLS`), so at zoom
+1.0 the deck fills the frame. Anything left over is centred on the deck's own
+ground rather than on black — `framing` carries that argument, and handles a
+grid of any proportion, not just the one this film uses.
 
 ## The zoom, and why it is sharp
 
@@ -91,13 +92,13 @@ OUT_W, OUT_H = 1920, 1080
 # How many grid rasters to keep. Small on purpose — see the loop in `main`.
 GRID_CACHE = 6
 
-# The primary face's advance as a fraction of its em. JetBrains Mono is exactly
-# 0.6, which is what lets a run of text be drawn with one `draw.text` call and
-# still land on cell boundaries. The raster's cell height is derived from this
-# rather than from the output frame: getting that backwards makes the font
-# taller than the cell is wide and every run overlaps its neighbour.
-# `Rasteriser` re-derives it from the loaded face and refuses a mismatch.
-FONT_ASPECT = 0.6
+# The cell is sized from the font, and the font is sized from the cell's
+# **height** — never from its width. A monospace face has two metrics that both
+# have to fit: an advance (JetBrains Mono: 0.600 em) and a line box
+# (ascent + descent: 1.32 em). Sizing to the width picks S = cell_w / 0.6, whose
+# line box is then 2.2x the advance and overflows a cell that is not at least
+# that tall — the rows collide and the baseline can land below the cell floor.
+# That shipped once; `Rasteriser` now measures both and refuses either failure.
 
 # Modifier bits, as `deck_film.rs::mod_bits` writes them.
 BOLD, ITALIC, DIM, UNDERLINE = 1, 2, 4, 8
@@ -133,6 +134,24 @@ class Face:
         return self.bold if bold else self.regular
 
 
+def fit_faces(cell_h: int) -> tuple[list[Face], int]:
+    """The largest font size whose line box fits `cell_h`, and the chain at it.
+
+    Steps down rather than solving in closed form: the em-to-line-box ratio is a
+    property of whatever face is installed, and a face swapped into
+    `FONT_CHAIN[0]` should re-fit rather than silently overflow. The advance is
+    checked here too — a size whose advance is fractional is skipped, because a
+    run drawn in one call needs whole-pixel columns.
+    """
+    for size in range(cell_h, 7, -1):
+        faces = load_faces(size)
+        ascent, descent = faces[0].regular.getmetrics()
+        advance = faces[0].regular.getlength("M")
+        if ascent + descent <= cell_h and abs(advance - round(advance)) < 0.01:
+            return faces, size
+    sys.exit(f"render-deck-film: no font size fits a {cell_h}px cell")
+
+
 def load_faces(px: int) -> list[Face]:
     """Load the font chain at `px`, skipping entries that are not installed."""
     from fontTools.ttLib import TTFont
@@ -165,35 +184,49 @@ def load_faces(px: int) -> list[Face]:
 class Rasteriser:
     """Draws a styled character grid at a fixed cell size."""
 
-    def __init__(self, cols: int, rows: int, cell_w: int, cell_h: int) -> None:
+    def __init__(self, cols: int, rows: int, cell_h: int) -> None:
+        """Size the type to a cell `cell_h` tall, then take the width it implies.
+
+        The order matters and is the whole correctness argument. A monospace
+        face has to satisfy two constraints at once — its **line box** must fit
+        the cell's height, or consecutive rows draw into each other, and its
+        **advance** must be exactly the cell's width, or a run drawn with one
+        `draw.text` call walks out of its columns. Only one of them can be
+        chosen freely. Choosing the height (rows are what a terminal fixes) and
+        deriving the width from the measured advance satisfies both; choosing
+        the width and deriving the height satisfies neither, because 1.32 em of
+        line box does not fit in 0.6 em / 0.6 = 1.0 em of cell.
+        """
         self.cols, self.rows = cols, rows
-        self.cell_w, self.cell_h = cell_w, cell_h
-        self.width, self.height = cols * cell_w, rows * cell_h
-        # Size the face by cell height, then trust the monospace advance: at
-        # 0.6 em JetBrains Mono lands exactly on a 0.6-ratio cell. A face whose
-        # advance differs (the fallbacks) is drawn per glyph, centred.
-        self.faces = load_faces(cell_h)
+        self.cell_h = cell_h
+        self.faces, self.size = fit_faces(cell_h)
         self.primary = self.faces[0]
-        # A run is drawn with one `draw.text` call, so the primary face's own
-        # advance is what positions every glyph inside it. If that is not the
-        # cell width, the run drifts against the cells around it and the frame
-        # reads as corrupt — which is exactly what a cell height derived from
-        # the output aspect rather than from the font produced (the grid is a
-        # 3.7:1 strip, the frame is 16:9, and the two are not the same shape).
+
         advance = self.primary.regular.getlength("M")
-        if abs(advance - cell_w) > 0.01:
+        self.cell_w = round(advance)
+        if abs(advance - self.cell_w) > 0.01:
             sys.exit(
                 f"render-deck-film: the primary face advances {advance:.3f}px at "
-                f"size {cell_h} but the cell is {cell_w}px wide. Cell height must "
-                f"be derived from the font (cell_w / {FONT_ASPECT}), never from "
-                "the output frame's aspect."
+                f"size {self.size}, which is not a whole pixel. A run is drawn in "
+                "one call, so a fractional advance walks the run out of its "
+                "columns; pick a cell height whose fitted size lands on an "
+                "integer advance."
             )
-        # Baseline: sit the ascent inside the cell rather than using PIL's
-        # top-left anchor, so a fallback face's different ascent still lands on
-        # the same baseline as the primary.
+
         ascent, descent = self.primary.regular.getmetrics()
-        slack = cell_h - (ascent + descent)
-        self.baseline = ascent + max(0, slack // 2)
+        if ascent + descent > cell_h:
+            sys.exit(
+                f"render-deck-film: the primary face's line box is "
+                f"{ascent + descent}px at size {self.size} but the cell is only "
+                f"{cell_h}px tall — consecutive rows would overlap. This is the "
+                "failure that ships as 'the text looks scrunched'."
+            )
+        # Centre the line box in the cell, so the leftover leading is split
+        # above and below rather than all landing under the baseline (which is
+        # what pushed the last row off the bottom of the frame).
+        self.baseline = ascent + (cell_h - (ascent + descent)) // 2
+
+        self.width, self.height = cols * self.cell_w, rows * cell_h
         self._face_cache: dict[int, Face | None] = {}
 
     def face_for(self, ch: str) -> Face:
@@ -411,12 +444,14 @@ def main() -> None:
         )
 
     # The raster has the *grid's* aspect, not the frame's: one cell is one
-    # character, and a character's shape is the font's business. Width comes
-    # from "the grid spans the frame at zoom 1.0"; height follows from the
-    # advance ratio.
-    cell_w = round(OUT_W * args.supersample / cols)
-    cell_h = round(cell_w / FONT_ASPECT)
-    raster = Rasteriser(cols, rows, cell_w, cell_h)
+    # character, and a character's shape is the font's business. The row count
+    # fixes the cell height; the face's advance at the size that fits then fixes
+    # the width, and the grid's aspect falls out of the two. `framing` pads
+    # whatever is left over — which is nothing when the film's cols/rows are
+    # picked for it (see `deck_film.rs::COLS`).
+    cell_h = round(OUT_H * args.supersample / rows)
+    raster = Rasteriser(cols, rows, cell_h)
+    cell_w = raster.cell_w
     ground = (0x0B, 0x0B, 0x0C)  # palette::GROUND — the deck's own ink
 
     print(
