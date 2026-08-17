@@ -33,6 +33,12 @@ stella-core = { path = "../stella-core" }
 # link it instead of taking a fourth acknowledged copy. Zero dependencies,
 # zero I/O (the `stella-home` shape), so the observer boundary holds.
 stella-diff = { path = "../stella-diff" }
+# The transcript renderer, shared with the TUI rather than re-implemented in the
+# page's JavaScript — which is what the previous arrangement was, and that copy
+# had drifted to rendering a file edit as raw text in a `<pre>`: no hunks, no
+# line numbers, no word-level highlights. It depends only on `stella-diff` and
+# performs no I/O, so linking it costs the observer boundary nothing.
+stella-transcript = { path = "../stella-transcript" }
 # One syscall: `kill(pid, 0)` in `sessions::pid_alive`, the read-time liveness
 # probe the session registry's readers all share (an acknowledged copy of
 # `stella_store::sessions::pid_alive` — see that fn's doc). Probing a pid

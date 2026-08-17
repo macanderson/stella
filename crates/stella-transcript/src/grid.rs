@@ -176,26 +176,40 @@ pub fn line_width(line: &Line) -> usize {
     line.iter().map(Cell::width).sum()
 }
 
+/// Everything a row builder needs that is the same for every row.
+///
+/// Bundled rather than threaded as three parameters through eight functions:
+/// the alternative grew a nine-argument signature whose call sites were
+/// impossible to read, and silencing the lint would have hidden the fact that
+/// the three always travel together.
+struct Ctx<'a> {
+    run: &'a Run,
+    state: &'a FoldState,
+    width: usize,
+}
+
+impl Ctx<'_> {
+    /// Whether a node renders expanded.
+    fn open(&self, node: NodeId) -> bool {
+        self.state.is_open(self.run, node)
+    }
+}
+
 /// Render the whole run to a character grid `width` columns wide.
 #[must_use]
 pub fn render(run: &Run, state: &FoldState, width: usize) -> Vec<Line> {
+    let ctx = Ctx { run, state, width };
     let mut lines = Vec::new();
     for (index, turn) in run.turns.iter().enumerate() {
-        render_turn(&mut lines, run, state, turn, index, width);
+        render_turn(&mut lines, &ctx, turn, index);
     }
     lines.push(status_line(run, state, width));
     lines
 }
 
-fn render_turn(
-    out: &mut Vec<Line>,
-    run: &Run,
-    state: &FoldState,
-    turn: &Turn,
-    index: usize,
-    width: usize,
-) {
-    let open = state.is_open(run, NodeId::Turn(index));
+fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
+    let width = ctx.width;
+    let open = ctx.open(NodeId::Turn(index));
     out.push(turn_frame_top(turn, open, width));
     if !open {
         out.push(vec![
@@ -213,10 +227,10 @@ fn render_turn(
     for (si, step) in turn.steps.iter().enumerate() {
         for (pi, prose) in turn.prose.iter().enumerate() {
             if prose.before_step == si {
-                prose_lines(out, run, state, prose, index, pi, width);
+                prose_lines(out, ctx, prose, index, pi);
             }
         }
-        step_lines(out, run, state, step, index, si, &offsets[si], width);
+        step_lines(out, ctx, step, index, si, &offsets[si]);
     }
 
     if let Some(answer) = &turn.answer {
@@ -291,20 +305,16 @@ fn role_lines(out: &mut Vec<Line>, tag: &str, color: Color, text: &str, width: u
 
 fn prose_lines(
     out: &mut Vec<Line>,
-    run: &Run,
-    state: &FoldState,
+    ctx: &Ctx<'_>,
     prose: &crate::model::Prose,
     ti: usize,
     pi: usize,
-    width: usize,
 ) {
-    let open = state.is_open(
-        run,
-        NodeId::Prose {
-            turn: ti,
-            prose: pi,
-        },
-    );
+    let width = ctx.width;
+    let open = ctx.open(NodeId::Prose {
+        turn: ti,
+        prose: pi,
+    });
     let head = digest::first_sentence(&prose.text);
     out.push(vec![
         Cell::new("│ ", Color::Faint),
@@ -329,17 +339,9 @@ fn prose_lines(
     }
 }
 
-fn step_lines(
-    out: &mut Vec<Line>,
-    run: &Run,
-    state: &FoldState,
-    step: &Step,
-    ti: usize,
-    si: usize,
-    offset: &str,
-    width: usize,
-) {
-    let open = state.is_open(run, NodeId::Step { turn: ti, step: si });
+fn step_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, step: &Step, ti: usize, si: usize, offset: &str) {
+    let width = ctx.width;
+    let open = ctx.open(NodeId::Step { turn: ti, step: si });
     let dig = digest::step_digest(step, 40);
     let chips = chips_text(&dig.chips);
 
@@ -372,21 +374,11 @@ fn step_lines(
         return;
     }
     if let Some(call) = &step.call {
-        body_lines(out, run, state, call, &dig.object, ti, si, width);
+        body_lines(out, ctx, call, &dig.object, ti, si);
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Node address (turn, step) plus the layout context; none is optional.
-fn body_lines(
-    out: &mut Vec<Line>,
-    run: &Run,
-    state: &FoldState,
-    call: &Call,
-    shown: &str,
-    ti: usize,
-    si: usize,
-    width: usize,
-) {
+fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: usize, si: usize) {
     if let Some(command) = digest::command_bar(call, shown) {
         out.push(vec![
             body_gutter(),
@@ -404,7 +396,7 @@ fn body_lines(
 
     if call.tool.is_mutation() {
         for (fi, change) in call.files.iter().enumerate() {
-            diff_lines(out, run, state, &FileDiff::build(change), ti, si, fi, width);
+            diff_lines(out, ctx, &FileDiff::build(change), ti, si, fi);
         }
         return;
     }
@@ -414,7 +406,7 @@ fn body_lines(
     if fold.echo_hidden {
         out.push(vec![body_gutter(), Cell::new("echo hidden", Color::Faint)]);
     }
-    let output_open = state.is_open(run, NodeId::Output { turn: ti, step: si });
+    let output_open = ctx.open(NodeId::Output { turn: ti, step: si });
     let body = if output_open {
         fold.body.clone()
     } else {
@@ -439,23 +431,20 @@ fn body_lines(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Every one is load-bearing: the node address is four indices.
 fn diff_lines(
     out: &mut Vec<Line>,
-    run: &Run,
-    state: &FoldState,
+    ctx: &Ctx<'_>,
     diff: &FileDiff,
     ti: usize,
     si: usize,
     fi: usize,
-    width: usize,
 ) {
-    let node = NodeId::File {
+    let width = ctx.width;
+    let open = ctx.open(NodeId::File {
         turn: ti,
         step: si,
         file: fi,
-    };
-    let open = state.is_open(run, node);
+    });
     let (marker, color) = match diff.status {
         FileStatus::Modified => ("±", Color::Amber),
         FileStatus::New => ("◆", Color::Green),
@@ -475,15 +464,12 @@ fn diff_lines(
     for (hi, hunk) in diff.hunks.iter().enumerate() {
         out.push(vec![body_gutter(), Cell::new(&hunk.header, Color::Blue)]);
         let hunk_open = !hunk.is_large()
-            || state.is_open(
-                run,
-                NodeId::Hunk {
-                    turn: ti,
-                    step: si,
-                    file: fi,
-                    hunk: hi,
-                },
-            );
+            || ctx.open(NodeId::Hunk {
+                turn: ti,
+                step: si,
+                file: fi,
+                hunk: hi,
+            });
         if !hunk_open {
             out.push(vec![
                 body_gutter(),

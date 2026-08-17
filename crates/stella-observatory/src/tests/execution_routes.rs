@@ -95,6 +95,66 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v, serde_json::json!([]));
 }
 
+/// `/transcript` renders the journal through `stella-transcript` — the same
+/// code the TUI draws from — rather than through the page's own JavaScript.
+///
+/// The assertions are about the *structural* fixes, not about pixels: a tool
+/// call and its result are one node, and the call's command is stated once. A
+/// golden of the markup would break on every styling change and prove neither.
+#[test]
+fn transcript_route_renders_one_node_per_call_stating_the_command_once() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/transcript?id=1");
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(response.content_type, "text/html; charset=utf-8");
+    let html = String::from_utf8(response.body).unwrap();
+
+    // Standalone: its own styles ride with it, so it needs nothing from
+    // index.html.
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("--del-word"), "the stylesheet is inlined");
+
+    // One step, carrying both halves of the call.
+    assert_eq!(
+        html.matches("class=\"step").count(),
+        1,
+        "the call and its result did not fold into one node:\n{html}"
+    );
+    assert!(html.contains("read_file"));
+    assert!(html.contains("fn a() {}"), "the result body is present");
+
+    // The path is the header object, and it is stated once.
+    assert_eq!(
+        html.matches("src/lib.rs").count(),
+        1,
+        "the invocation was repeated:\n{html}"
+    );
+
+    // The reasoning and the answer became prose and answer blocks.
+    assert!(html.contains("plan the edit"));
+    assert!(html.contains("and named it well"));
+}
+
+/// An execution with no events is an empty transcript, not a 500.
+#[test]
+fn transcript_route_renders_an_execution_with_no_events() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/transcript?id=2");
+    assert_eq!(response.status, "200 OK");
+    let html = String::from_utf8(response.body).unwrap();
+    assert!(!html.contains("class=\"step"));
+}
+
+/// A missing `?id=` is the caller's error, and says which parameter is absent.
+#[test]
+fn transcript_route_names_the_parameter_it_is_missing() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/transcript");
+    assert_eq!(response.status, "400 Bad Request");
+    let body = String::from_utf8(response.body).unwrap();
+    assert!(body.contains("id"), "{body}");
+}
+
 /// `after_seq` (#1476) narrows the transcript to rows newer than the
 /// drawer's last-seen `seq` — the incremental fetch a still-running
 /// execution's poll uses instead of re-downloading the whole transcript

@@ -3133,6 +3133,7 @@ dependencies = [
  "stella-home",
  "stella-protocol",
  "stella-store",
+ "stella-transcript",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
