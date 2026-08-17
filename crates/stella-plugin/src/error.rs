@@ -5,7 +5,9 @@
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
 
+use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
+use crate::package::ContributionKind;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
@@ -64,6 +66,52 @@ pub enum ManifestError {
         /// The declared grade, below the one the points need.
         participation: Participation,
     },
+
+    /// `[loop] calls` listed the same capability twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the host-call channel.
+    #[error("[loop] calls declares {call} more than once")]
+    DuplicateCall {
+        /// The capability that appeared twice.
+        call: HostCall,
+    },
+
+    /// A grade below `steering` declared host calls. Asking the host for a
+    /// capability is something a plugin does *while contributing to a turn*, and
+    /// contributing to a turn is the `steering` power exactly — an `observer`
+    /// watches the event stream and asks for nothing.
+    #[error(
+        "[loop] participation = \"{participation}\" may not declare calls; \
+         asking the host for a capability requires \"steering\" or above"
+    )]
+    CallsRequireSteering {
+        /// The declared grade, below the one the calls need.
+        participation: Participation,
+    },
+
+    /// `[loop] calls` was declared with no `[loop] points` to make them from.
+    /// A host call happens *during* a point, so a plugin that answers no point
+    /// can never make one — the manifest that quietly does nothing, again.
+    #[error(
+        "[loop] calls requires at least one entry in [loop] points: a host call \
+         is made while answering a point, and a plugin that answers none can \
+         never make one"
+    )]
+    CallsRequirePoints,
+
+    /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
+    #[error(
+        "[loop] max_calls has nothing to bound: declare the capabilities in \
+         [loop] calls, or drop the allowance"
+    )]
+    MaxCallsRequiresCalls,
+
+    /// `[loop] max_calls = 0` — an allowance that forbids the calls the same
+    /// block declares. Asking for none is an empty `calls` list, not a zero.
+    #[error(
+        "[loop] max_calls = 0 contradicts the capabilities [loop] calls \
+         declares: drop the calls instead"
+    )]
+    ZeroMaxCalls,
 
     /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
     /// oracle's evidence reaches the host in the `after_turn` response and
@@ -415,6 +463,64 @@ pub enum ManifestError {
     DuplicateCapability {
         /// The tool requested twice.
         tool: String,
+    },
+
+    /// A `[[tools]]`/`[[skills]]`/`[[records]]` entry named nothing. The name
+    /// is the identity the surface merges on and the string a consent document
+    /// shows; a blank one describes a contribution nobody can consent to.
+    #[error("{} declares a {kind} with an empty name", .kind.table())]
+    EmptyContributionName {
+        /// Which surface the nameless entry was declared for.
+        kind: ContributionKind,
+    },
+
+    /// A contributed entry stated nothing about itself.
+    ///
+    /// [`Self::EmptyCapabilityPurpose`]'s rule for the other half of the
+    /// consent document: "this package installs a tool called `deploy`" is not
+    /// something a human can consent to, and a count with no prose is what a
+    /// consent prompt degrades into when this is optional.
+    #[error(
+        "the {kind} \"{name}\" states nothing about itself: a contribution with \
+         no description is not something a user can consent to"
+    )]
+    EmptyContributionDescription {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The entry's declared name.
+        name: String,
+    },
+
+    /// The same contribution was declared twice. Always an editing mistake —
+    /// the [`Self::DuplicateCapability`] rule for the package tables — and
+    /// deduplicating silently would make the consent document's count wrong.
+    #[error("{kind} \"{name}\" is declared more than once")]
+    DuplicateContribution {
+        /// Which surface it was declared for.
+        kind: ContributionKind,
+        /// The name declared twice.
+        name: String,
+    },
+
+    /// A `[[records]]` entry asked for `enforcement = "blocking"`.
+    ///
+    /// The governance rule, refused at load. A blocking record can deny a tool
+    /// call, and that authority is granted only through the repository's own
+    /// hash-chained promotion ledger (`.stella/rules/promotions.jsonl`), where
+    /// each grant names an approver and a reason and is reviewed with the
+    /// record it arms. A package's records live outside that repository and
+    /// outside that chain, so a package may ship records that steer and never
+    /// one that denies. See [`crate::RecordEnforcement`].
+    #[error(
+        "the record \"{lineage}\" asks for enforcement = \"blocking\", which a \
+         plugin may not ship: a record gains the authority to deny a tool call \
+         only through this repository's own promotion ledger, which a package's \
+         files are not covered by. Ship it as advisory and let the workspace \
+         promote it."
+    )]
+    PluginRecordCannotEnforce {
+        /// The lineage that asked to enforce.
+        lineage: String,
     },
 
     /// `[wrapper]` was declared below `steering`. A wrapper intercepts the

@@ -8,12 +8,12 @@
 //! on the author's screen instead of in a consumer's parser; the wrapper wire
 //! contract joins it on the same terms". This module is that join.
 //!
-//! [`crate::WrapperRequest`] and [`crate::WrapperResponse`] are the only two
-//! things that cross the process boundary
-//! (`stella_runtime::wrapper::subprocess::exchange` encodes one and decodes the
-//! other, and nothing else on this wire is serialized), so they are the two
-//! roots this module publishes. Everything reachable from them is published
-//! with them.
+//! [`crate::WrapperRequest`] and [`crate::WrapperResponse`] were the only two
+//! things that crossed the process boundary until the host-call channel landed
+//! (#3540, `doc:wrapper-socket` §6b); [`crate::HostCallRequest`] and
+//! [`crate::HostCallResponse`] are the other two, and they cross the same pipes
+//! in the same conversation. All four are roots this module publishes, and
+//! everything reachable from them is published with them.
 //!
 //! # Why a corpus and not a JSON Schema
 //!
@@ -37,8 +37,9 @@
 //! - a re-tagged variant or a changed `rename_all` — the tag changes;
 //! - an added or removed field — a key appears or disappears in the full case;
 //! - an optional field made required, or a required one made optional — the
-//!   *minimal* case is what makes this visible, which is why every message
-//!   appears twice.
+//!   *minimal* case is what makes this visible, which is why a message with an
+//!   optional member appears twice. A message with none appears once: a second
+//!   identical case would assert an optionality that does not exist.
 //!
 //! What it does **not** catch, and what the schemars upgrade would: a widened
 //! or narrowed scalar type (`u32` → `u64`), and a string field that gains a
@@ -72,9 +73,11 @@ use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
-    FlipObservation, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, Signal, SignalKind,
-    SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome, VolatileContext, WrapperPoint,
-    WrapperRequest, WrapperResponse,
+    ChildTurnArgs, ChildTurnResult, FlipObservation, HostCall, HostCallArgs, HostCallFailure,
+    HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse, ObservedEvidence,
+    PROTOCOL_VERSION, PublishedSignal, RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal,
+    SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TurnOutcome, VolatileContext,
+    WrapperPoint, WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -85,10 +88,10 @@ const NOTE: &str = "GENERATED FILE — DO NOT EDIT. Every message the wrapper \
      socket carries, serialized by the same impls stella_runtime's subprocess \
      transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; \
      guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of \
-     truth: crates/stella-plugin/src/wire.rs. Each message appears twice — \
-     `full` populates every optional field, `minimal` omits every one that may \
-     be omitted — so a field changing between required and optional is a diff \
-     here. This is a corpus, not a JSON Schema: see \
+     truth: crates/stella-plugin/src/wire.rs and src/host_call.rs. A message \
+     with an optional member appears twice — `full` populates every optional \
+     field, `minimal` omits every one that may be omitted — so a field \
+     changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see \
      crates/stella-plugin/src/wire_corpus.rs for what that does and does not \
      catch (#3532).";
 
@@ -117,6 +120,8 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
         "protocol_version": PROTOCOL_VERSION,
         "requests": requests()?,
         "responses": responses()?,
+        "host_calls": host_calls()?,
+        "host_results": host_results()?,
         "parts": parts()?,
         "vocabulary": vocabulary()?,
     }))
@@ -169,6 +174,62 @@ fn responses() -> Result<Value, serde_json::Error> {
     ]))
 }
 
+/// The calls a plugin may make mid-point (`doc:wrapper-socket` §6b).
+///
+/// The other half of the conversation, and it is published on the same terms:
+/// these are messages that cross the process boundary, so a renamed field or a
+/// re-tagged capability has to land as a diff here rather than in a plugin's
+/// parser. A capability with an optional member appears in its fullest and
+/// emptiest legal form, for the reason every other message does — that pair is
+/// what makes `limit` going required a diff.
+fn host_calls() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![
+        case("recall/full", &recall_call_full())?,
+        case("recall/minimal", &recall_call_minimal())?,
+        // No optional member, so no pair: publishing one value twice under two
+        // names would assert an optionality that does not exist.
+        case("child_turn", &child_turn_call())?,
+        case("run_test", &run_test_call())?,
+    ]))
+}
+
+/// The host's answers to those calls.
+fn host_results() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![
+        case(
+            "recall/full",
+            &HostCallResponse::ok(1, HostCallOk::Recall(recall_result_full())),
+        )?,
+        case(
+            "recall/minimal",
+            &HostCallResponse::ok(1, HostCallOk::Recall(RecallResult::default())),
+        )?,
+        // [`HostCallOk`] is untagged, so the `ok` table is the only thing that
+        // tells a plugin which result it is holding. Publishing it is therefore
+        // publishing the *discriminator*: a key renamed here does not merely
+        // change a field, it makes a `child_turn` answer decode as the `recall`
+        // variant tried before it. No optional member, so no pair.
+        case(
+            "child_turn",
+            &HostCallResponse::ok(4, HostCallOk::ChildTurn(child_turn_result())),
+        )?,
+        case(
+            "err/full",
+            &HostCallResponse::err(
+                2,
+                HostCallFailure::new(
+                    HostCallRefusal::Undeclared,
+                    "this plugin's manifest does not declare \"child_turn\" in [loop] calls",
+                ),
+            ),
+        )?,
+        case(
+            "err/minimal",
+            &HostCallResponse::err(2, HostCallFailure::new(HostCallRefusal::Failed, "")),
+        )?,
+    ]))
+}
+
 /// The nested types, in the forms the four messages above do not reach.
 ///
 /// A message's `minimal` case omits its optional members entirely, so the
@@ -182,10 +243,16 @@ fn parts() -> Result<Value, serde_json::Error> {
         case("test_plan/full", &test_plan_full())?,
         case("test_plan/minimal", &test_plan_minimal())?,
         case("turn_outcome/full", &turn_outcome_full())?,
+        case(
+            "turn_outcome/measured-nothing",
+            &turn_outcome_measured_nothing(),
+        )?,
         case("turn_outcome/minimal", &turn_outcome_minimal())?,
         case("observed_evidence/full", &observed_evidence_full())?,
         case("observed_evidence/minimal", &observed_evidence_minimal())?,
         case("volatile_context", &volatile_context())?,
+        case("recall_frame/full", &recall_frame_full())?,
+        case("recall_frame/minimal", &recall_frame_minimal())?,
     ]))
 }
 
@@ -209,6 +276,11 @@ fn vocabulary() -> Result<Value, serde_json::Error> {
                 .map(well_typed)
                 .collect(),
         )?,
+        "host_call": values(enumerate(HostCall::Recall, host_call_after))?,
+        "host_call_refusal": values(enumerate(
+            HostCallRefusal::Undeclared,
+            host_call_refusal_after,
+        ))?,
     }))
 }
 
@@ -306,6 +378,29 @@ fn signal_after(signal: Signal) -> Option<Signal> {
         Signal::FlipAchieved => Some(Signal::TestsRed),
         Signal::TestsRed => Some(Signal::TestsGreen),
         Signal::TestsGreen => None,
+    }
+}
+
+/// The capability vocabulary. Closed by design, and this chain is what keeps a
+/// fourth capability from reaching the wire without reaching the corpus.
+fn host_call_after(call: HostCall) -> Option<HostCall> {
+    match call {
+        HostCall::Recall => Some(HostCall::ChildTurn),
+        HostCall::ChildTurn => Some(HostCall::RunTest),
+        HostCall::RunTest => None,
+    }
+}
+
+/// The refusal vocabulary — the codes a plugin branches on to degrade.
+fn host_call_refusal_after(refusal: HostCallRefusal) -> Option<HostCallRefusal> {
+    use HostCallRefusal as R;
+    match refusal {
+        R::Undeclared => Some(R::Forbidden),
+        R::Forbidden => Some(R::Unsupported),
+        R::Unsupported => Some(R::AllowanceSpent),
+        R::AllowanceSpent => Some(R::Unavailable),
+        R::Unavailable => Some(R::Failed),
+        R::Failed => None,
     }
 }
 
@@ -452,17 +547,32 @@ fn turn_outcome_full() -> TurnOutcome {
     TurnOutcome {
         completed: true,
         answer: "the witness now passes".to_string(),
-        tools: vec!["read_file".to_string(), "edit_file".to_string()],
-        changed_files: vec!["crates/stella-plugin/src/wire.rs".to_string()],
+        tools: Some(vec!["read_file".to_string(), "edit_file".to_string()]),
+        changed_files: Some(vec!["crates/stella-plugin/src/wire.rs".to_string()]),
     }
 }
 
+/// A host that **does** report both facts, about a turn that did nothing — the
+/// `[]` half of the `null`-vs-`[]` distinction #3552 turns on. Published beside
+/// the other two so a future edit that collapses the empty case back into the
+/// absent one is a diff in this corpus rather than a silent re-widening.
+fn turn_outcome_measured_nothing() -> TurnOutcome {
+    TurnOutcome {
+        completed: true,
+        answer: "nothing needed changing".to_string(),
+        tools: Some(Vec::new()),
+        changed_files: Some(Vec::new()),
+    }
+}
+
+/// A host that reports neither fact: both keys are absent, which is "not
+/// measured here" and never "empty".
 fn turn_outcome_minimal() -> TurnOutcome {
     TurnOutcome {
         completed: false,
         answer: String::new(),
-        tools: Vec::new(),
-        changed_files: Vec::new(),
+        tools: None,
+        changed_files: None,
     }
 }
 
@@ -477,6 +587,83 @@ fn observed_evidence_minimal() -> ObservedEvidence {
     ObservedEvidence {
         flip: FlipObservation::Unobservable,
         measurements: BTreeMap::new(),
+    }
+}
+
+fn recall_call_full() -> HostCallRequest {
+    HostCallRequest {
+        id: 1,
+        args: HostCallArgs::Recall(RecallArgs {
+            goal: "make the failing test pass".to_string(),
+            limit: Some(8),
+        }),
+    }
+}
+
+fn recall_call_minimal() -> HostCallRequest {
+    HostCallRequest {
+        id: 1,
+        args: HostCallArgs::Recall(RecallArgs {
+            goal: "make the failing test pass".to_string(),
+            limit: None,
+        }),
+    }
+}
+
+/// `child_turn` has no optional member, so its two cases are the same value —
+/// published anyway, because the pair is what makes a field *becoming* optional
+/// a diff.
+fn child_turn_call() -> HostCallRequest {
+    HostCallRequest {
+        id: 2,
+        args: HostCallArgs::ChildTurn(ChildTurnArgs {
+            role: "verifier".to_string(),
+            instruction: "grade the diff against the requirement".to_string(),
+        }),
+    }
+}
+
+fn run_test_call() -> HostCallRequest {
+    HostCallRequest {
+        id: 3,
+        args: HostCallArgs::RunTest(RunTestArgs {
+            candidate: CandidateHandle::new("candidate-1"),
+        }),
+    }
+}
+
+fn child_turn_result() -> ChildTurnResult {
+    ChildTurnResult {
+        role: "reviewer".to_string(),
+        seat: "research".to_string(),
+        report: "the diff drops the retry on a 429".to_string(),
+        completed: true,
+    }
+}
+
+fn recall_result_full() -> RecallResult {
+    RecallResult {
+        frames: vec![recall_frame_full()],
+    }
+}
+
+fn recall_frame_full() -> RecallFrame {
+    RecallFrame {
+        label: "symbol: retry_budget".to_string(),
+        kind: "symbol".to_string(),
+        source: "codegraph.db".to_string(),
+        uri: Some("src/retry.rs".to_string()),
+        content: "pub const RETRY_BUDGET: u32 = 3;".to_string(),
+    }
+}
+
+fn recall_frame_minimal() -> RecallFrame {
+    RecallFrame {
+        label: "lesson: retries".to_string(),
+        kind: "memory".to_string(),
+        source: "context.db".to_string(),
+        uri: None,
+        content: "the retry budget was exhausted last run".to_string(),
     }
 }
 
@@ -527,6 +714,30 @@ mod tests {
                 message
             );
         }
+        for entry in doc["host_calls"]
+            .as_array()
+            .expect("host_calls is an array")
+        {
+            let message = &entry["message"];
+            let decoded: HostCallRequest =
+                serde_json::from_value(message.clone()).expect("a published host call decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
+        for entry in doc["host_results"]
+            .as_array()
+            .expect("host_results is an array")
+        {
+            let message = &entry["message"];
+            let decoded: HostCallResponse =
+                serde_json::from_value(message.clone()).expect("a published answer decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
     }
 
     /// The `minimal` half of each pair is what makes optionality visible, and
@@ -546,25 +757,44 @@ mod tests {
     #[test]
     fn a_minimal_case_never_carries_a_key_its_full_case_omits() {
         let doc = corpus().expect("the corpus encodes");
-        for section in ["requests", "responses"] {
+        for section in ["requests", "responses", "host_calls", "host_results"] {
             let cases = doc[section].as_array().expect("a section is an array");
-            for pair in cases.chunks(2) {
-                let (full, minimal) = (&pair[0]["message"], &pair[1]["message"]);
-                let full_body = full["body"].as_object().expect("a full body is an object");
-                let minimal_body = minimal["body"]
-                    .as_object()
-                    .expect("a minimal body is an object");
+            // Paired by name rather than by position. A `chunks(2)` walk was
+            // enough while every message had exactly two cases; the host-call
+            // section publishes capabilities with no optional member at all
+            // (`child_turn`), so pairing by position would compare two
+            // different capabilities and call the difference optionality.
+            for entry in cases {
+                let case = entry["case"].as_str().expect("a case is named");
+                let Some(stem) = case.strip_suffix("/minimal") else {
+                    continue;
+                };
+                let full = cases
+                    .iter()
+                    .find(|other| other["case"] == json!(format!("{stem}/full")))
+                    .unwrap_or_else(|| panic!("{section} {case} has no /full case beside it"));
+                // A point message carries its payload under `body`; a host-call
+                // message is flat. Either way what is compared is the table a
+                // consumer parses.
+                let table = |message: &Value| {
+                    message
+                        .get("body")
+                        .unwrap_or(message)
+                        .as_object()
+                        .expect("a published message is an object")
+                        .clone()
+                };
+                let full_body = table(&full["message"]);
+                let minimal_body = table(&entry["message"]);
                 for key in minimal_body.keys() {
                     assert!(
                         full_body.contains_key(key),
-                        "{section} {} carries `{key}`, which its full case does not",
-                        pair[1]["case"],
+                        "{section} {case} carries `{key}`, which its full case does not",
                     );
                 }
                 assert_ne!(
-                    full, minimal,
-                    "{section} {} is identical to its full case",
-                    pair[1]["case"],
+                    full["message"], entry["message"],
+                    "{section} {case} is identical to its full case",
                 );
             }
         }

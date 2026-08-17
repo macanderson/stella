@@ -159,3 +159,132 @@ fn the_widest_grant_round_trips_through_toml_and_json() {
         "JSON round-trip diverged"
     );
 }
+
+const REVIEW_PACKAGE: &str = include_str!("fixtures/review-package.toml");
+
+fn review_package() -> PluginManifest {
+    PluginManifest::from_toml_str(REVIEW_PACKAGE).expect("a package manifest must load")
+}
+
+/// **The #3565 witness.** A package's tools, skills and records are in the
+/// document **this crate** renders, so a `stella-serve` host, an embedded host
+/// and `stella plugin install` all show the same one.
+///
+/// This is the sharpest gap the consent surface has had. A contributed tool is
+/// executable code entering the agent's tool surface, which the model may call
+/// on its own initiative for the rest of the session — and until the manifest
+/// could declare it, `consent_text` had no way to see it, so an embedding host
+/// showed a document that omitted it entirely. Only `stella plugin install`
+/// rendered an inventory of its own, off the directory.
+#[test]
+fn the_consent_text_shows_everything_the_package_ships() {
+    let manifest = review_package();
+    let text = consent_text(&manifest);
+
+    for tool in &manifest.tools {
+        assert!(
+            text.contains(&tool.name) && text.contains(tool.description.trim()),
+            "`{}` is missing from the consent text:\n{text}",
+            tool.name
+        );
+    }
+    for skill in &manifest.skills {
+        assert!(text.contains(&skill.slug), "{text}");
+    }
+    for record in &manifest.records {
+        assert!(text.contains(&record.lineage), "{text}");
+        assert!(text.contains(record.statement.trim()), "{text}");
+    }
+
+    // A tool is not merely listed — the three facts a user needs are said.
+    assert!(
+        text.contains("executable code this package ships"),
+        "the consent text must say a contributed tool is code:\n{text}"
+    );
+    assert!(
+        text.contains("the model may call on its own initiative"),
+        "and that nothing asks the user first:\n{text}"
+    );
+    assert!(
+        text.contains("runs as `vera`, not as you"),
+        "and that it is authorized as the plugin:\n{text}"
+    );
+    // A record's power is different in kind, and is disclosed as such.
+    assert!(
+        text.contains("steer every future turn"),
+        "a contributed record's quiet reach must be stated:\n{text}"
+    );
+    assert!(
+        text.contains("can never deny a tool call"),
+        "and its ceiling, so a user is not told it may block:\n{text}"
+    );
+}
+
+/// **The reconciliation witness (#3565 item 2).** The declaration is checked
+/// against the host's own read of the package, in both directions, so the
+/// document above is provably complete rather than merely well-intentioned.
+#[test]
+fn a_package_whose_declaration_and_directories_disagree_is_refused() {
+    let manifest = review_package();
+    let honest = stella_plugin::PackageListing {
+        tools: vec!["vera_review".into()],
+        skills: vec!["house-style".into()],
+        records: vec!["ctx.acme.web.no-force-push".into()],
+    };
+    manifest
+        .reconcile(&honest)
+        .expect("a package that ships exactly what it declares installs");
+
+    let mut smuggled = honest.clone();
+    smuggled.tools.push("deploy".into());
+    let refusal = manifest
+        .reconcile(&smuggled)
+        .expect_err("a tool no [[tools]] entry names cannot be consented to")
+        .to_string();
+    assert!(refusal.contains("deploy"), "{refusal}");
+
+    let refusal = manifest
+        .reconcile(&stella_plugin::PackageListing::empty())
+        .expect_err("a declaration with nothing behind it is refused too")
+        .to_string();
+    assert!(refusal.contains("vera_review"), "{refusal}");
+    assert!(refusal.contains("house-style"), "{refusal}");
+    assert!(refusal.contains("ctx.acme.web.no-force-push"), "{refusal}");
+}
+
+/// A package's records may steer and may never deny. Enforcement is granted
+/// only through the repository's own hash-chained promotion ledger, and a
+/// package's files are outside the tree that ledger is verified against —
+/// so the refusal happens at load, before any host has to remember the rule.
+#[test]
+fn a_package_may_not_ship_a_record_that_denies_a_tool_call() {
+    let err = PluginManifest::from_toml_str(
+        "name = \"vera\"\n\n[[records]]\nlineage = \"ctx.acme.web.no-force-push\"\n\
+         statement = \"Never force-push to a shared branch.\"\nenforcement = \"blocking\"",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, stella_plugin::ManifestError::PluginRecordCannotEnforce { ref lineage }
+            if lineage == "ctx.acme.web.no-force-push"),
+        "got {err:?}"
+    );
+}
+
+/// Invariant 4 for the package tables too: what a host renders consent from
+/// must survive the wire a `stella-serve` host reads it over.
+#[test]
+fn a_package_declaration_round_trips_through_toml_and_json() {
+    let parsed = review_package();
+    let toml_text = toml::to_string(&parsed).unwrap();
+    assert_eq!(
+        PluginManifest::from_toml_str(&toml_text).unwrap(),
+        parsed,
+        "TOML round-trip diverged"
+    );
+    let json = serde_json::to_string(&parsed).unwrap();
+    assert_eq!(
+        serde_json::from_str::<PluginManifest>(&json).unwrap(),
+        parsed,
+        "JSON round-trip diverged"
+    );
+}

@@ -82,7 +82,13 @@ fn bare_loop_config(cfg: &Config) -> Config {
 }
 
 /// Run a one-shot prompt through the raw step-loop (Engine::run_turn).
-/// Selected via `--no-pipeline`.
+/// Selected via `--no-pipeline`, or via `--pipeline <variant>`, which runs the
+/// same step-loop with an installed wrapper plugin around it (#3494).
+///
+/// `pipeline` is the caller's already-resolved choice, read for its variant id
+/// here rather than at the call site: `PipelineChoice::Raw` is `--no-pipeline`,
+/// where nothing is dispatched, no execution row records a variant, and the
+/// behaviour is exactly what it was before the socket had a caller.
 ///
 /// The parameter is `full_cfg`, not `cfg`, deliberately: the loop below runs on
 /// the narrowed [`bare_loop_config`] and nothing else, so dropping that call
@@ -90,14 +96,46 @@ fn bare_loop_config(cfg: &Config) -> Config {
 /// have let the same deletion fall silently back to the un-narrowed argument —
 /// the half of #2511 no unit test can reach, since this function builds a
 /// provider, connects MCP and opens the store.
+///
+/// `test_command` is the user's `--test-command`. On the raw path it arms no
+/// ladder of this crate's own — there is none — but it is what lets a wrapper
+/// plugin's `[oracle]` observe a fail→pass flip at all: it crosses the host's
+/// strict parser and rides the candidate grant as a [`stella_plugin::TestPlan`]
+/// (#3553). Dropped before, which is why `pre_turn_signals` published
+/// `test_command: false` unconditionally.
 pub(crate) async fn run_raw_one_shot(
     full_cfg: &Config,
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
+    test_command: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
+    // Resolved before the provider is built and before a single paid call: a
+    // `--pipeline` that names nothing installed must fail as a typo, not after
+    // the run it was meant to shape. The grant is minted in the same breath and
+    // for the same reason — a `--test-command` the host's parser refuses must
+    // stop the run here, not after it is paid for.
+    let bound = match pipeline.plugin() {
+        Some(variant) => Some(
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+                eprintln!("  ! {line}");
+            })
+            .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
+    // Pinned *before* the turn runs, which is the whole content of the tamper
+    // claim: an identity snapshotted afterwards vouches for nothing.
+    let candidate = match &bound {
+        Some(_) => Some(
+            crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
     let provider = build_provider(cfg)?;
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
     // registry's ledgers are reachable after the turn — the trait object
@@ -195,25 +233,66 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
-    let outcome = run_turn(
-        &*provider,
-        base_tools,
-        &custom_tools,
-        &registry,
-        &mut messages,
-        &mut budget,
-        &calibration,
-        &router,
-        cfg,
-        format,
-        &store,
-        "run",
-        prompt,
-        Some(presence.id()),
-        recall_event,
-        memory.as_mut(),
-    )
-    .await;
+    // The wrapper socket's first driver (#3494). With no `--pipeline` the arm
+    // below is the one that has always run, unchanged: one turn, no dispatch,
+    // and a NULL `pipeline_variant` because no wrapper ran over it.
+    let outcome = match (&bound, &candidate) {
+        // Both arms of one `Option` are set together above, so the mismatched
+        // pairs are unreachable; matching the tuple keeps that visible instead
+        // of unwrapping a grant on the strength of having checked the wrapper.
+        (Some(bound), Some(candidate)) => {
+            crate::wrapper_plugin::run_wrapped(
+                bound,
+                prompt,
+                crate::wrapper_plugin::pre_turn_signals(
+                    test_command.is_some(),
+                    budget_limit.is_some(),
+                ),
+                Some(candidate.grant.clone()),
+                crate::wrapper_plugin::RawTurnDriver {
+                    provider: &*provider,
+                    base_tools,
+                    custom_tools: &custom_tools,
+                    registry: &registry,
+                    messages: &mut messages,
+                    budget: &mut budget,
+                    calibration: &calibration,
+                    router: &router,
+                    cfg,
+                    format,
+                    store: &store,
+                    prompt,
+                    session: presence.id(),
+                    variant: bound.variant(),
+                    recall_event,
+                    memory: memory.as_mut(),
+                    watch: &candidate.watch,
+                    results: Vec::new(),
+                },
+            )
+            .await
+        }
+        _ => run_turn(
+            &*provider,
+            base_tools,
+            &custom_tools,
+            &registry,
+            &mut messages,
+            &mut budget,
+            &calibration,
+            &router,
+            cfg,
+            format,
+            &store,
+            persistence::TurnDoor::new("run"),
+            prompt,
+            Some(presence.id()),
+            recall_event,
+            memory.as_mut(),
+        )
+        .await
+        .map(|_| ()),
+    };
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
     if let Some(m) = &memory

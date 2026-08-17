@@ -119,8 +119,14 @@ mod tool_switches;
 mod trace;
 mod tune_cmd;
 mod turn_diff;
+mod turn_facts;
 mod turn_files;
 mod usage_cmd;
+// The wrapper socket's first driver (#3494). Beside `agent.rs` rather than
+// inside it, because that file is a grandfathered god file closed to growth.
+mod wrapper_candidate;
+mod wrapper_plugin;
+mod wrapper_recall;
 mod write_dirs;
 
 /// Serializes tests that mutate process environment variables. `setenv` /
@@ -1028,6 +1034,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Command::Run {
             prompt,
             no_pipeline,
+            pipeline,
             test_command,
             keep_witness,
             require_verified,
@@ -1058,7 +1065,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &prompt,
                     cli.globals.spend_limit,
                     output_format,
-                    !no_pipeline,
+                    wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
                     test_command.as_deref(),
                     keep_witness,
                     require_verified,

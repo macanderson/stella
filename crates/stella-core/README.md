@@ -37,14 +37,28 @@ a supervisor:
   turn and publishes its own *run*-level ending under a different name; the
   per-turn private event channel a wrapper used to hold is gone.
 - **Goal mode's round loop leaves this crate.** [`src/goal.rs`](src/goal.rs) is
-  a route-specific supervisor living inside the engine crate — worker turn →
-  verifier verdict → feedback. Under the wrapper contract (#3380) those rounds
-  are a wrapper's `again?`, and its verifier's model call is `after_turn`
-  evidence rather than a judge. The wrapper socket itself is defined **above**
-  core, in [`stella-runtime`](../stella-runtime): `before_turn` recalls and
-  researches, `after_turn` runs a test command or an oracle process, and
-  invariant #2 forbids that I/O here (`doc:turn-loop-wrappers` §9.1). When it
-  lands, this crate gets smaller.
+  still here today — a route-specific supervisor living inside the engine
+  crate: worker turn → verifier verdict → feedback. Under the wrapper contract
+  (#3380) those rounds are a wrapper's `again?`, and its verifier's model call
+  is `after_turn` evidence rather than a judge. **The socket itself has
+  landed**, defined **above** core, in [`stella-runtime`](../stella-runtime)
+  (`src/wrapper/`, #3479): `before_turn` recalls and researches, `after_turn`
+  runs a test command or an oracle process, and invariant #2 forbids that I/O
+  here (`doc:turn-loop-wrappers` §9.1). What has not landed is `goal.rs`
+  actually moving onto it — that is Track B's last slice
+  (`doc:pipeline-as-plugins` §7), and until it ships this crate is not yet
+  smaller for the socket existing.
+
+**This crate never learns a plugin exists, and that part is already true, not
+aspirational.** There is no `Principal::Plugin`, no manifest type, no
+`stella-plugin` or `stella-runtime` dependency in this crate's `Cargo.toml` —
+only `stella-protocol` — and there cannot be one without breaking invariant 1:
+a plugin host binds a plugin's declared grants to this crate's *existing*
+gates (`TurnGate`, `Hooks`, the Stop-hook feedback loop), it never teaches the
+engine a new concept for "plugin." **"Zero built-in wrappers" is the section
+heading's target, not yet the crate's state:** `goal.rs` is one resident
+wrapper still paid for out of this crate's own line count, and the bullet
+above is the tracking of its departure, not a claim that it has already left.
 
 What does not change: the twelve phases of a step, the safe-boundary rule, and
 the fact that **adjudicating the work was never this crate's job**. The staged

@@ -1,0 +1,12 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "recall",
+        "text": "[auto-recalled context]\n\nRelevant context:\n- prefer rg over grep in this workspace (context.db)\n- crates/stella-core/src/retry.rs:41 — pub struct RetryBudget { attempts: u32 } (codegraph.db)\n- the retry budget was exhausted before the second attempt, so the run aborted (context.db)\n"
+      }
+    ]
+  }
+}

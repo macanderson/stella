@@ -1,0 +1,26 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer_raw": {
+      "result": 1,
+      "ok": {
+        "frames": [
+          {
+            "label": "a frame from a host this plugin has not met",
+            "kind": "memory",
+            "source": "context.db",
+            "content": "the shape of a recalled frame is the contract, not an outcome",
+            "token_cost": 9
+          }
+        ]
+      }
+    }
+  }
+]

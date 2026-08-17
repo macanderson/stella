@@ -1,0 +1,16 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "research:workspace",
+        "text": "## Research: workspace orientation\n\nThe candidate root holds these top-level entries (hidden entries omitted):\n- AGENTS.md\n- README.md\n- src/\n- target/\n\nNot scanned, wherever they appear: hidden entries, symlinks, and __pycache__, build, dist, node_modules, target, vendor, venv."
+      },
+      {
+        "label": "research:wide_match",
+        "text": "## Research: `wide_match`\n\n1 match in 1 file under the candidate root, as workspace-relative paths:\n- src/wide.rs:1: wide_match xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx […]"
+      }
+    ]
+  }
+}

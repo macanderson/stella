@@ -66,6 +66,7 @@ pub use parts::{budget_guard, build_provider, open_store, seed_calibration};
 pub use session::{RuntimeBuilder, SessionRuntime};
 pub use spec::{Notice, NoticeSubject, Persistence, ProviderParts, RuntimeSpec};
 pub use wrapper::{
-    AdmittedWrapper, InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError,
-    WrapperHandler, admissible, again, judge, refuses_env_name,
+    AdmittedContribution, AdmittedWrapper, DispatchReport, DrivenTurn, InProcessWrapper,
+    RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, TurnWrapper, WrapperDispatch,
+    WrapperError, WrapperHandler, admissible, again, judge, refuses_env_name,
 };

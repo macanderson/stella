@@ -96,8 +96,8 @@ fn after_request() -> AfterTurnRequest {
         turn: TurnOutcome {
             completed: true,
             answer: "rewrote the sleep as a barrier".into(),
-            tools: vec!["read_file".into(), "edit_file".into()],
-            changed_files: vec!["crates/stella-core/src/driver.rs".into()],
+            tools: Some(vec!["read_file".into(), "edit_file".into()]),
+            changed_files: Some(vec!["crates/stella-core/src/driver.rs".into()]),
         },
     }
 }

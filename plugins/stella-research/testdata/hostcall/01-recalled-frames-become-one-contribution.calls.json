@@ -1,0 +1,38 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer": {
+      "result": 1,
+      "ok": {
+        "frames": [
+          {
+            "label": "prefer rg over grep in this workspace",
+            "kind": "memory",
+            "source": "context.db",
+            "content": "prefer rg over grep in this workspace"
+          },
+          {
+            "label": "crates/stella-core/src/retry.rs:41",
+            "kind": "symbol",
+            "source": "codegraph.db",
+            "content": "pub struct RetryBudget { attempts: u32 }",
+            "uri": "file:///crates/stella-core/src/retry.rs"
+          },
+          {
+            "label": "the retry budget was exhausted before the second attempt…",
+            "kind": "episode",
+            "source": "context.db",
+            "content": "the retry budget was exhausted before the second attempt, so the run aborted"
+          }
+        ]
+      }
+    }
+  }
+]

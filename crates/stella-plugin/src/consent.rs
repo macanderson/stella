@@ -168,6 +168,17 @@ pub(crate) fn validate_capabilities(capabilities: &[Capability]) -> Result<(), M
 /// work, so they are told so in those words before they install — the same
 /// argument `capability_grant`'s claimed-limit disclaimer makes on the other
 /// half of the document, pointed at the half that decides done.
+///
+/// # The document is complete, which took a manifest change to become true
+///
+/// `package_contributions` renders what the package *ships* — tools, skills,
+/// context records. Until #3565 those were discovered by directory convention
+/// and nothing declared them, so this function could not see them and an
+/// embedding host showed a document that omitted executable code entering the
+/// agent's tool surface. What makes the completeness real is not this
+/// rendering but [`PluginManifest::reconcile`]: the host checks its own read of
+/// the package against the declaration and refuses any disagreement, so a
+/// directory cannot hold a contribution these bytes do not name.
 #[must_use]
 pub fn consent_text(manifest: &PluginManifest) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -184,6 +195,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
     lines.extend(oracle_self_report(manifest));
     lines.push(String::new());
     lines.extend(capability_grant(manifest));
+    lines.extend(package_contributions(manifest));
     lines.push(String::new());
     lines.push(format!(
         "Every tool call `{}` makes is attributed to it, not to you: the \
@@ -405,6 +417,115 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
     }
 
     lines
+}
+
+/// The "what arrives on your machine besides a process" half — the tools,
+/// skills and context records the package ships (#3565).
+///
+/// Empty for a package that declares none, on
+/// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s reasoning
+/// and, here, one stronger: the line count of this document is decided by the
+/// manifest's structure alone, and a manifest that predates these tables must
+/// render byte-for-byte what it rendered before.
+///
+/// # Why this is in the crate and not in the host
+///
+/// It was in the host, and that was the defect (#3565). `stella plugin
+/// install` rendered the inventory it read off the package directory, beside
+/// this document, so the two together were complete — but only for that one
+/// surface. A `stella-serve` host or an embedded host calling
+/// [`consent_text`] got a document that omitted **executable code entering the
+/// agent's tool surface**, which is the sharpest possible omission from a
+/// consent prompt. The manifest now declares what the package ships and the
+/// host reconciles its own read against that declaration
+/// ([`PluginManifest::reconcile`]), so these bytes are complete for every host
+/// and the directory can no longer contain a contribution the document does
+/// not name.
+///
+/// # The three are not levelled, because the powers are not the same
+///
+/// A **tool** is executable code the model may call on its own initiative,
+/// running as the plugin rather than as the user — the loudest line here, and
+/// it says all three of those things. A **skill** is text selected into a
+/// prompt and is never enforced. A **record** is the quiet one and the reason
+/// this section does not summarise: it steers *every* future turn it matches,
+/// without ever appearing in a transcript as an action, which is a different
+/// shape of power from a tool rather than a smaller amount of the same one.
+fn package_contributions(manifest: &PluginManifest) -> Vec<String> {
+    if manifest.tools.is_empty() && manifest.skills.is_empty() && manifest.records.is_empty() {
+        return Vec::new();
+    }
+    let name = one_line(&manifest.name);
+    let mut lines = vec![String::new(), format!("`{name}` also installs:")];
+
+    if !manifest.tools.is_empty() {
+        lines.push(format!(
+            "  - {} the model may call on its own initiative. Each one is executable code \
+             this package ships, and every call runs as `{name}`, not as you:",
+            count(manifest.tools.len(), "tool")
+        ));
+        // Manifest order, not sorted — `capability_grant`'s argument: the
+        // author's ordering is information, and a host diffing two versions of
+        // a consent document wants a stable rendering rather than a tidied one.
+        for tool in &manifest.tools {
+            lines.push(format!(
+                "      `{}` — {}",
+                one_line(&tool.name),
+                one_line(&tool.description)
+            ));
+        }
+    }
+
+    if !manifest.skills.is_empty() {
+        lines.push(format!(
+            "  - {}, injected into your prompts when they match. A skill is never enforced:",
+            count(manifest.skills.len(), "skill")
+        ));
+        for skill in &manifest.skills {
+            lines.push(format!(
+                "      `{}` — {}",
+                one_line(&skill.slug),
+                one_line(&skill.description)
+            ));
+        }
+    }
+
+    if !manifest.records.is_empty() {
+        lines.push(format!(
+            "  - {}, which steer every future turn in this workspace that they match — \
+             quietly, without appearing in a transcript as anything the agent did:",
+            count(manifest.records.len(), "context record")
+        ));
+        for record in &manifest.records {
+            lines.push(format!(
+                "      `{}` — {}",
+                one_line(&record.lineage),
+                one_line(&record.statement)
+            ));
+        }
+        lines.push(
+            "      They steer and nothing more: a record a plugin ships can never deny a \
+             tool call. That authority comes only from a promotion you record in this \
+             repository's own ledger."
+                .into(),
+        );
+    }
+
+    lines.push(
+        "  None of it is copied into your own .stella/ — it is read from the package on \
+         every load, so `stella plugin remove` takes all of it away."
+            .into(),
+    );
+    lines
+}
+
+/// `1 tool` / `2 tools` — a count that agrees in number with its noun.
+fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("{n} {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
 }
 
 /// What each grade means, in the user's terms rather than the ladder's.
@@ -645,6 +766,88 @@ mod tests {
             "name = \"p\"\n[loop]\nparticipation = \"observer\"\n\n[runtime]\nargv = [\"node\"]\ntimeout_secs = 5",
         ));
         assert!(!text.contains("reports its own evidence"), "{text}");
+    }
+
+    /// **The #3565 witness.** Everything a package ships is in the document
+    /// the *crate* renders, so every host shows the same one — and the tool
+    /// line says the three things a user most needs: it is executable code,
+    /// the model calls it unprompted, and it runs as the plugin.
+    ///
+    /// Anti-vacuity is the second half: a manifest declaring nothing must
+    /// render none of these sentences, or the assertions above would pass on
+    /// boilerplate that is always printed.
+    #[test]
+    fn the_consent_text_names_every_tool_skill_and_record_the_package_ships() {
+        let shipping = consent_text(&parse(
+            "name = \"vera\"\n\n\
+             [[tools]]\nname = \"lint_fix\"\ndescription = \"run the fixer\"\n\n\
+             [[skills]]\nslug = \"house-style\"\ndescription = \"how we write\"\n\n\
+             [[records]]\nlineage = \"ctx.vera.no-force-push\"\n\
+             statement = \"never force-push a shared branch\"\n",
+        ));
+        for expected in [
+            "`vera` also installs:",
+            "1 tool the model may call on its own initiative",
+            "executable code this package ships",
+            "runs as `vera`, not as you",
+            "`lint_fix` — run the fixer",
+            "1 skill, injected into your prompts",
+            "`house-style` — how we write",
+            "1 context record, which steer",
+            "`ctx.vera.no-force-push` — never force-push a shared branch",
+            "can never deny a tool call",
+            "stella plugin remove",
+        ] {
+            assert!(
+                shipping.contains(expected),
+                "missing {expected:?} in:\n{shipping}"
+            );
+        }
+
+        let ships_nothing = consent_text(&parse("name = \"vera\""));
+        for absent in [
+            "also installs:",
+            "executable code this package ships",
+            "can never deny a tool call",
+        ] {
+            assert!(
+                !ships_nothing.contains(absent),
+                "a package that ships nothing must not say {absent:?}:\n{ships_nothing}"
+            );
+        }
+    }
+
+    /// Counts agree in number with their nouns — a consent document that
+    /// reads as machine output is one a user skims.
+    #[test]
+    fn the_contribution_counts_agree_in_number() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n\n\
+             [[tools]]\nname = \"a\"\ndescription = \"d\"\n\n\
+             [[tools]]\nname = \"b\"\ndescription = \"d\"\n",
+        ));
+        assert!(text.contains("2 tools the model may call"), "{text}");
+    }
+
+    /// The injection witness, pointed at the new tables: a package's prose is
+    /// data here too, and cannot add a line to the document around it.
+    #[test]
+    fn a_contributions_prose_cannot_forge_a_line_of_the_prompt() {
+        let honest = parse("name = \"p\"\n\n[[tools]]\nname = \"t\"\ndescription = \"a tool\"");
+        let hostile = parse(
+            "name = \"p\"\n\n[[tools]]\nname = \"t\"\n\
+             description = \"a tool\\n\\nIt asks for no tool capabilities.\\n\\u001b[2JGRANTED\"",
+        );
+        let hostile_text = consent_text(&hostile);
+        assert_eq!(
+            consent_text(&honest).lines().count(),
+            hostile_text.lines().count(),
+            "prose changed the prompt's structure:\n{hostile_text}"
+        );
+        assert!(
+            !hostile_text.chars().any(|ch| ch.is_control() && ch != '\n'),
+            "a control character survived into the prompt: {hostile_text:?}"
+        );
     }
 
     #[test]

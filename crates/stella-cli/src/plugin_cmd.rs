@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::{Settings, Toggle};
 
+pub(crate) mod package;
 pub(crate) mod process;
 pub(crate) mod roster;
 
@@ -186,6 +187,21 @@ fn install(
         ));
     }
 
+    // What the package *ships* — tools, skills, records — is declared in the
+    // manifest and rendered by `consent_text` with everything else (#3565).
+    // The host's job is the other half of that: check its own read of the
+    // directories against the declaration and refuse any disagreement, so the
+    // document below is provably complete. A `tools/` entry no `[[tools]]`
+    // names is executable code entering the model's surface that nobody
+    // consented to; a declaration with nothing behind it teaches a reader that
+    // the document is decorative. Both are refusals, and both come before
+    // anything is printed as though it were the truth.
+    manifest
+        .reconcile(&package::Inventory::of_package(source).listing())
+        .map_err(|mismatch| {
+            format!("`{name}` cannot be installed: {mismatch}\n\nNothing was copied.")
+        })?;
+
     println!("{}", stella_plugin::consent_text(&manifest));
 
     // The consent text lists the environment allowlist as the manifest wrote
@@ -290,7 +306,7 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
     if roster.plugins().is_empty() {
         println!("no plugins installed — add one with `stella plugin install <dir>`");
     }
-    for plugin in roster.plugins() {
+    for (plugin, inventory) in package::inventories(&roster) {
         let grant = &plugin.manifest.loop_grant;
         println!(
             "{:<24} {:<8} {}",
@@ -302,6 +318,19 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
             println!("  {description}");
         }
         println!("  {}", plugin.dir.display());
+        // What it contributes, not merely what it declares: a user asking
+        // "where did this tool come from?" is asking this listing, and a
+        // package's tools/skills/records are otherwise attributable only by
+        // reading a source path out of `stella tools`.
+        for (label, named) in [
+            ("tools", &inventory.tools),
+            ("skills", &inventory.skills),
+            ("records", &inventory.records),
+        ] {
+            if !named.is_empty() {
+                println!("  ships {label}: {}", named.join(", "));
+            }
+        }
         match &plugin.manifest.runtime {
             Some(runtime) => println!(
                 "  runs: {} ({}s, env: {})",

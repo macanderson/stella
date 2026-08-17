@@ -65,6 +65,27 @@ pub enum WrapperError {
         timeout: Duration,
     },
 
+    /// The plugin wrote more than the transport will read, and the read was
+    /// stopped there.
+    ///
+    /// Distinct from [`WrapperError::Decode`] on purpose, even though the
+    /// truncated bytes would also fail to parse: the plugin's answer was never
+    /// received, so there is nothing to show its author and nothing about the
+    /// JSON to fix. The fix is the volume — and the host's own reason for
+    /// caring is that it stopped holding the rest of it.
+    #[error(
+        "wrapper `{program}` wrote more to {stream} than the {cap}-byte ceiling this host will \
+         read, so the call was refused"
+    )]
+    OutputCap {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// Which stream crossed the ceiling: `"stdout"` or `"stderr"`.
+        stream: &'static str,
+        /// The ceiling it crossed.
+        cap: usize,
+    },
+
     /// The plugin ran and exited non-zero.
     #[error("wrapper `{program}` exited with {status}: {stderr}")]
     Exit {
@@ -81,6 +102,69 @@ pub enum WrapperError {
     /// cannot be represented as JSON at all.
     #[error("cannot encode a wrapper request: {0}")]
     Encode(#[source] serde_json::Error),
+
+    /// The plugin's stdout ended without the response that ends the point.
+    ///
+    /// Distinct from [`WrapperError::Exit`] because the child exited *cleanly*:
+    /// it said nothing and reported success, which is the one shape that would
+    /// otherwise read as "the wrapper had nothing to contribute". A plugin that
+    /// has nothing to say returns an empty response and says so
+    /// (`BeforeTurnResponse::empty`); saying nothing at all is a bug in the
+    /// plugin, and one its author cannot see without being told.
+    #[error("wrapper `{program}` exited without answering the point it was asked: {stderr}")]
+    NoResponse {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// What it wrote to stderr, bounded — usually where the reason is.
+        stderr: String,
+    },
+
+    /// The plugin made a host call at a host that closed its stdin, because no
+    /// callable capability was declared to this transport
+    /// (`doc:wrapper-socket` §6b).
+    ///
+    /// The refusal a declared-but-ungranted call gets is delivered *to the
+    /// plugin*, which is the fail-open direction the channel is built around.
+    /// This variant is the one case where that is impossible: with no gate
+    /// offering a call there is no conversation, so stdin was closed after the
+    /// request and there is no way back to the plugin. Reported to the host
+    /// instead of waiting for the deadline, because "my plugin hangs" is a much
+    /// worse diagnosis than the two this names.
+    ///
+    /// **Two causes, and the second is a host's bug rather than a plugin's.**
+    /// Either the manifest declares no `[loop] calls` — the plugin author's
+    /// one-line fix — or the host never attached a
+    /// [`HostCallGate`](super::HostCallGate) for a plugin that did. Stdin's
+    /// lifetime is decided from the gate, because a plugin that declares no call
+    /// reads its request with `cat` and would hang on a pipe held open for a
+    /// conversation it can never have. #3561 is the shipping instance.
+    #[error(
+        "wrapper `{program}` asked the host for \"{call}\", but no channel was open to answer on: \
+         its manifest declares no [loop] calls, or this host attached no gate"
+    )]
+    UnannouncedCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for.
+        call: stella_plugin::HostCall,
+    },
+
+    /// The plugin's last message was a host call and then its stdout ended, so
+    /// it could not have read the answer it asked for.
+    ///
+    /// A plugin that asks and stops listening has abandoned the point, and
+    /// crediting the round to it would mean judging a turn on evidence it never
+    /// finished gathering.
+    #[error(
+        "wrapper `{program}` asked the host for \"{call}\" and then closed its output without \
+         reading the answer"
+    )]
+    UnansweredCall {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The capability it asked for and abandoned.
+        call: stella_plugin::HostCall,
+    },
 
     /// The plugin's answer was not a readable response.
     #[error("wrapper `{program}` answered unreadably: {source} (in: {answer})")]
@@ -150,6 +234,38 @@ pub enum WrapperError {
         published: &'static str,
         /// The kind the signal declares.
         declared: stella_plugin::SignalKind,
+    },
+
+    /// A manifest was bound to the dispatcher without declaring `[wrapper]`.
+    ///
+    /// Not a defect in the plugin — a manifest may declare hooks, an oracle and
+    /// nothing else — but there is no stage order to resolve and no variant id
+    /// to record for it, so there is nothing to drive.
+    #[error("plugin `{plugin}` declares no [wrapper] block, so it has no stage order to run")]
+    NotAWrapper {
+        /// The manifest name.
+        plugin: String,
+    },
+
+    /// The declared stage order could not be resolved against this host's
+    /// published signals.
+    ///
+    /// Unreachable for a manifest that came from `PluginManifest::from_toml_str`
+    /// — a validated wrapper resolves for every possible `SignalValues`, which
+    /// `stella-plugin`'s `tests/wrapper_program.rs` asserts as a property — so
+    /// this names a hand-built manifest. It is an error rather than an empty
+    /// program because "which stages run" is not a question a host may answer by
+    /// guessing.
+    ///
+    /// The source is boxed because `ManifestError` is the larger of the two
+    /// types by some margin, and every other variant here would pay for it.
+    #[error("wrapper `{wrapper}` could not resolve its stage order: {source}")]
+    Unresolvable {
+        /// The wrapper's variant id.
+        wrapper: String,
+        /// Why the resolution failed.
+        #[source]
+        source: Box<stella_plugin::ManifestError>,
     },
 
     /// An in-process wrapper's own logic failed. The detail is a leaf

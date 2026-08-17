@@ -31,11 +31,24 @@
 //!
 //! Ported from `scripts/self-driving.sh` (#1548); the shell driver now delegates
 //! these decisions instead of carrying a second copy of them.
+//!
+//! [`HOST_SURFACE`] is the other half of that sentence: the loop is driven by a
+//! **host** outside the binary (`doc:pipeline-as-plugins` §10, D2), so the
+//! verbs that host calls are a contract with a caller this repository does
+//! not own. [`HOST_SURFACE`] declares them and [`HOST_SURFACE_VERSION`] lets
+//! a host refuse a build it was not written against, instead of meeting the
+//! skew as an `unrecognized subcommand` three cycles in.
+
+mod surface;
 
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+pub use surface::{
+    Emits, HOST_SURFACE, HOST_SURFACE_VERSION, HostVerb, SurfaceDrift, host_verb, surface_drift,
+};
 
 // ---------------------------------------------------------------------------
 // The dedup digest — the key the loop's termination story rests on

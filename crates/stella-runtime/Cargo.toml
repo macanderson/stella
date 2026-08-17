@@ -29,8 +29,13 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 # `process`/`io-util`/`time` are the subprocess wrapper transport: spawn, write
 # the request on stdin, read the response on stdout, bounded by the same clamp
-# `stella-core`'s hook runner uses.
-tokio = { workspace = true, features = ["sync", "process", "io-util", "time"] }
+# `stella-core`'s hook runner uses. `rt` is the host-call channel
+# (`doc:wrapper-socket` §6b): stdin belongs to one spawned task for the life of a
+# conversation, so a host answering a call cannot deadlock against a plugin
+# writing the next one. It is reachable through `process` today; declared here
+# because a feature this crate's own code calls is not one to inherit by
+# accident.
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt"] }
 async-trait = { workspace = true }
 
 [dev-dependencies]

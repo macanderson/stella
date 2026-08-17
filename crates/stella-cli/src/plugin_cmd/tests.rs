@@ -8,7 +8,9 @@
 //! own `.stella/`.
 
 use std::collections::BTreeMap;
+
 use std::path::{Path, PathBuf};
+use stella_core::ports::ToolExecutor as _;
 
 use super::roster::{PluginRoster, PluginScope};
 use super::*;
@@ -631,6 +633,460 @@ fn filesystem_isolation_closes_both_tiers() {
     assert!(
         notices.is_empty(),
         "an isolated run reports nothing: {notices:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// A plugin is a package: the tools, skills and records it ships (#3380)
+
+/// Add the three contributed directories to a package source tree.
+///
+/// One tool (a real spawnable program, so dispatch can be witnessed rather
+/// than inferred from a schema list), one skill, one context record carrying
+/// a marker the system prompt would have to contain.
+fn ships_a_package(source: &Path, plugin: &str) {
+    let tools = source.join(package::TOOLS_DIR);
+    std::fs::create_dir_all(&tools).expect("tools dir");
+    std::fs::write(
+        tools.join(format!("{plugin}_review.toml")),
+        format!(
+            "name = \"{plugin}_review\"\n\
+             description = \"review the diff the {plugin} way\"\n\
+             command = [\"/bin/echo\", \"reviewed\"]\n"
+        ),
+    )
+    .expect("tool manifest");
+
+    let skill = source.join(package::SKILLS_DIR).join("house-style");
+    std::fs::create_dir_all(&skill).expect("skill dir");
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: house-style\ndescription: how this shop writes code\n---\n\nPACKAGE_SKILL_MARKER\n",
+    )
+    .expect("skill file");
+
+    let rules = source.join(package::RECORDS_DIR);
+    std::fs::create_dir_all(&rules).expect("rules dir");
+    std::fs::write(
+        rules.join("acme.web.toml"),
+        "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+         \n[[record]]\nlineage_id = \"ctx.acme.web.marker\"\nkind = \"rule\"\n\
+         statement = \"PACKAGE_RECORD_MARKER\"\n\
+         \n[record.steering]\nforce = \"must\"\n",
+    )
+    .expect("record file");
+
+    // And the manifest declares all three (#3565). Not optional decoration:
+    // `install` reconciles the declaration against these very directories and
+    // refuses any disagreement, so a fixture that shipped without declaring is
+    // exactly the package that can no longer be installed.
+    let manifest = source.join(roster::MANIFEST_FILE);
+    let declared = format!(
+        "{}\n\
+         [[tools]]\nname = \"{plugin}_review\"\n\
+         description = \"review the diff the {plugin} way\"\n\n\
+         [[skills]]\nslug = \"house-style\"\n\
+         description = \"how this shop writes code\"\n\n\
+         [[records]]\nlineage = \"ctx.acme.web.marker\"\n\
+         statement = \"PACKAGE_RECORD_MARKER\"\n",
+        std::fs::read_to_string(&manifest).expect("the fixture manifest exists")
+    );
+    std::fs::write(&manifest, declared).expect("declared manifest");
+}
+
+/// **The reconciliation witness (#3565 item 2).** A package whose `tools/`
+/// holds a manifest the declaration does not name is **refused at install**,
+/// with both sides in the message and nothing copied.
+///
+/// The refusal is what makes `consent_text` provably complete: the document a
+/// user reads is rendered from the declaration alone, so a directory holding
+/// anything the declaration omits would put executable code into the agent's
+/// surface that nobody consented to. Before this, a package's contributions
+/// were discovered by directory convention and the manifest could not describe
+/// them at all.
+#[test]
+fn a_package_that_ships_more_than_it_declares_is_refused_at_install() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-undeclared");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    // One more tool than the manifest declares — the whole difference.
+    std::fs::write(
+        source.join(package::TOOLS_DIR).join("deploy.toml"),
+        "name = \"deploy\"\ndescription = \"ship it\"\ncommand = [\"/bin/true\"]\n",
+    )
+    .expect("undeclared tool");
+
+    let refusal = install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect_err("a package that ships an undeclared tool must be refused");
+    assert!(refusal.contains("deploy"), "{refusal}");
+    assert!(refusal.contains("[[tools]]"), "{refusal}");
+    assert!(refusal.contains("Nothing was copied"), "{refusal}");
+    assert!(
+        !stella_home::resolve_project_plugins_dir(&root)
+            .join("vera")
+            .exists(),
+        "and nothing was: a refused install leaves no directory behind"
+    );
+
+    // Declaring it is what makes the same bytes installable.
+    let manifest = source.join(roster::MANIFEST_FILE);
+    let declared = format!(
+        "{}\n[[tools]]\nname = \"deploy\"\ndescription = \"ship it\"\n",
+        std::fs::read_to_string(&manifest).expect("the fixture manifest exists")
+    );
+    std::fs::write(&manifest, declared).expect("declared manifest");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("a package that declares what it ships installs");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The custom-tool surface a session would assemble for `root`, gated
+/// exactly as `agent::tool_stack` gates it.
+fn contributed_tools(root: &Path) -> Vec<stella_tools::custom::CustomTool> {
+    // Through the foundry gate, exactly as a session's discovery is: a tool a
+    // package ships is no more exempt from it than one the user wrote.
+    crate::tool_foundry::adopt::gate_discovery(
+        stella_tools::custom::discover_with_plugins(
+            root,
+            None,
+            true,
+            &package::contributed_tool_dirs(root),
+        ),
+        root,
+    )
+    .tools
+}
+
+/// A base that answers nothing, so a name the custom layer stopped handling
+/// is visibly unhandled rather than quietly served by a built-in.
+struct EmptyBase;
+
+#[async_trait::async_trait]
+impl stella_core::ports::ToolExecutor for EmptyBase {
+    fn schemas(&self) -> Vec<stella_protocol::tool::ToolSchema> {
+        Vec::new()
+    }
+    async fn execute(
+        &self,
+        name: &str,
+        _input: &serde_json::Value,
+    ) -> stella_protocol::tool::ToolOutput {
+        stella_protocol::tool::ToolOutput::Error {
+            message: format!("no tool named `{name}`"),
+            class: None,
+        }
+    }
+}
+
+/// **The package witness: a plugin's tool installs with it, runs as the
+/// plugin, and is gone the moment the plugin is.**
+///
+/// Every clause fails before #3380: a package's `tools/` directory was read
+/// by nothing, so the tool did not exist, could not be attributed, and had
+/// no removal to survive.
+///
+/// The removal half is asserted through *dispatch*, not through a listing.
+/// The hook lesson this loader already paid for (see the module header) is
+/// that a plugin absent from a list can still be a plugin whose code runs —
+/// so the assertion is that the assembled stack no longer executes it.
+///
+/// Synchronous with an explicit runtime, not `#[tokio::test]`: the process
+/// environment lock has to be held across the dispatch, and a `MutexGuard`
+/// held across an `.await` is a real hazard the lint is right about.
+#[test]
+fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-tool");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+
+    assert!(
+        contributed_tools(&root).is_empty(),
+        "anti-vacuity: nothing is contributed before install"
+    );
+
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let installed = contributed_tools(&root);
+    let tool = installed
+        .iter()
+        .find(|tool| tool.name == "vera_review")
+        .expect("the package's tool joins the surface");
+    assert_eq!(
+        tool.contributed_by.as_deref(),
+        Some("vera"),
+        "and it is attributed to the package that shipped it"
+    );
+    assert_eq!(
+        tool.principal(&stella_core::ports::Principal::User),
+        stella_core::ports::Principal::Plugin("vera".into()),
+        "a plugin's script is authorized as the plugin, never as the human"
+    );
+
+    // It really dispatches: the schema is advertised and the program runs.
+    let base = EmptyBase;
+    let stack = crate::agent::tool_stack::session_stack_with_gate(
+        &base,
+        installed.clone(),
+        root.clone(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
+    match runtime.block_on(stack.execute("vera_review", &serde_json::json!({}))) {
+        stella_protocol::tool::ToolOutput::Ok { content, .. } => {
+            assert!(content.contains("reviewed"), "{content}");
+        }
+        other => panic!("the contributed tool must run: {other:?}"),
+    }
+
+    remove(&root, "vera").expect("remove must succeed");
+
+    assert!(
+        contributed_tools(&root).is_empty(),
+        "the contribution is derived from the package, so removing it removes them"
+    );
+    let after = crate::agent::tool_stack::session_stack_with_gate(
+        &EmptyBase,
+        contributed_tools(&root),
+        root.clone(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
+    match runtime.block_on(after.execute("vera_review", &serde_json::json!({}))) {
+        stella_protocol::tool::ToolOutput::Error { message, .. } => {
+            assert!(message.contains("no tool named"), "{message}");
+        }
+        other => panic!("a removed plugin's tool must stop dispatching: {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The clone witness, extended to the sharpest contribution (#3509 +
+/// #3380).** A contributed tool is executable code that a `git clone`
+/// carried in, so it must sit behind exactly the same trust gate the
+/// package's `[runtime]` process does — and it does, because there is no
+/// path to a contribution that does not go through the roster.
+#[test]
+fn an_untrusted_projects_contributed_tool_never_loads() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-untrusted");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+
+    let planted = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    ships_a_package(&planted, "vera");
+
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    assert!(
+        package::contributed_tool_dirs(&root).is_empty(),
+        "an untrusted checkout contributes no tool directory at all"
+    );
+    assert!(
+        contributed_tools(&root).is_empty(),
+        "so no tool is discovered from it"
+    );
+
+    // SAFETY: as above.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+    assert_eq!(
+        contributed_tools(&root)
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["vera_review".to_string()],
+        "the same bytes load once the operator trusts the workspace"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The record witness.** A context record a plugin ships steers this
+/// workspace's session, and stops the moment the plugin is removed — the
+/// same derive-never-copy guarantee, on the surface where "left behind"
+/// would mean a third party's policy still shaping the prompt.
+#[test]
+fn a_plugins_context_record_steers_and_stops_on_remove() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-record");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let authority = crate::settings::AuthorityPolicy {
+        project_prompts_allowed: true,
+        ..Default::default()
+    };
+    let steered = |root: &Path| {
+        crate::rules::load_workspace_rules(root, &authority)
+            .registry()
+            .entries
+            .iter()
+            .any(|entry| {
+                entry
+                    .record
+                    .record
+                    .statement
+                    .contains("PACKAGE_RECORD_MARKER")
+            })
+    };
+
+    assert!(
+        !steered(&root),
+        "anti-vacuity: nothing steers before install"
+    );
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+    assert!(
+        steered(&root),
+        "a package's record must reach the registry the session is steered by"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+    assert!(
+        !steered(&root),
+        "and must stop the moment the package is gone — nothing was copied into .stella/rules"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The skill witness.** Same shape, on the surface recall injects from.
+#[test]
+fn a_plugins_skill_is_selectable_and_stops_on_remove() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let loaded = |root: &Path| {
+        crate::memory::load_workspace_skills_with_authority(root, true)
+            .skills
+            .iter()
+            .any(|skill| skill.name == "house-style")
+    };
+    assert!(!loaded(&root), "anti-vacuity");
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+    assert!(loaded(&root), "a package's skill joins the selectable set");
+
+    remove(&root, "vera").expect("remove must succeed");
+    assert!(
+        !loaded(&root),
+        "and leaves with it — the skill lived in the package, not in .stella/skills"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The precedence witness.** A package may not silently take over a skill
+/// the user wrote: the user's body is the one that loads, and the plugin's
+/// same-named skill is dropped.
+#[test]
+fn a_plugins_skill_never_displaces_one_the_user_wrote() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill-precedence");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let mine = root.join(".stella").join("skills").join("house-style");
+    std::fs::create_dir_all(&mine).expect("my skill dir");
+    std::fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: house-style\ndescription: mine\n---\n\nMY_OWN_BODY\n",
+    )
+    .expect("my skill");
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let skills = crate::memory::load_workspace_skills_with_authority(&root, true).skills;
+    let held: Vec<&stella_core::skills::Skill> = skills
+        .iter()
+        .filter(|skill| skill.name == "house-style")
+        .collect();
+    assert_eq!(held.len(), 1, "one name, one skill: {held:?}");
+    assert!(
+        held[0].body.contains("MY_OWN_BODY"),
+        "the user's own skill is the one that loads: {}",
+        held[0].body
     );
 
     let _ = std::fs::remove_dir_all(&root);

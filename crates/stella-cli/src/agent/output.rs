@@ -192,12 +192,23 @@ pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEven
 /// and a `RunEnding` (`stella_core::event_sender::RunEnding`) here would put
 /// a second terminator on the goal path,
 /// which already emits its own. See #3379 for the ending contract.
+///
+/// `door` contributes the caller's own observer, when it asked for one
+/// ([`TurnDoor::observing`](super::persistence::TurnDoor::observing)): the tap
+/// sits **outermost**, so it folds every event this turn will send — the
+/// engine's, the registry's, and the turn-boundary `FileChange`s
+/// (`crate::turn_files`) alike — before any of them reach the durable sink or
+/// the renderer (#3552).
 pub(super) fn raw_event_sender_for_run(
     sender: mpsc::UnboundedSender<AgentEvent>,
     format: OutputFormat,
+    door: &super::persistence::TurnDoor<'_>,
 ) -> (EventSender, bool) {
     let (events, durable_pre_persisted) = event_sender_for_run(sender, format);
-    (events.pairing_stage_complete(), durable_pre_persisted)
+    (
+        door.observing(events.pairing_stage_complete()),
+        durable_pre_persisted,
+    )
 }
 
 /// The durable sink, and the point at which an event becomes a *line*.

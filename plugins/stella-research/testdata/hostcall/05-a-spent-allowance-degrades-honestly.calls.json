@@ -1,0 +1,19 @@
+[
+  {
+    "expect": {
+      "call": "recall",
+      "id": 1,
+      "args": {
+        "goal": "the retry budget is exhausted before the second attempt",
+        "limit": 8
+      }
+    },
+    "answer": {
+      "result": 1,
+      "err": {
+        "refusal": "allowance-spent",
+        "detail": "this point's host-call allowance of 1 is spent; answer with what you have"
+      }
+    }
+  }
+]

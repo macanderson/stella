@@ -47,12 +47,7 @@ impl HookRunner for ShellHookRunner {
         // that `kill_on_drop` cannot reach, and a timed-out hook must not
         // leak them into the rest of the session.
         #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        crate::exec::detach_into_own_process_group(&mut command);
         let mut child = command.spawn().map_err(|e| HookExecError::SpawnFailed {
             command: action.command.clone(),
             message: e.to_string(),

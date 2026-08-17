@@ -60,17 +60,44 @@
 //! [`EvidenceSet::from_observed`], which makes "the host owns tamper" a fact of
 //! the types rather than a rule someone has to remember.
 //!
-//! The two functions a host must not bypass are [`LoopGrant::permits_hook`]
-//! and [`LoopGrant::permits_point`]: they are the authoritative filters behind
-//! the epic's rule that an undeclared hook is never invoked and an undeclared
-//! wrapper point is never dispatched, however eagerly the plugin's own process
-//! would answer either one.
+//! `host_call.rs` (#3540, `doc:wrapper-socket` §6b) corrects a design error in
+//! the socket above: every point there is the host asking and the plugin
+//! answering, which forecloses a plugin that needs something only the host has
+//! — recall, a bounded child turn, a test re-run. A plugin may now **ask**
+//! ([`PluginMessage::Call`]) and read the answer before returning the response
+//! that ends the point. It still may never *reach*: the host performs the call,
+//! applies [`LoopGrant::permits_call`], and returns only what the declared grant
+//! permits, so an ask is the handing of a capability made explicit rather than
+//! ambient authority.
+//!
+//! `package.rs` (#3565) is the other half of what a plugin *is*: `[[tools]]`,
+//! `[[skills]]` and `[[records]]` declare what the package **ships** into the
+//! three surfaces a workspace already steers itself with. Those contributions
+//! are discovered by directory convention (#3380), which is what keeps
+//! provenance unforgeable — and is why nothing declared them, so
+//! [`consent_text`] could not name them and an embedding host showed a document
+//! that omitted executable code entering the agent's tool surface. The
+//! declaration closes that, and [`PluginManifest::reconcile`] keeps the two
+//! halves honest: the host hands over its own read as a [`PackageListing`] and
+//! any disagreement in either direction is a refusal, so a package can neither
+//! ship a tool it did not declare nor declare one it does not ship. See
+//! [`RecordEnforcement`] for why a package may ship a record that steers and
+//! never one that denies.
+//!
+//! The three functions a host must not bypass are [`LoopGrant::permits_hook`],
+//! [`LoopGrant::permits_point`] and [`LoopGrant::permits_call`]: they are the
+//! authoritative filters behind the epic's rule that an undeclared hook is never
+//! invoked, an undeclared wrapper point is never dispatched, and an undeclared
+//! capability is never performed — however eagerly the plugin's own process
+//! would answer or ask for one.
 
 mod consent;
 mod error;
 mod evidence;
+mod host_call;
 mod manifest;
 mod observed;
+mod package;
 mod program;
 mod runtime;
 mod wire;
@@ -87,11 +114,20 @@ mod wrapper;
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
+pub use host_call::{
+    ChildTurnArgs, ChildTurnResult, HostCall, HostCallArgs, HostCallFailure, HostCallOk,
+    HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage, RecallArgs,
+    RecallFrame, RecallResult, RunTestArgs,
+};
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
     Participation, PluginManifest, Role, Subloop, TamperPolicy,
 };
 pub use observed::ObservedEvidence;
+pub use package::{
+    ContributionKind, KindMismatch, PackageListing, PackageMismatch, RecordContribution,
+    RecordEnforcement, SkillContribution, ToolContribution,
+};
 pub use program::{SignalValues, StageProgram};
 pub use runtime::Runtime;
 pub use wire::{

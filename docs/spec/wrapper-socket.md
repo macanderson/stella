@@ -1,17 +1,28 @@
 ---
 id: wrapper-socket
 title: "The wrapper socket: four points, one wire, no host assumed"
-status: proposed
+status: implemented
 ---
 
 # The wrapper socket: four points, one wire, no host assumed
 
-**Status:** proposed, 2026-08-17. This is the design A3 of
+**Status:** implemented in the design's own scope, updated 2026-08-17 (design
+dated 2026-08-17, landed the same day, #3479). This is the design A3 of
 `doc:pipeline-as-plugins` builds. `doc:turn-loop-wrappers` §4 named the four
 points; §9.1 of the same document decided they cannot live in `stella-core`.
 This document decides everything else: where the trait lives, where the wire
 types live, what each point may say, and what `judge` is now that it is not a
-plugin's code.
+plugin's code. **What "implemented" covers and what it does not, stated
+plainly because §6 below is an acceptance test and it has not been run:** §2's
+table — the trait in `stella-runtime`, the wire types in `stella-plugin`,
+`judge`/`again` as free functions — is real code, proven end-to-end against
+one real subprocess plugin by `stella-runtime`'s own test suite
+(`tests/wrapper_socket.rs`). §6's acceptance test — the same plugin, unchanged,
+driven by `stella-cli`, `stella-serve`, and an embedded `stella-engine` host —
+has not been attempted: none of the three drivers calls this socket yet, and
+there is no host-sequence type in `stella-runtime` for a driver to call
+through. Track B (`doc:pipeline-as-plugins` §7) is where a first real caller,
+and with it a candidate for that sequence, is expected to appear.
 
 Everything below about today's tree was read out of it; where a claim is an
 inference it says so.
@@ -221,6 +232,114 @@ The design rules that make it passable:
 - **No terminal, no git, no cwd in any signature.** A wrapper that only works
   when a TTY or a git workspace is present is not a socket, it is a CLI
   feature.
+
+---
+
+## 6b. The host-call channel — a plugin may ask, never reach
+
+**Added 2026-08-17, correcting a design error in the original socket (#3540).**
+
+§5 defines four points, and every one of them is the *host* asking and the
+*plugin* answering. That is one exchange in one direction, and it forecloses an
+entire class of plugin: **one that needs something only the host has.**
+
+The gap is not hypothetical and it is not narrow:
+
+- `stella-research` is defined by `doc:pipeline-as-plugins` §3 as replacing
+  "research sub-agents, **recall**". Recall is
+  `ContextRecallPort::recall(goal) -> Recall { frames, .. }`, fanned out through
+  the CGP host over `context.db` and `codegraph.db`. A plugin gets none of it.
+- `stella-plan` reads the same frames — `build_planner_prompt` takes them — so
+  the second extraction is blocked by the identical gap.
+- `doc:turn-loop-wrappers` §9.3 already anticipated the shape and nobody built
+  it: *"a wrapper is handed a `ChildTurn` port… it names a role intent; the host
+  resolves it, carves the budget, runs the turn and settles once."* That is a
+  plugin asking the host to do something, mid-point.
+
+**How the error was made, recorded so it is not repeated.** #3498 offered
+exactly this as its option 2 — "a real callback channel… which makes the
+transport bidirectional" — and it was declined in favour of the smaller option 1
+on the grounds that a callback channel reopened the measured transport decision
+in `doc:plugin-transport-spike`. For `run_test` alone that was right. As a
+general judgement it was wrong: three separate capabilities need the same shape,
+so the question was never "does `run_test` deserve a channel", it was "is the
+socket one-directional", and that is an architecture question that was answered
+by accident.
+
+### The rule
+
+> **A plugin may ask the host for a capability. It may never reach for one.**
+
+While handling a point, a plugin may emit **host calls** and read their
+responses before returning its final point response. The exchange stops being
+one request/response and becomes a bounded conversation that *ends* in the point
+response.
+
+```text
+host  → { "point": "before_turn", "body": { … } }
+plugin→ { "call": "recall", "id": 1, "args": { "goal": "…", "limit": 8 } }
+host  → { "result": 1, "ok": { "frames": [ … ] } }
+plugin→ { "point": "before_turn", "body": { "context": [ … ] } }     ← ends it
+```
+
+### What this does not change, and the reasons are the load-bearing part
+
+- **No ambient authority.** The plugin does not retrieve; it *asks*, and the
+  host performs the retrieval, applies the gate, and returns only what the
+  plugin's declared grant permits. This is §0.3 of the plan intact — a wrapper
+  is handed its capabilities and never reaches for them. An `ask` is the
+  handing, made explicit.
+- **`judge` and `again` stay host functions.** A host call is available during
+  `before_turn` and `after_turn` only. The two pure functions gain nothing and
+  remain synchronous, I/O-free and total, so "a plugin cannot grade its own
+  work with a model" survives untouched.
+- **The transport decision stands.** `doc:plugin-transport-spike` chose the
+  subprocess path on measurement; a framed conversation over the same stdio
+  pipes is that path used more than once, not a different one. Nothing about
+  the spike's three axes changes.
+- **The capability set is closed and declared.** `HostCall` is a closed enum,
+  not an RPC surface: a plugin may only make calls its manifest declared, and
+  an undeclared call is refused the way an undeclared hook is
+  (`LoopGrant::permits_hook` is the precedent). A new capability is a reviewable
+  addition to the enum, never a string a plugin invents.
+
+### What it must be bounded by
+
+A conversation can hang where a single exchange could not, so the bounds are
+part of the contract rather than an implementation detail:
+
+- the existing per-point timeout covers the **whole** conversation, not each
+  turn of it — a plugin cannot buy time by talking;
+- a **maximum number of host calls per point**, declared and host-clamped, on
+  the `max_holds` precedent — the plugin's number is an ask, never an authority;
+- a call whose capability the manifest did not declare is refused with a typed
+  error, and the refusal is **reported**, never silent;
+- the response to a refused or failed call is delivered to the plugin so it can
+  degrade honestly, rather than killing it — the fail-open direction the Stop
+  gate already argues for (`user_hooks.rs:55-59`).
+
+### The first three calls
+
+`recall` (the context plane, read-only), `child_turn` (a bounded turn at a
+declared role intent — the `ChildTurn` port §9.3 named), and `run_test` (the
+candidate's test invocation, which #3498 solved narrowly by putting the plan in
+the request; it stays there, and the call is for the re-runs a verification
+plugin needs).
+
+**Two of the three are performed; the third is a declared gap.** `recall` and
+`child_turn` are served by `stella_runtime::wrapper::HostPlanes` — the latter
+through `ChildTurns`, over the host's own `SubAgentDispatcher`, so the budget is
+carved by `BudgetGuard::carve`, the child runs behind `ReadOnlyTools`, and every
+model call is the host's (#3564). A `child_turn` names a role intent the
+manifest declared; the host resolves it to a `ModelCallRole` seat, and **refuses
+outright any intent that resolves to the worker's seat** — a plugin may not
+spend the model whose work it is judging, which is the independence
+`Roster::independence_losses` merely *reports* for an operator's own
+configuration. Two things a caller must know rather than discover: the
+`verifier` tier binds to no seat by default (a host that wants it says so with
+`ChildTurns::with_seat`, because attributing a plugin's call to `verdict` would
+put a call on the receipt the pipeline did not make — #2584), and `run_test` is
+still `unsupported` from every host in the tree.
 
 ---
 

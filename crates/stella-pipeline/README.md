@@ -44,20 +44,29 @@ The three moves, in dependency order:
    `run_turn` a private channel, no longer filters the engine's events, and no longer
    emits the engine's `Complete` on its behalf. The journal now carries one engine
    completion per turn plus one run-level ending owned by the run's owner.
-2. **One wrapper contract** (#3380, open): `before_turn` / `after_turn` / `judge` /
-   `again?`, defined in [`stella-runtime`](../stella-runtime) rather than in
-   `stella-core`, because two of those four points do I/O. This crate's stages map onto
-   it — triage/recall/research/plan/scope are `before_turn`, witness is `after_turn`,
-   verify is `judge`, revise is `again?`. `judge` may not call a model, which
-   [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already satisfies: it is
-   terminal at every arm and #2584 removed the model verdict structurally.
-3. **Stages become a manifest** (#3381, open): the ordered stage list moves into the
-   `[wrapper]` block [`stella-plugin`](../stella-plugin) already parses, keyed by a
-   variant id the store's `pipeline_variant` column records (#3388, landed) so two
-   pipeline designs can be compared with a `GROUP BY` instead of a rebuild. The
-   manifest is parsed and **nothing here reads it yet** — that wiring is #3408. The
-   last step of the same issue inverts the flag: the raw loop becomes the default and
-   `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
+2. **One wrapper contract** (#3380, **landed** #3479): `before_turn` / `after_turn` /
+   `judge` / `again?`, defined in [`stella-runtime`](../stella-runtime) rather than in
+   `stella-core`, because two of those four points do I/O. The trait, both transports
+   and `judge`/`again` are proven end-to-end against a real subprocess plugin
+   (`stella-runtime`'s `tests/wrapper_socket.rs`) — what has **not** landed is a host
+   sequence that calls all four for a live turn, or this crate being ported onto one.
+   This crate's stages *map* onto the socket — triage/recall/research/plan/scope are
+   `before_turn`, witness is `after_turn`, verify is `judge`, revise is `again?` — but
+   `pipeline.rs` still calls its own Rust functions for all five. `judge` may not call
+   a model, which [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already
+   satisfies: it is terminal at every arm and #2584 removed the model verdict
+   structurally.
+3. **Stages become a manifest** (#3381, **landed**; #3408, **landed**): the ordered stage
+   list lives in the `[wrapper]` block [`stella-plugin`](../stella-plugin) parses, keyed
+   by a variant id the store's `pipeline_variant` column records (#3388, landed) so two
+   pipeline designs can be compared with a `GROUP BY` instead of a rebuild.
+   [`src/variant.rs`](src/variant.rs) reads the shipped `classic.toml` and resolves it
+   into the ordered `StageProgram` a turn would run — that reading is real, not a stub.
+   What is still open: `pipeline.rs` does not yet take that `StageProgram` as its
+   instruction, so today the resolved answer and the branches `pipeline.rs` actually
+   executes are two things asserted to agree rather than one thing driving the other.
+   The last step of the same issue inverts the flag: the raw loop becomes the default
+   and `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
 
 Two planning consequences right now. Anything that would grow
 [`src/pipeline.rs`](src/pipeline.rs) — already a god file closed to growth — is
@@ -132,6 +141,7 @@ as a planning assumption.
 | [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs) | The one stage that runs against the candidate's `witness_tools()` rather than the worker's executor: author → one bounded repair → artifact/invocation/identity acceptance. |
 | [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, plan, the conversational reply) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
 | [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AlwaysAbortGate`). |
+| [`src/ports/handle.rs`](src/ports/handle.rs) | `CandidateHandles` — A10's serializable candidate-worktree handle (#3380, `doc:pipeline-as-plugins` §4 A10): a lookup table over the existing `CandidateWorkspacePort`, answering the six operations `stella_protocol::CandidateOp` declares (create, root, run-test, seal, adopt, remove) and minting the `CandidateGrant` an out-of-process `after_turn` actually receives. No isolation logic of its own — the fence and the snapshot stay host-side. Landed with a stated gap: nothing on the shipping path constructs one yet (#3485) — `stella-runtime` has no `after_turn` dispatcher for it to plug into either, consistent with the socket having a trait but not yet a host sequence (see `stella-runtime`'s own README). |
 | [`src/triage.rs`](src/triage.rs) | `TaskClass`, `TaskAssessment`, the response parser, and the deterministic pattern floor. |
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |

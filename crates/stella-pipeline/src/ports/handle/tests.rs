@@ -706,3 +706,87 @@ fn the_lexical_fence_refuses_what_cannot_name_an_inside_path() {
         Path::new("tests/x.py")
     );
 }
+
+/// **Witness (#3553).** A driver that runs its turn in the tree it already has
+/// can mint a grant for it — canonical root, the host's test plan — without
+/// inventing a `CandidateWorkspace` it does not have. Before this, the only way
+/// to a `CandidateGrant` was through a table entry, so `stella-cli`'s
+/// shared-tree wrapper path sent `candidate: None` on every round.
+#[test]
+fn a_tree_the_host_already_runs_in_can_be_granted() {
+    let dir = tempfile::tempdir().expect("a temp tree");
+    let linked = dir.path().join("link");
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).expect("the real root");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &linked).expect("a symlinked view of it");
+    #[cfg(not(unix))]
+    let linked = real.clone();
+
+    let plan = TestPlan::new("sh".to_string(), vec!["tests/witness.sh".to_string()]);
+    let grant = host_tree_grant(linked.to_str().expect("utf-8"), Some(plan.clone()))
+        .expect("the root resolves");
+
+    assert_eq!(
+        grant.root,
+        std::fs::canonicalize(&real)
+            .expect("canonical")
+            .to_string_lossy(),
+        "the plugin is told the resolved path, so it and the fence mean one directory"
+    );
+    assert_eq!(grant.handle, CandidateHandle::new(HOST_TREE_HANDLE));
+    assert_eq!(grant.test, Some(plan));
+}
+
+/// It fails closed on a root the filesystem will not resolve, rather than
+/// handing out a path nothing can be judged against.
+#[test]
+fn an_unresolvable_host_tree_mints_no_grant() {
+    let denial =
+        host_tree_grant("/definitely/not/here/at/all", None).expect_err("the root does not exist");
+    assert!(matches!(denial, CandidateDenial::RootUnavailable { .. }));
+}
+
+/// The handle a host-tree grant carries addresses nothing in any table, so a
+/// plugin that asks to seal or adopt it is told the truth rather than served an
+/// isolation this host never had.
+#[tokio::test]
+async fn the_host_tree_handle_answers_no_isolation_operation() {
+    let port = TempPort::new(Vec::new(), Log::default());
+    let handles = CandidateHandles::new(&port);
+    let handle = CandidateHandle::new(HOST_TREE_HANDLE);
+    let denied = handles.seal(&handle).await.expect_err("no such workspace");
+    assert!(matches!(
+        denied,
+        CandidateOpError::Denied {
+            op: CandidateOp::Seal,
+            denial: CandidateDenial::UnknownHandle { .. },
+        }
+    ));
+}
+
+/// The free fence is the same funnel the handle-addressed one runs, so a caller
+/// holding a root gets exactly the containment a caller holding a handle does.
+#[test]
+fn the_free_fence_and_the_handle_fence_agree() {
+    let dir = tempfile::tempdir().expect("a temp tree");
+    std::fs::create_dir_all(dir.path().join("tests")).expect("tests dir");
+    std::fs::write(dir.path().join("tests/witness.sh"), "exit 1\n").expect("the artifact");
+    let root = dir.path().to_str().expect("utf-8");
+
+    assert!(resolve_in_root(root, "tests/witness.sh").is_ok());
+    assert!(matches!(
+        resolve_in_root(root, "../escape.sh"),
+        Err(CandidateDenial::Path {
+            reason: PathDenial::Traversal,
+            ..
+        })
+    ));
+    assert!(matches!(
+        resolve_in_root(root, "/etc/passwd"),
+        Err(CandidateDenial::Path {
+            reason: PathDenial::Absolute,
+            ..
+        })
+    ));
+}

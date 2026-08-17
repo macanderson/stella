@@ -1,0 +1,1 @@
+stella-research: the host did not serve the recall call: undeclared: this plugin's manifest does not declare "recall" in [loop] calls, so the host did not perform it

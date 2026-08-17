@@ -644,3 +644,167 @@ fn cycle_records_round_trip_and_preserve_foreign_keys() {
     let back = serde_json::to_value(&rec).expect("serializes");
     assert_eq!(back, raw, "byte-stable round-trip, foreign keys included");
 }
+
+// ---------------------------------------------------------------------------
+// the host surface — the contract a driver outside the binary binds to
+// ---------------------------------------------------------------------------
+
+/// A host looks a verb up by the exact string it is about to run, so two rows
+/// claiming one path make the lookup's answer depend on declaration order —
+/// and the loser of that race is a verb a host can never reach.
+#[test]
+fn every_host_verb_path_is_declared_once() {
+    let mut seen = std::collections::HashSet::new();
+    for verb in HOST_SURFACE {
+        assert!(
+            seen.insert(verb.path),
+            "`{}` is declared twice on the host surface",
+            verb.path
+        );
+    }
+}
+
+/// The path is pasted onto a command line segment by segment. A blank
+/// segment, a leading space or a doubled space each produce an argv the
+/// binary cannot parse, and none of them are visible when reading the table.
+#[test]
+fn every_host_verb_path_is_a_usable_argv() {
+    for verb in HOST_SURFACE {
+        assert!(!verb.path.is_empty(), "an empty verb path");
+        for segment in verb.segments() {
+            assert!(
+                !segment.is_empty() && segment.trim() == segment,
+                "`{}` has a segment that is not a bare argv word",
+                verb.path
+            );
+        }
+        assert!(
+            !verb.summary.trim().is_empty(),
+            "`{}` has no summary, so `surface` would print a bare path",
+            verb.path
+        );
+    }
+}
+
+/// The lookup is what a host calls before it binds; it must answer for every
+/// declared verb and refuse anything else rather than approximating.
+#[test]
+fn host_verb_resolves_exactly_the_declared_paths() {
+    for verb in HOST_SURFACE {
+        assert_eq!(host_verb(verb.path), Some(verb));
+    }
+    assert_eq!(host_verb("cycle"), None, "a group node is not a verb");
+    assert_eq!(
+        host_verb("cycle begin --explain"),
+        None,
+        "flags are not path"
+    );
+    assert_eq!(host_verb(""), None);
+}
+
+/// The rendering a host actually parses, pinned by shape rather than by
+/// round-trip: [`HostVerb`] borrows `'static` and so has no reader in this
+/// process (see its doc comment), which makes the emitted bytes the only
+/// thing there is to check.
+#[test]
+fn the_host_surface_serializes_into_the_keys_a_host_reads() {
+    let rendered = serde_json::to_value(HOST_SURFACE).expect("serializes");
+    let rows = rendered.as_array().expect("an array of verbs");
+    assert_eq!(rows.len(), HOST_SURFACE.len());
+    assert_eq!(
+        rows[1],
+        json!({
+            "path": "plan",
+            "emits": "shell-assignments",
+            "summary": "size this cycle to the machine it is running on",
+        }),
+        "the three keys, and the kebab-case emit spelling"
+    );
+}
+
+/// `Emits::as_str` is what the renderer prints and serde is what a host
+/// parses; two spellings of one shape is the drift this crate exists to
+/// prevent, one layer down.
+#[test]
+fn the_emit_spelling_a_host_parses_is_the_one_a_person_reads() {
+    for verb in HOST_SURFACE {
+        let wire = serde_json::to_string(&verb.emits).expect("serializes");
+        assert_eq!(wire, format!("\"{}\"", verb.emits.as_str()));
+    }
+}
+
+/// The declaration agrees with itself: feeding the surface its own paths must
+/// find nothing. The baseline the two drift cases below are read against.
+#[test]
+fn the_surface_does_not_drift_from_itself() {
+    let paths: Vec<&str> = HOST_SURFACE.iter().map(|verb| verb.path).collect();
+    assert_eq!(surface_drift(&paths), SurfaceDrift::default());
+    assert!(surface_drift(&paths).is_empty());
+}
+
+/// **The guard bites, direction one.** A verb a build carries with no row is
+/// reported by name — this is the case that fires when someone adds a
+/// subcommand and never tells a host it exists.
+#[test]
+fn a_verb_with_no_declared_row_is_named() {
+    let mut paths: Vec<&str> = HOST_SURFACE.iter().map(|verb| verb.path).collect();
+    paths.push("cycle abandon");
+    let drift = surface_drift(&paths);
+    assert_eq!(drift.undeclared, ["cycle abandon"]);
+    assert!(drift.absent.is_empty());
+    assert!(!drift.is_empty());
+}
+
+/// **The guard bites, direction two.** A declared verb a build no longer
+/// carries is reported by name — the worse case, because a host that checked
+/// the surface before binding was told the verb was there.
+#[test]
+fn a_declared_verb_the_build_dropped_is_named() {
+    let paths: Vec<&str> = HOST_SURFACE
+        .iter()
+        .map(|verb| verb.path)
+        .filter(|path| *path != "cycle begin")
+        .collect();
+    let drift = surface_drift(&paths);
+    assert_eq!(drift.absent, ["cycle begin"]);
+    assert!(drift.undeclared.is_empty());
+}
+
+/// A rename is both drifts at once, and a caller must see both halves — told
+/// only "`cycle start` is undeclared" a reader adds a row and ships a surface
+/// still promising a verb that is gone.
+#[test]
+fn a_renamed_verb_reports_both_halves() {
+    let paths: Vec<&str> = HOST_SURFACE
+        .iter()
+        .map(|verb| verb.path)
+        .map(|path| {
+            if path == "cycle begin" {
+                "cycle start"
+            } else {
+                path
+            }
+        })
+        .collect();
+    let drift = surface_drift(&paths);
+    assert_eq!(drift.undeclared, ["cycle start"]);
+    assert_eq!(drift.absent, ["cycle begin"]);
+}
+
+proptest! {
+    /// Order is a property of whichever parser enumerated the tree, never of
+    /// the answer: a host surface that agreed only when clap happened to walk
+    /// in declaration order would fail the day clap changed its walk.
+    #[test]
+    fn drift_is_insensitive_to_the_order_the_caller_enumerated(
+        seed in proptest::collection::vec(0usize..1000, 0..40)
+    ) {
+        let mut paths: Vec<&str> = HOST_SURFACE.iter().map(|verb| verb.path).collect();
+        // A deterministic shuffle driven by the generated seed.
+        let len = paths.len();
+        for (i, s) in seed.iter().enumerate() {
+            paths.swap(i % len, s % len);
+        }
+        prop_assert!(surface_drift(&paths).is_empty());
+    }
+}

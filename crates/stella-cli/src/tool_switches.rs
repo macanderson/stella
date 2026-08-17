@@ -207,6 +207,7 @@ mod tests {
             claimed_risk: None,
             claimed_idempotent: false,
             output_schema: None,
+            contributed_by: None,
         }
     }
 

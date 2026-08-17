@@ -1,0 +1,14 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "research-v1",
+    "stage": "research",
+    "round": 2,
+    "goal": "retry_budget is not honoured",
+    "candidate": {
+      "handle": "candidate-9",
+      "root": "${workspace_root}/does-not-exist"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "wrapper": "research-v1",
+    "stage": "research",
+    "round": 0,
+    "goal": "common_term",
+    "candidate": {
+      "handle": "candidate-1",
+      "root": "${workspace_root}"
+    }
+  }
+}

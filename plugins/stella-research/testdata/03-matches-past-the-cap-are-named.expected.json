@@ -1,0 +1,16 @@
+{
+  "point": "before_turn",
+  "body": {
+    "protocol_version": 1,
+    "context": [
+      {
+        "label": "research:workspace",
+        "text": "## Research: workspace orientation\n\nThe candidate root holds these top-level entries (hidden entries omitted):\n- AGENTS.md\n- README.md\n- src/\n- target/\n\nNot scanned, wherever they appear: hidden entries, symlinks, and __pycache__, build, dist, node_modules, target, vendor, venv."
+      },
+      {
+        "label": "research:common_term",
+        "text": "## Research: `common_term`\n\n9 matches in 1 file under the candidate root, as workspace-relative paths:\n- src/many.rs:1: common_term line 1\n- src/many.rs:2: common_term line 2\n- src/many.rs:3: common_term line 3\n- src/many.rs:4: common_term line 4\n- src/many.rs:5: common_term line 5\n[… 4 further matches not shown; this stage reports the first 5 …]"
+      }
+    ]
+  }
+}

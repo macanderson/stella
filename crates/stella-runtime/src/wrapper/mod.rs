@@ -45,8 +45,43 @@
 //! enforces on *declarations*; a socket that dispatches has to enforce the same
 //! rules on *values*, or the manifest's guarantees stop at the process
 //! boundary.
+//!
+//! It is also **on** the path rather than beside it: it consumes the response
+//! and answers with an [`AdmittedContribution`], which is the only value
+//! [`WrapperDispatch`] will apply. When the check merely returned `Ok(())` and
+//! the caller went on to read the response it already had, "the host checked
+//! first" was a habit with no non-test caller to practise it (#3494).
+//!
+//! # Who calls the four points
+//!
+//! [`WrapperDispatch`] — the host sequence, and the reason it is here rather than in
+//! `stella-cli`: `doc:wrapper-socket` §6 requires the same plugin to run under
+//! three drivers, and a sequence living in the binary is one the other two
+//! cannot reach.
+//!
+//! # The conversation inside a point
+//!
+//! Every point above is the host asking and the plugin answering, and that was
+//! the whole socket until #3540: strictly one-directional, which forecloses any
+//! plugin that needs something only the host has. `doc:wrapper-socket` §6b
+//! corrects it — **a plugin may ask the host for a capability; it may never
+//! reach for one** — and [`HostCallGate`] is the host half. A point becomes a
+//! bounded conversation that *ends* in the point response, and both transports
+//! drive the identical [`HostCallChannel`], so a Rust plugin can ask for exactly
+//! what a Python plugin can ask for.
+//!
+//! Nothing about the four points changes. [`judge`] and [`again`] gain nothing:
+//! a host call is available during `before_turn` and `after_turn` only, so both
+//! stay synchronous, I/O-free and total, and a plugin still cannot grade its own
+//! work with a model. The host performs every call itself, behind
+//! [`LoopGrant::permits_call`](stella_plugin::LoopGrant::permits_call) and a
+//! clamped per-point allowance, so what the plugin gets is what a human
+//! consented to at install and nothing more.
 
+mod child_turn;
+mod dispatch;
 mod error;
+mod host_call;
 mod in_process;
 mod subprocess;
 mod verdict;
@@ -54,10 +89,20 @@ mod verdict;
 use async_trait::async_trait;
 use stella_plugin::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, PluginManifest,
-    SignalValue,
+    PublishedSignal, SignalValue, VolatileContext,
 };
+use stella_protocol::completion::CompletionMessage;
 
+pub use child_turn::{ChildTurnPlane, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CHILD_TURNS};
+pub use dispatch::{
+    DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, RoundInput, TurnDriver, TurnPrelude,
+    WrapperDispatch,
+};
 pub use error::WrapperError;
+pub use host_call::{
+    DEFAULT_HOST_MAX_CALLS, DEFAULT_RECALL_FRAMES, HostCallChannel, HostCallGate, HostCapabilities,
+    HostPlanes, NoHostCalls, PointChannel, RecallHost, RefusedCall,
+};
 pub use in_process::{InProcessWrapper, WrapperHandler};
 pub use subprocess::{
     AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,
@@ -119,6 +164,67 @@ pub trait TurnWrapper: Send + Sync {
     ) -> Result<AfterTurnResponse, WrapperError>;
 }
 
+/// A `before_turn` contribution that has passed [`admissible`].
+///
+/// **The check's output, not a receipt for it.** There is no constructor and no
+/// public field: the only way to hold one is to have run the check that
+/// produces it, and the only way to spend the context inside it is
+/// [`Self::into_messages`]. That is the difference between a rule and a
+/// property — while [`admissible`] answered `Ok(())` and left the caller to
+/// read the `BeforeTurnResponse` it already had, nothing stopped a host
+/// applying a contribution it never checked, and for as long as the socket had
+/// no host at all nothing noticed (#3494).
+///
+/// What this does **not** claim: that a host cannot reach into a
+/// [`BeforeTurnResponse`]'s public fields itself. Those fields are public
+/// because a plugin author in another language needs the shape, and no type can
+/// close that. What is closed is the cheap path — the one a contributor takes
+/// without noticing they took it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedContribution {
+    role: Option<String>,
+    context: Vec<VolatileContext>,
+    scope: Vec<String>,
+    publish: Vec<PublishedSignal>,
+}
+
+impl AdmittedContribution {
+    /// The role intent, already checked against the `[roles]` the manifest
+    /// declares.
+    #[must_use]
+    pub fn role(&self) -> Option<&str> {
+        self.role.as_deref()
+    }
+
+    /// Workspace-relative paths the wrapper believes the turn should stay
+    /// within. Advisory: a plugin-supplied path is never itself a permission.
+    #[must_use]
+    pub fn scope(&self) -> &[String] {
+        &self.scope
+    }
+
+    /// The signals this stage published, already checked against the kind each
+    /// one declares.
+    #[must_use]
+    pub fn published(&self) -> &[PublishedSignal] {
+        &self.publish
+    }
+
+    /// Spend the contributed context as the volatile messages it is.
+    ///
+    /// Invariant 7, held at the type rather than at the call site: every
+    /// message here is a user message built by
+    /// [`VolatileContext::into_message`], so a host has nothing in hand that
+    /// could reach the byte-stable system prefix.
+    #[must_use]
+    pub fn into_messages(self) -> Vec<CompletionMessage> {
+        self.context
+            .into_iter()
+            .map(VolatileContext::into_message)
+            .collect()
+    }
+}
+
 /// Whether a `before_turn` contribution may be applied to the turn.
 ///
 /// Two checks, both of which restate a load-time rule at the value level:
@@ -137,14 +243,18 @@ pub trait TurnWrapper: Send + Sync {
 /// prefix, so "a plugin cannot make every turn a cache miss" is a property of
 /// the type rather than a rule this function has to remember (invariant 7).
 ///
+/// It takes the response **by value** and hands back the checked contribution,
+/// so applying something unchecked means writing a line that says so rather
+/// than forgetting a line.
+///
 /// # Errors
 ///
 /// [`WrapperError::UndeclaredRole`] or [`WrapperError::MistypedSignal`],
 /// naming the offending value.
 pub fn admissible(
     manifest: &PluginManifest,
-    response: &BeforeTurnResponse,
-) -> Result<(), WrapperError> {
+    response: BeforeTurnResponse,
+) -> Result<AdmittedContribution, WrapperError> {
     let wrapper = manifest
         .wrapper
         .as_ref()
@@ -177,5 +287,10 @@ pub fn admissible(
         }
     }
 
-    Ok(())
+    Ok(AdmittedContribution {
+        role: response.role,
+        context: response.context,
+        scope: response.scope,
+        publish: response.publish,
+    })
 }

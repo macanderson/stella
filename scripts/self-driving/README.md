@@ -46,6 +46,38 @@ design:
 remote), so the commands cannot live at `.claude/commands/` and survive. Edit the
 copies here and re-run `install-commands`.
 
+## The host surface
+
+`scripts/self-driving.sh` is **a** driver of this loop, not the only possible
+one. `doc:pipeline-as-plugins` §10 settles that self-driving is a *host*: it
+does not participate in a turn, it drives Stella from outside by calling
+`stella self-driving …` verbs. That makes the verb set a contract with callers
+this repository does not own, so it is declared as data:
+
+```bash
+stella self-driving surface              # the table, for a person
+stella self-driving surface --format json   # the same, for a program
+```
+
+Each row is a verb path (`plan`, `cycle begin`, `run stamp-cycle-pid`) and the
+shape it writes to stdout (`shell-assignments`, `query-envelope`, `json`,
+`text`, `exit-status`). The JSON payload leads with `surface_version`: a host
+reads it once at start-up and refuses a build it was not written against,
+rather than meeting a rename as clap's `unrecognized subcommand` in the middle
+of a cycle.
+
+**The table is deliberately not repeated here.** It lives in
+`stella_autonomy::HOST_SURFACE` and the shipping argument parser is checked
+against it in both directions — a verb with no row fails the build, and a row
+naming a verb the binary does not carry fails it too. A copy in this file
+would be the one that goes stale, and a surface nobody can trust is worse than
+no surface. `stella-autonomy`'s `surface.rs` carries the reasoning.
+
+The grant this loop needs from a machine is written out as an installable
+consent document at `plugins/stella-selfdriving/` — read it with
+`stella plugin install plugins/stella-selfdriving`, which shows the whole
+thing and then asks.
+
 | Command | Phase |
 |---|---|
 | `/self-driving` | one full cycle — the thing you loop |

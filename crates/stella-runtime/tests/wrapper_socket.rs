@@ -36,8 +36,8 @@ use stella_plugin::{
 use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{
-    DEFAULT_WRAPPER_TIMEOUT, InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError,
-    WrapperHandler, admissible, again, judge,
+    DEFAULT_WRAPPER_TIMEOUT, HostCallChannel, InProcessWrapper, SubprocessWrapper, TurnWrapper,
+    WrapperError, WrapperHandler, admissible, again, judge,
 };
 
 /// The reference wrapper's manifest: an arbiter whose definition of done is a
@@ -150,8 +150,8 @@ fn after(goal: &str) -> AfterTurnRequest {
         turn: TurnOutcome {
             completed: true,
             answer: "rewrote the hot loop".into(),
-            tools: vec!["edit_file".into()],
-            changed_files: vec!["crates/stella-core/src/driver.rs".into()],
+            tools: Some(vec!["edit_file".into()]),
+            changed_files: Some(vec!["crates/stella-core/src/driver.rs".into()]),
         },
     }
 }
@@ -200,10 +200,11 @@ async fn run_turn(
             .before_turn(before(*stage, goal))
             .await
             .expect("the plugin answers before_turn");
-        admissible(&manifest, &response).expect("the contribution is within what was declared");
-        for context in response.context {
-            messages.push(context.into_message());
-        }
+        // The check is what produces the value that gets applied, so there is
+        // no way through here that skips it (#3494).
+        let admitted =
+            admissible(&manifest, response).expect("the contribution is within what was declared");
+        messages.extend(admitted.into_messages());
     }
 
     // The plugin reports what it observed; the host merges its own tamper
@@ -311,7 +312,7 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verif
         .before_turn(before(StageName::Triage, "anything"))
         .await
         .expect("the plugin answers");
-    let error = admissible(&manifest(), &response).expect_err("\"verifier\" is not declared");
+    let error = admissible(&manifest(), response).expect_err("\"verifier\" is not declared");
     assert!(
         matches!(error, WrapperError::UndeclaredRole { ref role, .. } if role == "verifier"),
         "got {error:?}"
@@ -324,7 +325,7 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"publish":[{"
         .before_turn(before(StageName::Triage, "anything"))
         .await
         .expect("the plugin answers");
-    let error = admissible(&manifest(), &response).expect_err("a count is not a boolean");
+    let error = admissible(&manifest(), response).expect_err("a count is not a boolean");
     assert!(
         matches!(error, WrapperError::MistypedSignal { .. }),
         "got {error:?}"
@@ -376,10 +377,12 @@ printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"n
 #[tokio::test]
 async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
     struct Broken;
+    #[async_trait::async_trait]
     impl WrapperHandler for Broken {
-        fn before_turn(
+        async fn before_turn(
             &self,
             _request: BeforeTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::BeforeTurnResponse, WrapperError> {
             Err(WrapperError::Handler {
                 wrapper: "reference-v1".into(),
@@ -388,9 +391,10 @@ async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
             })
         }
 
-        fn after_turn(
+        async fn after_turn(
             &self,
             _request: AfterTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::AfterTurnResponse, WrapperError> {
             Err(WrapperError::Handler {
                 wrapper: "reference-v1".into(),
@@ -438,10 +442,12 @@ async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
 #[tokio::test]
 async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
     struct Native;
+    #[async_trait::async_trait]
     impl WrapperHandler for Native {
-        fn before_turn(
+        async fn before_turn(
             &self,
             _request: BeforeTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::BeforeTurnResponse, WrapperError> {
             Ok(stella_plugin::BeforeTurnResponse {
                 role: Some("triage".into()),
@@ -457,9 +463,10 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
             })
         }
 
-        fn after_turn(
+        async fn after_turn(
             &self,
             request: AfterTurnRequest,
+            _host: &dyn HostCallChannel,
         ) -> Result<stella_plugin::AfterTurnResponse, WrapperError> {
             let p50 = if request.goal.contains("slower") {
                 118

@@ -144,6 +144,26 @@ pub struct GatedToolSet<'a> {
     /// missing from this map is not trusted for being missing; see
     /// [`contracts::unknown_contract`].
     contracts: HashMap<String, stella_protocol::ToolContract>,
+    /// Tools whose code a third party contributed, and the principal the
+    /// gate must be asked about for a call into one (#3380).
+    ///
+    /// Empty for every session with no plugins installed, which is the
+    /// overwhelming majority — a lookup miss means [`Self::principal`], the
+    /// session's own caller. A hit **replaces** it: an installed plugin's
+    /// script tool is authorized as
+    /// [`Principal::Plugin`], because
+    /// the code that runs is the package's and the authority it holds is
+    /// whatever the install consented to — not the human's. The derivation
+    /// is [`crate::custom::CustomTool::principal`]; this field is only
+    /// where the answer is carried to the one place the gate is called.
+    ///
+    /// Not folded into [`Self::contracts`]: a contract describes *what* a
+    /// tool is (its schema, its risk, its provenance grade), and a principal
+    /// answers *who is asking* — the gate takes them as two arguments
+    /// because they are two questions, and merging them here would put a
+    /// caller identity inside a type that crosses the serve wire as a
+    /// description of a capability.
+    tool_principals: HashMap<String, Principal>,
 }
 
 impl<'a> GatedToolSet<'a> {
@@ -167,6 +187,7 @@ impl<'a> GatedToolSet<'a> {
             approvals: None,
             bus: None,
             contracts,
+            tool_principals: HashMap::new(),
         }
     }
 
@@ -193,6 +214,27 @@ impl<'a> GatedToolSet<'a> {
         self
     }
 
+    /// Declare which tools are a plugin's code, and as whom each must be
+    /// authorized (#3380) — the `tool_principals` field argues the rule.
+    ///
+    /// Attached by `agent::tool_stack`, which derives the map from the very
+    /// `Vec<CustomTool>` it hands the custom layer, so the tools the stack
+    /// can dispatch and the principals it authorizes them under come from
+    /// one list and cannot disagree. A session with no plugins passes an
+    /// empty map, which is the same thing as not calling this at all.
+    #[must_use]
+    pub fn with_tool_principals(mut self, tool_principals: HashMap<String, Principal>) -> Self {
+        self.tool_principals = tool_principals;
+        self
+    }
+
+    /// The caller the gate is asked about for `name`: the plugin that
+    /// contributed the tool, or — for everything the user wrote themselves
+    /// and every built-in — this stack's own principal.
+    fn principal_for(&self, name: &str) -> &Principal {
+        self.tool_principals.get(name).unwrap_or(&self.principal)
+    }
+
     /// Emit one evaluation's full account onto the attached bus, if any:
     /// who asked, for what, what the gate said, and rule by rule why. The
     /// `decision` field is what `bridge_policy_plane` copies verbatim into
@@ -211,7 +253,11 @@ impl<'a> GatedToolSet<'a> {
             stella_core::bus::names::POLICY_EVALUATED,
             stella_core::ports::authz::evaluation_journal_payload(
                 name,
-                &self.principal,
+                // The principal the decision was actually made about, which
+                // for a plugin's tool is the plugin. An audit line naming
+                // the human for a call the gate judged as a third party
+                // would be a false account of the very decision it records.
+                self.principal_for(name),
                 self.gate.name(),
                 evaluation,
             ),
@@ -236,6 +282,7 @@ impl<'a> GatedToolSet<'a> {
             approvals: None,
             bus: None,
             contracts,
+            tool_principals: HashMap::new(),
         }
     }
 
@@ -280,6 +327,7 @@ impl GatedToolSet<'static> {
             approvals: None,
             bus: None,
             contracts,
+            tool_principals: HashMap::new(),
         }
     }
 }
@@ -300,7 +348,9 @@ impl ToolExecutor for GatedToolSet<'_> {
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         let contract = self.contract(name);
-        let evaluation = self.gate.check_traced(&contract, &self.principal, input);
+        let evaluation = self
+            .gate
+            .check_traced(&contract, self.principal_for(name), input);
         // Journal before folding (#3289): the trace must survive whatever the
         // verdict is, and the fold consumes the evaluation.
         self.journal_evaluation(name, &evaluation);
@@ -819,6 +869,94 @@ mod tests {
             gated.execute(READ, &input()).await,
             ToolOutput::Ok { .. }
         ));
+    }
+
+    /// A gate that records which principal it was asked about, and refuses
+    /// anything a plugin asks for — the shape an operator would write to say
+    /// "installed packages get less than I do".
+    struct RecordingGate {
+        asked: std::sync::Mutex<Vec<(String, Principal)>>,
+    }
+
+    impl AuthzGate for RecordingGate {
+        fn name(&self) -> &'static str {
+            "recording"
+        }
+        fn check(
+            &self,
+            contract: &ToolContract,
+            principal: &Principal,
+            _input: &Value,
+        ) -> Result<AuthzDecision, AuthzEvalError> {
+            self.asked
+                .lock()
+                .unwrap()
+                .push((contract.name().to_string(), principal.clone()));
+            match principal {
+                Principal::Plugin(name) => Ok(AuthzDecision::Deny {
+                    reason: format!("`{name}` is a plugin and may not call this"),
+                }),
+                _ => Ok(AuthzDecision::Allow),
+            }
+        }
+    }
+
+    /// **The #3380 authority witness.** A tool a plugin contributed is
+    /// authorized as `Principal::Plugin`, so a gate can refuse it while
+    /// allowing the identical call from the human — which is the whole
+    /// difference between packaging authority and relocating it.
+    #[tokio::test]
+    async fn a_contributed_tool_is_authorized_as_its_plugin() {
+        let leaf = Leaf::new();
+        let gate = Arc::new(RecordingGate {
+            asked: std::sync::Mutex::new(Vec::new()),
+        });
+        let gated = GatedToolSet::new(&leaf, gate.clone(), Principal::User).with_tool_principals(
+            HashMap::from([(SPENDS.to_string(), Principal::Plugin("vera".into()))]),
+        );
+
+        // The user's own tool: allowed, and the gate was asked about the user.
+        assert!(matches!(
+            gated.execute(READ, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+        // The plugin's: refused, naming the plugin, and never reached.
+        match gated.execute(SPENDS, &input()).await {
+            ToolOutput::Error { message, .. } => assert!(message.contains("vera"), "{message}"),
+            other => panic!("a plugin's tool must face the plugin's authority: {other:?}"),
+        }
+        assert_eq!(
+            leaf.reached(),
+            vec![READ.to_string()],
+            "the refused call never reached the inner stack"
+        );
+        assert_eq!(
+            gate.asked.lock().unwrap().clone(),
+            vec![
+                (READ.to_string(), Principal::User),
+                (SPENDS.to_string(), Principal::Plugin("vera".into())),
+            ],
+            "one stack, two callers — decided per tool by provenance"
+        );
+    }
+
+    /// Anti-vacuity for the above: with no contributed tools declared, every
+    /// call is the session's own principal, exactly as before #3380.
+    #[tokio::test]
+    async fn without_contributions_every_call_is_the_sessions_own_principal() {
+        let leaf = Leaf::new();
+        let gate = Arc::new(RecordingGate {
+            asked: std::sync::Mutex::new(Vec::new()),
+        });
+        let gated = GatedToolSet::new(&leaf, gate.clone(), Principal::User);
+        assert!(matches!(
+            gated.execute(SPENDS, &input()).await,
+            ToolOutput::Ok { .. }
+        ));
+        assert_eq!(
+            gate.asked.lock().unwrap().clone(),
+            vec![(SPENDS.to_string(), Principal::User)]
+        );
     }
 
     fn session_default() -> Arc<dyn AuthzGate> {

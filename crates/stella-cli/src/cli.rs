@@ -533,6 +533,16 @@ pub(crate) enum Command {
         #[arg(long)]
         no_pipeline: bool,
 
+        /// Run this turn under an installed wrapper plugin, by the `[wrapper]
+        /// id` its manifest declares (`stella plugin list`). The plugin
+        /// contributes context before the turn, gathers evidence after it, and
+        /// its declared rule — evaluated by Stella, never by the plugin —
+        /// decides whether another turn runs. The id is recorded on the
+        /// execution row, so two variants can be compared. `classic` names the
+        /// built-in staged pipeline; omitted, nothing changes.
+        #[arg(long, value_name = "VARIANT", conflicts_with = "no_pipeline")]
+        pipeline: Option<String>,
+
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
         /// a change that flips a failing test to passing is proven done.

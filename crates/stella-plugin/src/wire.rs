@@ -140,7 +140,7 @@ struct Envelope {
 /// author sees one failure vocabulary rather than "a serde_json error appeared
 /// inside your serde error". The named field survives that trip — an unknown
 /// key in the body still reads as `unknown field \`…\``.
-fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
+pub(crate) fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
 where
     T: serde::de::DeserializeOwned,
     E: serde::de::Error,
@@ -216,14 +216,30 @@ impl<'de> Deserialize<'de> for WrapperResponse {
         D: Deserializer<'de>,
     {
         let Envelope { point, body } = Envelope::deserialize(deserializer)?;
+        Self::from_parts(point, body)
+    }
+}
+
+impl WrapperResponse {
+    /// Decode an already-split envelope into the response its point names.
+    ///
+    /// Split out of [`Deserialize`] because the host-call channel classifies a
+    /// plugin's message before it knows which shape it has
+    /// ([`PluginMessage`](crate::PluginMessage)): a message carrying both a
+    /// `point` and a `call` is a contradiction rather than a response, and that
+    /// judgement has to be made over the whole envelope. Both readers then reach
+    /// the identical body decoder, so a point response means one thing whether
+    /// it arrived alone or ended a conversation.
+    pub(crate) fn from_parts<E: serde::de::Error>(
+        point: WrapperPoint,
+        body: serde_json::Value,
+    ) -> Result<Self, E> {
         match point {
             WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
             WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
         }
     }
-}
 
-impl WrapperResponse {
     /// Which point this response answers — compared against the request's, so
     /// a plugin answering the wrong question is a named error rather than a
     /// verdict decided from the wrong evidence.
@@ -636,6 +652,23 @@ pub struct AfterTurnRequest {
 /// The engine always finishes its own turn and always says so; `completed` is
 /// that statement, and a wrapper's "the whole job is over" is a separate,
 /// separately named thing ([`Continuation`]) that cannot fake it.
+///
+/// # Why two of the four fields are optional
+///
+/// `tools` and `changed_files` are facts a host **may not have**, and the two
+/// answers a plugin needs to tell apart are "the turn dispatched no tools /
+/// changed no files" and "this host does not report them". They were plain
+/// `Vec`s until #3552, so every host that could not measure them sent `[]` —
+/// which reads as the first answer and *is* the second. A wrapper that gates
+/// its evidence on "did the turn touch anything" then graded every run as
+/// untouched, and nothing in the message let it notice.
+///
+/// So the absent case is spelled `None` (the key is omitted on the wire) and
+/// the empty case is spelled `Some(vec![])` (`[]`). Additive:
+/// [`PROTOCOL_VERSION`] is unchanged, a plugin written against the old shape
+/// reads `[]` exactly where it always did, and a host that omits the key sends
+/// bytes the old readers already accepted as "no entries" — the difference is
+/// that a reader who *cares* can now ask.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TurnOutcome {
@@ -644,12 +677,15 @@ pub struct TurnOutcome {
     /// The final assistant text.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub answer: String,
-    /// The tools the turn dispatched, in call order, by name.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<String>,
-    /// Workspace-relative paths the turn changed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub changed_files: Vec<String>,
+    /// The tools the turn dispatched, in call order, by name — or `None` when
+    /// this host does not observe them. See the type docs: `Some(vec![])` is
+    /// "the turn dispatched none", which is a different claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    /// Workspace-relative paths the turn changed, or `None` when this host does
+    /// not measure them. `Some(vec![])` is "the turn changed nothing".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_files: Option<Vec<String>>,
 }
 
 /// The evidence a wrapper gathered.

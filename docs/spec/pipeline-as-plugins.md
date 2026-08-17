@@ -1,12 +1,19 @@
 ---
 id: pipeline-as-plugins
 title: "Every wrapper is a plugin: the full extraction plan"
-status: proposed
+status: living
 ---
 
 # Every wrapper is a plugin: the full extraction plan
 
-**Status:** proposed, 2026-08-17.
+**Status:** living, updated 2026-08-17. First written 2026-08-17 as a
+completion plan; each item below is tracked to landed/open individually as it
+ships, which is the reason this reads as "proposed" in no single place — most
+of Track A (A1, A3–A10; A2 still open) and Track D's D1 have landed (#3479,
+building on ce9c7cd/aabb8d4/eb1fe9e/ed18283/9672787/5c5c325), and Tracks B, C
+and the rest of D remain the plan as written. §2's "governing gap" paragraph
+is left in place as history, with a correction above it, because it is the
+clearest record of what A3–A5/A8–A10 actually closed.
 
 `doc:turn-loop-wrappers` established the direction — one loop, six doors,
 wrappers are plugins — and sequenced its first three moves. This document is the
@@ -109,14 +116,25 @@ The starting position is better than "nothing" and worse than "nearly there".
   `[requirements]`, `[subloop]`, `[roles]`, and a closed condition grammar with
   a load-time stage-graph check (`crates/stella-plugin/src/{manifest,wrapper}.rs`).
 
-**The governing gap:** `stella-plugin` has **zero consumers**. Nothing calls
-`PluginManifest::from_toml_str`, there is no `.stella/plugins/` resolver, no
-install command, no loader. `crates/stella-plugin/src/wrapper.rs:29-33` says it
-plainly — a `StageName` is "a declared name that load-checks, not a dispatch
-target".
+**Update, 2026-08-17: Track A landed (#3479), and the paragraph below is what
+it read like before that.** Kept for the record, because it names precisely
+the gap A3–A5, A8–A10 closed. `stella-plugin` no longer has zero consumers —
+`stella-runtime`, `stella-cli` and `stella-pipeline` all consume it now, per
+`stella-plugin`'s own README "Consumers" section — and `.stella/plugins/`
+resolution, `stella plugin install|list|remove`, and a `TurnWrapper` trait
+with two working transports all exist. **What is still true, restated
+precisely rather than as "zero consumers": nothing drives a live turn through
+the socket yet.** `stella-runtime` has no host sequence that calls
+`before_turn`/`after_turn`/`judge`/`again?` in order (§4 A3's landed note has
+the detail), so a manifest an installed plugin declares is loaded, shown for
+consent, and otherwise inert on the path a real `stella run` takes.
 
-So the manifest describes a socket that does not exist. Track A builds the
-socket; everything else is downstream of it.
+> *Original text, now historical:* "`stella-plugin` has **zero consumers**.
+> Nothing calls `PluginManifest::from_toml_str`, there is no `.stella/plugins/`
+> resolver, no install command, no loader. `crates/stella-plugin/src/wrapper.rs:29-33`
+> says it plainly — a `StageName` is 'a declared name that load-checks, not a
+> dispatch target'. So the manifest describes a socket that does not exist.
+> Track A builds the socket; everything else is downstream of it."
 
 ---
 
@@ -205,26 +223,48 @@ mode already shipped. One constructor, or every wrapper re-authors the defect.
 
 ### A3. The wrapper socket (#3380)
 
-The four points, defined in **`stella-runtime`** — not `stella-core`, because
-`before_turn` performs recall and `after_turn` spawns processes, and invariant 2
-bans I/O in the engine (`doc:turn-loop-wrappers` §9.1).
+**LANDED, both halves (#3479).** The four points are defined in
+**`stella-runtime`** — not `stella-core`, because `before_turn` performs recall
+and `after_turn` spawns processes, and invariant 2 bans I/O in the engine
+(`doc:turn-loop-wrappers` §9.1).
 
-Two halves, and they are separable:
+Two halves, and they shipped together:
 
-- **A3a — the in-process contract.** A Rust trait in `stella-runtime`, plus the
-  manifest vocabulary for the four points (which `[wrapper]` does not yet have —
-  it declares stages, not points).
-- **A3b — the wire contract.** The same four points expressed as serialized
-  request/response, so a plugin can be a separate process. This is the half that
-  decides whether Python and TypeScript are first-class or bolted on, and §5
-  argues it must be designed **with** A3a rather than after it.
+- **A3a — the in-process contract.** The `TurnWrapper` trait
+  (`crates/stella-runtime/src/wrapper/mod.rs`), plus `[loop] points` — the
+  manifest vocabulary for the four points `[wrapper]` was missing when this
+  item was written — and `LoopGrant::permits_point` as its filter (folded into
+  A4 below).
+- **A3b — the wire contract.** `crates/stella-plugin/src/wire.rs`: the same
+  points as serialized request/response, so a plugin can be a separate
+  process, plus `docs/wire/wrapper.wire.json` as the generated, gate-checked
+  corpus (`doc:wrapper-socket` §3 commitment 2).
+
+**What "landed" does not yet cover, stated so this item is not read as more
+finished than it is.** There is no `dispatch` function and no host-sequence
+type in `stella-runtime` today — `admissible`, `judge` and `again` are free
+functions and `TurnWrapper` is a trait a caller implements against, but
+nothing in this crate calls all four points in order for a live turn. The
+socket is proven end-to-end against one real (non-Rust, `/bin/sh`) subprocess
+plugin by a test harness that runs its own round loop
+(`crates/stella-runtime/tests/wrapper_socket.rs`) — that is real evidence the
+trait and both transports work, but it is not §6's acceptance test, which asks
+for the same plugin driven unchanged by `stella-cli`, `stella-serve`, and an
+embedded `stella-engine` host. None of the three drivers calls `TurnWrapper`
+yet. Track B (§7) is where a real caller — and with it, a candidate
+dispatcher — would first appear.
 
 ### A4. A loader
 
-`.stella/plugins/` and `~/.stella/plugins/` resolvers (`crates/stella-home/`),
-`stella plugin install|list|remove` (`crates/stella-cli/`), a consent prompt on
-install that shows the declared participation grade and hook grants, and
-`LoopGrant::permits_hook` (`manifest.rs:137-140`) as the routing filter.
+**LANDED (#3479).** `.stella/plugins/` and `~/.stella/plugins/` resolvers,
+`stella plugin install|list|remove`, and the install consent prompt all ship
+in `crates/stella-cli/src/plugin_cmd.rs` + `plugin_cmd/{roster,process}.rs`,
+gated on `project_code_execution_trusted()` for the project tier (#3509,
+below). `LoopGrant::permits_hook` and `LoopGrant::permits_point` are both
+consulted as routing filters. **What loading does not yet do: drive a turn.**
+The loader resolves a manifest, shows consent, and stops — nothing calls
+`stella-runtime`'s `TurnWrapper` with what it resolved, because (per A3) there
+is no host sequence yet for it to call.
 
 **Uninstall must actually uninstall.** Hook settings currently *concatenate*
 across scopes and no scope can remove another's entries
@@ -253,25 +293,17 @@ most expensive grant in the ladder and can never reach a verdict.
 
 ### A5. A process declaration in the manifest
 
-Today only the oracle may name an executable — `OracleCommand{argv,
-timeout_secs}` (`crates/stella-plugin/src/manifest.rs:163-170`), "never a shell
-string", with `${plugin_dir}` interpolation as the host's job. There is no
-`runtime`, `language`, or `entrypoint` field on `PluginManifest`
-(`:227-259`), and `deny_unknown_fields` on every table means one cannot be added
-without editing the crate.
-
-Add `[runtime]` modelled directly on `OracleCommand`: `argv`, `timeout_secs`, an
-env allowlist. Deliberately **not** a `language` field — `argv` already
-expresses `["python3", "${plugin_dir}/main.py"]` and
+**LANDED (#3479).** `[runtime]` exists (`crates/stella-plugin/src/runtime.rs`):
+`argv`, `timeout_secs`, and a **default-deny** environment allowlist, modelled
+directly on `OracleCommand`. Deliberately **not** a `language` field — `argv`
+already expresses `["python3", "${plugin_dir}/main.py"]` and
 `["node", "${plugin_dir}/main.js"]` without Stella learning what a language is.
 
-**And `[oracle] command` is optional once `[runtime]` exists** (#3501 item 1).
-A plugin whose evidence comes from `after_turn` is its own oracle, and while
-`command` was mandatory every one of Track C's three reference plugins wrote its
-runtime argv out a second time, byte for byte — the sole reason their manifests
-differ in four lines rather than two. `PluginManifest::oracle_process()` resolves
-the two declarations into one answer, so a host never learns which shape an
-author chose.
+**`[oracle] command` is optional once `[runtime]` exists**, exactly as this
+item asked (#3501 item 1): `PluginManifest::oracle_process()` resolves the two
+declarations into one `OracleProcess` and reports which source it came from
+(`OracleProcessSource::OracleCommand` or `::Runtime`), so a host never learns
+which shape an author chose.
 
 ### A6. Structured verdicts
 
@@ -314,16 +346,18 @@ in the tree yet.
 
 ### A8. Signals and stages grow to cover the pipeline
 
-`StageName` is 8 of 12 — `verdict`, `reflect`, `contextwrite`, `complete` are
-undeclarable (`wrapper.rs:114-131` against `StageKind` in
-`crates/stella-protocol/src/event.rs:137+`). `Signal` is 5 values and only
-`Triage` publishes any (`wrapper.rs:140-156`), so no condition can read a diff
-size, a flip state, a test result, or a budget — which are precisely the
-pipeline's live skip conditions (`pipeline.rs:1141-1159`, `:1198`).
-
-Grow both to cover what the pipeline actually branches on. Keep the closed
-grammar: `wrapper.rs:16-21` is right that "a Turing-complete condition in a
-manifest is a second program with no gate on it."
+**LANDED (#3479).** `StageName` is now all 12 (`Triage`, `Recall`, `Research`,
+`Plan`, `Scope`, `Execute`, `Witness`, `Verify`, `Verdict`, `Reflect`,
+`ContextWrite`, `Complete` — `crates/stella-plugin/src/wrapper.rs`), matching
+`StageKind` in full. `Signal` grew from 5 to 15, and publication grew with it:
+`Execute` publishes `MutatingActions`/`DiffLines`, `Witness` publishes
+`WitnessAuthored`, `Verify` publishes `FlipAchieved`/`TestsRed`/`TestsGreen` —
+so a condition can now read a diff size, a flip state and a test result, which
+were exactly the gaps this item named. `BudgetMetered` is a host-published
+signal rather than stage-published (`Signal::publisher` returns `None` for
+it), which still closes the same gap from the other side. The closed grammar
+held throughout: nothing here admits a Turing-complete condition, matching the
+rule this item was written to protect.
 
 ### A9. Plugin events and the trace fold
 
@@ -889,3 +923,163 @@ installed plugin), not of the binary.
   already identifies between goal mode and the pipeline. The flag inversion is
   the forcing function: if inverting the default feels unsafe, the extraction is
   not finished.
+
+---
+
+## 13. A plugin is a package: what it *ships*, not only what it *does*
+
+Landed 2026-08-17 (#3565, completing #3380's loader half). §4's A-items answer
+"what say does a plugin have in the turn?". This section answers the other
+half of the maintainer's directive — *"a plugin needs to be able to ship and
+also be a packaged set of tools and skills too… plugins to the turn loop need
+to be able to affect context records/recall, tools, and the loop bits we
+shipped"* — and states the rule that keeps the two halves from disagreeing.
+
+### 13.1 What a plugin may contribute, and why to existing surfaces
+
+A package is `.stella`-shaped and that is the whole format:
+
+```text
+<plugin_dir>/
+  plugin.toml              the say in the loop (§4), and the declaration below
+  tools/*.toml             the same manifests .stella/tools/*.toml holds
+  skills/<slug>/SKILL.md   the same files .stella/skills/ holds
+  rules/*.toml             the same records .stella/rules/ holds
+```
+
+Three surfaces, no fourth. Each directory is handed to the loader that already
+reads that surface as an additional source — a plugin's tool *is* a custom
+tool (`stella_tools::custom`), its skill *is* a skill (`stella_core::skills`),
+its record *is* a context record (`crate::context_records`).
+
+**Contributing to an existing surface beats a parallel one**, and the argument
+is not aesthetic. A parallel plane would be a second set of precedence rules, a
+second set of diagnostics, a second thing to remember to gate, and a second
+place a name can collide — and the failure mode of forgetting any one of them
+is silent. Reusing the surface means a plugin's tool passes the same foundry
+gate, is named in `stella tools` beside the user's own, collides under the same
+"your own copy wins" rule, and is refused in an untrusted workspace by the same
+`PluginRoster::load` check that refuses everything else the package carries.
+Nothing here is exempt by construction rather than by policy.
+
+Recall and the loop bits the directive also names are **not** contributions:
+they are asks. A plugin reaches recall through the host-call channel
+(`doc:wrapper-socket` §6b, #3540) under `[loop] calls`, and it reaches the loop
+through `[loop] hooks` / `points`. The difference is that a contribution
+persists across every session in the workspace, while an ask happens inside one
+point of one turn and is answered by the host.
+
+### 13.2 The provenance / consent / retraction triple
+
+Every contribution has to answer all three, and each is answered structurally:
+
+- **Provenance — from the directory, never the file.** A tool's contributing
+  plugin is stamped by discovery from the directory that was read
+  (`CustomTool::contributed_by`), which is what
+  `custom::tests::a_manifest_cannot_claim_to_have_been_shipped_by_a_plugin`
+  pins, and what `CustomTool::principal` turns into `Principal::Plugin`. The
+  §13.3 declaration is deliberately *not* an input to this: a manifest names
+  what it ships and can never claim to have shipped something it did not.
+- **Consent — the crate's bytes, not a host's.** `stella_plugin::consent_text`
+  names every contributed tool, skill and record, and it says the three things
+  about a tool a user actually needs: it is executable code, the model calls it
+  on its own initiative, and it runs as the plugin rather than as them. This was
+  the defect #3565 was filed for — the inventory was rendered host-side by
+  `plugin_cmd::package::Inventory::consent_addendum`, so `stella plugin
+  install` was complete and every embedding host was not. That renderer is gone;
+  there is one document.
+- **Retraction — structural, by never copying.** Nothing is written into
+  `.stella/tools`, `.stella/skills` or `.stella/rules`. Contributions are
+  recomputed from the installed packages on every load, so `stella plugin
+  remove` deletes a directory and there is nothing left to forget to clean up.
+  The alternative was tried with hook matchers and produced a removed plugin
+  whose process still ran on every `PreToolUse`: there is no expression that
+  removes one owner's rows from a merged list nobody stamped with an owner.
+
+### 13.3 Declaration vs. discovery — neither alone is sufficient
+
+Discovery by directory convention is what makes provenance unforgeable, and it
+is also why nothing could render the contributions: `stella-plugin` is pure, so
+`consent_text` cannot see a directory. The manifest therefore declares what the
+package ships, in the identity **each surface** uses:
+
+```toml
+[[tools]]
+name = "vera_review"                       # the name the model calls
+description = "review the working diff"
+
+[[skills]]
+slug = "house-style"
+description = "how this shop writes code"
+
+[[records]]
+lineage = "ctx.acme.web.no-force-push"     # the lineage the registry merges
+statement = "Never force-push to a shared branch."
+```
+
+Two rules govern the pair, and they are the whole design:
+
+> **A declaration nobody checks is a promise. A directory nobody declared
+> cannot be consented to.**
+
+So `PluginManifest::reconcile` takes the host's own read as a `PackageListing`
+and refuses **both** directions: an entry the directories hold that no
+declaration names, and an entry declared that the directories do not hold.
+`stella plugin install` calls it before it prints anything, which is what makes
+the consent document provably complete rather than well-intentioned.
+
+Three consequences worth stating:
+
+- **Names, never paths**, so nothing here needs `${plugin_dir}` interpolation
+  (contrast `[runtime]` and `[oracle] command`, where the host expands it).
+- **A `[[tools]]` entry deliberately does not restate the tool's argv.** Author
+  prose is labelled as the author's throughout the consent surface, but an argv
+  reads as a *fact about what will run*, and this crate cannot check it against
+  the file that decides. Printing an unverified command line is the "claimed
+  limit rendered as an enforced one" mistake in new clothes.
+- **The listing carries the effective identity, not the filename.** A package
+  shipping `tools/fixer.toml` whose manifest inside says `name = "lint_fix"`
+  must reconcile against `lint_fix`, or the agreement being enforced is between
+  the manifest and a filename while the model is handed something else.
+
+### 13.4 Governance: a contributed record steers, and may never enforce
+
+`.stella/rules/` is tracked in Git, and in the `regulated` tier a record gains
+the authority to *deny* a tool call only through the repository-visible,
+hash-chained promotion ledger (`.stella/rules/promotions.jsonl`), where each
+grant names its approver and its reason and is reviewed with the record it arms.
+A package's records are outside that repository and outside that chain: they
+arrive with an install, not a review, and `stella context validate` verifies the
+chain against the repository's tree, which never contained them.
+
+The loader half placed plugin records in the **project** trust tier and
+**first** in merge order so a user's own copy wins. Both halves are correct and
+together they are **not sufficient** — which was a live security finding when
+this section was written:
+
+> A promotion grant is keyed on a **lineage**, and `registry_from` armed
+> `(Trust::Project, lineage)` for every live grant in the ledger. A plugin's
+> records load into that same tier. So a package shipping a record whose
+> `lineage_id` matched a live grant inherited the authority to deny tool calls
+> with **no promotion entry naming it**. Merge order does not settle this: it
+> only decides the collision when the workspace still *has* a record of that
+> lineage, and a grant outlives the file it was written for — a record deleted,
+> renamed into another set file, or moved out without a retirement event leaves
+> the grant live and the lineage unclaimed.
+
+Closed on both sides, because either alone leaves a gap:
+
+1. **The declaration cannot ask for it.** `[[records]] enforcement` is a closed
+   vocabulary and `blocking` is refused at load
+   (`ManifestError::PluginRecordCannotEnforce`). The variant is spellable
+   precisely so the refusal can explain the governance rule instead of
+   degrading into a deserializer's "unknown variant".
+2. **The ledger cannot grant it.** `context_records::repo_owned_lineages`
+   restricts a grant to lineages the **repository's own** project files
+   declare — every project rule file that did not arrive inside an installed
+   package. A grant is the repository's statement about the repository's
+   record; it now says nothing about anyone else's.
+
+The witness is `a_promotion_grant_does_not_arm_a_record_a_plugin_shipped`, and
+its second half is the anti-vacuity half: the repository's own record of the
+very same lineage, under the very same grant, still arms.

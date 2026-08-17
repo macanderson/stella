@@ -1,10 +1,26 @@
-//! The subprocess transport — one JSON request on stdin, one JSON response on
-//! stdout, in whatever language the plugin is written in.
+//! The subprocess transport — a JSON request on stdin, a JSON response on
+//! stdout, and between them whatever the plugin asks the host for, in whatever
+//! language the plugin is written in.
 //!
 //! This is the path that makes Python and TypeScript first-class rather than
 //! bolted on (`doc:pipeline-as-plugins` §5), so it is the path the tests
 //! exercise: `tests/wrapper_socket.rs` runs a wrapper written in `sh` — no
 //! Rust, no SDK, a JSON parser it does not even need — through a whole turn.
+//!
+//! # One exchange, or a bounded conversation
+//!
+//! A point was strictly one request and one response until #3540. It is now a
+//! **conversation that ends in the point response** (`doc:wrapper-socket` §6b):
+//! the plugin may emit host calls and read their answers first, if its manifest
+//! declared any and a [`HostCallGate`] was attached ([`SubprocessWrapper::serving`]).
+//! Two consequences worth stating where the code is:
+//!
+//! - **Stdin stays open only when a call is actually on offer.** A plugin that
+//!   declares none reads its request with `cat` or `sys.stdin.read()`, which
+//!   wait for EOF — so holding the pipe open for a conversation it can never
+//!   have would hang it until the deadline.
+//! - **The timeout covers the whole conversation.** Not each message: a plugin
+//!   must not be able to buy time by talking.
 //!
 //! # The shape is the one hooks already proved
 //!
@@ -13,6 +29,37 @@
 //! a 600s ceiling. Those two constants are **imported, not restated**: the
 //! budgets are the same budgets — one subprocess plane, one clamp — and a
 //! number in two places is how the last limit died (AGENTS.md § God files).
+//!
+//! The other two halves of that spawn policy are imported for the same reason,
+//! and a plugin needs them **more** than a hook does: a hook is at least
+//! repository- or operator-authored, while a plugin is third-party code a user
+//! installed once.
+//!
+//! - **The read is capped** at [`stella_tools::exec::MAX_CAPTURE_BYTES`], at
+//!   ingest. `wait_with_output` holds whatever the child writes, so a cap
+//!   applied to an error message afterwards only ever ran once the whole
+//!   stream was already resident — and `after_turn` is documented as the point
+//!   that runs a test suite or a benchmark, so the volume is not this host's to
+//!   trust. Where the hook plane elides the middle and keeps reading (its
+//!   output *is* the product), this transport refuses: a truncated message
+//!   cannot be decoded, and every byte read after the ceiling is spent on a
+//!   call already lost ([`WrapperError::OutputCap`]).
+//!
+//!   The ceiling is enforced here rather than by
+//!   [`stella_tools::exec::capture`], and the difference is the conversation:
+//!   `capture` reads until the child **exits**, and a plugin waiting for an
+//!   answer to a host call has not exited. What accumulates toward the ceiling
+//!   is therefore what is not yet a whole message — see [`Framer`], which also
+//!   refuses output that is not a message at all on the byte rather than at the
+//!   ceiling.
+//! - **The child leads its own process group**
+//!   ([`stella_tools::exec::detach_into_own_process_group`]), with
+//!   [`stella_tools::exec::GroupKillGuard`] armed on its pid. `kill_on_drop`
+//!   reaches the direct child and nothing else, so a plugin that backgrounds
+//!   work — again, the `after_turn` workload — would leave grandchildren
+//!   running past the turn they were gathering evidence for. The guard is
+//!   fired on the timeout and on the refusal, and disarmed once the child has
+//!   answered.
 //!
 //! # What this transport does not do, on purpose
 //!
@@ -56,19 +103,23 @@
 //!   every other spawned thing in this workspace follows.
 
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use stella_core::hooks::{DEFAULT_HOOK_TIMEOUT_MS, MAX_HOOK_TIMEOUT_MS};
 use stella_plugin::{
-    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, PROTOCOL_VERSION,
-    WrapperRequest, WrapperResponse,
+    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, HostCallResponse,
+    PROTOCOL_VERSION, PluginMessage, WrapperRequest, WrapperResponse,
 };
+use stella_tools::exec::MAX_CAPTURE_BYTES;
 use stella_tools::subprocess_env::is_sensitive_env_name;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStdin, Command};
+use tokio::sync::mpsc;
 
 use super::error::bounded;
+use super::host_call::{HostCallChannel, HostCallGate};
 use super::{TurnWrapper, WrapperError};
 
 /// The default budget for one wrapper call — 60s, the hook plane's default.
@@ -82,6 +133,13 @@ pub const MAX_WRAPPER_TIMEOUT: Duration = Duration::from_millis(MAX_HOOK_TIMEOUT
 
 /// How much of a child's stderr or unreadable stdout reaches an error message.
 const OUTPUT_EXCERPT_CHARS: usize = 2_000;
+
+/// How much of either stream is taken in one read.
+///
+/// The conversation reads incrementally rather than through
+/// [`stella_tools::exec::capture`], which waits for the child to exit — a
+/// wrapper that is mid-conversation has not exited and must not be waited for.
+const READ_CHUNK: usize = 8 * 1024;
 
 /// Whether the socket withholds a declared environment name from a plugin.
 ///
@@ -120,6 +178,7 @@ pub struct SubprocessWrapper {
     args: Vec<String>,
     env: Vec<(String, String)>,
     timeout: Duration,
+    gate: Option<Arc<HostCallGate>>,
 }
 
 /// A declared wrapper, together with what the socket took away from it.
@@ -225,9 +284,28 @@ impl SubprocessWrapper {
                 args: args.to_vec(),
                 env: admitted,
                 timeout,
+                gate: None,
             },
             refused,
         })
+    }
+
+    /// Serve this plugin's declared host calls from `gate`
+    /// (`doc:wrapper-socket` §6b).
+    ///
+    /// Without one the transport is the strictly one-directional socket it was:
+    /// the request goes out, stdin closes, and the plugin answers. With one, the
+    /// plugin may ask — bounded by what its manifest declared, by the gate's
+    /// clamped per-point allowance, and by the same point timeout, which covers
+    /// the **whole** conversation so a plugin cannot buy time by talking.
+    ///
+    /// The gate is `Arc` because a host holds it too: the refusals it recorded
+    /// are what the host reports, and a report only this transport could read
+    /// would be a silence.
+    #[must_use]
+    pub fn serving(mut self, gate: Arc<HostCallGate>) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// The program this wrapper starts — what an error message names.
@@ -242,13 +320,23 @@ impl SubprocessWrapper {
         self.timeout
     }
 
-    /// One request out, one response back.
+    /// One conversation: the request out, every host call answered, and the
+    /// point response back (`doc:wrapper-socket` §6b).
     ///
-    /// The write and the read are concurrent on purpose. Writing the whole
-    /// request before reading a byte deadlocks the moment either side fills a
-    /// pipe buffer — a wrapper that streams progress to stdout while the host
-    /// is still writing a large `changed_files` list is not exotic, it is
-    /// Tuesday.
+    /// **One timeout covers the whole of it.** That is contract, not an
+    /// implementation choice: a conversation can hang where a single exchange
+    /// could not, and a per-message budget would let a plugin buy unbounded time
+    /// by talking. A plugin that spends its point arguing is killed at the same
+    /// deadline as one that spends it thinking.
+    ///
+    /// The write and the read are concurrent on purpose, and now for two
+    /// reasons. Writing the whole request before reading a byte deadlocks the
+    /// moment either side fills a pipe buffer — a wrapper that streams progress
+    /// to stdout while the host is still writing a large `changed_files` list is
+    /// not exotic, it is Tuesday. The channel adds the mirror image: a host
+    /// writing a recall answer while the plugin writes its next message would
+    /// deadlock the same way. So stdin belongs to one task that does nothing
+    /// else, and this loop only ever reads.
     async fn exchange(&self, request: WrapperRequest) -> Result<WrapperResponse, WrapperError> {
         let asked = request.point();
         let body = serde_json::to_vec(&request).map_err(WrapperError::Encode)?;
@@ -263,76 +351,146 @@ impl SubprocessWrapper {
             .stderr(Stdio::piped())
             // A wrapper that outlives its budget is killed; without this, a
             // child that ignores the drop keeps running after the turn it was
-            // gathering evidence for has been reported.
+            // gathering evidence for has been reported. It reaches the direct
+            // child and nothing else, which is all there is on non-unix.
             .kill_on_drop(true);
+        // The rest of the tree. `after_turn` is where a plugin runs a test or a
+        // benchmark, so it is the point most likely to background something,
+        // and a backgrounded grandchild is exactly what `kill_on_drop` cannot
+        // reach — it outlives the turn it was gathering evidence for.
+        #[cfg(unix)]
+        stella_tools::exec::detach_into_own_process_group(&mut command);
 
         let mut child = command.spawn().map_err(|source| WrapperError::Spawn {
             program: self.program.clone(),
             source,
         })?;
-        let Some(mut stdin) = child.stdin.take() else {
+        // The child leads the group, so its pid *is* the group id. Taken
+        // before anything borrows the child, and armed immediately: between
+        // here and the disarm below, every path out — a returned error, a
+        // dropped future, a panic — reaps the whole group.
+        #[cfg(unix)]
+        let mut guard =
+            stella_tools::exec::GroupKillGuard::arm(child.id().unwrap_or(0).cast_signed());
+        let (Some(stdin), Some(mut stdout), Some(mut stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(WrapperError::Transport {
                 program: self.program.clone(),
-                source: std::io::Error::other("the child was started without a stdin pipe"),
+                source: std::io::Error::other(
+                    "the child was started without a full set of stdio pipes",
+                ),
             });
         };
 
-        let write = async move {
-            stdin.write_all(&body).await?;
-            // The newline is not part of the framing — one request is one
-            // process — but a line-oriented reader (`read()` in a shell,
-            // `sys.stdin.readline()` in Python) is the first thing a plugin
-            // author reaches for, and denying them it buys nothing.
-            stdin.write_all(b"\n").await?;
-            stdin.shutdown().await
-        };
-        let (written, waited) =
-            match tokio::time::timeout(self.timeout, futures_join(write, child.wait_with_output()))
-                .await
-            {
-                Ok(pair) => pair,
-                Err(_) => {
-                    return Err(WrapperError::Timeout {
-                        program: self.program.clone(),
-                        timeout: self.timeout,
-                    });
-                }
-            };
+        // Stdin belongs to one task and nothing else touches it. The alternative
+        // — writing inline from the read loop — stops reading for the duration
+        // of a write, which is the deadlock the channel makes reachable: the
+        // host writes a recall answer the plugin is not reading because it is
+        // writing something the host is not reading.
+        let (frames, outbox) = mpsc::channel::<Vec<u8>>(1);
+        let writer = tokio::spawn(write_frames(stdin, outbox));
+        // A send failing means the writer is gone, which the join below
+        // diagnoses with the actual I/O error; there is nothing better to say
+        // here than "carry on and read what the child has to say".
+        let _ = frames.send(body).await;
 
-        let output = waited.map_err(|source| WrapperError::Transport {
-            program: self.program.clone(),
-            source,
-        })?;
+        // Stdin closes now unless the plugin can actually ask for something.
+        // A plugin that declared no calls reads its request with `cat` or
+        // `sys.stdin.read()` — both wait for EOF — so holding the pipe open for
+        // a conversation it can never have would hang it until the deadline.
+        let conversation = self.gate.as_ref().filter(|gate| gate.offers_calls());
+        let channel = conversation.map(|gate| gate.open());
+        let frames = channel.is_some().then_some(frames);
+
+        let mut stderr_seen = Vec::new();
+        let mut read = 0usize;
+        let settled = tokio::time::timeout(self.timeout, async {
+            let response = self
+                .converse(
+                    &mut stdout,
+                    &mut stderr,
+                    frames,
+                    channel.as_ref(),
+                    &mut stderr_seen,
+                    &mut read,
+                )
+                .await?;
+            // `converse` has dropped the sender, so the writer has shut stdin
+            // down and the child has its EOF. Waiting for the exit *after* the
+            // answer is what keeps a plugin that answers and then dies loudly
+            // an `Exit` rather than a success.
+            let status = self
+                .settle(&mut child, &mut stderr, &mut stderr_seen, &mut read)
+                .await?;
+            Ok::<_, WrapperError>((response, status))
+        })
+        .await;
+
+        let (response, status) = match settled {
+            Ok(Ok(settled)) => settled,
+            Ok(Err(error)) => {
+                // The conversation failed with the child's state unknown — it
+                // may still be writing past the ceiling, or wedged. Kill the
+                // group before answering rather than leaving the drop to reach
+                // the direct child alone.
+                #[cfg(unix)]
+                guard.kill_now();
+                writer.abort();
+                return Err(error);
+            }
+            Err(_) => {
+                #[cfg(unix)]
+                guard.kill_now();
+                writer.abort();
+                return Err(WrapperError::Timeout {
+                    program: self.program.clone(),
+                    timeout: self.timeout,
+                });
+            }
+        };
+        // The child has answered and been reaped. Anything it detached on
+        // purpose is not this transport's to kill.
+        #[cfg(unix)]
+        guard.disarm();
+
         // A child that answered without reading its request is not an error:
         // a fixed-answer plugin closing stdin early is legitimate, and the
         // broken pipe it causes says nothing about the answer. Any other write
-        // failure did lose the request, so it is reported.
-        if let Err(source) = written
-            && source.kind() != std::io::ErrorKind::BrokenPipe
-        {
-            return Err(WrapperError::Transport {
-                program: self.program.clone(),
-                source,
-            });
+        // failure did lose the request, so it is reported. A join failure — the
+        // writer task panicked or was cancelled — is the same class of loss.
+        match writer.await {
+            Ok(Err(source)) if source.kind() != std::io::ErrorKind::BrokenPipe => {
+                return Err(WrapperError::Transport {
+                    program: self.program.clone(),
+                    source,
+                });
+            }
+            Err(join) => {
+                return Err(WrapperError::Transport {
+                    program: self.program.clone(),
+                    source: std::io::Error::other(join),
+                });
+            }
+            Ok(_) => {}
         }
 
-        if !output.status.success() {
+        if !status.success() {
             return Err(WrapperError::Exit {
                 program: self.program.clone(),
-                status: output
-                    .status
+                status: status
                     .code()
                     .map_or_else(|| "a signal".to_string(), |code| format!("code {code}")),
-                stderr: bounded(&output.stderr, OUTPUT_EXCERPT_CHARS),
+                stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
             });
         }
 
-        let response: WrapperResponse =
-            serde_json::from_slice(&output.stdout).map_err(|source| WrapperError::Decode {
+        let Some(response) = response else {
+            return Err(WrapperError::NoResponse {
                 program: self.program.clone(),
-                answer: bounded(&output.stdout, OUTPUT_EXCERPT_CHARS),
-                source,
-            })?;
+                stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
+            });
+        };
         if response.protocol_version() > PROTOCOL_VERSION {
             return Err(WrapperError::ProtocolVersion {
                 program: self.program.clone(),
@@ -349,21 +507,333 @@ impl SubprocessWrapper {
         }
         Ok(response)
     }
+
+    /// Read the plugin's messages until the one that ends the point, answering
+    /// every host call on the way.
+    ///
+    /// `Ok(None)` is stdout reaching EOF with no point response in it — the
+    /// child ended without answering, which the caller reports as an
+    /// [`WrapperError::Exit`] or a [`WrapperError::NoResponse`] once it knows
+    /// how the child died.
+    ///
+    /// # Framing
+    ///
+    /// **A message ends where its JSON value ends**, decided by the parser
+    /// rather than by a newline. `serde_json`'s streaming reader is what makes
+    /// that free: it either yields a value and says how many bytes it consumed,
+    /// or reports an incomplete document, which is exactly the "keep reading"
+    /// signal a framing needs. Two things fall out that a line rule would have
+    /// cost: a plugin may pretty-print its answer across lines the way its
+    /// language's JSON encoder does by default, and several messages arriving in
+    /// one read are all handled — a plugin that pipelines two calls does not
+    /// have to flush between them.
+    async fn converse(
+        &self,
+        stdout: &mut tokio::process::ChildStdout,
+        stderr: &mut tokio::process::ChildStderr,
+        mut frames: Option<mpsc::Sender<Vec<u8>>>,
+        channel: Option<&super::host_call::PointChannel<'_>>,
+        stderr_seen: &mut Vec<u8>,
+        read: &mut usize,
+    ) -> Result<Option<WrapperResponse>, WrapperError> {
+        let mut framer = Framer::default();
+        let mut chunk = vec![0u8; READ_CHUNK];
+        let mut errchunk = vec![0u8; READ_CHUNK];
+        let mut stdout_open = true;
+        let mut stderr_open = true;
+
+        while stdout_open {
+            let (result, is_stdout) = tokio::select! {
+                // Both reads are cancellation-safe (`AsyncReadExt::read` either
+                // fills or does nothing), which is what lets the loser of each
+                // race simply be asked again.
+                result = stdout.read(&mut chunk), if stdout_open => (result, true),
+                result = stderr.read(&mut errchunk), if stderr_open => (result, false),
+            };
+            let filled = result.map_err(|source| WrapperError::Transport {
+                program: self.program.clone(),
+                source,
+            })?;
+            if filled == 0 {
+                if is_stdout {
+                    stdout_open = false;
+                } else {
+                    stderr_open = false;
+                }
+                continue;
+            }
+            // The cap is applied at ingest, over both streams together: a
+            // ceiling checked after the fact is a ceiling paid for.
+            *read += filled;
+            if *read > MAX_CAPTURE_BYTES {
+                return Err(WrapperError::OutputCap {
+                    program: self.program.clone(),
+                    stream: if is_stdout { "stdout" } else { "stderr" },
+                    cap: MAX_CAPTURE_BYTES,
+                });
+            }
+            if !is_stdout {
+                stderr_seen.extend_from_slice(&errchunk[..filled]);
+                continue;
+            }
+            framer.push(&chunk[..filled]);
+
+            while let Some(message) = self.take_message(&mut framer)? {
+                match message {
+                    // The point response terminates the conversation. Dropping
+                    // the sender here is what shuts stdin down, so the plugin
+                    // gets its EOF and can exit.
+                    PluginMessage::Response(response) => return Ok(Some(response)),
+                    PluginMessage::Call(call) => {
+                        let asked = call.call();
+                        let Some(sender) = &frames else {
+                            // Stdin is already closed because the manifest
+                            // declared no callable capability, so there is no
+                            // way to tell the plugin it may not have this. A
+                            // hang until the deadline would be the alternative;
+                            // this at least names the manifest bug.
+                            return Err(WrapperError::UnannouncedCall {
+                                program: self.program.clone(),
+                                call: asked,
+                            });
+                        };
+                        let outcome = match channel {
+                            Some(channel) => channel.call(call.args).await,
+                            // Unreachable: `frames` is `Some` only when a
+                            // channel was opened. Written as a value rather
+                            // than an `expect`, because invariant 5 makes no
+                            // exception for "I checked earlier".
+                            None => super::host_call::NoHostCalls.call(call.args).await,
+                        };
+                        let answer = serde_json::to_vec(&HostCallResponse {
+                            result: call.id,
+                            outcome,
+                        })
+                        .map_err(WrapperError::Encode)?;
+                        if sender.send(answer).await.is_err() {
+                            // The writer is gone, so no further answer can
+                            // reach the plugin. Stop pretending otherwise;
+                            // the join in `exchange` reports why.
+                            frames = None;
+                        }
+                    }
+                }
+            }
+        }
+        // EOF with bytes still buffered: one last parse, so a plugin that
+        // answered without a trailing newline and exited is read exactly as it
+        // always was.
+        self.take_message(&mut framer)?.map_or(Ok(None), |message| {
+            match message {
+                PluginMessage::Response(response) => Ok(Some(response)),
+                // A call as the very last thing the plugin said: it asked and
+                // then closed its own stdout, so no answer could be read even
+                // if one were written.
+                PluginMessage::Call(call) => Err(WrapperError::UnansweredCall {
+                    program: self.program.clone(),
+                    call: call.call(),
+                }),
+            }
+        })
+    }
+
+    /// Take the next complete message the framer has assembled, if there is one.
+    fn take_message(&self, framer: &mut Framer) -> Result<Option<PluginMessage>, WrapperError> {
+        let Some(message) = framer.take().map_err(|detail| WrapperError::Decode {
+            program: self.program.clone(),
+            answer: bounded(framer.buffered(), OUTPUT_EXCERPT_CHARS),
+            source: serde::de::Error::custom(detail),
+        })?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&message)
+            .map(Some)
+            .map_err(|source| WrapperError::Decode {
+                program: self.program.clone(),
+                answer: bounded(&message, OUTPUT_EXCERPT_CHARS),
+                source,
+            })
+    }
+
+    /// Drain what the child still has to say and wait for it to exit.
+    ///
+    /// Stderr is read to EOF first: the child may be blocked writing a
+    /// diagnostic into a pipe nobody is emptying, and waiting for a process
+    /// that cannot finish its own error message is a deadlock with a
+    /// helpful-looking cause.
+    async fn settle(
+        &self,
+        child: &mut tokio::process::Child,
+        stderr: &mut tokio::process::ChildStderr,
+        stderr_seen: &mut Vec<u8>,
+        read: &mut usize,
+    ) -> Result<std::process::ExitStatus, WrapperError> {
+        let mut chunk = vec![0u8; READ_CHUNK];
+        loop {
+            let filled =
+                stderr
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|source| WrapperError::Transport {
+                        program: self.program.clone(),
+                        source,
+                    })?;
+            if filled == 0 {
+                break;
+            }
+            *read += filled;
+            if *read > MAX_CAPTURE_BYTES {
+                return Err(WrapperError::OutputCap {
+                    program: self.program.clone(),
+                    stream: "stderr",
+                    cap: MAX_CAPTURE_BYTES,
+                });
+            }
+            stderr_seen.extend_from_slice(&chunk[..filled]);
+        }
+        child
+            .wait()
+            .await
+            .map_err(|source| WrapperError::Transport {
+                program: self.program.clone(),
+                source,
+            })
+    }
 }
 
-/// Await both futures to completion.
+/// Where one message ends in a stream of them.
 ///
-/// `tokio::join!` is a macro over its own arguments, which cannot be handed a
-/// pair built elsewhere; this is the same thing as a function so the timeout
-/// above wraps *one* future covering both halves. Written out rather than
-/// pulled from `futures` because that would be a new dependency for eight
-/// lines (AGENTS.md § no new dependencies casually).
-async fn futures_join<A, B>(a: A, b: B) -> (A::Output, B::Output)
-where
-    A: Future,
-    B: Future,
-{
-    tokio::join!(a, b)
+/// **Not a line reader, and not a re-parse either**, and both alternatives were
+/// tried on the way here:
+///
+/// - *One message per line* is what the writer produces and what both shipped
+///   plugins write, but it forbids a plugin from pretty-printing its answer —
+///   which is what `json.dumps(x, indent=2)` and `JSON.stringify(x, null, 2)`
+///   do, and refusing them would make the wire contract a Rust programmer's
+///   idea of JSON.
+/// - *Try to parse the whole buffer on every read* accepts both shapes and is
+///   four lines, and it is quadratic: `crates/stella-runtime/tests/wrapper_transport_limits.rs`
+///   drives 9 MiB through this path in 8 KiB reads, which re-scanned about
+///   6 GiB and turned a prompt refusal into a ten-second timeout. The transport
+///   is the one place in this crate that reads attacker-shaped volume, so
+///   "correct but quadratic" is a defect here rather than a trade.
+///
+/// So the framer scans each byte exactly once, tracking nesting depth outside
+/// of strings, and hands over a value the moment its depth returns to zero. The
+/// scan is also what refuses output that is not a message at all: a plugin whose
+/// stdout starts with a log line is told so on the first read rather than at the
+/// ceiling, which is 8 MiB of reading later.
+#[derive(Debug, Default)]
+struct Framer {
+    buf: Vec<u8>,
+    /// How far into `buf` the scan has already reached, so no byte is examined
+    /// twice.
+    scanned: usize,
+    /// Nesting depth of `{`/`[` outside strings. `0` with `started` set means a
+    /// complete value ends at `scanned`.
+    depth: u32,
+    started: bool,
+    complete: Option<usize>,
+    in_string: bool,
+    escaped: bool,
+}
+
+impl Framer {
+    /// Add what one read produced.
+    fn push(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
+    /// What is buffered but not yet a message — for an error's excerpt.
+    fn buffered(&self) -> &[u8] {
+        &self.buf
+    }
+
+    /// The next complete message, or `None` while one is still arriving.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are not a JSON object at all, described in the words the
+    /// caller wraps into a decode failure. A message is an object in both
+    /// directions of this wire — a bare scalar is not a shape either side has —
+    /// so refusing on the first byte is strictly more useful than waiting to
+    /// fail on the whole document.
+    fn take(&mut self) -> Result<Option<Vec<u8>>, String> {
+        while self.scanned < self.buf.len() {
+            let byte = self.buf[self.scanned];
+            self.scanned += 1;
+            if self.in_string {
+                if self.escaped {
+                    self.escaped = false;
+                } else if byte == b'\\' {
+                    self.escaped = true;
+                } else if byte == b'"' {
+                    self.in_string = false;
+                }
+                continue;
+            }
+            match byte {
+                // Whitespace between messages is ordinary — the writer's own
+                // newline is one.
+                b' ' | b'\t' | b'\r' | b'\n' if !self.started => {}
+                b'{' | b'[' => {
+                    self.depth += 1;
+                    self.started = true;
+                }
+                // Anything else before a value has opened is a plugin writing
+                // something that is not a message to the stream its answer
+                // arrives on: a log line, a stray `}`, a bare string. Refused
+                // on the byte rather than accumulated to the ceiling, which is
+                // 8 MiB of reading later.
+                other if !self.started => {
+                    return Err(format!(
+                        "expected a JSON object on stdout, found `{}`",
+                        char::from(other).escape_debug()
+                    ));
+                }
+                b'"' => self.in_string = true,
+                b'}' | b']' => {
+                    self.depth = self.depth.saturating_sub(1);
+                    if self.depth == 0 {
+                        self.complete = Some(self.scanned);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = self.complete.take() else {
+            return Ok(None);
+        };
+        let message: Vec<u8> = self.buf.drain(..end).collect();
+        self.scanned = 0;
+        self.started = false;
+        Ok(Some(message))
+    }
+}
+
+/// Write every frame the conversation produces, and nothing else.
+///
+/// One task owns stdin for the life of the exchange. The newline after each
+/// frame is not what delimits a message — the parser decides that — but a
+/// line-oriented reader (`read` in a shell, `sys.stdin.readline()` in Python) is
+/// the first thing a plugin author reaches for, and denying them it buys
+/// nothing.
+///
+/// The shutdown at the end is the plugin's EOF, and it is why the sender is
+/// dropped the moment the point response lands: a plugin blocked on `cat` or
+/// `sys.stdin.read()` cannot exit until this happens.
+async fn write_frames(
+    mut stdin: ChildStdin,
+    mut outbox: mpsc::Receiver<Vec<u8>>,
+) -> std::io::Result<()> {
+    while let Some(frame) = outbox.recv().await {
+        stdin.write_all(&frame).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await?;
+    }
+    stdin.shutdown().await
 }
 
 #[async_trait]
@@ -398,5 +868,81 @@ impl TurnWrapper for SubprocessWrapper {
                 actual: WrapperResponse::BeforeTurn(response).point(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frames_of(chunks: &[&str]) -> Result<Vec<String>, String> {
+        let mut framer = Framer::default();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            framer.push(chunk.as_bytes());
+            while let Some(message) = framer.take()? {
+                out.push(String::from_utf8_lossy(&message).into_owned());
+            }
+        }
+        Ok(out)
+    }
+
+    /// The shape both shipped plugins write: one message, one line.
+    #[test]
+    fn a_message_per_line_is_one_message_per_line() {
+        assert_eq!(
+            frames_of(&["{\"a\":1}\n{\"b\":2}\n"]).expect("both messages frame"),
+            vec!["{\"a\":1}".to_string(), "\n{\"b\":2}".to_string()],
+        );
+    }
+
+    /// A plugin may pretty-print, because `json.dumps(x, indent=2)` is what its
+    /// language does by default and a wire contract that refuses it is a Rust
+    /// programmer's idea of JSON. A line reader would have cut this into five
+    /// unparseable pieces.
+    #[test]
+    fn a_message_may_span_lines() {
+        let pretty = "{\n  \"point\": \"before_turn\",\n  \"body\": {\n    \"protocol_version\": 1\n  }\n}\n";
+        let framed = frames_of(&[pretty]).expect("a pretty-printed message frames");
+        assert_eq!(framed.len(), 1);
+        assert!(framed[0].contains("before_turn"));
+    }
+
+    /// The framing does not depend on where a read happened to land — which is
+    /// the whole reason it is a scanner and not a `split('\n')`.
+    #[test]
+    fn a_message_split_across_reads_is_reassembled() {
+        assert_eq!(
+            frames_of(&["{\"goa", "l\":\"x\"", "}"]).expect("frames"),
+            vec!["{\"goal\":\"x\"}".to_string()],
+        );
+    }
+
+    /// Braces inside a string are text, not structure — a goal containing `}`
+    /// is ordinary, and a framer that ended the message there would truncate
+    /// every request carrying one.
+    #[test]
+    fn a_brace_inside_a_string_does_not_end_the_message() {
+        assert_eq!(
+            frames_of(&[r#"{"goal":"fix fn f() {}","n":1}"#]).expect("frames"),
+            vec![r#"{"goal":"fix fn f() {}","n":1}"#.to_string()],
+        );
+        assert_eq!(
+            frames_of(&[r#"{"goal":"a \" then }"}"#]).expect("frames"),
+            vec![r#"{"goal":"a \" then }"}"#.to_string()],
+            "an escaped quote does not leave the string"
+        );
+    }
+
+    /// Output that is not a message at all is refused on the byte, not at the
+    /// 8 MiB ceiling: a plugin logging to stdout is told what it did wrong.
+    #[test]
+    fn output_that_is_not_a_message_is_refused_immediately() {
+        let error = frames_of(&["starting up...\n{\"point\":\"before_turn\"}"])
+            .expect_err("a log line on stdout is refused");
+        assert!(error.contains("expected a JSON object"), "{error}");
+
+        let stray = frames_of(&["}{\"a\":1}"]).expect_err("a stray brace is refused");
+        assert!(stray.contains("expected a JSON object"), "{stray}");
     }
 }

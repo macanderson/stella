@@ -61,8 +61,8 @@ fn after() -> AfterTurnRequest {
         turn: TurnOutcome {
             completed: true,
             answer: "nothing".into(),
-            tools: Vec::new(),
-            changed_files: Vec::new(),
+            tools: Some(Vec::new()),
+            changed_files: Some(Vec::new()),
         },
     }
 }

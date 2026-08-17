@@ -30,6 +30,7 @@
 //! deployment grows a real gate (an RBAC plugin, a host-supplied policy over
 //! the serve wire), `session_gate` is the one function that changes.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -97,9 +98,33 @@ pub(crate) fn session_stack_with_gate<'a>(
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
+    // Derived from the same list the custom layer is about to own, before it
+    // is moved: what the stack can dispatch and who each call authorizes as
+    // come from one source, so a plugin's tool cannot reach the surface
+    // without its principal reaching the gate (#3380).
+    let contributed = contributed_principals(&custom_tools, &principal);
     let customs = CustomToolSet::new(base, custom_tools, workspace_root);
     let permitted = PolicyToolSet::new_boxed(Box::new(customs), policy);
-    GatedToolSet::new_boxed(Box::new(permitted), gate, principal)
+    GatedToolSet::new_boxed(Box::new(permitted), gate, principal).with_tool_principals(contributed)
+}
+
+/// The principal each plugin-contributed tool authorizes as, keyed by tool
+/// name — empty for the overwhelmingly common session with no plugins
+/// installed.
+///
+/// Only the entries that actually *change* the answer are emitted: a tool
+/// the user wrote themselves is absent from the map and falls through to the
+/// stack's own principal, so the map's size is the number of third-party
+/// tools rather than the number of tools.
+fn contributed_principals(
+    custom_tools: &[CustomTool],
+    caller: &Principal,
+) -> HashMap<String, Principal> {
+    custom_tools
+        .iter()
+        .filter(|tool| tool.contributed_by.is_some())
+        .map(|tool| (tool.name.clone(), tool.principal(caller)))
+        .collect()
 }
 
 /// The chain without the custom layer: the operator's switches and the gate
