@@ -506,12 +506,9 @@ impl SessionMemory {
     }
     /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
     ///
-    /// `#[cfg(test)]` because that is the whole truth about it: production
-    /// recall goes through [`Self::recalled_frames`] (which reports to stderr)
-    /// or [`Self::recalled_frames_anchored`] (which takes the caller's own
-    /// sink), and #3435 left this wrapper with test callers alone. Gating it
-    /// is what makes `-D dead-code` agree with the doc comment, rather than an
-    /// `#[allow]` asserting over the top of it.
+    /// Test-only, and gated as such: every caller is inside a `#[cfg(test)]`
+    /// module, so the shipping binary carries no reference to it and
+    /// `clippy -D warnings` reads it as dead code in that build.
     #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
