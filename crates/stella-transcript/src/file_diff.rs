@@ -170,13 +170,7 @@ fn render_hunk(hunk: &stella_diff::Hunk) -> RenderHunk {
                     i += 1;
                 }
                 let additions = &lines[add_start..i];
-                emit_change_block(
-                    removals,
-                    additions,
-                    &mut old_no,
-                    &mut new_no,
-                    &mut rows,
-                );
+                emit_change_block(removals, additions, &mut old_no, &mut new_no, &mut rows);
             }
         }
     }

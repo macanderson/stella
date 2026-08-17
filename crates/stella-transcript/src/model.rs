@@ -31,11 +31,26 @@ pub enum NodeId {
     /// The `n`th turn of the run.
     Turn(usize),
     /// The `s`th step of the `t`th turn.
-    Step { turn: usize, step: usize },
+    Step {
+        /// Turn index.
+        turn: usize,
+        /// Step index within the turn.
+        step: usize,
+    },
     /// The output body of the `s`th step of the `t`th turn.
-    Output { turn: usize, step: usize },
+    Output {
+        /// Turn index.
+        turn: usize,
+        /// Step index within the turn.
+        step: usize,
+    },
     /// The `p`th prose block of the `t`th turn.
-    Prose { turn: usize, prose: usize },
+    Prose {
+        /// Turn index.
+        turn: usize,
+        /// Prose-block index within the turn.
+        prose: usize,
+    },
     /// The `f`th file diff inside the `s`th step of the `t`th turn.
     File {
         /// Turn index.

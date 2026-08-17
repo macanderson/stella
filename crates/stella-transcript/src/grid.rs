@@ -241,10 +241,7 @@ fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
         Cell::new(" ", Color::Faint),
     ];
     if !open {
-        line.push(Cell::new(
-            format!("\"{}\" ", dig.prompt_line),
-            Color::Dim,
-        ));
+        line.push(Cell::new(format!("\"{}\" ", dig.prompt_line), Color::Dim));
     }
 
     let chips = chips_text(&dig.chips);
@@ -275,10 +272,17 @@ fn role_lines(out: &mut Vec<Line>, tag: &str, color: Color, text: &str, width: u
     for (i, wrapped) in wrap(text, measure).into_iter().enumerate() {
         let mut line = vec![Cell::new("│ ", Color::Faint)];
         if i == 0 {
-            line.push(Cell::new(&badge, Color::Ink).tinted(Tint::Badge(color)).bold());
+            line.push(
+                Cell::new(&badge, Color::Ink)
+                    .tinted(Tint::Badge(color))
+                    .bold(),
+            );
             line.push(Cell::new(" ", Color::Faint));
         } else {
-            line.push(Cell::new(" ".repeat(badge.chars().count() + 1), Color::Faint));
+            line.push(Cell::new(
+                " ".repeat(badge.chars().count() + 1),
+                Color::Faint,
+            ));
         }
         line.push(Cell::new(wrapped, Color::Ink));
         out.push(line);
@@ -294,7 +298,13 @@ fn prose_lines(
     pi: usize,
     width: usize,
 ) {
-    let open = state.is_open(run, NodeId::Prose { turn: ti, prose: pi });
+    let open = state.is_open(
+        run,
+        NodeId::Prose {
+            turn: ti,
+            prose: pi,
+        },
+    );
     let head = digest::first_sentence(&prose.text);
     out.push(vec![
         Cell::new("│ ", Color::Faint),
@@ -340,9 +350,12 @@ fn step_lines(
         Cell::new(pad(&dig.verb, TOOL_W), tool_color(dig.class)).bold(),
         Cell::new(&dig.object, Color::Ink),
     ];
-    if let Some((added, removed)) = dig.delta {
-        line.push(Cell::new(format!("  +{added}"), Color::Green));
-        line.push(Cell::new(format!(" −{removed}"), Color::Red));
+    if let Some(delta) = &dig.delta {
+        let color = match delta.kind {
+            FileStatus::Deleted => Color::Red,
+            _ => Color::Green,
+        };
+        line.push(Cell::new(format!("  {}", delta.label()), color));
     }
     if dig.status == Status::Error {
         line.push(Cell::new("  ✗ failed", Color::Red).bold());
@@ -460,10 +473,7 @@ fn diff_lines(
     }
 
     for (hi, hunk) in diff.hunks.iter().enumerate() {
-        out.push(vec![
-            body_gutter(),
-            Cell::new(&hunk.header, Color::Blue),
-        ]);
+        out.push(vec![body_gutter(), Cell::new(&hunk.header, Color::Blue)]);
         let hunk_open = !hunk.is_large()
             || state.is_open(
                 run,
@@ -532,7 +542,10 @@ fn status_line(run: &Run, state: &FoldState, width: usize) -> Line {
         run.step_count(),
         digest::format_cost(acc.micros)
     );
-    let right = format!("j/k step  ←/→ fold  z zoom [{}]  e outputs  c copy", state.zoom().label());
+    let right = format!(
+        "j/k step  ←/→ fold  z zoom [{}]  e outputs  c copy",
+        state.zoom().label()
+    );
     let gap = width
         .saturating_sub(left.chars().count() + right.chars().count())
         .max(2);
@@ -696,7 +709,11 @@ fn encode(lines: &[Line], basic: bool) -> String {
                     codes.push("30".to_string());
                 }
             }
-            out.push_str(&format!("\u{1b}[{}m{}\u{1b}[0m", codes.join(";"), cell.text));
+            out.push_str(&format!(
+                "\u{1b}[{}m{}\u{1b}[0m",
+                codes.join(";"),
+                cell.text
+            ));
         }
     }
     out

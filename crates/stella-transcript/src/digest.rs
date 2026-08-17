@@ -264,6 +264,43 @@ pub fn offsets(steps: &[Step]) -> Vec<String> {
     out
 }
 
+/// What a mutation call did to the files it touched.
+///
+/// A bare `+N −M` is the right answer for an edit and the wrong one for a
+/// creation or a deletion: `+0 −2` on a `delete_file` makes a reader parse
+/// arithmetic to recover a fact the tool name already stated. So the label is
+/// chosen by status, and the counts ride along for the surfaces that want them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delta {
+    /// Lines added across the call's files.
+    pub added: usize,
+    /// Lines removed across the call's files.
+    pub removed: usize,
+    /// The dominant file status — what the call did.
+    pub kind: crate::model::FileStatus,
+    /// How many files the call touched.
+    pub files: usize,
+}
+
+impl Delta {
+    /// The digest label.
+    #[must_use]
+    pub fn label(&self) -> String {
+        use crate::model::FileStatus;
+        match self.kind {
+            FileStatus::Modified => format!("+{} −{}", self.added, self.removed),
+            FileStatus::New if self.files > 1 => {
+                format!("{} new files · +{}", self.files, self.added)
+            }
+            FileStatus::New => format!("new file · +{}", self.added),
+            FileStatus::Deleted if self.files > 1 => {
+                format!("{} files deleted · −{}", self.files, self.removed)
+            }
+            FileStatus::Deleted => format!("deleted · −{}", self.removed),
+        }
+    }
+}
+
 /// A step's one-line digest: verb, object, and the outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepDigest {
@@ -273,8 +310,8 @@ pub struct StepDigest {
     pub object: String,
     /// The status the digest is tinted by.
     pub status: Status,
-    /// `+N −M` for a mutation call, else `None`.
-    pub delta: Option<(usize, usize)>,
+    /// What the call did to its files, for a mutation call.
+    pub delta: Option<Delta>,
     /// The right-aligned chips.
     pub chips: Vec<Chip>,
     /// The gutter monogram.
@@ -297,8 +334,16 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
             class: "xx",
         };
     };
-    let delta = if call.tool.is_mutation() {
-        Some(call.line_delta())
+    let delta = if call.tool.is_mutation() && !call.files.is_empty() {
+        let (added, removed) = call.line_delta();
+        Some(Delta {
+            added,
+            removed,
+            // The first file's status is the call's: a single-purpose tool
+            // (invariant #9) cannot create one file and delete another.
+            kind: call.files[0].status,
+            files: call.files.len(),
+        })
     } else {
         None
     };
@@ -343,10 +388,7 @@ pub fn first_sentence(text: &str) -> String {
     let trimmed = text.trim();
     let chars: Vec<char> = trimmed.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
-        if matches!(ch, '.' | '!' | '?')
-            && chars
-                .get(i + 1)
-                .is_none_or(|next| next.is_whitespace())
+        if matches!(ch, '.' | '!' | '?') && chars.get(i + 1).is_none_or(|next| next.is_whitespace())
         {
             return chars[..=i].iter().collect();
         }

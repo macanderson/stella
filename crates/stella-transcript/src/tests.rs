@@ -340,10 +340,7 @@ fn the_output_fold_control_has_something_behind_it() {
 fn a_long_output_folds_head_and_tail_so_errors_at_the_end_stay_visible() {
     let mut lines: Vec<String> = (0..30).map(|i| format!("line {i}")).collect();
     lines.push("error: the thing failed".to_string());
-    let out = Output {
-        lines,
-        clipped: 0,
-    };
+    let out = Output { lines, clipped: 0 };
     let fold = digest::fold_output(&out, "cmd");
     assert_eq!(fold.head.len(), digest::HEAD_LINES);
     assert_eq!(fold.tail.len(), digest::TAIL_LINES);
@@ -420,7 +417,10 @@ fn a_short_changed_run_falls_back_to_character_granularity() {
         .filter(|s| s.changed)
         .map(|s| s.text.as_str())
         .collect();
-    assert_eq!(hot_new, "2", "the whole token was tinted for a one-char add");
+    assert_eq!(
+        hot_new, "2",
+        "the whole token was tinted for a one-char add"
+    );
     assert!(old.iter().all(|s| !s.changed));
 }
 
@@ -477,6 +477,48 @@ fn a_deleted_file_renders_as_an_all_red_diff() {
     assert_eq!(diff.removed, 2);
     assert_eq!(diff.added, 0);
     assert_eq!(diff.status.token(), "gone");
+}
+
+#[test]
+fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithmetic() {
+    let delete = Call {
+        tool: ToolKind::DeleteFile,
+        header_object: "main.aux".to_string(),
+        args: Vec::new(),
+        output: Output::default(),
+        files: vec![FileChange {
+            path: "main.aux".to_string(),
+            before: "a\nb\n".to_string(),
+            after: String::new(),
+            status: FileStatus::Deleted,
+        }],
+        status: Status::Ok,
+        duration_ms: 4,
+        speculated: false,
+    };
+    let dig = digest::step_digest(&step(delete, 0), 40);
+    assert_eq!(dig.delta.unwrap().label(), "deleted · −2");
+
+    let create = Call {
+        tool: ToolKind::WriteFile,
+        header_object: ".latexmkrc".to_string(),
+        args: Vec::new(),
+        output: Output::default(),
+        files: vec![FileChange {
+            path: ".latexmkrc".to_string(),
+            before: String::new(),
+            after: "a\nb\nc\n".to_string(),
+            status: FileStatus::New,
+        }],
+        status: Status::Ok,
+        duration_ms: 4,
+        speculated: false,
+    };
+    let dig = digest::step_digest(&step(create, 0), 40);
+    assert_eq!(dig.delta.unwrap().label(), "new file · +3");
+
+    let dig = digest::step_digest(&step(edit("main.tex", "a\n", "b\n"), 0), 40);
+    assert_eq!(dig.delta.unwrap().label(), "+1 −1");
 }
 
 // ------------------------------------------------------------------ chips
@@ -550,10 +592,7 @@ fn html_escapes_model_output_that_looks_like_markup() {
 
 #[test]
 fn the_word_tint_reaches_the_ansi_encoder_as_a_background_span() {
-    let run = run_with(vec![step(
-        edit("main.tex", "{15pt}\n", "{12pt}\n"),
-        0,
-    )]);
+    let run = run_with(vec![step(edit("main.tex", "{15pt}\n", "{12pt}\n"), 0)]);
     let mut state = FoldState::new();
     state.set_zoom(Zoom::Everything);
     let ansi = grid::to_ansi256(&grid::render(&run, &state, 100));
@@ -563,10 +602,7 @@ fn the_word_tint_reaches_the_ansi_encoder_as_a_background_span() {
 
 #[test]
 fn a_sixteen_colour_terminal_degrades_the_word_tint_to_bold_underline() {
-    let run = run_with(vec![step(
-        edit("main.tex", "{15pt}\n", "{12pt}\n"),
-        0,
-    )]);
+    let run = run_with(vec![step(edit("main.tex", "{15pt}\n", "{12pt}\n"), 0)]);
     let mut state = FoldState::new();
     state.set_zoom(Zoom::Everything);
     let ansi = grid::to_ansi16(&grid::render(&run, &state, 100));

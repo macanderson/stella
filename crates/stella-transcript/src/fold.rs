@@ -140,7 +140,8 @@ impl FoldState {
             .and_then(|s| s.call.as_ref())
             .map_or(0, |c| c.files.len());
         for file in 0..files {
-            self.overrides.insert(NodeId::File { turn, step, file }, true);
+            self.overrides
+                .insert(NodeId::File { turn, step, file }, true);
         }
     }
 

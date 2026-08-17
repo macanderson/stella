@@ -88,7 +88,11 @@ fn run_bar(out: &mut String, run: &Run, state: &FoldState) {
         crate::fold::Zoom::Steps,
         crate::fold::Zoom::Everything,
     ] {
-        let on = if zoom == state.zoom() { " class=\"on\"" } else { "" };
+        let on = if zoom == state.zoom() {
+            " class=\"on\""
+        } else {
+            ""
+        };
         let _ = write!(out, "<span{on}>{}</span>", zoom.label());
     }
     out.push_str("</div></div>");
@@ -162,7 +166,10 @@ fn prose_block(
     ti: usize,
     pi: usize,
 ) {
-    let node = NodeId::Prose { turn: ti, prose: pi };
+    let node = NodeId::Prose {
+        turn: ti,
+        prose: pi,
+    };
     let open = state.is_open(run, node);
     let head = digest::first_sentence(&prose.text);
     let rest = prose.text.trim().strip_prefix(head.as_str()).unwrap_or("");
@@ -197,7 +204,11 @@ fn step_block(
     let node = NodeId::Step { turn: ti, step: si };
     let open = state.is_open(run, node);
     let dig = digest::step_digest(step, OBJECT_WIDTH);
-    let err = if dig.status == Status::Error { " err" } else { "" };
+    let err = if dig.status == Status::Error {
+        " err"
+    } else {
+        ""
+    };
 
     let _ = write!(
         out,
@@ -215,10 +226,15 @@ fn step_block(
         escape(&dig.verb),
         escape(&dig.object),
     );
-    if let Some((added, removed)) = dig.delta {
+    if let Some(delta) = &dig.delta {
+        let tone = match delta.kind {
+            FileStatus::Deleted => "del",
+            _ => "add",
+        };
         let _ = write!(
             out,
-            "<span class=\"dm add\">+{added}</span><span class=\"dm del\">−{removed}</span>"
+            "<span class=\"dm {tone}\">{}</span>",
+            escape(&delta.label())
         );
     }
     if dig.status == Status::Error {
@@ -283,14 +299,7 @@ fn args_toggle(out: &mut String, call: &Call) {
     out.push_str("</dl></details>");
 }
 
-fn output_body(
-    out: &mut String,
-    run: &Run,
-    state: &FoldState,
-    call: &Call,
-    ti: usize,
-    si: usize,
-) {
+fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: usize, si: usize) {
     let numbered = matches!(call.tool, ToolKind::ReadFile);
     let fold = digest::fold_output(&call.output, &call.header_object);
     let node = NodeId::Output { turn: ti, step: si };
@@ -338,11 +347,7 @@ fn output_body(
 fn emit_lines(out: &mut String, lines: &[String], numbered: bool, start: usize) {
     for (offset, line) in lines.iter().enumerate() {
         if numbered {
-            let _ = write!(
-                out,
-                "<span class=\"ln\">{:>4}</span>  ",
-                start + offset
-            );
+            let _ = write!(out, "<span class=\"ln\">{:>4}</span>  ", start + offset);
         }
         let _ = writeln!(out, "{}", escape(line));
     }
