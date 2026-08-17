@@ -94,10 +94,18 @@ pub(crate) fn spawn_forwarder(
         // terminal `TurnComplete` it annotates: the boundary is delivered in
         // the arriving event's slot and the `TurnComplete` rides the next
         // iteration. Latched, so the re-delivered event cannot match again.
-        let mut held: Option<AgentEvent> = scope.opens_execute_stage.then_some(AgentEvent::Stage {
-            name: stella_protocol::StageKind::Execute,
-            scope: stella_protocol::StageScope::Run,
-        });
+        let mut held: Option<AgentEvent> = None;
+        // The opening `Stage(Execute)` is emitted *lazily*, not pre-seeded,
+        // so a leading `ContextRecall` rides ahead of it — the same
+        // recall-before-stage order `agent/output.rs::open_raw_turn`
+        // documents as an invariant. Recall was assembled before the turn
+        // began, so a receipt that ordered the first stage ahead of it would
+        // misdescribe when the context entered. The lead lane sends that
+        // recall onto this channel *after* spawning the forwarder, so
+        // pre-seeding `Execute` in `held` delivered it before recall could be
+        // drained; deferring the open until the first non-recall event keeps
+        // recall first.
+        let mut owes_stage_execute = scope.opens_execute_stage;
         let mut owes_stage_complete = scope.opens_execute_stage;
         // The lane's run ending, as a backstop (#3379/#3398). The engine ends
         // each turn with `TurnComplete` and deliberately says nothing about
@@ -132,7 +140,18 @@ pub(crate) fn spawn_forwarder(
                     },
                 },
             };
-            let event = if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
+            let event = if owes_stage_execute
+                && !matches!(event, AgentEvent::ContextRecall { .. })
+            {
+                // First event that is not the turn's recall: open the stage
+                // ahead of it, and let it ride the next iteration.
+                owes_stage_execute = false;
+                held = Some(event);
+                AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Execute,
+                    scope: stella_protocol::StageScope::Run,
+                }
+            } else if owes_stage_complete && matches!(event, AgentEvent::TurnComplete { .. }) {
                 owes_stage_complete = false;
                 held = Some(event);
                 AgentEvent::Stage {
@@ -420,6 +439,73 @@ mod tests {
         assert!(
             stage_complete < complete,
             "the closing boundary rides AHEAD of the terminal event: {events:?}"
+        );
+    }
+
+    /// The turn's `ContextRecall` rides AHEAD of the synthesized opening
+    /// `Stage(Execute)` (#3416). Recall was assembled before the turn began,
+    /// so a receipt that ordered the first stage ahead of it would
+    /// misdescribe when the context entered — the same invariant
+    /// `agent/output.rs::open_raw_turn` documents for the one-shot path. The
+    /// lead lane sends recall onto the channel *after* spawning the
+    /// forwarder, so the opener must be deferred until the first non-recall
+    /// event rather than pre-seeded ahead of everything.
+    #[tokio::test]
+    async fn recall_precedes_the_synthesized_execute_boundary() {
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: true,
+            },
+            in_tx,
+            "lead".to_string(),
+            None,
+        );
+        // Recall is the first event of the turn, queued after the forwarder
+        // was spawned — exactly as `run_lead_turn` does it.
+        tx.send(AgentEvent::ContextRecall {
+            frames: Vec::new(),
+            provider_mix: Vec::new(),
+            tokens: 0,
+            usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
+        })
+        .unwrap();
+        tx.send(AgentEvent::Text { text: "hi".into() }).unwrap();
+        tx.send(AgentEvent::TurnComplete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        })
+        .unwrap();
+
+        let events = lane_events(&registry, tx, forwarder, &mut in_rx).await;
+        let recall = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::ContextRecall { .. }))
+            .expect("the recall event survives");
+        let stage_execute = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    AgentEvent::Stage {
+                        name: stella_protocol::StageKind::Execute,
+                        ..
+                    }
+                )
+            })
+            .expect("the opening boundary is emitted");
+        assert!(
+            recall < stage_execute,
+            "recall rides AHEAD of the opening stage boundary: {events:?}"
         );
     }
 
