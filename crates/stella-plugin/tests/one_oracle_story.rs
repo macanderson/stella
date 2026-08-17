@@ -98,22 +98,35 @@ fn offences(name: &str, text: &str) -> Vec<String> {
     found
 }
 
-/// Every `.rs` file in the crate's `src`, as `(file name, contents)`.
+/// Every file with `extension` under `dir`, as `(path relative to `dir`,
+/// contents)`.
+///
+/// **Recursive**, which is the difference between a guard and a guard-shaped
+/// hole: this crate's `src` is flat today apart from `src/bin`, so a
+/// non-recursive walk would have looked green while covering everything, and
+/// would have silently stopped covering the first submodule directory anyone
+/// added. That is the shape of omission the whole file is against.
 fn sources(dir: &Path, extension: &str) -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = fs::read_dir(dir)
-        .expect("the directory is readable")
-        .map(|entry| entry.expect("a readable directory entry").path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
-        .map(|path| {
+    fn walk(dir: &Path, extension: &str, prefix: &str, into: &mut Vec<(String, String)>) {
+        for entry in fs::read_dir(dir).expect("the directory is readable") {
+            let path = entry.expect("a readable directory entry").path();
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .expect("a UTF-8 file name")
                 .to_string();
-            let text = fs::read_to_string(&path).expect("a readable source file");
-            (name, text)
-        })
-        .collect();
+            let name = format!("{prefix}{name}");
+            if path.is_dir() {
+                walk(&path, extension, &format!("{name}/"), into);
+            } else if path.extension().is_some_and(|ext| ext == extension) {
+                let text = fs::read_to_string(&path).expect("a readable source file");
+                into.push((name, text));
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    walk(dir, extension, "", &mut files);
     // `read_dir` order is the filesystem's; a failure message that reorders
     // itself between runs is a failure message nobody trusts.
     files.sort();
