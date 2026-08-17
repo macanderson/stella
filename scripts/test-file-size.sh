@@ -86,15 +86,17 @@ commit() {
   git -C "$1" commit -q -m "$2"
 }
 
-# want <name> <expect-pass|expect-fail> <repo> [substring]
+# want <name> <expect-pass|expect-fail> <repo> [substring] [flag]
+#
+# `flag` is passed through to the guard — `--absolute` is the only one today.
 #
 # The substring is checked on BOTH verdicts. On expect-fail it pins which file
 # was flagged; on expect-pass it pins what a passing run still reported — a
 # drift note is a real finding that happens not to be fatal, and a guard that
 # passed by forgetting the file would satisfy a bare expect-pass.
 want() {
-  local name="$1" expect="$2" dir="$3" sub="${4:-}" out rc
-  out="$("$dir/scripts/check-file-size.sh" 2>&1)"
+  local name="$1" expect="$2" dir="$3" sub="${4:-}" flag="${5:-}" out rc
+  out="$("$dir/scripts/check-file-size.sh" ${flag:+"$flag"} 2>&1)"
   rc=$?
   if [ "$expect" = "expect-pass" ]; then
     if [ "$rc" -ne 0 ]; then
@@ -311,6 +313,34 @@ export FILE_SIZE_BASE_REF="HEAD^1"
 want "B9 growth on top of an inherited first-time crossing still fails" \
   expect-fail "$r" "src/big.rs is 1650 lines, over the 1500-line limit"
 unset FILE_SIZE_BASE_REF
+
+# ── --absolute: the post-merge canary's question (#3447) ─────────────────────
+#
+# Every case above is base-relative, which is the right mercy for an author who
+# inherited a violation. Its cost is that drift already sitting on `main` fails
+# nobody, so nothing ever reports it — and on a push to `main` the base is
+# `HEAD^1`, so even the canary sees only what the newest commit did. These two
+# pin the flag that lets the canary ask whether the tree is within its ceilings
+# at all. C1 is the witness: the SAME repo state that B7 forgives must fail.
+r="$(new_repo "absolute_inherited_drift")"
+plant "$r" "src/big.rs" 1600
+commit "$r" "base: a first-time crossing lands on main"
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "head: an unrelated change walks past it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "C1 --absolute flags inherited drift that the default run forgives" \
+  expect-fail "$r" "src/big.rs is 1600 lines" "--absolute"
+want "C2 the same tree, without the flag, is still only drift" \
+  expect-pass "$r" "inherited drift"
+unset FILE_SIZE_BASE_REF
+
+# The flag must not invent violations: a tree inside every ceiling still passes,
+# or the canary would file an issue against a healthy `main` every day.
+r="$(new_repo "absolute_clean_tree")"
+plant "$r" "src/small.rs" 100
+commit "$r" "a tree well inside the limit"
+want "C3 --absolute passes a tree within its ceilings" \
+  expect-pass "$r" "check-file-size: OK" "--absolute"
 
 echo
 echo "passed ${pass}, failed ${fail}"

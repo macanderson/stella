@@ -144,6 +144,23 @@ short_sha="${sha:0:9}"
 # Each row is "<name>|<command>". The command runs from the repo root.
 checks=(
   "lockfile-sync|./scripts/check-lockfile-sync.sh${manifest_dir:+ --manifest-dir $manifest_dir}"
+  # The other shared cell this file's header already names, and the one
+  # AGENTS.md calls the single biggest cause of a red `main` (#3447). It earns
+  # its row on the rule above rather than on thoroughness: the pre-merge guard
+  # is deliberately base-relative (#2004, #2397) and fails a PR only for growth
+  # past what it inherited, so drift already sitting on `main` is invisible to
+  # every branch in flight — by design, which is precisely what makes it
+  # unfixable before a merge. On 2026-08-17 `command_deck.rs` sat 4 lines over
+  # its ceiling on `main` while every open PR stayed correctly green; it was
+  # found by hand during an unrelated merge and fixed by #3444.
+  #
+  # `--absolute` is load-bearing and not a tidiness flag. Without it the guard
+  # judges a push to `main` against `HEAD^1`, so it would only ever notice
+  # drift the newest commit introduced — and the 2026-08-17 drift, already two
+  # commits old by the time anyone looked, passes that test cleanly. Verified
+  # by simulation before this row was added: with the baseline set back to
+  # 4010, the default invocation still reported ok.
+  "file-size|./scripts/check-file-size.sh --absolute"
 )
 
 failures=""

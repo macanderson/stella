@@ -152,6 +152,15 @@ current_sizes() {
   done
 }
 
+# See `resolve_base_commit` for what this changes and why only the canary wants
+# it. Read before the `--update` arm below so the two flags cannot be confused:
+# `--update` rewrites the baseline, `--absolute` only judges against it.
+ABSOLUTE_MODE=""
+if [ "${1:-}" = "--absolute" ]; then
+  ABSOLUTE_MODE=1
+  shift
+fi
+
 if [ "${1:-}" = "--update" ]; then
   {
     echo "# Grandfathered files over the ${LIMIT}-line ratchet. See #629 and"
@@ -193,6 +202,21 @@ fi
 # reader should not have to know that rule to see it.
 resolve_base_commit() {
   local candidate mb
+  # `--absolute` asks the other question: not "did this change grow a file?"
+  # but "is this tree within its ceilings at all?" Returning no base collapses
+  # `max(ceiling, base)` to the ceiling, which is the strict read.
+  #
+  # It exists for the post-merge canary (#3447). Every rung below is
+  # base-relative on purpose — inherited drift must not fail an author who did
+  # not cause it (#2004, #2397) — but that same mercy makes drift already
+  # sitting on `main` invisible to every branch in flight, and on a push to
+  # `main` the last rung compares against `HEAD^1`, so a violation introduced
+  # two commits ago goes unseen forever. Somebody has to ask the absolute
+  # question once the merge has happened, and this is the flag that asks it.
+  if [ -n "${ABSOLUTE_MODE:-}" ]; then
+    printf ''
+    return 0
+  fi
   # An explicit override wins, for hand runs and for the hermetic tests in
   # scripts/test-file-size.sh, which have no origin to infer one from.
   if [ -n "${FILE_SIZE_BASE_REF:-}" ]; then
