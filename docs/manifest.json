@@ -334,6 +334,7 @@
     "pipeline-as-plugins": {
       "path": "docs/spec/pipeline-as-plugins.md",
       "sections": [
+        0,
         1,
         2,
         3,
