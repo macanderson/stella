@@ -7,12 +7,12 @@
 //! `stella-tools::policy::ToolPolicy` already answers "is this tool switched
 //! on in this session?" — a session-global fact read from `settings.json`.
 //! What it cannot express is *who is asking*. A sub-agent, a pipeline role, a
-//! human at the keyboard, and an opaque principal handed over the serve wire
-//! by an embedding host all reach the same dispatch through the same
-//! executor, and today they arrive indistinguishable. Any RBAC system worth
-//! the name needs that distinction, and it must be able to supply its own
-//! rules rather than convince us to hardcode them — invariant #1, ports not
-//! concretions.
+//! human at the keyboard, an installed plugin, and an opaque principal handed
+//! over the serve wire by an embedding host all reach the same dispatch
+//! through the same executor, and without a name they arrive
+//! indistinguishable. Any RBAC system worth the name needs that distinction,
+//! and it must be able to supply its own rules rather than convince us to
+//! hardcode them — invariant #1, ports not concretions.
 //!
 //! So: the engine defines [`Principal`] (who), consumes
 //! [`stella_protocol::ToolContract`] (what, and how dangerous), and delegates
@@ -73,11 +73,35 @@ pub enum Principal {
     /// about a host's identity model (invariant #1). The gate that the host
     /// also supplies is the thing that understands it.
     Host(String),
+    /// An installed plugin, named by its manifest `name`.
+    ///
+    /// **Not [`Self::Host`], and the distinction is the whole point.** A host
+    /// is the process *embedding* Stella — it owns the filesystem, the
+    /// credentials and the lifecycle, and it is the party that supplies the
+    /// gate. A plugin is a thing that host (or the user) *installed into* a
+    /// session: it arrived later, its manifest was written by a third party,
+    /// and the authority it holds is whatever was granted at install and not
+    /// one capability more. Spelling both `Host` would make "the embedder"
+    /// and "a thing the embedder installed" indistinguishable to a gate,
+    /// which is the marketplace defect one level up — every plugin silently
+    /// holding its operator's authority (`doc:pipeline-as-plugins` §A1).
+    ///
+    /// Opaque exactly as [`Self::Host`] is, for the same reason: the string
+    /// is the manifest name a loader read, and `stella-core` never learns
+    /// what a plugin is. What that name *asked for* is declared in the
+    /// plugin's manifest and shown to a human before install by
+    /// `stella_plugin::consent_text`; the engine sees only the principal.
+    Plugin(String),
 }
 
 impl Principal {
     /// A short stable label for audit lines and deny reasons — never parsed,
     /// only displayed.
+    ///
+    /// Every variant carries its own prefix, so two principals that happen to
+    /// share an id stay distinguishable in the audit line: a host called
+    /// `vera` and a plugin called `vera` are different callers and must not
+    /// render the same.
     #[must_use]
     pub fn label(&self) -> String {
         match self {
@@ -85,6 +109,7 @@ impl Principal {
             Self::Role(role) => format!("role:{role}"),
             Self::SubAgent(id) => format!("subagent:{id}"),
             Self::Host(id) => format!("host:{id}"),
+            Self::Plugin(name) => format!("plugin:{name}"),
         }
     }
 }
@@ -471,6 +496,113 @@ mod tests {
         ) -> Result<AuthzDecision, AuthzEvalError> {
             Err(AuthzEvalError::new("broken", "policy store unreachable"))
         }
+    }
+
+    /// **The A1 witness, engine half** (`doc:pipeline-as-plugins` §A1). A
+    /// loader needs a principal it can honestly construct for an installed
+    /// plugin, and it must not be [`Principal::Host`]: a host embeds Stella,
+    /// a plugin is installed *into* a session by that host or the user, and a
+    /// gate that cannot tell them apart grants every plugin its operator's
+    /// authority.
+    ///
+    /// Fails to compile without `Principal::Plugin` — which is the point:
+    /// before it, there was no way to name a plugin as a caller at all.
+    #[test]
+    fn a_plugin_is_a_principal_of_its_own_and_never_reads_as_its_host() {
+        let plugin = Principal::Plugin("stella-selfdriving".into());
+        let host = Principal::Host("stella-selfdriving".into());
+
+        assert_eq!(plugin.label(), "plugin:stella-selfdriving");
+        assert_ne!(
+            plugin, host,
+            "an installed plugin and the process that installed it are different callers"
+        );
+        assert_ne!(
+            plugin.label(),
+            host.label(),
+            "the audit line must distinguish them even when the ids collide"
+        );
+    }
+
+    /// Every variant's label is distinct and prefixed, so no id can make two
+    /// principals render alike. The array is exhaustive by construction: add
+    /// a variant and this test still compiles, so `label`'s own `match` is
+    /// the compiler-enforced half and this is the collision half.
+    #[test]
+    fn every_principal_label_is_distinct_and_prefixed() {
+        let principals = [
+            Principal::User,
+            Principal::Role("same".into()),
+            Principal::SubAgent("same".into()),
+            Principal::Host("same".into()),
+            Principal::Plugin("same".into()),
+        ];
+        let labels: Vec<String> = principals.iter().map(Principal::label).collect();
+        let unique: std::collections::BTreeSet<&str> = labels.iter().map(String::as_str).collect();
+        assert_eq!(
+            unique.len(),
+            labels.len(),
+            "labels collide, so an audit line cannot say who asked: {labels:?}"
+        );
+    }
+
+    /// A gate that refuses everything an installed plugin asks for — the
+    /// shape a loader's default deny-by-default policy takes — can be written
+    /// against the existing vocabulary and names the plugin in its reason.
+    #[test]
+    fn a_gate_can_decide_on_a_plugin_principal_and_name_it_in_the_reason() {
+        struct PluginsGetNothing;
+
+        impl AuthzGate for PluginsGetNothing {
+            fn name(&self) -> &'static str {
+                "plugins-get-nothing"
+            }
+            fn check(
+                &self,
+                contract: &ToolContract,
+                principal: &Principal,
+                _input: &Value,
+            ) -> Result<AuthzDecision, AuthzEvalError> {
+                // A real decision per variant, not a catch-all: the point of
+                // the enum is that a gate is forced to answer for a plugin.
+                match principal {
+                    Principal::Plugin(name) => Ok(AuthzDecision::Deny {
+                        reason: format!(
+                            "plugin `{name}` was granted nothing, so `{}` is refused",
+                            contract.name()
+                        ),
+                    }),
+                    Principal::User
+                    | Principal::Role(_)
+                    | Principal::SubAgent(_)
+                    | Principal::Host(_) => Ok(AuthzDecision::Allow),
+                }
+            }
+        }
+
+        let refused = PluginsGetNothing
+            .check(
+                &contract("bash", RiskLevel::High),
+                &Principal::Plugin("vera".into()),
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        match refused {
+            AuthzDecision::Deny { reason } => assert!(reason.contains("vera"), "{reason}"),
+            other => panic!("expected a deny, got {other:?}"),
+        }
+
+        assert_eq!(
+            PluginsGetNothing
+                .check(
+                    &contract("bash", RiskLevel::High),
+                    &Principal::Host("vera".into()),
+                    &serde_json::json!({}),
+                )
+                .unwrap(),
+            AuthzDecision::Allow,
+            "the host that installed it is not the plugin"
+        );
     }
 
     #[test]

@@ -188,6 +188,47 @@ pub enum ManifestError {
     #[error("manifest name must not be empty")]
     EmptyName,
 
+    /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
+    /// rule keys on and what the consent prompt shows; a blank one is a
+    /// request for nothing that still reads as a request.
+    #[error("[[capabilities]] entry must name a tool: `tool` is empty")]
+    EmptyCapabilityTool,
+
+    /// A `[[capabilities]]` entry stated no purpose. "This plugin asks for
+    /// `bash`" is not something a human can consent to; the reason is the
+    /// half that makes the grant reviewable, so it is required rather than
+    /// optional.
+    #[error(
+        "[[capabilities]] entry for \"{tool}\" has an empty purpose: a capability \
+         with no stated reason is not something a user can consent to"
+    )]
+    EmptyCapabilityPurpose {
+        /// The tool whose purpose was blank.
+        tool: String,
+    },
+
+    /// A `[[capabilities]]` entry declared a blank scope string. A blank
+    /// limit renders as a limit and bounds nothing — the shape of claim this
+    /// consent surface exists to prevent.
+    #[error("[[capabilities]] entry for \"{tool}\" declares an empty scope entry")]
+    EmptyCapabilityScope {
+        /// The tool whose scope list contained a blank.
+        tool: String,
+    },
+
+    /// The same tool was requested twice. One entry per tool, with its scope
+    /// list carrying the qualifiers: two entries make the effective grant the
+    /// union of two lines a user read separately, which is exactly how a wide
+    /// grant hides inside a consent prompt.
+    #[error(
+        "[[capabilities]] requests \"{tool}\" more than once: declare one entry per \
+         tool and list its qualifiers in `scope`"
+    )]
+    DuplicateCapability {
+        /// The tool requested twice.
+        tool: String,
+    },
+
     /// `[wrapper]` was declared below `steering`. A wrapper intercepts the
     /// turn loop — it adds context, gathers evidence, and asks for another
     /// turn. That is participation, which `none` and `observer` have

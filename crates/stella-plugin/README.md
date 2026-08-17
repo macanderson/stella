@@ -37,6 +37,35 @@ Nothing here dispatches a stage: the four wrapper interception points are
 load-checks. The crate takes no engine dependency by contract, which is what
 lets the load-time contract be complete ahead of the socket it describes.
 
+`[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
+consent document. `[loop]` says what a plugin may do *inside* a turn; this
+says what it may reach *outside* one — a tool name, the grade it asks for in
+`stella_protocol::RiskLevel` (the gate's own vocabulary, not a second one),
+the reason a human reads, and any limit the plugin *claims* it will keep to.
+It is gated on no participation grade, deliberately: a `none`-grade content
+bundle shipping one custom tool that runs `git push` asks for more of the
+world than an `observer` that only watches, and tying the list to the ladder
+would let the widest grant hide behind the weakest grade.
+
+`consent_text(&manifest)` renders both halves into the words an install
+prompt shows, purely and deterministically — the "showable" half of A1's
+requirement that the widest grant anyone will ask for (`gh`, the AWS CLI,
+`brew`, a line in `~/.zshrc`, a daemon) be both expressible and visible
+*before* install. Two properties make it a gate rather than a formatting
+helper:
+
+- **Nothing is elided.** Every declared tool, purpose and claimed limit
+  reaches the output, with the widest grade as the headline.
+- **The plugin owns the prose; Stella owns the structure.** Author-supplied
+  text is flattened to one line and stripped of control characters, so a
+  `description` carrying newlines cannot forge a line of the prompt and an
+  ANSI escape cannot repaint the terminal the consent is given in.
+
+A claimed limit is rendered as the plugin's claim and labelled as one: the
+gate enforces the tool and the grade, and a prompt that showed a
+self-declared scope as an enforced one would have the user consent to a
+narrower grant than they are giving.
+
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
 epic's rule that **an undeclared hook is never invoked**, even if the
@@ -57,8 +86,12 @@ again, not this one cited.
 
 Everything that *acts* on a manifest is out:
 
-- Reading the manifest off disk, install consent, lifecycle states, overlay
-  and namespacing — the host (#1400's platform slices).
+- Reading the manifest off disk, *prompting* for install consent, lifecycle
+  states, overlay and namespacing — the host (#1400's platform slices). The
+  consent **text** is here (`consent_text`) because it is a pure function of
+  what the manifest declared, and `stella-cli`, `stella-serve` and an
+  embedded host must show a user the same words; asking the question, and
+  turning a `yes` into gate rules, is theirs.
 - Binding the grants to the engine's gates — the Stop gate, the hook runner,
   the sub-agent primitive — is the host's job (#3245 slices B/C). The engine
   itself never learns plugins exist: `stella-core` must never depend on this
@@ -92,6 +125,9 @@ before it crosses.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
   closed `StageName` and `Signal` vocabularies, the `Condition` grammar and
   its parser, and the load-time stage-graph check.
+- `src/consent.rs` — the install-consent surface: `Capability` (the
+  `[[capabilities]]` entry and its validation), `highest_risk`, and
+  `consent_text`, the pure renderer of the whole consent document.
 - `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
@@ -100,11 +136,18 @@ before it crosses.
 - `tests/wrapper_stages.rs` + `tests/fixtures/wrapper-*.toml` — #3381's
   acceptance: the shipped stage order and a cheaper second variant, differing
   in nothing but their text, plus one rejection test per load rule.
+- `tests/install_consent.rs` + `tests/fixtures/self-driving.toml` — A1's
+  acceptance: the widest grant anyone will ask for, written out, and the
+  proof that it is both expressible here and fully shown before install.
 
 ## Consumers
 
-None shipping yet, deliberately: this is the first slice of #3245, and the
-host that consumes it (manifest loading, install consent, Stop-gate binding
-via the bounded verification loop, the subloop runner) arrives with slices
-B–E of that epic. The crate exists first because every one of those slices
-needs the same validated answer to "what did this plugin declare?".
+No crate depends on this one yet, deliberately: this is the first slice of
+#3245, and the host that consumes it (manifest loading, the install prompt
+that shows `consent_text`, Stop-gate binding via the bounded verification
+loop, the subloop runner) arrives with slices B–E of that epic and with
+`doc:pipeline-as-plugins` §A4. The crate exists first because every one of
+those slices needs the same validated answer to "what did this plugin
+declare?" — and because A1's requirement is that the authority a plugin will
+be granted is expressible and showable *before* the loader that grants it
+exists, not after.

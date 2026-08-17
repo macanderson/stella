@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::consent::{Capability, validate_capabilities};
 use crate::error::ManifestError;
 use crate::wrapper::Wrapper;
 
@@ -256,6 +257,21 @@ pub struct PluginManifest {
     /// turn-loop wrapper.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper: Option<Wrapper>,
+    /// What the plugin asks to reach *outside* the turn — the tools it wants,
+    /// each graded in the gate's own [`stella_protocol::RiskLevel`], with the
+    /// reason a human reads at install (`doc:pipeline-as-plugins` §A1).
+    ///
+    /// Deliberately gated on **no** participation grade. The `[loop]` ladder
+    /// governs a plugin's say in the turn; this governs what it may touch,
+    /// and the two are orthogonal: a `none`-grade content bundle shipping one
+    /// custom tool that runs `git push` is asking for more of the world than
+    /// an `observer` that only watches. Tying the capability list to the
+    /// ladder would let the widest grant hide behind the weakest grade.
+    ///
+    /// Absent = it asks for nothing, which [`crate::consent_text`] says in
+    /// those words rather than by omission.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<Capability>,
 }
 
 /// `skip_serializing_if` needs a named predicate; "the grant is the default"
@@ -393,6 +409,8 @@ impl PluginManifest {
                 }
             }
         }
+
+        validate_capabilities(&self.capabilities)?;
 
         Ok(())
     }

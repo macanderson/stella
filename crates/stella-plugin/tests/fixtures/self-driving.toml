@@ -1,0 +1,55 @@
+# The widest grant anyone will ask for, written out.
+#
+# `doc:pipeline-as-plugins` §10 lists what the self-driving loop holds today as
+# a shell script running with full user authority: reading and filing GitHub
+# issues, opening PRs, starting and stopping a paid EC2 rig, `brew` installs
+# from a tap, rewriting a line in `~/.zshrc`, and daemonising itself. The run
+# playbook's D-3 settles that making it a plugin RELOCATES that authority and
+# grants nothing new — and places one requirement on this crate: the grant must
+# be expressible here, and showable to a user before install.
+#
+# This fixture is that requirement's witness. It is a declaration, not a grant:
+# nothing is installed, nothing is enforced, and `consent_text` is what a human
+# reads before any of it is true.
+name = "stella-selfdriving"
+description = "The autonomous delivery loop: picks work, ships it, and stewards the rig it runs on."
+
+[loop]
+participation = "arbiter"
+hooks = ["Stop", "PreToolUse", "PostToolUse"]
+max_holds = 3
+
+[requirements]
+gate-green = "make gate passed on the branch this cycle produced"
+pr-open = "the cycle's work is on a branch with an open pull request"
+
+[oracle]
+command = { argv = ["${plugin_dir}/bin/selfdriving-oracle", "verify"], timeout_secs = 900 }
+flip = "required"
+tamper = "artifact-identity"
+
+[[capabilities]]
+tool = "bash"
+risk = "destructive"
+purpose = "file and read GitHub issues, open pull requests, and install releases from the Homebrew tap"
+scope = [
+  "argv begins with `gh`",
+  "argv begins with `brew`",
+]
+
+[[capabilities]]
+tool = "write_file"
+risk = "destructive"
+purpose = "keep the `stella` shim on your login shell's PATH across upgrades"
+scope = ["the single shim line in `~/.zshrc`"]
+
+[[capabilities]]
+tool = "mcp__aws__ec2"
+risk = "destructive"
+purpose = "start and stop the benchmark rig, which is billed by the hour while it runs"
+scope = ["the instance named in `~/.stella/self-driving/rig.json`"]
+
+[[capabilities]]
+tool = "process_spawn"
+risk = "high"
+purpose = "daemonise the loop so a cycle survives the terminal that started it"

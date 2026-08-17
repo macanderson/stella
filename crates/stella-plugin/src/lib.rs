@@ -17,14 +17,23 @@
 //! host does not publish is a load error" mechanical rather than
 //! aspirational.
 //!
+//! `[[capabilities]]` (`doc:pipeline-as-plugins` §A1) is the other half of a
+//! consent document: what the plugin asks to reach *outside* the turn,
+//! graded in [`stella_protocol::RiskLevel`] — the gate's own vocabulary, so
+//! the grade a user is shown at install and the grade an `AuthzGate` refuses
+//! on cannot disagree. [`consent_text`] renders both halves into the words an
+//! install prompt shows, purely and deterministically.
+//!
 //! The one function a host must not bypass is [`LoopGrant::permits_hook`]:
 //! it is the authoritative filter behind the epic's rule that an undeclared
 //! hook is never invoked, even if the plugin's process registers for it.
 
+mod consent;
 mod error;
 mod manifest;
 mod wrapper;
 
+pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
 pub use manifest::{
     FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, Participation, PluginManifest, Role,
