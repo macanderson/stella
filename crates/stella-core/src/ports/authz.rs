@@ -140,7 +140,7 @@ impl From<AuthzDecision> for HookDecision {
     fn from(decision: AuthzDecision) -> Self {
         match decision {
             AuthzDecision::Allow => HookDecision::Allow,
-            AuthzDecision::Deny { reason } => HookDecision::Deny { reason },
+            AuthzDecision::Deny { reason } => HookDecision::Deny(reason.into()),
             AuthzDecision::RequireApproval { reason } => HookDecision::RequireApproval { reason },
         }
     }
