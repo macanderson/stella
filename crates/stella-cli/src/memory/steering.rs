@@ -142,12 +142,29 @@ impl<'m> SessionRequery<'m> {
 
     /// Report every answered re-query's recall into this turn's event stream
     /// (#3366). Separate from [`Self::new`] because the sender does not exist
-    /// until the driver has opened the channel, which happens after the
-    /// adapter's borrow of session memory is taken.
+    /// until the driver has opened the channel.
+    #[must_use]
     pub(crate) fn with_events(mut self, events: stella_core::EventSender) -> Self {
         self.events = Some(events);
         self
     }
+}
+
+/// The turn's re-query adapter, wired to report into the turn's own stream —
+/// the whole seam a driver needs, in one call.
+///
+/// A free function rather than two call sites assembling the same two steps,
+/// because the second step is the one that is silently optional: a driver
+/// that constructs a [`SessionRequery`] and forgets [`SessionRequery::with_events`]
+/// still compiles and still re-queries, and the only symptom is the missing
+/// telemetry #3366 was filed for. Both drivers (`agent::run_turn` and the
+/// deck's `run_lead_turn`) take it from here, so there is one place to forget.
+pub(crate) fn requery_for_turn<'m>(
+    memory: Option<&'m super::SessionMemory>,
+    messages: &[stella_protocol::CompletionMessage],
+    events: stella_core::EventSender,
+) -> Option<SessionRequery<'m>> {
+    memory.map(|memory| SessionRequery::new(memory, messages).with_events(events))
 }
 
 /// Order-free digest of the drift markers. `BTreeSet` so two signals that

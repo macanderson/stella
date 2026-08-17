@@ -3828,12 +3828,8 @@ async fn run_lead_turn(
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
-    let requery = session_memory.map(|memory| crate::memory::SessionRequery::new(memory, messages));
-
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    // The re-query's own `ContextRecall` — see `agent::run_turn` (#3366).
-    let requery = requery
-        .map(|requery| requery.with_events(stella_core::EventSender::new(tx.clone())));
+    let requery = crate::memory::requery_for_turn(session_memory, messages, tx.clone().into());
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),

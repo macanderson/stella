@@ -1619,20 +1619,13 @@ async fn run_turn(
         prompt,
         &cfg.workspace_root,
     );
-    // The proactive re-query (#3243 Phase 3): the engine consults this at
-    // every step boundary; the adapter's hysteresis makes an undrifted turn
-    // free. Seeded from `messages` so the turn-opening block (and any
-    // earlier turn's) is never re-injected.
-    let requery = session_memory
-        .as_deref()
-        .map(|memory| crate::memory::SessionRequery::new(memory, messages));
-
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
-    // A mid-turn re-query spends on a provider inside the step loop, so —
-    // unlike the pre-turn recall carried in as `recall_event` — it reports
-    // its own `ContextRecall` through this turn's stream (#3366).
-    let requery = requery.map(|requery| requery.with_events(tx.clone()));
+    // The proactive re-query (#3243 Phase 3): the engine consults this at
+    // every step boundary; the adapter's hysteresis makes an undrifted turn
+    // free. Seeded from `messages` so the turn-opening block is never
+    // re-injected, and given `tx` so its own recall is metered (#3366).
+    let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
