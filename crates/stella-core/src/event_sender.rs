@@ -57,7 +57,7 @@ impl EventSender {
 ///
 /// The engine ends every turn with [`AgentEvent::TurnComplete`] and stops
 /// there, because it cannot know whether its caller wants another turn. That
-/// leaves the run-terminal [`AgentEvent::Complete`] — exactly once, last, only
+/// leaves the run-terminal [`AgentEvent::RunComplete`] — exactly once, last, only
 /// on success — to whoever owns the run. This is that emitter, for the owners
 /// whose run is a plain sequence of engine turns: the CLI's one-shot and
 /// interactive paths, the deck's lead turn, a resumed turn, a fleet worker, a
@@ -72,12 +72,12 @@ impl EventSender {
 /// configuration.
 ///
 /// A run whose turns all failed has nothing to summarize and emits nothing: a
-/// failed run ends on [`AgentEvent::Error`], never on `Complete`. That is the
+/// failed run ends on [`AgentEvent::Error`], never on `RunComplete`. That is the
 /// same rule the engine used to apply one turn at a time.
 /// # Why it seals on drop
 ///
 /// The run ends when its event stream does, and *that* is the moment the
-/// terminal event has to be emitted — `Complete` must be last, so anything
+/// terminal event has to be emitted — `RunComplete` must be last, so anything
 /// that emits it earlier is guessing that nothing else will be sent. Tying it
 /// to the drop of the last sender clone makes "last" true by construction
 /// rather than by every owner remembering to call a method in the right place.
@@ -121,7 +121,7 @@ impl Drop for RunEnding {
     fn drop(&mut self) {
         let settled = self.settled.get_mut().ok().and_then(Option::take);
         if let Some((model, cost_usd)) = settled {
-            let _ = self.inner.send(AgentEvent::Complete { model, cost_usd });
+            let _ = self.inner.send(AgentEvent::RunComplete { model, cost_usd });
         }
     }
 }

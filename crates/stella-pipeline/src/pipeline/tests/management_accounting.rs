@@ -192,7 +192,7 @@ async fn triage_budget_crossing_aborts_before_a_second_provider_call() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. }))
+            .any(|event| matches!(event, AgentEvent::TurnComplete { .. }))
     );
 }
 

@@ -298,7 +298,8 @@ async fn triage_questions_fan_out_as_sub_agents_between_triage_and_plan() {
             matches!(
                 e,
                 AgentEvent::Stage {
-                    name: StageKind::Research
+                    name: StageKind::Research,
+                    scope: stella_protocol::StageScope::Run
                 }
             )
         })
@@ -309,7 +310,8 @@ async fn triage_questions_fan_out_as_sub_agents_between_triage_and_plan() {
             matches!(
                 e,
                 AgentEvent::Stage {
-                    name: StageKind::Plan
+                    name: StageKind::Plan,
+                    scope: stella_protocol::StageScope::Run
                 }
             )
         })

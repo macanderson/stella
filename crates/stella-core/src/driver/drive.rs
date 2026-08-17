@@ -81,6 +81,7 @@ impl Engine<'_> {
     pub async fn drive(&self, state: &mut TurnState, events: &EventSender) -> TurnOutcome {
         let _ = events.send(AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Turn,
         });
         self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
             lifecycle::turn_started_payload(

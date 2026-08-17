@@ -403,7 +403,11 @@ impl ArenaRecorder {
             AgentEvent::Commit { sha, .. } => {
                 inner.record_effect(format!("git-commit:{sha}"), "git_commit", None);
             }
-            AgentEvent::Complete { .. } => inner.finish(SessionOutcome::Completed),
+            // The RUN's ending, not a turn's (#3379). This recorder latches —
+            // `finish` makes it deaf to everything after — so latching on a
+            // per-turn event would truncate every wrapped run's trace to its
+            // first turn and stamp the whole thing Completed regardless.
+            AgentEvent::RunComplete { .. } => inner.finish(SessionOutcome::Completed),
             _ => {}
         }
     }
@@ -612,7 +616,7 @@ mod tests {
             duration_ms: 3,
             speculated: false,
         });
-        recorder.observe(&AgentEvent::Complete {
+        recorder.observe(&AgentEvent::TurnComplete {
             model: "test-model".into(),
             cost_usd: 0.0,
         });
@@ -690,7 +694,7 @@ mod tests {
                 duration_ms: 3,
                 speculated: false,
             });
-            recorder.observe(&AgentEvent::Complete {
+            recorder.observe(&AgentEvent::TurnComplete {
                 model: "test-model".into(),
                 cost_usd: 0.0,
             });
@@ -744,7 +748,7 @@ mod tests {
             name: "grep".into(),
             reason: "attempt_failed".into(),
         });
-        recorder.observe(&AgentEvent::Complete {
+        recorder.observe(&AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         });

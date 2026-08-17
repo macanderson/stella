@@ -189,6 +189,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             lead,
             AgentEvent::Stage {
                 name: StageKind::Triage,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(
@@ -223,6 +224,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             lead,
             AgentEvent::Stage {
                 name: StageKind::Plan,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(
@@ -283,6 +285,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             lead,
             AgentEvent::Stage {
                 name: StageKind::Witness,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(
@@ -333,6 +336,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             lead,
             AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(
@@ -463,6 +467,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             auth,
             AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(
@@ -526,6 +531,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             ci,
             AgentEvent::Stage {
                 name: StageKind::Verify,
+                scope: stella_protocol::StageScope::Run,
             },
         ),
         ev(

@@ -137,7 +137,8 @@ async fn a_resumed_pipeline_run_verifies_and_records_a_verdict() {
         events.iter().any(|e| matches!(
             e,
             AgentEvent::Stage {
-                name: StageKind::Verify
+                name: StageKind::Verify,
+                scope: stella_protocol::StageScope::Run
             }
         )),
         "the verify stage must run on the resumed work"

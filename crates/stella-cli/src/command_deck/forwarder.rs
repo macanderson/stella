@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use stella_core::event_sender::RunEnding;
 use stella_protocol::AgentEvent;
 use stella_store::Store;
 use stella_tui::Inbound;
@@ -12,21 +11,6 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
-
-/// The event sender a deck lane hands the engine for one turn (#3379).
-///
-/// A deck lane owns its run — one user prompt is one run of one turn — and
-/// since the engine stopped claiming the run-terminal `Complete`, the lane has
-/// to emit it. [`RunEnding`] does so when the returned sender drops, which for
-/// a caller that passes this straight into `run_turn_with_sender` is the
-/// statement's end: the turn is over, so the run is, and `complete` lands last
-/// on the lane's stream exactly as the deck's terminal settle expects.
-///
-/// It lives here rather than beside its one call site because `command_deck.rs`
-/// is closed to growth, and because the deck's lanes are what this file is for.
-pub(crate) fn owned_events(tx: &UnboundedSender<AgentEvent>) -> stella_core::EventSender {
-    RunEnding::sealing(stella_core::EventSender::new(tx.clone()))
-}
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
@@ -99,28 +83,42 @@ pub(crate) fn spawn_forwarder(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
-        // The lane's run ending (#3379). The engine ends each turn with
-        // `TurnComplete` and deliberately says nothing about the run, so the
-        // run-terminal `Complete` is the owner's to emit — and for a deck lane
-        // this forwarder *is* that owner: it is the one place that knows the
-        // stream closed rather than merely that a turn did, which is exactly
-        // what "`complete` is last" requires. Synthesizing it into the loop
-        // rather than after it puts it through the same persist-then-forward
-        // path as every other event, so the lane's journal and the deck agree.
+        // The lane's run ending, as a backstop (#3379/#3398). The engine ends
+        // each turn with `TurnComplete` and deliberately says nothing about
+        // the run, so the run-terminal `RunComplete` is the owner's to emit.
+        // Most deck lanes emit it themselves, because they alone know the
+        // run's true total: a staged lane's cost spans roles that never appear
+        // as a turn ending at all, so a total reconstructed here would
+        // under-report it. A lane that emits nothing — the subsession worker —
+        // still owes its deck row an ending, and this forwarder is the one
+        // place that knows the *stream* closed rather than merely that a turn
+        // did, which is what "the terminator is last" requires.
+        //
+        // So it synthesizes only for a stream that ended without one.
+        // Unconditional synthesis would put two terminators on every lane that
+        // does emit its own, which `replay::validate_terminal` calls a
+        // violation. Doing it inside the loop rather than after it puts the
+        // event through the same persist-then-forward path as everything else,
+        // so the lane's journal and the deck agree.
         let mut turn_end: Option<(String, f64)> = None;
+        let mut run_ended = false;
         loop {
             let event = match rx.recv().await {
                 Some(event) => event,
-                None => match turn_end.take() {
-                    Some((model, cost_usd)) => AgentEvent::Complete { model, cost_usd },
-                    // Either the run already sealed on the previous pass, or
-                    // no turn of it ever succeeded — a failed run ends on
-                    // `Error`, never on `Complete`.
+                None => match turn_end.take().filter(|_| !run_ended) {
+                    Some((model, cost_usd)) => AgentEvent::RunComplete { model, cost_usd },
+                    // The run's owner already ended it, the stream sealed on a
+                    // previous pass, or no turn of it ever succeeded — a
+                    // failed run ends on `Error`, never on `RunComplete`.
                     None => break,
                 },
             };
-            if let AgentEvent::TurnComplete { model, cost_usd } = &event {
-                turn_end = Some((model.clone(), *cost_usd));
+            match &event {
+                AgentEvent::TurnComplete { model, cost_usd } => {
+                    turn_end = Some((model.clone(), *cost_usd));
+                }
+                AgentEvent::RunComplete { .. } => run_ended = true,
+                _ => {}
             }
             bridge.observe(&event);
             // A plan that reached the gate is the plan whose progress the
@@ -279,7 +277,7 @@ mod tests {
             None,
         );
         registry.attach_events(stella_core::EventSender::new(tx.clone()));
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         })

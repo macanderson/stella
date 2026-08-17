@@ -235,7 +235,7 @@ impl<'a> Fold<'a> {
     /// Render one event.
     fn event(&mut self, event: &AgentEvent) {
         match event {
-            AgentEvent::Stage { name } => {
+            AgentEvent::Stage { name, .. } => {
                 let name = wire_token(name);
                 self.row(format!(
                     r#"<div class="ev stage">{t}<span class="lbl">STAGE</span><b>{name}</b></div>"#,
@@ -401,7 +401,7 @@ impl<'a> Fold<'a> {
                 let short = sha.chars().take(12).collect::<String>();
                 self.note_row("note", "COMMIT", &short, Some(&message));
             }
-            AgentEvent::Complete { model, cost_usd } => {
+            AgentEvent::TurnComplete { model, cost_usd } => {
                 let model = self.clean(model);
                 self.note_row(
                     "note",

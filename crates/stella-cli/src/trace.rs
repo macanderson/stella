@@ -349,7 +349,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
     let mut open_tools: HashMap<String, ((u32, u64, u64), usize)> = HashMap::new();
     for record in events {
         match &record.event {
-            AgentEvent::Stage { name } => {
+            AgentEvent::Stage { name, .. } => {
                 let stage = wire_token(name);
                 if fold.stage_trajectory.last() != Some(&stage) {
                     fold.stage_trajectory.push(stage.clone());
@@ -559,9 +559,11 @@ mod tests {
         let events = [
             AgentEvent::Stage {
                 name: StageKind::Triage,
+                scope: stella_protocol::StageScope::Run,
             },
             AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
             AgentEvent::StepManifest {
                 turn_instance: 0,

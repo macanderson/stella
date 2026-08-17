@@ -23,9 +23,7 @@ impl<'a> Pipeline<'a> {
         revision: Option<&str>,
         spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineStageAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Plan,
-        });
+        self.emit_stage(StageKind::Plan);
         let fallback_plan = || vec![PlanStep::new(goal)];
 
         let resolved = match self.assigned(ModelCallRole::Plan) {

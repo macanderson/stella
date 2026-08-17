@@ -168,6 +168,25 @@ impl SessionDurability {
         )
     }
 
+    /// Snapshot the shared work tree and return what changed since this
+    /// session's previous snapshot (#3413).
+    ///
+    /// The producer behind [`crate::turn_files`]: an engine-only turn mutates
+    /// the tree through MCP and custom script tools, none of which name a path
+    /// in a schema the engine reads, so the only honest answer comes from
+    /// measuring the tree rather than inferring from tool inputs. See
+    /// [`stella_store::work_journal::snapshot`] for why that is a measurement
+    /// of the *turn* and never an attribution to the agent.
+    ///
+    /// Empty while unbound, on the session's first snapshot, and for a turn
+    /// that changed nothing — the caller cannot tell those apart and must not
+    /// need to: all three mean "no file change to report".
+    pub fn snapshot_worktree(&self) -> Vec<stella_store::work_journal::JournalChange> {
+        self.journal()
+            .and_then(|journal| journal.snapshot_worktree().ok())
+            .unwrap_or_default()
+    }
+
     /// The resume point an interrupted turn left behind, or `None` when this
     /// session has none — which, because every terminal path discards, means
     /// no turn of it was interrupted.

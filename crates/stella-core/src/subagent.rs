@@ -517,7 +517,7 @@ pub fn forwards_to_parent(event: &AgentEvent) -> bool {
         // The parent (or the pipeline above it) is the sole authority for
         // stage boundaries and for the terminal event of a run.
         AgentEvent::Stage { .. }
-            | AgentEvent::Complete { .. }
+            | AgentEvent::TurnComplete { .. }
             // The child's narration is a draft of its report; the report is
             // delivered exactly once, on `Finished`.
             | AgentEvent::Text { .. }

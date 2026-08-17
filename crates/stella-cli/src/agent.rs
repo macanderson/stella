@@ -61,6 +61,7 @@ mod prompt;
 mod reflect;
 pub(crate) mod resume;
 mod skill_usage;
+mod summary;
 pub(crate) mod tool_stack;
 mod tools;
 mod turn_close;
@@ -436,7 +437,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        let events = friction.tap(pipeline_event_sender(&tx, format));
+        let events = friction.tap(tx.clone());
         let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config)
             .with_calibration(&calibration);
         pipeline.run(prompt, &mut messages, &mut budget).await
@@ -483,6 +484,7 @@ async fn run_pipeline_one_shot(
         if format == OutputFormat::StreamJson {
             let _ = tx.send(AgentEvent::Stage {
                 name: stella_protocol::StageKind::Reflect,
+                scope: stella_protocol::StageScope::Run,
             });
         }
         // The whole planner history, not its tail: the digest selects (#2460),
@@ -520,15 +522,13 @@ async fn run_pipeline_one_shot(
         reflection_report = report;
     }
 
-    if format == OutputFormat::StreamJson
-        && let Ok(outcome) = &result
-    {
-        // The run's one terminal frame, carrying the true all-calls total.
-        // The pipeline's own pre-reflection `Complete` was suppressed at the
-        // sender (`pipeline_event_sender`), so this is the only one to reach
-        // stdout *or* the durable sink; the renderer holds it back until every
-        // queued reflection/accounting event has gone out.
-        let _ = tx.send(AgentEvent::Complete {
+    if let Ok(outcome) = &result {
+        // The run's one terminal frame, for every format (#3398). This function
+        // owns the stream, so it owns the ending; the pipeline no longer emits
+        // one. The cost is the true all-calls total — the renderer holds this
+        // back until every queued reflection/accounting event has gone out, so
+        // it is the last line of the durable record as well as the display.
+        let _ = tx.send(AgentEvent::RunComplete {
             model: wiring.worker_model.to_string(),
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
         });
@@ -1694,14 +1694,18 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
+    // What this turn changed in the shared tree (#3413), measured at the
+    // boundary and emitted *before* the close below: these are the turn's own
+    // events and a consumer folding the stream must see them inside the turn
+    // they describe. See `crate::turn_files` for why a measurement, not a hook.
+    crate::turn_files::emit_shared_tree_changes(cfg, &tx);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).
     drop(requery);
     // Releasing every sender — the registry's clones included — closes the
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
-    // already-queued event has actually printed before this function returns
-    // (no events lost to a detached task racing process exit).
+    // already-queued event has actually printed before this function returns.
     let rendered = close_event_stream(registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
@@ -1724,34 +1728,9 @@ async fn run_turn(
     );
 
     if format == OutputFormat::Json {
-        // One final JSON object: the outcome summary plus the full event
-        // log (the same objects stream-json would have emitted line by
-        // line).
-        let (status, text, cost_usd, reason) = match &outcome {
-            TurnOutcome::Completed { text, cost_usd } => {
-                ("completed", Some(text.clone()), Some(*cost_usd), None)
-            }
-            TurnOutcome::Aborted {
-                reason, cost_usd, ..
-            } => ("aborted", None, Some(*cost_usd), Some(reason.clone())),
-        };
-        let summary = RawRunSummary {
-            schema_version: crate::SUMMARY_SCHEMA_VERSION,
-            status,
-            text,
-            cost_usd,
-            reason,
-            model: format!("{}/{}", cfg.provider.id, cfg.model_id),
-            events: collected,
-            files_touched: serde_json::json!({ "files_touched": [] }),
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
-                "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
-            ))
-        );
-        crate::note_json_summary_emitted();
+        // One final JSON object: the outcome summary plus the full event log
+        // (the same objects stream-json would have emitted line by line).
+        summary::print_json_summary(cfg, &outcome, collected);
     }
 
     match outcome {

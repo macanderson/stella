@@ -222,7 +222,10 @@ fn the_adapter_turns_the_reference_stream_into_a_valid_reference_golden() {
     let signatures: Vec<String> = events.iter().map(event_signature).collect();
     assert!(signatures.iter().any(|s| s.starts_with("stage:")));
     assert!(signatures.iter().any(|s| s.starts_with("tool_start:")));
-    assert!(signatures.iter().any(|s| s.starts_with("complete")));
+    // A reference stream's terminator is a TURN's ending: the adapter replays
+    // one agent's trajectory, and the run's ending belongs to whoever owned
+    // the stream, which a foreign recording does not carry (#3379).
+    assert!(signatures.iter().any(|s| s.starts_with("turn_complete")));
 
     let manifest = GoldenManifest::for_recording(
         "reference_smoke",
