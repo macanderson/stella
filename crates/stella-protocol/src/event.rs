@@ -1034,11 +1034,36 @@ pub enum AgentEvent {
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
     Error { message: String, retryable: bool },
-    /// The turn finished — the stream's terminator, and the only event a
-    /// consumer may treat as "nothing more is coming". `cost_usd` is the
-    /// turn's total spend and `model` the model that served its last committed
-    /// call; both are summaries of the `StepUsage` events that preceded it, not
-    /// a separate source of truth. A turn that fails ends on
+    /// **One turn** finished — emitted by the engine at the end of every
+    /// successful `run_turn`, and meaning exactly that. It does **not** mean
+    /// the work is over: a wrapper that runs a revise loop produces one of
+    /// these per round.
+    ///
+    /// `cost_usd` is that turn's total spend and `model` the model that served
+    /// its last committed call; both are summaries of the `StepUsage` events
+    /// that preceded it, not a separate source of truth. A turn that fails
+    /// ends on [`AgentEvent::Error`] instead, never on both.
+    ///
+    /// # Why this is separate from [`AgentEvent::Complete`] (#3379)
+    ///
+    /// The engine used to emit `Complete` per turn, which forced any wrapper
+    /// running more than one turn to *filter the engine's events out of the
+    /// consumer stream* — a two-way coupling where the engine is not merely
+    /// called by the pipeline but edited by it. Splitting the two endings makes
+    /// the contract one-directional: the engine always finishes its turn and
+    /// always says so here, a wrapper that wants more work simply **requests
+    /// another turn**, and the run's owner emits the run-terminal `Complete`.
+    /// Both appear in the journal, in order, and neither is ever suppressed.
+    TurnComplete { model: String, cost_usd: f64 },
+    /// The **run** finished — the stream's terminator, and the only event a
+    /// consumer may treat as "nothing more is coming". Emitted exactly once,
+    /// last, and only on success, by whoever owns the run: the pipeline for a
+    /// staged run, the CLI/host for a raw one. The engine never emits it (see
+    /// [`AgentEvent::TurnComplete`]), because the engine does not know whether
+    /// its caller wants another turn.
+    ///
+    /// `cost_usd` is the run's total spend and `model` the model that served
+    /// its last committed call. A run that fails ends on
     /// [`AgentEvent::Error`] instead, never on both.
     Complete { model: String, cost_usd: f64 },
     /// An event whose `"type"` this binary does not recognize — almost always

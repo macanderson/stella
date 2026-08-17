@@ -1628,7 +1628,7 @@ async fn run_turn(
         .map(|memory| crate::memory::SessionRequery::new(memory, messages));
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = event_sender_for_raw_run(raw_tx, format);
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());

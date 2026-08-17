@@ -14,17 +14,34 @@
 //!
 //! # Event ownership
 //!
-//! `stella-core::Engine::run_turn` emits its own `Stage { Execute }`, a
-//! terminal `Stage { Complete }`, and a `Complete` — correct for *one turn*,
-//! but a multi-step plan or a revise loop runs several turns. The pipeline is
-//! the **single authority** for stage boundaries and the terminal event on an
-//! outcome-producing run: it gives each `run_turn` a private channel, then
-//! forwards every event to the consumer *except* the engine's
-//! `Stage`/`Complete` (which would otherwise falsely signal "done" after step
-//! one). The pipeline emits `Complete` for success or a non-retryable `Error`
-//! for terminal failure; hard [`PipelineRunError`] exits remain typed return
-//! values for the caller to close out. This mirrors the one-emission-point
-//! discipline of L-E1/L-T5.
+//! The connection between the engine and this wrapper is **one-directional**
+//! (#3379). The engine finishes every turn it is given and says so with its
+//! own `TurnComplete`, which means exactly one thing and never lies: *this
+//! turn is over*. It does not mean the work is over, and the engine is not
+//! asked to know — a multi-step plan or a revise loop simply **requests
+//! another turn**. Every one of those endings reaches the consumer, in order,
+//! unedited: a run of three turns puts three `turn_complete` events in the
+//! journal, which is the truth about what happened.
+//!
+//! The pipeline's own ending is a **separate event with a separate name**:
+//! `Complete` for success, or a non-retryable `Error` for terminal failure,
+//! emitted exactly once and last, keeping the wire promise published in
+//! `docs/wire/README.md` and enforced by [`crate::replay::validate_stream`].
+//! Hard [`PipelineRunError`] exits remain typed return values for the caller
+//! to close out. This mirrors the one-emission-point discipline of L-E1/L-T5.
+//!
+//! What the pipeline must **not** do is edit the engine's stream to make this
+//! work. It used to: each turn ran behind a wrapping sender that dropped the
+//! engine's `Complete` before any consumer saw it, so the engine was not
+//! merely called by the pipeline but rewritten by it — a two-way coupling that
+//! made "the run finished" indistinguishable from "a turn finished" in the
+//! journal, and that a plugin (#3246) structurally could not hold. The
+//! wrapping sender survives, because it is load-bearing for other reasons
+//! (see [`Pipeline::filtered_turn_events`]); the ending is no longer among
+//! what it touches.
+//!
+//! One engine event is still dropped there — `Stage`, whose vocabulary is the
+//! run owner's — and that is tracked residue, not the settled design.
 //!
 //! # Cache discipline (L-E8)
 //!

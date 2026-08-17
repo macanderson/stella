@@ -205,3 +205,66 @@ async fn a_no_tool_call_step_ends_the_walk_with_one_consolidated_check() {
         "the consolidated follow-up's reply is the run's final text"
     );
 }
+
+/// #3379 witness: the engine owns its own ending, and the pipeline owns the
+/// run's — one journal, both endings, in order, neither suppressed.
+///
+/// It lives beside the plan walk because this is the workspace's cheapest
+/// genuinely multi-turn run: an 8-step plan the worker never closes out is
+/// eight engine turns, deterministically, with no model call spent on a
+/// verdict.
+///
+/// Fails on `main`, where `filtered_turn_events` dropped every engine
+/// `Complete` before any consumer saw it and exactly one terminal event
+/// existed for the whole run — so a reader could not tell how many turns the
+/// run took, and the one word `complete` meant "a turn ended" when the engine
+/// said it and "the job ended" when the pipeline did.
+#[tokio::test]
+async fn every_engine_turn_ends_in_the_journal_and_the_run_ends_once() {
+    let mut script = vec![text_result("multi"), eight_step_plan()];
+    for n in 1..=8 {
+        script.push(writing_tool_result(&format!("did step {n}")));
+        script.push(text_result(&format!("step {n} complete")));
+    }
+    let (outcome, events, _prompts) =
+        plan_walk_scenario!(ScriptedProvider::new(script), OneWritingTool);
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+
+    // The two endings, in the order they were emitted.
+    let endings: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnComplete { .. } => Some("turn"),
+            AgentEvent::Complete { .. } => Some("run"),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        endings.iter().filter(|e| **e == "turn").count(),
+        8,
+        "one engine ending per turn the run actually drove — the walk ran 8 \
+         steps, so 8 turns finished and the journal says so: {endings:?}"
+    );
+    assert_eq!(
+        endings.iter().filter(|e| **e == "run").count(),
+        1,
+        "the run terminates exactly once, and `complete` still means what \
+         `docs/wire/README.md` publishes: {endings:?}"
+    );
+    assert_eq!(
+        endings.last(),
+        Some(&"run"),
+        "the run's ending is last; nothing may follow it: {endings:?}"
+    );
+
+    // Enforced mechanically too, not only by the assertions above: a per-turn
+    // ending let through as `complete` would fail the published terminal
+    // invariant here rather than merely reading oddly.
+    let violations = crate::replay::validate_stream(&events);
+    assert!(
+        violations.is_empty(),
+        "the stream still satisfies every structural invariant: {violations:?}"
+    );
+}

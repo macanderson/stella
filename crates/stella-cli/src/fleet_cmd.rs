@@ -947,8 +947,13 @@ async fn run_task(
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // A fleet worker owns its run (#3379) — no pipeline above it,
+                // so the terminal `Complete` the engine stopped claiming is
+                // this lane's to emit. Sealed when `worker` drops at the end
+                // of this block, after the race resolves.
+                let worker = crate::command_deck::forwarder::lane_turn_events(&tx);
                 tokio::select! {
-                    outcome = engine.run_turn(&mut messages, &mut budget, &tx) => {
+                    outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
                         Raced::Outcome(outcome)
                     }
                     _ = stop_wait => Raced::Stopped,

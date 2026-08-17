@@ -3501,7 +3501,35 @@
       "type": "object"
     },
     {
-      "description": "The turn finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\". `cost_usd` is the\nturn's total spend and `model` the model that served its last committed\ncall; both are summaries of the `StepUsage` events that preceded it, not\na separate source of truth. A turn that fails ends on\n[`AgentEvent::Error`] instead, never on both.",
+      "description": "**One turn** finished — emitted by the engine at the end of every\nsuccessful `run_turn`, and meaning exactly that. It does **not** mean\nthe work is over: a wrapper that runs a revise loop produces one of\nthese per round.\n\n`cost_usd` is that turn's total spend and `model` the model that served\nits last committed call; both are summaries of the `StepUsage` events\nthat preceded it, not a separate source of truth. A turn that fails\nends on [`AgentEvent::Error`] instead, never on both.\n\n# Why this is separate from [`AgentEvent::Complete`] (#3379)\n\nThe engine used to emit `Complete` per turn, which forced any wrapper\nrunning more than one turn to *filter the engine's events out of the\nconsumer stream* — a two-way coupling where the engine is not merely\ncalled by the pipeline but edited by it. Splitting the two endings makes\nthe contract one-directional: the engine always finishes its turn and\nalways says so here, a wrapper that wants more work simply **requests\nanother turn**, and the run's owner emits the run-terminal `Complete`.\nBoth appear in the journal, in order, and neither is ever suppressed.",
+      "properties": {
+        "cost_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "turn_complete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "model",
+        "cost_usd"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The **run** finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\". Emitted exactly once,\nlast, and only on success, by whoever owns the run: the pipeline for a\nstaged run, the CLI/host for a raw one. The engine never emits it (see\n[`AgentEvent::TurnComplete`]), because the engine does not know whether\nits caller wants another turn.\n\n`cost_usd` is the run's total spend and `model` the model that served\nits last committed call. A run that fails ends on\n[`AgentEvent::Error`] instead, never on both.",
       "properties": {
         "cost_usd": {
           "format": "double",

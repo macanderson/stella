@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use stella_core::event_sender::RunEnding;
 use stella_protocol::AgentEvent;
 use stella_store::Store;
 use stella_tui::Inbound;
@@ -11,6 +12,21 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
+
+/// The event sender a deck lane hands the engine for one turn (#3379).
+///
+/// A deck lane owns its run — one user prompt is one run of one turn — and
+/// since the engine stopped claiming the run-terminal `Complete`, the lane has
+/// to emit it. [`RunEnding`] does so when the returned sender drops, which for
+/// a caller that passes this straight into `run_turn_with_sender` is the
+/// statement's end: the turn is over, so the run is, and `complete` lands last
+/// on the lane's stream exactly as the deck's terminal settle expects.
+///
+/// It lives here rather than beside its one call site because `command_deck.rs`
+/// is closed to growth, and because the deck's lanes are what this file is for.
+pub(crate) fn lane_turn_events(tx: &UnboundedSender<AgentEvent>) -> stella_core::EventSender {
+    RunEnding::sealing(stella_core::EventSender::new(tx.clone()))
+}
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
