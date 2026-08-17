@@ -25,11 +25,12 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use stella_plugin::{
-    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, Continuation,
-    Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION, PluginManifest,
-    PublishedSignal, RoundState, Signal, SignalValue, StageName, StopReason, TamperFinding,
-    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
-    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
+    Continuation, Correction, EvidenceSet, FlipObservation, ObservedEvidence, Outcome,
+    PROTOCOL_VERSION, PluginManifest, PublishedSignal, RoundState, Signal, SignalValue, StageName,
+    StopReason, TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause,
+    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
+    WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -47,6 +48,15 @@ where
     json
 }
 
+/// The grant a host mints for a live candidate: the handle, the root the
+/// plugin works in, and the test the host would run there.
+fn grant() -> CandidateGrant {
+    CandidateGrant::new(CandidateHandle::new("candidate-7"), "/tmp/candidate-7").with_test(
+        TestPlan::new("pytest", vec!["tests/test_flip.py".into(), "-q".into()])
+            .with_baseline(TestBaseline::Failed),
+    )
+}
+
 fn before_request() -> BeforeTurnRequest {
     BeforeTurnRequest {
         protocol_version: PROTOCOL_VERSION,
@@ -54,7 +64,7 @@ fn before_request() -> BeforeTurnRequest {
         stage: StageName::Research,
         round: 2,
         goal: "make the flaky test deterministic".into(),
-        candidate: Some(CandidateHandle::new("candidate-7")),
+        candidate: Some(grant()),
         published: vec![PublishedSignal {
             signal: Signal::Questions,
             value: SignalValue::Count(3),
@@ -81,7 +91,7 @@ fn after_request() -> AfterTurnRequest {
         wrapper: "staged-v1".into(),
         round: 2,
         goal: "make the flaky test deterministic".into(),
-        candidate: Some(CandidateHandle::new("candidate-7")),
+        candidate: Some(grant()),
         turn: TurnOutcome {
             completed: true,
             answer: "rewrote the sleep as a barrier".into(),
@@ -91,10 +101,11 @@ fn after_request() -> AfterTurnRequest {
     }
 }
 
-fn evidence() -> EvidenceSet {
-    EvidenceSet {
+/// What a plugin may report — no tamper finding, because that is the host's
+/// (#3499).
+fn observed() -> ObservedEvidence {
+    ObservedEvidence {
         flip: FlipObservation::Achieved,
-        tamper: TamperFinding::Clean,
         measurements: BTreeMap::from([("p50".to_string(), 103), ("p99".to_string(), 128)]),
     }
 }
@@ -117,14 +128,20 @@ fn every_message_round_trips_byte_for_byte() {
     round_trip(&after_request());
     round_trip(&AfterTurnResponse {
         protocol_version: PROTOCOL_VERSION,
-        evidence: evidence(),
+        evidence: observed(),
     });
+    // The merged set is not a message — the host assembles it — but it crosses
+    // a crate boundary to `judge`, so invariant 4 covers it all the same.
+    round_trip(&EvidenceSet::from_observed(
+        observed(),
+        TamperFinding::Clean,
+    ));
     round_trip(&WrapperRequest::BeforeTurn(before_request()));
     round_trip(&WrapperRequest::AfterTurn(after_request()));
     round_trip(&WrapperResponse::BeforeTurn(before_response()));
     round_trip(&WrapperResponse::AfterTurn(AfterTurnResponse {
         protocol_version: PROTOCOL_VERSION,
-        evidence: EvidenceSet::unobserved(),
+        evidence: ObservedEvidence::nothing(),
     }));
 }
 
@@ -315,6 +332,133 @@ fn a_message_without_a_protocol_version_does_not_parse() {
         PROTOCOL_VERSION
     );
     round_trip(&BeforeTurnResponse::empty());
+}
+
+/// **The #3498 witness.** Everything a plugin needs to act on the candidate
+/// arrives *in the request*: the root it works in and the test invocation it
+/// runs, both readable by a program that speaks nothing but JSON.
+///
+/// Failing before the change for the plainest reason — `candidate` was a bare
+/// `CandidateHandle`, a string whose only implementation was in-process async
+/// Rust over a `&dyn` port, so `body.candidate.root` and
+/// `body.candidate.test.program` did not exist. Track C's three reference
+/// plugins took the test command from `[runtime] env` instead, which is the
+/// socket's own rule ("every capability arrives in the request") being bent by
+/// the socket.
+#[test]
+fn a_plugin_reads_the_candidate_root_and_its_test_out_of_the_request() {
+    let json = round_trip(&WrapperRequest::AfterTurn(after_request()));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let candidate = &value["body"]["candidate"];
+
+    assert_eq!(candidate["handle"], "candidate-7");
+    assert_eq!(
+        candidate["root"], "/tmp/candidate-7",
+        "a plugin that runs a test suite needs a directory, and it must be in the request"
+    );
+    assert_eq!(candidate["test"]["program"], "pytest");
+    assert_eq!(
+        candidate["test"]["args"],
+        serde_json::json!(["tests/test_flip.py", "-q"]),
+        "argv, never a shell string — the host parsed it before minting the grant"
+    );
+    assert_eq!(
+        candidate["test"]["baseline"], "failed",
+        "the red half of the flip travels with the plan rather than in an env var"
+    );
+
+    // The four baselines are distinct answers, not a bool with a spare state:
+    // `unobserved` is what a timed-out or unspawnable run reports, and reading
+    // it as red is the #860 bug arriving on the wire.
+    for (baseline, wire) in [
+        (TestBaseline::NotRun, "not-run"),
+        (TestBaseline::Passed, "passed"),
+        (TestBaseline::Failed, "failed"),
+        (TestBaseline::Unobserved, "unobserved"),
+    ] {
+        assert_eq!(serde_json::to_value(baseline).unwrap(), wire);
+        round_trip(&baseline);
+    }
+    assert_eq!(TestBaseline::default(), TestBaseline::NotRun);
+
+    // A host with no test to give says so, rather than leaving a plugin to
+    // guess at one.
+    let bare = CandidateGrant::new(CandidateHandle::new("candidate-1"), "/tmp/candidate-1");
+    assert_eq!(bare.test, None);
+    assert_eq!(
+        round_trip(&bare),
+        r#"{"handle":"candidate-1","root":"/tmp/candidate-1"}"#
+    );
+}
+
+/// **The #3500 witness**, on the vector Track C ships as
+/// `plugins/testdata/09-unknown-envelope-field.request.json`: an unknown key
+/// beside `point`/`body` is a refusal, not a silent drop.
+///
+/// Failing before the change because serde's reader for an adjacently tagged
+/// enum ignores every other key — so all three reference plugins refused this
+/// message while the host that receives them accepted it, which is exactly
+/// backwards.
+#[test]
+fn an_unknown_envelope_key_is_refused_rather_than_ignored() {
+    let body = r#"
+      "point": "after_turn",
+      "body": {
+        "protocol_version": 1,
+        "wrapper": "verify-v1",
+        "round": 0,
+        "goal": "make the failing test pass",
+        "candidate": {"handle": "candidate-1", "root": "/tmp/candidate-1"},
+        "turn": {"completed": true, "answer": "done", "changed_files": ["src/lib.rs"]}
+      }
+    "#;
+
+    let err = serde_json::from_str::<WrapperRequest>(&format!("{{{body}, \"extra\": 1}}"))
+        .expect_err("an unknown envelope key must not be silently dropped");
+    assert!(
+        err.to_string().contains("extra"),
+        "the error must name the key, got {err}"
+    );
+
+    // ...and the same message without it decodes, which is what proves `extra`
+    // was the refusal's cause rather than something else in the vector.
+    let accepted = serde_json::from_str::<WrapperRequest>(&format!("{{{body}}}"))
+        .expect("the vector is otherwise a well-formed request");
+    assert_eq!(accepted.point(), WrapperPoint::AfterTurn);
+
+    // The key order is not part of the contract: an envelope whose body
+    // precedes its point decodes the same way, so a plugin author's JSON
+    // library cannot fail them by writing its map in the other order.
+    let reordered = r#"{"body": {"protocol_version": 1, "evidence":
+        {"flip": "achieved"}}, "point": "after_turn"}"#;
+    assert_eq!(
+        serde_json::from_str::<WrapperResponse>(reordered)
+            .expect("either order decodes")
+            .point(),
+        WrapperPoint::AfterTurn
+    );
+
+    // A response is held to the same line: the host refuses what a plugin says
+    // it does not understand, in the direction that matters most.
+    let err = serde_json::from_str::<WrapperResponse>(
+        r#"{"point": "before_turn", "body": {"protocol_version": 1}, "cost_usd": 0.02}"#,
+    )
+    .expect_err("an unknown key on a response is refused too");
+    assert!(
+        err.to_string().contains("cost_usd"),
+        "the error must name the key, got {err}"
+    );
+
+    // The body keeps its own strictness through the new envelope reader — the
+    // property that made adjacent framing worth having in the first place.
+    let err = serde_json::from_str::<WrapperResponse>(
+        r#"{"point": "before_turn", "body": {"protocol_version": 1, "system_prompt": "you are..."}}"#,
+    )
+    .expect_err("an unknown key inside the body is refused");
+    assert!(
+        err.to_string().contains("system_prompt"),
+        "the error must name the field, got {err}"
+    );
 }
 
 #[test]

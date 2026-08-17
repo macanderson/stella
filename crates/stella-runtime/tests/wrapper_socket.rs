@@ -28,11 +28,12 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use stella_plugin::{
-    AfterTurnRequest, BeforeTurnRequest, Continuation, EvidenceSet, FlipObservation, LoopGrant,
-    Outcome, PROTOCOL_VERSION, Participation, PluginManifest, RoundState, SignalValues, StageName,
-    StopReason, TamperFinding, TurnOutcome, UnmetBecause, Verdict, VerdictRule, VolatileContext,
-    WrapperPoint,
+    AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceSet,
+    FlipObservation, LoopGrant, Outcome, PROTOCOL_VERSION, Participation, PluginManifest,
+    RoundState, SignalValues, StageName, StopReason, TamperFinding, TestBaseline, TestPlan,
+    TurnOutcome, UnmetBecause, Verdict, VerdictRule, VolatileContext, WrapperPoint,
 };
+use stella_protocol::CandidateHandle;
 use stella_protocol::completion::MessageRole;
 use stella_runtime::wrapper::{
     DEFAULT_WRAPPER_TIMEOUT, InProcessWrapper, SubprocessWrapper, TurnWrapper, WrapperError,
@@ -49,6 +50,10 @@ description = "keeps the benchmark inside its recorded budget"
 [loop]
 participation = "arbiter"
 hooks = ["Stop"]
+# The socket points this wrapper answers. Declared, so an undeclared point is
+# never dispatched instead of being discovered by refusal (#3501) — and an
+# [oracle] must name after_turn, because that is where its evidence arrives.
+points = ["before_turn", "after_turn"]
 max_holds = 2
 
 [requirements]
@@ -57,7 +62,6 @@ within-budget = "the benchmark p50 stays inside its recorded budget"
 [oracle]
 command = { argv = ["bench"], timeout_secs = 60 }
 flip = "not-applicable"
-tamper = "artifact-identity"
 measurements = ["p50"]
 
 [[oracle.checks]]
@@ -98,7 +102,7 @@ case "$input" in
       *slower*) p50=118 ;;
       *) p50=103 ;;
     esac
-    printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","tamper":"not-checked","measurements":{"p50":%s}}}}\n' "$p50"
+    printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"p50":%s}}}}\n' "$p50"
     ;;
   *)
     printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"budget","text":"the recorded p50 budget is 105"}],"role":"triage","publish":[{"signal":"questions","value":{"count":2}}]}}'
@@ -197,11 +201,16 @@ async fn run_turn(
         }
     }
 
-    let evidence = wrapper
+    // The plugin reports what it observed; the host merges its own tamper
+    // finding before judging (#3499). This host took no snapshot — this
+    // manifest's oracle has no flip to protect — and says so itself rather
+    // than making the plugin admit to a check it could never perform.
+    let observed = wrapper
         .after_turn(after(goal))
         .await
         .expect("the plugin answers after_turn")
         .evidence;
+    let evidence = EvidenceSet::from_observed(observed, TamperFinding::NotChecked);
 
     let verdict = judge(&VerdictRule::from_manifest(&manifest), &evidence);
     let continuation = again(
@@ -331,7 +340,7 @@ async fn the_child_sees_exactly_the_environment_it_was_given() {
     let probe = r#"
 cat >/dev/null
 if [ -n "${CARGO_MANIFEST_DIR:-}" ]; then inherited=1; else inherited=0; fi
-printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","tamper":"not-checked","measurements":{"inherited":%s,"granted":%s}}}}\n' "$inherited" "${GRANTED:-0}"
+printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"inherited":%s,"granted":%s}}}}\n' "$inherited" "${GRANTED:-0}"
 "#;
     let wrapper = SubprocessWrapper::new(
         vec!["/bin/sh".into(), "-c".into(), probe.into()],
@@ -450,9 +459,8 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
             };
             Ok(stella_plugin::AfterTurnResponse {
                 protocol_version: PROTOCOL_VERSION,
-                evidence: EvidenceSet {
+                evidence: stella_plugin::ObservedEvidence {
                     flip: FlipObservation::NotAttempted,
-                    tamper: TamperFinding::NotChecked,
                     measurements: BTreeMap::from([("p50".into(), p50)]),
                 },
             })
@@ -482,7 +490,10 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
     // ...and the host decides both the same way, because the rule is the
     // manifest's and not the transport's.
     let rule = VerdictRule::from_manifest(&manifest());
-    let evidence = native.after_turn(after(goal)).await.unwrap().evidence;
+    let evidence = EvidenceSet::from_observed(
+        native.after_turn(after(goal)).await.unwrap().evidence,
+        TamperFinding::NotChecked,
+    );
     assert!(matches!(judge(&rule, &evidence), Verdict::Unmet { .. }));
 }
 
@@ -634,5 +645,106 @@ fn only_an_arbiter_can_hold_a_turn_open() {
         unmet.len(),
         1,
         "the unmet clause is still reported, never silently dropped"
+    );
+}
+
+/// **The #3498 witness, end to end.** A plugin written in `sh` — no JSON
+/// library, no SDK, no ambient authority — acts on the candidate workspace
+/// using *only* what arrived in its request: the canonical root, the test
+/// runner's argv, and the red that invocation reported before the turn.
+///
+/// Failing before the change because `AfterTurnRequest::candidate` was a bare
+/// `CandidateHandle` whose six operations existed only as in-process async
+/// Rust over a `&dyn` port. A plugin holding one could do nothing with it, so
+/// the three reference plugins of macanderson/stella-examples#1 took their test
+/// command and baseline from two `[runtime] env` names — default-deny and
+/// visible at install consent, but a bend in the socket's own rule that every
+/// capability arrives in the request (`doc:wrapper-socket` §6).
+///
+/// The three measurements are deliberately facts about the *filesystem and the
+/// argv*, not echoes: `root_reached` is 1 only if the directory named in the
+/// request really holds the candidate's test file, so a grant carrying a
+/// plausible-looking path nothing lives at scores 0.
+#[tokio::test]
+async fn a_plugin_acts_on_the_candidate_using_only_what_the_request_carried() {
+    let tree = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(tree.path().join("tests")).expect("mkdir");
+    std::fs::write(
+        tree.path().join("tests/test_flip.py"),
+        b"def test(): pass\n",
+    )
+    .expect("write");
+    let root = tree
+        .path()
+        .canonicalize()
+        .expect("canonical root")
+        .to_str()
+        .expect("a UTF-8 temp path")
+        .to_string();
+
+    // What the host mints. In production this is
+    // `stella_pipeline::ports::CandidateHandles::grant`, which canonicalises
+    // the root and refuses to mint one it cannot resolve; this crate must not
+    // depend on the pipeline (`tests/no_pipeline_edge.rs`), so the grant is
+    // built here in the shape that host produces.
+    let mut request = after("make the failing test pass");
+    request.candidate = Some(
+        CandidateGrant::new(CandidateHandle::new("candidate-1"), root.clone()).with_test(
+            TestPlan::new("pytest", vec!["tests/test_flip.py".into()])
+                .with_baseline(TestBaseline::Failed),
+        ),
+    );
+
+    let reader = r#"
+input=$(cat)
+field() { printf '%s' "$input" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
+root=$(field root)
+program=$(field program)
+baseline=$(field baseline)
+if [ -f "$root/tests/test_flip.py" ]; then reached=1; else reached=0; fi
+if [ "$program" = "pytest" ]; then named=1; else named=0; fi
+if [ "$baseline" = "failed" ]; then red=1; else red=0; fi
+printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"root_reached":%s,"test_named":%s,"baseline_red":%s}}}}\n' "$reached" "$named" "$red"
+"#;
+
+    let evidence = plugin(reader)
+        .after_turn(request.clone())
+        .await
+        .expect("the plugin answers")
+        .evidence;
+    assert_eq!(
+        evidence.measurements,
+        BTreeMap::from([
+            ("root_reached".into(), 1),
+            ("test_named".into(), 1),
+            ("baseline_red".into(), 1),
+        ]),
+        "everything the plugin needed was in the request"
+    );
+
+    // The falsifier: the same plugin, a grant whose root names a directory
+    // that does not exist. `root_reached` collapses, which is what proves the
+    // 1 above was a fact about the filesystem rather than the script agreeing
+    // with itself.
+    let mut elsewhere = request;
+    elsewhere.candidate = Some(
+        CandidateGrant::new(
+            CandidateHandle::new("candidate-1"),
+            format!("{root}/not-a-candidate"),
+        )
+        .with_test(
+            TestPlan::new("pytest", vec!["tests/test_flip.py".into()])
+                .with_baseline(TestBaseline::Failed),
+        ),
+    );
+    assert_eq!(
+        plugin(reader)
+            .after_turn(elsewhere)
+            .await
+            .expect("the plugin answers")
+            .evidence
+            .measurements
+            .get("root_reached"),
+        Some(&0)
     );
 }

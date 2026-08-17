@@ -32,7 +32,7 @@ pub mod workspace;
 /// (#3380, `doc:pipeline-as-plugins` §4 A10).
 pub mod handle;
 
-pub use handle::{CandidateHandles, CandidateOpError};
+pub use handle::{CandidateHandles, CandidateOpError, test_plan};
 pub use workspace::{AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, WorkspaceError};
 
 /// Maps a router-resolved [`ModelRef`] to the concrete provider adapter that

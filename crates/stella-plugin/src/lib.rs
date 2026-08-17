@@ -52,14 +52,25 @@
 //! any language, and "a verification plugin quietly calls a model to decide
 //! done" stays impossible by construction rather than by policy.
 //!
-//! The one function a host must not bypass is [`LoopGrant::permits_hook`]:
-//! it is the authoritative filter behind the epic's rule that an undeclared
-//! hook is never invoked, even if the plugin's process registers for it.
+//! `observed.rs` (#3499) is the line between the two halves of that evidence:
+//! [`ObservedEvidence`] is what a plugin returns, and it has **no tamper
+//! field** — snapshotting artifact identity is host-side, so a plugin asked to
+//! report it could only ever answer "not checked" and leave every verdict
+//! undecided. The host merges its own finding through
+//! [`EvidenceSet::from_observed`], which makes "the host owns tamper" a fact of
+//! the types rather than a rule someone has to remember.
+//!
+//! The two functions a host must not bypass are [`LoopGrant::permits_hook`]
+//! and [`LoopGrant::permits_point`]: they are the authoritative filters behind
+//! the epic's rule that an undeclared hook is never invoked and an undeclared
+//! wrapper point is never dispatched, however eagerly the plugin's own process
+//! would answer either one.
 
 mod consent;
 mod error;
 mod evidence;
 mod manifest;
+mod observed;
 mod program;
 mod runtime;
 mod wire;
@@ -69,16 +80,17 @@ pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
 pub use error::ManifestError;
 pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
 pub use manifest::{
-    FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, Participation, PluginManifest, Role,
-    Subloop, TamperPolicy,
+    FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
+    Participation, PluginManifest, Role, Subloop, TamperPolicy,
 };
+pub use observed::ObservedEvidence;
 pub use program::{SignalValues, StageProgram};
 pub use runtime::Runtime;
 pub use wire::{
-    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, Continuation,
-    Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION, PublishedSignal,
-    RoundState, SignalValue, StopReason, TamperFinding, TurnOutcome, UndecidedReason, UnmetBecause,
-    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
+    Continuation, Correction, EvidenceSet, FlipObservation, Outcome, PROTOCOL_VERSION,
+    PublishedSignal, RoundState, SignalValue, StopReason, TamperFinding, TestBaseline, TestPlan,
+    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
+    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 pub use wrapper::{CompareOp, Condition, Signal, SignalKind, StageName, Wrapper, WrapperStage};

@@ -28,8 +28,14 @@
 //!
 //! - **No borrows, no lifetimes, no trait objects.** An out-of-process plugin
 //!   cannot be handed a `&dyn` anything (`doc:wrapper-socket` §6). Every type
-//!   here is owned plain data; the candidate worktree crosses as
-//!   [`CandidateHandle`], a name the host resolves, never as a port.
+//!   here is owned plain data; the candidate worktree crosses as a
+//!   [`CandidateGrant`] — the host's [`CandidateHandle`] plus the two facts a
+//!   plugin cannot act without, its root and the test to run — never as a
+//!   port. The grant is what makes "every capability arrives in the request"
+//!   true rather than aspirational: before it, the only implementation of the
+//!   handle was in-process async Rust over a `&dyn` port, so three reference
+//!   plugins had to take their test command out of `[runtime] env` instead
+//!   (#3498).
 //! - **No terminal, no git, no cwd, no credential in any signature.** A
 //!   wrapper that only works when a TTY or a git checkout is present is a CLI
 //!   feature, not a socket. A wrapper names a *role intent*
@@ -53,11 +59,12 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
 use crate::manifest::{Oracle, PluginManifest};
+use crate::observed::ObservedEvidence;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// The version every message on this wire carries.
@@ -99,18 +106,75 @@ impl std::fmt::Display for WrapperPoint {
     }
 }
 
+/// The two keys an envelope may carry, and the only two.
+///
+/// **This type is why the envelope is not simply
+/// `#[derive(Deserialize)] #[serde(tag, content)]`** (#3500). Serde's reader
+/// for an adjacently tagged enum ignores every key beside the tag and the
+/// content, so `{"point": …, "body": …, "extra": 1}` decoded cleanly and the
+/// `extra` vanished — while this crate's stated rule, enforced by
+/// `deny_unknown_fields` on every manifest table, is that an unknown key is a
+/// load error. The wire has the stronger claim on that rule than the manifest
+/// does: a manifest is written by a human who can be told, and the wire is
+/// spoken by a program that will not notice. Track C found the host accepting
+/// what all three of its reference plugins refused.
+///
+/// Serde offers no `deny_unknown_fields` for an adjacently tagged enum, so the
+/// strictness lives on a struct that has one, and the body is held as a
+/// [`serde_json::Value`] until `point` has been read — serde's own buffer for
+/// that is private, and holding the body is what makes the two keys order-free
+/// rather than "point must come first", which would be a JSON contract nobody
+/// could keep by accident.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Envelope {
+    point: WrapperPoint,
+    body: serde_json::Value,
+}
+
+/// Decode one envelope body into the type its point names.
+///
+/// Reported through the calling deserializer's own error type, so a plugin
+/// author sees one failure vocabulary rather than "a serde_json error appeared
+/// inside your serde error". The named field survives that trip — an unknown
+/// key in the body still reads as `unknown field \`…\``.
+fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
+where
+    T: serde::de::DeserializeOwned,
+    E: serde::de::Error,
+{
+    serde_json::from_value(body).map_err(E::custom)
+}
+
 /// One request on the wire: `{"point": …, "body": {…}}`.
 ///
-/// Adjacently tagged rather than internally tagged so the body keeps
+/// Adjacently framed rather than internally tagged so the body keeps
 /// `deny_unknown_fields` — an internally tagged enum hands the tag field down
-/// into the variant, where a denying struct rejects it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// into the variant, where a denying struct rejects it. `Serialize` is derived
+/// from that framing; `Deserialize` is written out by hand over a two-key
+/// envelope that denies unknown fields, because the derived reader for the
+/// same framing accepts any number of keys beside `point` and `body` and drops
+/// them silently (#3500 — see this module's `Envelope`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "point", content = "body", rename_all = "snake_case")]
 pub enum WrapperRequest {
     /// Ask the wrapper to contribute to a turn that has not run yet.
     BeforeTurn(BeforeTurnRequest),
     /// Tell the wrapper a turn completed, and ask for evidence.
     AfterTurn(AfterTurnRequest),
+}
+
+impl<'de> Deserialize<'de> for WrapperRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let Envelope { point, body } = Envelope::deserialize(deserializer)?;
+        match point {
+            WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
+            WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
+        }
+    }
 }
 
 impl WrapperRequest {
@@ -133,14 +197,28 @@ impl WrapperRequest {
     }
 }
 
-/// One response on the wire, in the same framing as [`WrapperRequest`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One response on the wire, in the same framing as [`WrapperRequest`] — and
+/// refused the same way when it carries a key this host does not know.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "point", content = "body", rename_all = "snake_case")]
 pub enum WrapperResponse {
     /// What the wrapper contributes to the turn about to run.
     BeforeTurn(BeforeTurnResponse),
     /// The evidence the wrapper gathered about the turn that ran.
     AfterTurn(AfterTurnResponse),
+}
+
+impl<'de> Deserialize<'de> for WrapperResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let Envelope { point, body } = Envelope::deserialize(deserializer)?;
+        match point {
+            WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
+            WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
+        }
+    }
 }
 
 impl WrapperResponse {
@@ -165,6 +243,131 @@ impl WrapperResponse {
     }
 }
 
+/// The candidate workspace, as a plugin receives it.
+///
+/// **A capability the host resolves and bounds, never a path a plugin is
+/// trusted to stay inside.** The distinction is the whole design and it is
+/// worth being exact about, because the grant does hand out an absolute path:
+///
+/// - [`Self::root`] is where the plugin's *own* reads and its *own* test run
+///   happen. A plugin that runs a test suite needs a directory, and pretending
+///   otherwise is what pushed three reference plugins onto `[runtime] env` for
+///   their test command (#3498).
+/// - [`Self::handle`] is the capability. Every path the plugin names on the
+///   way *back* — a scope, a withheld adoption path, a witness artifact — is
+///   resolved against this handle's root by the host and refused if it lands
+///   anywhere else, after symlinks, on the host's own filesystem
+///   (`CandidateDenial`, and `stella_pipeline::ports::CandidateHandles` for
+///   the implementation). The refusal is the host's; nothing here is a promise
+///   the plugin was asked to keep.
+///
+/// So a plugin that ignores the root and lies about where it went has told the
+/// host nothing the host will act on, which is the property that lets the same
+/// grant cross to a process in any language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateGrant {
+    /// The name the host minted for this workspace, and the only thing that
+    /// re-addresses it. Opaque: see [`CandidateHandle`].
+    pub handle: CandidateHandle,
+    /// The workspace's absolute root on the host's filesystem, canonical — the
+    /// host resolves symlinks *before* minting the grant, so the path a plugin
+    /// is told and the path the host fences against are the same one.
+    pub root: String,
+    /// The test the host would run in this workspace, when it has one to
+    /// give. `None` is "the host has no test invocation", never "run whatever
+    /// you like": a plugin with no plan reports
+    /// [`FlipObservation::Unobservable`] rather than guessing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<TestPlan>,
+}
+
+impl CandidateGrant {
+    /// A grant with no test invocation — the shape a host mints for a
+    /// workspace whose test command it does not know.
+    #[must_use]
+    pub fn new(handle: CandidateHandle, root: impl Into<String>) -> Self {
+        Self {
+            handle,
+            root: root.into(),
+            test: None,
+        }
+    }
+
+    /// The same grant, carrying the test the host would run.
+    #[must_use]
+    pub fn with_test(mut self, test: TestPlan) -> Self {
+        self.test = Some(test);
+        self
+    }
+}
+
+/// One test invocation, as the host already parsed it.
+///
+/// **argv, never a shell string** — the #1400 rule every spawned thing in this
+/// workspace follows, and the reason the host's own strict test-command parser
+/// runs before a grant is minted rather than inside the plugin. A plugin
+/// receives a program and its arguments; it never receives a line to hand to a
+/// shell, and a command the host's parser refuses produces no grant to carry
+/// one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestPlan {
+    /// The test runner executable, from the host's closed runner vocabulary.
+    pub program: String,
+    /// Its exact argument vector.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// What this same invocation reported *before* the turn ran — the red half
+    /// of a fail→pass flip, handed over so a plugin does not have to
+    /// reconstruct it (or take it from an environment variable, which is what
+    /// Track C had to do).
+    #[serde(default)]
+    pub baseline: TestBaseline,
+}
+
+impl TestPlan {
+    /// A plan with no baseline observation.
+    #[must_use]
+    pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            baseline: TestBaseline::NotRun,
+        }
+    }
+
+    /// The same plan, carrying what the invocation reported before the turn.
+    #[must_use]
+    pub fn with_baseline(mut self, baseline: TestBaseline) -> Self {
+        self.baseline = baseline;
+        self
+    }
+}
+
+/// What a [`TestPlan`]'s invocation reported before the turn ran.
+///
+/// Four answers rather than an exit code, and the fourth is why: a run that
+/// timed out or could not find its toolchain never observed an assertion, and
+/// scoring its non-zero exit as "red" is exactly the bug `CmdOutcome`'s
+/// `assertion_result` exists to close (#860) — an infra failure would satisfy
+/// a flip's precondition and the next clean run would be credited as a fix.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TestBaseline {
+    /// The host did not run the invocation before the turn, so nothing is
+    /// claimed about it.
+    #[default]
+    NotRun,
+    /// It ran and its assertions passed.
+    Passed,
+    /// It ran and its assertions genuinely failed — the red a flip needs.
+    Failed,
+    /// It was attempted and did not complete, so it says nothing about
+    /// assertions either way.
+    Unobserved,
+}
+
 /// Everything a wrapper is given before a turn runs.
 ///
 /// Every capability arrives *in the request* — there is no ambient authority
@@ -187,10 +390,9 @@ pub struct BeforeTurnRequest {
     /// The goal, as the user stated it.
     pub goal: String,
     /// The candidate workspace this turn will run against, when the host has
-    /// created one. A name the host resolves, never a path to be trusted —
-    /// see [`CandidateHandle`].
+    /// created one — see [`CandidateGrant`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate: Option<CandidateHandle>,
+    pub candidate: Option<CandidateGrant>,
     /// What earlier stages of this same turn published, in publication order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<PublishedSignal>,
@@ -353,9 +555,10 @@ pub struct AfterTurnRequest {
     pub round: u32,
     /// The goal, as the user stated it.
     pub goal: String,
-    /// The candidate workspace the turn ran against, when there was one.
+    /// The candidate workspace the turn ran against, when there was one —
+    /// see [`CandidateGrant`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate: Option<CandidateHandle>,
+    pub candidate: Option<CandidateGrant>,
     /// What the turn did.
     pub turn: TurnOutcome,
 }
@@ -387,11 +590,14 @@ pub struct TurnOutcome {
 pub struct AfterTurnResponse {
     /// The version this message is written at.
     pub protocol_version: u32,
-    /// What the wrapper observed.
-    pub evidence: EvidenceSet,
+    /// What the wrapper observed — its own half of the evidence, never the
+    /// host's ([`ObservedEvidence`], and #3499 for why the difference is a
+    /// type).
+    pub evidence: ObservedEvidence,
 }
 
-/// What a wrapper observed about the turn — the whole evidence vocabulary.
+/// The whole evidence vocabulary a verdict is decided from: what the wrapper
+/// observed, merged with what the host checked.
 ///
 /// A struct of closed fields rather than an open list of facts, and that is
 /// the design: `judge` must be **total** over this type, and totality over a
@@ -410,7 +616,10 @@ pub struct AfterTurnResponse {
 pub struct EvidenceSet {
     /// What the wrapper saw of the fail→pass flip.
     pub flip: FlipObservation,
-    /// What the wrapper's tamper check found.
+    /// What the **host's** tamper check found. Snapshotting artifact identity
+    /// is host-side (`doc:pipeline-as-plugins` §4 A10), so this field is not on
+    /// the wire a plugin speaks at all and is merged in by
+    /// [`EvidenceSet::from_observed`] (#3499).
     pub tamper: TamperFinding,
     /// The numbers the oracle reported, by declared measurement name. A name
     /// absent here is *missing*, never a satisfied budget — see

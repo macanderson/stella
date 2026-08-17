@@ -23,6 +23,16 @@ publish.workspace = true
 # here wants the same argument made again, not this one cited.
 [dependencies]
 serde.workspace = true
+# The wire envelope's own decoder (#3500). `{"point": …, "body": …}` is
+# adjacently tagged, and serde's derived reader for that shape ignores every
+# other key — so the host accepted garbage while every manifest table refused
+# it. Refusing an unknown envelope key needs the body held while the point is
+# read, and serde's own buffer for that is private; `serde_json::Value` is the
+# supported one. It is a real edge for a near-leaf crate, so note what it is
+# not: this crate still performs no I/O, and it was already a dev-dependency
+# here (invariant #4's round-trip tests), so the lockfile and the license
+# allow-list are unchanged by the move.
+serde_json.workspace = true
 stella-protocol = { path = "../stella-protocol" }
 thiserror.workspace = true
 toml.workspace = true
@@ -34,4 +44,3 @@ toml.workspace = true
 # tests pure engine logic (AGENTS.md § Testing approach). Dev-only: it is not
 # a workspace dependency of this near-leaf crate.
 proptest.workspace = true
-serde_json.workspace = true

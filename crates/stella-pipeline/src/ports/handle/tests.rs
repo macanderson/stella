@@ -287,6 +287,163 @@ async fn a_round_tripped_handle_addresses_the_candidate_and_runs_its_tests() {
     );
 }
 
+/// **The #3498 witness.** What crosses to an out-of-process plugin is a
+/// [`CandidateGrant`] it can act on — a usable canonical root and the test the
+/// host would run there — and the handle inside it is still the only thing
+/// that addresses the workspace, so a path the plugin names back is refused
+/// host-side.
+///
+/// Failing before the change because `CandidateHandles` minted no grant at
+/// all: `AfterTurnRequest::candidate` was a bare handle whose six operations
+/// were in-process async Rust over a `&dyn` port, so the three reference
+/// plugins of macanderson/stella-examples#1 took their test command from
+/// `[runtime] env` — the socket's own "every capability arrives in the
+/// request" bent by the socket.
+#[tokio::test]
+async fn a_grant_carries_a_usable_root_and_test_while_the_fence_stays_the_hosts() {
+    let tree = candidate_tree();
+    // The root the port hands out is a *symlink* to the candidate, so a grant
+    // that skipped canonicalisation would tell the plugin one directory while
+    // the fence judged another. The alias lives in its own tempdir rather than
+    // at a fixed name, so two of these can run at once. Unix-only for the same
+    // reason the symlink test below is: constructing one elsewhere needs
+    // privileges a test does not have.
+    #[cfg(unix)]
+    let aliases = tempfile::tempdir().expect("tempdir");
+    #[cfg(unix)]
+    let declared = {
+        let alias = aliases.path().join("aliased");
+        std::os::unix::fs::symlink(tree.path(), &alias).expect("symlink");
+        alias
+    };
+    #[cfg(not(unix))]
+    let declared = tree.path().to_path_buf();
+
+    let log: Log = Arc::new(Mutex::new(Vec::new()));
+    let port = TempPort::new(vec![declared], Arc::clone(&log));
+    let handles = CandidateHandles::new(&port);
+    let handle = handles.create().await.expect("create");
+
+    let invocation =
+        crate::witness::parse_test_invocation("pytest tests/test_flip.py").expect("parses");
+    let baseline = CmdOutcome {
+        exit_code: 1,
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        kind: CmdKind::Completed,
+    };
+    let grant = handles
+        .grant(&handle, Some(test_plan(&invocation, Some(&baseline))))
+        .expect("the workspace is live, so it grants");
+
+    // The crossing: nothing but bytes survives, exactly as a subprocess or an
+    // HTTP host would carry it.
+    let wire = serde_json::to_string(&grant).expect("serialises");
+    let crossed: CandidateGrant = serde_json::from_str(&wire).expect("deserialises");
+    assert_eq!(crossed, grant);
+
+    // The root is usable: a program holding nothing but this string finds the
+    // candidate's own tree there.
+    assert_eq!(
+        Path::new(&crossed.root),
+        tree.path().canonicalize().expect("canonical tree"),
+        "the grant must carry the canonical root, or the plugin and the fence \
+         disagree about which directory they are talking about"
+    );
+    assert!(
+        Path::new(&crossed.root)
+            .join("tests/test_flip.py")
+            .is_file()
+    );
+
+    // ...and so is the test: argv the host's own parser already accepted, plus
+    // the red it observed before the turn, neither of which the plugin has to
+    // find in an environment variable.
+    let plan = crossed.test.as_ref().expect("the host had a test to give");
+    assert_eq!(plan.program, "pytest");
+    assert_eq!(plan.args, vec!["tests/test_flip.py".to_string()]);
+    assert_eq!(plan.baseline, TestBaseline::Failed);
+
+    // A baseline that never observed an assertion is *not* red: reporting a
+    // timed-out run as the failing half of a flip is the #860 bug.
+    let timed_out = CmdOutcome {
+        exit_code: -1,
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        kind: CmdKind::TimedOut,
+    };
+    assert_eq!(
+        test_plan(&invocation, Some(&timed_out)).baseline,
+        TestBaseline::Unobserved
+    );
+    assert_eq!(test_plan(&invocation, None).baseline, TestBaseline::NotRun);
+
+    // The handle that came back over the wire is still the only authority: a
+    // path the plugin names is judged by the host against that same canonical
+    // root, whatever the plugin believes about where it went.
+    for (named, reason) in [
+        ("../../etc/passwd", PathDenial::Traversal),
+        ("/etc/passwd", PathDenial::Absolute),
+    ] {
+        assert_eq!(
+            handles
+                .resolve_path(&crossed.handle, named)
+                .expect_err("the host refuses what escapes"),
+            CandidateDenial::Path {
+                path: named.to_string(),
+                reason,
+            }
+        );
+    }
+    assert!(
+        handles
+            .resolve_path(&crossed.handle, "tests/test_flip.py")
+            .is_ok(),
+        "an in-root path still resolves, or the fence proves nothing"
+    );
+
+    // Nothing about minting a grant touched the substrate: it is the
+    // serializable form of `root`, not a seventh operation.
+    assert_eq!(seen(&log), vec!["create".to_string()]);
+}
+
+/// A grant is refused rather than guessed at when the root cannot be
+/// established — fail-closed in the same direction the fence itself fails.
+#[tokio::test]
+async fn a_workspace_whose_root_is_gone_grants_nothing() {
+    let tree = candidate_tree();
+    let log: Log = Arc::new(Mutex::new(Vec::new()));
+    let port = TempPort::new(vec![tree.path().join("vanished")], log);
+    let handles = CandidateHandles::new(&port);
+    let handle = handles.create().await.expect("create");
+
+    let error = handles
+        .grant(&handle, None)
+        .expect_err("a root that does not resolve mints no grant");
+    assert_eq!(error.op(), CandidateOp::Root);
+    assert!(
+        matches!(
+            error,
+            CandidateOpError::Denied {
+                denial: CandidateDenial::RootUnavailable { .. },
+                ..
+            }
+        ),
+        "got {error:?}"
+    );
+
+    // And a handle nobody minted is the same refusal it always was.
+    assert!(matches!(
+        handles
+            .grant(&CandidateHandle::new("candidate-4096"), None)
+            .expect_err("a forged handle grants nothing"),
+        CandidateOpError::Denied {
+            denial: CandidateDenial::UnknownHandle { .. },
+            ..
+        }
+    ));
+}
+
 /// The other half of the same witness: a path that escapes is refused by the
 /// host, with the attempt reported as written.
 #[tokio::test]

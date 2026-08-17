@@ -20,13 +20,28 @@
 //! precisely the drift shape #1613 already cost this repository once, so the
 //! handle path is a *lookup table over the existing port*, and nothing else.
 //!
-//! # The fence
+//! # The grant is what crosses, and the fence is what makes that safe
 //!
-//! [`stella_protocol::CandidateOp::Root`] hands out an absolute path, because a plugin that
-//! runs a test suite needs one. Every path that comes *back* — a withheld
-//! adoption path, an argument inside a test command — is resolved by
-//! [`CandidateHandles::resolve_path`] against the handle's own root and
-//! refused if it lands anywhere else. Two layers, deliberately:
+//! [`CandidateHandles::grant`] mints the [`stella_plugin::CandidateGrant`] an out-of-process
+//! plugin actually receives in its request: the handle, the workspace's
+//! **canonical** root, and the test invocation the host would run. Before it,
+//! `AfterTurnRequest` carried a bare handle whose only implementation was the
+//! in-process async Rust below — so a plugin holding one could do nothing with
+//! it, and Track C's three reference plugins took their test command out of
+//! `[runtime] env` instead (#3498).
+//!
+//! Handing out a root is not handing out trust, and the two halves are
+//! deliberately different directions:
+//!
+//! - **Outbound**, the root is canonical *before* it is minted, so the path the
+//!   plugin is told and the path the host fences against are the same one. A
+//!   root that will not canonicalise mints no grant at all
+//!   ([`stella_protocol::CandidateDenial::RootUnavailable`]) rather than a
+//!   grant nothing can be judged against.
+//! - **Inbound**, every path that comes *back* — a withheld adoption path, a
+//!   scope a plugin proposes, an argument inside a test command — is resolved
+//!   by [`CandidateHandles::resolve_path`] against that same root and refused
+//!   if it lands anywhere else. Two layers, deliberately:
 //!
 //! 1. **Lexical** (`fence_lexical`) — absolute paths, `..` components, NUL
 //!    bytes and backslashes are refused without touching the filesystem, as
@@ -69,10 +84,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
+use stella_plugin::{CandidateGrant, TestBaseline, TestPlan};
 use stella_protocol::{CandidateDenial, CandidateHandle, CandidateOp, PathDenial};
 
 use super::{
-    AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, WorkspaceError,
+    AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, TestInvocation,
+    WorkspaceError,
 };
 use crate::witness::parse_test_invocation;
 
@@ -187,6 +204,51 @@ impl<'p> CandidateHandles<'p> {
     pub fn root(&self, handle: &CandidateHandle) -> Result<String, CandidateOpError> {
         let workspace = self.live(handle, CandidateOp::Root)?;
         Ok(workspace.root().to_string())
+    }
+
+    /// Mint the [`CandidateGrant`] a plugin receives in its request — the
+    /// serializable form of [`CandidateOp::Root`], not a seventh operation
+    /// (the closed set of six is the design, `stella_protocol::candidate`).
+    ///
+    /// The root it carries is **canonical**, so what the plugin is told and
+    /// what [`Self::resolve_path`] fences against are the same path even when
+    /// the workspace was created through a symlink. It fails closed on both
+    /// ways that can go wrong: a root the filesystem will not resolve, and a
+    /// root this host cannot spell as UTF-8, each refuse to mint rather than
+    /// hand out a path nothing can be judged against.
+    ///
+    /// `test` is the invocation the host would run there — build it with
+    /// [`test_plan`] so the argv a plugin receives is the one the pipeline's
+    /// own parser already accepted. `None` says the host has no test to give,
+    /// which a plugin reports as unobservable rather than guessing at.
+    ///
+    /// # Errors
+    ///
+    /// [`CandidateOpError::Denied`] with [`CandidateDenial::UnknownHandle`]
+    /// for a handle this table never minted or has already retired, and with
+    /// [`CandidateDenial::RootUnavailable`] for a root that cannot be
+    /// resolved.
+    pub fn grant(
+        &self,
+        handle: &CandidateHandle,
+        test: Option<TestPlan>,
+    ) -> Result<CandidateGrant, CandidateOpError> {
+        let workspace = self.live(handle, CandidateOp::Root)?;
+        let deny = |denial| CandidateOpError::denied(CandidateOp::Root, denial);
+        let canonical = canonical_root(workspace.root())
+            .map_err(deny)?
+            .into_os_string()
+            .into_string()
+            .map_err(|_| {
+                deny(CandidateDenial::RootUnavailable {
+                    reason: "the candidate root is not valid UTF-8".to_string(),
+                })
+            })?;
+        Ok(CandidateGrant {
+            handle: handle.clone(),
+            root: canonical,
+            test,
+        })
     }
 
     /// [`CandidateOp::RunTest`] — run one test command inside the workspace.
@@ -323,6 +385,27 @@ impl<'p> CandidateHandles<'p> {
     }
 }
 
+/// Build the wire [`TestPlan`] for one already-parsed invocation and what it
+/// reported before the turn ran.
+///
+/// The baseline is read through [`CmdOutcome::assertion_result`] and never off
+/// a raw exit code, which is the whole reason [`TestBaseline`] has a fourth
+/// variant: a run that timed out or could not find its toolchain observed no
+/// assertion, and reporting its non-zero exit as red would satisfy a flip's
+/// precondition on infrastructure noise (#860). `None` is "the host did not run
+/// it", which is a different claim again.
+#[must_use]
+pub fn test_plan(invocation: &TestInvocation, baseline: Option<&CmdOutcome>) -> TestPlan {
+    TestPlan::new(invocation.program.clone(), invocation.args.clone()).with_baseline(match baseline
+        .map(CmdOutcome::assertion_result)
+    {
+        None => TestBaseline::NotRun,
+        Some(Some(true)) => TestBaseline::Passed,
+        Some(Some(false)) => TestBaseline::Failed,
+        Some(None) => TestBaseline::Unobserved,
+    })
+}
+
 /// Both fence layers, in order: refuse what is malformed without touching the
 /// filesystem, then judge containment after the filesystem has had its say.
 fn fence(root: &str, path: &str) -> Result<PathBuf, CandidateDenial> {
@@ -374,6 +457,18 @@ fn fence_lexical(path: &str) -> Result<PathBuf, PathDenial> {
     Ok(fenced)
 }
 
+/// The one place a candidate root is turned into a path, for both directions:
+/// the root [`CandidateHandles::grant`] hands a plugin and the root
+/// [`fence_on_disk`] judges containment against. One resolution, so the two can
+/// never disagree about which directory the fence is around.
+fn canonical_root(root: &str) -> Result<PathBuf, CandidateDenial> {
+    Path::new(root)
+        .canonicalize()
+        .map_err(|reason| CandidateDenial::RootUnavailable {
+            reason: reason.to_string(),
+        })
+}
+
 fn is_drive_letter(name: &std::ffi::OsStr) -> bool {
     matches!(
         name.to_str().map(str::as_bytes),
@@ -401,12 +496,7 @@ fn fence_on_disk(
         path: as_written.to_string(),
         reason: PathDenial::EscapesRoot,
     };
-    let canonical_root =
-        Path::new(root)
-            .canonicalize()
-            .map_err(|reason| CandidateDenial::RootUnavailable {
-                reason: reason.to_string(),
-            })?;
+    let canonical_root = canonical_root(root)?;
 
     let mut existing = canonical_root.join(relative);
     let mut tail = Vec::new();

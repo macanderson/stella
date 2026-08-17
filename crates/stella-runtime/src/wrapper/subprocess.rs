@@ -18,11 +18,15 @@
 //!
 //! - **It sets no working directory.** `doc:wrapper-socket` §6 bans cwd from
 //!   every signature, and everything the plugin needs arrives in the request —
-//!   the candidate worktree as a `CandidateHandle` the host resolves, never a
-//!   path the plugin is trusted to have stayed inside. It is also a hard
-//!   constraint here rather than a preference: this crate must not read
-//!   process-global state at all (`tests/no_ambient_reads.rs`), and a cwd is
-//!   the most process-global thing there is.
+//!   the candidate worktree as a `CandidateGrant`, which is the host's own
+//!   handle plus the canonical root and test invocation the plugin acts on
+//!   (#3498). The root in that grant is where the plugin works; it is not a
+//!   permission, because every path the plugin names *back* is re-resolved
+//!   against the handle host-side and refused if it escapes. Setting a cwd
+//!   would additionally break a hard constraint here rather than a preference:
+//!   this crate must not read process-global state at all
+//!   (`tests/no_ambient_reads.rs`), and a cwd is the most process-global thing
+//!   there is.
 //! - **It clears the environment and sets exactly what it was given.** A
 //!   plugin is third-party code a user installed; inheriting the operator's
 //!   environment hands it `ANTHROPIC_API_KEY` and every other credential the
