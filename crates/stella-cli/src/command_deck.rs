@@ -3890,11 +3890,11 @@ async fn run_lead_turn(
         }
         engine.run_turn(messages, budget, &tx).await
     };
-    // The model is done and the deck has already painted "done". Everything
-    // below is bookkeeping that can take real time (the forwarder persists
-    // every event of the turn), and across all of it the driver's `select!`
-    // is still reading user input — so latch the flag that tells its prompt
-    // arm to treat what arrives as the next turn, not a sidecar request.
+    agent::persistence::emit_run_complete_raw(&tx, &cfg.model_id, &outcome);
+    // The model is done and the deck already painted "done". Everything below is
+    // bookkeeping that can take real time (the forwarder persists every event of the
+    // turn) while the driver's `select!` still reads input — so latch the flag that
+    // tells its prompt arm what arrives is the next turn, not a sidecar request.
     steering.mark_settling();
     let persistence_complete = close_turn_stream(registry, tx, forwarder).await;
     claims.release_all();

@@ -269,9 +269,21 @@ agent_event_tags! {
     // Exemplar — `Behavioral`. The session journal classifies this as a
     // transition, which is what makes it flush durably instead of buffering:
     // the signal decides persistence timing, not just content.
-    Complete => "complete",
+    //
+    // Renamed from `complete` in #3379. One turn of the loop ended; it does
+    // NOT mean the run ended, and a wrapped run emits several of these.
+    TurnComplete => "turn_complete",
         ConsumerPosture::Behavioral {
             site: "stella-store/src/journal.rs::JournalRecord::is_transition",
         },
         &[];
+    // The run's terminator — the only event that means "nothing more is
+    // coming" (#3379). Behavioral rather than merely surfaced: it is what
+    // ends a recording, settles the deck's terminal state, and closes the
+    // stream-json evidence file.
+    RunComplete => "run_complete",
+        ConsumerPosture::Behavioral {
+            site: "stella-pipeline/src/replay.rs::validate_stream (stream terminator)",
+        },
+        &[Surface::Observatory];
 }

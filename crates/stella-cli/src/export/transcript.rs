@@ -401,7 +401,7 @@ impl<'a> Fold<'a> {
                 let short = sha.chars().take(12).collect::<String>();
                 self.note_row("note", "COMMIT", &short, Some(&message));
             }
-            AgentEvent::Complete { model, cost_usd } => {
+            AgentEvent::TurnComplete { model, cost_usd } => {
                 let model = self.clean(model);
                 self.note_row(
                     "note",

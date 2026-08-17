@@ -155,7 +155,7 @@ pub fn release_if_settled(ui: &mut DeckUi, agent: &str, event: &stella_protocol:
     use stella_protocol::AgentEvent;
     let vacates_running = matches!(
         event,
-        AgentEvent::Complete { .. }
+        AgentEvent::TurnComplete { .. }
             | AgentEvent::Error {
                 retryable: false,
                 ..

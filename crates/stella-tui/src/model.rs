@@ -1057,13 +1057,28 @@ impl SessionModel {
                     });
                 }
             }
-            AgentEvent::Complete { model, cost_usd } => {
+            // ONE turn ended (#3379). A wrapped run has several, so this must
+            // not settle anything terminal: the cost and model are this turn's
+            // and are worth showing, but closing the proof rail or dropping a
+            // pending prompt here would discard a live approval gate the run is
+            // still waiting on. `RunComplete` below is the terminal one.
+            AgentEvent::TurnComplete { model, cost_usd } => {
+                self.hud.model = Some(model.clone());
+                self.streaming_text.clear();
+                self.transcript.push(TranscriptEntry::Complete {
+                    model: model.clone(),
+                    cost_usd: *cost_usd,
+                });
+            }
+            // The RUN ended — the only event that means nothing more is
+            // coming, and so the only one that may settle terminal state.
+            AgentEvent::RunComplete { model, cost_usd } => {
                 self.hud.stage = Some(StageKind::Complete);
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
                 // Close the proof rail: anything the run never reported now
-                // says so, rather than reading `pending` on a turn that is
+                // says so, rather than reading `pending` on a run that is
                 // over. See `crate::proof` — this is the half of the invariant
                 // that does not depend on the pipeline cooperating.
                 self.proof.finish();
@@ -1071,14 +1086,10 @@ impl SessionModel {
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 self.pending_hunk_review = None;
-                // The turn is over; a span still open here was one the turn
-                // never woke from (#2007).
+                // The run is over; a span still open here was one it never
+                // woke from (#2007).
                 self.parked = None;
                 self.streaming_text.clear();
-                self.transcript.push(TranscriptEntry::Complete {
-                    model: model.clone(),
-                    cost_usd: *cost_usd,
-                });
             }
             // Internal accounting for read-only speculation that never
             // committed — no visible model state to update.

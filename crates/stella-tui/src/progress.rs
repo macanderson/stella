@@ -666,7 +666,7 @@ mod tests {
         let mut m = agent_running(StageKind::Verify);
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "glm-5.2".into(),
                 cost_usd: 0.1,
             },
@@ -698,7 +698,7 @@ mod tests {
         let mut m = agent_running(StageKind::Verify);
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "glm-5.2".into(),
                 cost_usd: 0.1,
             },

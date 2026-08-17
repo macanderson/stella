@@ -4,7 +4,7 @@
 //! The settle window: everything true about a turn AFTER the deck has already
 //! called it finished.
 //!
-//! `AgentEvent::Complete` leaves the turn and the deck instantly paints
+//! `AgentEvent::TurnComplete` leaves the turn and the deck instantly paints
 //! `✓ complete · 100% · done`. Two separate things are wrong with the picture
 //! at that instant, and this module owns both, because they are the same
 //! mistake seen from two sides — the deck reports an ending the driver has not
@@ -19,7 +19,7 @@
 //!
 //! ## Telling "the work is finished" apart from "the agent asked you something"
 //!
-//! A lead turn ends by emitting [`stella_protocol::AgentEvent::Complete`],
+//! A lead turn ends by emitting [`stella_protocol::AgentEvent::TurnComplete`],
 //! which the deck's fold maps to [`stella_tui::AgentStatus::Done`] — a status
 //! that reports `is_terminal()`. For a worker that is exactly right: it was
 //! dispatched, it finished, its row is over. For the lead it is a lie in the common case. The
@@ -358,7 +358,7 @@ mod tests {
         assert!(!ends_with_a_question(&turn));
     }
 
-    /// The bug: `AgentEvent::Complete` leaves the turn and the deck instantly
+    /// The bug: `AgentEvent::TurnComplete` leaves the turn and the deck instantly
     /// paints `✓ complete · 100% · done`, but the driver has left its `select!`
     /// and is inside post-turn bookkeeping — including reflection, which is a
     /// live model call. A prompt submitted at that finished-looking turn used to

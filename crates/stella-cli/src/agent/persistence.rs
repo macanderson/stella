@@ -82,6 +82,36 @@ pub(crate) fn begin_pipeline_execution(
         Some(session),
         Some(PIPELINE_VARIANT_CLASSIC),
     )
+
+/// Emit the run's ending on an **unwrapped** turn (#3379).
+///
+/// The engine says when its turn is over ([`AgentEvent::TurnComplete`]); it
+/// does not know whether anything is going to ask it for another one, and it
+/// must not have to. So the run's ending belongs to whoever owns the run: a
+/// wrapper when one is driving, and this function when the raw turn IS the
+/// whole run.
+///
+/// A turn that aborted does not get one. An abort already crossed the stream
+/// as `Error`, and the run must never end on both — the same rule the pipeline
+/// follows for its own terminal frame.
+pub(crate) fn emit_run_complete(tx: &stella_core::EventSender, model: &str, outcome: &TurnOutcome) {
+    if let TurnOutcome::Completed { cost_usd, .. } = outcome {
+        let _ = tx.send(AgentEvent::RunComplete {
+            model: model.to_string(),
+            cost_usd: *cost_usd,
+        });
+    }
+}
+
+/// [`emit_run_complete`] for a caller holding the raw channel sender rather
+/// than an [`stella_core::EventSender`] — the Command Deck's lead turn. Same
+/// rule, one wrapper, so neither site can drift from the other.
+pub(crate) fn emit_run_complete_raw(
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+    model: &str,
+    outcome: &TurnOutcome,
+) {
+    emit_run_complete(&stella_core::EventSender::new(tx.clone()), model, outcome);
 }
 
 #[derive(Default)]
@@ -304,7 +334,7 @@ fn defer_stream_terminal(
     pending: &mut Option<AgentEvent>,
     event: AgentEvent,
 ) -> Option<AgentEvent> {
-    if matches!(event, AgentEvent::Complete { .. }) {
+    if matches!(event, AgentEvent::TurnComplete { .. }) {
         *pending = Some(event);
         None
     } else {
@@ -823,14 +853,14 @@ mod stream_tests {
             AgentEvent::Stage {
                 name: stella_protocol::StageKind::Execute,
             },
-            AgentEvent::Complete {
+            AgentEvent::TurnComplete {
                 model: "old".into(),
                 cost_usd: 1.0,
             },
             AgentEvent::Stage {
                 name: stella_protocol::StageKind::Reflect,
             },
-            AgentEvent::Complete {
+            AgentEvent::TurnComplete {
                 model: "final".into(),
                 cost_usd: 1.25,
             },
@@ -845,13 +875,13 @@ mod stream_tests {
         assert_eq!(
             ordered
                 .iter()
-                .filter(|event| matches!(event, AgentEvent::Complete { .. }))
+                .filter(|event| matches!(event, AgentEvent::TurnComplete { .. }))
                 .count(),
             1
         );
         assert!(matches!(
             ordered.last(),
-            Some(AgentEvent::Complete { model, cost_usd })
+            Some(AgentEvent::TurnComplete { model, cost_usd })
                 if model == "final" && (*cost_usd - 1.25).abs() < f64::EPSILON
         ));
     }
@@ -873,7 +903,7 @@ mod stream_tests {
             "anthropic".into(),
             false,
         );
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "worker".into(),
             cost_usd: 1.0,
         })
@@ -882,7 +912,7 @@ mod stream_tests {
             name: stella_protocol::StageKind::Reflect,
         })
         .unwrap();
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "worker+reflection".into(),
             cost_usd: 1.25,
         })
@@ -901,7 +931,7 @@ mod stream_tests {
         ));
         assert!(matches!(
             journal.events.last().map(|record| &record.event),
-            Some(AgentEvent::Complete { model, cost_usd })
+            Some(AgentEvent::TurnComplete { model, cost_usd })
                 if model == "worker+reflection"
                     && (*cost_usd - 1.25).abs() < f64::EPSILON
         ));

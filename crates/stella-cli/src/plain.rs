@@ -267,7 +267,7 @@ pub fn assistant_response(text: &str) {
     }
 }
 
-/// Print a cost summary for a turn. `AgentEvent::Complete` (the source of
+/// Print a cost summary for a turn. `AgentEvent::TurnComplete` (the source of
 /// this data under `stella_core::Engine`) carries `model`/`cost_usd` only —
 /// no per-turn token breakdown — so this is deliberately narrow. Real
 /// per-role token/cost accounting lives in `BudgetTick` (`render_event`
@@ -556,7 +556,7 @@ pub fn render_event(event: &AgentEvent) {
         } => {
             // Unmetered sessions stay quiet about spend.
         }
-        AgentEvent::Complete { .. } => {
+        AgentEvent::TurnComplete { .. } => {
             // The call site prints `cost_summary` from `TurnOutcome`
             // directly (it has the same model/cost_usd this event carries,
             // plus wall-clock elapsed time this event doesn't).

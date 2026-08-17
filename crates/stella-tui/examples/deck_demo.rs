@@ -146,7 +146,7 @@ async fn main() -> std::io::Result<()> {
                             ScopeDecision::Revise { .. } => AgentEvent::Stage {
                                 name: StageKind::Plan,
                             },
-                            ScopeDecision::Abort => AgentEvent::Complete {
+                            ScopeDecision::Abort => AgentEvent::TurnComplete {
                                 model: "glm-5.2".into(),
                                 cost_usd: 0.0,
                             },
@@ -457,7 +457,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             session_limit_usd: None,
             deadline_remaining_ms: None,
         }),
-        ev(AgentEvent::Complete {
+        ev(AgentEvent::TurnComplete {
             model: "glm-5.2".into(),
             cost_usd: 0.008,
         }),

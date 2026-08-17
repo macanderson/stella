@@ -208,7 +208,7 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
                     });
                 }
             },
-            ReferenceEvent::Result { model } => events.push(AgentEvent::Complete {
+            ReferenceEvent::Result { model } => events.push(AgentEvent::TurnComplete {
                 model: model.unwrap_or_else(|| "reference".to_string()),
                 cost_usd: 0.0,
             }),

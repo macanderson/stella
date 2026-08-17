@@ -333,7 +333,7 @@ impl SteeringTap {
 
     /// The model is done; the turn future is now only finishing bookkeeping.
     ///
-    /// There is a real gap between the two. `AgentEvent::Complete` leaves the
+    /// There is a real gap between the two. `AgentEvent::TurnComplete` leaves the
     /// driver and the deck paints `✓ done · stage complete · 100%`, but
     /// `run_lead_turn` has not returned: it still has to drop the event
     /// channel, `await` the forwarder that persists every event of the turn,
@@ -1362,7 +1362,7 @@ mod tests {
     }
 
     /// The reported bug. The deck paints `✓ done · stage complete · 100%` the
-    /// moment `AgentEvent::Complete` leaves the driver, but `run_lead_turn`
+    /// moment `AgentEvent::TurnComplete` leaves the driver, but `run_lead_turn`
     /// keeps running — and its `select!` keeps reading input — while it
     /// persists the turn. A follow-up typed into that window used to be read
     /// as a brand-new request and spawned `req:1`, so a long collaboration

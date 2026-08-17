@@ -94,7 +94,7 @@ fn corruptions() -> Vec<Corruption> {
                 let terminal = events
                     .iter()
                     .rev()
-                    .find(|e| matches!(e, AgentEvent::Complete { .. }))
+                    .find(|e| matches!(e, AgentEvent::TurnComplete { .. }))
                     .expect("the fixture terminates")
                     .clone();
                 events.push(terminal);

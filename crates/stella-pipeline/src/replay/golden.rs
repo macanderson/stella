@@ -332,7 +332,7 @@ mod tests {
         AgentEvent::Stage { name }
     }
     fn complete() -> AgentEvent {
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "scripted/only".into(),
             cost_usd: 0.0,
         }

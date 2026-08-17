@@ -169,7 +169,7 @@ fn turn_clock_holds_zero_then_runs_freezes_and_resets() {
     w.now_ms = 9_500;
     w.apply_inbound(&ev(
         "lead",
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },
@@ -541,7 +541,7 @@ fn complete_marks_done_and_records_final_cost() {
     w.apply_inbound(&reg("lead"));
     w.apply_inbound(&ev(
         "lead",
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "glm".into(),
             cost_usd: 0.033,
         },

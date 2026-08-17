@@ -60,7 +60,9 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
 /// agent's lifecycle.
 pub(super) fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
     match ev {
-        AgentEvent::Complete { .. } => Some(AgentStatus::Done),
+        // An agent is Done when its RUN ends, not when one of its turns
+        // does — a wrapped run has several turns and is still working (#3379).
+        AgentEvent::RunComplete { .. } => Some(AgentStatus::Done),
         AgentEvent::Error { retryable, .. } => Some(if *retryable {
             AgentStatus::Running
         } else {
@@ -319,7 +321,10 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         ),
         AgentEvent::AskUser { question, .. } => (TraceKind::Other, snip(question)),
         AgentEvent::Error { message, .. } => (TraceKind::Error, snip(message)),
-        AgentEvent::Complete { model, cost_usd } => {
+        AgentEvent::TurnComplete { model, cost_usd } => {
+            (TraceKind::Complete, format!("turn {model} ${cost_usd:.4}"))
+        }
+        AgentEvent::RunComplete { model, cost_usd } => {
             (TraceKind::Complete, format!("{model} ${cost_usd:.4}"))
         }
     }

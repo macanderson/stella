@@ -664,27 +664,35 @@ fn validate_tool_pairing(events: &[AgentEvent], out: &mut Vec<StreamViolation>) 
     }
 }
 
+/// The run terminates exactly once, on `RunComplete`, and nothing follows it.
+///
+/// Before #3379 this checked `Complete`, which the engine emitted per turn and
+/// the pipeline suppressed so that only its own survived. Now the engine keeps
+/// its per-turn `TurnComplete` and a wrapped run emits several — so counting
+/// those would report a violation for every extra turn, which is the
+/// *expected* shape rather than a defect. The terminator is `RunComplete`, and
+/// the "exactly one, last" rule belongs to it alone.
 fn validate_terminal(events: &[AgentEvent], out: &mut Vec<StreamViolation>) {
-    let complete_indices: Vec<usize> = events
+    let run_complete_indices: Vec<usize> = events
         .iter()
         .enumerate()
-        .filter(|(_, e)| matches!(e, AgentEvent::Complete { .. }))
+        .filter(|(_, e)| matches!(e, AgentEvent::RunComplete { .. }))
         .map(|(i, _)| i)
         .collect();
-    if complete_indices.len() > 1 {
-        for &i in &complete_indices[1..] {
+    if run_complete_indices.len() > 1 {
+        for &i in &run_complete_indices[1..] {
             out.push(StreamViolation {
                 index: i,
-                reason: "more than one Complete event; a stream terminates once".to_string(),
+                reason: "more than one run_complete event; a run terminates once".to_string(),
             });
         }
     }
-    if let Some(&first) = complete_indices.first()
+    if let Some(&first) = run_complete_indices.first()
         && first != events.len() - 1
     {
         out.push(StreamViolation {
             index: first,
-            reason: "Complete is not the last event; nothing may follow it".to_string(),
+            reason: "run_complete is not the last event; nothing may follow it".to_string(),
         });
     }
 }
@@ -865,7 +873,8 @@ pub fn event_signature(event: &AgentEvent) -> String {
             }
         },
         AgentEvent::Error { retryable, .. } => format!("error:retryable={retryable}"),
-        AgentEvent::Complete { .. } => "complete".to_string(),
+        AgentEvent::TurnComplete { .. } => "turn_complete".to_string(),
+        AgentEvent::RunComplete { .. } => "run_complete".to_string(),
         // Task subjects/descriptions are volatile content; the board's shape
         // (how many tasks, how many resolved) is the structural part.
         AgentEvent::TaskUpdate { tasks } => {
@@ -1155,7 +1164,7 @@ mod tests {
         }
     }
     fn complete() -> AgentEvent {
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "glm-5.2".into(),
             cost_usd: 0.01,
         }

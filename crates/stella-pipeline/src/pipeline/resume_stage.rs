@@ -533,7 +533,7 @@ impl<'a> Pipeline<'a> {
             // same one. What differs is the status the caller settles on, not
             // whether the run ended.
             PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {
-                self.emit(AgentEvent::Complete {
+                self.emit(AgentEvent::RunComplete {
                     // The label is `None` only when the candidate path returned
                     // before it resolved a worker (a setup abort that then
                     // degraded to a bare run). Re-resolve rather than emit

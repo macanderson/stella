@@ -746,7 +746,7 @@ async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. })),
+            .any(|event| matches!(event, AgentEvent::TurnComplete { .. })),
         "the child does not terminate the parent's stream"
     );
 

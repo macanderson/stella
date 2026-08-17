@@ -240,7 +240,7 @@ mod tests {
             None,
         );
         registry.attach_events(stella_core::EventSender::new(tx.clone()));
-        tx.send(AgentEvent::Complete {
+        tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         })

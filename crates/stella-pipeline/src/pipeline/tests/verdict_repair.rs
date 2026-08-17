@@ -140,7 +140,7 @@ async fn a_refuted_verdict_with_headroom_earns_another_repair_round() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. })),
+            .any(|event| matches!(event, AgentEvent::TurnComplete { .. })),
         "a repaired run ends on the success terminal event: {events:?}"
     );
 }
@@ -170,7 +170,7 @@ async fn an_unmeasured_budget_grants_no_repair_past_the_allowance() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. })),
+            .any(|event| matches!(event, AgentEvent::TurnComplete { .. })),
         "a refuted run must never emit the success terminal event: {events:?}"
     );
 }

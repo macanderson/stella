@@ -114,7 +114,7 @@ mod tests {
         let log = DebugLog::new(None);
         assert!(!log.is_active());
         // No path → no panic, no file, pure no-op.
-        log.event(&AgentEvent::Complete {
+        log.event(&AgentEvent::TurnComplete {
             model: "glm".into(),
             cost_usd: 0.0,
         });

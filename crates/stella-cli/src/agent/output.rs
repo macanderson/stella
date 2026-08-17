@@ -162,10 +162,11 @@ pub(super) fn event_sender_for_run(
 
 /// The sender the pipeline itself emits on, for a one-shot run.
 ///
-/// On `stream-json` the caller emits its own terminal `Complete` once
+/// On `stream-json` the caller emits its own terminal `RunComplete` once
 /// reflection and accounting have settled, carrying the all-calls total — so
 /// the pipeline's earlier, pre-reflection one is dropped here rather than left
-/// to be "replaced" downstream. It never was replaced anywhere it mattered:
+/// to be "replaced" downstream. (That there are two emitters of a run's ending
+/// at all is the remaining half of #3379; see #3398.) It never was replaced anywhere it mattered:
 /// the renderer only ever *displayed* the last `Complete`, but the durable
 /// JSONL sink appends every event it is handed, so both landed in the
 /// benchmark evidence file and a consumer that stopped at the first terminal
@@ -184,7 +185,7 @@ pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) 
     }
     let inner = events.clone();
     EventSender::from_fn(move |event| {
-        if matches!(event, AgentEvent::Complete { .. }) {
+        if matches!(event, AgentEvent::RunComplete { .. }) {
             return Ok(());
         }
         inner.send(event)
@@ -275,7 +276,7 @@ mod pipeline_sender_tests {
             .send(AgentEvent::Text { text: "hi".into() })
             .unwrap();
         pipeline
-            .send(AgentEvent::Complete {
+            .send(AgentEvent::TurnComplete {
                 model: "m".into(),
                 cost_usd: 1.0,
             })
@@ -302,7 +303,7 @@ mod pipeline_sender_tests {
         assert!(
             !seen
                 .iter()
-                .any(|e| matches!(e, AgentEvent::Complete { .. })),
+                .any(|e| matches!(e, AgentEvent::TurnComplete { .. })),
             "the pipeline's Complete must not reach the sink: {seen:?}"
         );
         assert_eq!(seen.len(), 1, "everything else passes through: {seen:?}");
@@ -316,7 +317,7 @@ mod pipeline_sender_tests {
             let seen = drain(format);
             assert!(
                 seen.iter()
-                    .any(|e| matches!(e, AgentEvent::Complete { .. })),
+                    .any(|e| matches!(e, AgentEvent::TurnComplete { .. })),
                 "{format:?} has only this one terminal event: {seen:?}"
             );
         }

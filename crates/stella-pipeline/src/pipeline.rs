@@ -1466,7 +1466,7 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
         });
-        self.emit(AgentEvent::Complete {
+        self.emit(AgentEvent::RunComplete {
             model: resolved.model_ref.to_string(),
             cost_usd: *total_cost,
         });

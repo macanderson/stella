@@ -848,7 +848,7 @@ impl WorkspaceModel {
                     entry.budget_ticked = true;
                     entry.cost_usd = *spent_usd;
                 }
-                AgentEvent::Complete { model, cost_usd } => {
+                AgentEvent::TurnComplete { model, cost_usd } => {
                     entry.meta.model = Some(model.clone());
                     entry.cost_usd = entry.cost_usd.max(*cost_usd);
                     // The turn-completion event: freeze the header clock at its

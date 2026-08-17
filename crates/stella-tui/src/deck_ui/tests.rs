@@ -1376,7 +1376,7 @@ fn a_finished_turn_releases_a_routing_card_stuck_on_its_prompt() {
     ingest_inbound(
         &Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "test-model".into(),
                 cost_usd: 0.0,
             },
@@ -1426,7 +1426,7 @@ fn a_finished_turn_on_another_agent_does_not_release_someone_elses_card() {
     ingest_inbound(
         &Inbound::Event {
             agent: "req:2".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "test-model".into(),
                 cost_usd: 0.0,
             },

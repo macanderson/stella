@@ -442,10 +442,18 @@ impl<'a> Pipeline<'a> {
         let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
-                // The pipeline is the sole authority for stage boundaries and
-                // the terminal event of an outcome-producing run — drop the
-                // engine's per-turn copies.
-                AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => Ok(()),
+                // Stage boundaries stay the pipeline's: it emits its own at
+                // every stage, and the engine's per-turn copy would interleave
+                // a second vocabulary into the same stream. Which of the two
+                // vocabularies survives is a separate question (#3398).
+                //
+                // The engine's TURN terminator, by contrast, is no longer
+                // dropped (#3379). It is a true statement about a turn that
+                // really did end, and a wrapped run has several; the run's own
+                // ending is `RunComplete`, emitted once by the pipeline. Before
+                // this, one word meant two things depending on who said it, and
+                // the pipeline had to silence the engine to keep them apart.
+                AgentEvent::Stage { .. } => Ok(()),
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

@@ -207,7 +207,7 @@ async fn red_final_verdict_is_verification_failed_not_completed() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. })),
+            .any(|event| matches!(event, AgentEvent::TurnComplete { .. })),
         "a failed verification must never emit the success terminal event"
     );
     assert!(

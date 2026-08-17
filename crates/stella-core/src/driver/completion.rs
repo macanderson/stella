@@ -190,7 +190,7 @@ impl<'a> Engine<'a> {
             let _ = events.send(AgentEvent::Stage {
                 name: StageKind::Complete,
             });
-            let _ = events.send(AgentEvent::Complete {
+            let _ = events.send(AgentEvent::TurnComplete {
                 model: result.model.clone(),
                 cost_usd: total_cost_usd,
             });

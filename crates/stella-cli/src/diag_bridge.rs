@@ -492,14 +492,28 @@ impl DomainBridge {
                     self.at_seq().with("stage", stage_name(*name)),
                 );
             }
-            AgentEvent::Complete { model, cost_usd } => {
+            AgentEvent::TurnComplete { model, cost_usd } => {
                 // A turn terminator: any call still awaiting a result will
                 // never get one, so the retention map drains rather than
-                // carrying stale entries into the next turn.
+                // carrying stale entries into the next turn. This fires once
+                // per turn, and a wrapped run has several (#3379).
                 self.in_flight.clear();
                 self.emit(
                     Level::Info,
-                    "agent.complete",
+                    "agent.turn_complete",
+                    self.at_seq()
+                        .with("model", operator_id(model))
+                        .with("cost_usd", *cost_usd),
+                );
+            }
+            AgentEvent::RunComplete { model, cost_usd } => {
+                // The run terminator. The in-flight map was already drained by
+                // the last turn's terminator above; clearing again is a no-op
+                // that keeps this arm correct on its own terms.
+                self.in_flight.clear();
+                self.emit(
+                    Level::Info,
+                    "agent.run_complete",
                     self.at_seq()
                         .with("model", operator_id(model))
                         .with("cost_usd", *cost_usd),
@@ -1023,7 +1037,7 @@ mod tests {
         assert!(bridge.in_flight.is_empty(), "a discard removes its entry");
 
         bridge.observe(&tool_call("task", serde_json::json!({})));
-        bridge.observe(&AgentEvent::Complete {
+        bridge.observe(&AgentEvent::TurnComplete {
             model: "claude-fable-5".into(),
             cost_usd: 0.1,
         });

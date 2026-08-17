@@ -928,7 +928,7 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Complete {
+                event: AgentEvent::TurnComplete {
                     model: "z/glm".into(),
                     cost_usd: 0.01,
                 },
@@ -1170,7 +1170,7 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Complete {
+                event: AgentEvent::TurnComplete {
                     model: "z/glm".into(),
                     cost_usd: 0.004,
                 },

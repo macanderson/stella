@@ -1034,13 +1034,44 @@ pub enum AgentEvent {
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
     Error { message: String, retryable: bool },
-    /// The turn finished — the stream's terminator, and the only event a
-    /// consumer may treat as "nothing more is coming". `cost_usd` is the
-    /// turn's total spend and `model` the model that served its last committed
-    /// call; both are summaries of the `StepUsage` events that preceded it, not
-    /// a separate source of truth. A turn that fails ends on
-    /// [`AgentEvent::Error`] instead, never on both.
-    Complete { model: String, cost_usd: f64 },
+    /// **One turn** finished. `cost_usd` is that turn's spend and `model` the
+    /// model that served its last committed call; both summarize the
+    /// `StepUsage` events that preceded it, not a separate source of truth. A
+    /// turn that fails ends on [`AgentEvent::Error`] instead, never on both.
+    ///
+    /// This is **not** "the work is over" (#3379). A wrapper — the staged
+    /// pipeline, goal mode — runs several turns, so several of these appear in
+    /// one run's stream, in order. The run's ending is [`AgentEvent::RunComplete`]
+    /// and it appears exactly once.
+    ///
+    /// It was called `Complete` until #3379, and the rename is the point: one
+    /// word meant "this turn is over" when the engine said it and "the whole
+    /// job is over" when the pipeline said it, and nothing reading the journal
+    /// could tell which contract it was holding. The old name is not aliased —
+    /// every call site was moved.
+    TurnComplete { model: String, cost_usd: f64 },
+    /// **The run** finished — the stream's terminator, and the only event a
+    /// consumer may treat as "nothing more is coming".
+    ///
+    /// Emitted exactly once, by whoever owns the run: a wrapper if one is
+    /// driving (after its "another turn?" answer is *no*), otherwise the host
+    /// that asked for the single turn. `cost_usd` is the whole run's spend
+    /// across every turn it contained, so it is `>=` any single
+    /// [`AgentEvent::TurnComplete`]'s.
+    ///
+    /// A run that ends in failure ends on [`AgentEvent::Error`] with
+    /// `retryable: false` instead, exactly as it did before this event
+    /// existed — never on both.
+    ///
+    /// # The one-directional contract (#3379)
+    ///
+    /// The engine always finishes its turn and always says so; a wrapper that
+    /// wants more work asks for another turn. It never suppresses, rewrites,
+    /// or re-emits an engine event to manufacture an ending. Before this
+    /// existed the pipeline did exactly that — it dropped the engine's
+    /// terminal events and emitted its own in their place — which is a
+    /// two-way connection between the engine and one of its callers.
+    RunComplete { model: String, cost_usd: f64 },
     /// An event whose `"type"` this binary does not recognize — almost always
     /// one emitted by a NEWER stella than the one reading. The whole original
     /// JSON object is preserved in `payload` (tag included), so a proxy,

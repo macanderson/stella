@@ -851,7 +851,7 @@ fn stream_json_is_one_line_per_event() {
             name: StageKind::Triage,
         },
         AgentEvent::Text { text: "hi".into() },
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "glm-5.2".into(),
             cost_usd: 0.001,
         },
