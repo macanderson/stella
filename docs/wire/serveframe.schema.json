@@ -4,10 +4,13 @@
       "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls below can delegate to it after routing\n[`AgentEvent::Unknown`] around it. Without that indirection the forward-\ncompat fallback would mean hand-writing a visitor for every variant.",
       "oneOf": [
         {
-          "description": "The turn entered a new pipeline stage. Every stage boundary emits one,\nin the order the pipeline walks them.",
+          "description": "A stage boundary was crossed. `scope` says **whose** stage it is, and\nit is not decoration (#3398).\n\nTwo disjoint authorities emit stages. The engine emits three kinds,\nonce per turn ([`crate::StageScope::Turn`]). A wrapper — the staged pipeline,\na goal loop — emits its own vocabulary once per run\n([`crate::StageScope::Run`]). Before this field existed the pipeline dropped\nthe engine's copies outright, because a consumer receiving both had no\nway to tell them apart and several branch on stage transitions.\n\nThe deck is the reason this is a required field rather than a hint: it\ntreats a stage transition away from a scope review as the human's\napproval of that review. A turn-scoped stage arriving while a scope\ngate is open would forge consent nobody gave, so every consumer that\nbranches on stages must be able to select the scope it means.",
           "properties": {
             "name": {
               "$ref": "#/$defs/StageKind"
+            },
+            "scope": {
+              "$ref": "#/$defs/StageScope"
             },
             "type": {
               "const": "stage",
@@ -16,7 +19,8 @@
           },
           "required": [
             "type",
-            "name"
+            "name",
+            "scope"
           ],
           "type": "object"
         },
@@ -1348,7 +1352,7 @@
           "type": "object"
         },
         {
-          "description": "**One turn** finished — emitted by the engine at the end of every\nsuccessful `run_turn`, and meaning exactly that. It does **not** mean\nthe work is over: a wrapper that runs a revise loop produces one of\nthese per round.\n\n`cost_usd` is that turn's total spend and `model` the model that served\nits last committed call; both are summaries of the `StepUsage` events\nthat preceded it, not a separate source of truth. A turn that fails\nends on [`AgentEvent::Error`] instead, never on both.\n\n# Why this is separate from [`AgentEvent::Complete`] (#3379)\n\nThe engine used to emit `Complete` per turn, which forced any wrapper\nrunning more than one turn to *filter the engine's events out of the\nconsumer stream* — a two-way coupling where the engine is not merely\ncalled by the pipeline but edited by it. Splitting the two endings makes\nthe contract one-directional: the engine always finishes its turn and\nalways says so here, a wrapper that wants more work simply **requests\nanother turn**, and the run's owner emits the run-terminal `Complete`.\nBoth appear in the journal, in order, and neither is ever suppressed.",
+          "description": "**One turn** finished. `cost_usd` is that turn's spend and `model` the\nmodel that served its last committed call; both summarize the\n`StepUsage` events that preceded it, not a separate source of truth. A\nturn that fails ends on [`AgentEvent::Error`] instead, never on both.\n\nThis is **not** \"the work is over\" (#3379). A wrapper — the staged\npipeline, goal mode — runs several turns, so several of these appear in\none run's stream, in order. The run's ending is [`AgentEvent::RunComplete`]\nand it appears exactly once.\n\nIt was called `Complete` until #3379, and the rename is the point: one\nword meant \"this turn is over\" when the engine said it and \"the whole\njob is over\" when the pipeline said it, and nothing reading the journal\ncould tell which contract it was holding. The old name is not aliased —\nevery call site was moved.",
           "properties": {
             "cost_usd": {
               "format": "double",
@@ -1370,7 +1374,7 @@
           "type": "object"
         },
         {
-          "description": "The **run** finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\". Emitted exactly once,\nlast, and only on success, by whoever owns the run: the pipeline for a\nstaged run, the CLI/host for a raw one. The engine never emits it (see\n[`AgentEvent::TurnComplete`]), because the engine does not know whether\nits caller wants another turn.\n\n`cost_usd` is the run's total spend and `model` the model that served\nits last committed call. A run that fails ends on\n[`AgentEvent::Error`] instead, never on both.",
+          "description": "**The run** finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\".\n\nEmitted exactly once, by whoever owns the run: a wrapper if one is\ndriving (after its \"another turn?\" answer is *no*), otherwise the host\nthat asked for the single turn. `cost_usd` is the whole run's spend\nacross every turn it contained, so it is `>=` any single\n[`AgentEvent::TurnComplete`]'s.\n\nA run that ends in failure ends on [`AgentEvent::Error`] with\n`retryable: false` instead, exactly as it did before this event\nexisted — never on both.\n\n# The one-directional contract (#3379)\n\nThe engine always finishes its turn and always says so; a wrapper that\nwants more work asks for another turn. It never suppresses, rewrites,\nor re-emits an engine event to manufacture an ending. Before this\nexisted the pipeline did exactly that — it dropped the engine's\nterminal events and emitted its own in their place — which is a\ntwo-way connection between the engine and one of its callers.",
           "properties": {
             "cost_usd": {
               "format": "double",
@@ -1380,7 +1384,7 @@
               "type": "string"
             },
             "type": {
-              "const": "complete",
+              "const": "run_complete",
               "type": "string"
             }
           },
@@ -3252,7 +3256,6 @@
       ]
     },
     "StageKind": {
-      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).",
       "oneOf": [
         {
           "const": "triage",
@@ -3312,6 +3315,21 @@
         {
           "const": "complete",
           "description": "The turn is done. The last stage boundary a turn emits.",
+          "type": "string"
+        }
+      ]
+    },
+    "StageScope": {
+      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).\nWhose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "oneOf": [
+        {
+          "const": "turn",
+          "description": "One engine turn's own phases. Several per run when a wrapper drives.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "A wrapper's stages over the whole run: triage, plan, witness, verify.",
           "type": "string"
         }
       ]

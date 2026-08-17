@@ -611,7 +611,7 @@ fn stages(events: &[AgentEvent]) -> Vec<StageKind> {
     events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Stage { name } => Some(*name),
+            AgentEvent::Stage { name, .. } => Some(*name),
             _ => None,
         })
         .collect()

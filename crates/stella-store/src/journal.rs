@@ -139,7 +139,9 @@ impl JournalRecord {
             JournalRecord::Event { event, .. } => {
                 matches!(
                     event,
-                    AgentEvent::Complete { .. } | AgentEvent::Error { .. }
+                    AgentEvent::TurnComplete { .. }
+                        | AgentEvent::RunComplete { .. }
+                        | AgentEvent::Error { .. }
                 )
             }
         }
@@ -405,7 +407,8 @@ pub fn unsettled_prompts(records: &[JournalRecord]) -> Vec<(String, String)> {
             JournalRecord::Event { agent, event } => {
                 if matches!(
                     event,
-                    AgentEvent::Complete { .. }
+                    AgentEvent::TurnComplete { .. }
+                        | AgentEvent::RunComplete { .. }
                         | AgentEvent::Error {
                             retryable: false,
                             ..
@@ -497,7 +500,7 @@ mod tests {
     fn complete(agent: &str) -> JournalRecord {
         JournalRecord::Event {
             agent: agent.into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::TurnComplete {
                 model: "m".into(),
                 cost_usd: 0.0,
             },

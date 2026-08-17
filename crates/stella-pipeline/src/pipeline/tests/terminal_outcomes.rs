@@ -204,11 +204,27 @@ async fn red_final_verdict_is_verification_failed_not_completed() {
         "triage and worker spend are retained"
     );
     let events = drain(&mut rx);
+    // A failed verification must never emit the RUN's success terminator.
+    // Written against `RunComplete`, not `TurnComplete`: the worker's turn
+    // really did finish, and saying so is true (#3379). What must not appear
+    // is the claim that the run succeeded.
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, AgentEvent::Complete { .. })),
-        "a failed verification must never emit the success terminal event"
+            .any(|event| matches!(event, AgentEvent::RunComplete { .. })),
+        "a failed verification must never emit the run's success terminal event"
+    );
+    // And the failure is reported rather than merely withheld — a stream that
+    // ends silently would pass the assertion above while telling nobody.
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error {
+                retryable: false,
+                ..
+            }
+        )),
+        "the failure is announced on the stream: {events:?}"
     );
     assert!(
         events.iter().any(|event| matches!(

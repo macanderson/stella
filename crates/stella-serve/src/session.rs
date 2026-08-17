@@ -533,7 +533,7 @@ pub(crate) async fn drive_turn(
     // A served session is one run of one turn, so this is the run's owner and
     // owes it a terminal event (#3379): the engine ends the turn with
     // `TurnComplete` and says nothing about the run, because it cannot know
-    // whether its caller wants another. The wrapper emits `Complete` when it
+    // whether its caller wants another. The wrapper emits `RunComplete` when it
     // drops at the end of this function — after the turn, last on the stream
     // the host is reading.
     let events = RunEnding::sealing(EventSender::new(events.clone()));

@@ -169,7 +169,7 @@ fn turn_clock_holds_zero_then_runs_freezes_and_resets() {
     w.now_ms = 9_500;
     w.apply_inbound(&ev(
         "lead",
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },
@@ -307,6 +307,7 @@ fn stray_event_auto_registers_its_agent() {
         "ghost",
         AgentEvent::Stage {
             name: StageKind::Plan,
+            scope: stella_protocol::StageScope::Run,
         },
     ));
     assert!(w.index_of("ghost").is_some());
@@ -541,7 +542,7 @@ fn complete_marks_done_and_records_final_cost() {
     w.apply_inbound(&reg("lead"));
     w.apply_inbound(&ev(
         "lead",
-        AgentEvent::Complete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.033,
         },
@@ -559,6 +560,7 @@ fn trace_captures_every_agent_and_filters_by_agent() {
         "a",
         AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         },
     ));
     w.apply_inbound(&ev(

@@ -31,6 +31,7 @@ fn running_model() -> WorkspaceModel {
         agent: "lead".into(),
         event: AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         },
     });
     m

@@ -161,7 +161,7 @@ fn a_settled_thought_reverts_to_its_head() {
 #[test]
 fn a_terminal_event_settles_a_trailing_thought() {
     for terminal in [
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "glm-5.2".into(),
             cost_usd: 0.01,
         },

@@ -948,10 +948,12 @@ async fn run_task(
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
                 // A fleet worker owns its run (#3379) — no pipeline above it,
-                // so the terminal `Complete` the engine stopped claiming is
-                // this lane's to emit. Sealed when `worker` drops at the end
-                // of this block, after the race resolves.
-                let worker = crate::command_deck::forwarder::owned_events(&tx);
+                // so the run's terminator is this lane's to emit. It is sent
+                // once below, gated on the worker's own `success` flag, rather
+                // than sealed on drop here: a cancelled or aborted worker must
+                // end on `Error` alone, and only the code after the race knows
+                // which of the three ways this lane ended.
+                let worker = stella_core::EventSender::new(tx.clone());
                 tokio::select! {
                     outcome = engine.run_turn_with_sender(&mut messages, &mut budget, &worker) => {
                         Raced::Outcome(outcome)
@@ -969,6 +971,15 @@ async fn run_task(
                 Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
             }
         };
+    // One task is one run on its own stream, so this is its terminator
+    // (#3398). `success` is the worker's own flag, decided just above.
+    if success {
+        agent::persistence::emit_run_complete_on_raw(
+            &tx,
+            &cfg.model_id,
+            budget.session_spent_usd(),
+        );
+    }
     drop(tx);
     let rendered = renderer.await.unwrap_or_default();
     claims.release_all();

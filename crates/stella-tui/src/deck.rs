@@ -848,11 +848,19 @@ impl WorkspaceModel {
                     entry.budget_ticked = true;
                     entry.cost_usd = *spent_usd;
                 }
-                AgentEvent::Complete { model, cost_usd } => {
+                AgentEvent::TurnComplete { model, cost_usd } => {
                     entry.meta.model = Some(model.clone());
                     entry.cost_usd = entry.cost_usd.max(*cost_usd);
                     // The turn-completion event: freeze the header clock at its
                     // final elapsed so it holds the last turn's duration.
+                    entry.end_turn(now);
+                }
+                // The RUN's ending carries the whole run's cost, which is >= any
+                // single turn's (#3379). `max` so a wrapped run's total replaces
+                // the last turn's rather than being replaced by it.
+                AgentEvent::RunComplete { model, cost_usd } => {
+                    entry.meta.model = Some(model.clone());
+                    entry.cost_usd = entry.cost_usd.max(*cost_usd);
                     entry.end_turn(now);
                 }
                 // A non-retryable error also ends the turn — an aborted turn,
@@ -885,6 +893,7 @@ impl WorkspaceModel {
                 // re-emitted step must not restart a phase clock.
                 AgentEvent::Stage {
                     name: StageKind::Witness,
+                    scope: stella_protocol::StageScope::Run,
                 } => {
                     entry.witness_phase_ms.author_ms.get_or_insert(now);
                 }

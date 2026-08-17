@@ -114,7 +114,7 @@ mod tests {
         let log = DebugLog::new(None);
         assert!(!log.is_active());
         // No path → no panic, no file, pure no-op.
-        log.event(&AgentEvent::Complete {
+        log.event(&AgentEvent::TurnComplete {
             model: "glm".into(),
             cost_usd: 0.0,
         });
@@ -129,6 +129,7 @@ mod tests {
         assert!(log.is_active());
         log.event(&AgentEvent::Stage {
             name: stella_protocol::StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         });
         log.input(&UserInput::Prompt {
             text: "hi".into(),

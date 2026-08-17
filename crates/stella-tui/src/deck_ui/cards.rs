@@ -364,6 +364,7 @@ mod tests {
             agent: "lead".into(),
             event: AgentEvent::Stage {
                 name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
         });
         let action = handle_card_key(key(KeyCode::Char('e')), &model, &mut ui);

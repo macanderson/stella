@@ -298,7 +298,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let pipeline = crate::resume_frame::pipeline(
                     &cfg.durability,
                     ports,
-                    pipeline_event_sender(&events, OutputFormat::Text),
+                    events.clone(),
                     pipeline_config,
                 );
                 ResumedEnd::Pipeline(pipeline.resume(spec).await)
@@ -313,13 +313,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
-                // The raw branch owns its run (#3379): no pipeline above it
-                // means nobody else will emit the terminal `Complete` the
-                // engine no longer claims. The wrapper seals when this
-                // statement's temporary drops — after the turn, before the
-                // stream closes.
-                let owned = stella_core::event_sender::RunEnding::sealing(events.clone());
-                ResumedEnd::Turn(drive_resumed_turn(&engine, state, &owned).await)
+                // No `RunEnding` wrapper here: this function emits the resumed
+                // run's terminator once for *both* arms below, from the cost
+                // the reporting projection already settled (#3398). Sealing
+                // this arm as well would put two terminators on one stream,
+                // which `replay::validate_terminal` calls a violation.
+                ResumedEnd::Turn(drive_resumed_turn(&engine, state, &events).await)
             }
         }
     };
@@ -427,6 +426,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         result,
     } = reported;
 
+    // One terminator for the resumed run (#3398), on both arms: the bare
+    // restored turn never had one, and the pipeline arm used to get the
+    // pipeline's. A failed resume already reported through `result`.
+    if result.is_ok() {
+        persistence::emit_run_complete(&events, &cfg.model_id, cost_usd);
+    }
     // The canonical teardown (#960): detach the registry's sender clones,
     // drop ours, and only then await the renderer — otherwise the channel
     // never closes and a completed resume hangs.
@@ -689,12 +694,14 @@ mod tests {
         );
 
         // The renderer's contract: the resumed turn frames itself as an
-        // execute stage before its first event.
+        // execute stage before its first event. TURN-scoped: the engine emits
+        // it about its own turn, not a wrapper about the run (#3398).
         let first = rx.recv().await.expect("at least the stage event");
         assert!(matches!(
             first,
             AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute
+                name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Turn
             }
         ));
     }

@@ -42,6 +42,7 @@ fn scoped_model(approved: bool) -> WorkspaceModel {
             agent: "lead".into(),
             event: AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
         });
     }

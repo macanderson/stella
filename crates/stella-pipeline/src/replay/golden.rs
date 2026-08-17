@@ -329,10 +329,20 @@ mod tests {
     use stella_protocol::StageKind;
 
     fn stage(name: StageKind) -> AgentEvent {
-        AgentEvent::Stage { name }
+        // These fixtures are a wrapper's stream, so its own vocabulary.
+        AgentEvent::Stage {
+            name,
+            scope: stella_protocol::StageScope::Run,
+        }
+    }
+    fn run_complete() -> AgentEvent {
+        AgentEvent::RunComplete {
+            model: "scripted/only".into(),
+            cost_usd: 0.0,
+        }
     }
     fn complete() -> AgentEvent {
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "scripted/only".into(),
             cost_usd: 0.0,
         }
@@ -438,9 +448,13 @@ mod tests {
 
     #[test]
     fn an_ill_formed_recording_cannot_become_a_yardstick() {
-        // Two Completes — a stream terminates once. A golden that violates the
-        // invariants would license runs that violate them too.
-        let events = vec![complete(), complete()];
+        // Two RUN terminators — a run terminates once. A golden that violates
+        // the invariants would license runs that violate them too.
+        //
+        // Deliberately not two `turn_complete`s: a wrapped run has several of
+        // those and they are well-formed (#3379). The invariant belongs to the
+        // run's ending alone.
+        let events = vec![run_complete(), run_complete()];
         let manifest = GoldenManifest::for_recording("t", "a task", source(), &events);
         match GoldenTrajectory::new(manifest, events) {
             Err(GoldenError::NotWellFormed { violations, .. }) => {
@@ -508,7 +522,9 @@ mod tests {
         run[1] = stage(StageKind::Verdict);
         let diff = g.diff(&run);
         assert_eq!(diff.len(), 1);
-        assert_eq!(diff[0].left.as_deref(), Some("stage:Execute"));
-        assert_eq!(diff[0].right.as_deref(), Some("stage:Verdict"));
+        // The signature carries the scope (#3398), so a golden cannot alias a
+        // wrapper's stage with an engine turn phase of the same name.
+        assert_eq!(diff[0].left.as_deref(), Some("stage:Run:Execute"));
+        assert_eq!(diff[0].right.as_deref(), Some("stage:Run:Verdict"));
     }
 }

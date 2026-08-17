@@ -193,6 +193,7 @@ fn running_model_with_queue() -> WorkspaceModel {
         agent: "lead".into(),
         event: AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         },
     });
     m.queue.enqueue("write the tests".into(), 1);
