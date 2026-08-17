@@ -84,6 +84,12 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original."
+    )
+)]
 pub enum ErrorClass {
     /// The call's arguments could not be read as the tool's schema — a
     /// missing required field, a wrong type. The model's mistake: it counts

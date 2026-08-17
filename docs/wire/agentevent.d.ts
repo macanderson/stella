@@ -281,17 +281,7 @@ export interface ContextProviderUsage {
 }
 
 /**
- * The per-request roll-up of what one context recall cost
- * (`docs/spec/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering
- * pipeline bills from, and the answer to "what did this turn's context cost,
- * and which sources drove it?".
- *
- * Deliberately **content-free**: budget scalars, an accounting timestamp, and
- * per-provider counts and costs. The spec's `served_frames` drill-down is
- * *not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the
- * same [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular
- * identities locally, so an auditor still walks from a total to its frames
- * without this type ever carrying one.
+ * The per-request roll-up of what one context recall cost: the envelope a metering pipeline bills from, and the answer to "what did this turn's context cost, and which sources drove it?". Per-provider detail rides in `providers`; `budget_consumed` is the total the host admitted.
  */
 export interface ContextUsage {
   /**
@@ -324,10 +314,7 @@ export interface ContextUsage {
 export type DeliveryDecline = "nothing_created" | "integrity_refusal" | "adopt_failed";
 
 /**
- * What the pipeline did with the winning candidate's workspace.
- *
- * Internally tagged on `outcome`, so a `jq` reader selects an arm by field
- * rather than by the presence or absence of a sibling key.
+ * What the pipeline did with the winning candidate's workspace, and why. Internally tagged on `outcome`, so a reader selects an arm by that field rather than by the presence or absence of a sibling key.
  */
 export type DeliveryOutcome = {
   /**
@@ -371,25 +358,7 @@ export type DeliveryOutcome = {
 };
 
 /**
- * Why a tool call failed, as a closed machine-readable set (#3145).
- *
- * [`ToolOutput::Error`]'s `message` is prose written for the model to retry
- * against; this is the axis a *measurement* needs, because a per-tool error
- * rate cannot mean anything while a tool defect, model misuse, and a policy
- * refusal all count as the same failure. The variants partition failures by
- * **whose problem they are**: the model's ([`Self::InvalidInput`],
- * [`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],
- * [`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],
- * [`Self::Environment`]), or ours ([`Self::Internal`]).
- *
- * Deliberately **not** here: an `abandoned` class. A call whose turn ended
- * before it returned never produced a `ToolOutput` at all — abandonment is a
- * store-side lifecycle fact, not an error a tool can report.
- *
- * Forward-compat matches [`crate::receipt::BlockKind`]: an unknown token
- * written by a newer emitter deserializes to [`Self::Other`] rather than
- * failing the whole event. Lossy on the way out for the same reason —
- * re-serializing writes `"other"`, not the original token.
+ * Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.
  */
 export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
 
@@ -465,38 +434,7 @@ export interface HunkProposal {
 }
 
 /**
- * Which rung of the evidence ladder a `Verdict` actually came to rest
- * on (#1043).
- *
- * # Why the rung is on the wire instead of inferred
- *
- * `VerdictEvidence` already carries `passed` and `deterministic`, and for a
- * while that looked like enough. It is not, and the gap is not academic:
- *
- * - `deterministic: true, passed: false` is emitted by **two** rungs — a red
- *   touched test ([`LadderRung::Revise`], a genuine failure) and a turn that
- *   dispatched nothing ([`LadderRung::NothingAttempted`], where the honest
- *   label is "no evidence", not "wrong").
- * - `deterministic: true, passed: true` is emitted both by the full
- *   deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review
- *   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
- *   reader inferring "deterministic pass" from those two flags would label a
- *   turn nothing checked as the ladder's strongest possible result.
- * - `deterministic: false` covers two rungs that are not the same answer —
- *   [`LadderRung::Unverifiable`] ("no probe could look") and
- *   [`LadderRung::Unverified`] ("the probes looked and did not settle it") —
- *   and the only thing separating them in the old shape was the wording of a
- *   summary string.
- *
- * Re-deriving the rung by re-running the ladder over
- * [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
- * but not which of the three ways the verifier arm resolved, and it silently
- * disagrees with reality whenever the run's `veto_warnings` setting differed
- * from the reader's assumption. So the pipeline states the rung it took.
- *
- * Wire-compatible in the additive direction only, like every nested
- * vocabulary in this crate: a reader that meets a rung it does not know fails
- * the event rather than laundering it (see the [`crate::event`] docs).
+ * Which rung of the evidence ladder a `verdict` event actually came to rest on. The verdict's `passed` and `deterministic` flags cannot express this on their own: several distinct outcomes share the same pair of booleans, so the rung is carried explicitly rather than inferred. Read this field, not the flags, when you need to know what was established.
  */
 export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "unverified" | "witness_unsatisfiable" | "waived";
 
@@ -804,25 +742,7 @@ export interface OracleObservation {
 }
 
 /**
- * The accounting an adapter had already observed when an attempt died before
- * its terminal usage frame arrived.
- *
- * A mid-stream disconnect is not a total loss of accounting. The
- * Anthropic-shaped dialects report the prompt's cost in `message_start`,
- * inside the first few hundred bytes of the response, so a stream cut during
- * generation has *already* delivered exact input, cache-read and cache-write
- * counts. Before this type existed those numbers travelled exactly as far as
- * the adapter's stack frame: [`crate::error::ProviderError`] carried a
- * `String` and nothing else, the `?` on the next chunk dropped the whole
- * envelope, and the turn was recorded as though the attempt had cost nothing.
- * A user watching a dropped connection was told their accounting was
- * "incomplete" for numbers the process had been holding a moment earlier.
- *
- * Every field is a LOWER BOUND, and that is the point: it is a floor under
- * real spend, never a substitute for a provider-attested total. `reported`
- * on the inner [`CompletionUsage`] is therefore always `false`, which keeps a
- * partial structurally unable to pass [`CompletionUsage::is_complete`] and so
- * out of the settled-accounting path no matter how complete it looks.
+ * The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting.
  */
 export interface PartialUsage {
   /**
@@ -861,15 +781,7 @@ export type PolicyKind = "evaluated" | "blocked" | "approval_requested" | "secre
 export type PrStatus = "draft" | "open" | "merged" | "closed";
 
 /**
- * One step of the proof a turn builds for its own work, in the order the
- * pipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].
- *
- * Additive in one direction only: an older reader that does not know the
- * `proof` type tag preserves the whole event via
- * [`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and
- * meets a future `kind` fails the whole event — this nested enum is closed,
- * with no `Unknown` step (see [`crate::event`]'s module docs on nested
- * vocabularies).
+ * One step of the proof a turn builds for its own work, in the order the pipeline makes the observation. Carried by the `proof` event. Note the forward-compatibility asymmetry: a reader that does not know the `proof` event preserves it whole as an `unknown` event, but a reader that knows `proof` and meets a future `kind` here fails the whole event -- this nested vocabulary is closed and has no unknown step.
  */
 export type ProofStep = {
   kind: "assurance";
@@ -1675,25 +1587,7 @@ export type AgentEvent = {
    */
   estimated_input_tokens?: number;
   /**
-   * Why generation stopped, as the provider reported it
-   * ([`crate::completion::FinishReason`]). `Length` is the
-   * only *ground truth* a consumer has that this step was cut off at
-   * the output ceiling — the "we stopped first" event.
-   *
-   * It is here because it was previously nowhere: the engine knew the
-   * reason and dropped it at this boundary, so every downstream reader
-   * had to *infer* truncation from step shape. The benchmark harness
-   * inferred it as "≥16384 output tokens and no tool call", which was
-   * right when the output ceiling was 16K and became a false positive
-   * the moment the ceiling moved to 64K — the reading behind the
-   * unexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An
-   * inferred cap hit cannot be told from a long answer; a reported one
-   * can.
-   *
-   * `None` means the provider did not report a reason (or the stream
-   * predates this field — hence `serde(default)`), and must never be
-   * read as "not truncated": absence of the signal is not evidence of
-   * a clean stop.
+   * Why generation stopped, as the provider reported it. `length` is the only ground truth a consumer has that this step was cut off at the output ceiling -- the "we stopped first" signal. Absent on older streams, so treat a missing value as unknown rather than as a natural stop.
    */
   finish_reason?: FinishReason | null;
   input_tokens: number;
@@ -1754,19 +1648,7 @@ export type AgentEvent = {
 } | {
   duration_ms: number;
   /**
-   * The model the failed call was dispatched to.
-   *
-   * Per-call attribution, on the same contract as
-   * [`AgentEvent::StepUsage`]'s `provider`: this names what was
-   * actually being called, never the session's configured default.
-   * Sourced from [`crate::Provider::model`] (or the caller's own model
-   * hint) rather than hardcoded — until #2831 every one of these rows
-   * said [`UNKNOWN_MODEL`], which made a per-model failure census
-   * uncomputable and left mid-turn fallback unable to say which model
-   * had been failing.
-   *
-   * [`UNKNOWN_MODEL`] survives as the one documented spelling of "no
-   * model could be named here", and is expected to be rare.
+   * The model the failed call was dispatched to. Per-call attribution, on the same contract as a `step_usage` event's `provider`: this names what was actually being called, never the session's configured default.
    */
   model: string;
   /**
