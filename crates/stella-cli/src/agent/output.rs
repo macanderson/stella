@@ -3,6 +3,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use stella_core::event_sender::RunEnding;
 use stella_core::ports::Clock;
 use stella_core::{EventSendError, EventSender};
 use stella_protocol::AgentEvent;
@@ -160,35 +161,27 @@ pub(super) fn event_sender_for_run(
     (EventSender::new(sender), false)
 }
 
-/// The sender the pipeline itself emits on, for a one-shot run.
+/// [`event_sender_for_run`] for a run the CLI drives as bare engine turns,
+/// with no pipeline above it (#3379).
 ///
-/// On `stream-json` the caller emits its own terminal `Complete` once
-/// reflection and accounting have settled, carrying the all-calls total — so
-/// the pipeline's earlier, pre-reflection one is dropped here rather than left
-/// to be "replaced" downstream. It never was replaced anywhere it mattered:
-/// the renderer only ever *displayed* the last `Complete`, but the durable
-/// JSONL sink appends every event it is handed, so both landed in the
-/// benchmark evidence file and a consumer that stopped at the first terminal
-/// event read the pre-reflection cost (#960).
+/// The difference is who ends the run. A staged run's ending is the
+/// pipeline's, authored from a verdict it alone holds. A raw run has no such
+/// author: the engine ends each turn with `TurnComplete` and deliberately
+/// says nothing about the run, so the CLI — the owner here — emits the
+/// terminal `RunComplete` itself. [`RunEnding`] does that when this sender's
+/// last clone drops, which is precisely when the run's stream closes and
+/// therefore the only moment "last" is guaranteed rather than assumed.
 ///
-/// Suppression is exactly as wide as the replacement. The pipeline emits
-/// `Complete` only on an `Ok` outcome, and the one-shot path sends its
-/// replacement for every `Ok` outcome, so a run that had a terminal event
-/// before still has exactly one — never zero.
-///
-/// Every other format keeps the pipeline's `Complete`: it is the only one they
-/// get.
-pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) -> EventSender {
-    if format != OutputFormat::StreamJson {
-        return events.clone();
-    }
-    let inner = events.clone();
-    EventSender::from_fn(move |event| {
-        if matches!(event, AgentEvent::Complete { .. }) {
-            return Ok(());
-        }
-        inner.send(event)
-    })
+/// Wrapping *outside* the durability boundary above is deliberate: the
+/// terminal event is journaled through the same persist-first sender as
+/// everything before it, so a durable stream still ends on the event that
+/// ended the run.
+pub(super) fn event_sender_for_raw_run(
+    sender: mpsc::UnboundedSender<AgentEvent>,
+    format: OutputFormat,
+) -> (EventSender, bool) {
+    let (events, durable_pre_persisted) = event_sender_for_run(sender, format);
+    (RunEnding::sealing(events), durable_pre_persisted)
 }
 
 /// The durable sink, and the point at which an event becomes a *line*.
