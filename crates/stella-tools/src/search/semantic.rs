@@ -79,11 +79,7 @@ pub enum WarmOutcome {
 /// between awaits and a pass killed halfway has committed every batch before
 /// it.
 #[cfg(test)]
-pub async fn warm_file_vectors(
-    root: &Path,
-    embedder: &dyn Embedder,
-    limit: usize,
-) -> WarmOutcome {
+pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usize) -> WarmOutcome {
     warm_file_vectors_with_progress(root, embedder, limit, &mut |_| {}).await
 }
 
@@ -152,8 +148,11 @@ async fn warm_opened(
         if scan.files.is_empty() {
             break;
         }
-        if let Err(reason) = embed_batch(graph, embedder, &fingerprint, &scan.files).await {
-            return WarmOutcome::Failed { embedded, reason };
+        if let Err(error) = embed_batch(graph, embedder, &fingerprint, &scan.files).await {
+            return WarmOutcome::Failed {
+                embedded,
+                reason: error.to_string(),
+            };
         }
         embedded += scan.files.len();
         progress(embedded);
@@ -176,10 +175,10 @@ pub async fn catch_up_embeddings(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,
-) -> Result<(), String> {
+) -> Result<(), EmbedError> {
     let scan = graph
         .files_pending_embedding(fingerprint, stella_graph::MAX_FILES_PER_PASS)
-        .map_err(|error| format!("the code graph could not be read: {error}"))?;
+        .map_err(|error| EmbedError::GraphRead(error.to_string()))?;
     if scan.files.is_empty() {
         return Ok(());
     }
@@ -187,6 +186,27 @@ pub async fn catch_up_embeddings(
         embed_batch(graph, embedder, fingerprint, chunk).await?;
     }
     Ok(())
+}
+
+/// Why a warm or catch-up pass stopped (invariant #5).
+///
+/// The split that matters to a caller is embedder-versus-index: an embedder
+/// failure is usually configuration or a network hop and leaves the index
+/// perfectly usable for the lexical rungs, while a graph read/write failure
+/// means the index itself is the problem. `super::engine` degrades on the
+/// first and reports the second, and it could not tell them apart while both
+/// arrived as prose.
+#[derive(Debug, thiserror::Error)]
+pub enum EmbedError {
+    /// The code graph could not be read for pending work.
+    #[error("the code graph could not be read: {0}")]
+    GraphRead(String),
+    /// The embedder itself failed — unconfigured, unreachable, or refusing.
+    #[error("the embedder failed: {0}")]
+    Embedder(String),
+    /// The vectors were produced but could not be committed to the index.
+    #[error("the embeddings could not be stored: {0}")]
+    GraphWrite(String),
 }
 
 /// Embed one batch and commit it — the single place a file's vector comes
@@ -197,12 +217,12 @@ async fn embed_batch(
     embedder: &dyn Embedder,
     fingerprint: &str,
     batch: &[stella_graph::PendingEmbed],
-) -> Result<(), String> {
+) -> Result<(), EmbedError> {
     let texts: Vec<String> = batch.iter().map(|p| p.text.clone()).collect();
     let embeddings = embedder
         .embed(&texts)
         .await
-        .map_err(|error| format!("the embedder failed: {error}"))?;
+        .map_err(|error| EmbedError::Embedder(error.to_string()))?;
     let rows: Vec<FileVector> = batch
         .iter()
         .zip(embeddings)
@@ -217,6 +237,6 @@ async fn embed_batch(
         // A write failure here is not recoverable by continuing: the next
         // batch would be written into the same broken store and the pass
         // would report success having stored nothing.
-        .map_err(|error| format!("cannot store file vectors: {error}"))
+        .map_err(|error| EmbedError::GraphWrite(error.to_string()))
         .map(|_| ())
 }

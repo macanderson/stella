@@ -1,8 +1,8 @@
 //! Durable replacement of a file's contents on the agent's primary
 //! source-mutation path.
 //!
-//! `write_file`, `edit_file`, `apply_edits` and `save_memory` all used to
-//! call `tokio::fs::write` straight onto the target, which opens with
+//! `write_file` and `edit_file` — the agent's two ways of changing a file —
+//! both used to call `tokio::fs::write` straight onto the target, which opens with
 //! `O_TRUNC`: the old bytes are gone before the new ones are written. A
 //! crash, an OOM kill, or a Ctrl-C in that window left the user's own source
 //! file truncated, with the replacement nowhere on disk. That is the one
@@ -59,7 +59,8 @@
 //! and, because the inode never changes, are preserved here for free — the
 //! one thing the previous rename-based implementation could not promise.
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::rootfd::{RootError, RootHandle};
@@ -74,8 +75,9 @@ use crate::rootfd::{RootError, RootHandle};
 /// walk create the interior directories as it goes — the replacement for a
 /// `create_dir_all` that would re-resolve the whole prefix.
 ///
-/// Runs the blocking filesystem work on a blocking worker, for the same
-/// reason [`write_file_durably`] does.
+/// Runs the blocking filesystem work on a blocking worker: the
+/// open/write/truncate/fsync sequence has no async equivalent that fsyncs,
+/// and doing it on a reactor thread would stall the runtime.
 pub async fn write_file_durably_at(
     handle: Arc<RootHandle>,
     rel: String,
@@ -97,9 +99,9 @@ fn write_blocking_at(
 ) -> Result<(), RootError> {
     use std::io::Write as _;
 
-    // The same sequence as `write_blocking` below, and for the same reasons —
-    // the only difference is where the descriptor came from. `open_write`
-    // opens without `O_TRUNC` and reports whether it created the entry.
+    // The sequence the module header argues for: `open_write` opens without
+    // `O_TRUNC` and reports whether it created the entry, so the old bytes
+    // are never gone before the new ones are written.
     let target = handle.open_write(rel, create_parents)?;
     let mut file = &target.file;
     let mode_before = captured_mode(file)?;
@@ -115,78 +117,10 @@ fn write_blocking_at(
     Ok(())
 }
 
-/// Replace `path`'s contents with `bytes`, durably and in place.
-///
-/// The path form, for the callers that do not resolve against a workspace
-/// root at all: `save_memory` writes into `root/.stella/` from constants.
-/// Anything taking a model- or repository-supplied path wants
-/// [`write_file_durably_at`], which cannot be raced between the resolve and
-/// the open.
-///
-/// Returns `Err` with a message shaped for the tools' existing
-/// `ToolOutput::Error { message }`. Runs the blocking filesystem work on a
-/// blocking worker: the open/write/truncate/fsync sequence has no async
-/// equivalent that fsyncs, and doing it on a reactor thread would stall the
-/// runtime.
-pub async fn write_file_durably(path: PathBuf, bytes: Vec<u8>) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || write_blocking(&path, &bytes))
-        .await
-        .map_err(|error| format!("write task failed: {error}"))?
-}
-
-fn write_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write as _;
-
-    // `create(true)` without `truncate(true)`: one open that creates the file
-    // if it is absent and otherwise keeps the existing inode, with no window
-    // in which the old contents are gone. Deciding between "create" and
-    // "rewrite" with a prior `stat` would only add a race.
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        // This form is only reached for paths Stella built itself out of
-        // constants, but a symlink can still be planted at the final name;
-        // refuse to follow one. (Interior components are why the model-steered
-        // path goes through `write_file_durably_at` instead — see #938.)
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-
-    let existed = path.exists();
-    let mut file = options
-        .open(path)
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-    let mode_before = captured_mode(&file)
-        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-    file.write_all(bytes)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    // After the write, never before: this is what makes a crash leave the new
-    // content plus a stale tail instead of an empty file.
-    file.set_len(bytes.len() as u64)
-        .map_err(|error| format!("cannot truncate {}: {error}", path.display()))?;
-    // The one thing preserving the inode does NOT preserve by itself: the
-    // kernel clears set-user-ID and set-group-ID on write by an unprivileged
-    // process. Restore the captured mode — before the fsync, so the metadata
-    // change is covered by it.
-    restore_mode(&file, mode_before)
-        .map_err(|error| format!("cannot restore mode on {}: {error}", path.display()))?;
-    file.sync_all()
-        .map_err(|error| format!("cannot fsync {}: {error}", path.display()))?;
-    if !existed {
-        // A new file's directory entry is itself state that has to reach the
-        // disk; without this the file can exist in the page cache and not in
-        // the directory after a power loss. Best-effort: a filesystem that
-        // refuses to open a directory for sync is not a reason to fail a
-        // write that already landed.
-        sync_directory(path);
-    }
-    Ok(())
-}
-
 /// The file's mode before the write, so the set-user-ID/set-group-ID bits the
-/// kernel strips can be put back. Asked of the open descriptor, not of the
-/// path, so both write forms can share it.
+/// kernel strips can be put back. Asked of the open descriptor rather than of
+/// the path — the whole point of this module is that a name may be re-pointed
+/// between two resolutions.
 #[cfg(unix)]
 fn captured_mode(file: &std::fs::File) -> std::io::Result<u32> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -216,20 +150,6 @@ fn restore_mode(_file: &std::fs::File, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn sync_directory(path: &Path) {
-    if let Some(parent) = path.parent()
-        && let Ok(handle) = std::fs::File::open(parent)
-    {
-        let _ = handle.sync_all();
-    }
-}
-
-/// Windows has no directory handle to flush; the creation's durability is
-/// whatever the filesystem's own metadata journal provides.
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,8 +165,23 @@ mod tests {
         dir
     }
 
+    /// Drive the live implementation — the root-descriptor form every write
+    /// in the product actually takes.
+    ///
+    /// These seven tests used to exercise a second, path-resolving copy of
+    /// the same sequence, which had no callers left once every write moved to
+    /// the `_at` form (#938). Pointing them here costs nothing and buys the
+    /// thing a durability test is for: they now fail when the code that runs
+    /// stops preserving an inode, a setgid bit, or a hard link.
     async fn write(path: &Path, content: &str) -> Result<(), String> {
-        write_file_durably(path.to_path_buf(), content.as_bytes().to_vec()).await
+        let parent = path.parent().expect("a parent directory");
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a UTF-8 file name");
+        let handle = RootHandle::open(parent).map_err(|error| error.to_string())?;
+        write_blocking_at(&handle, name, content.as_bytes(), true)
+            .map_err(|error| error.to_string())
     }
 
     #[tokio::test]

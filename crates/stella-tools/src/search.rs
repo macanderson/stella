@@ -137,7 +137,7 @@ impl Tool for Search {
         if query.trim().is_empty() {
             return ToolOutput::error(QUERY_REQUIRED);
         }
-        search_in(ctx.root(), query, self.config.clone()).await
+        search_in(ctx.root(), query, self.config).await
     }
 }
 

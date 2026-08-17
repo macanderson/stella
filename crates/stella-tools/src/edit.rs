@@ -375,7 +375,10 @@ mod tests {
                 &cx(dir.path()),
             )
             .await;
-        let ToolOutput::Ok { content: second, .. } = second else {
+        let ToolOutput::Ok {
+            content: second, ..
+        } = second
+        else {
             panic!("expected ok, got: {second:?}");
         };
 

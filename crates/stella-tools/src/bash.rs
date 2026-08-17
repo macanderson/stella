@@ -608,7 +608,10 @@ mod tests {
     async fn runs_echo_command() {
         let dir = std::env::temp_dir();
         let result = Bash::new(None)
-            .execute(&serde_json::json!({"command": "echo hello_stella"}), &cx(&dir))
+            .execute(
+                &serde_json::json!({"command": "echo hello_stella"}),
+                &cx(&dir),
+            )
             .await;
         match result {
             ToolOutput::Ok { content, .. } => assert!(content.contains("hello_stella")),
@@ -888,7 +891,6 @@ mod tests {
         }
     }
 
-
     fn text_of(out: ToolOutput) -> String {
         match out {
             ToolOutput::Ok { content, .. } => content,
@@ -1112,4 +1114,3 @@ mod tests {
         assert!(!text.contains("outside the session root"), "{text}");
     }
 }
-

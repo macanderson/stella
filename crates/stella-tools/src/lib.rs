@@ -11,7 +11,7 @@
 //! its place by being something an agent cannot do any other way:
 //!
 //! - the **working surface** — one shell ([`bash`]), the file CRUD quartet
-//!   ([`read`] / [`write`] / [`edit`] / [`delete`]), and one unified code
+//!   ([`read`] / [`mod@write`] / [`edit`] / [`delete`]), and one unified code
 //!   search ([`search`], lexical and semantic in a single `query` parameter);
 //! - the **coordination surface** — the sub-agent spawn tool (`task`), the
 //!   session task board (`task_create` / `task_list` / `task_start` /

@@ -45,12 +45,7 @@ const MAX_BODY_LINES: usize = 40;
 /// know all degrade to fewer lines, never to an error. A search that failed
 /// to enrich a hit still found the hit, and losing the whole answer over a
 /// detail line would be the worst possible trade.
-pub fn render_hit(
-    graph: Option<&CodeGraph>,
-    root: &Path,
-    hit: &Hit,
-    depth: Depth,
-) -> String {
+pub fn render_hit(graph: Option<&CodeGraph>, root: &Path, hit: &Hit, depth: Depth) -> String {
     let facets = facets_at(depth);
     // `Facet::Path` is the header and is present at every depth by
     // construction, so it is written unconditionally rather than looked up.
@@ -425,7 +420,7 @@ const STOPWORDS: &[&str] = &[
 ];
 
 /// Words worth matching on: lowercase, alphanumeric, at least three
-/// characters, and not a [`STOPWORDS`] entry.
+/// characters, and not a stopword.
 pub fn terms_of(query: &str) -> Vec<String> {
     let mut terms: Vec<String> = query
         .split(|c: char| !c.is_alphanumeric())

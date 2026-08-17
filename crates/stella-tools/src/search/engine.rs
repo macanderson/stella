@@ -276,7 +276,7 @@ pub async fn report_with(
         // A graph that will not open is a degradation, not a dead end: the
         // file scan needs no index and is exactly the strategy for a
         // workspace the indexer cannot serve.
-        Ok(Err(message)) => (None, Some(message)),
+        Ok(Err(error)) => (None, Some(error.to_string())),
         Err(join_error) => {
             return SearchReport::failed(&worker_failure("the search", join_error));
         }
@@ -529,7 +529,9 @@ async fn semantic_hits(
     query: &str,
 ) -> Result<(Vec<Hit>, Option<String>), String> {
     let fingerprint = embedder.fingerprint().id();
-    catch_up_embeddings(graph, embedder, &fingerprint).await?;
+    catch_up_embeddings(graph, embedder, &fingerprint)
+        .await
+        .map_err(|error| error.to_string())?;
     catch_up_chunk_embeddings(graph, embedder, &fingerprint).await?;
 
     let query_vector = match embedder.embed(&[query.to_string()]).await {

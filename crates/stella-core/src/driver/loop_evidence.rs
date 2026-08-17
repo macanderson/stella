@@ -546,7 +546,9 @@ pub const READ_FOOTER_TALLY_END: &str = "\u{d7} this session";
 /// over the WHOLE transcript on every step, so returning an owned copy meant a
 /// full heap copy of every tool result — a step's worth of garbage proportional
 /// to the entire history, for a normalization that usually changes nothing.
-pub fn comparable_output(output: &stella_protocol::ToolOutput) -> Cow<'_, stella_protocol::ToolOutput> {
+pub fn comparable_output(
+    output: &stella_protocol::ToolOutput,
+) -> Cow<'_, stella_protocol::ToolOutput> {
     if let stella_protocol::ToolOutput::Ok { content, data } = output
         && let Some(idx) = read_footer_start(content)
     {

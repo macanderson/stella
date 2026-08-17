@@ -345,7 +345,10 @@ pub const SCRATCH_DIR_ENV: &str = "STELLA_SCRATCH";
 /// value the scrub can remove. Does nothing when the session has no scratch
 /// directory — an absent capability is absent, not an empty string the child
 /// would treat as a valid path.
-pub fn inject_scratch_env(command: &mut tokio::process::Command, scratch: Option<&std::path::Path>) {
+pub fn inject_scratch_env(
+    command: &mut tokio::process::Command,
+    scratch: Option<&std::path::Path>,
+) {
     if let Some(path) = scratch {
         command.env(SCRATCH_DIR_ENV, path);
     }

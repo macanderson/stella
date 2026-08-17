@@ -683,7 +683,10 @@ mod tests {
         std::fs::write(dir.path().join("bundle.min.js"), &huge).unwrap();
 
         let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "bundle.min.js"}), &cx(dir.path()))
+            .execute(
+                &serde_json::json!({"path": "bundle.min.js"}),
+                &cx(dir.path()),
+            )
             .await;
         let ToolOutput::Ok { content, .. } = out else {
             panic!("expected ok, got: {out:?}");
@@ -835,8 +838,12 @@ mod tests {
             let input = serde_json::json!({ "path": name });
             let first = tool.execute(&input, &cx(dir.path())).await;
             let second = tool.execute(&input, &cx(dir.path())).await;
-            let (ToolOutput::Ok { content: raw, .. }, ToolOutput::Ok { content: raw_again, .. }) =
-                (&first, &second)
+            let (
+                ToolOutput::Ok { content: raw, .. },
+                ToolOutput::Ok {
+                    content: raw_again, ..
+                },
+            ) = (&first, &second)
             else {
                 panic!("expected ok for {name}, got: {first:?} / {second:?}");
             };
