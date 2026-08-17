@@ -224,6 +224,123 @@ async fn the_scope_check_does_not_resolve_the_final_component() {
     assert!(!dir.path().join("link.toml").exists());
 }
 
+/// The half that matters most for benchmarking: the shell audit must not
+/// refuse ordinary work.
+///
+/// A false refusal breaks a build for a reason the agent cannot diagnose, and
+/// one of those costs more than the rare escape the refusal would have caught.
+/// Every command here is something a real task runs constantly.
+#[tokio::test]
+async fn the_shell_audit_permits_ordinary_build_and_test_commands() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+    let ctx = ToolCtx::bare(dir.path().to_path_buf());
+
+    for command in [
+        "echo hello",
+        "ls -la",
+        "cat src/lib.rs",
+        "grep -rn TODO .",
+        "mkdir -p build/out",
+        "touch src/new.rs",
+        "rm -f build/stale.o",
+        "cp src/a.rs src/b.rs",
+        "mv src/b.rs src/c.rs",
+        "echo done > build/log.txt",
+        "cargo build --release 2>&1 | tail -20",
+        "sed -i.bak s/a/b/ src/c.rs",
+        // Unresolvable by design: a variable, a glob, a home path. Skipped
+        // rather than guessed at.
+        "rm -rf $BUILD_DIR",
+        "rm -f build/*.o",
+        "cp config ~/backup",
+    ] {
+        let out = stella_tools::bash::Bash::new(None)
+            .execute(&serde_json::json!({ "command": command }), &ctx)
+            .await;
+        if let stella_protocol::tool::ToolOutput::Error { message, .. } = &out {
+            assert!(
+                !message.contains("outside this session's writable directories")
+                    && !message.contains("worktrees"),
+                "the audit must not refuse `{command}`: {message}"
+            );
+        }
+    }
+}
+
+/// What the audit is for: a clearly-resolvable write outside the session's
+/// directories is refused before the shell runs.
+#[tokio::test]
+async fn the_shell_audit_refuses_a_resolvable_write_outside_the_scope() {
+    let session = tempfile::tempdir().expect("session");
+    let outside = tempfile::tempdir().expect("outside");
+    let victim = outside.path().join("precious.txt");
+    std::fs::write(&victim, "do not delete\n").expect("write victim");
+
+    let ctx = ToolCtx::bare(session.path().to_path_buf());
+    let out = stella_tools::bash::Bash::new(None)
+        .execute(
+            &serde_json::json!({ "command": format!("rm -f {}", victim.display()) }),
+            &ctx,
+        )
+        .await;
+
+    let message = message(&out);
+    assert!(
+        message.contains("outside this session's writable directories"),
+        "{message}"
+    );
+    assert!(
+        victim.exists(),
+        "the refusal must land before the shell runs"
+    );
+}
+
+/// A redirect creates a file whatever the command around it is, so the audit
+/// reads it as a write.
+#[tokio::test]
+async fn the_shell_audit_refuses_a_redirect_outside_the_scope() {
+    let session = tempfile::tempdir().expect("session");
+    let outside = tempfile::tempdir().expect("outside");
+    let target = outside.path().join("planted.txt");
+
+    let ctx = ToolCtx::bare(session.path().to_path_buf());
+    let out = stella_tools::bash::Bash::new(None)
+        .execute(
+            &serde_json::json!({ "command": format!("echo pwned > {}", target.display()) }),
+            &ctx,
+        )
+        .await;
+
+    assert!(out.is_error(), "{out:?}");
+    assert!(!target.exists(), "nothing may be created outside the scope");
+}
+
+/// The shell may not write into a sibling worktree either — the same boundary
+/// the file tools enforce, so the two cannot disagree.
+#[tokio::test]
+async fn the_shell_audit_refuses_writing_into_a_sibling_worktree() {
+    let dir = workspace_with_a_worktree();
+    let ctx = ToolCtx::bare(dir.path().to_path_buf());
+
+    let out = stella_tools::bash::Bash::new(None)
+        .execute(
+            &serde_json::json!({
+                "command": "rm -f .stella/worktrees/sibling-task/secret.rs"
+            }),
+            &ctx,
+        )
+        .await;
+
+    let message = message(&out);
+    assert!(message.contains("worktrees"), "{message}");
+    assert!(
+        dir.path()
+            .join(".stella/worktrees/sibling-task/secret.rs")
+            .exists()
+    );
+}
+
 /// The edit tool consults the same boundary as the write tool — one session,
 /// one answer.
 #[tokio::test]

@@ -66,7 +66,7 @@ impl Tool for WriteFile {
         // the bytes are on disk is a report, not a boundary.
         let (scope_root, path) = match ctx.resolve_for_write(path) {
             Ok(resolved) => resolved,
-            Err(refusal) => return ToolOutput::error(refusal),
+            Err(refusal) => return ToolOutput::error(refusal.to_string()),
         };
         let path = path.as_str();
 

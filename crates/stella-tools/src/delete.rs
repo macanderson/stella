@@ -68,7 +68,7 @@ impl Tool for DeleteFile {
         // scope is consulted before the descriptor walk starts.
         let (scope_root, path) = match ctx.resolve_for_write(path) {
             Ok(resolved) => resolved,
-            Err(refusal) => return ToolOutput::error(refusal),
+            Err(refusal) => return ToolOutput::error(refusal.to_string()),
         };
         let path = path.as_str();
         let handle = match RootHandle::open(&scope_root) {

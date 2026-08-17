@@ -30,7 +30,6 @@ use std::sync::Arc;
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
 use stella_protocol::{AgentEvent, CompletionMessage};
-use stella_tools::ToolRegistry;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -651,7 +650,7 @@ async fn run_worker(
     // `Arc` because the lane's sub-agent dispatcher holds a `Weak` back to it
     // (`crate::subagent`) — the registry is the child's tool set, so an owning
     // handle either way would leak both.
-    let registry = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry = Arc::new(crate::write_dirs::registry_for(cfg));
     // A worker lane delegates research like any other turn. Without this the
     // `task` tool is still advertised (the registry registers it
     // unconditionally) and answers "sub-agents are unavailable" every time —

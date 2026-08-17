@@ -134,6 +134,54 @@ mod witness_tools;
 use oracle_writes::{ObservedTestRunner, OracleWrites};
 use witness_tools::WitnessToolExecutor;
 
+/// Where every worktree Stella creates lives, relative to the repository
+/// toplevel — the same path `stella_core::workspace_scope::DENIED_SUBPATH`
+/// denies to every session but the one that entered it, and the same one
+/// `stella_fleet::git` already used for worker worktrees.
+///
+/// Spelled here as a repo-relative string rather than derived through
+/// `denied_dir`, because this module needs it in both forms: joined onto the
+/// toplevel to place a worktree, and compared against `git ls-files` output to
+/// keep one out of a snapshot.
+const WORKTREES_REL: &str = stella_core::workspace_scope::DENIED_SUBPATH;
+
+/// Create the worktrees directory and make it **invisible to git**.
+///
+/// A self-ignoring directory: a `.gitignore` containing `*` inside it, which
+/// git honours regardless of what the project's own ignore files say. Two
+/// things depend on this, and both are the candidate workspace's core promise
+/// that the real tree is never touched:
+///
+/// - `git status` in the user's checkout must stay exactly as it was. Without
+///   this the directory shows up as `?? .stella/`, and a snapshot taken to
+///   mirror the tree's dirty state would mirror Stella's own bookkeeping as
+///   if the user had left it there.
+/// - A worktree must never be committable. It is a second checkout, and one
+///   accidentally staged into the repository would be a disaster nobody
+///   notices until the push.
+///
+/// Idempotent: an existing directory and an existing ignore file are both
+/// left alone.
+fn ensure_worktrees_dir(worktrees_root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(worktrees_root).map_err(|error| {
+        format!(
+            "cannot create the worktree directory `{}`: {error}",
+            worktrees_root.display()
+        )
+    })?;
+    let ignore = worktrees_root.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(&ignore, "*\n").map_err(|error| {
+            format!(
+                "cannot write `{}` — a worktree directory git can see would \
+                 dirty the user's tree: {error}",
+                ignore.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// The commit identity for snapshot plumbing commits (which exist only
 /// inside the shadow and are discarded with it) — the user's repo may have
 /// no identity configured (CI), and their real identity must never be
@@ -419,14 +467,25 @@ impl GitCandidateWorkspaces {
             .unwrap_or(Path::new(""))
             .to_path_buf();
 
-        let dir = std::env::temp_dir().join(format!(
-            "stella_candidate_{}_{}",
+        // Every worktree Stella creates lives under one known path, and that
+        // path is denied to every session but the one that entered it
+        // (`stella_core::workspace_scope`). This used to be the system temp
+        // directory, which put a second checkout of the repository somewhere
+        // no scope could name — so an agent that found it could read a
+        // parallel revision of the file it was editing and never know.
+        //
+        // The fleet worker's worktrees already lived here
+        // (`stella_fleet::git`); this is the last creator that did not.
+        let worktrees_root = toplevel.join(WORKTREES_REL);
+        ensure_worktrees_dir(&worktrees_root).map_err(snap)?;
+        let dir = worktrees_root.join(format!(
+            "candidate_{}_{}",
             std::process::id(),
             SHADOW_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let dir_str = dir
             .to_str()
-            .ok_or_else(|| snap("temp dir path is not valid UTF-8".to_string()))?;
+            .ok_or_else(|| snap("worktree path is not valid UTF-8".to_string()))?;
         // The ref namespace this candidate is about to share with the graded
         // tree, recorded before it can move (#2541) — see [`ref_escape`].
         let refs_at_create = ref_escape::shared_refs(&toplevel).await;
@@ -621,6 +680,21 @@ async fn populate_snapshot(
     .await?;
     let mut overlay: Vec<String> = Vec::new();
     for rel in listing.split('\0').filter(|p| !p.is_empty()) {
+        // Never copy the worktree directory into a snapshot of the tree it
+        // lives in. Candidate worktrees moved from the system temp directory
+        // to `.stella/worktrees/` so a scope could name and deny them
+        // (`stella_core::workspace_scope`); that put them inside the
+        // repository, where `ls-files --others` lists them as untracked and
+        // this walk then tried to copy a directory as if it were a file.
+        //
+        // Recursing would be worse than the error: a candidate's snapshot
+        // would contain a copy of every other candidate's tree, and each
+        // fan-out would square. Skipped outright rather than gitignored,
+        // because a repository whose `.stella/.gitignore` predates this must
+        // not fan out into a disk-filling copy either.
+        if Path::new(rel).starts_with(WORKTREES_REL) {
+            continue;
+        }
         match copy_preserving_mtime(&toplevel.join(rel), &dir.join(rel)).await {
             Ok(()) => {}
             // A file that vanished between listing and copy is dirty-state

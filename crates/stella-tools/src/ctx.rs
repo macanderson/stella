@@ -130,12 +130,12 @@ impl ToolCtx {
     /// The returned relative path is used only to walk the handle, so the
     /// descriptor walk still re-checks every component. This decides policy;
     /// `rootfd` closes the race.
-    pub fn resolve_for_write(&self, path: &str) -> Result<(PathBuf, String), String> {
+    pub fn resolve_for_write(&self, path: &str) -> Result<(PathBuf, String), ScopeRefusal> {
         let absolute = self.absolutize(path);
 
         let decision = self.scope.may_write(&absolute);
         if !decision.is_allowed() {
-            return Err(self.scope_refusal(&absolute, decision));
+            return Err(self.refusal(&absolute, decision));
         }
 
         // The most specific containing root wins, so a nested allowed
@@ -152,12 +152,21 @@ impl ToolCtx {
             }
         }
         let Some(root) = best else {
-            return Err(self.scope_refusal(&absolute, ScopeDecision::OutsideScope));
+            return Err(self.refusal(&absolute, ScopeDecision::OutsideScope));
         };
         let relative = normalized
             .strip_prefix(root)
-            .map_err(|_| self.scope_refusal(&absolute, ScopeDecision::OutsideScope))?;
+            .map_err(|_| self.refusal(&absolute, ScopeDecision::OutsideScope))?;
         Ok((root.clone(), relative.to_string_lossy().into_owned()))
+    }
+
+    /// Whether a model-supplied path may be written, as a refusal string when
+    /// it may not — the shape a caller that is not opening the path itself
+    /// needs (the shell audit in [`crate::bash`]).
+    pub fn refuse_write(&self, path: &str) -> Option<String> {
+        let absolute = self.absolutize(path);
+        let decision = self.scope.may_write(&absolute);
+        (!decision.is_allowed()).then(|| self.scope_refusal(&absolute, decision))
     }
 
     /// Whether a model-supplied path may be read, as a refusal string when it
@@ -232,6 +241,15 @@ impl ToolCtx {
         }
     }
 
+    /// The typed refusal for a path the scope rejected.
+    fn refusal(&self, path: &Path, decision: ScopeDecision) -> ScopeRefusal {
+        ScopeRefusal {
+            decision,
+            path: path.to_path_buf(),
+            message: self.scope_refusal(path, decision),
+        }
+    }
+
     /// The refusal a tool returns for a path `scope` rejected, phrased for the
     /// model rather than for a log.
     ///
@@ -300,6 +318,25 @@ impl ToolCtx {
     pub fn progress(&self, payload: Value) -> bool {
         self.emit(stella_core::bus::names::TOOL_CALL_PROGRESS, payload)
     }
+}
+
+/// Why a path was refused, carrying the decision a caller can branch on
+/// (invariant #5).
+///
+/// The message is prose for the model; [`Self::decision`] is the fact. They
+/// are separate fields because a caller wanting to tell "outside the scope"
+/// from "that is another session's worktree" must not have to match on the
+/// prose — the two want different handling (widen the scope versus never), and
+/// the wording is free to improve without breaking anyone.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+pub struct ScopeRefusal {
+    /// Which rule refused the path.
+    pub decision: ScopeDecision,
+    /// The absolute path as the scope saw it, after resolution.
+    pub path: PathBuf,
+    /// The refusal as the model reads it.
+    message: String,
 }
 
 /// `root` canonicalized, or `root` unchanged when it cannot be.

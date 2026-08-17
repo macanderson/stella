@@ -54,6 +54,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "trace_capture",
     "ignore_gitignore",
     "create_worktrees",
+    "allowed_dirs",
     "ui",
     "reward",
     "context",
@@ -266,6 +267,7 @@ pub(super) fn unknown_keys_in(path: &Path) -> Vec<String> {
 const TOML_ROOT_FIELDS: &[&str] = &[
     "meta",
     "run",
+    "workspace",
     "providers",
     "models",
     "agents",
@@ -287,6 +289,10 @@ const RUN_FIELDS: &[&str] = &[
     "create_worktrees",
     "ignore_gitignore",
 ];
+/// `[workspace]` — closed, like `[run]`: a mistyped `allowed_dir` grants
+/// nothing and looks exactly like a granted directory until a tool refuses a
+/// write, which is the failure this walker exists to pre-empt.
+const WORKSPACE_FIELDS: &[&str] = &["allowed_dirs"];
 const MODELS_FIELDS: &[&str] = &["allowed", "output_caps"];
 const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 
@@ -352,6 +358,7 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
         match key.as_str() {
             "meta" => closed("meta", value, META_FIELDS, found),
             "run" => closed("run", value, RUN_FIELDS, found),
+            "workspace" => closed("workspace", value, WORKSPACE_FIELDS, found),
             "models" => closed("models", value, MODELS_FIELDS, found),
             "mcp" => closed("mcp", value, TOML_MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),

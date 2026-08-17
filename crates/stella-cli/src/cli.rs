@@ -158,6 +158,28 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) upstream_pin: Vec<String>,
 
+    /// Extra directory a write tool may touch, outside the workspace root
+    ///
+    /// Repeat the flag, or comma-separate, to name several:
+    /// `--allow-dir /srv/shared --allow-dir ../vendor`. A relative path
+    /// resolves against the workspace root, so it means the same directory
+    /// however the run was launched.
+    ///
+    /// ADDITIVE to `stella.toml`'s `[workspace] allowed_dirs` — this widens
+    /// the project's list for one invocation and never replaces it, so an
+    /// operator reaching for one directory cannot silently revoke the rest.
+    /// A flag as well as a settings key for the same reason as
+    /// `--upstream-pin`: a run under settings isolation
+    /// (`STELLA_NO_SETTINGS`) has no other way to be granted one.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_ALLOW_DIR",
+        value_delimiter = ',',
+        hide_short_help = true
+    )]
+    pub(crate) allow_dir: Vec<String>,
+
     /// Hard USD spend limit for the whole session
     ///
     /// Scoped to the session, not the turn: enforced mode aborts cleanly

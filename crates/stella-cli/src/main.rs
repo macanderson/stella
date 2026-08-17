@@ -118,6 +118,7 @@ mod tune_cmd;
 mod turn_diff;
 mod turn_files;
 mod usage_cmd;
+mod write_dirs;
 
 /// Serializes tests that mutate process environment variables. `setenv` /
 /// `getenv` from concurrent threads is documented UB on POSIX, and the test
@@ -511,6 +512,11 @@ fn main() -> ExitCode {
     // ones with no settings entry to merge — which is every trial of a run
     // under settings isolation.
     config::set_upstream_pin(cli.globals.upstream_pin.clone());
+
+    // The operator's extra write directories, recorded beside the pin and for
+    // the same reason: a run under settings isolation has no other way to be
+    // granted one, and every later `Config::load` reads it.
+    config::set_allow_dirs(cli.globals.allow_dir.clone());
 
     // The diagnostic plane, before anything that can fail interestingly. From
     // here on a record explains a decision instead of being discarded, and the

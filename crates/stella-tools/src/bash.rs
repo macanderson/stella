@@ -24,25 +24,33 @@
 //! running interpreter as well. An operator who needs shell execution actually
 //! contained wants that chain plus a boundary the whole process sits inside.
 //!
-//! # This tool carries no confinement of its own, and says so
+//! # Read anything; change only what this session owns
 //!
-//! **There is no session-wide OS sandbox here, and no text audit of the
-//! command either.** Both existed once and both were tied to a caller that no
-//! longer does: `STELLA_BASH_SANDBOX`, the opt-in Seatbelt/`bwrap` wrapper,
-//! was removed in #1300 for claiming a session-wide bound it never had (it
-//! wrapped this one tool while every other spawn path ran around it); the
-//! `confine`/`contain` pair that replaced it audited the command text and put
-//! an OS write ban on a *graded tree*, armed only inside an isolated
-//! best-of-N candidate workspace — a registry configuration this crate no
-//! longer builds.
+//! The asymmetry is [`stella_core::workspace_scope`]'s and the reasoning is
+//! there: an agent fixing a build legitimately needs to read system headers,
+//! the toolchain and a dependency's source, and a read cannot damage the
+//! user's tree — while creating, editing or deleting outside the session's own
+//! directories is never something a correct turn needs.
 //!
-//! Restoring either as it stood would be unwired code with no caller, so this
-//! module ships without them and names the gap rather than implying a
-//! boundary. Session isolation belongs to the container the whole Stella
-//! process runs in (`docs/spec/remote-sandboxes.md` §2), and what bounds an
-//! individual call is the registry's `tool.call.requested` policy chain and
-//! the operator's `"tools": {"bash": "off"}` switch. Re-arming a real
-//! per-command boundary is tracked work, not a silence.
+//! `shell_write_audit` (crate-private) applies that to the command text
+//! **before the spawn**, and its own header is the honest account of what a text audit can and
+//! cannot do. The short version: it is a fence against the mistake that
+//! actually happens (a copied absolute path, an `rm` aimed at the wrong tree,
+//! a redirect into a sibling checkout), it is **not** a sandbox, and it is
+//! biased hard toward permitting — a false refusal breaks a build for a reason
+//! the agent cannot diagnose, which costs more than the rare escape it would
+//! have caught. Confinement is *enforced* in the file tools, which resolve a
+//! path and hold a descriptor.
+//!
+//! **There is still no session-wide OS sandbox here.** `STELLA_BASH_SANDBOX`,
+//! the opt-in Seatbelt/`bwrap` wrapper, was removed in #1300 for claiming a
+//! session-wide bound it never had — it wrapped this one tool while every
+//! other spawn path ran around it. The `confine`/`contain` pair that replaced
+//! it put a kernel-level write ban on a graded tree, but was armed only by the
+//! candidate-workspace registry this crate no longer builds; restoring it
+//! without a caller would be unwired code, so it is tracked in #3468 rather
+//! than shipped dark. Session isolation belongs to the container the whole
+//! Stella process runs in (`docs/spec/remote-sandboxes.md` §2).
 
 use std::path::Path;
 use std::time::Duration;
@@ -297,6 +305,122 @@ fn is_identifier_or_path(s: &str) -> bool {
     }) && s.chars().any(|c| c.is_ascii_alphabetic())
 }
 
+/// Commands whose positional arguments name things they **change**.
+///
+/// Deliberately short, and deliberately only commands whose argument shape is
+/// unambiguous. A longer list is not a safer one: every entry is a chance to
+/// misread a flag as a path and refuse a legitimate build step, and a shell
+/// audit that cries wolf gets switched off, at which point it protects
+/// nothing. The commands here cover what actually destroys work in practice.
+const MUTATING_COMMANDS: &[&str] = &[
+    "rm", "rmdir", "mv", "cp", "touch", "mkdir", "truncate", "install", "chmod", "chown", "ln",
+    "dd", "shred",
+];
+
+/// What the shell audit concluded about one command.
+///
+/// `None` means "nothing resolvable pointed outside the scope" — which is the
+/// answer for the overwhelming majority of commands, including every one whose
+/// paths this scanner cannot resolve. That is the deliberate bias: see
+/// [`shell_write_audit`].
+///
+/// # What this is, and what it is not
+///
+/// It is a **text audit of the command the model wrote**, performed before the
+/// spawn. It catches the copied absolute path, the `rm -rf /some/other/tree`,
+/// the redirect into a sibling checkout — the mistakes that actually happen.
+///
+/// It is **not a sandbox**, and nothing here should be described as one. A
+/// shell can compute a path (`$(printf '\057etc')`), read one from a file, or
+/// run a script that does either, and no amount of scanning the command text
+/// survives that. The file tools are where confinement is *enforced*, because
+/// they resolve a path and hold a descriptor; this is a fence that stops
+/// honest mistakes and says so.
+///
+/// The bias is toward permitting, and that is a benchmarking decision as much
+/// as a correctness one: a false refusal breaks a build for a reason the agent
+/// cannot diagnose, and one of those costs more than the rare escape this
+/// would have caught.
+fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String> {
+    let words = shell_words(command);
+    let mut index = 0usize;
+
+    while index < words.len() {
+        let word = words[index].as_str();
+
+        // A redirect names a file the shell itself will create or truncate,
+        // whatever the command around it is.
+        if let Some(target) = word.strip_prefix(">>").or_else(|| word.strip_prefix('>')) {
+            let target = if target.is_empty() {
+                words.get(index + 1).map(String::as_str).unwrap_or("")
+            } else {
+                target
+            };
+            if let Some(refusal) = refuse_if_outside(target, ctx) {
+                return Some(refusal);
+            }
+        }
+
+        if MUTATING_COMMANDS.contains(&word) {
+            // Scan this command's own arguments only: a pipeline or operator
+            // ends its reach, or `rm x && cd /tmp` would have `/tmp` read as
+            // something `rm` was about to delete.
+            for argument in &words[index + 1..] {
+                if matches!(argument.as_str(), ";" | "&" | "&&" | "|" | "||") {
+                    break;
+                }
+                if argument.starts_with('-') {
+                    continue;
+                }
+                if let Some(refusal) = refuse_if_outside(argument, ctx) {
+                    return Some(refusal);
+                }
+            }
+        }
+
+        // `sed -i` and `tee` edit in place; their targets are ordinary
+        // positionals, so the same argument walk covers them once the
+        // in-place flag is what distinguishes them from a read.
+        if (word == "sed" && words[index..].iter().any(|w| w.starts_with("-i"))) || word == "tee" {
+            for argument in &words[index + 1..] {
+                if matches!(argument.as_str(), ";" | "&" | "&&" | "|" | "||") {
+                    break;
+                }
+                if argument.starts_with('-') {
+                    continue;
+                }
+                if let Some(refusal) = refuse_if_outside(argument, ctx) {
+                    return Some(refusal);
+                }
+            }
+        }
+
+        index += 1;
+    }
+    None
+}
+
+/// The refusal for one argument, when it resolves to something outside the
+/// session's writable directories.
+///
+/// Anything the scanner cannot resolve to a concrete path — a variable, a
+/// glob, a home-relative `~`, an option-looking token — is **skipped**, not
+/// guessed at. A wrong refusal is worse than a missed one here (see
+/// [`shell_write_audit`]).
+fn refuse_if_outside(argument: &str, ctx: &crate::ctx::ToolCtx) -> Option<String> {
+    if argument.is_empty()
+        || argument.starts_with('$')
+        || argument.starts_with('~')
+        || argument.starts_with('-')
+        || argument.contains('*')
+        || argument.contains('?')
+        || argument.contains('$')
+    {
+        return None;
+    }
+    ctx.refuse_write(argument)
+}
+
 /// The tip a symbol-shaped grep earns: [`crate::search`] answers the same
 /// question by meaning and returns the symbol's neighborhood already attached,
 /// so the usual `grep -rn` → `read_file` → `grep` again round trip collapses
@@ -428,7 +552,15 @@ impl Tool for Bash {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "bash".into(),
-            description: "Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop.".into(),
+            description: "Run a shell command in the workspace root. Returns stdout+stderr with a \
+                timeout backstop. You can READ anything on this machine — system headers, the \
+                toolchain, a dependency's source. You can only CHANGE things inside this \
+                session's directories (get_environment reports the workspace root), so a \
+                command that creates, edits, deletes or moves a file elsewhere is refused \
+                before it runs. Prefer write_file/edit_file/delete_file over shell equivalents \
+                for files in the workspace: their changes are what this turn's diff and \
+                verification are computed from."
+                .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -451,6 +583,14 @@ impl Tool for Bash {
                 return ToolOutput::from(err);
             }
         };
+        // Audited before the spawn, on the text the model wrote: a refusal
+        // that arrives after the process has run is a report, not a fence.
+        // Read `shell_write_audit` on why this permits far more than it
+        // refuses, and on why it is not a sandbox.
+        if let Some(refusal) = shell_write_audit(command, ctx) {
+            return ToolOutput::error(refusal);
+        }
+
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a verifier can demand as evidence.

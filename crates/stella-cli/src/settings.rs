@@ -201,6 +201,20 @@ pub struct Settings {
     /// actually going to change files. See [`CreateWorktrees`].
     #[serde(default)]
     pub create_worktrees: Option<CreateWorktrees>,
+    /// Directories OUTSIDE the workspace root that write tools may touch
+    /// (`stella.toml`'s `[workspace] allowed_dirs`). Relative entries resolve
+    /// against the project root at the read site
+    /// ([`Settings::allowed_write_dirs`]) rather than at parse time: a scope
+    /// is parsed before the run knows which workspace it is for, so resolving
+    /// here would bake the wrong root into a user-scope entry.
+    ///
+    /// Last-wins per scope like every other field — a project that states its
+    /// own list replaces the user's rather than inheriting half of it, because
+    /// a write permission nobody wrote in full is exactly the grant an
+    /// operator must not be surprised by. The CLI's `--allow-dir` is additive
+    /// on top of whatever this resolves to; see `crate::write_dirs`.
+    #[serde(default)]
+    pub allowed_dirs: Option<Vec<String>>,
     /// Appearance preferences — currently just the TUI colour theme
     /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
     #[serde(default)]
@@ -681,6 +695,24 @@ impl Settings {
     /// same as an empty or null one — see [`CreateWorktrees`].
     pub fn create_worktrees(&self) -> CreateWorktrees {
         self.create_worktrees.unwrap_or_default()
+    }
+
+    /// The extra write directories this run is granted: the configured list
+    /// UNIONED with `extra` (the invocation's `--allow-dir`), each resolved to
+    /// an absolute path against `workspace_root`. An absent key and an empty
+    /// `extra` give an empty list — the workspace root alone, the default
+    /// scope.
+    ///
+    /// Resolution happens here rather than at parse time because a scope file
+    /// is read before the run's root is known (see the field's docs), and the
+    /// union happens here rather than at the call site so no consumer can
+    /// apply one source without the other.
+    pub fn allowed_write_dirs(&self, workspace_root: &Path, extra: &[String]) -> Vec<PathBuf> {
+        crate::write_dirs::resolve(
+            workspace_root,
+            self.allowed_dirs.as_deref().unwrap_or(&[]),
+            extra,
+        )
     }
 
     /// The persisted TUI colour-theme slug (`ui.theme`), if any. `None` means

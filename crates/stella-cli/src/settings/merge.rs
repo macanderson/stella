@@ -261,6 +261,15 @@ impl Settings {
         if let Some(worktrees) = scope.create_worktrees {
             self.create_worktrees = Some(worktrees);
         }
+        // Extra write directories (`[workspace] allowed_dirs`): whole-list
+        // last-wins, and — the explicit-listing rule again — dropped entirely
+        // if omitted here, which would leave `allowed_write_dirs()` empty no
+        // matter what any file said. A list, not a union across scopes: the
+        // grant is a complete statement about what this tree may write to, and
+        // a half-inherited one is a permission nobody wrote.
+        if let Some(dirs) = &scope.allowed_dirs {
+            self.allowed_dirs = Some(dirs.clone());
+        }
         // External CGP providers merge per-ENTRY (like `providers`), so a
         // project scope can enable an entry the user scope declared without
         // restating its transport — but a higher scope's entry replaces the
