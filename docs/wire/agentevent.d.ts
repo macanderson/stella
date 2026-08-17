@@ -399,6 +399,8 @@ export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "
  * Both live producers measure a tree against a tree, so every kind emitted
  * today is a mutation — see [`Self::Read`] for the one that is not, and why
  * it stays in the space anyway.
+ *
+ * [`AgentEvent::FileChange`]: super::AgentEvent::FileChange
  */
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
@@ -729,6 +731,8 @@ export interface MediaArtifactRef {
   /**
    * The artifact id, matching the `artifact_id` its
    * [`AgentEvent::MediaProgress`] events carried.
+   *
+   * [`AgentEvent::MediaProgress`]: super::AgentEvent::MediaProgress
    */
   id: string;
   /**

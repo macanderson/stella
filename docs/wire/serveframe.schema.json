@@ -2121,11 +2121,11 @@
       ]
     },
     "FileChangeKind": {
-      "description": "What happened to a file in a [`AgentEvent::FileChange`] event.\n\nBoth live producers measure a tree against a tree, so every kind emitted\ntoday is a mutation — see [`Self::Read`] for the one that is not, and why\nit stays in the space anyway.",
+      "description": "What happened to a file in a [`AgentEvent::FileChange`] event.\n\nBoth live producers measure a tree against a tree, so every kind emitted\ntoday is a mutation — see [`Self::Read`] for the one that is not, and why\nit stays in the space anyway.\n\n[`AgentEvent::FileChange`]: super::AgentEvent::FileChange",
       "oneOf": [
         {
           "const": "read",
-          "description": "Content was successfully read — no mutation, never a diff.\n\n**Replay-only, permanently, and this is the decision rather than a gap\nawaiting one (#3413).** It had a producer when a `read` built-in\nexisted; the 12-tool purge (#3244) removed it, and nothing will emit it\nagain. Neither surviving producer can: both diff a tree against a tree,\nand a read leaves no trace in a tree to diff. Re-acquiring one would\nmean going back to declaring file operations from tool inputs, which is\nthe defect [`AgentEvent::FileChange`] documents rather than a capability\nworth restoring.\n\nIt stays in the kind space because journals recorded before the purge\ncarry it and replay must parse them — deleting the variant would make\nthose streams unreadable. Consumers must keep handling it, and must not\ntreat its absence from a live stream as evidence that nothing was read.",
+          "description": "Content was successfully read — no mutation, never a diff.\n\n**Replay-only, permanently, and this is the decision rather than a gap\nawaiting one (#3413).** It had a producer when a `read` built-in\nexisted; the 12-tool purge (#3244) removed it, and nothing will emit it\nagain. Neither surviving producer can: both diff a tree against a tree,\nand a read leaves no trace in a tree to diff. Re-acquiring one would\nmean going back to declaring file operations from tool inputs, which is\nthe defect [`AgentEvent::FileChange`] documents rather than a capability\nworth restoring.\n\nIt stays in the kind space because journals recorded before the purge\ncarry it and replay must parse them — deleting the variant would make\nthose streams unreadable. Consumers must keep handling it, and must not\ntreat its absence from a live stream as evidence that nothing was read.\n\n[`AgentEvent::FileChange`]: super::AgentEvent::FileChange",
           "type": "string"
         },
         {
@@ -2527,7 +2527,7 @@
       "description": "A completed media artifact: id + kind + where it landed on disk.",
       "properties": {
         "id": {
-          "description": "The artifact id, matching the `artifact_id` its\n[`AgentEvent::MediaProgress`] events carried.",
+          "description": "The artifact id, matching the `artifact_id` its\n[`AgentEvent::MediaProgress`] events carried.\n\n[`AgentEvent::MediaProgress`]: super::AgentEvent::MediaProgress",
           "type": "string"
         },
         "kind": {
@@ -2581,7 +2581,7 @@
           "type": "object"
         },
         {
-          "description": "The artifact landed; a [`AgentEvent::MediaComplete`] follows.",
+          "description": "The artifact landed; a [`AgentEvent::MediaComplete`] follows.\n\n[`AgentEvent::MediaComplete`]: super::AgentEvent::MediaComplete",
           "properties": {
             "state": {
               "const": "succeeded",
