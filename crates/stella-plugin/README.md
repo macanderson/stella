@@ -18,6 +18,18 @@ credential or a URL. Unknown keys, unknown hook names, and unknown grades are
 load errors (`deny_unknown_fields` everywhere, the #1400 rule this crate
 inherits).
 
+`[runtime]` (#3380, `doc:pipeline-as-plugins` §A5) is the process half: the
+`argv` the host starts, the `timeout_secs` it enforces, and an environment
+allowlist that is **default-deny** — the child inherits exactly the names
+declared and nothing else. Two decisions are load-bearing. There is no
+`language` field, because `["python3", …]` and `["node", …]` already
+distinguish two plugins without stella learning what a language is (and three
+plugins differing only in `argv` are what make the language-neutrality claim a
+proof). And the environment is an exact list rather than a glob or a scrub, so
+the set a user consents to at install is the set the child gets; a host-side
+refusal of model credentials narrows it further, which this crate deliberately
+cannot express because it has no credential vocabulary.
+
 `[wrapper]` (#3381) is the turn-loop wrapper's stage order, declared instead
 of hardcoded: an ordered `[[wrapper.stages]]` list under one variant id — the
 id the store's `pipeline_variant` column records (#3388). Two properties make
@@ -157,6 +169,9 @@ before it crosses.
 - `src/evidence.rs` — the `[oracle]` block's evidence half: `OracleCheck`,
   the `MeasurementRule` grammar and its parser, the load-time rules that keep
   a check readable and every requirement decidable, and `Oracle::unmet`.
+- `src/runtime.rs` — the `[runtime]` block: `Runtime`, its validation rules,
+  and `Runtime::child_env`, the pure default-deny selection a host applies
+  after clearing the child's environment.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.
