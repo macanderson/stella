@@ -1,0 +1,22 @@
+[package]
+name = "stella-transcript"
+description = "The shared transcript information model and its two renderers — jet-black HTML for the Observatory and a character grid for the TUI. Pure functions over owned data; no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Near-leaf by contract: one workspace edge, to the differ, so a file-mutation
+# call renders the same hunks the Observatory's prompt-diff view already shows
+# rather than a second acknowledged copy (the `stella-diff` extraction argument
+# in #1511, applied a second time). Nothing here reads a file, spawns a
+# process, or touches the network — invariant #2.
+[dependencies]
+stella-diff = { path = "../stella-diff" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+proptest = { workspace = true }

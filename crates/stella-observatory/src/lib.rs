@@ -54,6 +54,7 @@ mod live;
 mod self_driving;
 mod sent_context;
 mod sessions;
+mod transcript_view;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -168,6 +169,20 @@ impl Response {
 /// module for why it also needs its own connection budget.
 const LIVE_ROUTE: &str = "/api/v1/live";
 
+/// Render one execution's transcript to a standalone HTML page.
+///
+/// Asks for the journal `full` — the per-body clip exists so the dashboard's
+/// incremental poll stays small, and this route renders once into a page whose
+/// output folds already keep a long body out of the reader's way.
+fn render_transcript(obs: &Observatory, id: i64) -> Result<String, db::DbError> {
+    let execution = obs.execution(id)?;
+    let journal = obs.execution_journal(id, true, None)?;
+    let rows = journal.as_array().cloned().unwrap_or_default();
+    let run = transcript_view::build_run(&execution, &rows);
+    let state = stella_transcript::FoldState::new();
+    Ok(stella_transcript::html::render_page(&run, &state))
+}
+
 /// The path with any query string removed.
 fn route_of(path: &str) -> &str {
     path.split_once('?').map_or(path, |(route, _)| route)
@@ -222,6 +237,26 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 status: "200 OK",
                 content_type: "image/svg+xml",
                 body: WORDMARK_LIGHT_SVG.as_bytes().to_vec(),
+            };
+        }
+        // The rendered transcript (`?id=<execution id>`). Unlike every route
+        // below it, this returns HTML rather than JSON: the page is rendered by
+        // `stella-transcript`, the same code the TUI draws from, so the two
+        // surfaces cannot drift the way the dashboard's hand-rolled JavaScript
+        // renderer drifted from the deck's. It is standalone — its own styles
+        // ride with it — so it opens in its own tab and needs nothing from
+        // `index.html`.
+        "/transcript" => {
+            let Some(id) = query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) else {
+                return Response::error("400 Bad Request", "missing ?id=<execution id>");
+            };
+            return match render_transcript(&obs, id) {
+                Ok(body) => Response {
+                    status: "200 OK",
+                    content_type: "text/html; charset=utf-8",
+                    body: body.into_bytes(),
+                },
+                Err(err) => Response::error("500 Internal Server Error", &err.to_string()),
             };
         }
         "/api/meta" => Ok(obs.meta()),
