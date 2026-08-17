@@ -66,9 +66,17 @@ pub(super) fn frame_handle(frame: &RecalledFrame) -> String {
 /// of #3243, not smuggled into a refactor.
 pub(super) struct GatheredSteering {
     pub candidates: Vec<SteeringCandidate>,
-    /// Drops the sources' own budgets already decided — today the record
-    /// channel's named evictions, the behavior `SteeringSet::dropped`
-    /// generalizes.
+    /// Drops the sources' own budgets already decided, from all three sources
+    /// since #3358: the record channel's named evictions, the recall host's
+    /// merge report, and the skills selector's top-k and section cuts.
+    ///
+    /// One asymmetry is deliberate and worth stating, because `by_source`
+    /// counts it: a skill omitted by `render_skills_section`'s own token
+    /// budget appears in **both** `selected` and `dropped`. The plane
+    /// authorized it and the section renderer then left it out — those are two
+    /// true facts about one skill, and the plane suppressing it instead would
+    /// change the rendered bytes, which is the Phase 4 budget merge (#3243),
+    /// not this ledger slice.
     pub source_drops: Vec<DroppedCandidate>,
 }
 

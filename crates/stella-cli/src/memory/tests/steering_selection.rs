@@ -262,3 +262,88 @@ async fn an_answered_requery_emits_one_context_recall() {
         "the event names the frames the re-query spent on"
     );
 }
+
+/// **Witness (#3358, frames).** A frame the recall host's cross-provider merge
+/// evicted is named in `SteeringSet::dropped` under `SteeringSource::Memory`,
+/// beside the frames the same turn kept.
+///
+/// Fails on base: `recalled_frames_anchored` consumed `recalled.dropped` for
+/// the stderr warning and then discarded it — `Recall` carries frames and
+/// usage but no drop list, so by the time the plane gathered its candidates
+/// there was nothing left to map, and neither `frame_drop` nor the plane's
+/// frame-drop channel existed to map it into.
+///
+/// The merge's own drop *report* is exercised where it is produced (the CGP
+/// composition conformance run in `contextgraph::tests`, which asserts every
+/// non-admitted frame is named); a local one-provider recall cannot reach it,
+/// since the provider applies the same budget first and leaves the merge
+/// nothing to evict. So the kept side here is a real recall and the evicted
+/// side is a merge drop of exactly the shape that run admits.
+#[tokio::test]
+async fn a_frame_the_host_merge_evicted_reaches_the_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let goal = "the deploy script must run migrations before restarting the api";
+    let memory = session(dir.path());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(goal, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    let recalled = memory.recalled_frames_anchored(goal, vec![], |_| {}).await;
+    assert_eq!(
+        recalled.recall.frames.len(),
+        1,
+        "the control: the planted lesson is recalled"
+    );
+
+    let evicted = crate::memory::recall::frame_drop(&crate::contextgraph::HostDroppedFrame {
+        provider: "local".into(),
+        id: "nod_evicted".into(),
+        citation_label: "[evicted lesson]".into(),
+        token_cost: 120,
+        reason: stella_context::DropReason::TokenBudget,
+    });
+    assert_eq!(
+        (evicted.source, evicted.handle.as_str(), evicted.est_tokens),
+        (
+            stella_core::steering::SteeringSource::Memory,
+            "nod_evicted",
+            120
+        ),
+        "a merge eviction keeps its stable id and the cost the budget refused"
+    );
+
+    let empty = stella_core::skills::select_skills_reporting(
+        &[],
+        goal,
+        &[],
+        &stella_core::skills::SelectionConfig::default(),
+    );
+    let signal = stella_core::steering::TurnSignal {
+        prompt: goal,
+        ..Default::default()
+    };
+    let set = crate::memory::recall::query_gathered_plane(
+        &signal,
+        &recalled.recall.frames,
+        std::slice::from_ref(&evicted),
+        &empty,
+        None,
+    );
+
+    assert_eq!(
+        set.by_source().get("memory").copied(),
+        Some((1, 1)),
+        "the plane reports true (selected, dropped) counts for the memory \
+         source: {set:?}"
+    );
+    assert!(
+        set.dropped.contains(&evicted),
+        "the eviction is named in the ledger: {:?}",
+        set.dropped
+    );
+}
