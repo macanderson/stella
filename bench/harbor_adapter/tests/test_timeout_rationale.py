@@ -35,7 +35,45 @@ from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DRIVER_RS = _REPO_ROOT / "crates" / "stella-core" / "src" / "driver.rs"
+_DRIVER_SRC = _REPO_ROOT / "crates" / "stella-core" / "src"
+_MODEL_TIMEOUT_DEFAULT = re.compile(
+    r"model_timeout:\s*Some\(Duration::from_secs\((\d+)\)\)"
+)
+
+
+def _engine_default_seconds() -> int:
+    """The engine's `model_timeout` default, found wherever it currently lives.
+
+    Deliberately a search over the whole driver module rather than a fixed
+    path. `EngineConfig` was seeded in `driver.rs` when this guard was written
+    and now lives in `driver/config.rs` (#3410); the literal did not change,
+    only its file, and a hardcoded path turns that ordinary split into a red
+    bench job. The same shape broke `test_assurance_tiers.py` when
+    `settings.rs` was split (#3390).
+    """
+    candidates = [
+        _DRIVER_SRC / "driver.rs",
+        *sorted((_DRIVER_SRC / "driver").glob("*.rs")),
+    ]
+    found = [
+        (path, match)
+        for path in candidates
+        if path.exists()
+        for match in [_MODEL_TIMEOUT_DEFAULT.search(path.read_text(encoding="utf-8"))]
+        if match is not None
+    ]
+    assert found, (
+        "could not find the engine's `model_timeout` default anywhere under "
+        f"{_DRIVER_SRC / 'driver'} or {_DRIVER_SRC / 'driver.rs'} — the "
+        "seeding was renamed or the default removed, so this rationale no "
+        "longer pins anything"
+    )
+    assert len(found) == 1, (
+        "the `model_timeout` default is seeded in more than one file "
+        f"({[str(path) for path, _ in found]}); this guard can no longer say "
+        "which one the engine uses"
+    )
+    return int(found[0][1].group(1))
 
 
 class TestInheritedTimeoutRationale:
@@ -71,28 +109,16 @@ class TestInheritedTimeoutRationale:
                 "explicit timeout — the rationale is stale"
             )
 
-    def test_the_816_matches_the_engine_default_in_driver_rs(self) -> None:
+    def test_the_816_matches_the_engine_default_in_the_driver(self) -> None:
         """The documented number pins against the driver's literal — the
         `TestOutputCeilingParity` discipline, so the two cannot drift while
-        both look deliberate. The path is a literal in this file; a crate
-        move is fixed here."""
-        try:
-            source = _DRIVER_RS.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise AssertionError(
-                f"cannot read the engine default at {_DRIVER_RS}: "
-                f"{exc.strerror}. That path is a literal in this file — if "
-                "the crate moved, update `_DRIVER_RS` to match."
-            ) from exc
-        match = re.search(
-            r"model_timeout:\s*Some\(Duration::from_secs\((\d+)\)\)", source
-        )
-        assert match is not None, (
-            "could not find the engine's `model_timeout` default in "
-            f"{_DRIVER_RS} — the seeding moved or was renamed; repoint the "
-            "regex in this test"
-        )
-        assert int(match.group(1)) == _ENGINE_DEFAULT_MODEL_TIMEOUT_SECS, (
+        both look deliberate.
+
+        Which *file* seeds the default is not part of the claim: see
+        `_engine_default_seconds`, which searches the driver module so that
+        splitting it moves no goalposts. What is pinned is the number.
+        """
+        assert _engine_default_seconds() == _ENGINE_DEFAULT_MODEL_TIMEOUT_SECS, (
             "the engine default changed: update "
             "`_ENGINE_DEFAULT_MODEL_TIMEOUT_SECS` and every rationale that "
             "names it, in the same PR"
