@@ -62,7 +62,7 @@ impl Pipeline<'_> {
         let Assigned::To(resolved) = self.assigned(ModelCallRole::Research) else {
             return Vec::new();
         };
-        self.emit(AgentEvent::Stage { name: StageKind::Research, scope: StageScope::Run });
+        self.emit_stage(StageKind::Research);
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
         }

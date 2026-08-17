@@ -1103,7 +1103,10 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run },
+                event: AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Execute,
+                    scope: stella_protocol::StageScope::Run,
+                },
             },
             Inbound::Event {
                 agent: "lead".into(),

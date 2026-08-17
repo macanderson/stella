@@ -322,7 +322,10 @@ mod durable_stream_tests {
         );
 
         sender
-            .send(AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run })
+            .send(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
+            })
             .unwrap();
 
         let recorded = std::fs::read_to_string(&path).unwrap();
@@ -344,7 +347,10 @@ mod durable_stream_tests {
         let path = dir.path().join("events.jsonl");
         let (raw_tx, mut paused_renderer) = mpsc::unbounded_channel();
         let sender = ordered_durable_event_sender(raw_tx, path.clone(), Arc::new(FixedClock(7)));
-        let stage = AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run };
+        let stage = AgentEvent::Stage {
+            name: stella_protocol::StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        };
         let usage = AgentEvent::StepUsage {
             upstream_provider: None,
             reasoning_tokens: None,

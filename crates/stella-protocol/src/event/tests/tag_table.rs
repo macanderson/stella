@@ -19,7 +19,10 @@ fn type_tag_matches_the_serde_type_wire_tag() {
     // cross-checked against serde for a representative sample, weighted to
     // the recently added variants most prone to a copy-paste tag.
     let sample = vec![
-        AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
+        AgentEvent::Stage {
+            name: StageKind::Triage,
+            scope: crate::StageScope::Run,
+        },
         AgentEvent::Text { text: "hi".into() },
         AgentEvent::TextDelta { delta: "h".into() },
         AgentEvent::Reasoning { delta: "r".into() },

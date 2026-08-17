@@ -294,7 +294,7 @@ impl<'a> Pipeline<'a> {
         }
 
         // --- Execute, re-entered mid-turn. ---------------------------------
-        self.emit(AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        self.emit_stage(StageKind::Execute);
         let mut signals = ChangeSignals::default();
         let (outcome, messages, mut budget) = self
             .resume_engine_turn(&engine, resume.checkpoint, &mut signals, flip_halt.clone())
@@ -491,7 +491,7 @@ impl<'a> Pipeline<'a> {
             };
         }
 
-        self.emit(AgentEvent::Stage { name: StageKind::Complete, scope: StageScope::Run });
+        self.emit_stage(StageKind::Complete);
         // #2569: three standings, not two. The ladder's abstaining rungs
         // publish `passed: true` deliberately — an unprovable run is not a
         // broken one — and reading only that flag collapsed them onto

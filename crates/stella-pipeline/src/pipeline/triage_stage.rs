@@ -58,7 +58,7 @@ impl Pipeline<'_> {
         if !self.responsibility_enabled(ModelCallRole::Triage) {
             return Ok((self.triage_ablated(goal), Vec::new()));
         }
-        self.emit(AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run });
+        self.emit_stage(StageKind::Triage);
         // Deterministic short-circuit, BEFORE the paid call.
         //
         // `resolve_conversational` is a disjunction whose first term ignores

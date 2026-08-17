@@ -1073,7 +1073,7 @@ impl<'a> Pipeline<'a> {
         // its first await), then the recall future emits
         // Stage::ContextRecall before its own first await.
         let recall_future = async {
-            self.emit(AgentEvent::Stage { name: StageKind::ContextRecall, scope: StageScope::Run });
+            self.emit_stage(StageKind::ContextRecall);
             // The ceiling goes INSIDE the future, not around the join: the
             // join must still poll triage to completion so its outcome —
             // including the `UsageIncomplete` envelope its own ceiling emits
@@ -1461,10 +1461,8 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Text {
             text: reply.clone(),
         });
-        self.emit(AgentEvent::Stage { name: StageKind::Complete, scope: StageScope::Run });
-        // The run's ending is NOT the pipeline's to emit (#3398): a wrapper
-        // cannot know whether it is the whole run — `stella goal` drives one
-        // pipeline run per round over one stream. The stream's owner emits it.
+        self.emit_stage(StageKind::Complete);
+        // The run's ending is NOT the pipeline's to emit (#3398).
         Ok(PipelineOutcome {
             status: PipelineStatus::Completed,
             task_class: TaskClass::SimpleLookup,
@@ -1938,7 +1936,7 @@ impl<'a> Pipeline<'a> {
         spend: &mut Spend<'_>,
         mut state: CandidateState,
     ) -> CandidateResult {
-        self.emit(AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run });
+        self.emit_stage(StageKind::Verify);
         let effective_cmd = self.effective_test_command(witness);
         let witness_paths = Self::witness_paths(witness);
         let meter = repair_gate::RepairMeter::start(*spend.total);
@@ -2483,7 +2481,7 @@ impl<'a> Pipeline<'a> {
         state
             .messages
             .push(CompletionMessage::user(revision_prompt(cause)));
-        self.emit(AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        self.emit_stage(StageKind::Execute);
         let (outcome, _) = self
             .run_engine_turn(
                 engine,
@@ -2508,7 +2506,7 @@ impl<'a> Pipeline<'a> {
             }
         }
         let probe = self.gather_diff(surface, &state.untracked_before).await;
-        self.emit(AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run });
+        self.emit_stage(StageKind::Verify);
         Ok(probe)
     }
 

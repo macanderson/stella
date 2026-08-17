@@ -29,7 +29,10 @@ fn running_model() -> WorkspaceModel {
     m.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
-        event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
+        event: AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        },
     });
     m
 }

@@ -616,10 +616,19 @@ pub fn stage_transition_legal(from: StageKind, to: StageKind) -> bool {
     )
 }
 
+/// The wrapper's stages walk one legal order. Turn-scoped stages are skipped
+/// (#3398): they are the engine's own phases, several per run, and folding
+/// them into this single order would report a violation at every turn
+/// boundary — the engine's terminal stage outranks every wrapper stage, so
+/// everything after the first turn would read as an illegal transition.
 fn validate_stage_ordering(events: &[AgentEvent], out: &mut Vec<StreamViolation>) {
     let mut last_stage: Option<StageKind> = None;
     for (i, event) in events.iter().enumerate() {
-        if let AgentEvent::Stage { name } = event {
+        if let AgentEvent::Stage {
+            name,
+            scope: stella_protocol::StageScope::Run,
+        } = event
+        {
             if let Some(prev) = last_stage
                 && !stage_transition_legal(prev, *name)
             {
@@ -727,7 +736,10 @@ fn validate_budget_monotonic(events: &[AgentEvent], out: &mut Vec<StreamViolatio
 /// distinction the golden-replay comparison rests on.
 pub fn event_signature(event: &AgentEvent) -> String {
     match event {
-        AgentEvent::Stage { name, .. } => format!("stage:{name:?}"),
+        // The scope rides the signature (#3398): without it the two stage
+        // vocabularies alias to the same string, and a golden comparison could
+        // not tell an engine turn phase from a wrapper stage of the same name.
+        AgentEvent::Stage { name, scope } => format!("stage:{scope:?}:{name:?}"),
         // Text/Reasoning deltas are volatile content — only their presence
         // and kind are structural.
         AgentEvent::Text { .. } => "text".to_string(),

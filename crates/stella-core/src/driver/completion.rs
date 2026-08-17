@@ -187,7 +187,10 @@ impl<'a> Engine<'a> {
                 )));
                 return None;
             }
-            let _ = events.send(AgentEvent::Stage { name: StageKind::Complete, scope: stella_protocol::StageScope::Turn });
+            let _ = events.send(AgentEvent::Stage {
+                name: StageKind::Complete,
+                scope: stella_protocol::StageScope::Turn,
+            });
             let _ = events.send(AgentEvent::TurnComplete {
                 model: result.model.clone(),
                 cost_usd: total_cost_usd,

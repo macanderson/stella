@@ -22,7 +22,7 @@ use stella_protocol::receipt::{
     ManifestEntry, ProviderShare,
 };
 use stella_protocol::{
-    AgentEvent, CompiledContextFrameBuilt, ErrorClass, MediaArtifactRef, SubAgentPhase,
+    AgentEvent, CompiledContextFrameBuilt, ErrorClass, MediaArtifactRef, StageScope, SubAgentPhase,
     SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
 };
 
@@ -623,14 +623,26 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             model: "opus".into(),
             cost_usd: 0.42,
         },
+        // The run's ending is a separate event from a turn's (#3379), so the
+        // wire contract pins both — a consumer reading `turn_complete` as
+        // "nothing more is coming" is the bug the split exists to prevent.
+        AgentEvent::RunComplete {
+            model: "opus".into(),
+            cost_usd: 1.37,
+        },
     ];
 
     // One event per arm of every nested vocabulary.
-    events.extend(
-        all_stage_kinds()
-            .into_iter()
-            .map(|name| AgentEvent::Stage { name }),
-    );
+    // Every stage kind, in BOTH scopes: the wire contract has to pin the
+    // engine's turn phases and a wrapper's run stages as distinct events
+    // (#3398), not one of them arbitrarily.
+    for scope in [StageScope::Turn, StageScope::Run] {
+        events.extend(
+            all_stage_kinds()
+                .into_iter()
+                .map(move |name| AgentEvent::Stage { name, scope }),
+        );
+    }
     events.extend(
         all_tool_outputs()
             .into_iter()

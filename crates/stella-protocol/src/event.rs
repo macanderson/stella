@@ -292,9 +292,9 @@ pub enum AgentEvent {
     /// it is not decoration (#3398).
     ///
     /// Two disjoint authorities emit stages. The engine emits three kinds,
-    /// once per turn ([`StageScope::Turn`]). A wrapper — the staged pipeline,
+    /// once per turn ([`crate::StageScope::Turn`]). A wrapper — the staged pipeline,
     /// a goal loop — emits its own vocabulary once per run
-    /// ([`StageScope::Run`]). Before this field existed the pipeline dropped
+    /// ([`crate::StageScope::Run`]). Before this field existed the pipeline dropped
     /// the engine's copies outright, because a consumer receiving both had no
     /// way to tell them apart and several branch on stage transitions.
     ///

@@ -127,7 +127,10 @@ mod tests {
         let path = dir.path().join("cli.output");
         let log = DebugLog::new(Some(path.clone()));
         assert!(log.is_active());
-        log.event(&AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run });
+        log.event(&AgentEvent::Stage {
+            name: stella_protocol::StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        });
         log.input(&UserInput::Prompt {
             text: "hi".into(),
             attachments: Vec::new(),

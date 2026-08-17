@@ -52,7 +52,15 @@ impl TallyFold {
             // The progress axis. A turn whose stages stop advancing while a
             // reverse request's wait climbs is wedged; one that keeps advancing
             // is merely slow. That distinction is the whole point of counting.
-            AgentEvent::Stage { .. } => tally.stages = tally.stages.saturating_add(1),
+            // Only wrapper stages count as progress (#3398). Folding the
+            // engine's per-turn phases into the same counter would make a run
+            // spinning turns under a stalled wrapper stage read as advancing,
+            // which is exactly the wedge this counter exists to detect.
+            AgentEvent::Stage {
+                scope: stella_protocol::StageScope::Run,
+                ..
+            } => tally.stages = tally.stages.saturating_add(1),
+            AgentEvent::Stage { .. } => {}
             // "One committed model call — the metering record", emitted exactly
             // once per step that lands.
             AgentEvent::StepUsage { .. } => tally.model_calls = tally.model_calls.saturating_add(1),
@@ -128,8 +136,14 @@ mod tests {
     #[test]
     fn the_fold_counts_the_signals_that_distinguish_wedged_from_slow() {
         let mut fold = TallyFold::default();
-        fold.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
-        fold.observe(&AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run });
+        fold.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        });
+        fold.observe(&AgentEvent::Stage {
+            name: StageKind::Verify,
+            scope: stella_protocol::StageScope::Run,
+        });
         fold.observe(&AgentEvent::Retry {
             attempt: 1,
             reason: "429".to_string(),
@@ -219,10 +233,16 @@ mod tests {
     #[test]
     fn a_parked_turn_is_distinguishable_from_a_wedged_one() {
         let mut wedged = TallyFold::default();
-        wedged.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        wedged.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        });
 
         let mut waiting = TallyFold::default();
-        waiting.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        waiting.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        });
         waiting.observe(&parked("CI for branch main settles", 1800));
         waiting.observe(&AgentEvent::TurnWoken {
             reason: "changed".to_string(),
@@ -291,7 +311,10 @@ mod tests {
     fn counters_saturate_rather_than_wrap() {
         let mut fold = TallyFold::default();
         fold.tally.stages = u32::MAX;
-        fold.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        fold.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        });
         assert_eq!(fold.finish().stages, u32::MAX);
     }
 }

@@ -693,7 +693,10 @@ mod tests {
         let first = rx.recv().await.expect("at least the stage event");
         assert!(matches!(
             first,
-            AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run }
+            AgentEvent::Stage {
+                name: stella_protocol::StageKind::Execute,
+                scope: stella_protocol::StageScope::Run
+            }
         ));
     }
 

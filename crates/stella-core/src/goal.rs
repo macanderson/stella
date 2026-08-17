@@ -251,7 +251,10 @@ impl Engine<'_> {
                 }
             }
 
-            let _ = events.send(AgentEvent::Stage { name: StageKind::Verdict, scope: stella_protocol::StageScope::Turn });
+            let _ = events.send(AgentEvent::Stage {
+                name: StageKind::Verdict,
+                scope: stella_protocol::StageScope::Turn,
+            });
             let (verdict, verifier_cost) = match round_engine
                 .assess(verifier, goal, messages, budget, events, goal_config)
                 .await

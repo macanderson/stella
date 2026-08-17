@@ -305,7 +305,10 @@ fn stray_event_auto_registers_its_agent() {
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&ev(
         "ghost",
-        AgentEvent::Stage { name: StageKind::Plan, scope: StageScope::Run },
+        AgentEvent::Stage {
+            name: StageKind::Plan,
+            scope: stella_protocol::StageScope::Run,
+        },
     ));
     assert!(w.index_of("ghost").is_some());
 }
@@ -555,7 +558,10 @@ fn trace_captures_every_agent_and_filters_by_agent() {
     w.apply_inbound(&reg("b"));
     w.apply_inbound(&ev(
         "a",
-        AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
+        AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
+        },
     ));
     w.apply_inbound(&ev(
         "b",

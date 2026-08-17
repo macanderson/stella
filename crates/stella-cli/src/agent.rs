@@ -481,7 +481,10 @@ async fn run_pipeline_one_shot(
         && let Some(m) = &mut memory
     {
         if format == OutputFormat::StreamJson {
-            let _ = tx.send(AgentEvent::Stage { name: stella_protocol::StageKind::Reflect, scope: StageScope::Run });
+            let _ = tx.send(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Reflect,
+                scope: stella_protocol::StageScope::Run,
+            });
         }
         // The whole planner history, not its tail: the digest selects (#2460),
         // and pre-truncating here would drop the middle it selects for.

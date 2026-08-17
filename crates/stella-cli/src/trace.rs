@@ -557,8 +557,14 @@ mod tests {
 
         // The journal, in stream order.
         let events = [
-            AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
-            AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
+            AgentEvent::Stage {
+                name: StageKind::Triage,
+                scope: stella_protocol::StageScope::Run,
+            },
+            AgentEvent::Stage {
+                name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
+            },
             AgentEvent::StepManifest {
                 turn_instance: 0,
                 step: 0,

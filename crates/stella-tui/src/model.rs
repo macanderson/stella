@@ -20,8 +20,8 @@
 use crate::ansi::strip_ansi;
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, HunkProposal, MediaJobState, MediaKind,
-    PrStatus, ScopeProposal, StageKind, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus,
-    ToolOutput,
+    PrStatus, ScopeProposal, StageKind, StageScope, SubAgentPhase, SubAgentStatus, TaskItem,
+    TaskStatus, ToolOutput,
 };
 
 use std::collections::VecDeque;
@@ -562,7 +562,7 @@ impl SessionModel {
             // `textline::unknown_event`), so nothing is hidden — the model
             // just declines to invent state for it.
             AgentEvent::Unknown { .. } => {}
-            AgentEvent::Stage { name, .. } => {
+            AgentEvent::Stage { name, scope } => {
                 // A stage after a Complete means a new turn has started —
                 // clear the completion flag so the progress bar and HUD read
                 // fresh (otherwise the bar stays frozen at full-green and
@@ -596,7 +596,15 @@ impl SessionModel {
                 // Retire, not discard: this transition IS the approval signal,
                 // so the proposal graduates to `approved_scope` and stays
                 // readable for the rest of the turn (`⌃S`).
-                if *name != StageKind::ScopeReview
+                //
+                // Only a WRAPPER's stage counts (#3398). The engine emits its
+                // own turn phases, and one of those arriving while a gate is
+                // open would graduate the proposal into `approved_scope` —
+                // the deck asserting the human's consent on the strength of an
+                // event the human never saw. A turn-scoped stage is never an
+                // approval signal, because nobody was asked.
+                if *scope == StageScope::Run
+                    && *name != StageKind::ScopeReview
                     && let Some(approved) = self.pending_scope_review.take()
                 {
                     self.approved_scope = Some(approved);

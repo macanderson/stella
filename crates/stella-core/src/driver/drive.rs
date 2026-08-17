@@ -79,7 +79,10 @@ impl Engine<'_> {
     /// current-thread runtime. See that method for why, and for why a caller
     /// that needs to stop a turn should cancel rather than drop this future.
     pub async fn drive(&self, state: &mut TurnState, events: &EventSender) -> TurnOutcome {
-        let _ = events.send(AgentEvent::Stage { name: StageKind::Execute, scope: stella_protocol::StageScope::Turn });
+        let _ = events.send(AgentEvent::Stage {
+            name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Turn,
+        });
         self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
             lifecycle::turn_started_payload(
                 state.messages().len(),

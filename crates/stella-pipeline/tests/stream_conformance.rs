@@ -81,7 +81,10 @@ fn corruptions() -> Vec<Corruption> {
                 let at = events.len() - 1;
                 events.insert(
                     at,
-                    AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
+                    AgentEvent::Stage {
+                        name: StageKind::Triage,
+                        scope: stella_protocol::StageScope::Run,
+                    },
                 );
             },
         },
