@@ -89,6 +89,7 @@ impl Engine<'_> {
                 state.messages().len(),
                 self.config.max_steps,
                 self.call_role,
+                self.lane.as_ref(),
             )
         });
         let outcome = self.step_loop(state, events).await;
