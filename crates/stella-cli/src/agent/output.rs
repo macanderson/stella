@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use stella_core::event_sender::RunEnding;
 use stella_core::ports::Clock;
 use stella_core::{EventSendError, EventSender};
 use stella_protocol::AgentEvent;
@@ -159,29 +158,6 @@ pub(super) fn event_sender_for_run(
         }
     }
     (EventSender::new(sender), false)
-}
-
-/// [`event_sender_for_run`] for a run the CLI drives as bare engine turns,
-/// with no pipeline above it (#3379).
-///
-/// The difference is who ends the run. A staged run's ending is the
-/// pipeline's, authored from a verdict it alone holds. A raw run has no such
-/// author: the engine ends each turn with `TurnComplete` and deliberately
-/// says nothing about the run, so the CLI — the owner here — emits the
-/// terminal `Complete` itself. [`RunEnding`] does that when this sender's
-/// last clone drops, which is precisely when the run's stream closes and
-/// therefore the only moment "last" is guaranteed rather than assumed.
-///
-/// Wrapping *outside* the durability boundary above is deliberate: the
-/// terminal event is journaled through the same persist-first sender as
-/// everything before it, so a durable stream still ends on the event that
-/// ended the run.
-pub(super) fn event_sender_for_raw_run(
-    sender: mpsc::UnboundedSender<AgentEvent>,
-    format: OutputFormat,
-) -> (EventSender, bool) {
-    let (events, durable_pre_persisted) = event_sender_for_run(sender, format);
-    (RunEnding::sealing(events), durable_pre_persisted)
 }
 
 /// The sender the pipeline itself emits on, for a one-shot run.
