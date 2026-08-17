@@ -2873,6 +2873,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stella-autonomy"
+version = "0.9.65"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "stella-cli"
 version = "0.9.65"
 dependencies = [
@@ -2896,6 +2906,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-autonomy",
  "stella-context",
  "stella-core",
  "stella-diag",
@@ -3127,6 +3138,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
+ "stella-autonomy",
  "stella-context",
  "stella-core",
  "stella-diff",
@@ -3157,6 +3169,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-plugin",
  "stella-protocol",
  "tempfile",
  "thiserror 2.0.20",
@@ -3167,6 +3180,7 @@ dependencies = [
 name = "stella-plugin"
 version = "0.9.65"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
  "stella-protocol",

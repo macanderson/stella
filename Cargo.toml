@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/stella-autonomy",
   "crates/stella-diag",
   "crates/stella-diff",
   "crates/stella-embed",

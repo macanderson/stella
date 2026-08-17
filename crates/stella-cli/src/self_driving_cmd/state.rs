@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Map, Value};
-use stella_core::self_driving::{AimdLimits, Calibration, CycleRecord, Floors};
+use stella_autonomy::{AimdLimits, Calibration, CycleRecord, Floors};
 
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 
@@ -49,13 +49,13 @@ pub(crate) fn dry_streak_target() -> u32 {
 
 /// A heartbeat older than this means nobody is driving the cycle any more.
 ///
-/// The default comes from `stella-core` rather than a literal here, so the
+/// The default comes from `stella-autonomy` rather than a literal here, so the
 /// terminal and the observatory dashboard cannot disagree about when a run is
 /// dead — they used to hold separate `900`s (#1613).
 pub(crate) fn stale_after_secs() -> i64 {
     env_u64(
         "SELF_DRIVING_STALE_AFTER_SECS",
-        stella_core::self_driving::DEFAULT_STALE_AFTER_SECS as u64,
+        stella_autonomy::DEFAULT_STALE_AFTER_SECS as u64,
     ) as i64
 }
 
