@@ -26,6 +26,12 @@ use crate::ladder::ProofTree;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "One step of the proof a turn builds for its own work, in the order the pipeline makes the observation. Carried by the `proof` event. Note the forward-compatibility asymmetry: a reader that does not know the `proof` event preserves it whole as an `unknown` event, but a reader that knows `proof` and meets a future `kind` here fails the whole event -- this nested vocabulary is closed and has no unknown step."
+    )
+)]
 pub enum ProofStep {
     /// What assurance this turn is going to buy, stated by triage **before**
     /// any of it happens.
@@ -99,6 +105,12 @@ pub enum ProofStep {
     /// record a second model's opinion on inconclusive evidence, it now records
     /// that the evidence was inconclusive and stops, so the trace states the
     /// limit of what was established rather than papering over it.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Deliberately distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation."
+        )
+    )]
     VerificationUnproven { reason: String },
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
