@@ -479,6 +479,17 @@ pub struct Config {
     /// tools`) from carrying durability they have no turn to use. See
     /// [`crate::durability`].
     pub durability: crate::durability::SessionDurability,
+    /// What this session has learned about which output ceilings its providers
+    /// will actually fund — read by every engine it builds (#3307). See
+    /// [`stella_core::driver::output_budget_recovery`] for the mechanism.
+    ///
+    /// A shared cell for the same reason [`Self::durability`] is one: it must
+    /// outlive the `EngineConfig` that [`crate::agent::engine_config_for`]
+    /// rebuilds every turn. Unlike durability it is *meant* to be inherited by
+    /// every lane — one handle is one account, and a lane that paid to learn a
+    /// refused ceiling should spare the others from paying again.
+    pub output_ceilings:
+        std::sync::Arc<stella_core::driver::output_budget_recovery::SessionOutputCeilings>,
     /// `--base-url`: required for the `local` provider (it IS the server
     /// address), an optional proxy/override for every other provider.
     pub base_url_override: Option<String>,
@@ -884,6 +895,7 @@ impl Config {
                     // resolved by the driver, after config load. See the
                     // field's doc comment.
                     durability: crate::durability::SessionDurability::default(),
+                    output_ceilings: Default::default(),
                     api_key: ApiKey::new(api_key),
                     workspace_root,
                     base_url_override: Some(base_url),
@@ -1098,6 +1110,7 @@ impl Config {
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.
             durability: crate::durability::SessionDurability::default(),
+            output_ceilings: Default::default(),
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),
@@ -1455,6 +1468,7 @@ impl Config {
             plan_mode: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
+            output_ceilings: Default::default(),
             create_worktrees: Default::default(),
             allowed_write_dirs: Vec::new(),
             api_key: ApiKey::new("dummy-key-unused-offline"),
