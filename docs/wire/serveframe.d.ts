@@ -1159,7 +1159,7 @@ export type DeliveryOutcome = {
 export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
 
 /**
- * What happened to a file in a [`AgentEvent::FileChange`] event.
+ * What happened to a file in a [`AgentEvent::FileChange`](super::AgentEvent::FileChange) event.
  *
  * Both live producers measure a tree against a tree, so every kind emitted
  * today is a mutation — see [`Self::Read`] for the one that is not, and why
@@ -1536,7 +1536,7 @@ export interface ManifestEntry {
 export interface MediaArtifactRef {
   /**
    * The artifact id, matching the `artifact_id` its
-   * [`AgentEvent::MediaProgress`] events carried.
+   * [`AgentEvent::MediaProgress`](super::AgentEvent::MediaProgress) events carried.
    */
   id: string;
   /**
