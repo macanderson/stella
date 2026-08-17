@@ -30,9 +30,28 @@ from arenabench.telemetry import seat_manifest_path
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    """Run git in `repo`, and on failure say what git actually said.
+
+    Deliberately not `check=True`: `CalledProcessError` renders as the argv and
+    the exit status alone, so git's own message — the half that says *why* — is
+    captured into the exception and never printed. A run on 2026-08-17 failed
+    here leaving nothing in the CI log but
+
+        CalledProcessError: Command '['git', 'fetch', '-q', 'origin']'
+        returned non-zero exit status 128.
+
+    for a fixture whose `origin` is a local directory it had created moments
+    earlier. That is a failure nobody can diagnose from the log it leaves, and
+    re-running it was the only move available (#3402).
+    """
+    done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError(
+            f"git {' '.join(args)} in {repo} exited {done.returncode}\n"
+            f"stdout: {done.stdout.strip() or '(empty)'}\n"
+            f"stderr: {done.stderr.strip() or '(empty)'}"
+        )
+    return done.stdout.strip()
 
 
 @pytest.fixture
@@ -1009,3 +1028,26 @@ class TestAPinIsObservedOnce:
             "floating ref — the exact #2098 race"
         )
         assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
+
+
+def test_a_failing_git_reports_what_git_said(tmp_path: Path) -> None:
+    """The witness for #3402: the message survives to the log.
+
+    `_git` used to raise `CalledProcessError`, whose string is the argv and the
+    exit status — git's own explanation was captured and discarded. A fixture
+    failure was then undiagnosable from CI output, which is how a `git fetch`
+    exiting 128 against a purely local origin cost a full investigation and
+    ended in a re-run rather than an answer.
+    """
+    with pytest.raises(AssertionError) as excinfo:
+        _git(tmp_path, "rev-parse", "HEAD")
+
+    message = str(excinfo.value)
+    assert "exited" in message, "the exit status must survive"
+    assert "stderr:" in message, "git's own channel must be reported, not swallowed"
+    # git's wording differs across versions; what must hold is that SOMETHING
+    # git wrote is present, rather than an empty stderr line standing in for it.
+    assert "stderr: (empty)" not in message, (
+        "a git failure with no stderr reported is exactly the undiagnosable "
+        "shape this guards against"
+    )
