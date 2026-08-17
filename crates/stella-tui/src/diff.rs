@@ -17,9 +17,16 @@
 //! near-identical lines by eye. Colors come from [`crate::theme`] only — the
 //! add/remove/hunk semantics stay consistent with the rest of the deck (and
 //! with any future light variant of the theme) by construction.
+//!
+//! A third thing is deliberately **not** decided here: how much of a diff is
+//! shown. That is [`stella_diff::view`], shared with the Observatory and the
+//! export dashboard so the same edit is elided the same way wherever it is
+//! read. This module owns how a shown line looks, never which lines those
+//! are.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use stella_diff::view;
 
 use crate::syntax::{Lang, lang_from_path, tok_style, tokenize};
 use crate::theme;
@@ -118,26 +125,30 @@ pub fn footer_line(added: u32, removed: u32, width: usize) -> Line<'static> {
 /// a header. Only with no path at all is the diff's real `diff --git` /
 /// `+++` header consulted. An unknown language renders plain, byte-for-byte.
 pub fn body_lines(diff: &str, path: Option<&str>) -> Vec<Line<'static>> {
-    body_lines_capped(diff, path, usize::MAX).0
+    body_lines_capped(diff, path, usize::MAX, None).0
 }
 
 /// Like [`body_lines`], but shows at most `cap` lines, returning the styled
 /// selection plus the number of lines it withheld.
 ///
-/// The cap is **hunk-aware**: it emits whole hunks while they fit and drops
-/// the rest, rather than slicing the body at line `cap`. A flat cut lands
-/// wherever it lands — routinely between a `-` line and the `+` line that
-/// replaces it — leaving a change that reads as a pure deletion. Whole hunks
-/// are the smallest unit that is honest on its own. Only when the *first*
-/// hunk alone overruns the budget does this fall back to a window, and even
-/// then the window is centred on the changed lines rather than anchored at
-/// the hunk's leading context.
+/// Which lines survive is [`stella_diff::view::plan`]'s call, not this
+/// module's — the same policy the Observatory and an exported dashboard
+/// apply, so one edit does not look like three different edits across three
+/// views of one run. In short: whole hunks from the beginning *and* the end,
+/// falling back to a window at each end of a single over-budget hunk.
+///
+/// The elision is drawn **in place**, as a `⋯ n lines` row where the missing
+/// lines belong, with `fold_hint` appended when the surface has an
+/// affordance to name (`" · ctrl+o"`). A truncation announced only after the
+/// body reads as "the change ends here and there is more below", which is
+/// the one thing a head-and-tail rendering must not say.
 pub fn body_lines_capped(
     diff: &str,
     path: Option<&str>,
     cap: usize,
+    fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
-    render_body(diff, path, cap, true)
+    render_body(diff, path, cap, true, fold_hint)
 }
 
 /// [`body_lines_capped`] for the transcript's inline diffs, which drop a lone
@@ -152,9 +163,10 @@ pub fn body_lines_inline(
     diff: &str,
     path: Option<&str>,
     cap: usize,
+    fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
     let multi = diff.lines().filter(|l| l.starts_with("@@")).count() > 1;
-    render_body(diff, path, cap, multi)
+    render_body(diff, path, cap, multi, fold_hint)
 }
 
 /// [`body_lines_inline`] dressed as ANSI strings for the plain surface
@@ -174,9 +186,10 @@ pub fn body_lines_inline_ansi(
     diff: &str,
     path: Option<&str>,
     cap: usize,
+    fold_hint: Option<&str>,
     palette: &crate::ansi::AnsiPalette,
 ) -> (Vec<String>, usize) {
-    let (lines, hidden) = body_lines_inline(diff, path, cap);
+    let (lines, hidden) = body_lines_inline(diff, path, cap, fold_hint);
     (crate::ansi::lines_to_ansi(&lines, palette), hidden)
 }
 
@@ -185,6 +198,7 @@ fn render_body(
     path: Option<&str>,
     cap: usize,
     hunk_headers: bool,
+    fold_hint: Option<&str>,
 ) -> (Vec<Line<'static>>, usize) {
     let lang = match path {
         Some(p) => lang_from_path(p),
@@ -193,16 +207,20 @@ fn render_body(
     // `.lines()`, not `.split('\n')`: a diff ending in a trailing newline
     // must not render (and count against hunk state) a spurious empty row.
     let raw: Vec<&str> = diff.lines().collect();
-    let keep = select_lines(&raw, cap);
+    let plan = view::plan(&view::hunk_starts(&raw), raw.len(), cap);
+    let fold = plan.fold_before();
     let emphasis = word_emphasis(&raw);
     let mut old_no: Option<u32> = None;
     let mut new_no: Option<u32> = None;
     let mut in_hunk = false;
     let mut lines = Vec::new();
-    let mut hidden = 0usize;
     for (i, text) in raw.iter().enumerate() {
+        if fold == Some(i) {
+            lines.push(fold_line(plan.hidden, fold_hint));
+        }
         // Every line advances the gutter counters, shown or not — skipping a
-        // line must not renumber the ones after it.
+        // line must not renumber the ones after it, and the numbers on the
+        // far side of an elision have to be the file's real ones.
         let line = body_line(
             text,
             lang,
@@ -211,72 +229,34 @@ fn render_body(
             &mut in_hunk,
             emphasis.get(&i).copied(),
         );
-        if !keep[i] {
-            hidden += 1;
-        } else if hunk_headers || !text.starts_with("@@") {
+        if plan.shows(i) && (hunk_headers || !text.starts_with("@@")) {
             lines.push(line);
         }
     }
-    (lines, hidden)
+    // A trailing elision folds after the last line rather than in front of
+    // one, so `fold_before` names an index the loop never reaches.
+    if fold == Some(raw.len()) {
+        lines.push(fold_line(plan.hidden, fold_hint));
+    }
+    (lines, plan.hidden)
 }
 
-/// Choose which diff lines a `cap`-limited render shows. See
-/// [`body_lines_capped`] for the policy; this is the mechanism.
-fn select_lines(raw: &[&str], cap: usize) -> Vec<bool> {
-    let n = raw.len();
-    if n <= cap {
-        return vec![true; n];
-    }
-    let mut keep = vec![false; n];
-    // Hunk boundaries. Anything before the first `@@` is file metadata that
-    // belongs with the hunk it introduces, so the first boundary is pulled
-    // back to 0; a headerless pseudo-diff (stella's event path emits these)
-    // is simply one unbounded hunk.
-    let mut bounds: Vec<usize> = (0..n).filter(|&i| raw[i].starts_with("@@")).collect();
-    if bounds.first().copied().unwrap_or(1) != 0 {
-        bounds.insert(0, 0);
-    }
-    bounds.push(n);
-
-    let mut used = 0usize;
-    for w in bounds.windows(2) {
-        let (start, end) = (w[0], w[1]);
-        if used + (end - start) > cap {
-            break;
-        }
-        keep[start..end].fill(true);
-        used += end - start;
-    }
-    if used > 0 {
-        return keep;
-    }
-
-    // The first hunk alone overruns the budget. Keep its `@@` header (it is
-    // the line that says *where* in the file this is) and a window of the
-    // body starting two lines of context above the first real change.
-    let end = bounds[1];
-    let first_change = (0..end)
-        .find(|&i| matches!(raw[i].as_bytes().first(), Some(b'+') | Some(b'-')) && !is_meta(raw[i]))
-        .unwrap_or(0);
-    let header = (0..end).find(|&i| raw[i].starts_with("@@"));
-    let mut budget = cap;
-    if let Some(h) = header {
-        keep[h] = true;
-        budget = budget.saturating_sub(1);
-    }
-    let start = first_change
-        .saturating_sub(2)
-        .max(header.map_or(0, |h| h + 1));
-    for slot in &mut keep[start..end] {
-        if budget == 0 {
-            break;
-        }
-        if !*slot {
-            *slot = true;
-            budget -= 1;
-        }
-    }
-    keep
+/// The row standing in for the lines an elision removed: `⋯ 480 lines`, plus
+/// whatever affordance the surface wants named after it.
+///
+/// Blank gutter on purpose — it is not a line of the file, so giving it a
+/// number would make the column lie about which line follows.
+fn fold_line(hidden: usize, hint: Option<&str>) -> Line<'static> {
+    // `plural_lines` and not a local format: a generated file elides
+    // thousands of lines, and `⋯ 4,812 lines` is legible where `4812` is a
+    // number the reader has to count digits on. It is the same helper every
+    // other "there is more" row in the transcript uses.
+    let text = format!(
+        "⋯ {}{}",
+        crate::render::plural_lines(hidden),
+        hint.unwrap_or_default()
+    );
+    Line::from(vec![gutter(None), Span::styled(text, theme::muted())])
 }
 
 /// Whether a line is diff metadata rather than source content.
@@ -1028,19 +1008,49 @@ mod tests {
     }
 
     #[test]
-    fn capped_rendering_styles_only_the_cap_and_reports_what_it_withheld() {
-        // The second return value is the *hidden* count, not the total: the
-        // only caller is the "⋯ N lines · ctrl+o" fold hint, and a total
-        // makes it do subtraction the renderer already knows the answer to.
+    fn capped_rendering_shows_both_ends_and_marks_the_elided_middle() {
+        // The witness for the head-and-tail policy. This rendering used to be
+        // "+one, +two" — the first `cap` lines and nothing else — which reads
+        // as a change that starts here and trails off, and left the reader no
+        // way to see where the edit actually ended.
         let diff = "+one\n+two\n+three\n+four\n+five";
-        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 2);
-        assert_eq!(lines.len(), 2, "styles stop at the cap");
-        assert_eq!(hidden, 3, "and the other three are reported as withheld");
-        // An uncapped call withholds nothing and is byte-identical to
-        // `body_lines`.
-        let (all, n) = body_lines_capped(diff, Some("x.rs"), usize::MAX);
+        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 2, None);
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        assert_eq!(hidden, 3, "three of five lines are withheld");
+        assert!(
+            texts[0].contains("+one"),
+            "the beginning survives: {texts:?}"
+        );
+        assert!(
+            texts.last().is_some_and(|t| t.contains("+five")),
+            "and so does the end: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("⋯ 3 lines")),
+            "with the elision marked between them, not after them: {texts:?}"
+        );
+        // The marker sits where the missing lines were — before the tail, not
+        // trailing the body. A trailing marker under a rendering whose last
+        // row is the file's last row says "there is more below" and is wrong.
+        let fold = texts.iter().position(|t| t.contains("⋯")).expect("marker");
+        assert_eq!(fold, 1, "immediately after the head: {texts:?}");
+
+        // An uncapped call withholds nothing, draws no marker, and stays
+        // byte-identical to `body_lines`.
+        let (all, n) = body_lines_capped(diff, Some("x.rs"), usize::MAX, None);
         assert_eq!(n, 0);
         assert_eq!(all, body_lines(diff, Some("x.rs")));
+    }
+
+    #[test]
+    fn the_fold_hint_names_the_surface_affordance_when_there_is_one() {
+        let diff = "+one\n+two\n+three\n+four\n+five";
+        let (lines, _) = body_lines_capped(diff, Some("x.rs"), 2, Some(" · ctrl+o"));
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("⋯ 3 lines · ctrl+o")),
+            "{texts:?}"
+        );
     }
 
     #[test]
@@ -1051,12 +1061,12 @@ mod tests {
         // on its own, so a budget that cannot fit the second hunk drops all
         // of it instead of showing its opening half.
         let diff = "@@ -1,2 +1,2 @@\n-a\n+A\n@@ -9,2 +9,2 @@\n-b\n+B";
-        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 4);
+        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 4, None);
         let texts: Vec<String> = lines.iter().map(line_text).collect();
         assert_eq!(
             lines.len(),
-            3,
-            "the whole first hunk, header included: {texts:?}"
+            4,
+            "the whole first hunk, header included, plus the fold row: {texts:?}"
         );
         assert_eq!(hidden, 3, "the entire second hunk is withheld");
         assert!(
@@ -1066,6 +1076,22 @@ mod tests {
         assert!(
             !texts.iter().any(|t| t.contains("-b")),
             "no half of the second hunk leaks in under the remaining budget: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn line_numbers_on_the_far_side_of_an_elision_are_the_files_real_ones() {
+        // The gutter is walked over every line, shown or not. If it were
+        // walked only over the shown ones, the tail would be numbered as
+        // though the elided middle had never existed — a diff that points at
+        // the wrong lines is worse than one that shows fewer.
+        let body: String = (1..=40).map(|i| format!("+line{i}\n")).collect();
+        let diff = format!("@@ -0,0 +1,40 @@\n{body}");
+        let (lines, _) = body_lines_capped(&diff, Some("x.rs"), 6, None);
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        assert!(
+            texts.last().is_some_and(|t| t.contains("  40 +line40")),
+            "the last row is file line 40, not line 6: {texts:?}"
         );
     }
 

@@ -36,7 +36,7 @@ stella-autonomy = { path = "../stella-autonomy" }
 # extracted from `stella-cli`'s `inspect::diff` precisely so this crate could
 # link it instead of taking a fourth acknowledged copy. Zero dependencies,
 # zero I/O (the `stella-home` shape), so the observer boundary holds.
-stella-diff = { path = "../stella-diff" }
+stella-diff = { path = "../stella-diff", features = ["json"] }
 # One syscall: `kill(pid, 0)` in `sessions::pid_alive`, the read-time liveness
 # probe the session registry's readers all share (an acknowledged copy of
 # `stella_store::sessions::pid_alive` — see that fn's doc). Probing a pid

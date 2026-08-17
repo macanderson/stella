@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "next dev --port 3900",
     "build": "next build && node scripts/sync-web.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:diff-parity": "node scripts/check-diff-view-parity.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

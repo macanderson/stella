@@ -3298,6 +3298,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "stella-diag",
+ "stella-diff",
  "stella-protocol",
  "stella-tools",
  "sysinfo",

@@ -20,6 +20,18 @@
 //! `stella-home` precedent (#1139) — so linking it costs no caller its
 //! isolation.
 
+//! Rendering is deliberately *not* here — a hunk becomes ratatui spans, HTML
+//! or ANSI in the surface that draws it. What every surface does share is how
+//! much of a diff it may draw and which part: [`view`] holds that one policy,
+//! so a reader comparing the deck, the Observatory and an exported dashboard
+//! sees one edit rather than three.
+
+pub mod parse;
+pub mod view;
+
+#[cfg(feature = "json")]
+pub mod json;
+
 /// Beyond this many DP cells the exact LCS is abandoned for the
 /// replace-everything bound: a pathological input must degrade to a
 /// coarse-but-instant answer rather than allocate a gigabyte and stall the
