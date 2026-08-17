@@ -147,16 +147,36 @@ Ordered by dependency. Each item names the files it touches.
 
 ### A1. A plugin is not the user
 
-**Today Stella cannot tell a plugin apart from the human.** The authority
-vocabulary landed — `Principal` (`crates/stella-core/src/ports/authz.rs:62`),
-`AuthzGate` (`:244`), `RiskLevel` and `ToolContract`
-(`crates/stella-protocol/src/contract.rs:68`, `:197`) — but every call site
-passes the constant `Principal::User`
-(`crates/stella-cli/src/agent.rs:362`, `:1657`, `:1672`).
+**Today Stella has no name for a plugin.** The authority vocabulary landed —
+`Principal` (`crates/stella-core/src/ports/authz.rs:62`), `AuthzGate` (`:244`),
+`RiskLevel` and `ToolContract` (`crates/stella-protocol/src/contract.rs:68`,
+`:197`) — and `Principal` has four variants: `User`, `Role`, `SubAgent`, `Host`.
 
-`Principal::Host(String)` (`authz.rs:74-76`) is already the right shape and is
-deliberately opaque so core grows no opinion about who hosts are. Thread a real
-principal through dispatch and make plugin identity one.
+**Correction, 2026-08-17.** An earlier draft of this section said "every call
+site passes the constant `Principal::User`" and concluded that Stella "cannot
+tell a plugin apart from the human". The narrow claim holds — the three
+`crates/stella-cli/src/agent.rs` sites (`:362`, `:1657`, `:1672`) do pass the
+constant — but the conclusion drawn from it does not, and the difference changes
+what A1 has to build. Read out of the tree:
+
+- `Principal::SubAgent` is constructed from a real dispatch id at
+  `crates/stella-cli/src/subsession.rs:732` and `crates/stella-cli/src/fleet_cmd.rs:729`;
+- `Principal::Role` is constructed at `crates/stella-cli/src/candidate_ws.rs:498`;
+- `Principal::Host` is constructed from the serve wire at
+  `crates/stella-serve/src/routes.rs:118`.
+
+So the principal **is** threaded through dispatch already, and the gate already
+sees a caller that is not the human. What is missing is narrower and sharper:
+**there is no `Principal` variant that means "an installed plugin", so a loader
+would have nothing honest to construct.** A1 is therefore an addition to the
+vocabulary plus its consent surface, not the threading exercise the earlier
+draft described — which makes it smaller than stated and no less blocking.
+
+`Principal::Host(String)` (`authz.rs:74-76`) is the right *shape* to copy —
+opaque, so core grows no opinion — but it is the wrong *meaning* to reuse: a
+host is the process embedding Stella, and a plugin is something that process
+installed. Collapsing them would make "the embedder" and "a thing the embedder
+installed" indistinguishable to a gate, which is the same defect one level up.
 
 This is **first** and not negotiable: a marketplace shipped on top of a
 system that cannot distinguish an installed plugin from its operator grants
@@ -193,7 +213,7 @@ Two halves, and they are separable:
 `.stella/plugins/` and `~/.stella/plugins/` resolvers (`crates/stella-home/`),
 `stella plugin install|list|remove` (`crates/stella-cli/`), a consent prompt on
 install that shows the declared participation grade and hook grants, and
-`LoopGrant::permits_hook` (`manifest.rs:134-139`) as the routing filter.
+`LoopGrant::permits_hook` (`manifest.rs:137-140`) as the routing filter.
 
 **Uninstall must actually uninstall.** Hook settings currently *concatenate*
 across scopes and no scope can remove another's entries
@@ -222,14 +242,16 @@ was achieved, and the digest. This is invariant 5's own test — the driver and 
 trace fold both branch on it (#3246 §O1.2).
 
 While here: `RequireApproval` is surfaced as inapplicable at a turn boundary
-(`user_hooks.rs:~322`). A paid plugin that must ask "verification budget
+(`user_hooks.rs:327-329`). A paid plugin that must ask "verification budget
 exhausted, continue?" needs a real answer.
 
 ### A7. `max_holds` becomes real
 
-`LoopGrant::max_holds` is declared and read by nothing
-(`manifest.rs:120-124`); the live bound is the constant `MAX_STOP_CONSULTS`
-(`user_hooks.rs:99`). Clamp the declared value to a host ceiling. A verification
+`LoopGrant::max_holds` is declared at `manifest.rs:124` and **its value is
+read by nothing**; the live bound is the constant `MAX_STOP_CONSULTS`
+(`user_hooks.rs:99`). Load validation does read the field, but only for grade
+coherence — `manifest.rs:313-318` rejects it below `arbiter` and rejects zero.
+Nothing consults the number. Clamp the declared value to a host ceiling. A verification
 plugin needing four rounds cannot currently ask for them.
 
 ### A8. Signals and stages grow to cover the pipeline
@@ -247,8 +269,15 @@ manifest is a second program with no gate on it."
 
 ### A9. Plugin events and the trace fold
 
-A `plugin.<id>.*` namespace in the bus catalog — already contemplated at
-`crates/stella-core/src/bus/names.rs:3-4` — plus the fold arm that reads it.
+A `plugin.<id>.*` namespace in the bus catalog, plus the fold arm that reads
+it.
+
+(Correction, 2026-08-17: an earlier draft said this namespace was "already
+contemplated at `crates/stella-core/src/bus/names.rs:3-4`". It is not — the
+string `plugin` does not appear in that file at all. What lines 3-4 actually
+say is the weaker, general "Extensions may emit custom names — the catalog is
+the contract for what the host emits, not a closed set", which permits the
+namespace without contemplating it. The namespace is entirely net-new.)
 
 **Plugins do not write traces.** They emit journal events; the trace is a fold
 (`crates/stella-cli/src/trace.rs:8-18`). Contributed facts then inherit
@@ -258,8 +287,9 @@ directly routes around all four.
 
 ### A10. A worktree handle that crosses a process
 
-`CandidateWorkspacePort` + `CandidateWorkspace` are 21 methods returning
-borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-334`).
+`CandidateWorkspacePort` + `CandidateWorkspace` are 19 methods returning
+borrowed trait objects (`crates/stella-pipeline/src/ports/workspace.rs:94-335`
+— 18 on `CandidateWorkspace`, one `create` on the port).
 `after_turn` is defined as "author a witness, run the oracle, read the flip" —
 all of which need the candidate worktree, and none of which has a serializable
 handle. Custom tools currently pin a child's cwd to the workspace root
@@ -352,7 +382,7 @@ replacing `--no-pipeline`), with the wrapper id recorded on the executions row
 so two variants can be compared. That column and migration already shipped
 (`crates/stella-store/src/ddl.rs:115`, `migrations.rs:29`) but the only writer
 passes the constant `PIPELINE_VARIANT_CLASSIC`
-(`crates/stella-cli/src/agent/persistence.rs:22`, `:45`) — wiring `Wrapper::id`
+(`crates/stella-cli/src/agent/persistence.rs:22`, passed at `:83`) — wiring `Wrapper::id`
 to it is a Track A tail item, because without it the A/B comparison this whole
 plan is justified by cannot distinguish two variants.
 
@@ -369,7 +399,7 @@ Order, easiest and least risky first:
 
 **The bar for each:** a side-by-side benchmark holds before the built-in path is
 deleted. The dependency cut — `stella-cli` no longer declaring
-`stella-pipeline`, today 166 references across 41 files — is the **last** slice,
+`stella-pipeline`, today 166 references across 42 files — is the **last** slice,
 never the first.
 
 ---
@@ -480,7 +510,7 @@ The feature is already split three ways, and the split is good:
 | Layer | Where | What |
 |---|---|---|
 | Decision | `crates/stella-core/src/self_driving.rs` | The AIMD controller sizing a cycle to its machine, the aperture ladder, the dry-streak oracle, digest normalization for the dedup set, the ledger folds. Pure, synchronous, owned data, property-tested. |
-| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `probes.rs`, `state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. |
+| I/O | `crates/stella-cli/src/self_driving_cmd.rs` (+ `self_driving_cmd/probes.rs`, `self_driving_cmd/state.rs`) | Machine probes, state files, process spawning. Feeds results in, writes decisions out. |
 | Observation | `crates/stella-observatory/src/self_driving.rs` | Read-only fold over `~/.stella/self-driving/<slug>/` JSONL. Never writes. |
 
 There is also a shell driver (`scripts/self-driving.sh`) that delegates its
