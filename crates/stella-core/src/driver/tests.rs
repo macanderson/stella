@@ -810,7 +810,7 @@ async fn simple_turn_with_no_tool_calls_completes() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, AgentEvent::Complete { .. }))
+            .any(|e| matches!(e, AgentEvent::TurnComplete { .. }))
     );
 }
 
@@ -1348,8 +1348,8 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, AgentEvent::Complete { .. })),
-        "an empty turn must NOT emit a Complete success marker"
+            .any(|e| matches!(e, AgentEvent::TurnComplete { .. })),
+        "an empty turn must NOT emit a TurnComplete success marker"
     );
 }
 
@@ -1415,10 +1415,10 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
     assert_eq!(
         events
             .iter()
-            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .filter(|e| matches!(e, AgentEvent::TurnComplete { .. }))
             .count(),
         1,
-        "exactly one Complete, so the turn reads as finished rather than killed"
+        "exactly one TurnComplete, so the turn reads as finished rather than killed"
     );
 }
 
@@ -1554,10 +1554,10 @@ async fn length_continuations_are_bounded_per_turn() {
     assert_eq!(
         events
             .iter()
-            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .filter(|e| matches!(e, AgentEvent::TurnComplete { .. }))
             .count(),
         1,
-        "exactly one Complete, from the final fall-through step"
+        "exactly one TurnComplete, from the final fall-through step"
     );
     assert!(
         events.iter().any(|e| matches!(

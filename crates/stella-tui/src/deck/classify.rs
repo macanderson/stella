@@ -319,6 +319,15 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         ),
         AgentEvent::AskUser { question, .. } => (TraceKind::Other, snip(question)),
         AgentEvent::Error { message, .. } => (TraceKind::Error, snip(message)),
+        // A turn boundary, not the agent's ending (#3379) — `TraceKind::Other`
+        // keeps it out of the deck's terminal styling, which a wrapped run
+        // would otherwise wear once per revise round. `status_from_event`
+        // above deliberately leaves it to the wildcard for the same reason:
+        // a finished turn does not make the agent `Done`.
+        AgentEvent::TurnComplete { model, cost_usd } => (
+            TraceKind::Other,
+            format!("turn done — {model} ${cost_usd:.4}"),
+        ),
         AgentEvent::Complete { model, cost_usd } => {
             (TraceKind::Complete, format!("{model} ${cost_usd:.4}"))
         }

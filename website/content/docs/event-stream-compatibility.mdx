@@ -55,6 +55,15 @@ That holds in both directions:
 Event type names and field names are never renamed or repurposed once shipped.
 Growth is by addition.
 
+A worked example of that rule holding under pressure: stella needed a way to say
+"one turn of this run finished", and a run can be several turns. The tempting
+move was to let `complete` mean that — it would have fired several times per run,
+fired early, and fired on runs that ultimately failed, breaking every client that
+had believed the promise above. Instead the new fact got a new name,
+`turn_complete`, and `complete` still means exactly what it always meant: the run
+is over, once, last, on success. Clients that ignore unknown types were unaffected;
+clients that want per-turn boundaries read the new event.
+
 ## The two rules that matter
 
 Everything above reduces to a single distinction that your client should mirror,

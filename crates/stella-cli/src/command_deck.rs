@@ -96,7 +96,7 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, SkillRegistry};
 use crate::{agent, rules};
 
 mod authoring;
-mod forwarder;
+pub(crate) mod forwarder;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;

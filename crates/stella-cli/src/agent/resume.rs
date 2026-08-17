@@ -313,7 +313,13 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
-                ResumedEnd::Turn(drive_resumed_turn(&engine, state, &events).await)
+                // The raw branch owns its run (#3379): no pipeline above it
+                // means nobody else will emit the terminal `Complete` the
+                // engine no longer claims. The wrapper seals when this
+                // statement's temporary drops — after the turn, before the
+                // stream closes.
+                let owned = stella_core::event_sender::RunEnding::sealing(events.clone());
+                ResumedEnd::Turn(drive_resumed_turn(&engine, state, &owned).await)
             }
         }
     };

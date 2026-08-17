@@ -659,6 +659,10 @@ export type AgentEvent = {
 } | {
   cost_usd: number;
   model: string;
+  type: "turn_complete";
+} | {
+  cost_usd: number;
+  model: string;
   type: "complete";
 };
 

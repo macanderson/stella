@@ -865,6 +865,7 @@ pub fn event_signature(event: &AgentEvent) -> String {
             }
         },
         AgentEvent::Error { retryable, .. } => format!("error:retryable={retryable}"),
+        AgentEvent::TurnComplete { .. } => "turn_complete".to_string(),
         AgentEvent::Complete { .. } => "complete".to_string(),
         // Task subjects/descriptions are volatile content; the board's shape
         // (how many tasks, how many resolved) is the structural part.
@@ -985,10 +986,20 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // follows it — so a golden recorded before the signal existed carries no
     // such row and keeping it would shift every later position. What delivery
     // DID is still compared: the `file_change` signatures stay in the walk.
+    // `TurnComplete` (#3379) joins them on the context receipts' ground, and
+    // strictly so: before that change the engine's per-turn ending was dropped
+    // at the wrapping sender and reached no recording at all, so every golden
+    // committed to this tree carries none. It is additive observability of a
+    // boundary the walk already sees — the turn's `text` and `step_usage`
+    // signatures stay in the comparison, so what the turn DID is still
+    // compared; only the marker naming its edge is excluded. Keeping it would
+    // shift every later aligned position and report drift about a signal's
+    // arrival rather than about behaviour.
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,
-            AgentEvent::CandidateDelivery { .. }
+            AgentEvent::TurnComplete { .. }
+                | AgentEvent::CandidateDelivery { .. }
                 | AgentEvent::TextDelta { .. }
                 | AgentEvent::BlockRegistered { .. }
                 | AgentEvent::StepManifest { .. }

@@ -1057,6 +1057,14 @@ impl SessionModel {
                     });
                 }
             }
+            // One turn ended (#3379) — deliberately inert. Everything the
+            // `Complete` arm below does is a *terminal settle*: it closes the
+            // proof rail and drops the pending scope / ask-user / hunk gates.
+            // Doing any of that here would discard a live approval gate in the
+            // middle of a wrapped run, which is precisely the breakage the
+            // separate name exists to prevent. The run's own ending still
+            // arrives, once, from whoever owns the run.
+            AgentEvent::TurnComplete { .. } => {}
             AgentEvent::Complete { model, cost_usd } => {
                 self.hud.stage = Some(StageKind::Complete);
                 self.hud.model = Some(model.clone());

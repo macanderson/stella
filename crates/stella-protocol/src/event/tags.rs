@@ -266,6 +266,21 @@ agent_event_tags! {
     Error => "error",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // The engine's per-turn ending (#3379). `Behavioral`: the diagnostic
+    // bridge drains its in-flight tool-call retention map on it, because that
+    // is a *turn* obligation — a call still awaiting a result when a turn ends
+    // will never get one — and doing it only on the run's `Complete` carried
+    // one turn's stale entries into the next.
+    //
+    // Deliberately not claiming the run owners as a second behavioral site:
+    // `RunEnding` observes this event to author `Complete`, but it branches on
+    // nothing — severing the signal would change what it reports, not what it
+    // does.
+    TurnComplete => "turn_complete",
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/diag_bridge.rs::DomainBridge::observe",
+        },
+        &[Surface::Observatory];
     // Exemplar — `Behavioral`. The session journal classifies this as a
     // transition, which is what makes it flush durably instead of buffering:
     // the signal decides persistence timing, not just content.

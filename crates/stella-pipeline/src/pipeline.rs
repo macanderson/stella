@@ -14,17 +14,17 @@
 //!
 //! # Event ownership
 //!
-//! `stella-core::Engine::run_turn` emits its own `Stage { Execute }`, a
-//! terminal `Stage { Complete }`, and a `Complete` — correct for *one turn*,
-//! but a multi-step plan or a revise loop runs several turns. The pipeline is
-//! the **single authority** for stage boundaries and the terminal event on an
-//! outcome-producing run: it gives each `run_turn` a private channel, then
-//! forwards every event to the consumer *except* the engine's
-//! `Stage`/`Complete` (which would otherwise falsely signal "done" after step
-//! one). The pipeline emits `Complete` for success or a non-retryable `Error`
-//! for terminal failure; hard [`PipelineRunError`] exits remain typed return
-//! values for the caller to close out. This mirrors the one-emission-point
-//! discipline of L-E1/L-T5.
+//! The connection to the engine is **one-directional** (#3379): it ends every
+//! turn with its own `TurnComplete` — *this turn is over*, never *the work is
+//! over* — and a plan step or revise round just **requests another turn**. Each
+//! reaches the consumer unedited: three turns put three in the journal, and
+//! the pipeline's ending is a separate event with a separate name: `Complete`
+//! on success or a non-retryable `Error` on failure, exactly once and last, as
+//! the wire contract promises and [`crate::replay::validate_stream`] enforces.
+//! Hard [`PipelineRunError`] exits stay typed return values for the caller to
+//! close out — the one-emission-point discipline of L-E1/L-T5. What it must
+//! **not** do is edit the engine's stream to get there, as it used to: see
+//! `Pipeline::filtered_turn_events` for what that sender does now.
 //!
 //! # Cache discipline (L-E8)
 //!
