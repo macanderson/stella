@@ -39,6 +39,7 @@
 //! correct ahead of the socket it will eventually describe.
 
 use serde::{Deserialize, Serialize};
+use stella_protocol::StageKind;
 
 use crate::error::ManifestError;
 
@@ -110,7 +111,15 @@ impl WrapperStage {
 /// unknown value must be a load error rather than a silently shorter run, and
 /// a future stage adds a variant here. The names and their order mirror
 /// `stage_rank` in `crates/stella-pipeline/src/replay.rs`, which is the
-/// canonical ordering today.
+/// canonical ordering today — and [`StageName::kind`] makes that mirror
+/// mechanical rather than a claim, since it is one-to-one onto
+/// [`StageKind`]'s twelve.
+///
+/// **A name here is not a promise that every host runs it.** The vocabulary
+/// mirrors [`StageKind`] because a wrapper that cannot spell a boundary
+/// cannot describe the run it wraps; which hosts emit which boundary today
+/// differs per stage, and each variant below says so rather than leaving a
+/// manifest author to discover it from a run that quietly did nothing.
 ///
 /// [`FlipPolicy`]: crate::FlipPolicy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,6 +141,42 @@ pub enum StageName {
     Witness,
     /// Turn evidence into a verdict.
     Verify,
+    /// The verdict boundary — and **the staged pipeline does not dispatch
+    /// it**, which is the one thing a manifest author has to know before
+    /// writing the name down.
+    ///
+    /// `stella-pipeline` emits no [`StageKind::Verdict`] at all: its verify
+    /// stage emits the `Verdict` *event* directly from `ladder_decision`, and
+    /// `crates/stella-pipeline/src/pipeline/tests.rs` asserts the stage never
+    /// appears in that stream. The hosts that do emit the boundary are the
+    /// goal loops — `crates/stella-cli/src/agent/goal.rs` and
+    /// `crates/stella-serve/src/goal.rs` run-scoped,
+    /// `crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming
+    /// `verdict` describes a goal-loop run and not a staged one.
+    Verdict,
+    /// Post-verdict self-reflection: mine the finished turn for lessons and
+    /// record them for later recall.
+    ///
+    /// Emitted run-scoped today by `crates/stella-cli/src/agent.rs`, gated
+    /// there on the turn having done real work — the branch
+    /// [`Signal::MutatingActions`] transcribes.
+    Reflect,
+    /// Context write-back: episode summaries and fact upserts landing in the
+    /// context plane.
+    ///
+    /// A **declared gap**: the work happens (`crates/stella-cli/src/agent.rs`
+    /// records the episode under the same "did real work" gate as reflection)
+    /// but no host emits this boundary today, so nothing yet reports it.
+    /// Declarable so a wrapper can order the write-back it will drive once
+    /// the socket exists (#3380), and named as a gap here rather than
+    /// discovered as a silence.
+    ContextWrite,
+    /// The run is done — the last boundary a run emits.
+    ///
+    /// Emitted run-scoped today by `stella-core`'s
+    /// `EventSender::pairing_stage_complete` and by `stella-cli`'s command-deck
+    /// forwarder.
+    Complete,
 }
 
 impl StageName {
@@ -140,6 +185,11 @@ impl StageName {
     /// This is the typed-output half of the graph check: a condition may only
     /// name a signal that the host publishes or that an **earlier** stage
     /// produces.
+    ///
+    /// A stage publishing nothing is the common case and not a gap: it is a
+    /// stage the pipeline branches *into* rather than *on*. Every signal
+    /// listed here transcribes a live branch — see [`Signal`] for the line
+    /// each one came from.
     #[must_use]
     pub fn publishes(self) -> &'static [Signal] {
         match self {
@@ -148,14 +198,20 @@ impl StageName {
                 Signal::Questions,
                 Signal::Plans,
                 Signal::Verifies,
+                Signal::WantsWitness,
+                Signal::WantsVerifier,
             ],
+            Self::Execute => &[Signal::MutatingActions, Signal::DiffLines],
+            Self::Witness => &[Signal::WitnessAuthored],
+            Self::Verify => &[Signal::FlipAchieved, Signal::TestsRed, Signal::TestsGreen],
             Self::Recall
             | Self::Research
             | Self::Plan
             | Self::Scope
-            | Self::Execute
-            | Self::Witness
-            | Self::Verify => &[],
+            | Self::Verdict
+            | Self::Reflect
+            | Self::ContextWrite
+            | Self::Complete => &[],
         }
     }
 
@@ -171,6 +227,39 @@ impl StageName {
             Self::Execute => "execute",
             Self::Witness => "witness",
             Self::Verify => "verify",
+            Self::Verdict => "verdict",
+            Self::Reflect => "reflect",
+            Self::ContextWrite => "contextwrite",
+            Self::Complete => "complete",
+        }
+    }
+
+    /// The workspace-wide stage vocabulary this name denotes.
+    ///
+    /// One vocabulary exists (`stella-protocol`'s [`StageKind`]) and this
+    /// crate does not get a second one — the mapping is total and one-to-one,
+    /// so "the manifest vocabulary mirrors `StageKind`" is a fact a test can
+    /// check instead of a sentence that drifts. It is also what a host needs
+    /// at dispatch time: a declared stage becomes the boundary it emits.
+    ///
+    /// The manifest spelling and the wire spelling deliberately differ where
+    /// the shorter word is the one people say — `recall` for
+    /// [`StageKind::ContextRecall`], `scope` for [`StageKind::ScopeReview`].
+    #[must_use]
+    pub fn kind(self) -> StageKind {
+        match self {
+            Self::Triage => StageKind::Triage,
+            Self::Recall => StageKind::ContextRecall,
+            Self::Research => StageKind::Research,
+            Self::Plan => StageKind::Plan,
+            Self::Scope => StageKind::ScopeReview,
+            Self::Execute => StageKind::Execute,
+            Self::Witness => StageKind::Witness,
+            Self::Verify => StageKind::Verify,
+            Self::Verdict => StageKind::Verdict,
+            Self::Reflect => StageKind::Reflect,
+            Self::ContextWrite => StageKind::ContextWrite,
+            Self::Complete => StageKind::Complete,
         }
     }
 }
@@ -184,20 +273,71 @@ impl std::fmt::Display for StageName {
 /// A fact a condition may read.
 ///
 /// The **published set** — naming anything outside it is a load error. Every
-/// entry is a fact the staged pipeline already branches on today, so this is a
-/// description of live behaviour rather than a vocabulary invented for the
-/// manifest:
+/// entry transcribes a branch the pipeline takes today, at a named line; a
+/// fact with no live branch behind it is not added, because the grammar's
+/// whole defence is that a new name is a reviewable decision rather than a
+/// dial someone might find a use for. Growing this set is how a wrapper gains
+/// expressiveness — never a richer condition syntax.
 ///
-/// - `test-command` — `Pipeline::config.test_command`, the host fact gating
-///   witness authoring.
-/// - `conversational`, `questions`, `plans`, `verifies` — triage's assessment,
-///   which decides the conversational fast path, whether the research stage
-///   runs at all, and whether the class plans and verifies.
+/// Host facts, readable by any stage:
+///
+/// - `test-command` — `Pipeline::config.test_command`, the fact gating
+///   witness authoring (`pipeline.rs`, the `authored_witness` conjunction).
+/// - `candidates` — `PipelineConfig::candidate_count()`. `n == 1` is the
+///   single-shot/best-of-N split in `pipeline.rs::run`.
+/// - `budget-metered` — `budget.mode() != BudgetMode::Off`, the first thing
+///   `pipeline/repair_gate.rs::repair_headroom` asks before a repair round
+///   may be bought. Metered, not the amount: dollars are a float, the grammar
+///   compares against whole numbers only, and a threshold silently coarser
+///   than the guard's would be worse than no threshold.
+///
+/// Triage's assessment, which decides the conversational fast path, whether
+/// research runs, and what the class is owed:
+///
+/// - `conversational`, `questions`, `plans`, `verifies` — as before.
+/// - `wants-witness` — `assessment.wants_witness()`, a conjunct of the
+///   authored-witness decision in `pipeline.rs::run`.
+/// - `wants-verifier` — `assessment.wants_verifier()`, read by the
+///   `LadderDecision::Unverified` arm of `pipeline.rs::verify_candidate`.
+///
+/// What execution produced, read by the ladder in `verify.rs`:
+///
+/// - `mutating-actions` — `mutating_actions == 0`, a conjunct of
+///   `LadderInputs::nothing_was_attempted`.
+/// - `diff-lines` — `diff_lines <= diff_budget`, the diff-budget conjunct of
+///   the `SubmitFast` rung.
+///
+/// What the witness stage produced:
+///
+/// - `witness-authored` — `witness.is_some()`, which decides the effective
+///   test command, the tamper sweep, and the mutation audit in
+///   `pipeline.rs::verify_candidate`.
+///
+/// What verification observed. The two test signals are **both** false when no
+/// test ran, and that is deliberate: `touched_tests_passed` is an
+/// `Option<bool>`, and one `tests-passed` boolean would report a suite that
+/// never ran identically to one that went red. Two total predicates keep the
+/// third state visible, the way [`FlipOutcome::is_achieved`] and
+/// [`FlipOutcome::was_observed`] do for the flip:
+///
+/// - `flip-achieved` — `flip.is_achieved()`, the receipt half of the
+///   `SubmitFast` rung.
+/// - `tests-red` — `touched_tests_passed == Some(false)`, the ladder's
+///   deterministic-failure rung.
+/// - `tests-green` — `touched_tests_passed == Some(true)`, the corroboration
+///   the pipeline's own flip needs beside it.
+///
+/// [`FlipOutcome::is_achieved`]: stella_protocol::FlipOutcome::is_achieved
+/// [`FlipOutcome::was_observed`]: stella_protocol::FlipOutcome::was_observed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Signal {
     /// Boolean, host: a `--test-command` is configured for this run.
     TestCommand,
+    /// Count, host: how many candidates this run executes (best-of-N).
+    Candidates,
+    /// Boolean, host: spend is actually gated, not merely recorded.
+    BudgetMetered,
     /// Boolean, triage: this turn is chat, not a software task.
     Conversational,
     /// Count, triage: how many research questions triage named.
@@ -206,6 +346,26 @@ pub enum Signal {
     Plans,
     /// Boolean, triage: this task class verifies unconditionally.
     Verifies,
+    /// Boolean, triage: this turn warrants an authored witness test.
+    WantsWitness,
+    /// Boolean, triage: an inconclusive ladder warrants a model verifier.
+    WantsVerifier,
+    /// Count, execute: calls dispatched that were able to change the tree.
+    MutatingActions,
+    /// Count, execute: lines of diff the turn produced.
+    DiffLines,
+    /// Boolean, witness: a witness test was authored and accepted.
+    WitnessAuthored,
+    /// Boolean, verify: the tracked command went fail→pass and held. `false`
+    /// covers "no flip" **and** "nothing observed one" — pair it with
+    /// `tests-green` rather than reading it as a negative finding.
+    FlipAchieved,
+    /// Boolean, verify: a touched test ran and failed. `false` means "no test
+    /// ran red", which includes no test having run at all.
+    TestsRed,
+    /// Boolean, verify: a touched test ran and passed. `false` means "no test
+    /// ran green", which includes no test having run at all.
+    TestsGreen,
 }
 
 impl Signal {
@@ -213,10 +373,20 @@ impl Signal {
     /// for tests that must fail when the set grows without a decision.
     pub const ALL: &'static [Signal] = &[
         Signal::TestCommand,
+        Signal::Candidates,
+        Signal::BudgetMetered,
         Signal::Conversational,
         Signal::Questions,
         Signal::Plans,
         Signal::Verifies,
+        Signal::WantsWitness,
+        Signal::WantsVerifier,
+        Signal::MutatingActions,
+        Signal::DiffLines,
+        Signal::WitnessAuthored,
+        Signal::FlipAchieved,
+        Signal::TestsRed,
+        Signal::TestsGreen,
     ];
 
     /// Resolve a wire name to a signal. `None` is the load error the caller
@@ -231,10 +401,20 @@ impl Signal {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::TestCommand => "test-command",
+            Self::Candidates => "candidates",
+            Self::BudgetMetered => "budget-metered",
             Self::Conversational => "conversational",
             Self::Questions => "questions",
             Self::Plans => "plans",
             Self::Verifies => "verifies",
+            Self::WantsWitness => "wants-witness",
+            Self::WantsVerifier => "wants-verifier",
+            Self::MutatingActions => "mutating-actions",
+            Self::DiffLines => "diff-lines",
+            Self::WitnessAuthored => "witness-authored",
+            Self::FlipAchieved => "flip-achieved",
+            Self::TestsRed => "tests-red",
+            Self::TestsGreen => "tests-green",
         }
     }
 
@@ -244,10 +424,20 @@ impl Signal {
     #[must_use]
     pub fn kind(self) -> SignalKind {
         match self {
-            Self::Questions => SignalKind::Count,
-            Self::TestCommand | Self::Conversational | Self::Plans | Self::Verifies => {
-                SignalKind::Boolean
+            Self::Questions | Self::Candidates | Self::MutatingActions | Self::DiffLines => {
+                SignalKind::Count
             }
+            Self::TestCommand
+            | Self::BudgetMetered
+            | Self::Conversational
+            | Self::Plans
+            | Self::Verifies
+            | Self::WantsWitness
+            | Self::WantsVerifier
+            | Self::WitnessAuthored
+            | Self::FlipAchieved
+            | Self::TestsRed
+            | Self::TestsGreen => SignalKind::Boolean,
         }
     }
 
@@ -259,10 +449,16 @@ impl Signal {
     #[must_use]
     pub fn publisher(self) -> Option<StageName> {
         match self {
-            Self::TestCommand => None,
-            Self::Conversational | Self::Questions | Self::Plans | Self::Verifies => {
-                Some(StageName::Triage)
-            }
+            Self::TestCommand | Self::Candidates | Self::BudgetMetered => None,
+            Self::Conversational
+            | Self::Questions
+            | Self::Plans
+            | Self::Verifies
+            | Self::WantsWitness
+            | Self::WantsVerifier => Some(StageName::Triage),
+            Self::MutatingActions | Self::DiffLines => Some(StageName::Execute),
+            Self::WitnessAuthored => Some(StageName::Witness),
+            Self::FlipAchieved | Self::TestsRed | Self::TestsGreen => Some(StageName::Verify),
         }
     }
 }

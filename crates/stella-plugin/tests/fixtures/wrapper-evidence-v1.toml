@@ -1,0 +1,57 @@
+# A variant that pays for the tail of the run only where the run produced
+# something for it to be about.
+#
+# `wrapper-staged-v1.toml` transcribes the order the staged pipeline runs
+# today; this one exists to exercise the rest of the vocabulary — the stages
+# after the verdict, and the signals execute, witness and verify publish.
+# Its opinions are its own: "write context back only from a turn whose work
+# was corroborated" is a variant's choice, not a transcription of what ships.
+#
+# Each condition still names a signal that transcribes a live branch — see
+# `Signal`'s docs in `crates/stella-plugin/src/wrapper.rs` for the line behind
+# each one.
+name = "evidence"
+description = "Grade every turn; spend on reflection and write-back only when the turn earned them."
+
+[loop]
+participation = "steering"
+
+[wrapper]
+id = "evidence-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "execute"
+
+# `assessment.wants_witness()` — a conjunct of the pipeline's own
+# authored-witness decision.
+[[wrapper.stages]]
+name = "witness"
+if = "wants-witness"
+
+# Unconditional on purpose: the ladder's abstaining rungs are answers, and a
+# turn that changed nothing is exactly the case they exist to report.
+[[wrapper.stages]]
+name = "verify"
+
+# "Did real work" — the same shape gating reflection on the CLI path.
+[[wrapper.stages]]
+name = "reflect"
+if = "mutating-actions > 0"
+
+# Reads a signal verify publishes, which is only legal because verify above is
+# unconditional: a skipped publisher produces nothing, and the loader says so
+# rather than letting the read resolve to a silent `false`.
+[[wrapper.stages]]
+name = "contextwrite"
+if = "tests-green"
+
+[[wrapper.stages]]
+name = "complete"
+
+# `verdict` is deliberately not declared. The staged pipeline emits no such
+# boundary — its verify stage emits the Verdict event straight from
+# `ladder_decision` — so a staged variant naming it would describe a stage
+# that never runs. The goal loops are where that name belongs.

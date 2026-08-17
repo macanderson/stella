@@ -56,6 +56,10 @@ use crate::wrapper::{Condition, Signal, SignalKind, StageName, Wrapper};
 pub struct SignalValues {
     /// [`Signal::TestCommand`] — a `--test-command` is configured for this run.
     pub test_command: bool,
+    /// [`Signal::Candidates`] — how many candidates this run executes.
+    pub candidates: u64,
+    /// [`Signal::BudgetMetered`] — spend is gated, not merely recorded.
+    pub budget_metered: bool,
     /// [`Signal::Conversational`] — triage called this chat, not a task.
     pub conversational: bool,
     /// [`Signal::Questions`] — how many research questions triage named.
@@ -64,6 +68,27 @@ pub struct SignalValues {
     pub plans: bool,
     /// [`Signal::Verifies`] — this task class verifies unconditionally.
     pub verifies: bool,
+    /// [`Signal::WantsWitness`] — this turn warrants an authored witness.
+    pub wants_witness: bool,
+    /// [`Signal::WantsVerifier`] — an inconclusive ladder warrants a verifier.
+    pub wants_verifier: bool,
+    /// [`Signal::MutatingActions`] — calls dispatched that could change the
+    /// tree.
+    pub mutating_actions: u64,
+    /// [`Signal::DiffLines`] — lines of diff the turn produced.
+    pub diff_lines: u64,
+    /// [`Signal::WitnessAuthored`] — a witness test was authored and accepted.
+    pub witness_authored: bool,
+    /// [`Signal::FlipAchieved`] — the tracked command went fail→pass and held.
+    pub flip_achieved: bool,
+    /// [`Signal::TestsRed`] — a touched test ran and failed.
+    ///
+    /// With [`Self::tests_green`], the host's projection of the ladder's
+    /// `Option<bool>`: both `false` is "no test ran", which is why one
+    /// `tests_passed` field would be a lie rather than a simplification.
+    pub tests_red: bool,
+    /// [`Signal::TestsGreen`] — a touched test ran and passed.
+    pub tests_green: bool,
 }
 
 impl SignalValues {
@@ -77,10 +102,20 @@ impl SignalValues {
     pub fn boolean(&self, signal: Signal) -> Option<bool> {
         match signal {
             Signal::TestCommand => Some(self.test_command),
+            Signal::BudgetMetered => Some(self.budget_metered),
             Signal::Conversational => Some(self.conversational),
             Signal::Plans => Some(self.plans),
             Signal::Verifies => Some(self.verifies),
-            Signal::Questions => None,
+            Signal::WantsWitness => Some(self.wants_witness),
+            Signal::WantsVerifier => Some(self.wants_verifier),
+            Signal::WitnessAuthored => Some(self.witness_authored),
+            Signal::FlipAchieved => Some(self.flip_achieved),
+            Signal::TestsRed => Some(self.tests_red),
+            Signal::TestsGreen => Some(self.tests_green),
+            Signal::Questions
+            | Signal::Candidates
+            | Signal::MutatingActions
+            | Signal::DiffLines => None,
         }
     }
 
@@ -89,7 +124,20 @@ impl SignalValues {
     pub fn count(&self, signal: Signal) -> Option<u64> {
         match signal {
             Signal::Questions => Some(self.questions),
-            Signal::TestCommand | Signal::Conversational | Signal::Plans | Signal::Verifies => None,
+            Signal::Candidates => Some(self.candidates),
+            Signal::MutatingActions => Some(self.mutating_actions),
+            Signal::DiffLines => Some(self.diff_lines),
+            Signal::TestCommand
+            | Signal::BudgetMetered
+            | Signal::Conversational
+            | Signal::Plans
+            | Signal::Verifies
+            | Signal::WantsWitness
+            | Signal::WantsVerifier
+            | Signal::WitnessAuthored
+            | Signal::FlipAchieved
+            | Signal::TestsRed
+            | Signal::TestsGreen => None,
         }
     }
 }
@@ -234,10 +282,20 @@ mod tests {
     fn multi_step() -> SignalValues {
         SignalValues {
             test_command: false,
+            candidates: 1,
+            budget_metered: true,
             conversational: false,
             questions: 2,
             plans: true,
             verifies: true,
+            wants_witness: true,
+            wants_verifier: true,
+            mutating_actions: 4,
+            diff_lines: 37,
+            witness_authored: true,
+            flip_achieved: true,
+            tests_red: false,
+            tests_green: true,
         }
     }
 

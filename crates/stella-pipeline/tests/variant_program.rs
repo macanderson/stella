@@ -33,6 +33,10 @@ fn stage_kind(name: StageName) -> StageKind {
         StageName::Execute => StageKind::Execute,
         StageName::Witness => StageKind::Witness,
         StageName::Verify => StageKind::Verify,
+        StageName::Verdict => StageKind::Verdict,
+        StageName::Reflect => StageKind::Reflect,
+        StageName::ContextWrite => StageKind::ContextWrite,
+        StageName::Complete => StageKind::Complete,
     }
 }
 
@@ -43,6 +47,8 @@ fn full_ceremony() -> SignalValues {
         &TaskAssessment::from_class(TaskClass::MultiStep),
         2,
         None, // no --test-command: the run authors its own witness
+        1,    // single-shot
+        true, // spend is metered
     )
 }
 
@@ -109,14 +115,24 @@ fn representative_turns() -> Vec<SignalValues> {
             &TaskAssessment::from_class(TaskClass::MultiStep),
             2,
             Some("cargo test"),
+            1,
+            true,
         ),
         // One concrete change: no DAG planning, so no scope review either.
-        variant::signals(&TaskAssessment::from_class(TaskClass::SingleTask), 0, None),
+        variant::signals(
+            &TaskAssessment::from_class(TaskClass::SingleTask),
+            0,
+            None,
+            1,
+            true,
+        ),
         // A lookup: the cheapest class, which does not verify unconditionally.
         variant::signals(
             &TaskAssessment::from_class(TaskClass::SimpleLookup),
             0,
             None,
+            1,
+            true,
         ),
     ]
 }
@@ -127,6 +143,8 @@ fn a_configured_test_command_skips_witness_authoring() {
         &TaskAssessment::from_class(TaskClass::MultiStep),
         2,
         Some("cargo test"),
+        1,
+        true,
     ))
     .unwrap();
     assert!(
@@ -145,6 +163,8 @@ fn a_single_task_skips_planning_and_scope_review() {
         &TaskAssessment::from_class(TaskClass::SingleTask),
         0,
         None,
+        1,
+        true,
     ))
     .unwrap();
     assert_eq!(
@@ -166,6 +186,8 @@ fn a_simple_lookup_does_not_verify_unconditionally() {
         &TaskAssessment::from_class(TaskClass::SimpleLookup),
         0,
         None,
+        1,
+        true,
     ))
     .unwrap();
     assert!(
@@ -182,15 +204,26 @@ fn a_simple_lookup_does_not_verify_unconditionally() {
 /// condition above quietly wrong.
 #[test]
 fn signals_come_from_the_facts_they_name() {
-    let multi = variant::signals(&TaskAssessment::from_class(TaskClass::MultiStep), 3, None);
+    let multi = variant::signals(
+        &TaskAssessment::from_class(TaskClass::MultiStep),
+        3,
+        None,
+        1,
+        true,
+    );
     assert_eq!(
         multi,
         SignalValues {
             test_command: false,
+            candidates: 1,
+            budget_metered: true,
             conversational: false,
             questions: 3,
             plans: true,
             verifies: true,
+            wants_witness: true,
+            wants_verifier: true,
+            ..unobserved()
         }
     );
 
@@ -201,15 +234,74 @@ fn signals_come_from_the_facts_they_name() {
         },
         0,
         Some("just test"),
+        4,
+        false,
     );
     assert_eq!(
         lookup,
         SignalValues {
             test_command: true,
+            candidates: 4,
+            budget_metered: false,
             conversational: true,
             questions: 0,
             plans: false,
             verifies: false,
+            wants_witness: false,
+            wants_verifier: true,
+            ..unobserved()
         }
     );
+}
+
+/// The post-triage half of a [`SignalValues`] as `variant::signals` leaves it:
+/// nothing executed, authored or observed yet. Spelled once here so the two
+/// assertions above are about the fields they name.
+fn unobserved() -> SignalValues {
+    SignalValues {
+        test_command: false,
+        candidates: 1,
+        budget_metered: false,
+        conversational: false,
+        questions: 0,
+        plans: false,
+        verifies: false,
+        wants_witness: false,
+        wants_verifier: false,
+        mutating_actions: 0,
+        diff_lines: 0,
+        witness_authored: false,
+        flip_achieved: false,
+        tests_red: false,
+        tests_green: false,
+    }
+}
+
+/// The guard behind `variant::signals`'s stated contract: this host takes one
+/// snapshot at the triage boundary, so a shipped variant may only read facts
+/// that exist by then. A condition on a signal execute, witness or verify
+/// publishes would be answered from the snapshot instead of from the stage —
+/// silently, and in the direction of "nothing happened".
+///
+/// Not a limit on the manifest grammar, which is right to have those signals:
+/// it is a limit on *this* host until resolution becomes progressive (#3491),
+/// and it is checked here so the day a variant reaches for one, this fails
+/// instead of the run quietly skipping a stage.
+#[test]
+fn the_shipped_variant_reads_only_facts_the_triage_boundary_has() {
+    let wrapper = variant::classic().expect("the shipped classic manifest must load");
+    for stage in &wrapper.stages {
+        let Some(condition) = stage.condition().expect("a shipped condition must parse") else {
+            continue;
+        };
+        let signal = condition.signal();
+        let publisher = signal.publisher();
+        assert!(
+            matches!(publisher, None | Some(StageName::Triage)),
+            "{} reads {signal}, which {} publishes — this host cannot answer it \
+             at the triage boundary (#3491)",
+            stage.name,
+            publisher.map_or_else(|| "the host".to_string(), |p| p.to_string()),
+        );
+    }
 }

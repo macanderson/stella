@@ -128,21 +128,39 @@ pub fn classic_program(values: &SignalValues) -> Result<StageProgram, VariantErr
         })
 }
 
-/// The host's half of the contract: every published signal, filled in from the
-/// facts this turn actually has.
+/// The host's half of the contract **as of the triage boundary**: every
+/// published signal, filled in from the facts this turn has by then.
 ///
 /// One place, deliberately. The manifest's conditions are only as trustworthy
 /// as the values behind them, so "what does `plans` mean" is answered by
 /// [`TaskClass::plans`](crate::triage::TaskClass::plans) here rather than by
 /// each caller's idea of it.
+///
+/// # What the later stages' signals read here
+///
+/// `stella-plugin` publishes signals from execute, witness and verify too, and
+/// none of them has a value at this point in the run: nothing has executed,
+/// nothing has been authored, nothing has been observed. They therefore carry
+/// their *nothing-yet* value, and that is only sound because
+/// [`stella_plugin::Wrapper::resolve`] is a single up-front pass over one
+/// snapshot — so a variant whose condition reads one of them would be answered
+/// from this snapshot rather than from the stage's actual output. The shipped
+/// `classic` manifest reads none of them, which `tests/variant_program.rs`
+/// asserts rather than assumes. Resolving progressively, so a post-execute
+/// condition reads what that stage produced, is the socket's work (#3380) and
+/// is tracked in #3491.
 #[must_use]
 pub fn signals(
     assessment: &TaskAssessment,
     research_questions: usize,
     test_command: Option<&str>,
+    candidates: u32,
+    budget_metered: bool,
 ) -> SignalValues {
     SignalValues {
         test_command: test_command.is_some(),
+        candidates: u64::from(candidates),
+        budget_metered,
         conversational: assessment.conversational,
         // Saturating rather than wrapping: a question count past `u64::MAX`
         // cannot exist, and every comparison in the grammar answers the same
@@ -150,5 +168,16 @@ pub fn signals(
         questions: u64::try_from(research_questions).unwrap_or(u64::MAX),
         plans: assessment.class.plans(),
         verifies: assessment.class.verifies_unconditionally(),
+        wants_witness: assessment.wants_witness(),
+        wants_verifier: assessment.wants_verifier(),
+        // Not yet observed — see this function's contract above. Spelled out
+        // one field at a time rather than through a helper, so adding a signal
+        // makes a human decide here whether this host can answer it.
+        mutating_actions: 0,
+        diff_lines: 0,
+        witness_authored: false,
+        flip_achieved: false,
+        tests_red: false,
+        tests_green: false,
     }
 }

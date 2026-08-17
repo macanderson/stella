@@ -21,7 +21,7 @@ use stella_plugin::{
 /// The canonical stage order, which every generated manifest is a
 /// subsequence of — an out-of-order manifest is `wrapper_stages.rs`'s subject,
 /// not this one.
-const CANONICAL: [StageName; 8] = [
+const CANONICAL: [StageName; 12] = [
     StageName::Triage,
     StageName::Recall,
     StageName::Research,
@@ -30,13 +30,21 @@ const CANONICAL: [StageName; 8] = [
     StageName::Execute,
     StageName::Witness,
     StageName::Verify,
+    StageName::Verdict,
+    StageName::Reflect,
+    StageName::ContextWrite,
+    StageName::Complete,
 ];
 
 /// The conditions a generated stage may carry. Index 0 is "unconditional";
 /// the rest are every shape of the closed grammar over both a host fact and a
 /// stage-published one, which is what lets the generator produce manifests on
 /// both sides of each graph rule.
-const CONDITIONS: [&str; 10] = [
+///
+/// Every publisher is represented — host, triage, execute, witness and verify
+/// — so the graph rules are exercised against signals that become readable at
+/// four different points in the order, not only at triage's.
+const CONDITIONS: [&str; 20] = [
     "",
     "conversational",
     "no-conversational",
@@ -47,9 +55,19 @@ const CONDITIONS: [&str; 10] = [
     "questions > 0",
     "questions >= 2",
     "no-test-command",
+    "candidates > 1",
+    "budget-metered",
+    "wants-witness",
+    "no-wants-verifier",
+    "mutating-actions > 0",
+    "diff-lines > 400",
+    "witness-authored",
+    "flip-achieved",
+    "tests-red",
+    "no-tests-green",
 ];
 
-fn manifest_text(choices: &[Option<usize>; 8]) -> String {
+fn manifest_text(choices: &[Option<usize>; 12]) -> String {
     let mut text = String::from(
         "name = \"generated\"\n\
          [loop]\n\
@@ -97,6 +115,31 @@ fn graph_is_satisfied(wrapper: &Wrapper, program: &StageProgram) -> Result<(), S
     Ok(())
 }
 
+/// Every signal at its emptiest — no test command, nothing observed, nothing
+/// changed. Spelled out rather than derived: [`SignalValues`] refuses
+/// `Default` on purpose, and the whole point of that refusal is that a new
+/// signal has to be answered somewhere. This is that somewhere for the
+/// example-based tests; the cases below vary the fields they are about.
+fn bare() -> SignalValues {
+    SignalValues {
+        test_command: false,
+        candidates: 1,
+        budget_metered: false,
+        conversational: false,
+        questions: 0,
+        plans: false,
+        verifies: false,
+        wants_witness: false,
+        wants_verifier: false,
+        mutating_actions: 0,
+        diff_lines: 0,
+        witness_authored: false,
+        flip_achieved: false,
+        tests_red: false,
+        tests_green: false,
+    }
+}
+
 /// The witness. Nothing before this change could turn a manifest into an
 /// ordered list of the stages a turn runs: `Wrapper::resolve`, `SignalValues`
 /// and `StageProgram` did not exist, so this file did not compile.
@@ -124,11 +167,10 @@ fn resolving_a_manifest_produces_a_stage_order() {
 
     let asked = wrapper
         .resolve(&SignalValues {
-            test_command: false,
-            conversational: false,
             questions: 3,
             plans: true,
             verifies: true,
+            ..bare()
         })
         .unwrap();
     assert_eq!(asked.variant(), "probe-v1");
@@ -144,11 +186,10 @@ fn resolving_a_manifest_produces_a_stage_order() {
 
     let cheap = wrapper
         .resolve(&SignalValues {
-            test_command: false,
-            conversational: false,
             questions: 0,
             plans: false,
             verifies: false,
+            ..bare()
         })
         .unwrap();
     assert_eq!(cheap.stages(), [StageName::Triage, StageName::Execute]);
@@ -201,21 +242,47 @@ fn a_conditional_publisher_nobody_reads_still_loads() {
     assert!(PluginManifest::from_toml_str(text).is_ok());
 }
 
+/// Generated in two blocks — the booleans and the counts — because
+/// [`SignalValues`] has more fields than a proptest tuple strategy takes.
+/// Destructured by position at the one site that reads them, so a new signal
+/// is a compile error here rather than a silently unvaried field.
 fn signal_values() -> impl Strategy<Value = SignalValues> {
     (
-        any::<bool>(),
-        any::<bool>(),
-        0u64..5,
-        any::<bool>(),
-        any::<bool>(),
+        prop::array::uniform11(any::<bool>()),
+        prop::array::uniform4(0u64..5),
     )
         .prop_map(
-            |(test_command, conversational, questions, plans, verifies)| SignalValues {
+            |(
+                [
+                    test_command,
+                    budget_metered,
+                    conversational,
+                    plans,
+                    verifies,
+                    wants_witness,
+                    wants_verifier,
+                    witness_authored,
+                    flip_achieved,
+                    tests_red,
+                    tests_green,
+                ],
+                [candidates, questions, mutating_actions, diff_lines],
+            )| SignalValues {
                 test_command,
+                candidates,
+                budget_metered,
                 conversational,
                 questions,
                 plans,
                 verifies,
+                wants_witness,
+                wants_verifier,
+                mutating_actions,
+                diff_lines,
+                witness_authored,
+                flip_achieved,
+                tests_red,
+                tests_green,
             },
         )
 }
@@ -228,7 +295,7 @@ proptest! {
     /// silently.
     #[test]
     fn a_loadable_manifest_resolves_totally_and_deterministically(
-        choices in prop::array::uniform8(prop::option::of(0usize..CONDITIONS.len())),
+        choices in prop::array::uniform12(prop::option::of(0usize..CONDITIONS.len())),
         values in signal_values(),
     ) {
         let text = manifest_text(&choices);

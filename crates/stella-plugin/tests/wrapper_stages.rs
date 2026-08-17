@@ -14,11 +14,14 @@
 //! contract, which is complete on its own.
 
 use stella_plugin::{
-    CompareOp, Condition, ManifestError, PluginManifest, Signal, SignalKind, StageName,
+    CompareOp, Condition, ManifestError, PluginManifest, Signal, SignalKind, SignalValues,
+    StageName,
 };
+use stella_protocol::StageKind;
 
 const STAGED_V1: &str = include_str!("fixtures/wrapper-staged-v1.toml");
 const LEAN_V1: &str = include_str!("fixtures/wrapper-lean-v1.toml");
+const EVIDENCE_V1: &str = include_str!("fixtures/wrapper-evidence-v1.toml");
 
 fn parse(text: &str) -> Result<PluginManifest, ManifestError> {
     PluginManifest::from_toml_str(text)
@@ -116,6 +119,202 @@ fn the_shipped_conditions_parse_to_the_branches_they_transcribe() {
         None,
         "an omitted `if` is unconditional, not a condition that never fires"
     );
+}
+
+// --- The vocabulary covers the pipeline (A8). -----------------------------
+
+/// The mirror the [`StageName`] docs claim, mechanically: the manifest
+/// vocabulary is one-to-one onto the workspace's one stage vocabulary. The
+/// `match` is exhaustive, so a new [`StageKind`] variant fails this file to
+/// compile rather than leaving a boundary no wrapper can name.
+#[test]
+fn every_stage_the_workspace_names_is_declarable() {
+    for kind in [
+        StageKind::Triage,
+        StageKind::ContextRecall,
+        StageKind::Research,
+        StageKind::Plan,
+        StageKind::ScopeReview,
+        StageKind::Execute,
+        StageKind::Witness,
+        StageKind::Verify,
+        StageKind::Verdict,
+        StageKind::Reflect,
+        StageKind::ContextWrite,
+        StageKind::Complete,
+    ] {
+        // Exhaustive on purpose: this arm is what a thirteenth `StageKind`
+        // breaks, and breaking here is the point.
+        let name = match kind {
+            StageKind::Triage => StageName::Triage,
+            StageKind::ContextRecall => StageName::Recall,
+            StageKind::Research => StageName::Research,
+            StageKind::Plan => StageName::Plan,
+            StageKind::ScopeReview => StageName::Scope,
+            StageKind::Execute => StageName::Execute,
+            StageKind::Witness => StageName::Witness,
+            StageKind::Verify => StageName::Verify,
+            StageKind::Verdict => StageName::Verdict,
+            StageKind::Reflect => StageName::Reflect,
+            StageKind::ContextWrite => StageName::ContextWrite,
+            StageKind::Complete => StageName::Complete,
+        };
+        assert_eq!(
+            name.kind(),
+            kind,
+            "{name} must denote the stage vocabulary's own {kind:?}"
+        );
+        // And the manifest spelling round-trips, so the name a wrapper writes
+        // is the name this mapping is keyed on.
+        let text = wrapper_manifest(&format!(
+            "[[wrapper.stages]]\n\
+             name = \"{name}\"\n"
+        ));
+        let wrapper = parse(&text)
+            .unwrap_or_else(|err| panic!("\"{name}\" must be declarable, got {err:?}"))
+            .wrapper
+            .expect("[wrapper] declared");
+        assert_eq!(wrapper.stages[0].name, name);
+    }
+}
+
+/// The witness for A8's second half: a stage gated on a signal that only
+/// **execute**, **witness** or **verify** publishes loads, and resolves into
+/// the order the values imply. Before this change none of those signals
+/// existed — every condition here was `UnknownSignal`, and four of the seven
+/// stage names were an unknown-variant parse error.
+#[test]
+fn a_variant_gated_on_the_new_signals_loads_and_resolves() {
+    let wrapper = parse(EVIDENCE_V1)
+        .expect("the evidence variant must load")
+        .wrapper
+        .expect("[wrapper] must parse");
+    assert_eq!(wrapper.id, "evidence-v1");
+    // The new stage names and conditions survive a serde round-trip too, the
+    // same claim `both_variants_round_trip_through_toml_and_json` makes of the
+    // two older fixtures (invariant 4).
+    let parsed = parse(EVIDENCE_V1).unwrap();
+    assert_eq!(parsed, parse(&toml::to_string(&parsed).unwrap()).unwrap());
+    let json = serde_json::to_string(&parsed).unwrap();
+    assert_eq!(parsed, serde_json::from_str(&json).unwrap());
+
+    // A turn that did work, wanted a witness, and left the suite green.
+    let earned = wrapper
+        .resolve(&SignalValues {
+            wants_witness: true,
+            mutating_actions: 6,
+            diff_lines: 42,
+            witness_authored: true,
+            flip_achieved: true,
+            tests_green: true,
+            ..bare()
+        })
+        .expect("a validated manifest resolves for every set of values");
+    assert_eq!(
+        earned.stages(),
+        [
+            StageName::Triage,
+            StageName::Execute,
+            StageName::Witness,
+            StageName::Verify,
+            StageName::Reflect,
+            StageName::ContextWrite,
+            StageName::Complete,
+        ]
+    );
+
+    // The same manifest over a turn that produced nothing: no witness worth
+    // authoring, nothing to reflect on, nothing corroborated to write back —
+    // but still graded, because "it changed nothing" is a finding.
+    let idle = wrapper.resolve(&bare()).expect("resolution is total");
+    assert_eq!(
+        idle.stages(),
+        [
+            StageName::Triage,
+            StageName::Execute,
+            StageName::Verify,
+            StageName::Complete,
+        ]
+    );
+}
+
+/// The other half of the witness, and the rule the new publishers must not
+/// weaken: a signal is readable only *after* the stage that produces it. Every
+/// new publisher gets asked, because the check is per-signal and one
+/// mis-declared `publisher()` would silently exempt exactly one of them.
+#[test]
+fn reading_a_later_stages_new_signal_is_still_a_load_error() {
+    for (reader, condition, signal, publisher) in [
+        (
+            StageName::Triage,
+            "diff-lines > 0",
+            Signal::DiffLines,
+            StageName::Execute,
+        ),
+        (
+            StageName::Execute,
+            "witness-authored",
+            Signal::WitnessAuthored,
+            StageName::Witness,
+        ),
+        (
+            StageName::Witness,
+            "flip-achieved",
+            Signal::FlipAchieved,
+            StageName::Verify,
+        ),
+        (
+            StageName::Execute,
+            "tests-red",
+            Signal::TestsRed,
+            StageName::Verify,
+        ),
+    ] {
+        // The publisher is declared, just too late — which is precisely the
+        // manifest that would load and then wedge without the graph check.
+        let text = wrapper_manifest(&format!(
+            "[[wrapper.stages]]\n\
+             name = \"{reader}\"\n\
+             if = \"{condition}\"\n\
+             [[wrapper.stages]]\n\
+             name = \"{publisher}\"\n"
+        ));
+        match parse(&text) {
+            Err(ManifestError::SignalNotYetPublished {
+                stage,
+                signal: named,
+                publisher: by,
+            }) => {
+                assert_eq!(stage, reader);
+                assert_eq!(named, signal);
+                assert_eq!(by, publisher);
+            }
+            other => panic!("expected SignalNotYetPublished for \"{condition}\", got {other:?}"),
+        }
+    }
+}
+
+/// Every signal at its emptiest. [`SignalValues`] refuses `Default` so that a
+/// new signal must be answered somewhere; this is that somewhere for the
+/// example above, which varies only the fields it is about.
+fn bare() -> SignalValues {
+    SignalValues {
+        test_command: false,
+        candidates: 1,
+        budget_metered: false,
+        conversational: false,
+        questions: 0,
+        plans: false,
+        verifies: false,
+        wants_witness: false,
+        wants_verifier: false,
+        mutating_actions: 0,
+        diff_lines: 0,
+        witness_authored: false,
+        flip_achieved: false,
+        tests_red: false,
+        tests_green: false,
+    }
 }
 
 #[test]
