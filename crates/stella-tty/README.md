@@ -23,6 +23,13 @@ the crate doc for why: each consumer's three booleans come from a genuinely
 different place, and purity is what keeps the condition unit-testable without
 faking a terminal).
 
+This matters more as Stella becomes an engine embedded in other applications
+(`doc:engine-embedding`): a host driving turns over HTTP has **no** human on the
+other end of the process, so anything that would stop to ask has to know that
+before it asks, and fail closed to the host's own approval route instead
+([`stella-serve`](../stella-serve) remotes the decision back to the host). One pure
+answer, reused by every door, is what stops each surface guessing separately.
+
 Everything else is out. This crate has **no dependencies and must keep
 none** — the `stella-home` shape (#1139): a leaf that pulls in nothing costs
 neither `stella-cli` nor `stella-model` any isolation by depending on it.

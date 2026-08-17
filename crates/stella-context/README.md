@@ -19,6 +19,22 @@ seam for *in-plane* sources that share the workspace store's lifetime. The
 built-in store declares `egress: false`: it reads and writes locally and nothing
 leaves the machine.
 
+## Direction — recall is the question a wrapper asks before a turn
+
+Stella is becoming one turn loop with a plugin architecture around it
+(`doc:turn-loop-wrappers`). In that shape, `recall` is what a wrapper's
+`before_turn` point spends its budget on — "what could help here?" — asked once,
+answered with citations, and handed to the turn as context the engine did not have
+to go looking for. That is also why this crate is not part of the engine: retrieval
+is I/O, invariant #2 keeps it out of [`stella-core`](../stella-core), and the wrapper
+socket that will call it is assembled in [`stella-runtime`](../stella-runtime).
+
+The steering planes are being consolidated (#3243) rather than multiplied, so a new
+"inject something helpful" path is a change to that one question, not a fifth plane
+of its own. And the byte-stable-prompt rule (invariant #7) is this crate's binding
+constraint at the seam: recalled context rides as a volatile message *after* the
+stable prefix, because a prompt-cache miss is a cost regression a host pays for.
+
 ## Where it sits
 
 No workspace crate is a dependency — only `contextgraph-types` (pinned by git
