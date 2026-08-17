@@ -51,6 +51,7 @@
 
 pub mod attachment;
 pub mod cache;
+pub mod candidate;
 pub mod compaction_rewrite;
 pub mod completion;
 pub mod context_event;
@@ -77,6 +78,11 @@ pub use attachment::{
     media_type_for_path,
 };
 pub use cache::CacheCause;
+// A candidate worktree, named so it can cross a process (#3380 A10). Here
+// rather than in `stella-plugin` because a handle is a value the *host* mints
+// at run time, not a manifest declaration parsed out of borrowed text — see
+// the module docs for the full argument.
+pub use candidate::{CandidateDenial, CandidateHandle, CandidateOp, PathDenial};
 pub use compaction_rewrite::CompactionRewrite;
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionRequestRef, CompletionResult, CompletionUsage,

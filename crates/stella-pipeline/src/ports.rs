@@ -16,6 +16,7 @@
 //! [`ApprovalGate`]). None of these belong inside the step-driver.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use stella_core::Router;
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::Sleeper;
@@ -25,6 +26,13 @@ use stella_protocol::{ContextUsage, ModelRef, Provider, ScopeProposal};
 /// `ports::CandidateWorkspace` path in the crate still resolves.
 pub mod workspace;
 
+/// The serializable half of candidate isolation — see [`handle`]. The six
+/// operations of [`workspace::CandidateWorkspace`]'s nineteen that a caller in
+/// another process can address, and the host-side fence that bounds them
+/// (#3380, `doc:pipeline-as-plugins` §4 A10).
+pub mod handle;
+
+pub use handle::{CandidateHandles, CandidateOpError};
 pub use workspace::{AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, WorkspaceError};
 
 /// Maps a router-resolved [`ModelRef`] to the concrete provider adapter that
@@ -368,7 +376,12 @@ impl ArtifactIdentity {
 /// assertion, and letting it lock the flip oracle onto a command that never
 /// really failed manufactures a fake fail→pass flip when the candidate merely
 /// runs faster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Serializable alongside [`CmdOutcome`]: a handle-addressed `run_test`
+/// (#3380 A10) answers an out-of-process caller with exactly this, so the
+/// infra-vs-assertion distinction survives the crossing instead of collapsing
+/// back into an exit code on the way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CmdKind {
     /// The process ran to completion; `exit_code` is its real exit status.
     #[default]
@@ -399,7 +412,7 @@ pub enum CmdKind {
 /// is pre-truncated by the runner (middle-out, L-S3) into head+tail tails —
 /// the pipeline never needs the full stream, only exit status and enough
 /// text to summarize evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CmdOutcome {
     /// Process exit code. `0` conventionally means success; any non-zero is
     /// a failure. A signal-killed process reports a conventional 128+n here
