@@ -27,7 +27,8 @@
 //! single transaction (#467). The drain loop that pinpoints such a row lives in
 //! [`crate::drain`].
 //!
-//! Schema: see [`schema`], which now carries both mechanisms. Convergence is
+//! Schema: see the private `schema` submodule, which now carries both
+//! mechanisms (`usage/schema.rs`). Convergence is
 //! still the ordinary one — every table is `CREATE ... IF NOT EXISTS`, the
 //! batch replays on every open, and adding a table needs nothing else. What
 //! this doc used to say could not be done — reshape an existing table, or
