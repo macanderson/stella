@@ -139,15 +139,7 @@ pub async fn run_one_shot(
         )
         .await
     } else {
-        run_raw_one_shot(
-            cfg,
-            prompt,
-            budget_limit,
-            format,
-            pipeline.plugin(),
-            test_command,
-        )
-        .await
+        run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline, test_command).await
     }
 }
 

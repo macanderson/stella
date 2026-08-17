@@ -85,9 +85,10 @@ fn bare_loop_config(cfg: &Config) -> Config {
 /// Selected via `--no-pipeline`, or via `--pipeline <variant>`, which runs the
 /// same step-loop with an installed wrapper plugin around it (#3494).
 ///
-/// `wrapper` is that variant id. `None` is `--no-pipeline`: nothing is
-/// dispatched, no execution row records a variant, and the behaviour is exactly
-/// what it was before the socket had a caller.
+/// `pipeline` is the caller's already-resolved choice, read for its variant id
+/// here rather than at the call site: `PipelineChoice::Raw` is `--no-pipeline`,
+/// where nothing is dispatched, no execution row records a variant, and the
+/// behaviour is exactly what it was before the socket had a caller.
 ///
 /// The parameter is `full_cfg`, not `cfg`, deliberately: the loop below runs on
 /// the narrowed [`bare_loop_config`] and nothing else, so dropping that call
@@ -107,7 +108,7 @@ pub(crate) async fn run_raw_one_shot(
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
-    wrapper: Option<&str>,
+    pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
@@ -117,7 +118,7 @@ pub(crate) async fn run_raw_one_shot(
     // the run it was meant to shape. The grant is minted in the same breath and
     // for the same reason — a `--test-command` the host's parser refuses must
     // stop the run here, not after it is paid for.
-    let bound = match wrapper {
+    let bound = match pipeline.plugin() {
         Some(variant) => Some(
             crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
                 eprintln!("  ! {line}");
