@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`](super::AgentEvent) variant carries
+//! The leaf payload types an [`AgentEvent`] variant carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
@@ -18,8 +18,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ladder::LadderSnapshot;
+// Referenced only by the intra-doc links below, which is a use rustc's
+// `unused_imports` lint does not count. `cfg(doc)` is what keeps both halves
+// honest: rustdoc sets it and resolves the links, every other build never sees
+// the import and so has nothing to warn about. The alternative — spelling the
+// links `[`AgentEvent::X`](super::AgentEvent::X)` — would leak a Rust module
+// path into the published wire contract, because schemars exports these doc
+// comments verbatim as the `description` of `docs/wire/agentevent.schema.json`
+// and `agentevent.d.ts` (#3450).
+#[cfg(doc)]
+use super::AgentEvent;
 
-/// What happened to a file in a [`AgentEvent::FileChange`](super::AgentEvent::FileChange) event.
+/// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
 /// Both live producers measure a tree against a tree, so every kind emitted
 /// today is a mutation — see [`Self::Read`] for the one that is not, and why
@@ -36,7 +46,7 @@ pub enum FileChangeKind {
     /// again. Neither surviving producer can: both diff a tree against a tree,
     /// and a read leaves no trace in a tree to diff. Re-acquiring one would
     /// mean going back to declaring file operations from tool inputs, which is
-    /// the defect [`AgentEvent::FileChange`](super::AgentEvent::FileChange) documents rather than a capability
+    /// the defect [`AgentEvent::FileChange`] documents rather than a capability
     /// worth restoring.
     ///
     /// It stays in the kind space because journals recorded before the purge
@@ -59,7 +69,7 @@ impl FileChangeKind {
     ///
     /// A `true` here is not a licence to claim the *agent* changed the file:
     /// the shared-tree producer measures the turn, not the actor (see
-    /// [`AgentEvent::FileChange`](super::AgentEvent::FileChange)).
+    /// [`AgentEvent::FileChange`]).
     #[must_use]
     pub fn is_mutation(self) -> bool {
         !matches!(self, FileChangeKind::Read)
@@ -194,7 +204,7 @@ pub enum MediaJobState {
     Queued,
     /// Generation is under way.
     Running,
-    /// The artifact landed; a [`AgentEvent::MediaComplete`](super::AgentEvent::MediaComplete) follows.
+    /// The artifact landed; a [`AgentEvent::MediaComplete`] follows.
     Succeeded,
     /// Generation failed terminally.
     Failed {
@@ -209,7 +219,7 @@ pub enum MediaJobState {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MediaArtifactRef {
     /// The artifact id, matching the `artifact_id` its
-    /// [`AgentEvent::MediaProgress`](super::AgentEvent::MediaProgress) events carried.
+    /// [`AgentEvent::MediaProgress`] events carried.
     pub id: String,
     /// What was produced.
     pub kind: MediaKind,
