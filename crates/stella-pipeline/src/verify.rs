@@ -369,13 +369,24 @@ pub fn normalize_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The five ways the evidence ladder resolves a turn — all of them terminal,
-/// and all of them decided from deterministic observations alone (L-E11).
+/// The ways the evidence ladder resolves a turn — all of them terminal, and
+/// all of them decided from deterministic observations alone (L-E11).
 ///
-/// There is deliberately no "ask a model" arm. Every variant here is a
+/// **This enum is the enumeration**, and prose elsewhere cites it rather than
+/// restating the list. That is not a style preference: this doc comment said
+/// "the five ways" for as long as there had been six variants, and the wrong
+/// count had been copied into `AGENTS.md`, `doc:turn-loop-wrappers`,
+/// `doc:witness-protocol`, this crate's README and two public web surfaces
+/// before anyone counted the arms (#3473).
+///
+/// There is deliberately no "ask a model" arm — the property that matters, and
+/// the one terminality alone does **not** imply, since a terminal arm could in
+/// principle spend a verifier call and then stop. Every variant here is a
 /// conclusion the oracle reached itself; a turn the oracle cannot settle
 /// resolves to [`Self::Unverified`], which is an honest "not proven" rather
-/// than a second model's opinion wearing a verdict's clothes.
+/// than a second model's opinion wearing a verdict's clothes. A seventh arm
+/// that bought a model call would break this sentence, which is why the
+/// guarantee is stated here, once, beside the variants it quantifies over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LadderDecision {
     /// Deterministic pass: flip achieved + touched-tests-green + diff within

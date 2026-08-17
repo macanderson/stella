@@ -39,7 +39,7 @@ They answer different questions, and only one of them has an oracle.
 that failed before the change and passes after it settles it, and where no such
 flip exists, no amount of reading settles it either. That is the pipeline's
 question, and #2584 replaced its model verdict with
-`LadderDecision`'s five terminal outcomes — measured, that verdict agreed with
+`LadderDecision`'s terminal outcomes — measured, that verdict agreed with
 Terminal-Bench's grader 46% of the time and 17 of its false passes cost 5 tasks
 outright.
 

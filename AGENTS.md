@@ -439,13 +439,15 @@ creates the oracle rather than substituting for one — its test either goes
 fail→pass or does not, and that is decided by running it. Everything downstream
 is deterministic: `ladder_decision`
 (`crates/stella-pipeline/src/verify.rs`) is terminal at **every** one of its
-outcomes — the `LadderDecision` enum beside it is the enumeration, and today
-that is `SubmitFast`, `Revise`, `WitnessUnsatisfiable`, `NothingAttempted`,
-`Unverifiable` and `Unverified`. The count is deliberately not the load-bearing
-half of that sentence: what matters is that no arm escalates to a model, which
-the enum's own doc comments each state. (This paragraph said "all five" and
-omitted `WitnessUnsatisfiable` for as long as that variant existed — #3473,
-the shared-cell drift this file warns about, in this file.) The verify stage
+outcomes, and **no arm escalates to a model** — which is the load-bearing half
+and is *not* implied by terminality, since a terminal arm could spend a verifier
+call and then stop. That guarantee is stated once, in the `LadderDecision`
+enum's own doc comment, quantified over the variants beside it; this file
+deliberately does not restate the list or its count, because a number copied
+into a second file drifts. It did: this paragraph said "all five" and omitted
+`WitnessUnsatisfiable` for as long as that variant existed, and so did five
+other copies including the enum doc it now cites (#3473) — the shared-cell
+failure this file warns about, in this file. The verify stage
 emits the `Verdict` event from that answer directly — the
 pipeline never emits `StageKind::Verdict` itself, which is why the rank above is
 an ordering, not a stage the run passes through. The model verdict and the
