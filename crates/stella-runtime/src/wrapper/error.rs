@@ -173,6 +173,38 @@ pub enum WrapperError {
         declared: stella_plugin::SignalKind,
     },
 
+    /// A manifest was bound to the dispatcher without declaring `[wrapper]`.
+    ///
+    /// Not a defect in the plugin — a manifest may declare hooks, an oracle and
+    /// nothing else — but there is no stage order to resolve and no variant id
+    /// to record for it, so there is nothing to drive.
+    #[error("plugin `{plugin}` declares no [wrapper] block, so it has no stage order to run")]
+    NotAWrapper {
+        /// The manifest name.
+        plugin: String,
+    },
+
+    /// The declared stage order could not be resolved against this host's
+    /// published signals.
+    ///
+    /// Unreachable for a manifest that came from `PluginManifest::from_toml_str`
+    /// — a validated wrapper resolves for every possible `SignalValues`, which
+    /// `stella-plugin`'s `tests/wrapper_program.rs` asserts as a property — so
+    /// this names a hand-built manifest. It is an error rather than an empty
+    /// program because "which stages run" is not a question a host may answer by
+    /// guessing.
+    ///
+    /// The source is boxed because `ManifestError` is the larger of the two
+    /// types by some margin, and every other variant here would pay for it.
+    #[error("wrapper `{wrapper}` could not resolve its stage order: {source}")]
+    Unresolvable {
+        /// The wrapper's variant id.
+        wrapper: String,
+        /// Why the resolution failed.
+        #[source]
+        source: Box<stella_plugin::ManifestError>,
+    },
+
     /// An in-process wrapper's own logic failed. The detail is a leaf
     /// explanation for a human, not something a caller branches on — the
     /// branch a caller needs is "which point failed", which the call site

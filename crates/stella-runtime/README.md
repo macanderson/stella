@@ -83,9 +83,9 @@ id reaches `executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host
-linking `stella-engine` — neither of which calls `WrapperDispatch` yet;
+linking `stella-engine` — neither of which calls `WrapperDispatch` yet (#3551);
 candidate-workspace grants on the CLI path, so `RoundInput::candidate` is
-`None` there and a `flip = "required"` oracle abstains; and
+`None` there and a `flip = "required"` oracle abstains (#3553); and
 [`stella-pipeline`](../stella-pipeline), which still takes its own branches
 rather than being ported onto this socket (Track B, `doc:pipeline-as-plugins`
 §7). A wrapper is meant to be handed a child-turn **port** that names a role

@@ -8,7 +8,7 @@ Send a one-shot prompt and let the agent work to completion without any interact
 ## Synopsis
 
 ```bash
-stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [--require-verified] [global flags]
+stella run <prompt> [--no-pipeline] [--pipeline <VARIANT>] [--test-command <CMD>] [--keep-witness] [--require-verified] [global flags]
 ```
 
 ## What it does
@@ -27,12 +27,21 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 ## Flags
 
-`stella run` adds four command-specific flags on top of the [global flags](/docs/commands):
+`stella run` adds five command-specific flags on top of the [global flags](/docs/commands):
 
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
     Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify,
     verifier).
+  </OptionCard>
+  <OptionCard name="--pipeline <VARIANT>">
+    Run the turn under an installed **wrapper plugin**, named by the `[wrapper] id` its
+    manifest declares (`stella plugin list`). The plugin contributes context before the
+    turn and gathers evidence after it; the rule it declared at install — evaluated by
+    Stella, never by the plugin — decides whether another turn runs. The variant id is
+    recorded on the execution row, so two variants can be compared side by side.
+    `--pipeline classic` names the built-in staged pipeline; omitted, nothing changes.
+    Conflicts with `--no-pipeline`.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
     The test command the pipeline's verify stage runs deterministically — e.g.

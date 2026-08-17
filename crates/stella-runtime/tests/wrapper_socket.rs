@@ -200,10 +200,11 @@ async fn run_turn(
             .before_turn(before(*stage, goal))
             .await
             .expect("the plugin answers before_turn");
-        admissible(&manifest, &response).expect("the contribution is within what was declared");
-        for context in response.context {
-            messages.push(context.into_message());
-        }
+        // The check is what produces the value that gets applied, so there is
+        // no way through here that skips it (#3494).
+        let admitted =
+            admissible(&manifest, response).expect("the contribution is within what was declared");
+        messages.extend(admitted.into_messages());
     }
 
     // The plugin reports what it observed; the host merges its own tamper
@@ -311,7 +312,7 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verif
         .before_turn(before(StageName::Triage, "anything"))
         .await
         .expect("the plugin answers");
-    let error = admissible(&manifest(), &response).expect_err("\"verifier\" is not declared");
+    let error = admissible(&manifest(), response).expect_err("\"verifier\" is not declared");
     assert!(
         matches!(error, WrapperError::UndeclaredRole { ref role, .. } if role == "verifier"),
         "got {error:?}"
@@ -324,7 +325,7 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"publish":[{"
         .before_turn(before(StageName::Triage, "anything"))
         .await
         .expect("the plugin answers");
-    let error = admissible(&manifest(), &response).expect_err("a count is not a boolean");
+    let error = admissible(&manifest(), response).expect_err("a count is not a boolean");
     assert!(
         matches!(error, WrapperError::MistypedSignal { .. }),
         "got {error:?}"

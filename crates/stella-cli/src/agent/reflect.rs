@@ -76,13 +76,13 @@ impl FrictionTap {
 /// The whole history is handed to reflection, not the tail of it: selection is
 /// the digest's job now (#2460), and pre-truncating here would hide exactly the
 /// middle the selection exists to find.
-pub(super) async fn reflect_on_interactive_turn<E: std::fmt::Display>(
+pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     provider: &dyn Provider,
     cfg: &Config,
     memory: &mut Option<SessionMemory>,
     messages: &[CompletionMessage],
     turn_start: usize,
-    result: &Result<(), E>,
+    result: &Result<T, E>,
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)

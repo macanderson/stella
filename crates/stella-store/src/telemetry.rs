@@ -1,5 +1,6 @@
 //! Per-call telemetry persistence and its execution-level trust boundary.
 
+use rusqlite::OptionalExtension as _;
 use rusqlite::params;
 
 use crate::{Result, Store, sqlite_i64};
@@ -281,6 +282,32 @@ impl Store {
             params![variant, execution_id],
         )?;
         Ok(())
+    }
+
+    /// Which wrapper ran over one execution, or `None` for a turn nothing
+    /// wrapped.
+    ///
+    /// The reader the column shipped without. Every consumer so far reads it
+    /// through the observatory's own SQL, so nothing in this crate's API could
+    /// tell whether a write had landed — which is how the only writer came to
+    /// pass a constant for two years' worth of releases without a test that
+    /// could notice (#3494).
+    ///
+    /// # Errors
+    ///
+    /// The underlying `rusqlite` failure. A missing execution id is `Ok(None)`,
+    /// not an error: "no such row" and "that row had no wrapper" are both
+    /// honestly "nothing ran over it here".
+    pub fn pipeline_variant(&self, execution_id: i64) -> Result<Option<String>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT pipeline_variant FROM executions WHERE id = ?",
+                params![execution_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
     }
 
     /// Open an execution row for a **standalone system model call** — one

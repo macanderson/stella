@@ -16,10 +16,50 @@ pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> Cali
     stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
 
-/// The wrapper variant the staged pipeline records (#3388/#3381). Named once
-/// here so the value the store groups by cannot drift from the value the
-/// pipeline calls itself.
-pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = "classic";
+/// The wrapper variant the staged pipeline records (#3388/#3381).
+///
+/// Re-exported from `stella-pipeline` rather than spelled again: the id is the
+/// join key of every per-variant comparison, and two copies of a join key is
+/// how the last one died (AGENTS.md § God files). The manifest under
+/// `crates/stella-pipeline/variants/classic.toml` declares the same id, and
+/// that crate's `variant_program` tests hold the two together.
+pub(crate) const PIPELINE_VARIANT_CLASSIC: &str = stella_pipeline::variant::CLASSIC_VARIANT_ID;
+
+/// Which door a turn came in by, and which wrapper — if any — ran over it.
+///
+/// The two facts #3388 split into two columns, travelling together so a caller
+/// cannot supply one and forget the other. `kind` is the **command the user
+/// ran** and nothing else; `variant` is the wrapper, and it is written *only
+/// when that manifest was the thing that ran*. A raw turn with no wrapper over
+/// it leaves the column NULL, which is a real answer ("no wrapper"), not a gap.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TurnDoor<'a> {
+    /// The door — `run`, `chat`, `deck`, …
+    pub(crate) kind: &'a str,
+    /// The wrapper variant that ran over this turn, if one did.
+    pub(crate) variant: Option<&'a str>,
+}
+
+impl<'a> TurnDoor<'a> {
+    /// A turn with no wrapper over it.
+    pub(crate) fn new(kind: &'a str) -> Self {
+        Self {
+            kind,
+            variant: None,
+        }
+    }
+
+    /// The same door, recording the wrapper plugin that ran over the turn.
+    ///
+    /// Named for what it asserts: the variant is written because this manifest
+    /// *ran*, never because it was installed or selected and then declined.
+    pub(crate) fn wrapped_by(self, variant: &'a str) -> Self {
+        Self {
+            variant: Some(variant),
+            ..self
+        }
+    }
+}
 
 /// Begin an execution record; a failure degrades to "no persistence for this
 /// execution" rather than blocking the work.
@@ -74,14 +114,8 @@ pub(crate) fn begin_pipeline_execution(
     cfg: &Config,
     session: &str,
 ) -> Option<(Arc<Store>, i64)> {
-    begin_execution(
-        store,
-        "run",
-        prompt,
-        cfg,
-        Some(session),
-        Some(PIPELINE_VARIANT_CLASSIC),
-    )
+    let door = TurnDoor::new("run").wrapped_by(PIPELINE_VARIANT_CLASSIC);
+    begin_execution(store, door.kind, prompt, cfg, Some(session), door.variant)
 }
 
 /// Emit the run's ending — the single terminator of one run's event stream
@@ -749,6 +783,72 @@ pub(crate) fn persist_event_detailed(
         PersistOutcome::UsageIncomplete(recovered)
     } else {
         PersistOutcome::Complete
+    }
+}
+
+#[cfg(test)]
+mod pipeline_variant_tests {
+    use super::*;
+
+    /// **The A/B witness.** The wrapper that ran is recorded on the executions
+    /// row — the actual variant id, not a constant.
+    ///
+    /// Failing before #3494 because the only writer was
+    /// [`begin_pipeline_execution`], which passed
+    /// [`PIPELINE_VARIANT_CLASSIC`] unconditionally: two variants produced the
+    /// same value in the column both are supposed to be distinguished by, so
+    /// the comparison `doc:pipeline-as-plugins` §7 justifies the whole
+    /// extraction with could not be made. The `TurnDoor` this asserts through
+    /// did not exist either.
+    #[test]
+    fn the_wrapper_that_ran_is_the_variant_the_row_records() {
+        let store = stella_store::Store::in_memory().expect("store");
+
+        let wrapped = store
+            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
+            .expect("begin");
+        let door = TurnDoor::new("run").wrapped_by("budget-v1");
+        assert_eq!(door.kind, "run", "the door is the command, not the wrapper");
+        store
+            .set_pipeline_variant(wrapped, door.variant.expect("a wrapper ran"))
+            .expect("record the variant");
+        assert_eq!(
+            store.pipeline_variant(wrapped).expect("read"),
+            Some("budget-v1".to_string()),
+            "the installed plugin's own id reaches the column, not the built-in's"
+        );
+
+        // ...and the built-in staged pipeline still records its own id rather
+        // than a blank, which is the rule the column shipped with.
+        let classic = store
+            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
+            .expect("begin");
+        store
+            .set_pipeline_variant(classic, PIPELINE_VARIANT_CLASSIC)
+            .expect("record");
+        assert_eq!(
+            store.pipeline_variant(classic).expect("read"),
+            Some("classic".to_string())
+        );
+
+        // ...and a raw turn with nothing over it leaves NULL, which is the
+        // positive statement "no wrapper ran", not a missing measurement.
+        let bare = store
+            .begin_execution("run", "make it faster", "anthropic", "claude-opus-5")
+            .expect("begin");
+        assert!(TurnDoor::new("run").variant.is_none());
+        assert_eq!(store.pipeline_variant(bare).expect("read"), None);
+    }
+
+    /// The id the CLI records and the id the pipeline calls itself are one
+    /// string, not two that happen to agree.
+    #[test]
+    fn the_classic_id_is_the_pipelines_own() {
+        assert_eq!(
+            PIPELINE_VARIANT_CLASSIC,
+            stella_pipeline::variant::CLASSIC_VARIANT_ID
+        );
+        assert_eq!(PIPELINE_VARIANT_CLASSIC, "classic");
     }
 }
 

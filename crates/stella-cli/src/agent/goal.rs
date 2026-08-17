@@ -82,7 +82,12 @@ fn bare_loop_config(cfg: &Config) -> Config {
 }
 
 /// Run a one-shot prompt through the raw step-loop (Engine::run_turn).
-/// Selected via `--no-pipeline`.
+/// Selected via `--no-pipeline`, or via `--pipeline <variant>`, which runs the
+/// same step-loop with an installed wrapper plugin around it (#3494).
+///
+/// `wrapper` is that variant id. `None` is `--no-pipeline`: nothing is
+/// dispatched, no execution row records a variant, and the behaviour is exactly
+/// what it was before the socket had a caller.
 ///
 /// The parameter is `full_cfg`, not `cfg`, deliberately: the loop below runs on
 /// the narrowed [`bare_loop_config`] and nothing else, so dropping that call
@@ -95,9 +100,22 @@ pub(crate) async fn run_raw_one_shot(
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
+    wrapper: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
+    // Resolved before the provider is built and before a single paid call: a
+    // `--pipeline` that names nothing installed must fail as a typo, not after
+    // the run it was meant to shape.
+    let dispatch = match wrapper {
+        Some(variant) => Some(
+            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+                eprintln!("  ! {line}");
+            })
+            .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
     let provider = build_provider(cfg)?;
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
     // registry's ledgers are reachable after the turn — the trait object
@@ -195,25 +213,58 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
-    let outcome = run_turn(
-        &*provider,
-        base_tools,
-        &custom_tools,
-        &registry,
-        &mut messages,
-        &mut budget,
-        &calibration,
-        &router,
-        cfg,
-        format,
-        &store,
-        "run",
-        prompt,
-        Some(presence.id()),
-        recall_event,
-        memory.as_mut(),
-    )
-    .await;
+    // The wrapper socket's first driver (#3494). With no `--pipeline` the arm
+    // below is the one that has always run, unchanged: one turn, no dispatch,
+    // and a NULL `pipeline_variant` because no wrapper ran over it.
+    let outcome = match &dispatch {
+        Some(dispatch) => {
+            crate::wrapper_plugin::run_wrapped(
+                dispatch,
+                prompt,
+                crate::wrapper_plugin::pre_turn_signals(false, budget_limit.is_some()),
+                crate::wrapper_plugin::RawTurnDriver {
+                    provider: &*provider,
+                    base_tools,
+                    custom_tools: &custom_tools,
+                    registry: &registry,
+                    messages: &mut messages,
+                    budget: &mut budget,
+                    calibration: &calibration,
+                    router: &router,
+                    cfg,
+                    format,
+                    store: &store,
+                    prompt,
+                    session: presence.id(),
+                    variant: dispatch.variant(),
+                    recall_event,
+                    memory: memory.as_mut(),
+                    results: Vec::new(),
+                },
+            )
+            .await
+        }
+        None => run_turn(
+            &*provider,
+            base_tools,
+            &custom_tools,
+            &registry,
+            &mut messages,
+            &mut budget,
+            &calibration,
+            &router,
+            cfg,
+            format,
+            &store,
+            persistence::TurnDoor::new("run"),
+            prompt,
+            Some(presence.id()),
+            recall_event,
+            memory.as_mut(),
+        )
+        .await
+        .map(|_| ()),
+    };
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
     if let Some(m) = &memory
