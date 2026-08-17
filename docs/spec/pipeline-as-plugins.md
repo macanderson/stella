@@ -32,7 +32,7 @@ The work splits into four tracks that must land roughly in order:
 | **A — Substrate** | The socket, a loader, a plugin identity, structured verdicts | Nothing below can dispatch without it |
 | **B — Extraction** | The pipeline's stages become plugins, one at a time | Each is independently shippable once A exists |
 | **C — Proof** | Python and TypeScript plugins in `stella-examples`, running in CI | A one-language plugin surface is a library, not a platform |
-| **D — Self-driving** | The autonomous loop leaves the binary | Depends on A, and on capabilities B does not need |
+| **D — Self-driving** | The autonomous loop leaves the binary | Its first step depends on nothing; its last depends only on A1 |
 
 The single most important constraint, stated once and enforced throughout:
 **`judge` stays in-process, pure, and total.** Plugins declare their verdict
@@ -491,24 +491,81 @@ out-of-process host seam. Forcing it through a turn-granularity socket would
 widen that socket for a single caller — the kind of generalisation that is
 cheaper to add later, when a second caller exists to shape it.
 
+### It already runs out-of-process — that is the feasibility proof
+
+This is not a speculative port. `scripts/self-driving.sh` **already drives the
+loop from outside the binary**, delegating every ported decision one-for-one to
+`stella self-driving …` verbs (#1548). An external program calling a documented
+command surface *is* the plugin shape. What is missing is packaging and
+authority, not mechanism.
+
+That also means **Track D does not depend on the wrapper socket at all.** It was
+listed as depending on Track A; that is too coarse. D1 depends on nothing, and
+the plugin depends only on A1 (identity), not on #3380.
+
 ### The work
 
-- **D1.** Move `self_driving.rs` and its tests out of `stella-core` unchanged.
-  Pure functions over owned data port without edits; the property tests come
-  with them. Core's `lib.rs` loses the module.
-- **D2.** Decide the granularity question above. Blocking on D3.
-- **D3.** Give the plugin a command surface — whatever `scripts/self-driving.sh`
-  needs to drive a cycle, expressed so an out-of-process plugin can call it.
-  Reuse `stella-serve`'s framing if the spike in §5.3 selects a compatible
-  transport.
-- **D4.** Keep the observatory view working. It reads JSONL from a fixed path
-  and never writes; if the plugin keeps writing the same shapes, the view needs
-  no change. Verify this rather than assume it — a broken dashboard is how a
-  monitor gets muted.
-- **D5.** Keep `make self-driving-test` green. The control logic it covers is
-  moving, not changing, so the harness should follow it with its assertions
-  intact. If an assertion has to be relaxed to make the move pass, the move
-  changed behaviour and that is a bug in D1.
+- **D1. Move the pure core to a leaf crate — not into the plugin.** The module
+  imports only `std`, `serde` and `sha2`, nothing in `stella-core` calls it, and
+  `lib.rs:44` is the sole reference. Mechanically it is one `mod` line and three
+  `use` lines.
+
+  **It must land in a shared leaf crate, not inside the plugin binary**, because
+  `stella-observatory` links it deliberately — `Cargo.toml` carries the reason,
+  and it is a scar: the observatory previously carried its own `fold_runs` and
+  the two implementations drifted, so the dashboard and
+  `stella self-driving metrics` disagreed about whether the loop was `NOISY`
+  for every odd cycle count (#1613). Burying the fold in a plugin executable
+  re-creates that bug. A leaf crate on the `stella-diff` / `stella-home` pattern
+  keeps one copy for both readers.
+
+  Depends on nothing. Can land immediately, independent of every other track.
+
+- **D2. The plugin is a host, not a wrapper.** Settled by §10's granularity
+  argument and by the fact that the shell driver already works this way. It
+  needs a stable command surface, not the four points.
+
+- **D3. Finish the authority story before the plugin ships.** This, not core, is
+  the real gate — see below.
+
+- **D4.** Keep the observatory route working (`/api/self-driving`, plus its
+  912-line reader). It reads JSONL from a fixed path and never writes, so if the
+  plugin keeps writing the same shapes it needs no change. Verify rather than
+  assume: a broken dashboard is how a monitor gets muted.
+
+- **D5.** Keep `make self-driving-test` green. It is hermetic, drives the shell
+  face end-to-end through the delegation map, and is the behavioural golden for
+  the Rust port. It moves with the feature or the plugin ships untested. If an
+  assertion has to be relaxed to make the move pass, the move changed behaviour
+  and that is a bug in D1.
+
+- **D6.** Carry the rest: `stella-home`'s four resolvers including the
+  legacy-path migration, and the `/self-driving*` slash-command install path.
+
+### The real blocker is authority, not core
+
+Ejecting the decision core is mechanical. The I/O half is not, and the reason is
+the size of the grant it needs: reading and filing GitHub issues, creating PRs,
+starting and stopping a paid EC2 rig, `brew` installs from a tap, **rewriting a
+line in `~/.zshrc`**, daemonising itself, and invoking a different agent product
+through installed slash commands.
+
+A plugin holding that is effectively root on the developer's machine. Today
+Stella cannot tell a plugin from its operator (§A1), so installing this as a
+plugin *right now* would grant all of it with no gate in front. That is a wider
+grant than the tool-contract vocabulary currently expresses.
+
+**Consequence for sequencing:** D1 is safe to land whenever. D3 must wait for
+A1, and self-driving is the right forcing function for A1 precisely because it
+is the most dangerous plugin anyone will install.
+
+### What is not being ejected
+
+Missions (`doc:self-driving-missions`, #2347 merged as a spec; #2345 closed
+not-planned) are **spec only** — there is no `mission` or `campaign` code under
+`crates/`. Ejecting today moves the stewardship loop, not the objective-driven
+one. The missions design is greenfield and the plugin can adopt it without a
+migration.
 
 ### Capabilities self-driving needs that the pipeline does not
 
