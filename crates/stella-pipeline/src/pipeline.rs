@@ -1466,10 +1466,9 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
         });
-        self.emit(AgentEvent::RunComplete {
-            model: resolved.model_ref.to_string(),
-            cost_usd: *total_cost,
-        });
+        // The run's ending is NOT the pipeline's to emit (#3398): a wrapper
+        // cannot know whether it is the whole run — `stella goal` drives one
+        // pipeline run per round over one stream. The stream's owner emits it.
         Ok(PipelineOutcome {
             status: PipelineStatus::Completed,
             task_class: TaskClass::SimpleLookup,

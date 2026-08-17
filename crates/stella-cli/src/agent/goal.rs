@@ -576,6 +576,13 @@ pub(crate) async fn run_goal_turn(
             )
             .await
     };
+    // This goal loop owns the stream, so it — not any single round — emits the
+    // run's one ending (#3398). A goal that ends unmet still *ended*: the
+    // rounds ran, the money was spent, and the outcome is carried by the
+    // execution record, not by withholding the terminator.
+    if let GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. } = &outcome {
+        persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    }
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
@@ -934,11 +941,16 @@ async fn run_goal_pipeline_turn(
         }
     };
 
-    drop(tx);
-    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
     // The shared guard is the settled ledger, including a verifier turn that
     // aborted after spending and therefore returned no `verifier_cost` value.
     let total_cost_usd = budget.session_spent_usd();
+    // ONE terminator for the whole goal run (#3398). Each round drives its own
+    // `Pipeline::run` over this one stream, and the pipeline used to emit a
+    // terminator per round — several per run, which `validate_terminal` calls
+    // a violation and which no consumer could reconcile.
+    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, total_cost_usd);
+    drop(tx);
+    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
     if let Some((store, id)) = &execution {
         let outcome_label = match &goal_result {
             Ok(()) => "goal_met",

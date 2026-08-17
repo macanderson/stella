@@ -436,7 +436,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        let events = friction.tap(pipeline_event_sender(&tx, format));
+        let events = friction.tap(tx.clone());
         let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config)
             .with_calibration(&calibration);
         pipeline.run(prompt, &mut messages, &mut budget).await
@@ -520,14 +520,12 @@ async fn run_pipeline_one_shot(
         reflection_report = report;
     }
 
-    if format == OutputFormat::StreamJson
-        && let Ok(outcome) = &result
-    {
-        // The run's one terminal frame, carrying the true all-calls total.
-        // The pipeline's own pre-reflection `Complete` was suppressed at the
-        // sender (`pipeline_event_sender`), so this is the only one to reach
-        // stdout *or* the durable sink; the renderer holds it back until every
-        // queued reflection/accounting event has gone out.
+    if let Ok(outcome) = &result {
+        // The run's one terminal frame, for every format (#3398). This function
+        // owns the stream, so it owns the ending; the pipeline no longer emits
+        // one. The cost is the true all-calls total — the renderer holds this
+        // back until every queued reflection/accounting event has gone out, so
+        // it is the last line of the durable record as well as the display.
         let _ = tx.send(AgentEvent::RunComplete {
             model: wiring.worker_model.to_string(),
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
@@ -1697,7 +1695,7 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
-    persistence::emit_run_complete(&tx, &cfg.model_id, &outcome);
+    persistence::emit_run_complete_for_turn(&tx, &cfg.model_id, &outcome);
     // Releasing every sender — the registry's clones included — closes the
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
     // already-queued event has actually printed before this function returns.

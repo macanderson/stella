@@ -82,36 +82,64 @@ pub(crate) fn begin_pipeline_execution(
         Some(session),
         Some(PIPELINE_VARIANT_CLASSIC),
     )
+}
 
-/// Emit the run's ending on an **unwrapped** turn (#3379).
+/// Emit the run's ending — the single terminator of one run's event stream
+/// (#3379, #3398).
 ///
-/// The engine says when its turn is over ([`AgentEvent::TurnComplete`]); it
-/// does not know whether anything is going to ask it for another one, and it
-/// must not have to. So the run's ending belongs to whoever owns the run: a
-/// wrapper when one is driving, and this function when the raw turn IS the
-/// whole run.
+/// The engine says when its *turn* is over ([`AgentEvent::TurnComplete`]); it
+/// does not know whether anything will ask it for another one, and it must not
+/// have to. The *run's* ending therefore belongs to whoever owns the run, and
+/// "owns the run" has one operational meaning: **the code that created this
+/// event stream and will close it.**
 ///
-/// A turn that aborted does not get one. An abort already crossed the stream
-/// as `Error`, and the run must never end on both — the same rule the pipeline
-/// follows for its own terminal frame.
-pub(crate) fn emit_run_complete(tx: &stella_core::EventSender, model: &str, outcome: &TurnOutcome) {
+/// That rule is why no wrapper emits this. The staged pipeline used to, and on
+/// `stella goal` — which drives one pipeline run per round over a single
+/// stream — that produced one terminator per round, several per run, which
+/// `replay::validate_terminal` calls a violation. A wrapper cannot know
+/// whether it is the whole run; the stream's owner always can.
+///
+/// # Nothing is emitted for a run that failed
+///
+/// A failed run already crossed the stream as `Error`, and a run must never
+/// end on both.
+pub(crate) fn emit_run_complete(tx: &stella_core::EventSender, model: &str, cost_usd: f64) {
+    let _ = tx.send(AgentEvent::RunComplete {
+        model: model.to_string(),
+        cost_usd,
+    });
+}
+
+/// [`emit_run_complete`] for a run whose ending is one engine turn's outcome:
+/// emitted on a completed turn, withheld on an abort (which already sent
+/// `Error`).
+pub(crate) fn emit_run_complete_for_turn(
+    tx: &stella_core::EventSender,
+    model: &str,
+    outcome: &TurnOutcome,
+) {
     if let TurnOutcome::Completed { cost_usd, .. } = outcome {
-        let _ = tx.send(AgentEvent::RunComplete {
-            model: model.to_string(),
-            cost_usd: *cost_usd,
-        });
+        emit_run_complete(tx, model, *cost_usd);
     }
 }
 
 /// [`emit_run_complete`] for a caller holding the raw channel sender rather
-/// than an [`stella_core::EventSender`] — the Command Deck's lead turn. Same
-/// rule, one wrapper, so neither site can drift from the other.
+/// than an [`stella_core::EventSender`] — the goal loops, whose ending is the
+/// whole loop's cost rather than one turn's outcome.
+pub(crate) fn emit_run_complete_on_raw(
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+    model: &str,
+    cost_usd: f64,
+) {
+    emit_run_complete(&stella_core::EventSender::new(tx.clone()), model, cost_usd);
+}
+
 pub(crate) fn emit_run_complete_raw(
     tx: &mpsc::UnboundedSender<AgentEvent>,
     model: &str,
     outcome: &TurnOutcome,
 ) {
-    emit_run_complete(&stella_core::EventSender::new(tx.clone()), model, outcome);
+    emit_run_complete_for_turn(&stella_core::EventSender::new(tx.clone()), model, outcome);
 }
 
 #[derive(Default)]

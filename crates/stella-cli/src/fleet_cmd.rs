@@ -964,6 +964,15 @@ async fn run_task(
                 Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
             }
         };
+    // One task is one run on its own stream, so this is its terminator
+    // (#3398). `success` is the worker's own flag, decided just above.
+    if success {
+        agent::persistence::emit_run_complete_on_raw(
+            &tx,
+            &cfg.model_id,
+            budget.session_spent_usd(),
+        );
+    }
     drop(tx);
     let rendered = renderer.await.unwrap_or_default();
     claims.release_all();

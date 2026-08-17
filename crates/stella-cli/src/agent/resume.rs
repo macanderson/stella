@@ -298,7 +298,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let pipeline = crate::resume_frame::pipeline(
                     &cfg.durability,
                     ports,
-                    pipeline_event_sender(&events, OutputFormat::Text),
+                    events.clone(),
                     pipeline_config,
                 );
                 ResumedEnd::Pipeline(pipeline.resume(spec).await)
@@ -421,6 +421,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         result,
     } = reported;
 
+    // One terminator for the resumed run (#3398), on both arms: the bare
+    // restored turn never had one, and the pipeline arm used to get the
+    // pipeline's. A failed resume already reported through `result`.
+    if result.is_ok() {
+        persistence::emit_run_complete(&events, &cfg.model_id, cost_usd);
+    }
     // The canonical teardown (#960): detach the registry's sender clones,
     // drop ours, and only then await the renderer — otherwise the channel
     // never closes and a completed resume hangs.

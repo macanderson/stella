@@ -532,24 +532,15 @@ impl<'a> Pipeline<'a> {
             // state without aborting, and the stream's terminal frame is the
             // same one. What differs is the status the caller settles on, not
             // whether the run ended.
-            PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {
-                self.emit(AgentEvent::RunComplete {
-                    // The label is `None` only when the candidate path returned
-                    // before it resolved a worker (a setup abort that then
-                    // degraded to a bare run). Re-resolve rather than emit
-                    // `Complete { model: "" }` — a terminal event that names no
-                    // model reads to every consumer as "no model ran", which is
-                    // exactly backwards on a path that did the work.
-                    model: worker_model_label
-                        .or_else(|| {
-                            self.resolve_provider(Role::Worker)
-                                .ok()
-                                .map(|worker| worker.model_ref.to_string())
-                        })
-                        .unwrap_or_default(),
-                    cost_usd: total_cost,
-                })
-            }
+            // The run's ending is NOT the pipeline's to emit (#3398): a
+            // wrapper cannot know whether it is the whole run, and on
+            // `stella goal` it is one of several rounds sharing a stream. The
+            // stream's owner emits exactly one terminator, from the
+            // `PipelineOutcome` returned below (which carries the same
+            // `total_cost_usd` this used to send). The FAILURE arm stays: an
+            // error is a fact about this pipeline run, not a claim about the
+            // run's ending.
+            PipelineStatus::Completed | PipelineStatus::Unverified { .. } => {}
             PipelineStatus::VerificationFailed { verdict } => {
                 self.emit(AgentEvent::Error {
                     message: format!("verification failed: {}", verdict.summary),
