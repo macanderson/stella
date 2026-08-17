@@ -86,6 +86,7 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        contributed_by: None,
     }
 }
 
@@ -370,6 +371,7 @@ fn a_hand_written_manifest_has_no_witness_input() {
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        contributed_by: None,
     };
     assert!(witness_input(&tool).is_err());
 }

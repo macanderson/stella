@@ -91,7 +91,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use stella_core::ports::ToolExecutor;
+use stella_core::ports::{Principal, ToolExecutor};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -161,9 +161,52 @@ pub struct CustomTool {
     /// contract so the registry-side output check (#3285) can hold a script
     /// tool to its own promise.
     pub output_schema: Option<Value>,
+    /// The plugin whose package shipped this manifest, when one did (#3380).
+    ///
+    /// `None` for every tool the *user* wrote — `.stella/tools/*.toml` and
+    /// `~/.stella/tools/*.toml`. `Some(name)` is the manifest `name` of the
+    /// installed plugin whose `<plugin_dir>/tools/` the file was read from,
+    /// and it is set by discovery from the directory it scanned, never by
+    /// the manifest: a package cannot name itself something it is not.
+    ///
+    /// This is the provenance the other two package properties are built on.
+    /// Retraction reads it as "which tools disappear when this plugin does"
+    /// — though nothing has to *do* that, because the tools are derived from
+    /// the installed package on every load and a deleted package contributes
+    /// nothing to the next one. Authorization reads it through
+    /// [`Self::principal`], which is the half that has teeth.
+    pub contributed_by: Option<String>,
 }
 
 impl CustomTool {
+    /// The caller an [`stella_core::ports::AuthzGate`] must see for a call
+    /// into this tool, given the `caller` the session's stack acts as.
+    ///
+    /// # A plugin's tool is the plugin's, not the human's
+    ///
+    /// The model asks for the call, but the code that runs is a third
+    /// party's, delivered by a package a user consented to install and
+    /// carrying whatever authority *that* consent granted — not the
+    /// operator's. A gate handed [`Principal::User`] for a plugin's script
+    /// could not express "this plugin may not touch the network" at all,
+    /// because it would be answering about the human. So a contributed tool
+    /// authorizes as [`Principal::Plugin`], for the same reason a plugin's
+    /// hook dispatch does (`doc:pipeline-as-plugins` §A1), and the session's
+    /// own principal is passed through untouched for every tool the user
+    /// wrote themselves.
+    ///
+    /// Note what this does **not** do: it never *widens*. A plugin tool
+    /// called from a sub-agent lane does not inherit that lane's principal
+    /// and a user tool never becomes a plugin's — the substitution is total
+    /// and one-directional, decided by provenance discovery stamped from the
+    /// directory it read.
+    pub fn principal(&self, caller: &Principal) -> Principal {
+        match &self.contributed_by {
+            Some(plugin) => Principal::Plugin(plugin.clone()),
+            None => caller.clone(),
+        }
+    }
+
     /// The schema advertised to the model — the same shape a built-in emits.
     ///
     /// `read_only`/`speculation_safe` stay `false` **regardless of the
@@ -439,6 +482,9 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         claimed_risk: raw.risk,
         claimed_idempotent: raw.idempotent,
         output_schema,
+        // Discovery stamps this from the directory it read; a manifest may
+        // not claim to have been shipped by a plugin.
+        contributed_by: None,
     })
 }
 
@@ -469,20 +515,72 @@ pub fn discover_in_scopes(
     user_root: Option<&Path>,
     include_workspace: bool,
 ) -> UngatedDiscovery {
+    discover_with_plugins(workspace_root, user_root, include_workspace, &[])
+}
+
+/// One installed plugin's contributed tool directory: the manifest `name`
+/// every tool found under it is attributed to, and `<plugin_dir>/tools`.
+///
+/// The host resolves these — only it knows what is installed, which tier a
+/// package came from, whether the workspace is trusted to run its code, and
+/// whether an operator switched the plugin off. This crate is handed the
+/// answer and never asks.
+#[derive(Debug, Clone)]
+pub struct PluginToolDir {
+    /// The plugin's manifest `name`, as [`CustomTool::contributed_by`] and
+    /// [`stella_core::ports::Principal::Plugin`] spell it.
+    pub plugin: String,
+    /// `<plugin_dir>/tools`. A missing directory is a plugin that ships no
+    /// tools, which is the ordinary case and not a diagnostic.
+    pub dir: PathBuf,
+}
+
+/// [`discover_in_scopes`], plus the tools installed plugins contribute
+/// (#3380).
+///
+/// # Precedence: the user's own name always wins, and never silently
+///
+/// Plugin directories are scanned **last**, after the workspace's and the
+/// user's own, so a plugin manifest claiming a name one of those already
+/// defined is dropped with a [`ToolDiagnostic`] naming both files. That is
+/// the same rule and the same machinery `.stella/tools` already beats
+/// `~/.stella/tools` with — a plugin does not get a stronger claim on a name
+/// than the user's own two scopes have on each other's.
+///
+/// The direction is the security-relevant half. Letting a package capture
+/// `deploy` from under the script a developer wrote would mean an install
+/// silently re-pointed a name they already call, and the model — which
+/// chooses by description alone — would never see the substitution. Refusing
+/// the *plugin* copy makes the worst case "the tool I installed is missing,
+/// and `stella plugin list` says why".
+///
+/// Plugin-versus-plugin collisions resolve the same way: the caller supplies
+/// the directories in roster order (name-ordered), so the first plugin to
+/// claim a name keeps it and the second is reported.
+pub fn discover_with_plugins(
+    workspace_root: &Path,
+    user_root: Option<&Path>,
+    include_workspace: bool,
+    plugin_dirs: &[PluginToolDir],
+) -> UngatedDiscovery {
     let mut report = UngatedDiscovery::default();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Workspace first so it wins collisions, then user-global.
-    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut dirs: Vec<(PathBuf, Option<&str>)> = Vec::new();
     if include_workspace {
-        dirs.push(workspace_root.join(".stella").join("tools"));
+        dirs.push((workspace_root.join(".stella").join("tools"), None));
     }
     if let Some(user_root) = user_root {
-        dirs.push(user_root.join("tools"));
+        dirs.push((user_root.join("tools"), None));
+    }
+    // Last, so a plugin never takes a name the user's own manifests defined.
+    for contributed in plugin_dirs {
+        dirs.push((contributed.dir.clone(), Some(contributed.plugin.as_str())));
     }
 
-    for dir in dirs {
-        load_dir(&dir, &mut seen, &mut report);
+    for (dir, plugin) in dirs {
+        load_dir(&dir, plugin, &mut seen, &mut report);
     }
     report
 }
@@ -490,8 +588,14 @@ pub fn discover_in_scopes(
 /// Scan one directory for `*.toml` manifests, appending tools and diagnostics
 /// to `report`. Absent directories are silently ignored (having no tools dir is
 /// normal); files are processed in sorted order for deterministic output.
+///
+/// `plugin` is the package this directory belongs to, or `None` for the
+/// user's own scopes — it becomes [`CustomTool::contributed_by`] on
+/// everything found here, which is why provenance cannot be forged: it comes
+/// from the directory being read, not from anything inside the file.
 fn load_dir(
     dir: &Path,
+    plugin: Option<&str>,
     seen: &mut std::collections::HashSet<String>,
     report: &mut UngatedDiscovery,
 ) {
@@ -518,19 +622,33 @@ fn load_dir(
             }
         };
         match parse_manifest(&text, &path) {
-            Ok(tool) => {
+            Ok(mut tool) => {
                 if seen.contains(&tool.name) {
                     report.diagnostics.push(ToolDiagnostic {
                         path: path.clone(),
-                        reason: format!(
-                            "tool `{}` already defined by an earlier (workspace) manifest — this \
-                             one is ignored",
-                            tool.name
-                        ),
+                        reason: match plugin {
+                            // Never "and the plugin's copy won": a package
+                            // silently replacing a name the user already
+                            // defined is the one outcome the precedence rule
+                            // exists to forbid, so the message says whose
+                            // copy is running.
+                            Some(plugin) => format!(
+                                "tool `{}` is already defined by a manifest you installed \
+                                 yourself — the copy the `{plugin}` plugin ships is ignored, \
+                                 and yours is the one that runs",
+                                tool.name
+                            ),
+                            None => format!(
+                                "tool `{}` already defined by an earlier (workspace) manifest \
+                                 — this one is ignored",
+                                tool.name
+                            ),
+                        },
                     });
                     continue;
                 }
                 seen.insert(tool.name.clone());
+                tool.contributed_by = plugin.map(str::to_string);
                 report.tools.push(tool);
             }
             Err(reason) => report.diagnostics.push(ToolDiagnostic { path, reason }),

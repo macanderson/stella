@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::{Settings, Toggle};
 
+pub(crate) mod package;
 pub(crate) mod process;
 pub(crate) mod roster;
 
@@ -188,6 +189,17 @@ fn install(
 
     println!("{}", stella_plugin::consent_text(&manifest));
 
+    // What the package *ships* — tools, skills, records — read off the source
+    // directory, because only the host can see one (`package::Inventory::
+    // consent_addendum` argues the seam). Printed inside the same transaction
+    // and above the same single y/N: a contributed tool is executable code
+    // entering the model's surface, and consenting to it after the fact is not
+    // consenting to it.
+    let inventory = package::Inventory::of_package(source);
+    if let Some(addendum) = inventory.consent_addendum(name) {
+        println!("\n{addendum}");
+    }
+
     // The consent text lists the environment allowlist as the manifest wrote
     // it, because that crate has no credential vocabulary and must not grow
     // one. The host does, and it refuses part of that list — so the correction
@@ -290,7 +302,7 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
     if roster.plugins().is_empty() {
         println!("no plugins installed — add one with `stella plugin install <dir>`");
     }
-    for plugin in roster.plugins() {
+    for (plugin, inventory) in package::inventories(&roster) {
         let grant = &plugin.manifest.loop_grant;
         println!(
             "{:<24} {:<8} {}",
@@ -302,6 +314,19 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
             println!("  {description}");
         }
         println!("  {}", plugin.dir.display());
+        // What it contributes, not merely what it declares: a user asking
+        // "where did this tool come from?" is asking this listing, and a
+        // package's tools/skills/records are otherwise attributable only by
+        // reading a source path out of `stella tools`.
+        for (label, named) in [
+            ("tools", &inventory.tools),
+            ("skills", &inventory.skills),
+            ("records", &inventory.records),
+        ] {
+            if !named.is_empty() {
+                println!("  ships {label}: {}", named.join(", "));
+            }
+        }
         match &plugin.manifest.runtime {
             Some(runtime) => println!(
                 "  runs: {} ({}s, env: {})",

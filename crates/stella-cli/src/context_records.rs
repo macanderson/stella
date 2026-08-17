@@ -322,11 +322,44 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
     TieredFiles {
         user: crate::rules::FsRuleSource.read_rule_files(user),
         project: if include_project {
-            crate::rules::FsRuleSource.read_rule_files(project)
+            crate::rules::FsRuleSource.read_rule_files(&plugin_first(project, root))
         } else {
             Vec::new()
         },
     }
+}
+
+/// The project-tier rule directories, with installed plugins' contributed
+/// `<plugin_dir>/rules` **first** (#3380).
+///
+/// # Both halves of the position are load-bearing
+///
+/// *Project tier, never user.* A plugin's records are a third party's, which
+/// is the same trust posture the repository's own `.stella/rules` has and a
+/// weaker one than `~/.stella/rules`. Reading them as `Trust::User` would let
+/// an installed package's record establish a guard the workspace's own
+/// records cannot override — the monotonicity `merge_tiers` enforces, pointed
+/// the wrong way.
+///
+/// *First within it, never last.* Both merges here are later-wins
+/// (`merge_by_lineage`, `merge_rule_files`), so a directory appended after
+/// `.stella/rules` would silently replace a record the workspace committed
+/// with one a package shipped. First means the workspace's own copy of a
+/// lineage is the one that steers, which is the same "your own wins" rule the
+/// contributed tool and skill surfaces apply
+/// (`crate::plugin_cmd::package`).
+///
+/// The plugins are already trust-gated: `PluginRoster::load` refuses the
+/// project tier entirely in a workspace that is not trusted to run code, so
+/// nothing reaches here from an untrusted checkout — and `include_project`
+/// above gates the same axis a second time for the same checkout.
+fn plugin_first(project: &[String], root: &Path) -> Vec<String> {
+    let mut dirs: Vec<String> = crate::plugin_cmd::package::contributed_record_dirs(root)
+        .into_iter()
+        .map(|contributed| contributed.dir.display().to_string())
+        .collect();
+    dirs.extend(project.iter().cloned());
+    dirs
 }
 
 /// This workspace's rule files, kept in their trust tiers.

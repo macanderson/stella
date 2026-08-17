@@ -103,10 +103,47 @@ pub(crate) fn load_workspace_skills_with_authority(
             user_skills_dir: user_skills_dir(),
         },
     );
+    append_plugin_skills(workspace_root, &mut loaded);
     // A skill disabled from the SKILLS tab is excluded from recall/selection
     // and the ⚡ slash menu — its file stays on disk (see `crate::skill_manager`).
     crate::skill_manager::retain_enabled(&mut loaded.skills, workspace_root);
     loaded
+}
+
+/// Add the skills installed plugins ship (`<plugin_dir>/skills/<slug>/SKILL.md`,
+/// #3380), after the user's own.
+///
+/// # A plugin's skill never displaces one of yours
+///
+/// Appended, and only where the name is still free, rather than merged
+/// through [`skills::load_skills_with_diagnostics`]'s own later-wins
+/// precedence. That loader's rule is "workspace beats user-global", which is
+/// a statement about *your* two directories; a package arriving with a
+/// `SKILL.md` named like one you wrote would, under the same rule, silently
+/// replace the procedure in your prompts with a third party's — the one
+/// outcome the package precedence rule forbids everywhere it appears
+/// (`crate::plugin_cmd::package`). Loading each package separately is also
+/// what keeps a plugin's malformed skill a diagnostic about that package
+/// instead of a name collision inside your own load.
+///
+/// Roster order decides plugin-versus-plugin, matching the tool surface.
+fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
+    for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
+        let found = skills::load_skills_with_diagnostics(
+            &FsSkillSource,
+            &LoadSkillsOptions {
+                workspace_skills_dir: contributed.dir.display().to_string(),
+                user_skills_dir: String::new(),
+            },
+        );
+        loaded.diagnostics.extend(found.diagnostics);
+        for skill in found.skills {
+            if loaded.skills.iter().any(|held| held.name == skill.name) {
+                continue;
+            }
+            loaded.skills.push(skill);
+        }
+    }
 }
 
 /// Compatibility seam for callers that deliberately request the historical

@@ -32,6 +32,14 @@ pub(crate) fn custom_tool_report_for_workspace(
 /// Discover only the custom-tool scopes permitted by the current authority.
 /// Filesystem-isolated benchmark runs omit both workspace and user-global
 /// executable extensions regardless of the ordinary authority policy.
+///
+/// Installed plugins contribute their `<plugin_dir>/tools` here too (#3380),
+/// scanned last so a package never takes a name the user's own manifests
+/// defined. Their trust gate is the roster's — an untrusted checkout's
+/// plugins are not loaded at all, so its contributed tools are not discovered
+/// — and their principal rides on each tool as
+/// [`stella_tools::custom::CustomTool::contributed_by`], which
+/// `super::tool_stack` turns into the caller the authorization gate sees.
 pub(crate) fn custom_tool_report_for_scopes(
     root: &std::path::Path,
     include_workspace: bool,
@@ -40,7 +48,12 @@ pub(crate) fn custom_tool_report_for_scopes(
         stella_tools::custom::UngatedDiscovery::default()
     } else {
         let user_root = crate::paths::user_extension_root();
-        stella_tools::custom::discover_in_scopes(root, user_root.as_deref(), include_workspace)
+        stella_tools::custom::discover_with_plugins(
+            root,
+            user_root.as_deref(),
+            include_workspace,
+            &crate::plugin_cmd::package::contributed_tool_dirs(root),
+        )
     }
 }
 
@@ -438,6 +451,15 @@ pub(crate) fn workspace_ports(
     // "same root" has to be the same RESOLVER too: reading the OS home here
     // and the extension root above meant the two surfaces could name different
     // directories the moment either moved (#2178).
+    //
+    // `discover_in_scopes`, deliberately, not `discover_with_plugins`:
+    // plugin-contributed tools are **withheld** from a candidate workspace
+    // (#3380, tracked in #3563). A contributed tool must be authorized as
+    // `Principal::Plugin`, and the map that does that is attached by
+    // `tool_stack::session_stack_with_gate` — the candidate chain is built by
+    // `policy_stack_owned`, which carries no such map, so admitting them here
+    // would run a package's script under the *candidate role's* principal.
+    // That is a widening, and the fail-closed direction is the missing tool.
     let user_root = crate::paths::user_extension_root();
     let custom_tools = crate::tool_foundry::adopt::gate_discovery(
         stella_tools::custom::discover_in_scopes(

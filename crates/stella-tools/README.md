@@ -175,6 +175,21 @@ manifests register only if the workspace adopted them, a human enabled them,
 and their bytes still match what their witness ran against — re-checked at
 the moment of launch, not just at scan time.
 
+**A plugin's tool is the plugin's, not the user's (#3380).** An installed
+plugin may ship script tools in `<plugin_dir>/tools/*.toml`, and
+`custom::discover_with_plugins` scans those directories **last**, so a
+package can never take a name the user's own `.stella/tools` or
+`~/.stella/tools` already defines — the collision is reported and the user's
+copy is the one that runs. Everything found there is stamped
+`CustomTool::contributed_by` **from the directory it was read out of**, never
+from anything the manifest says, and `CustomTool::principal` turns that into
+`Principal::Plugin(name)`: `GatedToolSet::with_tool_principals` carries the
+map, so an authorization gate is asked about the *package* for a call into a
+package's script and about the session's own caller for everything else. The
+host (`stella-cli`'s `plugin_cmd::package`) decides which directories exist
+at all — which is where the install consent and the untrusted-checkout trust
+gate live.
+
 **A manifest's claims are claims, never facts (#3287).** A
 `.stella/tools/*.toml` may declare `read_only`, `risk`, `idempotent` and an
 optional `[output_schema]`, and every one of them is a self-report: they ride
