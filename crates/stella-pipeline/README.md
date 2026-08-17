@@ -50,7 +50,7 @@ The three moves, in dependency order:
    it — triage/recall/research/plan/scope are `before_turn`, witness is `after_turn`,
    verify is `judge`, revise is `again?`. `judge` may not call a model, which
    [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already satisfies: it is
-   terminal at all five outcomes and #2584 removed the model verdict structurally.
+   terminal at every arm and #2584 removed the model verdict structurally.
 3. **Stages become a manifest** (#3381, open): the ordered stage list moves into the
    `[wrapper]` block [`stella-plugin`](../stella-plugin) already parses, keyed by a
    variant id the store's `pipeline_variant` column records (#3388, landed) so two
@@ -193,8 +193,12 @@ loop). A mismatch aborts the candidate *before* the ladder runs. It is
 an authority boundary, not evidence for a model to weigh, and no verifier can override it.
 
 **The evidence ladder is the whole decision, and every rung is terminal.**
-`ladder_decision` is a pure function over `LadderInputs` returning one of five outcomes, in
-order: touched tests red → `Revise` (already deterministic; nothing is spent confirming it);
+`ladder_decision` is a pure function over `LadderInputs` returning one arm of `LadderDecision`
+— that enum is the enumeration, and this list is an ordering rather than a second copy of it
+(#3473). In order: an authored witness that failed *the same way* on both trees →
+`WitnessUnsatisfiable` (#2540 — its red says nothing about the change, and the worker cannot
+repair an instrument, so this outranks `Revise`); touched tests red → `Revise` (already
+deterministic; nothing is spent confirming it);
 a turn that dispatched nothing that could mutate → `NothingAttempted`; every channel dark →
 `Unverifiable` (abstain); flip + green + within budget + no fresh diagnostics + a
 non-tautological witness that covered the diff → `SubmitFast`; anything else →
@@ -373,7 +377,7 @@ contract.
   this crate enforces at runtime; "Architecture: ports, not concretions" for the inherited
   no-I/O and byte-stable-prompt rules.
 - [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
-  — the full stage flow, the five terminal ladder outcomes, and the `/pipeline` deck toggle.
+  — the full stage flow, the terminal ladder outcomes, and the `/pipeline` deck toggle.
 - [`../../docs/spec/replay-golden-trajectories.md`](../../docs/spec/replay-golden-trajectories.md) — the
   recording procedure and the reference-engine adapter contract.
 - [`../stella-core`](../stella-core) — `Engine::run_turn`, the loop this crate composes.

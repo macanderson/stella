@@ -80,7 +80,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
 
     let provider = build_provider(cfg)?;
     let tools_registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
     crate::subagent::install_for_session(cfg, &tools_registry)?;
     // `interactive_approvals: false` — a daemon-resumed turn answers approvals
     // through the daemon's own one-shot gate (sidecar or staged stdio), never

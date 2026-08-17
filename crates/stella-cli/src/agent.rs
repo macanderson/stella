@@ -237,7 +237,7 @@ async fn run_pipeline_one_shot(
     };
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     crate::subagent::install_for_session(cfg, &registry)?;
     // The one derivation of "a human is here to answer" (approvals, rules).
@@ -680,7 +680,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )?;
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
     let mcp = connect_mcp(
         cfg,
         registry.clone(),
