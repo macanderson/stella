@@ -82,9 +82,11 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Still 2.2x `exec::MAX_OUTPUT_BYTES` (30k), preserving #616's ratio
 /// argument: the shell is the agent's primary sensory channel — one `bash`
 /// call renders a whole build or test run whose first error and final summary
-/// sit far apart — while the `exec` budget bounds each incremental
-/// `read_output` page of a *managed* process the agent polls repeatedly.
-/// Aligning them would either starve the shell or inflate every page read.
+/// sit far apart — while the `exec` budget bounds one incremental page of a
+/// long-running capture. (That budget's original consumer was the managed
+/// process family's `read_output`, deleted in #3244; the ratio argument is
+/// about the two *shapes* of output, so it survives its example.) Aligning
+/// them would either starve the shell or inflate every page read.
 pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// grep-family commands whose first positional arg is a search pattern.
@@ -576,9 +578,11 @@ fn drift_advisory(command: &str, root: &Path) -> Option<String> {
 }
 
 /// A bare `sleep` blocking the whole trial budget goes undetected today:
-/// loop detection sees polls (`read_output`) between the sleeps so the
+/// loop detection sees other calls between the sleeps, so the
 /// interleaved-repeat rung reads the window as progressing, and the budget
-/// guard is spend-based, so idling costs $0. #2022's first step is honest
+/// guard is spend-based, so idling costs $0. (The shape #2022 observed
+/// interleaved `read_output` polls; that tool is gone, but any interleaved
+/// call produces the same blind spot, so the reasoning is unchanged.) #2022's first step is honest
 /// visibility, not a refusal — a static text-shape check on the command, not
 /// a measured elapsed time, so it stays deterministic for the loop detector
 /// (never embed a timing here; see `stella-tool-timings-must-not-ride-tooloutput`).
@@ -622,9 +626,21 @@ fn bare_sleep_seconds(command: &str) -> Option<u64> {
     saw_sleep.then_some(total_secs)
 }
 
-/// A footer naming a bare `sleep` that crossed the advisory threshold, and
-/// the instrument (`read_output`/`wait_for`) that returns as soon as there is
-/// something to see instead of blocking the whole interval.
+/// A footer naming a bare `sleep` that crossed the advisory threshold, and a
+/// remedy the agent can actually perform.
+///
+/// **The remedy has to name a tool that exists.** This advisory shipped for a
+/// while pointing at `read_output`/`wait_for` — the managed-process family,
+/// which #3244 deleted and the tool restore did not bring back. Every long
+/// bare `sleep` therefore handed the model a directive with no tool behind it,
+/// which is worse than the silence it replaced: an instruction that cannot be
+/// followed teaches the model to discount the next one too. The text was
+/// restored verbatim along with the rest of `bash`, and the stale half was
+/// only caught by an issue sweep afterwards.
+///
+/// So the wording now stays inside what the surface offers: a short poll in a
+/// loop, which `bash` can do on its own, and which returns as soon as the
+/// condition holds instead of blocking the whole interval.
 fn sleep_advisory(command: &str) -> Option<String> {
     let secs = bare_sleep_seconds(command)?;
     if secs < SLEEP_ADVISORY_THRESHOLD_SECS {
@@ -632,9 +648,11 @@ fn sleep_advisory(command: &str) -> Option<String> {
     }
     Some(format!(
         "\n\nnote: this call blocked for {secs}s inside a bare `sleep` with no other work in \
-         it. If you are waiting on a background process, poll with `read_output`/`wait_for` \
-         instead — they return as soon as there is something to see, so a short poll costs less \
-         of the trial's budget than sleeping through the whole interval."
+         it, and the whole interval was charged to the turn whether or not the thing you are \
+         waiting for finished early. If you are waiting on something, poll for the condition \
+         instead of sleeping through it — a bounded retry loop that checks and exits as soon \
+         as the check passes (for example `for i in $(seq 30); do <check> && break; sleep 1; \
+         done`) costs a fraction of a blind wait."
     ))
 }
 
@@ -1263,7 +1281,18 @@ mod tests {
         );
         let note = sleep_advisory("sleep 300; echo done").expect("over threshold");
         assert!(note.contains("300s"));
-        assert!(note.contains("read_output"));
+        // The remedy must be one the agent can actually perform. This
+        // assertion used to require the string `read_output` — a tool #3244
+        // deleted — so it kept a directive with no tool behind it green for
+        // as long as it existed. Now it pins that the note names polling,
+        // and that it names NO tool the catalog does not carry.
+        assert!(note.contains("poll"), "{note}");
+        for gone in ["read_output", "wait_for", "start_process"] {
+            assert!(
+                !note.contains(gone),
+                "the advisory names `{gone}`, which is not on the tool surface: {note}"
+            );
+        }
     }
 
     #[tokio::test]
