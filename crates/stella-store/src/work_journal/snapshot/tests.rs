@@ -56,7 +56,10 @@ fn a_turn_that_named_no_paths_still_reports_what_it_changed_with_real_counts() {
         "a real edit must never report +0 -0 (#2290)"
     );
     assert!(
-        changes[1].diff.as_deref().is_some_and(|d| d.contains("four")),
+        changes[1]
+            .diff
+            .as_deref()
+            .is_some_and(|d| d.contains("four")),
         "each change carries its own slice of the patch"
     );
 }

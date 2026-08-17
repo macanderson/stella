@@ -47,9 +47,8 @@ pub(super) fn print_json_summary(cfg: &Config, outcome: &TurnOutcome, events: Ve
     };
     println!(
         "{}",
-        serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
-            "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
-        ))
+        serde_json::to_string_pretty(&summary)
+            .unwrap_or_else(|e| format!("{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"))
     );
     crate::note_json_summary_emitted();
 }

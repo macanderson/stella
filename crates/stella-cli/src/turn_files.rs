@@ -53,9 +53,9 @@
 //! grandfathered god file, closed to growth (AGENTS.md § "God files — plan
 //! around them, never into them").
 
+use stella_core::EventSender;
 use stella_protocol::event::{AgentEvent, FileChangeKind};
 use stella_store::work_journal::{JournalChange, JournalChangeKind};
-use stella_core::EventSender;
 
 use crate::config::Config;
 

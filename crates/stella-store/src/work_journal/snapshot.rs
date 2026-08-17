@@ -104,7 +104,7 @@ impl WorkJournal {
     /// Ignored paths are excluded by `git add -A` honouring the work tree's own
     /// `.gitignore`, which is what keeps `.stella/private/` — the session's own
     /// databases, rewritten on every turn — out of the answer. The reserved
-    /// [`JOURNAL_DIR`] prefix is filtered too, defensively: this lineage never
+    /// `.stella-journal/` prefix is filtered too, defensively: this lineage never
     /// writes those blobs, so a hit would mean the user has a real file there.
     ///
     /// Best-effort by contract at every call site: a turn that ended is not
@@ -140,10 +140,15 @@ impl WorkJournal {
 
     /// The commit this session's snapshot lineage last wrote, if any.
     fn snapshot_tip(&self) -> Option<String> {
-        self.git_snapshot(&["rev-parse", "--verify", "--quiet", &snapshot_ref(&self.session)])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+        self.git_snapshot(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &snapshot_ref(&self.session),
+        ])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
     }
 
     /// The tree a commit names.
@@ -174,8 +179,15 @@ impl WorkJournal {
     /// single format carrying all three, and the alternative — deriving counts
     /// or kinds from the patch — is exactly the re-derivation that broke.
     fn diff_trees(&self, before: &str, after: &str) -> Result<Vec<JournalChange>> {
-        let name_status =
-            self.git_snapshot(&["diff-tree", "-r", "--name-status", "--no-renames", "-z", before, after])?;
+        let name_status = self.git_snapshot(&[
+            "diff-tree",
+            "-r",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            before,
+            after,
+        ])?;
         let mut changes = parse_name_status(&name_status);
         changes.retain(|change| !is_reserved(&change.path));
         if changes.is_empty() {
@@ -186,9 +198,15 @@ impl WorkJournal {
         // whose numstat read failed is still a real delta and must still be
         // reported, with the `0/0` that says "not measured" rather than
         // vanishing from the answer.
-        if let Ok(numstat) =
-            self.git_snapshot(&["diff-tree", "-r", "--numstat", "--no-renames", "-z", before, after])
-        {
+        if let Ok(numstat) = self.git_snapshot(&[
+            "diff-tree",
+            "-r",
+            "--numstat",
+            "--no-renames",
+            "-z",
+            before,
+            after,
+        ]) {
             attach_numstat(&mut changes, &numstat);
         }
         if let Ok(patch) = self.git_snapshot(&[
