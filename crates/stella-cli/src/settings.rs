@@ -49,7 +49,7 @@ pub(crate) mod migrate;
 mod private;
 mod steering;
 mod toml_config;
-mod toml_io;
+pub(crate) mod toml_io;
 mod unknown;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub use toml_config::ConfigScope;

@@ -95,6 +95,7 @@ use crate::config::Config;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, SkillRegistry};
 use crate::{agent, rules};
 
+mod add_dir;
 mod authoring;
 pub(crate) mod forwarder;
 mod lead_control;
@@ -3708,6 +3709,10 @@ async fn run_deck_command(
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
         | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" => {}
         _ => {
+            if let Some(reply) = add_dir::handle(trimmed, cfg, registry) {
+                say(reply);
+                return DeckCommand::Handled;
+            }
             // `/model <provider/slug>` — set the persistent default model.
             // Validation + the settings write live in `model_cmd` (parity
             // with the SETTINGS tab); handled before the whitespace check
