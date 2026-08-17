@@ -8,11 +8,13 @@
 //! survives the session, and that is the contract, not a limitation —
 //! anything the user should keep belongs in the workspace.
 //!
-//! (The directory used to be exported to every built-in shell spawn as
-//! `STELLA_SCRATCH`; that export left with the shell tools. A host that
-//! runs subprocesses of its own and wants them writing into scratch passes
-//! the path itself — `get_state` pages whatever lands in the directory,
-//! however it got there.)
+//! (The directory is exported to `bash`'s child as `STELLA_SCRATCH`
+//! ([`crate::subprocess_env::inject_scratch_env`]), so a command the model
+//! runs can put a working file somewhere that is neither the workspace —
+//! where it would land in the turn's diff — nor `/tmp`, where it would
+//! outlive the session. A host that runs subprocesses of its own passes the
+//! path itself; `get_state` pages whatever lands in the directory, however
+//! it got there.)
 //!
 //! Contracts:
 //! - Keys are filenames: `[A-Za-z0-9._-]`, 1–128 chars. Anything else is a

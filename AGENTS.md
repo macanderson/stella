@@ -521,7 +521,7 @@ the files you must plan around (see below).
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `catalog.rs`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |

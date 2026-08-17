@@ -1,9 +1,9 @@
 ---
 title: Built-in Tools
-description: The complete catalog of tools the stella agent can call in every session — the coordination core of sub-agents, the task board, scratch state, and the environment probe — including which are read-only.
+description: The complete catalog of tools the stella agent can call in every session — one shell, file CRUD, one search, sub-agent delegation, the task board, scratch state, and the environment probe — including which are read-only.
 ---
 
-stella ships a deliberately small built-in surface: **12 tools**, covering sub-agent delegation, the session task board, scratch session state, and the session environment. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool — built-in or merged — is subject to a [per-tool permission model](/docs/agent-tools/permissions).
+stella ships a deliberately small built-in surface: **18 tools**, covering the shell, file create/read/update/delete, code search, sub-agent delegation, the session task board, scratch session state, and the session environment. The surface is small on purpose — it is the set of verbs the agent needs to do work in a repository, and nothing beyond it. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool — built-in or merged — is subject to a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
@@ -17,19 +17,54 @@ This reflects the live session: it accounts for custom tools discovered in `.ste
 
 ## The built-in catalog
 
-Each tool is either **read-only** (it only observes session state and the environment) or **mutating** (it changes the task board, writes scratch state, or dispatches work to a sub-agent). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects.
+Each tool is either **read-only** (it only observes — the workspace, session state, or the environment) or **mutating** (it writes a file, runs a command, changes the task board, writes scratch state, or dispatches work to a sub-agent). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects. The engine parallelizes on that flag, so a mutating tool marked read-only would race writes.
 
 A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice, so only calls that are free to repeat opt in. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
-The speculation-safe subset is exactly: `get_state`, `list_state`, `get_environment`, and `task_list`.
+The speculation-safe subset is exactly: `read_file`, `task_list`, `get_state`, `list_state`, and `get_environment`.
+
+`search` is the instructive exception: it is read-only about the *workspace* — it never edits a file — yet it is not speculation-safe, because its semantic rung writes embeddings through into `codegraph.db` as it ranks. Running it twice is not free, so it observes without opting in.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 
-<Callout type="info">
-This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs` asserts that every card below matches `catalog.rs` — the name, the access marker, and the counts. Adding a tool without documenting it fails the test suite by name.
+<Callout type="warn">
+This page **is** maintained by hand, and nothing in the gate compares it to `crates/stella-tools/src/catalog.rs`. The generated, gate-enforced copy of the same facts is `docs/tools/*.toml` — one file per tool, rebuilt by `make tool-docs-update` and checked by `make tool-docs`. When the two disagree, `docs/tools/` is right and this page is stale; fix it in the PR that adds or removes the tool. (An earlier version of this callout claimed a `crates/stella-tools/tests/docs_in_sync.rs` asserted the cards below against the catalog. No such test has ever existed, which is exactly how this page came to describe a surface the binary had not shipped for months.)
 </Callout>
 
-All 12 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+All 18 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+
+### Shell
+
+<CardGrid size="md">
+  <ToolCard name="bash" access="mutating">
+    Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. The only built-in that runs something nobody bounded, which is why it is graded `high` risk and why a permission ceiling that withholds it still leaves the rest of the surface working.
+  </ToolCard>
+</CardGrid>
+
+### Files
+
+<CardGrid size="md">
+  <ToolCard name="read_file" access="read">
+    Read a file from the workspace. Returns content with 1-based line numbers; `offset` and `limit` take a range out of a large file rather than the whole thing.
+  </ToolCard>
+  <ToolCard name="write_file" access="mutating">
+    Create or overwrite a file, creating parent directories as needed.
+  </ToolCard>
+  <ToolCard name="edit_file" access="mutating">
+    Replace an exact substring in a file. The old string must appear exactly once unless `replace_all` is set — an ambiguous match is refused rather than guessed at.
+  </ToolCard>
+  <ToolCard name="delete_file" access="mutating">
+    Delete a file in the workspace. Prefer it over `bash rm`: a symlink is removed as the link, and its target is left alone. The one `destructive` grade in the catalog, because an unlinked file is the one thing on this surface the agent cannot undo from inside the turn.
+  </ToolCard>
+</CardGrid>
+
+### Search
+
+<CardGrid size="md">
+  <ToolCard name="search" access="read">
+    Find code by meaning, not just by text: describe what you are looking for and get back the files that answer it with their symbols, callers, imports and source attached, so one call usually replaces a run of grep/glob/read round trips. The answer always states which strategies ran and whether it was truncated.
+  </ToolCard>
+</CardGrid>
 
 ### Task board &amp; sub-agents
 
@@ -82,7 +117,7 @@ All 12 tools register in every session — no configuration, no prerequisites. G
   </ToolCard>
 </CardGrid>
 
-The read-only partition is exactly: `task_list`, `get_state`, `list_state`, and `get_environment`. The other eight are mutating.
+The read-only partition is exactly: `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`. The other twelve are mutating.
 
 ## Switching tools off
 
@@ -97,7 +132,7 @@ Every tool ships **on**. The one way to turn something off is a `"tools"` entry 
 }
 ```
 
-A key is a **tool name**, a **group name** (the family headings above — `task`, `scratch`, `environment` — plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on.
+A key is a **tool name**, a **group name** (the family headings above — `shell`, `file`, `search`, `task`, `scratch`, `environment` — plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on.
 
 Two recipes that fall out of that rule:
 

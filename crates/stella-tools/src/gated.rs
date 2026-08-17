@@ -8,14 +8,14 @@
 //!
 //! # Why a decorator and not registry-internal logic
 //!
-//! [`crate::registry::ToolRegistry`] only knows about the twelve built-ins.
-//! Custom `.stella/tools/*.toml` tools ([`crate::custom::CustomToolSet`]) and
-//! every connected MCP server's tools are layered *above* it — and since the
-//! surface reduction (#3244) those two are where nearly every capability the
-//! agent has now lives. A gate inside the registry would govern the smallest
-//! and best-reviewed group while missing all the rest, which is precisely the
-//! shape of gap this issue exists to close: the tools most worth governing
-//! are the ones a third party supplied.
+//! [`crate::registry::ToolRegistry`] only knows about the built-ins. Custom
+//! `.stella/tools/*.toml` tools ([`crate::custom::CustomToolSet`]) and every
+//! connected MCP server's tools are layered *above* it, and a session's
+//! capability surface is open-ended on that side while the built-in side is
+//! closed and reviewed. A gate inside the registry would therefore govern the
+//! best-reviewed group — the one whose risk grades a human already argued
+//! about in [`crate::catalog`] — while missing every tool a third party
+//! supplied, which is precisely the shape of gap this issue exists to close.
 //!
 //! So this composes like [`crate::policy::ToolPolicy`]'s enforcement point
 //! does, and belongs **outermost** — above the operator's policy filter.

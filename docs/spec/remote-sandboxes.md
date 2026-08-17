@@ -309,11 +309,17 @@ claim gets tested before any protocol exists.
 
 **Both names in this section are prospective**: neither
 `ToolRegistry::classify_file_op` nor `ToolRegistry::record_touch` exists in
-the tree today, and no built-in tool writes files at all — the one live
-`FileChange` producer is `Pipeline::deliver_winner`, from the rows adoption
-measured (#3366). They are what a file-writing remote tool would need, named
-here so the design is reviewable, and a PR that builds them owes this section
-a rewrite in the past tense.
+the tree today. The premise around them has moved, though, and in the
+direction that makes them worth building: `write_file`, `edit_file` and
+`delete_file` are built-ins again, so a file-writing tool is no longer
+hypothetical — it is the local case this section's remote case has to match.
+What has *not* changed is who produces `FileChange`: the live producers are
+`Pipeline::deliver_winner` from the rows adoption measured (#3366) and the
+work journal's turn-boundary tree snapshot (`stella-cli/src/turn_files.rs`,
+#3413), both of which **measure** rather than infer from tool arguments —
+see that module for why inferring from a tool's inputs is a known defect and
+not a shortcut. A PR that builds the two names above owes this section a
+rewrite in the past tense, and owes that contract an answer.
 
 A path-writing tool must decide create-vs-update by asking the filesystem
 whether the path existed *before* the write. Naively remoted, that is a

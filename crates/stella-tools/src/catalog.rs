@@ -84,10 +84,18 @@ pub struct ToolEntry {
     /// | [`RiskLevel::High`] | Leaves the workspace, spends money, or runs something nobody bounded |
     /// | [`RiskLevel::Destructive`] | The agent cannot undo it |
     ///
-    /// Today's twelve built-ins populate only `Low` and `High` — the surface
-    /// is the task board, the scratch plane and one environment report, and
-    /// the single interesting split is delegation versus everything else.
-    /// The upper rungs are not speculative scaffolding: every tool that is
+    /// Today's eighteen built-ins populate all four grades, and the working
+    /// surface is what spreads them: `read_file` and `search` observe
+    /// (`Low`), `write_file` and `edit_file` are bounded and locally undoable
+    /// (`Medium`), `delete_file` is the one thing the agent cannot undo from
+    /// inside the turn (`Destructive`), and `bash` runs a command nobody
+    /// bounded (`High`, which it shares with `task` for the same reason —
+    /// neither's cost is bounded by anything this table can see). The
+    /// coordination rows — the board, the scratch plane, the environment
+    /// report — are all `Low`, because what they mutate cannot outlive the
+    /// process.
+    ///
+    /// `Medium` also carries a second load: every tool that is
     /// *not* a built-in — an MCP server's, a `.stella/tools/*.toml`
     /// manifest's — is graded [`RiskLevel::High`] by
     /// [`stella_protocol::ToolContract::declared`] for being unreviewed, so a
@@ -327,11 +335,12 @@ mod tests {
     /// mutation before its step commits, so the table refuses the shape
     /// outright rather than trusting every consumer to intersect.
     ///
-    /// (Every read-only row in the current 12-tool surface also happens to
-    /// be speculation-safe — the board, scratch and environment reads are
-    /// all pure local reads — so unlike the wider historical surface there
-    /// is no in-catalog row where the two flags diverge. The subset
-    /// direction is the enforced claim.)
+    /// (`search` is the live witness that the two flags are genuinely
+    /// different questions: it is `read_only` — it changes no workspace file
+    /// — and it is deliberately *not* speculation-safe, because its semantic
+    /// rung writes embeddings through into `codegraph.db` while it ranks, so
+    /// running it twice is not free. Only the subset direction is enforced
+    /// here; the other direction is a per-row judgement.)
     #[test]
     fn speculation_safe_is_a_subset_of_read_only() {
         for entry in CATALOG {
