@@ -57,7 +57,7 @@ impl EventSender {
 ///
 /// The engine ends every turn with [`AgentEvent::TurnComplete`] and stops
 /// there, because it cannot know whether its caller wants another turn. That
-/// leaves the run-terminal [`AgentEvent::Complete`] — exactly once, last, only
+/// leaves the run-terminal [`AgentEvent::RunComplete`] — exactly once, last, only
 /// on success — to whoever owns the run. This is that emitter, for the owners
 /// whose run is a plain sequence of engine turns: the CLI's one-shot and
 /// interactive paths, the deck's lead turn, a resumed turn, a fleet worker, a
