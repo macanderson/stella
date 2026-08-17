@@ -255,7 +255,7 @@ class TestRoleResolutionMirrorsTheEngine:
     def test_a_pinned_worker_leaves_the_verifier_independent_on_default_model(
         self,
     ) -> None:
-        """"Inherits" is not the same claim as "is the worker's model".
+        """ "Inherits" is not the same claim as "is the worker's model".
 
         With only the *worker* pinned, the verifier falls through to
         `default_model` — a different model, so the engine authors a witness.
@@ -325,7 +325,36 @@ class TestTheOffReasonIsTrue:
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_SETTINGS_RS = _REPO_ROOT / "crates" / "stella-cli" / "src" / "settings.rs"
+_SETTINGS_SRC = _REPO_ROOT / "crates" / "stella-cli" / "src"
+_SETTINGS_MODULE = [
+    _SETTINGS_SRC / "settings.rs",
+    *sorted((_SETTINGS_SRC / "settings").glob("*.rs")),
+]
+_MODEL_FOR_DECL = "pub fn model_for("
+
+
+def _model_for_source() -> str:
+    """The one file in the `settings` module that declares `model_for`.
+
+    Deliberately a search rather than a fixed path: splitting `settings.rs`
+    into submodules moves the declaration without changing a line of it, and
+    a hardcoded path turns that ordinary refactor into a red bench job
+    (#3390 did exactly this, moving it to `settings/engine.rs`).
+    """
+    holders = [
+        f for f in _SETTINGS_MODULE if f.exists() and _MODEL_FOR_DECL in f.read_text()
+    ]
+    assert holders, (
+        "`AgentEngineConfig::model_for` is declared nowhere under "
+        f"{_SETTINGS_SRC / 'settings'} — the posture module mirrors its "
+        "fallback order and must follow the rename"
+    )
+    assert len(holders) == 1, (
+        f"`{_MODEL_FOR_DECL}` is declared in more than one settings file "
+        f"({[str(f) for f in holders]}); this mirror can no longer name which "
+        "one the engine resolves through"
+    )
+    return holders[0].read_text()
 
 
 def test_the_engine_still_resolves_a_role_in_the_order_this_module_mirrors() -> None:
@@ -337,12 +366,8 @@ def test_the_engine_still_resolves_a_role_in_the_order_this_module_mirrors() -> 
     else in either tree would notice — the two live in different languages,
     different test suites, and different CI jobs.
     """
-    source = _SETTINGS_RS.read_text()
-    start = source.find("pub fn model_for(")
-    assert start != -1, (
-        f"`AgentEngineConfig::model_for` is gone from {_SETTINGS_RS} — the "
-        "posture module mirrors its fallback order and must follow the rename"
-    )
+    source = _model_for_source()
+    start = source.index(_MODEL_FOR_DECL)
     body = source[start : source.index("\n    }\n", start)]
     rungs = [
         body.index("self.agent(kind).and_then(|a| a.model"),
