@@ -689,13 +689,14 @@ mod tests {
         );
 
         // The renderer's contract: the resumed turn frames itself as an
-        // execute stage before its first event.
+        // execute stage before its first event. TURN-scoped: the engine emits
+        // it about its own turn, not a wrapper about the run (#3398).
         let first = rx.recv().await.expect("at least the stage event");
         assert!(matches!(
             first,
             AgentEvent::Stage {
                 name: stella_protocol::StageKind::Execute,
-                scope: stella_protocol::StageScope::Run
+                scope: stella_protocol::StageScope::Turn
             }
         ));
     }
