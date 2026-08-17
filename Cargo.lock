@@ -3169,6 +3169,7 @@ version = "0.9.65"
 dependencies = [
  "serde",
  "serde_json",
+ "stella-protocol",
  "thiserror 2.0.20",
  "toml",
 ]

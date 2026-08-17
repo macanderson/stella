@@ -58,6 +58,7 @@ pub mod contract;
 pub mod delivery_event;
 pub mod error;
 pub mod event;
+pub mod hook;
 pub mod journal;
 pub mod ladder;
 pub mod lane;
@@ -96,6 +97,10 @@ pub use event::{
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.
+// The lifecycle-hook vocabulary lives here so `stella-core` (which dispatches
+// the hooks) and `stella-plugin` (which grants them) can share one enum
+// without either depending on the other (#3310).
+pub use hook::HookEvent;
 pub use journal::{StampedEvent, stamped_line};
 pub use lane::{BuiltinLane, LaneId, TurnLane};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);

@@ -34,8 +34,8 @@ it a gate rather than documentation:
 
 Nothing here dispatches a stage: the four wrapper interception points are
 #3380 and do not exist yet, so a stage name is a declared name that
-load-checks. The crate is a leaf by contract, which is what lets the load-time
-contract be complete ahead of the socket it describes.
+load-checks. The crate takes no engine dependency by contract, which is what
+lets the load-time contract be complete ahead of the socket it describes.
 
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
@@ -47,8 +47,13 @@ declared list, so even a hand-built grant cannot leak a dispatch.
 
 This crate owns one decision: *what a manifest declares, and whether that
 declaration is coherent*. Pure functions over borrowed text; no I/O, no
-environment, and — like `stella-diag` — no workspace-crate dependencies, so
-anything may depend on it and it depends on nothing.
+environment, and exactly one workspace dependency: `stella-protocol`, for the
+shared `HookEvent` vocabulary (#3310). That edge exists because it *removes* a
+hand-kept mirror — the grant names the engine's dispatch points, and two
+copies of one enum in two crates that may not depend on each other drift with
+nothing red. `stella-protocol` is types-only, so it costs this crate no
+behaviour; a second workspace dependency here needs the same argument made
+again, not this one cited.
 
 Everything that *acts* on a manifest is out:
 
@@ -62,9 +67,13 @@ Everything that *acts* on a manifest is out:
   providers, running the oracle and tracking its flip — all host, all
   elsewhere.
 
-`HookEvent` here mirrors `stella-core::hooks::HookEvent` by name rather than
-importing it, because the dependency is forbidden in both directions;
-keeping the two sets identical is a review obligation tracked in #3310.
+`HookEvent` here is not a type of this crate's own: it is re-exported from
+`stella_protocol::hook`, and so is `stella-core::hooks::HookEvent` (#3310).
+The vocabulary lives underneath both because the dependency between them is
+forbidden in both directions — which used to mean two hand-kept copies, and a
+sixth engine event undeclarable in a manifest until someone remembered the
+mirror. It is one edit now, and `hook_vocabulary_is_the_shared_one`
+(`tests/manifest_grades.rs`) is the assertion that the sets cannot part.
 
 ## God files — do not add lines
 

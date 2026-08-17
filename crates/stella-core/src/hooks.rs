@@ -61,27 +61,15 @@ pub mod decision;
 
 /// Lifecycle events a hook can fire on (TS: `HookEvent`, `HOOK_EVENTS`,
 /// plus the #2684 additions `Stop` and `PreCompact`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HookEvent {
-    SessionStart,
-    PreToolUse,
-    PostToolUse,
-    /// The turn is about to complete (`driver::user_hooks`). Not
-    /// tool-scoped: the matcher is ignored.
-    Stop,
-    /// An overflow-summarization round is about to run
-    /// (`driver::user_hooks`). Not tool-scoped: the matcher is ignored.
-    PreCompact,
-}
-
-impl HookEvent {
-    /// Whether this event fires for one specific tool call — the events
-    /// whose matchers glob over the tool name. The rest ignore the matcher
-    /// and run every registered action.
-    pub fn tool_scoped(self) -> bool {
-        matches!(self, HookEvent::PreToolUse | HookEvent::PostToolUse)
-    }
-}
+///
+/// Defined in [`stella_protocol::hook`] and re-exported here, so this path
+/// keeps resolving. A plugin manifest grants the same five points
+/// (`stella-plugin::manifest`), and before #3310 that was a second hand-kept
+/// copy of this enum: the engine may not depend on `stella-plugin` (#3245
+/// open question 3) and `stella-plugin` may not depend on the engine, so the
+/// vocabulary lives in the crate underneath both. A sixth event is now one
+/// edit; it used to be two, with nothing red if you made only one.
+pub use stella_protocol::hook::HookEvent;
 
 /// Default per-hook timeout — 60s (TS: `DEFAULT_HOOK_TIMEOUT_MS`).
 pub const DEFAULT_HOOK_TIMEOUT_MS: u64 = 60_000;

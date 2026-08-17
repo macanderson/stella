@@ -106,3 +106,19 @@ fn the_arbiter_fixture_carries_the_full_grant() {
         ["triage", "plan", "execute", "witness", "verify"]
     );
 }
+
+/// The manifest's hook vocabulary IS the engine's, not a copy of it (#3310).
+///
+/// Before the shared home this assertion could not have been written: the two
+/// enums were distinct types in crates that may not depend on each other, so
+/// "the sets are identical" was a sentence in a doc comment, and a sixth
+/// engine event would have been undeclarable in a manifest with nothing red.
+/// `HookEvent::ALL` is what makes the *whole* set the subject, rather than
+/// the five a test author happened to spell out.
+#[test]
+fn hook_vocabulary_is_the_shared_one() {
+    let granted: Vec<HookEvent> = HookEvent::ALL.into_iter().collect();
+    let shared: Vec<stella_protocol::hook::HookEvent> =
+        stella_protocol::hook::HookEvent::ALL.into_iter().collect();
+    assert_eq!(granted, shared);
+}
