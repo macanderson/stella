@@ -1388,13 +1388,17 @@ mod tests {
 
     #[test]
     fn length_mismatch_reports_trailing_events() {
+        // Deliberately the RUN terminator, not a turn's: `TurnComplete` is
+        // excluded from the walk above as additive observability, so a stream
+        // trailing one is correctly *not* a divergence and would prove nothing
+        // about length handling here.
         let a = [stage(StageKind::Execute)];
-        let b = [stage(StageKind::Execute), complete()];
+        let b = [stage(StageKind::Execute), run_complete()];
         let diff = structural_diff(&a, &b);
         assert_eq!(diff.len(), 1);
         assert_eq!(diff[0].index, 1);
         assert_eq!(diff[0].left, None);
-        assert_eq!(diff[0].right.as_deref(), Some("turn_complete"));
+        assert_eq!(diff[0].right.as_deref(), Some("run_complete"));
     }
 
     // JSONL round-trip + torn tail
