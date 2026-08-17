@@ -1103,12 +1103,12 @@ fn skill_usage_records_per_execution_version_rows() {
     //       calls visible, crashed ones recoverable. v19 recounts stored
     //       block costs under one token rule (#925). v20 `foundry_tools`
     //       (#830). v21 `session_turn_diffs` (#1870). v22
-    //       `executions.journal_era` (#1981). v23
-    //       `execution_reflection.parse_error` (#2175). v24 splits
+    //       `executions.journal_era` (#1981). v23 `parse_error` (#2175). v24 splits
     //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
     //       `tool_calls.error_class` (#3145): which KIND of failure, so an
-    //       error rate can exclude misuse. v26 splits wrapper from door (#3388).
-    assert_eq!(SCHEMA_VERSION, 26);
+    //       error rate can exclude misuse. v26/v27 split wrapper (#3388) and
+    //       role (#3395) out of `kind`.
+    assert_eq!(SCHEMA_VERSION, 27);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
