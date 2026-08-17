@@ -165,18 +165,9 @@ impl Tool for Search {
         // the await: a `MutexGuard` is not `Send`, and holding one over the
         // embedding round trip would serialise concurrent searches on the
         // slowest thing either of them does.
-        let mut cache = std::mem::take(
-            &mut *self
-                .cache
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        );
-        let report = engine::report_cached(ctx.root(), query, self.config, &mut cache).await;
-        *self
-            .cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = cache;
-        report.rendered
+        engine::report_cached(ctx.root(), query, self.config, &self.cache)
+            .await
+            .rendered
     }
 }
 
@@ -294,8 +285,14 @@ mod tests {
     }
 
     /// The other half: an edit between two searches must not be served the
-    /// bundle gathered from the old bytes. The cache is keyed by content
-    /// identity precisely so this cannot happen.
+    /// bundle gathered from the old bytes.
+    ///
+    /// This test used to assert only that two different strings hash
+    /// differently and that an EMPTY cache misses — both true with the
+    /// invalidation branch deleted, so it proved nothing. An adversarial audit
+    /// caught that. It now stores an entry and asserts the three outcomes that
+    /// matter: a matching identity hits, a changed one misses, and the stale
+    /// entry is *evicted* rather than left for a later caller to be served.
     #[test]
     fn a_changed_file_invalidates_its_entry() {
         let mut cache = cache::GatherCache::default();
@@ -305,9 +302,24 @@ mod tests {
             before, after,
             "any byte change must change the identity, or invalidation cannot work"
         );
+
+        cache.store(
+            "src/a.rs".to_string(),
+            before,
+            stella_graph::FileNeighborhood::default(),
+        );
+        assert!(
+            cache.lookup("src/a.rs", &before).is_some(),
+            "an unchanged file must hit"
+        );
+        assert!(
+            cache.lookup("src/a.rs", &after).is_none(),
+            "a changed file must miss"
+        );
         assert!(
             cache.lookup("src/a.rs", &before).is_none(),
-            "an empty cache hits nothing"
+            "the stale entry must be evicted on the miss, not left to be served \
+             to a later caller that happens to ask with the old identity"
         );
     }
 

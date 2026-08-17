@@ -40,3 +40,6 @@ toml.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 # Property tests for foundry authorship and the approval precedence ladder.
 proptest.workspace = true
+# `poll!` — the cancellation-safety witness drops a tool future mid-await, the
+# way an elapsed dispatch timeout does.
+futures-util.workspace = true

@@ -36,7 +36,7 @@ pub(super) fn render(
         query,
         answer,
         config,
-        &mut GatherCache::default(),
+        &std::sync::Mutex::new(GatherCache::default()),
     )
 }
 
@@ -46,8 +46,14 @@ pub(super) async fn report_with(
     config: SearchConfig,
     resolution: stella_embed::Resolution,
 ) -> SearchReport {
-    crate::search::engine::report_with(root, query, config, resolution, &mut GatherCache::default())
-        .await
+    crate::search::engine::report_with(
+        root,
+        query,
+        config,
+        resolution,
+        &std::sync::Mutex::new(GatherCache::default()),
+    )
+    .await
 }
 
 pub(super) fn render_hit(
