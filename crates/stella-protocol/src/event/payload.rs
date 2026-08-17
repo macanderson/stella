@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`](super::AgentEvent) variant carries
+//! The leaf payload types an [`AgentEvent`] variant carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
@@ -18,6 +18,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ladder::LadderSnapshot;
+// Rustdoc-only. These types moved out of `event.rs` (#3436) and their doc
+// comments still cite the variants that carry them, which no longer resolve
+// from here — `doc-warnings` is `-D warnings`, so that is a red gate.
+//
+// Importing rather than writing `crate::AgentEvent` in the links is
+// deliberate: `schemars` publishes every doc comment verbatim as the wire
+// schema's `description`, so qualifying the paths would have leaked a Rust
+// module path into `docs/wire/*.schema.json` and the generated `.d.ts` — a
+// silent edit to the published contract to satisfy a lint. This keeps the
+// documented text byte-identical.
+#[allow(unused_imports)]
+use crate::AgentEvent;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
