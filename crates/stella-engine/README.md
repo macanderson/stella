@@ -20,6 +20,30 @@ Consumed by [`stella-serve`](../stella-serve) and external hosts.
 `stella-cli` deliberately does **not** link it — the CLI drives turns through
 `stella-core` directly.
 
+## Direction — this is the in-process embedding door
+
+Stella's goal is to be the AI engine inside somebody else's application: a
+durable, composable turn loop reached either **in process through these Rust
+ports** or **over the wire** through [`stella-serve`](../stella-serve)
+(`doc:engine-embedding`, `doc:serve-surface`). This crate is the first of those
+two doors, and step mode is what makes it durable — a host that owns a queue, a
+deadline, and a crash-restart story drives `run_step`, persists the
+`Checkpoint`, and resumes in a different process.
+
+Two things this door deliberately does not carry:
+
+- **No verification.** The staged pipeline is a *wrapper* around the loop, not
+  part of it, and it is leaving the workspace to become a plugin (#3246,
+  `doc:turn-loop-wrappers`). A host driving steps through this facade gets the
+  loop and the loop's own ending — since #3379 `run_turn` always emits its
+  terminal completion and no caller may filter it — and gets nothing that
+  adjudicates whether the work was correct. That is the plugin's job, and the
+  host opts into it.
+- **No wrapper socket.** The four-point wrapper contract (#3380) is assembled in
+  [`stella-runtime`](../stella-runtime), above this facade, because two of its
+  four points do I/O. Nothing about it belongs in a crate that inherits
+  `stella-core`'s I/O-free posture.
+
 ## Boundary — does this change belong here?
 
 Almost nothing belongs here. This crate **re-exports and documents**; the step

@@ -900,32 +900,30 @@ mod tests {
         }
     }
 
-    /// The half of the engine tie that still exists to pin.
+    /// The engine's working-set restoration (#2685) replays this tool by the
+    /// name and path parameter `stella_core::restore` spells, and refuses the
+    /// replay unless the schema declares `read_only` — the same one-definition
+    /// tie as the footer test above. A drift on either side is not cosmetic:
+    /// it is restoration silently ceasing to restore files.
     ///
-    /// `stella_core::restore`'s working-set restoration (#2685) used to
-    /// *replay* this tool by name, and a sibling test asserted the two
-    /// spellings against `restore::READ_TOOL` / `READ_PATH_PARAM`. Those
-    /// constants went away with the tool in #3244, and restoration now tells
-    /// the model to re-read through the session's tools rather than replaying
-    /// anything — so re-adding them here would pin this schema to a consumer
-    /// that no longer reads it. Re-arming the replay is tracked follow-up
-    /// work, not a silence.
-    ///
-    /// What is still load-bearing and cheap to assert: the schema shape that
-    /// replay (and the parked-wait probe) requires — a `read_only` claim and
-    /// a `path` parameter.
+    /// This replaces the narrowed `the_read_tool_keeps_the_schema_shape_a_replay_requires`
+    /// that stood in while the replay was disarmed by the tool purge (#3244):
+    /// the constants exist again, so the pin goes back to asserting against
+    /// them rather than against literals (#3470).
     #[test]
-    fn the_read_tool_keeps_the_schema_shape_a_replay_requires() {
+    fn the_read_tool_is_the_one_the_engines_restoration_replays() {
         let schema = ReadFile::default().schema();
-        assert_eq!(schema.name, "read_file");
+        assert_eq!(schema.name, stella_core::restore::READ_TOOL);
         assert!(
             schema.read_only,
             "restoration (and the parked-wait probe) replay only schema-declared \
              read-only tools; dropping the claim silently disables both"
         );
         assert!(
-            schema.input_schema["properties"].get("path").is_some(),
-            "the path parameter must keep the spelling a replay would use"
+            schema.input_schema["properties"]
+                .get(stella_core::restore::READ_PATH_PARAM)
+                .is_some(),
+            "the path parameter must keep the spelling the engine replays"
         );
     }
 

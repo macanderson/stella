@@ -50,7 +50,7 @@
         },
         {
           "const": "other",
-          "description": "A kind this reader does not recognize (written by a newer emitter).\n\nTolerant on the way in, **lossy on the way out**: the original token is\nnot preserved, so re-serializing an event that arrived with a future\nkind writes `\"other\"`. Unlike [`crate::event::AgentEvent::Unknown`], which keeps the\nwhole original object, a proxy or `replay::to_jsonl` that round-trips a\nnewer emitter's `block_registered` rewrites the kind. Widen this enum\nbefore relaying a stream whose kinds matter downstream.",
+          "description": "A kind this reader does not recognize (written by a newer emitter).\n\nTolerant on the way in, lossy on the way out: the original token is not preserved, so re-serializing an event that arrived with a future kind writes `\"other\"`. Unlike the `unknown` event, which keeps the whole original object, a proxy that round-trips a newer emitter's `block_registered` rewrites the kind. Widen this enum before relaying a stream whose kinds matter downstream.",
           "type": "string"
         }
       ]
@@ -370,7 +370,7 @@
       "type": "object"
     },
     "ContextUsage": {
-      "description": "The per-request roll-up of what one context recall cost\n(`docs/spec/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering\npipeline bills from, and the answer to \"what did this turn's context cost,\nand which sources drove it?\".\n\nDeliberately **content-free**: budget scalars, an accounting timestamp, and\nper-provider counts and costs. The spec's `served_frames` drill-down is\n*not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the\nsame [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular\nidentities locally, so an auditor still walks from a total to its frames\nwithout this type ever carrying one.",
+      "description": "The per-request roll-up of what one context recall cost: the envelope a metering pipeline bills from, and the answer to \"what did this turn's context cost, and which sources drove it?\". Per-provider detail rides in `providers`; `budget_consumed` is the total the host admitted.",
       "properties": {
         "as_of": {
           "description": "The report's accounting snapshot (RFC 3339), stamped by the host. This\nis the *accounting event* time, never the query's bi-temporal `as_of`\nretrieval pin — two different clocks.",
@@ -425,7 +425,7 @@
       ]
     },
     "DeliveryOutcome": {
-      "description": "What the pipeline did with the winning candidate's workspace.\n\nInternally tagged on `outcome`, so a `jq` reader selects an arm by field\nrather than by the presence or absence of a sibling key.",
+      "description": "What the pipeline did with the winning candidate's workspace, and why. Internally tagged on `outcome`, so a reader selects an arm by that field rather than by the presence or absence of a sibling key.",
       "oneOf": [
         {
           "description": "The candidate's work was adopted into the real tree. The counts are\nwhat adoption itself measured (git's `numstat` plus the applied patch),\nnot a re-derivation — so a zero-file delivery is a real, reportable\nanswer and is distinguishable from a decline.",
@@ -501,7 +501,7 @@
       ]
     },
     "ErrorClass": {
-      "description": "Why a tool call failed, as a closed machine-readable set (#3145).\n\n[`ToolOutput::Error`]'s `message` is prose written for the model to retry\nagainst; this is the axis a *measurement* needs, because a per-tool error\nrate cannot mean anything while a tool defect, model misuse, and a policy\nrefusal all count as the same failure. The variants partition failures by\n**whose problem they are**: the model's ([`Self::InvalidInput`],\n[`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],\n[`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],\n[`Self::Environment`]), or ours ([`Self::Internal`]).\n\nDeliberately **not** here: an `abandoned` class. A call whose turn ended\nbefore it returned never produced a `ToolOutput` at all — abandonment is a\nstore-side lifecycle fact, not an error a tool can report.\n\nForward-compat matches [`crate::receipt::BlockKind`]: an unknown token\nwritten by a newer emitter deserializes to [`Self::Other`] rather than\nfailing the whole event. Lossy on the way out for the same reason —\nre-serializing writes `\"other\"`, not the original token.",
+      "description": "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.",
       "oneOf": [
         {
           "const": "invalid_input",
@@ -642,7 +642,7 @@
       "type": "object"
     },
     "LadderRung": {
-      "description": "Which rung of the evidence ladder a `Verdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`VerdictEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers two rungs that are not the same answer —\n  [`LadderRung::Unverifiable`] (\"no probe could look\") and\n  [`LadderRung::Unverified`] (\"the probes looked and did not settle it\") —\n  and the only thing separating them in the old shape was the wording of a\n  summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the verifier arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
+      "description": "Which rung of the evidence ladder a `verdict` event actually came to rest on. The verdict's `passed` and `deterministic` flags cannot express this on their own: several distinct outcomes share the same pair of booleans, so the rung is carried explicitly rather than inferred. Read this field, not the flags, when you need to know what was established.",
       "oneOf": [
         {
           "const": "submit_fast",
@@ -671,7 +671,7 @@
         },
         {
           "const": "witness_unsatisfiable",
-          "description": "The authored witness produced the **same failure** before and after the\nwork, so it cannot discriminate: nothing it reports is a fact about the\nchange, and no revision can make it one (#2540).\n\nReads as a claim about the **witness**, not about the work — the same\n`-able` / `-ed` distinction [`LadderRung::Unverifiable`] and\n[`LadderRung::Unverified`] already carry. \"Unsatisfiable\" says the\ninstrument's demand cannot be met by doing the task; it says nothing\nabout whether the task was done.\n\nOrdered above [`LadderRung::Revise`] in the ladder, which is the whole\npoint of having it. A witness that fails post-execute reaches `Revise`\nat the ladder's first step, and `Revise` blames the worker: the failure\nis fed back as the thing to fix. On Terminal-Bench `fix-git` a witness\nenumerated every commit unreachable from `master` and counted the\npipeline's own snapshot commits among them, so it stayed red however\ncorrectly the agent merged the real one — and every revise cycle minted\nanother snapshot, hence another violation. The worker diagnosed it\nexactly and could do nothing; the run ended on the deadline rather than\non the logic.\n\nThe discriminator is **fingerprint equality**\n(`crate::witness::airlock::FailureFingerprint`), never \"it failed\ntwice\": a witness that fails *differently* after the work is genuine\nfeedback about the change and keeps reaching `Revise`.",
+          "description": "The authored witness produced the same failure before and after the work, so it cannot discriminate: nothing it reports is a fact about the change, and no revision can make it one. This is a claim about the witness, not about the work -- it says the instrument's demand cannot be met by doing the task, and says nothing about whether the task was done. The discriminator is failure-fingerprint equality, never merely \"it failed twice\": a witness that fails differently after the work is genuine feedback and reaches `revise` instead.",
           "type": "string"
         },
         {
@@ -1079,7 +1079,7 @@
       "type": "object"
     },
     "PartialUsage": {
-      "description": "The accounting an adapter had already observed when an attempt died before\nits terminal usage frame arrived.\n\nA mid-stream disconnect is not a total loss of accounting. The\nAnthropic-shaped dialects report the prompt's cost in `message_start`,\ninside the first few hundred bytes of the response, so a stream cut during\ngeneration has *already* delivered exact input, cache-read and cache-write\ncounts. Before this type existed those numbers travelled exactly as far as\nthe adapter's stack frame: [`crate::error::ProviderError`] carried a\n`String` and nothing else, the `?` on the next chunk dropped the whole\nenvelope, and the turn was recorded as though the attempt had cost nothing.\nA user watching a dropped connection was told their accounting was\n\"incomplete\" for numbers the process had been holding a moment earlier.\n\nEvery field is a LOWER BOUND, and that is the point: it is a floor under\nreal spend, never a substitute for a provider-attested total. `reported`\non the inner [`CompletionUsage`] is therefore always `false`, which keeps a\npartial structurally unable to pass [`CompletionUsage::is_complete`] and so\nout of the settled-accounting path no matter how complete it looks.",
+      "description": "The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting.",
       "properties": {
         "cost_usd": {
           "description": "`usage` priced at the serving model's catalog rates, or `0.0` when the\nadapter had no pricing row for the model. Never provider-attested.",
@@ -1153,7 +1153,7 @@
       ]
     },
     "ProofStep": {
-      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].\n\nAdditive in one direction only: an older reader that does not know the\n`proof` type tag preserves the whole event via\n[`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and\nmeets a future `kind` fails the whole event — this nested enum is closed,\nwith no `Unknown` step (see [`crate::event`]'s module docs on nested\nvocabularies).",
+      "description": "One step of the proof a turn builds for its own work, in the order the pipeline makes the observation. Carried by the `proof` event. Note the forward-compatibility asymmetry: a reader that does not know the `proof` event preserves it whole as an `unknown` event, but a reader that knows `proof` and meets a future `kind` here fails the whole event -- this nested vocabulary is closed and has no unknown step.",
       "oneOf": [
         {
           "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
@@ -1271,7 +1271,7 @@
           "type": "object"
         },
         {
-          "description": "The evidence channels worked, and what they returned did not amount to\na proof ([`crate::LadderRung::Unverified`]).\n\nThe near-twin of [`Self::VerificationUnavailable`] and deliberately not\nthe same step, for the reason that one exists at all: a reader has to be\nable to tell \"the instruments were blind\" from \"the instruments worked\nand the answer was not enough\". They imply opposite repairs — fix the\nprobe, versus produce the missing observation — and a rail that renders\nboth as one row sends every reader to the wrong one half the time.\n\nThis is the step that replaced the model verdict. Where a run used to\nrecord a second model's opinion on inconclusive evidence, it now records\nthat the evidence was inconclusive and stops, so the trace states the\nlimit of what was established rather than papering over it.",
+          "description": "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Deliberately distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation.",
           "properties": {
             "kind": {
               "const": "verification_unproven",
@@ -1937,7 +1937,7 @@
   "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls below can delegate to it after routing\n[`AgentEvent::Unknown`] around it. Without that indirection the forward-\ncompat fallback would mean hand-writing a visitor for every variant.",
   "oneOf": [
     {
-      "description": "A stage boundary was crossed. `scope` says **whose** stage it is, and\nit is not decoration (#3398).\n\nTwo disjoint authorities emit stages. The engine emits three kinds,\nonce per turn ([`crate::StageScope::Turn`]). A wrapper — the staged pipeline,\na goal loop — emits its own vocabulary once per run\n([`crate::StageScope::Run`]). Before this field existed the pipeline dropped\nthe engine's copies outright, because a consumer receiving both had no\nway to tell them apart and several branch on stage transitions.\n\nThe deck is the reason this is a required field rather than a hint: it\ntreats a stage transition away from a scope review as the human's\napproval of that review. A turn-scoped stage arriving while a scope\ngate is open would forge consent nobody gave, so every consumer that\nbranches on stages must be able to select the scope it means.",
+      "description": "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression.",
       "properties": {
         "name": {
           "$ref": "#/$defs/StageKind"
@@ -2641,7 +2641,7 @@
               "type": "null"
             }
           ],
-          "description": "Why generation stopped, as the provider reported it\n([`crate::completion::FinishReason`]). `Length` is the\nonly *ground truth* a consumer has that this step was cut off at\nthe output ceiling — the \"we stopped first\" event.\n\nIt is here because it was previously nowhere: the engine knew the\nreason and dropped it at this boundary, so every downstream reader\nhad to *infer* truncation from step shape. The benchmark harness\ninferred it as \"≥16384 output tokens and no tool call\", which was\nright when the output ceiling was 16K and became a false positive\nthe moment the ceiling moved to 64K — the reading behind the\nunexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An\ninferred cap hit cannot be told from a long answer; a reported one\ncan.\n\n`None` means the provider did not report a reason (or the stream\npredates this field — hence `serde(default)`), and must never be\nread as \"not truncated\": absence of the signal is not evidence of\na clean stop."
+          "description": "Why generation stopped, as the provider reported it. `length` is the only ground truth a consumer has that this step was cut off at the output ceiling -- the \"we stopped first\" signal. Absent on older streams, so treat a missing value as unknown rather than as a natural stop."
         },
         "input_tokens": {
           "format": "uint64",
@@ -2738,7 +2738,7 @@
           "type": "integer"
         },
         "model": {
-          "description": "The model the failed call was dispatched to.\n\nPer-call attribution, on the same contract as\n[`AgentEvent::StepUsage`]'s `provider`: this names what was\nactually being called, never the session's configured default.\nSourced from [`crate::Provider::model`] (or the caller's own model\nhint) rather than hardcoded — until #2831 every one of these rows\nsaid [`UNKNOWN_MODEL`], which made a per-model failure census\nuncomputable and left mid-turn fallback unable to say which model\nhad been failing.\n\n[`UNKNOWN_MODEL`] survives as the one documented spelling of \"no\nmodel could be named here\", and is expected to be rare.",
+          "description": "The model the failed call was dispatched to. Per-call attribution, on the same contract as a `step_usage` event's `provider`: this names what was actually being called, never the session's configured default.",
           "type": "string"
         },
         "partial": {
@@ -3439,7 +3439,7 @@
       "type": "object"
     },
     {
-      "description": "A bounded child turn started or finished — the `Started`/`Finished`\nbracket IS the attribution for every event emitted between them.\nSee [`crate::subagent_event`] for what the child forwards and what it\ndeliberately drops at that boundary.",
+      "description": "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a deliberately narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops.",
       "properties": {
         "phase": {
           "$ref": "#/$defs/SubAgentPhase"
@@ -3462,7 +3462,7 @@
       "type": "object"
     },
     {
-      "description": "What the pipeline did with the winning candidate's workspace, and why\n(#2942). Emitted exactly once per isolated run, at the single point the\ndecision is taken — so \"was this candidate delivered?\" is answered on\nthe wire rather than inferred from whether a [`AgentEvent::FileChange`]\nburst happened to follow the verdict.\n\n`root` is the candidate workspace path, absent only when no workspace\nwas ever created. It is a per-run temporary directory, so it is a\nrun-to-run artifact and no golden comparison may key on its value.\n\nSee [`crate::delivery_event`] for why the outcome is a sum type and what\nthe counts are measured from.",
+      "description": "What the pipeline did with the winning candidate's workspace, and why. Emitted exactly once per isolated run, at the single point the decision is taken. The `delivery` object is internally tagged on its own `outcome` field, so a reader selects an arm by that field rather than by the presence or absence of a sibling key.",
       "properties": {
         "delivery": {
           "$ref": "#/$defs/DeliveryOutcome",
@@ -3492,7 +3492,7 @@
       "type": "object"
     },
     {
-      "description": "The turn failed. `retryable` is the source's own classification (see\n[`crate::error::ProviderError::is_retryable`]), never re-derived from\n`message` by a consumer.",
+      "description": "The turn failed. `retryable` is the source's own classification of the failure and must be read as given -- never re-derived by matching on `message`, whose wording is not part of this contract.",
       "properties": {
         "message": {
           "type": "string"

@@ -27,7 +27,36 @@ use std::path::Path;
 use stella_core::search::{Depth, Facet, facets_at};
 use stella_graph::{CodeGraph, NeighborhoodSymbol};
 
+use super::cache::{self, GatherCache};
 use super::engine::Hit;
+
+/// The file's neighborhood, from the session cache when the file's bytes are
+/// unchanged since it was gathered, and from the graph otherwise.
+///
+/// `source` doubles as the cache key: `None` (an unreadable or non-UTF-8
+/// file) has no identity to validate against, so it bypasses the cache
+/// entirely and is gathered fresh — the conservative direction. A graph the
+/// path is unknown to degrades to `None` exactly as the un-cached gather did,
+/// and is not cached either: a miss is not a fact worth retaining.
+fn gathered_neighborhood(
+    cache: &mut GatherCache,
+    graph: &CodeGraph,
+    path: &str,
+    source: Option<&str>,
+) -> Option<stella_graph::FileNeighborhood> {
+    let identity = source.map(cache::content_identity);
+    if let Some(identity) = identity
+        && let Some(neighborhood) = cache.lookup(path, &identity)
+    {
+        return Some(neighborhood);
+    }
+    let neighborhood = graph.file_neighborhood(Path::new(path)).ok()?;
+    cache.gathered += 1;
+    if let Some(identity) = identity {
+        cache.store(path.to_string(), identity, neighborhood.clone());
+    }
+    Some(neighborhood)
+}
 
 /// Symbols named per hit. Past this the list stops being a summary.
 const MAX_SYMBOLS: usize = 8;
@@ -45,7 +74,13 @@ const MAX_BODY_LINES: usize = 40;
 /// know all degrade to fewer lines, never to an error. A search that failed
 /// to enrich a hit still found the hit, and losing the whole answer over a
 /// detail line would be the worst possible trade.
-pub fn render_hit(graph: Option<&CodeGraph>, root: &Path, hit: &Hit, depth: Depth) -> String {
+pub fn render_hit(
+    graph: Option<&CodeGraph>,
+    root: &Path,
+    hit: &Hit,
+    depth: Depth,
+    cache: &mut GatherCache,
+) -> String {
     let facets = facets_at(depth);
     // `Facet::Path` is the header and is present at every depth by
     // construction, so it is written unconditionally rather than looked up.
@@ -55,7 +90,8 @@ pub fn render_hit(graph: Option<&CodeGraph>, root: &Path, hit: &Hit, depth: Dept
         return block;
     };
     let source = std::fs::read_to_string(root.join(&hit.path)).ok();
-    let Ok(neighborhood) = graph.file_neighborhood(Path::new(&hit.path)) else {
+    let Some(neighborhood) = gathered_neighborhood(cache, graph, &hit.path, source.as_deref())
+    else {
         return block;
     };
     // The matched symbol leads the detailed facets when the ranking named

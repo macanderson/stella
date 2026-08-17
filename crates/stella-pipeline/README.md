@@ -1,10 +1,13 @@
 # stella-pipeline
 
-The orchestration plane above `stella-core::Engine`. It drives one prompt through the
-staged turn flow — **evaluate → enhance → route → execute → witness → verify → verdict →
-revise** (the witness is authored on demand, after execution, once the warrant has read
-the diff) — over injected ports, emitting an `AgentEvent` at every stage boundary. This is
-the default `stella run` path.
+The verification wrapper around `stella-core::Engine`. It drives one prompt through the
+staged turn flow — **triage → recall → research → plan → scope → execute → witness →
+verify → verdict** (`stage_rank` in [`src/replay.rs`](src/replay.rs) is the canonical
+ordering; the witness is authored on demand, *after* execution, once the warrant has read
+the diff, and the revise back-edges land on execute so re-execution never re-authors) —
+over injected ports, emitting an `AgentEvent` at every stage boundary. This is still the
+default `stella run` path today, and it is the crate on its way out of the workspace: see
+"Direction" below before planning anything here.
 
 Two boundaries define the crate. First, **no I/O**: it never imports a provider SDK, a
 shell, a context store, or a terminal — everything crosses the traits in
@@ -20,6 +23,47 @@ Depends on `stella-protocol` (wire types and `AgentEvent`) and `stella-core` (`E
 `Router`, `BudgetGuard`, `ToolExecutor`, `Sleeper`), plus `tokio`, `async-trait`, `serde`,
 `serde_json` and `thiserror`. Nothing in the workspace depends on it except `stella-cli`,
 which owns the port implementations and the `Router` itself. It builds no binary.
+
+## Direction — this crate becomes a plugin
+
+Stella's product goal is a **simple, extensible, durable, composable plugin
+architecture around one agent turn loop**, embeddable in any application through the
+Rust ports or the HTTP surface. Verification is not part of that loop. It is a wrapper,
+this crate is that wrapper, and the plan (`doc:turn-loop-wrappers`, sequenced by #3246)
+is for it to leave the workspace and be installed as a plugin instead.
+
+State it plainly, because it changes what Stella *is*: **once this crate is a plugin,
+Stella does not verify its own work unless the plugin is installed.** A raw turn runs the
+loop, reports what it changed, and stops. The witness contract, the flip oracle, the
+evidence ladder and the revise policy all travel with the plugin — they do not become
+weaker, they become opt-in, and the product claim moves with them.
+
+The three moves, in dependency order:
+
+1. **The engine owns its ending** (#3379, landed). This crate no longer hands each
+   `run_turn` a private channel, no longer filters the engine's events, and no longer
+   emits the engine's `Complete` on its behalf. The journal now carries one engine
+   completion per turn plus one run-level ending owned by the run's owner.
+2. **One wrapper contract** (#3380, open): `before_turn` / `after_turn` / `judge` /
+   `again?`, defined in [`stella-runtime`](../stella-runtime) rather than in
+   `stella-core`, because two of those four points do I/O. This crate's stages map onto
+   it — triage/recall/research/plan/scope are `before_turn`, witness is `after_turn`,
+   verify is `judge`, revise is `again?`. `judge` may not call a model, which
+   [`src/verify.rs`](src/verify.rs)'s `ladder_decision` already satisfies: it is
+   terminal at all five outcomes and #2584 removed the model verdict structurally.
+3. **Stages become a manifest** (#3381, open): the ordered stage list moves into the
+   `[wrapper]` block [`stella-plugin`](../stella-plugin) already parses, keyed by a
+   variant id the store's `pipeline_variant` column records (#3388, landed) so two
+   pipeline designs can be compared with a `GROUP BY` instead of a rebuild. The
+   manifest is parsed and **nothing here reads it yet** — that wiring is #3408. The
+   last step of the same issue inverts the flag: the raw loop becomes the default and
+   `--pipeline <variant>` opts in, with `--no-pipeline` kept as an inert alias.
+
+Two planning consequences right now. Anything that would grow
+[`src/pipeline.rs`](src/pipeline.rs) — already a god file closed to growth — is
+probably a manifest entry or a stage module, not a new branch. And nothing here may
+reach back *into* the engine: a private channel, a filtered event, or an ending emitted
+on the engine's behalf is the coupling that has to be dead before the crate can leave.
 
 ## Boundary — does this change belong here?
 

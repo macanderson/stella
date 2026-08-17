@@ -450,10 +450,31 @@ fn the_liveness_fallback_takes_a_lock_that_does_not_exist_yet() {
 /// Deliberately slow: it waits out the real [`STOP_GRACE`], because a test
 /// that shortened the grace would be testing a different constant than the one
 /// that ships.
+///
+/// # The script must not block in a forked child (#1721)
+///
+/// `stop` signals the process GROUP — `signal_group` is `kill(-pgid, …)` —
+/// so a `trap` in the shell protects only the shell. The original fixture was
+/// `trap '' TERM; sleep 120`, where `sleep` is a separate process that never
+/// ignored anything: the group `SIGTERM` killed it outright, `sh` reaped it
+/// and exited normally, and the lock was released in ~81ms. That is why this
+/// test "flaked" — twice at 81.41ms and 81.65ms, agreeing to a quarter of a
+/// millisecond, which is a deterministic path and not a scheduler race. It had
+/// been re-hardened three times as a load problem it never was.
+///
+/// So the shell itself has to be the thing that survives, and it must stay
+/// runnable rather than parked inside a child: the loop below keeps `sh` — the
+/// process holding the liveness lock and leading the group — alive across the
+/// whole grace, while its short-lived `sleep` children are free to die to the
+/// same signal without ending the run.
 #[test]
 fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     let (dir, registry) = temp_registry("stop-ignores-term");
-    let mut run = spawn_sh(&registry, "stubborn", "trap '' TERM; sleep 120");
+    let mut run = spawn_sh(
+        &registry,
+        "stubborn",
+        "trap '' TERM; while :; do sleep 1; done",
+    );
     let sidecar = registry.sidecar_dir(&run.id);
     let id = run.id.clone();
 

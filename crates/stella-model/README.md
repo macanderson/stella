@@ -17,6 +17,20 @@ so a new OpenAI-compatible endpoint costs a config row in `stella-cli` rather
 than a module here. A new module is justified by a structurally different
 request/response shape, never by a new vendor name.
 
+## Direction — BYOK belongs to the host, and no plugin ever sees a key
+
+Stella is becoming an engine embedded in other applications, reached through the
+Rust ports or over HTTP (`doc:engine-embedding`). Two things that puts on this
+crate. Keys and endpoints are the **host's**: a wrapper or plugin around the loop
+names a *role intent* (`triage`, `planner`, `witness_author`) and the host resolves
+it against the user's providers, so nothing in an extension plane ever holds a
+credential or a URL (`doc:turn-loop-wrappers` §9.3, and
+[`stella-plugin`](../stella-plugin) enforces the manifest half). And when the
+engine is embedded rather than run from a terminal, the parity matrix in
+[`src/provider_parity.rs`](src/provider_parity.rs) is the only thing standing
+between a host and a silent capability drop — a posture declared per provider per
+axis, each naming the witness test that proves it on the wire.
+
 ## Where it sits
 
 Depends on exactly one workspace crate, `stella-protocol` (`Provider`,

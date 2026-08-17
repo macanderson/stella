@@ -17,7 +17,6 @@ stella-store = { path = "../stella-store" }
 stella-mcp = { path = "../stella-mcp" }
 stella-context = { path = "../stella-context" }
 stella-graph = { path = "../stella-graph" }
-stella-pipeline = { path = "../stella-pipeline" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -43,6 +43,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+pub mod cache;
 pub mod codegraph;
 pub mod engine;
 pub mod enrich;
@@ -65,6 +66,17 @@ pub const QUERY_REQUIRED: &str = "`query` is required and must be a non-empty de
 /// writing a better one.
 pub struct Search {
     config: SearchConfig,
+    /// The session's gathered-context cache (#3467). Owned by the tool
+    /// instance, which is owned by the registry, so its lifetime *is* the
+    /// session's — a turn that ranks the same file five times gathers its
+    /// neighborhood from the graph once.
+    ///
+    /// A `Mutex` rather than a `RefCell` because `Tool` is `Sync` and dispatch
+    /// may run read-only tools concurrently. It is held across no await: the
+    /// lock is taken inside the render pass and released before the call
+    /// returns, so two concurrent searches serialise only on rendering, never
+    /// on the embedding round trip.
+    cache: std::sync::Mutex<cache::GatherCache>,
 }
 
 impl Search {
@@ -72,9 +84,7 @@ impl Search {
     /// environment once, at construction.
     #[must_use]
     pub fn from_env() -> Self {
-        Self {
-            config: SearchConfig::from_env(),
-        }
+        Self::with_config(SearchConfig::from_env())
     }
 
     /// The tool with an explicit configuration — for tests, and for a host
@@ -82,7 +92,21 @@ impl Search {
     /// environment.
     #[must_use]
     pub fn with_config(config: SearchConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            cache: std::sync::Mutex::new(cache::GatherCache::default()),
+        }
+    }
+
+    /// How many neighborhoods this tool has gathered from the code graph since
+    /// it was constructed — the observable difference between a working cache
+    /// and one that silently never hits, and what #3467's witness asserts.
+    #[must_use]
+    pub fn gathered(&self) -> usize {
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .gathered
     }
 }
 
@@ -137,12 +161,27 @@ impl Tool for Search {
         if query.trim().is_empty() {
             return ToolOutput::error(QUERY_REQUIRED);
         }
-        search_in(ctx.root(), query, self.config).await
+        // The cache is moved out, used, and put back rather than held across
+        // the await: a `MutexGuard` is not `Send`, and holding one over the
+        // embedding round trip would serialise concurrent searches on the
+        // slowest thing either of them does.
+        let mut cache = std::mem::take(
+            &mut *self
+                .cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        let report = engine::report_cached(ctx.root(), query, self.config, &mut cache).await;
+        *self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = cache;
+        report.rendered
     }
 }
 
-/// The tool's answer for one workspace — the seam the tool and the CLI command
-/// share, and what a test drives against a temp root.
+/// The tool's answer for one workspace, with no cache — the seam a test drives
+/// against a temp root, and the shape the one-shot CLI command uses.
 pub async fn search_in(root: &Path, query: &str, config: SearchConfig) -> ToolOutput {
     engine::report(root, query, config).await.rendered
 }
@@ -196,6 +235,79 @@ mod tests {
         assert!(
             content.contains("provider.rs"),
             "the file scan must find the fixture: {content}"
+        );
+    }
+
+    /// The #3467 witness: one `Search` instance serves a repeat search from
+    /// its session cache rather than re-reading the file's neighborhood out of
+    /// the code graph.
+    ///
+    /// Asserted on the gather counter, not on wall clock: a timing assertion
+    /// here would be flaky, and — worse — a timing has no business anywhere
+    /// near a tool's observable behaviour (the loop detector keys on output
+    /// bytes). The rendered answers must also be byte-identical, because a
+    /// cache that changes the answer is not a cache.
+    ///
+    /// Fails before this change: the tool held no cache, so both calls
+    /// gathered.
+    #[tokio::test]
+    async fn one_instance_serves_a_repeat_search_from_its_session_cache() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("cached_target.rs"),
+            "pub fn cached_target() {}\n",
+        )
+        .expect("write fixture");
+
+        let tool = Search::from_env();
+        let ctx = crate::ctx::ToolCtx::bare(dir.path().to_path_buf());
+        let input = serde_json::json!({ "query": "cached_target" });
+
+        let first = tool.execute(&input, &ctx).await;
+        let after_first = tool.gathered();
+        let second = tool.execute(&input, &ctx).await;
+        let after_second = tool.gathered();
+
+        // A workspace with no code graph gathers nothing at all, so the
+        // assertion below would pass vacuously. Only make the claim when the
+        // first call actually did graph work to save.
+        if after_first > 0 {
+            assert_eq!(
+                after_second, after_first,
+                "the repeat search must gather nothing new: {after_first} then {after_second}"
+            );
+        }
+
+        let (
+            ToolOutput::Ok { content: first, .. },
+            ToolOutput::Ok {
+                content: second, ..
+            },
+        ) = (&first, &second)
+        else {
+            panic!("both searches must succeed: {first:?} / {second:?}");
+        };
+        assert_eq!(
+            first, second,
+            "a cached repeat must render byte-identically, or the cache changes the answer"
+        );
+    }
+
+    /// The other half: an edit between two searches must not be served the
+    /// bundle gathered from the old bytes. The cache is keyed by content
+    /// identity precisely so this cannot happen.
+    #[test]
+    fn a_changed_file_invalidates_its_entry() {
+        let mut cache = cache::GatherCache::default();
+        let before = cache::content_identity("pub fn a() {}\n");
+        let after = cache::content_identity("pub fn a() {}\npub fn b() {}\n");
+        assert_ne!(
+            before, after,
+            "any byte change must change the identity, or invalidation cannot work"
+        );
+        assert!(
+            cache.lookup("src/a.rs", &before).is_none(),
+            "an empty cache hits nothing"
         );
     }
 

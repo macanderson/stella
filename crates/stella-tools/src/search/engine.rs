@@ -250,7 +250,23 @@ impl SearchReport {
 /// reads against a local file, so paying a thread hop for each would cost more
 /// than it saves.
 pub async fn report(root: &Path, query: &str, config: SearchConfig) -> SearchReport {
-    report_with(root, query, config, stella_embed::from_env()).await
+    // A fresh cache per call: this is the one-shot door (`stella search`), and
+    // a process that answers one query has nothing to reuse. The `search`
+    // TOOL calls `report_cached` instead and keeps its cache for the session.
+    let mut cache = crate::search::cache::GatherCache::default();
+    report_with(root, query, config, stella_embed::from_env(), &mut cache).await
+}
+
+/// [`report`] against a caller-owned cache — the door the session-lifetime
+/// `search` tool opens, so the files a turn keeps re-ranking are gathered from
+/// the graph once rather than once per call.
+pub async fn report_cached(
+    root: &Path,
+    query: &str,
+    config: SearchConfig,
+    cache: &mut crate::search::cache::GatherCache,
+) -> SearchReport {
+    report_with(root, query, config, stella_embed::from_env(), cache).await
 }
 
 /// [`report`], with the embedder's resolution passed in rather than read from
@@ -263,6 +279,7 @@ pub async fn report_with(
     query: &str,
     config: SearchConfig,
     resolution: Resolution,
+    cache: &mut crate::search::cache::GatherCache,
 ) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
@@ -305,7 +322,7 @@ pub async fn report_with(
         }
     };
 
-    let output = render(graph.as_ref(), root, query, &answer, config);
+    let output = render(graph.as_ref(), root, query, &answer, config, cache);
     if let Some(graph) = graph {
         graph.shutdown();
     }
@@ -960,6 +977,7 @@ pub fn render(
     query: &str,
     answer: &Answer,
     config: SearchConfig,
+    cache: &mut crate::search::cache::GatherCache,
 ) -> ToolOutput {
     let allocation: Allocation = allocate(answer.hits.len(), config.depth, config.budget);
 
@@ -992,7 +1010,7 @@ pub fn render(
 
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
         content.push('\n');
-        content.push_str(&enrich::render_hit(graph, root, hit, *depth));
+        content.push_str(&enrich::render_hit(graph, root, hit, *depth, cache));
     }
 
     if allocation.truncated() {
