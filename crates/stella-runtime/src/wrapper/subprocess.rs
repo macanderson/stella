@@ -14,6 +14,30 @@
 //! budgets are the same budgets — one subprocess plane, one clamp — and a
 //! number in two places is how the last limit died (AGENTS.md § God files).
 //!
+//! The other two halves of that spawn policy are imported for the same reason,
+//! and a plugin needs them **more** than a hook does: a hook is at least
+//! repository- or operator-authored, while a plugin is third-party code a user
+//! installed once.
+//!
+//! - **The read is capped** at [`stella_tools::exec::MAX_CAPTURE_BYTES`], at
+//!   ingest. `wait_with_output` holds whatever the child writes, so a cap
+//!   applied to an error message afterwards only ever ran once the whole
+//!   stream was already resident — and `after_turn` is documented as the point
+//!   that runs a test suite or a benchmark, so the volume is not this host's to
+//!   trust. Where the hook plane elides the middle and keeps reading (its
+//!   output *is* the product), this transport refuses: the answer is one JSON
+//!   document, a truncated copy of it cannot be decoded, and every byte read
+//!   after the ceiling is spent on a call already lost
+//!   ([`stella_tools::exec::Overflow::Refuse`], [`WrapperError::OutputCap`]).
+//! - **The child leads its own process group**
+//!   ([`stella_tools::exec::detach_into_own_process_group`]), with
+//!   [`stella_tools::exec::GroupKillGuard`] armed on its pid. `kill_on_drop`
+//!   reaches the direct child and nothing else, so a plugin that backgrounds
+//!   work — again, the `after_turn` workload — would leave grandchildren
+//!   running past the turn they were gathering evidence for. The guard is
+//!   fired on the timeout and on the refusal, and disarmed once the child has
+//!   answered.
+//!
 //! # What this transport does not do, on purpose
 //!
 //! - **It sets no working directory.** `doc:wrapper-socket` §6 bans cwd from
@@ -64,6 +88,7 @@ use stella_plugin::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, PROTOCOL_VERSION,
     WrapperRequest, WrapperResponse,
 };
+use stella_tools::exec::{Capture, MAX_CAPTURE_BYTES, Overflow, capture};
 use stella_tools::subprocess_env::is_sensitive_env_name;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -263,13 +288,27 @@ impl SubprocessWrapper {
             .stderr(Stdio::piped())
             // A wrapper that outlives its budget is killed; without this, a
             // child that ignores the drop keeps running after the turn it was
-            // gathering evidence for has been reported.
+            // gathering evidence for has been reported. It reaches the direct
+            // child and nothing else, which is all there is on non-unix.
             .kill_on_drop(true);
+        // The rest of the tree. `after_turn` is where a plugin runs a test or a
+        // benchmark, so it is the point most likely to background something,
+        // and a backgrounded grandchild is exactly what `kill_on_drop` cannot
+        // reach — it outlives the turn it was gathering evidence for.
+        #[cfg(unix)]
+        stella_tools::exec::detach_into_own_process_group(&mut command);
 
         let mut child = command.spawn().map_err(|source| WrapperError::Spawn {
             program: self.program.clone(),
             source,
         })?;
+        // The child leads the group, so its pid *is* the group id. Taken
+        // before anything borrows the child, and armed immediately: between
+        // here and the disarm below, every path out — a returned error, a
+        // dropped future, a panic — reaps the whole group.
+        #[cfg(unix)]
+        let mut guard =
+            stella_tools::exec::GroupKillGuard::arm(child.id().unwrap_or(0).cast_signed());
         let Some(mut stdin) = child.stdin.take() else {
             return Err(WrapperError::Transport {
                 program: self.program.clone(),
@@ -286,28 +325,77 @@ impl SubprocessWrapper {
             stdin.write_all(b"\n").await?;
             stdin.shutdown().await
         };
-        let (written, waited) =
-            match tokio::time::timeout(self.timeout, futures_join(write, child.wait_with_output()))
-                .await
-            {
-                Ok(pair) => pair,
-                Err(_) => {
-                    return Err(WrapperError::Timeout {
-                        program: self.program.clone(),
-                        timeout: self.timeout,
-                    });
+        let mut write = std::pin::pin!(write);
+        let mut written: Option<std::io::Result<()>> = None;
+        let mut capture = std::pin::pin!(capture(&mut child, MAX_CAPTURE_BYTES, Overflow::Refuse));
+        // The capture ends the exchange, and the write is abandoned if it has
+        // not finished by then. Awaiting both — which is what this was — makes
+        // the refusal below wait on a write the plugin has by definition
+        // stopped reading, so a request past the OS pipe buffer (~64 KiB: one
+        // ordinary `changed_files` list) would block there until the budget
+        // ran out and turn a prompt refusal back into a late `Timeout`.
+        let waited = tokio::time::timeout(self.timeout, async {
+            loop {
+                tokio::select! {
+                    // Biased so a write that is already finished is collected
+                    // rather than discarded by a capture ready in the same
+                    // poll: the error it may carry is worth more than one
+                    // iteration of the loop.
+                    biased;
+                    result = &mut write, if written.is_none() => written = Some(result),
+                    result = &mut capture => break result,
                 }
-            };
+            }
+        })
+        .await;
 
-        let output = waited.map_err(|source| WrapperError::Transport {
+        let waited = match waited {
+            Ok(waited) => waited,
+            Err(_) => {
+                // The child is alive and over budget: kill the group before
+                // answering, rather than leaving the drop to reach the direct
+                // child alone.
+                #[cfg(unix)]
+                guard.kill_now();
+                return Err(WrapperError::Timeout {
+                    program: self.program.clone(),
+                    timeout: self.timeout,
+                });
+            }
+        };
+        // A wait failure deliberately does not disarm: the child's state is
+        // unknown, so dropping the still-armed guard kills the group.
+        let output = match waited.map_err(|source| WrapperError::Transport {
             program: self.program.clone(),
             source,
-        })?;
+        })? {
+            Capture::Exited(output) => output,
+            // The read stopped at the ceiling and the child is still writing.
+            // Killing the group here is the half that makes the cap a memory
+            // bound rather than a pause: an unrefused writer would otherwise
+            // sit in the pipe until the budget expired.
+            Capture::Refused { stream } => {
+                #[cfg(unix)]
+                guard.kill_now();
+                return Err(WrapperError::OutputCap {
+                    program: self.program.clone(),
+                    stream,
+                    cap: MAX_CAPTURE_BYTES,
+                });
+            }
+        };
+        // The child has answered and been reaped. Anything it detached on
+        // purpose is not this transport's to kill.
+        #[cfg(unix)]
+        guard.disarm();
+
         // A child that answered without reading its request is not an error:
         // a fixed-answer plugin closing stdin early is legitimate, and the
         // broken pipe it causes says nothing about the answer. Any other write
-        // failure did lose the request, so it is reported.
-        if let Err(source) = written
+        // failure did lose the request, so it is reported. `None` — the answer
+        // landed before the write finished — is the same case one step
+        // earlier, and is read the same way.
+        if let Some(Err(source)) = written
             && source.kind() != std::io::ErrorKind::BrokenPipe
         {
             return Err(WrapperError::Transport {
@@ -349,21 +437,6 @@ impl SubprocessWrapper {
         }
         Ok(response)
     }
-}
-
-/// Await both futures to completion.
-///
-/// `tokio::join!` is a macro over its own arguments, which cannot be handed a
-/// pair built elsewhere; this is the same thing as a function so the timeout
-/// above wraps *one* future covering both halves. Written out rather than
-/// pulled from `futures` because that would be a new dependency for eight
-/// lines (AGENTS.md § no new dependencies casually).
-async fn futures_join<A, B>(a: A, b: B) -> (A::Output, B::Output)
-where
-    A: Future,
-    B: Future,
-{
-    tokio::join!(a, b)
 }
 
 #[async_trait]

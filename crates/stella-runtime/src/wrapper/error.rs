@@ -65,6 +65,27 @@ pub enum WrapperError {
         timeout: Duration,
     },
 
+    /// The plugin wrote more than the transport will read, and the read was
+    /// stopped there.
+    ///
+    /// Distinct from [`WrapperError::Decode`] on purpose, even though the
+    /// truncated bytes would also fail to parse: the plugin's answer was never
+    /// received, so there is nothing to show its author and nothing about the
+    /// JSON to fix. The fix is the volume — and the host's own reason for
+    /// caring is that it stopped holding the rest of it.
+    #[error(
+        "wrapper `{program}` wrote more to {stream} than the {cap}-byte ceiling this host will \
+         read, so the call was refused"
+    )]
+    OutputCap {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// Which stream crossed the ceiling: `"stdout"` or `"stderr"`.
+        stream: &'static str,
+        /// The ceiling it crossed.
+        cap: usize,
+    },
+
     /// The plugin ran and exited non-zero.
     #[error("wrapper `{program}` exited with {status}: {stderr}")]
     Exit {
