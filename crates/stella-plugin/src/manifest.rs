@@ -78,56 +78,30 @@ impl std::fmt::Display for Participation {
     }
 }
 
-/// A hook point a plugin may declare in `[loop] hooks`.
+/// A hook point a plugin may declare in `[loop] hooks` — re-exported from
+/// [`stella_protocol::hook`], which is where the vocabulary lives.
 ///
-/// The names mirror the engine's shipped hook events
-/// (`stella-core::hooks::HookEvent`) exactly — same set, same wire strings —
-/// because the grant is *for* those dispatch points. The engine's enum is
-/// deliberately not imported: `stella-core` never learns plugins exist
-/// (#3245 open question 3 settles the direction), and this crate is a leaf.
-/// The host maps between the two by name; keeping the sets identical is a
-/// review obligation on any PR that grows either (#3310 tracks unifying the
-/// two in a shared home so the mirror stops being manual).
+/// The grant is *for* the engine's dispatch points, so the set has to be the
+/// engine's set exactly. Until #3310 this crate held its own copy of the
+/// enum, because the two crates that spell the vocabulary may not depend on
+/// each other in either direction: `stella-core` never learns plugins exist
+/// (#3245 open question 3), and this crate must not pull in the engine.
+/// Sharing one type through the crate *underneath* both settles it without
+/// either edge — and turns "keep the two sets identical" from a review
+/// obligation into a fact the compiler enforces.
 ///
 /// **The PascalCase is load-bearing, and the casing split from
 /// [`Participation`] is deliberate.** These five strings are not this
 /// crate's to choose: `"PreToolUse"` is already what a user types in
 /// `.stella/settings.json` to register a shell hook (README.md §Lifecycle
-/// hooks), because `stella-core`'s enum carries no `rename_all`. Spelling
-/// the same event `"pre_tool_use"` in a plugin manifest would fork one
-/// concept's name across two files a user edits — strictly worse than the
-/// inconsistency it would resolve. [`Participation`] is lowercase because
-/// its vocabulary is this crate's own invention (#3245 §2) and nothing
-/// outside spells it. The rule for a future block: **a value that mirrors
-/// an existing user-facing string keeps that string's casing; a value this
-/// crate coins is lowercase.** `wire_strings_are_pinned_on_both_sides`
-/// fails if either half drifts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HookEvent {
-    /// Once, before the turn begins.
-    SessionStart,
-    /// Before each tool call — input rewriting and permission decisions.
-    PreToolUse,
-    /// After each tool call.
-    PostToolUse,
-    /// The turn is about to complete. Declaring this is what an arbiter's
-    /// verdict hook rides on, and it is rejected below that grade.
-    Stop,
-    /// An overflow-summarization round is about to run.
-    PreCompact,
-}
-
-impl std::fmt::Display for HookEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            HookEvent::SessionStart => "SessionStart",
-            HookEvent::PreToolUse => "PreToolUse",
-            HookEvent::PostToolUse => "PostToolUse",
-            HookEvent::Stop => "Stop",
-            HookEvent::PreCompact => "PreCompact",
-        })
-    }
-}
+/// hooks). Spelling the same event `"pre_tool_use"` in a plugin manifest
+/// would fork one concept's name across two files a user edits — strictly
+/// worse than the inconsistency it would resolve. [`Participation`] is
+/// lowercase because its vocabulary is this crate's own invention (#3245 §2)
+/// and nothing outside spells it. The rule for a future block: **a value
+/// that mirrors an existing user-facing string keeps that string's casing;
+/// a value this crate coins is lowercase.**
+pub use stella_protocol::hook::HookEvent;
 
 /// The `[loop]` block — THE registration #3245's directive asks for.
 ///
