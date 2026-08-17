@@ -139,6 +139,7 @@ pub(crate) async fn drive_goal(
 
         let _ = sender.send(AgentEvent::Stage {
             name: StageKind::Verdict,
+            scope: stella_protocol::StageScope::Run,
         });
         let (verdict, verifier_cost) = match round_engine
             .assess(

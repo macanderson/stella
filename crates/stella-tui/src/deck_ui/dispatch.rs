@@ -155,7 +155,10 @@ pub fn release_if_settled(ui: &mut DeckUi, agent: &str, event: &stella_protocol:
     use stella_protocol::AgentEvent;
     let vacates_running = matches!(
         event,
-        AgentEvent::Complete { .. }
+        AgentEvent::TurnComplete { .. }
+            // The run ending settles the agent too — and it is the event that
+            // settles it for a wrapped run, whose turns keep ending (#3379).
+            | AgentEvent::RunComplete { .. }
             | AgentEvent::Error {
                 retryable: false,
                 ..

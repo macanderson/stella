@@ -116,6 +116,7 @@ mod tool_switches;
 mod trace;
 mod tune_cmd;
 mod turn_diff;
+mod turn_files;
 mod usage_cmd;
 
 /// Serializes tests that mutate process environment variables. `setenv` /

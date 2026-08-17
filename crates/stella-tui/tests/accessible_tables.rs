@@ -94,6 +94,7 @@ fn the_executions_dashboard_reads_as_labelled_records() {
         agent: "lead".into(),
         event: AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         },
     });
     let mut ui = accessible_ui(DeckTab::Agents);

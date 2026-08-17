@@ -1,4 +1,4 @@
-{"type":"stage","name":"triage"}
-{"type":"stage","name":"execute"}
+{"type":"stage","name":"triage","scope":"run"}
+{"type":"stage","name":"execute","scope":"run"}
 {"type":"text","delta":"working"}
-{"type":"complete","model":"zai/glm-5.2","cost_
+{"type":"run_complete","model":"zai/glm-5.2","cost_

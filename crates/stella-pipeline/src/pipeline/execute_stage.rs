@@ -76,6 +76,19 @@ pub(super) struct PlanWalk<'p> {
 }
 
 impl<'a> Pipeline<'a> {
+    /// Emit one of THIS wrapper's stage boundaries.
+    ///
+    /// Every stage the pipeline emits is run-scoped by construction (#3398) —
+    /// the engine emits the turn-scoped ones itself. A helper rather than the
+    /// literal at ~30 call sites so the scope cannot be got wrong at one of
+    /// them, which is the failure mode a required field is meant to end.
+    pub(super) fn emit_stage(&self, name: StageKind) {
+        self.emit(AgentEvent::Stage {
+            name,
+            scope: stella_protocol::StageScope::Run,
+        });
+    }
+
     /// Execute stage: one turn for simple/single-task; one turn per plan step
     /// for multi-step (each step guides a fresh engine turn). The last turn's
     /// text lands in `state.final_text`; `Err` is the first aborted turn's
@@ -88,9 +101,7 @@ impl<'a> Pipeline<'a> {
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        self.emit_stage(StageKind::Execute);
         // Borrowed, not collected: the steps are only read, so materializing a
         // `Vec<&PlanStep>` per candidate bought nothing.
         let steps: &[PlanStep] = plan.unwrap_or_default();
@@ -449,19 +460,11 @@ impl<'a> Pipeline<'a> {
         let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
-                // The pipeline owns the run's stage vocabulary, and the engine
-                // still emits one stage boundary of its own (`Execute`, at
-                // `drive`'s entry). Forwarding it would put an `Execute` inside
-                // the witness stage, which `replay::validate_stage_ordering`
-                // correctly rejects as an illegal Witness -> Execute move. It
-                // is dropped here until stage ownership moves the same way the
-                // ending just did (#3416).
-                //
-                // The engine's *ending* is no longer dropped: `TurnComplete`
-                // goes straight through to the consumer, counted on the way
-                // past and never edited. That is the whole point — this
-                // wrapper observes the engine, it does not rewrite it.
-                AgentEvent::Stage { .. } => Ok(()),
+                // Nothing is dropped here any more (#3398). The engine's
+                // stages and its turn terminator are true statements about a
+                // turn that really happened, and every consumer that branches
+                // on them now selects a `StageScope` — so the two vocabularies
+                // coexist in one stream instead of one silencing the other.
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

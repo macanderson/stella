@@ -153,7 +153,12 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
             ReferenceEvent::Stage { label } => {
                 let name = stage_kind_for_label(&label)
                     .ok_or(ReferenceAdapterError::UnmappedStage { line, label })?;
-                events.push(AgentEvent::Stage { name });
+                events.push(AgentEvent::Stage {
+                    name,
+                    // A reference recording is a WRAPPER's stage vocabulary —
+                    // triage/plan/verify — never an engine turn's (#3398).
+                    scope: stella_protocol::StageScope::Run,
+                });
             }
             ReferenceEvent::Text { delta } => events.push(AgentEvent::Text { text: delta }),
             ReferenceEvent::Reasoning { delta } => events.push(AgentEvent::Reasoning { delta }),
@@ -208,7 +213,7 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
                     });
                 }
             },
-            ReferenceEvent::Result { model } => events.push(AgentEvent::Complete {
+            ReferenceEvent::Result { model } => events.push(AgentEvent::TurnComplete {
                 model: model.unwrap_or_else(|| "reference".to_string()),
                 cost_usd: 0.0,
             }),

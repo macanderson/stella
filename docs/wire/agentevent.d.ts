@@ -394,10 +394,11 @@ export type DeliveryOutcome = {
 export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
 
 /**
- * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
- * by the tool that touched it, which is why [`Self::is_mutation`] answers
- * "was this call a write" and never "did the tree change". See the variant's
- * doc for the difference and why only git can answer the second.
+ * What happened to a file in a [`AgentEvent::FileChange`] event.
+ *
+ * Both live producers measure a tree against a tree, so every kind emitted
+ * today is a mutation — see [`Self::Read`] for the one that is not, and why
+ * it stays in the space anyway.
  */
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
@@ -1057,12 +1058,22 @@ export interface ScopeProposal {
   write_globs?: string[];
 }
 
+export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+
 /**
  * A named point in the turn's data flow. Exactly one stage vocabulary
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
+ * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
+ *
+ * Deliberately **not** `#[serde(default)]`. A default would silently claim
+ * one scope for every historical recording, and half of them are the other
+ * one — a decode ambiguity that would live in the fixtures forever. A
+ * recording written before this field existed decodes through
+ * [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
+ * rather than guessing wrong.
  */
-export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageScope = "turn" | "run";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly
@@ -1300,6 +1311,7 @@ export interface VerdictEvidence {
  */
 export type AgentEvent = {
   name: StageKind;
+  scope: StageScope;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
@@ -2104,7 +2116,7 @@ export type AgentEvent = {
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
-  type: "complete";
+  type: "run_complete";
 };
 
 /**
@@ -2152,4 +2164,4 @@ export type KnownTypeTag =
   | "candidate_delivery"
   | "error"
   | "turn_complete"
-  | "complete";
+  | "run_complete";
