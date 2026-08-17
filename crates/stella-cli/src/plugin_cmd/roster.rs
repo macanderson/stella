@@ -140,10 +140,15 @@ pub(crate) struct PluginHookRoute {
     /// Seconds before the host kills the process.
     pub(crate) timeout_secs: u64,
     /// The environment variable names — exactly these — the child may
-    /// inherit. Resolved to values at spawn time by
-    /// [`super::process::prepare_command`], never here: a route is a
-    /// declaration, and holding resolved credentials in one would put them
-    /// in every debug print of it.
+    /// inherit. Resolved to values at spawn time by the socket's own
+    /// constructor (`stella_runtime::wrapper::SubprocessWrapper::declare`),
+    /// never here: a route is a declaration, and holding resolved
+    /// credentials in one would put them in every debug print of it.
+    ///
+    /// That constructor is also where a credential is refused, so the
+    /// refusal holds for every host rather than only for this binary
+    /// (#3512). [`super::process::refused_credentials`] reports the same
+    /// judgement at install time; it does not enforce it.
     pub(crate) env_allowlist: Vec<String>,
 }
 
