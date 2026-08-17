@@ -18,6 +18,25 @@ credential or a URL. Unknown keys, unknown hook names, and unknown grades are
 load errors (`deny_unknown_fields` everywhere, the #1400 rule this crate
 inherits).
 
+`[wrapper]` (#3381) is the turn-loop wrapper's stage order, declared instead
+of hardcoded: an ordered `[[wrapper.stages]]` list under one variant id — the
+id the store's `pipeline_variant` column records (#3388). Two properties make
+it a gate rather than documentation:
+
+- **The `if` field is a closed grammar**, not an expression language:
+  `[no-]<boolean-signal>` or `<count-signal> <op> <number>`, over a published
+  signal set, evaluated by a pure function. A condition naming a signal the
+  host does not publish is a load error — a manifest that quietly does nothing
+  is worse than one that refuses to load.
+- **The stage graph is load-checked.** A condition reading a signal that only
+  a *later* stage publishes is rejected at load, so a hand-written variant
+  fails with a reason instead of wedging mid-run.
+
+Nothing here dispatches a stage: the four wrapper interception points are
+#3380 and do not exist yet, so a stage name is a declared name that
+load-checks. The crate is a leaf by contract, which is what lets the load-time
+contract be complete ahead of the socket it describes.
+
 The one function a host must never bypass is
 `LoopGrant::permits_hook(event)` — the authoritative filter behind the
 epic's rule that **an undeclared hook is never invoked**, even if the
@@ -61,11 +80,17 @@ before it crosses.
   `Participation`, `HookEvent`, `Oracle`, `Subloop`, `Role`), parsing, and
   every cross-field validation rule, each documented on the `ManifestError`
   variant that enforces it.
+- `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
+  closed `StageName` and `Signal` vocabularies, the `Condition` grammar and
+  its parser, and the load-time stage-graph check.
 - `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
   `serde_json` (invariant 4), and the undeclared-hook filter proven against
   the fixtures.
+- `tests/wrapper_stages.rs` + `tests/fixtures/wrapper-*.toml` — #3381's
+  acceptance: the shipped stage order and a cheaper second variant, differing
+  in nothing but their text, plus one rejection test per load rule.
 
 ## Consumers
 
