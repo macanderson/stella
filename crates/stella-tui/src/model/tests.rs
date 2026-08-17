@@ -159,9 +159,7 @@ fn streaming_text_deltas_coalesce_into_one_entry() {
 fn a_stage_between_text_deltas_breaks_coalescing() {
     let mut model = SessionModel::new();
     model.apply(&text("a"));
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Verify,
-    });
+    model.apply(&AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run });
     model.apply(&text("b"));
     // text, stage, text
     assert_eq!(model.transcript.len(), 3);
@@ -401,14 +399,10 @@ fn scope_review_sets_then_clears_on_next_stage() {
     });
     assert!(model.pending_scope_review.is_some());
     // The scope-review stage marker itself must NOT clear it.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::ScopeReview,
-    });
+    model.apply(&AgentEvent::Stage { name: StageKind::ScopeReview, scope: StageScope::Run });
     assert!(model.pending_scope_review.is_some());
     // The engine moving on to execute clears it.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
-    });
+    model.apply(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
     assert!(model.pending_scope_review.is_none());
     // …but the plan itself survives: the gate closing is the approval, and the
     // approved steps have to stay recallable for the rest of the turn.
@@ -432,9 +426,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
             ..Default::default()
         },
     });
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
-    });
+    model.apply(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
     model.apply(&AgentEvent::TurnComplete {
         model: "glm".into(),
         cost_usd: 0.5,
@@ -448,9 +440,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
 
     // And it belongs to *that* turn: the next one starts unapproved rather
     // than inheriting consent it was never given.
-    model.apply(&AgentEvent::Stage {
-        name: StageKind::Execute,
-    });
+    model.apply(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
     assert!(
         model.approved_scope.is_none(),
         "a new turn inherited the previous turn's approval"
@@ -1084,9 +1074,7 @@ fn replay_past_the_cap_stays_deterministic() {
 #[test]
 fn replay_of_the_same_log_yields_identical_models() {
     let log = vec![
-        AgentEvent::Stage {
-            name: StageKind::Execute,
-        },
+        AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         text("hi "),
         text("there"),
         AgentEvent::ToolStart {

@@ -105,7 +105,7 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::Unknown { event_type, .. } => {
             (TraceKind::Other, format!("unrecognized `{event_type}`"))
         }
-        AgentEvent::Stage { name } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
+        AgentEvent::Stage { name, .. } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
         AgentEvent::Text { text } => (TraceKind::Text, snip(text)),
         // Mapped for completeness; `apply_event` never traces deltas (one
         // row per token would churn the capped ring — see the guard there).

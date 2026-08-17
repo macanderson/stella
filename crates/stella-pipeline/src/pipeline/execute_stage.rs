@@ -81,9 +81,7 @@ impl<'a> Pipeline<'a> {
         spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        self.emit(AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
         // Borrowed, not collected: the steps are only read, so materializing a
         // `Vec<&PlanStep>` per candidate bought nothing.
         let steps: &[PlanStep] = plan.unwrap_or_default();

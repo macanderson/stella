@@ -25,9 +25,7 @@ fn say(agent: &str, text: &str) -> Inbound {
 fn stage(agent: &str) -> Inbound {
     Inbound::Event {
         agent: agent.into(),
-        event: AgentEvent::Stage {
-            name: StageKind::Execute,
-        },
+        event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
     }
 }
 

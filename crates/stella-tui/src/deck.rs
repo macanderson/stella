@@ -883,9 +883,7 @@ impl WorkspaceModel {
                 // Witness phase entry stamps (the witness panel's per-phase
                 // clocks). `get_or_insert` keeps the FIRST observation — a
                 // re-emitted step must not restart a phase clock.
-                AgentEvent::Stage {
-                    name: StageKind::Witness,
-                } => {
+                AgentEvent::Stage { name: StageKind::Witness, scope: StageScope::Run } => {
                     entry.witness_phase_ms.author_ms.get_or_insert(now);
                 }
                 AgentEvent::Proof { step } => match step {

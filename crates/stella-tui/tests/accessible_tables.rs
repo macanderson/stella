@@ -92,9 +92,7 @@ fn the_executions_dashboard_reads_as_labelled_records() {
     )));
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
-        event: AgentEvent::Stage {
-            name: StageKind::Execute,
-        },
+        event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
     });
     let mut ui = accessible_ui(DeckTab::Agents);
     ui.agents_pane = AgentsPane::Executions;

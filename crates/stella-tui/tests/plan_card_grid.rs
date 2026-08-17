@@ -40,9 +40,7 @@ fn scoped_model(approved: bool) -> WorkspaceModel {
         // Approval = the first non-ScopeReview stage.
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         });
     }
     m

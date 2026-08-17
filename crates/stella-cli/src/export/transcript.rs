@@ -235,7 +235,7 @@ impl<'a> Fold<'a> {
     /// Render one event.
     fn event(&mut self, event: &AgentEvent) {
         match event {
-            AgentEvent::Stage { name } => {
+            AgentEvent::Stage { name, .. } => {
                 let name = wire_token(name);
                 self.row(format!(
                     r#"<div class="ev stage">{t}<span class="lbl">STAGE</span><b>{name}</b></div>"#,

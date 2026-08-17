@@ -878,16 +878,12 @@ mod stream_tests {
     #[test]
     fn complete_is_unique_and_final_even_when_later_events_arrive() {
         let events = vec![
-            AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
-            },
+            AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run },
             AgentEvent::TurnComplete {
                 model: "old".into(),
                 cost_usd: 1.0,
             },
-            AgentEvent::Stage {
-                name: stella_protocol::StageKind::Reflect,
-            },
+            AgentEvent::Stage { name: stella_protocol::StageKind::Reflect, scope: StageScope::Run },
             AgentEvent::TurnComplete {
                 model: "final".into(),
                 cost_usd: 1.25,
@@ -936,9 +932,7 @@ mod stream_tests {
             cost_usd: 1.0,
         })
         .unwrap();
-        tx.send(AgentEvent::Stage {
-            name: stella_protocol::StageKind::Reflect,
-        })
+        tx.send(AgentEvent::Stage { name: stella_protocol::StageKind::Reflect, scope: StageScope::Run })
         .unwrap();
         tx.send(AgentEvent::TurnComplete {
             model: "worker+reflection".into(),
@@ -953,9 +947,7 @@ mod stream_tests {
         assert_eq!(journal.events.len(), 2);
         assert!(matches!(
             journal.events.first().map(|record| &record.event),
-            Some(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Reflect
-            })
+            Some(AgentEvent::Stage { name: stella_protocol::StageKind::Reflect, scope: StageScope::Run })
         ));
         assert!(matches!(
             journal.events.last().map(|record| &record.event),

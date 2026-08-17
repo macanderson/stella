@@ -128,12 +128,8 @@ mod tests {
     #[test]
     fn the_fold_counts_the_signals_that_distinguish_wedged_from_slow() {
         let mut fold = TallyFold::default();
-        fold.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
-        fold.observe(&AgentEvent::Stage {
-            name: StageKind::Verify,
-        });
+        fold.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
+        fold.observe(&AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run });
         fold.observe(&AgentEvent::Retry {
             attempt: 1,
             reason: "429".to_string(),
@@ -223,14 +219,10 @@ mod tests {
     #[test]
     fn a_parked_turn_is_distinguishable_from_a_wedged_one() {
         let mut wedged = TallyFold::default();
-        wedged.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        wedged.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
 
         let mut waiting = TallyFold::default();
-        waiting.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        waiting.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
         waiting.observe(&parked("CI for branch main settles", 1800));
         waiting.observe(&AgentEvent::TurnWoken {
             reason: "changed".to_string(),
@@ -299,9 +291,7 @@ mod tests {
     fn counters_saturate_rather_than_wrap() {
         let mut fold = TallyFold::default();
         fold.tally.stages = u32::MAX;
-        fold.observe(&AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
+        fold.observe(&AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run });
         assert_eq!(fold.finish().stages, u32::MAX);
     }
 }

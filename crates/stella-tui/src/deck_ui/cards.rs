@@ -362,9 +362,7 @@ mod tests {
         // Approved (first non-ScopeReview stage): `e` proposes the change.
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Stage {
-                name: stella_protocol::StageKind::Execute,
-            },
+            event: AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Run },
         });
         let action = handle_card_key(key(KeyCode::Char('e')), &model, &mut ui);
         assert_eq!(

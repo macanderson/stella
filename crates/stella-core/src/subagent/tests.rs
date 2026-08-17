@@ -820,9 +820,7 @@ fn the_forward_filter_fails_toward_visible() {
     assert!(forwards_to_parent(&AgentEvent::TaskUpdate {
         tasks: vec![]
     }));
-    assert!(!forwards_to_parent(&AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
-    }));
+    assert!(!forwards_to_parent(&AgentEvent::Stage { name: stella_protocol::StageKind::Execute, scope: StageScope::Turn }));
 }
 
 // ---- seams: gate, steering, attribution -------------------------------

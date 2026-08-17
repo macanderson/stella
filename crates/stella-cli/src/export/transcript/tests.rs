@@ -280,9 +280,7 @@ fn the_elapsed_column_counts_whole_seconds_and_invents_no_precision() {
         &journal(vec![
             (
                 "2026-08-09 12:00:00",
-                AgentEvent::Stage {
-                    name: StageKind::Triage,
-                },
+                AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
             ),
             ("2026-08-09 12:00:34", text("thirty-four seconds later")),
             ("2026-08-09 12:02:14", text("two minutes fourteen")),

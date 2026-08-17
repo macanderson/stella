@@ -140,12 +140,8 @@ async fn main() -> std::io::Result<()> {
                         // demo back to PLAN, which is what the real pipeline
                         // does with the note.
                         let next = match decision {
-                            ScopeDecision::Approve | ScopeDecision::Trim => AgentEvent::Stage {
-                                name: StageKind::Execute,
-                            },
-                            ScopeDecision::Revise { .. } => AgentEvent::Stage {
-                                name: StageKind::Plan,
-                            },
+                            ScopeDecision::Approve | ScopeDecision::Trim => AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
+                            ScopeDecision::Revise { .. } => AgentEvent::Stage { name: StageKind::Plan, scope: StageScope::Run },
                             ScopeDecision::Abort => AgentEvent::TurnComplete {
                                 model: "glm-5.2".into(),
                                 cost_usd: 0.0,
@@ -400,12 +396,8 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
         event,
     };
     let steps = vec![
-        ev(AgentEvent::Stage {
-            name: StageKind::Triage,
-        }),
-        ev(AgentEvent::Stage {
-            name: StageKind::Execute,
-        }),
+        ev(AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run }),
+        ev(AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run }),
         ev(AgentEvent::ToolStart {
             call: ToolCall {
                 call_id: format!("{id}-c1"),

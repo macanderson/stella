@@ -876,9 +876,7 @@ async fn run_goal_pipeline_turn(
             }
 
             // Goal assessment (same verifier + read-only tools as the raw goal loop).
-            let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Verdict,
-            });
+            let _ = tx.send(AgentEvent::Stage { name: stella_protocol::StageKind::Verdict, scope: StageScope::Run });
             let (verdict, verifier_cost) = match verifier_engine
                 .with_turn_instance(round_turn)
                 .assess(verifier, goal, messages, budget, &tx, &goal_config)

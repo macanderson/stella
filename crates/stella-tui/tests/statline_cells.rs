@@ -38,9 +38,7 @@ fn running_model() -> WorkspaceModel {
     ));
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
-        event: AgentEvent::Stage {
-            name: StageKind::Execute,
-        },
+        event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
     });
     m
 }

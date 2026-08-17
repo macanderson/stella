@@ -562,7 +562,7 @@ impl SessionModel {
             // `textline::unknown_event`), so nothing is hidden — the model
             // just declines to invent state for it.
             AgentEvent::Unknown { .. } => {}
-            AgentEvent::Stage { name } => {
+            AgentEvent::Stage { name, .. } => {
                 // A stage after a Complete means a new turn has started —
                 // clear the completion flag so the progress bar and HUD read
                 // fresh (otherwise the bar stays frozen at full-green and

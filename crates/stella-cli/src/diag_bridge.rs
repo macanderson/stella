@@ -485,7 +485,7 @@ impl DomainBridge {
             }
 
             // ---- Stage / turn shape. ------------------------------------
-            AgentEvent::Stage { name } => {
+            AgentEvent::Stage { name, .. } => {
                 self.emit(
                     Level::Info,
                     "agent.stage",

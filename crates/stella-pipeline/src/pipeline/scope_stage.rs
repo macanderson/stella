@@ -163,9 +163,7 @@ impl Pipeline<'_> {
             return Err(PipelineError::ScopeReviewRequiredHeadless);
         }
 
-        self.emit(AgentEvent::Stage {
-            name: StageKind::ScopeReview,
-        });
+        self.emit(AgentEvent::Stage { name: StageKind::ScopeReview, scope: StageScope::Run });
         let proposal = build_proposal(goal, &plan, &estimate);
         self.emit(AgentEvent::ScopeReview {
             proposal: proposal.clone(),

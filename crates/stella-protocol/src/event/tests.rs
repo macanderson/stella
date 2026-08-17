@@ -847,9 +847,7 @@ fn research_stage_and_role_roundtrip_with_snake_case_tokens() {
 #[test]
 fn stream_json_is_one_line_per_event() {
     let events = [
-        AgentEvent::Stage {
-            name: StageKind::Triage,
-        },
+        AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
         AgentEvent::Text { text: "hi".into() },
         AgentEvent::TurnComplete {
             model: "glm-5.2".into(),

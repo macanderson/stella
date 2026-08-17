@@ -1251,9 +1251,7 @@ mod tests {
 
         use stella_protocol::{ToolCall, ToolOutput};
         let structural: Vec<AgentEvent> = vec![
-            AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
             AgentEvent::Text { text: "t".into() },
             AgentEvent::Reasoning { delta: "r".into() },
             AgentEvent::ToolStart {

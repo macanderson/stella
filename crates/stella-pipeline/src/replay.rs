@@ -727,7 +727,7 @@ fn validate_budget_monotonic(events: &[AgentEvent], out: &mut Vec<StreamViolatio
 /// distinction the golden-replay comparison rests on.
 pub fn event_signature(event: &AgentEvent) -> String {
     match event {
-        AgentEvent::Stage { name } => format!("stage:{name:?}"),
+        AgentEvent::Stage { name, .. } => format!("stage:{name:?}"),
         // Text/Reasoning deltas are volatile content — only their presence
         // and kind are structural.
         AgentEvent::Text { .. } => "text".to_string(),

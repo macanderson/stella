@@ -536,7 +536,7 @@ pub fn render_event(event: &AgentEvent) {
         flush_reasoning();
     }
     match event {
-        AgentEvent::Stage { name } => stage_rule(*name),
+        AgentEvent::Stage { name, .. } => stage_rule(*name),
         AgentEvent::ToolStart { .. } | AgentEvent::ToolResult { .. } => {
             // Handled inline at the call site, which holds the `call_id ->
             // name` correlation this event pair needs (see the module doc).

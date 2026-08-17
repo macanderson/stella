@@ -187,9 +187,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         reg(lead, "web-app-2.0 · phase 3 automations", "lead"),
         ev(
             lead,
-            AgentEvent::Stage {
-                name: StageKind::Triage,
-            },
+            AgentEvent::Stage { name: StageKind::Triage, scope: StageScope::Run },
         ),
         ev(
             lead,
@@ -221,9 +219,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ),
         ev(
             lead,
-            AgentEvent::Stage {
-                name: StageKind::Plan,
-            },
+            AgentEvent::Stage { name: StageKind::Plan, scope: StageScope::Run },
         ),
         ev(
             lead,
@@ -281,9 +277,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         // the goldens stay byte-stable.
         ev(
             lead,
-            AgentEvent::Stage {
-                name: StageKind::Witness,
-            },
+            AgentEvent::Stage { name: StageKind::Witness, scope: StageScope::Run },
         ),
         ev(
             lead,
@@ -331,9 +325,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         // ── lead executes: reads, edits, commits ────────────────────────
         ev(
             lead,
-            AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         ),
         ev(
             lead,
@@ -461,9 +453,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ),
         ev(
             auth,
-            AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         ),
         ev(
             auth,
@@ -524,9 +514,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         // ── ci subagent verifies + opens a PR ───────────────────────────
         ev(
             ci,
-            AgentEvent::Stage {
-                name: StageKind::Verify,
-            },
+            AgentEvent::Stage { name: StageKind::Verify, scope: StageScope::Run },
         ),
         ev(
             ci,

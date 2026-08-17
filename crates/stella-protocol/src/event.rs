@@ -104,6 +104,24 @@ pub use crate::receipt::{
 /// A named point in the turn's data flow. Exactly one stage vocabulary
 /// exists in this workspace — never duplicated per-crate (the TS-era
 /// `StageKind` duplication this structurally forbids, L-E1).
+/// Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
+///
+/// Deliberately **not** `#[serde(default)]`. A default would silently claim
+/// one scope for every historical recording, and half of them are the other
+/// one — a decode ambiguity that would live in the fixtures forever. A
+/// recording written before this field existed decodes through
+/// [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
+/// rather than guessing wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum StageScope {
+    /// One engine turn's own phases. Several per run when a wrapper drives.
+    Turn,
+    /// A wrapper's stages over the whole run: triage, plan, witness, verify.
+    Run,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -270,9 +288,22 @@ fn retries_exhausted_retryable_default() -> bool {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
 pub enum AgentEvent {
-    /// The turn entered a new pipeline stage. Every stage boundary emits one,
-    /// in the order the pipeline walks them.
-    Stage { name: StageKind },
+    /// A stage boundary was crossed. `scope` says **whose** stage it is, and
+    /// it is not decoration (#3398).
+    ///
+    /// Two disjoint authorities emit stages. The engine emits three kinds,
+    /// once per turn ([`StageScope::Turn`]). A wrapper — the staged pipeline,
+    /// a goal loop — emits its own vocabulary once per run
+    /// ([`StageScope::Run`]). Before this field existed the pipeline dropped
+    /// the engine's copies outright, because a consumer receiving both had no
+    /// way to tell them apart and several branch on stage transitions.
+    ///
+    /// The deck is the reason this is a required field rather than a hint: it
+    /// treats a stage transition away from a scope review as the human's
+    /// approval of that review. A turn-scoped stage arriving while a scope
+    /// gate is open would forge consent nobody gave, so every consumer that
+    /// branches on stages must be able to select the scope it means.
+    Stage { name: StageKind, scope: StageScope },
     /// The step's answer text, in full — the authoritative, durable record.
     /// Not a fragment, despite the live preview sibling
     /// [`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated

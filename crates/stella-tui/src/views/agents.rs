@@ -474,9 +474,7 @@ mod tests {
         )));
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            event: AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         });
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),

@@ -236,9 +236,7 @@ mod tests {
         model.apply_inbound(&reg("b"));
         model.apply_inbound(&ev(
             "a",
-            AgentEvent::Stage {
-                name: StageKind::Execute,
-            },
+            AgentEvent::Stage { name: StageKind::Execute, scope: StageScope::Run },
         ));
         model.apply_inbound(&ev(
             "a",
