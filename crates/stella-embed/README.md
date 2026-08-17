@@ -21,6 +21,15 @@ memory into the code indexer for the sake of one trait. So the seam moved down
 instead. `stella-context::embed` re-exports every item from here, so its own
 callers were untouched.
 
+The same reasoning scales past these two callers. Stella is becoming an engine
+other applications embed, with capabilities reached through ports and wrappers
+supplied as plugins (`doc:engine-embedding`, `doc:turn-loop-wrappers`) — so
+"whoever needs a vector links the seam, and nobody links a plane they do not use"
+is the shape that keeps a host's build from dragging in Stella's retrieval stack to
+get a cosine. The `SimilarityPosture` a backend must declare is the same discipline
+pointed at meaning rather than dependencies: a score that cannot be compared across
+fingerprints says so, instead of being silently ranked.
+
 Inside the crate the invariant-2 split is by module, not by convention:
 
 | module | I/O? | what it is |

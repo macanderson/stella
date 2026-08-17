@@ -21,6 +21,24 @@ The dispatchable surface is twelve tools, in three families plus one report:
 - **The environment report** — `get_environment`
   ([`src/environment.rs`](src/environment.rs)).
 
+## Direction — twelve built-ins is the whole surface, forever
+
+Stella's product goal is an extensible turn loop whose extension happens *outside*
+the binary: capabilities arrive as MCP servers, workspace custom tools, or plugins
+(`doc:turn-loop-wrappers`, #3246), never as a thirteenth built-in. That is why the
+list above is closed rather than merely short — a built-in is a thing every
+embedding host pays for whether it wanted it or not, and the mechanisms in this
+crate (the registry, the sandbox, the read-only contract, the subprocess-env
+scrub) are what a third-party tool inherits by going through the same door.
+
+Two rules that follow, and that this crate is the enforcement point for. The
+**single-purpose rule** (invariant #9) is not style: per-tool policy has to be able
+to withhold a destructive verb without withholding a benign one, so a parameter may
+scope an operation and never select one. And `read_only` is a **contract the engine
+concurrency model relies on** — a read tool with a mutating arm cannot declare it
+honestly, and the speculation pump will happily run that tool several times in one
+step.
+
 Everything else the model can call reaches it as a **custom script tool**
 ([`src/custom.rs`](src/custom.rs) — a TOML manifest beside a script, no
 registry edit), an **MCP tool** (`stella-mcp`, merged above this registry by

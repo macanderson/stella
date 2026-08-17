@@ -26,6 +26,36 @@ binary from [`src/main.rs`](src/main.rs); `stella-cli` does not link it, and
 `stella` user. The corollary: `make smoke` runs the CLI and never exercises this
 crate — `make gate`'s `cargo test --workspace` is the only thing that does.
 
+## Direction — this is the over-the-wire embedding door
+
+Stella's product goal is to be the AI engine inside somebody else's application,
+reached one of two ways: **in process** through the Rust ports
+([`stella-runtime`](../stella-runtime) assembles, [`stella-engine`](../stella-engine)
+drives a turn a step at a time), or **over HTTP/SSE** through this crate
+(`doc:engine-embedding`, `doc:serve-surface`). Everything a host embeds is the same
+loop; the two doors differ only in where the ports are satisfied — locally, or by a
+reverse-RPC frame back to the host.
+
+What that means for this crate as the plugin architecture lands:
+
+- **The engine here does not verify its own work.** The staged verification flow is
+  a wrapper around the loop, and it is leaving the workspace to become a plugin
+  (#3246, `doc:turn-loop-wrappers`); nothing in this crate links
+  [`stella-pipeline`](../stella-pipeline) and nothing here ever did. A host wanting
+  adjudication supplies it — its own test command, its own oracle, or, once the
+  wrapper contract lands (#3380), the plugin — and the answer arrives as evidence
+  the host owns, exactly like a tool result does today.
+- **`src/goal.rs` is a wrapper living in a surface crate.** Its round loop is the
+  same shape as [`stella-core`](../stella-core)'s goal mode and the pipeline's
+  revise edge — one idea written three times, which is the duplication the wrapper
+  contract exists to delete. Expect it to be re-homed onto that contract rather than
+  grown; the four points are `before_turn` / `after_turn` / `judge` / `again?`, and
+  a model call belongs in `after_turn` as evidence, never in `judge`.
+- **No ambient authority stays the harder rule.** A plugin reached from here is a
+  declaration a host binds ([`stella-plugin`](../stella-plugin) is the manifest), never
+  a process that gets its own credentials. Invariant #3 does not relax because a
+  wrapper asked.
+
 The binary is meant to run containerized —
 [`../../packaging/docker/Dockerfile.serve`](../../packaging/docker/Dockerfile.serve)
 builds it with `--bin stella-serve`, runs it under a non-root numeric UID, binds

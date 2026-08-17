@@ -8,20 +8,23 @@
 //!
 //! [`Engine::summarize_overflow_span`] replaces the oldest viable span with a
 //! model-written summary when the pure compaction passes cannot reach the
-//! budget. That splice loses the working set inside the span — the body of
-//! any skill the model was mid-way through executing. Immediately after the
-//! splice lands, the engine restores it under one marker-prefixed tail
-//! message:
+//! budget. That splice loses the working set inside the span: file contents
+//! the model had read, and the body of any skill it was mid-way through
+//! executing. Immediately after the splice lands, the engine restores both
+//! under one marker-prefixed tail message:
 //!
 //! - **What** to restore is pure decision logic over the span, in
 //!   [`crate::restore`] — captured before the splice, budgeted against the
 //!   same compaction budget that triggered the round.
+//! - **Fresh file content** comes from replaying each read through the
+//!   ordinary tool dispatch path ([`Engine::execute_with_repair`]), exactly
+//!   as the parked-wait probe does (`driver::waiting`) — zero model calls,
+//!   no new I/O surface, hooks and the tool timeout all apply, and the replay
+//!   is refused unless the read tool's schema declares `read_only` in the
+//!   very set the model's own calls are built from.
 //! - **Active skill bodies** need no I/O at all: the body is the invocation
 //!   message the span already held, and the live-slug set comes from the tool
 //!   stack through [`crate::ports::ToolExecutor::active_skill_slugs`].
-//!   (File contents are deliberately not restored — see [`crate::restore`]'s
-//!   module docs: a file is re-readable on demand, a folded-away invocation
-//!   body is not.)
 //!
 //! Restoration runs only on the committed success path. The budget-abort arm
 //! applies a paid summary purely to *shrink* the context a resumed session
@@ -30,7 +33,7 @@
 
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionResult, MessageRole,
-    ReasoningEffort,
+    ReasoningEffort, ToolCall, ToolOutput,
 };
 
 use super::{Engine, SUMMARY_MARKER_PREFIX, lifecycle};
@@ -38,7 +41,7 @@ use crate::budget::BudgetGuard;
 use crate::bus;
 use crate::estimator::estimate_conversation_tokens;
 use crate::event_sender::EventSender;
-use crate::restore::WorkingSet;
+use crate::restore::{FreshContent, FreshRead, WorkingSet};
 use crate::retry::RetryPolicy;
 use crate::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use crate::step::SummarizerHealth;
@@ -52,6 +55,11 @@ use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 /// first visible token (#2503), and an empty summary here trips the give-up
 /// latch that disables compaction for the rest of the turn.
 const SUMMARY_OUTPUT_CONTRACT: u32 = 1_200;
+
+/// The synthetic `call_id` restoration replays carry — the
+/// `driver::waiting::PARKED_CALL_ID` shape: it never enters the transcript,
+/// so it only needs to be recognizable in hook payloads and diagnostics.
+const RESTORE_CALL_ID: &str = "working-set-restore";
 
 impl<'a> Engine<'a> {
     /// Replace the oldest viable span with a model-written summary. Failures
@@ -225,9 +233,9 @@ impl<'a> Engine<'a> {
             return cost_usd;
         }
         health.reset();
-        // Captured BEFORE the splice destroys the span (#2685): which live
-        // skill bodies are about to be folded away, minus anything the kept
-        // tail still holds.
+        // Captured BEFORE the splice destroys the span (#2685): which reads
+        // and which live skill bodies are about to be folded away, minus
+        // anything the kept tail still holds.
         let working_set = crate::restore::collect_working_set(
             &messages[start..end],
             &messages[end..],
@@ -243,7 +251,8 @@ impl<'a> Engine<'a> {
             factor,
             events,
         );
-        self.restore_working_set(messages, working_set, compaction_budget);
+        self.restore_working_set(messages, working_set, compaction_budget, events)
+            .await;
         cost_usd
     }
 
@@ -385,19 +394,58 @@ impl<'a> Engine<'a> {
     /// `compaction_budget` — so restoration structurally cannot defeat the
     /// compaction that triggered it.
     ///
-    /// Skill bodies were captured from the span and need no I/O — the whole
-    /// step is synchronous. An empty working set appends nothing.
-    pub(super) fn restore_working_set(
+    /// File content is re-read fresh through the ordinary dispatch path,
+    /// which deliberately picks up external edits; the replay is refused
+    /// wholesale unless the read tool's schema declares `read_only` in the
+    /// same schema set the model's own calls are built from (the
+    /// `maybe_park` guard, for the same reason: a call the model never sees
+    /// must not mutate anything). Skill bodies were captured from the span
+    /// and need no I/O. An empty working set appends nothing.
+    pub(super) async fn restore_working_set(
         &self,
         messages: &mut Vec<CompletionMessage>,
         working_set: WorkingSet,
         compaction_budget: u64,
+        events: &EventSender,
     ) {
         if working_set.is_empty() {
             return;
         }
+        let read_tool_is_read_only = self
+            .tools
+            .schemas()
+            .iter()
+            .any(|s| s.name == crate::restore::READ_TOOL && s.read_only);
+        let mut fresh: Vec<FreshRead> = Vec::new();
+        if read_tool_is_read_only {
+            for read in &working_set.reads {
+                let call = ToolCall {
+                    call_id: RESTORE_CALL_ID.into(),
+                    name: crate::restore::READ_TOOL.into(),
+                    input: read.input.clone(),
+                };
+                // `read_only: true` is not asserted, it is checked: the loop
+                // is guarded by `read_tool_is_read_only` above, which read
+                // the bit off the advertised schema (#2684 threads it into
+                // hook payloads).
+                let content = match self.execute_with_repair(&call, true, Some(events)).await {
+                    ToolOutput::Ok { content, .. } => FreshContent::Current(content),
+                    ToolOutput::Error { message, .. } => FreshContent::Unreadable(message),
+                };
+                fresh.push(FreshRead {
+                    path: read.path.clone(),
+                    content,
+                });
+            }
+        }
+        // No read-only read tool in this executor (a test double, a scoped
+        // child surface): the files cannot be re-read here — and the model
+        // could not re-read them either, so there is nothing actionable to
+        // name. Skills still restore; they need no I/O.
+
         let headroom = compaction_budget.saturating_sub(estimate_conversation_tokens(messages));
-        let Some(restoration) = crate::restore::render_restoration(&working_set.skills, headroom)
+        let Some(restoration) =
+            crate::restore::render_restoration(&working_set.skills, &fresh, headroom)
         else {
             return;
         };
@@ -419,12 +467,14 @@ mod tests {
     //! neither the constant nor the behavior); `the_literal_is_the_constant`
     //! pins the spelling.
 
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
     use async_trait::async_trait;
     use serde_json::Value;
-    use std::sync::Mutex;
     use stella_protocol::{
         CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
-        Provider, ProviderError, ToolOutput, ToolSchema,
+        Provider, ProviderError, ToolCall, ToolOutput, ToolResult, ToolSchema,
     };
     use tokio::sync::mpsc;
 
@@ -466,22 +516,69 @@ mod tests {
         }
     }
 
-    /// A tool-less executor carrying only the live-skill answer the port
-    /// hands the engine — restoration needs no tools at all.
-    struct SkillTools {
+    /// A read-only `read_file` served from an in-memory map — the "disk"
+    /// the witnesses mutate to prove the restore is a FRESH read, plus the
+    /// live-skill answer the port carries.
+    struct MapTools {
+        files: Arc<Mutex<HashMap<String, String>>>,
         active: Vec<String>,
     }
     #[async_trait]
-    impl ToolExecutor for SkillTools {
+    impl ToolExecutor for MapTools {
         fn schemas(&self) -> Vec<ToolSchema> {
-            Vec::new()
+            vec![ToolSchema {
+                name: "read_file".into(),
+                description: "read".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                speculation_safe: true,
+            }]
         }
-        async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
-            ToolOutput::error(format!("unknown tool `{name}`"))
+        async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+            if name != "read_file" {
+                return ToolOutput::error(format!("unknown tool `{name}`"));
+            }
+            let path = input.get("path").and_then(Value::as_str).unwrap_or("");
+            match self.files.lock().unwrap().get(path) {
+                Some(content) => ToolOutput::Ok {
+                    content: content.clone(),
+                    data: None,
+                },
+                None => ToolOutput::error(format!("no such file: {path}")),
+            }
         }
         fn active_skill_slugs(&self) -> Vec<String> {
             self.active.clone()
         }
+    }
+
+    fn read_step(call_id: &str, path: &str, recorded: &str) -> [CompletionMessage; 2] {
+        [
+            CompletionMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    call_id: call_id.into(),
+                    name: "read_file".into(),
+                    input: serde_json::json!({ "path": path }),
+                }],
+                tool_results: vec![],
+                attachments: Vec::new(),
+            },
+            CompletionMessage {
+                role: MessageRole::Tool,
+                content: String::new(),
+                tool_calls: vec![],
+                tool_results: vec![ToolResult {
+                    call_id: call_id.into(),
+                    output: ToolOutput::Ok {
+                        content: recorded.into(),
+                        data: None,
+                    },
+                }],
+                attachments: Vec::new(),
+            },
+        ]
     }
 
     fn filler(tag: &str) -> CompletionMessage {
@@ -538,51 +635,131 @@ mod tests {
         out
     }
 
-    /// Witness (c): restoration is charged to the compaction budget that
-    /// triggered the round — the post-restore conversation still fits it,
-    /// and the skill body that did not fit is dropped whole and NAMED.
-    /// Fails on base: no restoration message, so nothing names the drop.
+    /// Witness (a): after a span summarization, one tail message under the
+    /// restoration marker carries the CURRENT content of a file read inside
+    /// the span. Fails on base: the splice lands and nothing is restored.
     #[tokio::test]
-    async fn restoration_fits_the_compaction_budget_and_names_the_dropped_skills() {
+    async fn a_summarized_span_restores_its_read_files_under_the_marker() {
         let provider = SummaryProvider;
-        let tools = SkillTools {
-            active: vec!["small".into(), "huge".into()],
+        let files = Arc::new(Mutex::new(HashMap::from([(
+            "src/lib.rs".to_string(),
+            "1\tpub fn current() {}".to_string(),
+        )])));
+        let tools = MapTools {
+            files: files.clone(),
+            active: vec![],
         };
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
             filler("a0"),
-            CompletionMessage::user(crate::skills::invoke::render_invocation_message(
-                "small",
-                "One short step.",
-            )),
-            CompletionMessage::user(crate::skills::invoke::render_invocation_message(
-                "huge",
-                &"a very long procedure step\n".repeat(2_000),
-            )),
-            filler("a1"),
-            filler("a2"),
-            filler("a3"),
         ];
+        messages.extend(read_step("c1", "src/lib.rs", "1\tpub fn recorded() {}"));
+        messages.extend([filler("a1"), filler("a2"), filler("a3")]);
 
-        // Big enough for the splice plus the small body; far too small for
-        // the huge one.
+        summarize(&engine, &mut messages, 100_000).await;
+
+        let restored = restoration_message(&messages)
+            .expect("a restoration tail message exists after the splice");
+        assert!(
+            restored.contains("src/lib.rs") && restored.contains("pub fn current() {}"),
+            "the restoration carries the file's current content: {restored}"
+        );
+        assert_eq!(
+            messages
+                .last()
+                .map(|m| m.content.starts_with("[working set restored")),
+            Some(true),
+            "the restoration is the tail message — the volatile cache zone"
+        );
+    }
+
+    /// Witness (b): an external edit between the recorded read and the
+    /// restore shows the NEW content — the restore is a fresh read, never a
+    /// resurrected stale copy. Fails on base: no restoration message at all.
+    #[tokio::test]
+    async fn an_external_edit_between_read_and_restore_shows_the_new_content() {
+        let provider = SummaryProvider;
+        let files = Arc::new(Mutex::new(HashMap::from([(
+            "src/lib.rs".to_string(),
+            "1\told bytes".to_string(),
+        )])));
+        let tools = MapTools {
+            files: files.clone(),
+            active: vec![],
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+            filler("a0"),
+        ];
+        messages.extend(read_step("c1", "src/lib.rs", "1\told bytes"));
+        messages.extend([filler("a1"), filler("a2"), filler("a3")]);
+
+        // The external edit, after the model's read but before the restore.
+        files
+            .lock()
+            .unwrap()
+            .insert("src/lib.rs".into(), "1\tEDITED BYTES".into());
+
+        summarize(&engine, &mut messages, 100_000).await;
+
+        let restored = restoration_message(&messages).expect("a restoration message exists");
+        assert!(
+            restored.contains("EDITED BYTES"),
+            "the restore picked up the external edit: {restored}"
+        );
+        assert!(
+            !restored.contains("old bytes"),
+            "the stale recorded copy is not resurrected: {restored}"
+        );
+    }
+
+    /// Witness (c): restoration is charged to the compaction budget that
+    /// triggered the round — the post-restore conversation still fits it,
+    /// and the file that did not fit is dropped whole and NAMED. Fails on
+    /// base: no restoration message, so nothing names the drop.
+    #[tokio::test]
+    async fn restoration_fits_the_compaction_budget_and_names_the_dropped_files() {
+        let provider = SummaryProvider;
+        let files = Arc::new(Mutex::new(HashMap::from([
+            ("recent.rs".to_string(), "1\tfn recent() {}".to_string()),
+            ("older.rs".to_string(), "x".repeat(60_000)),
+        ])));
+        let tools = MapTools {
+            files: files.clone(),
+            active: vec![],
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+            filler("a0"),
+        ];
+        // `older.rs` read first, `recent.rs` second: most recent first wins.
+        messages.extend(read_step("c1", "older.rs", "x-recorded"));
+        messages.extend(read_step("c2", "recent.rs", "1\tfn recorded() {}"));
+        messages.extend([filler("a1"), filler("a2"), filler("a3")]);
+
+        // Big enough for the splice plus the small file; far too small for
+        // the 60k-byte one.
         let compaction_budget = 1_200;
         summarize(&engine, &mut messages, compaction_budget).await;
 
         let restored = restoration_message(&messages).expect("a restoration message exists");
         assert!(
-            restored.contains("One short step."),
-            "the small skill body is restored: {restored}"
+            restored.contains("fn recent() {}"),
+            "the most recent file is restored: {restored}"
         );
         assert!(
-            !restored.contains(&"a very long procedure step\n".repeat(10)),
-            "the over-budget body's content is not smuggled in"
+            !restored.contains(&"x".repeat(100)),
+            "the over-budget file's content is not smuggled in"
         );
         assert!(
-            restored.contains("Dropped for budget") && restored.contains("skill:huge"),
-            "the dropped skill is named, never silent: {restored}"
+            restored.contains("Dropped for budget") && restored.contains("older.rs"),
+            "the dropped file is named, never silent: {restored}"
         );
         assert!(
             crate::estimator::estimate_conversation_tokens(&messages) <= compaction_budget,
@@ -596,7 +773,8 @@ mod tests {
     #[tokio::test]
     async fn an_active_skill_body_is_restored_and_an_inactive_one_is_not() {
         let provider = SummaryProvider;
-        let tools = SkillTools {
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
             active: vec!["deploy".into()],
         };
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
@@ -630,12 +808,15 @@ mod tests {
         );
     }
 
-    /// Witness (e): a span with no active skill restores nothing — no empty
-    /// marker message rides the transcript.
+    /// Witness (e): a span with no reads and no active skill restores
+    /// nothing — no empty marker message rides the transcript.
     #[tokio::test]
     async fn a_span_with_no_working_set_appends_no_marker_message() {
         let provider = SummaryProvider;
-        let tools = SkillTools { active: vec![] };
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
+            active: vec![],
+        };
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),
@@ -655,6 +836,38 @@ mod tests {
             restoration_message(&messages),
             None,
             "nothing was lost, so nothing is restored"
+        );
+    }
+
+    /// A deleted file still gets a fresh read — which fails — and the
+    /// restoration names it as no longer readable instead of resurrecting
+    /// the recorded copy or dropping the fact silently.
+    #[tokio::test]
+    async fn a_file_deleted_before_restore_is_named_not_resurrected() {
+        let provider = SummaryProvider;
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())), // gone from "disk"
+            active: vec![],
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+            filler("a0"),
+        ];
+        messages.extend(read_step("c1", "deleted.rs", "1\trecorded content"));
+        messages.extend([filler("a1"), filler("a2"), filler("a3")]);
+
+        summarize(&engine, &mut messages, 100_000).await;
+
+        let restored = restoration_message(&messages).expect("a restoration message exists");
+        assert!(
+            restored.contains("No longer readable") && restored.contains("deleted.rs"),
+            "the vanished file is named: {restored}"
+        );
+        assert!(
+            !restored.contains("recorded content"),
+            "stale content is never resurrected: {restored}"
         );
     }
 
@@ -757,7 +970,10 @@ mod tests {
     #[tokio::test]
     async fn a_starved_summarizer_is_retried_with_room_and_never_latches() {
         let provider = StarvingProvider::new(1);
-        let tools = SkillTools { active: vec![] };
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
+            active: vec![],
+        };
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),
@@ -808,7 +1024,10 @@ mod tests {
     #[tokio::test]
     async fn a_retry_that_starves_again_records_one_failure_and_stops() {
         let provider = StarvingProvider::new(u32::MAX);
-        let tools = SkillTools { active: vec![] };
+        let tools = MapTools {
+            files: Arc::new(Mutex::new(HashMap::new())),
+            active: vec![],
+        };
         let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
         let mut messages = vec![
             CompletionMessage::system("sys"),

@@ -16,6 +16,13 @@ acknowledged copy to render "what changed between two model calls" (#1511).
 A leaf crate is the `stella-home` precedent (#1139): shared by linking,
 without costing any caller its isolation.
 
+That shape is the composability Stella is building toward everywhere else — one
+turn loop, capabilities reached through ports, and everything wrapped around it a
+plugin (`doc:turn-loop-wrappers`). A dependency-free leaf is the cheapest version
+of the same idea: the differ is depend-able from a surface, a wrapper, or an
+observer without any of them learning about the others. Which is also why the
+answer to "can this take one small dependency?" stays no.
+
 ## Semantics worth knowing
 
 - **Line semantics follow `str::lines()`**: `""` is zero lines and a trailing

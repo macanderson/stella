@@ -103,8 +103,54 @@ EOF
   exit 1
 fi
 
+# Second question, independent of drift: does the contract describe itself in
+# terms a consumer can follow? `schemars` exports Rust doc comments verbatim as
+# `description`, so a doc comment written for a reader of this workspace is
+# published to integrators who have no workspace in front of them. A
+# `crate::witness::airlock::FailureFingerprint` in `agentevent.d.ts` is a
+# reference that cannot be resolved by anyone it is addressed to (#3461).
+#
+# The remedy is never to edit the generated file, and never to rewrite the Rust
+# doc into something poorer for its own reader. It is to give the item a
+# wire-facing description of its own and leave the doc comment alone:
+#
+#     #[cfg_attr(feature = "schema", schemars(description = "..."))]
+#
+# This is deliberately a check on the SHAPE of the words, not their quality —
+# it can only tell that a Rust path escaped, which is the one failure that is
+# mechanically decidable. Note it is not a ratchet: the count reached zero in
+# #3461 and the only acceptable number afterwards is zero.
+leaked="$(grep -o -E '(crate|super)::[A-Za-z_:]+' "$committed"/*.json "$committed"/*.d.ts 2>/dev/null | sort -u || true)"
+if [ -n "$leaked" ]; then
+  echo "check-wire-schema: FAILED — Rust paths in the published wire contract" >&2
+  echo "$leaked" | while IFS= read -r leaked_path; do
+    echo "  $leaked_path" >&2
+  done
+  cat >&2 <<'EOF'
+
+`docs/wire/` is read by consumers of `--output-format stream-json`, of the SSE
+stream, and of agentevent.d.ts. None of them can resolve a `crate::` path.
+
+These come from doc comments: schemars publishes them verbatim as the schema's
+`description`. Do NOT fix this by editing the generated artifact, and do NOT
+strip the path out of the Rust doc — that reference is useful to the reader it
+was written for. Give the item a description written for the OTHER reader:
+
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "... no crate:: paths, no [`links`] ...")
+    )]
+
+then regenerate:
+
+    bash scripts/export-agentevent-schema.sh
+
+EOF
+  exit 1
+fi
+
 # The verdict is already decided; the write is best-effort. SIGPIPE is ignored
 # and the write's failure discarded, so a reader that closed the pipe
 # (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
 trap '' PIPE
-echo "check-wire-schema: OK — docs/wire/ matches the types." || true
+echo "check-wire-schema: OK — docs/wire/ matches the types, and names no Rust path." || true
