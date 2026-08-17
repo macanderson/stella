@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`](super::AgentEvent) variant carries
+//! The leaf payload types an [`AgentEvent`] variant carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
@@ -18,6 +18,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ladder::LadderSnapshot;
+
+/// Brought into scope for the `[`AgentEvent::…`]` intra-doc links below, which
+/// resolved inline in `event.rs` and stopped resolving when #3440 moved these
+/// types into a child module (`rustdoc -D warnings` is a gate step).
+///
+/// `#[cfg(doc)]` rather than a plain `use` because nothing here names the type
+/// in code, and rather than qualifying each link as `(super::AgentEvent::…)`
+/// because these doc comments are exported verbatim into
+/// `docs/wire/agentevent.d.ts` — a Rust module path in the public TypeScript
+/// contract would be a leak, not a link.
+#[cfg(doc)]
+use super::AgentEvent;
 
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
