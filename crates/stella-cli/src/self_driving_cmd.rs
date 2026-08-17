@@ -15,6 +15,7 @@
 
 pub(crate) mod probes;
 pub(crate) mod state;
+mod surface;
 
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -33,6 +34,19 @@ use state::LoopState;
 
 #[derive(Subcommand)]
 pub(crate) enum SelfDrivingCmd {
+    /// The host-verb surface this build carries: every verb a driver outside
+    /// the binary may call, and the shape each writes to stdout.
+    ///
+    /// A host reads this once at start-up and refuses a build it was not
+    /// written against, instead of meeting the skew as an `unrecognized
+    /// subcommand` in the middle of a cycle.
+    Surface {
+        /// Output format: the human table, or the surface under the
+        /// versioned query envelope (#1568).
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
+    },
+
     /// Size this cycle to the machine it is actually running on: supply x
     /// demand x calibration -> a tier and concrete knobs, emitted as shell
     /// assignments so the caller cannot mis-transcribe them.
@@ -255,8 +269,20 @@ pub(crate) enum RunCmd {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn run(cmd: &SelfDrivingCmd) -> Result<(), String> {
+    // Answered before the state directory is opened, and deliberately: a host
+    // asking "which verbs does this build carry" has not decided to drive
+    // anything yet, and a compatibility probe that fails because a state dir
+    // is unwritable reports the wrong problem.
+    if let SelfDrivingCmd::Surface { format } = cmd {
+        return surface::surface(*format);
+    }
     let st = LoopState::open()?;
     match cmd {
+        // Returned above, before any state was touched. The arm exists because
+        // the match must be total, and it repeats the call rather than
+        // answering `Ok(())`: a dead arm that lies is one refactor away from
+        // being a live arm that silently prints nothing.
+        SelfDrivingCmd::Surface { format } => surface::surface(*format),
         SelfDrivingCmd::Plan { explain } => plan(&st, *explain),
         SelfDrivingCmd::State { dry_streak, format } => cmd_state(&st, *dry_streak, *format),
         SelfDrivingCmd::Cycle { cmd } => match cmd {

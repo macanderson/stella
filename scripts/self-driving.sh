@@ -3,13 +3,22 @@
 #
 # The deterministic half of the loop is `stella self-driving` (#1548): the
 # governor, the ledger, the aperture ladder, the dedup oracle, and the run
-# lifecycle are engine code with types and tests (stella-core::self_driving +
+# lifecycle are engine code with types and tests (stella-autonomy +
 # stella-cli's self_driving_cmd). This script keeps only what is genuinely shell
 # work — the benchmark arms, the Homebrew ship step, the daemon's process
 # supervision, and the Claude command install — and DELEGATES every ported
 # verb one-for-one, so exactly one copy of every decision exists.
 #
+# This script is one HOST of that verb surface, not the only possible one
+# (`doc:pipeline-as-plugins` §10 D2). `stella self-driving surface` prints the
+# surface as data — every verb and the shape it writes to stdout — so a driver
+# that does NOT ship in lockstep with the binary can check compatibility
+# before it binds instead of meeting a rename as `unrecognized subcommand`
+# three cycles in. This script ships in the same repository as the binary, so
+# it needs only the presence probe in `require_stella` below.
+#
 #   scripts/self-driving.sh preflight          # is this machine able to run a cycle?
+#   scripts/self-driving.sh surface            # -> stella self-driving surface
 #   scripts/self-driving.sh plan --explain     # -> stella self-driving plan
 #   scripts/self-driving.sh queue --limit 20   # -> stella self-driving queue
 #   scripts/self-driving.sh cycle-begin        # -> stella self-driving cycle begin
@@ -963,7 +972,7 @@ main() {
     # The spellings are identical on both sides, so nothing here can drift
     # from the binary's behaviour — and `make self-driving-test` drives these
     # delegations end-to-end.
-    plan|calibrate|aperture|watch|metrics|queue|state|seen|runs|phase)
+    surface|plan|calibrate|aperture|watch|metrics|queue|state|seen|runs|phase)
       require_stella
       exec stella self-driving "$sub" "$@" ;;
     run)
