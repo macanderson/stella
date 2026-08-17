@@ -4,8 +4,9 @@ The step-driver. `Engine::run_turn` takes a message history, a budget guard and
 an event channel, and runs the model/tool loop to an answer: one model call per
 step, retry+backoff, context compaction, tool-output eviction, loop detection,
 USD metering. Alongside it live the workspace's other decision engines — rules,
-skills, routing, the goal loop, the task board — which the CLI drives
-directly rather than through a turn.
+skills, routing, the task board — which the CLI drives directly rather than
+through a turn. The goal loop still lives here too, and is the one resident that
+is leaving (see "Direction" below).
 
 **No I/O.** This crate never imports a provider SDK, never touches the
 filesystem, never spawns a process, never opens a socket. Anything needing the
@@ -20,6 +21,36 @@ budget arithmetic plain synchronous functions over owned data, testable against
 fakes without a runtime. The one documented exception is reading a clock:
 [`src/bus.rs`](src/bus.rs) reads `SystemTime` to timestamp events and `Instant`
 to enforce the per-handler latency budget.
+
+## Direction — one loop, zero built-in wrappers
+
+Stella's product shape is an **embeddable agent turn loop with a plugin
+architecture around it**: one step loop, several doors into it, and everything
+wrapped around it a plugin — "one loop, six doors, and wrappers are plugins"
+(`doc:turn-loop-wrappers`). Read from this crate, that direction is
+**subtractive**. The loop keeps what it has and gives up the parts that make it
+a supervisor:
+
+- **The engine owns its turn's ending, and nothing else's.** Landed (#3379,
+  #3417/#3418): `run_turn` always emits its own terminal completion and no
+  caller filters or swallows it. A caller that wants more work asks for another
+  turn and publishes its own *run*-level ending under a different name; the
+  per-turn private event channel a wrapper used to hold is gone.
+- **Goal mode's round loop leaves this crate.** [`src/goal.rs`](src/goal.rs) is
+  a route-specific supervisor living inside the engine crate — worker turn →
+  verifier verdict → feedback. Under the wrapper contract (#3380) those rounds
+  are a wrapper's `again?`, and its verifier's model call is `after_turn`
+  evidence rather than a judge. The wrapper socket itself is defined **above**
+  core, in [`stella-runtime`](../stella-runtime): `before_turn` recalls and
+  researches, `after_turn` runs a test command or an oracle process, and
+  invariant #2 forbids that I/O here (`doc:turn-loop-wrappers` §9.1). When it
+  lands, this crate gets smaller.
+
+What does not change: the twelve phases of a step, the safe-boundary rule, and
+the fact that **adjudicating the work was never this crate's job**. The staged
+verification flow is a *caller* ([`stella-pipeline`](../stella-pipeline)), on its
+way out of the workspace into a plugin (#3246). A turn driven with no wrapper
+installed runs the loop and reports what it changed; it does not verify itself.
 
 ## Where it sits
 
@@ -124,7 +155,7 @@ lib.rs), never as a planning assumption.
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |
 | [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s verifier is one. |
-| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. |
+| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. **A wrapper living inside the engine crate** — slated to leave for the wrapper contract (#3380); do not grow it. |
 | [`src/router.rs`](src/router.rs) | Role → model resolution over a caller-supplied `ProviderProfile`, plus the per-provider circuit breaker. |
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
