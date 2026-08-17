@@ -9,14 +9,14 @@
 //! Stella's own event stream, and they show up on a **cheap** model just as
 //! clearly as an expensive one.
 //!
-//! So this tool runs N Terminal-Bench tasks through Stella — cheap model,
-//! budget-capped, in parallel — and reports the correctness signals that the
+//! So this tool runs N Terminal-Bench tasks through Stella — cheap model, in
+//! parallel — and reports the correctness signals that the
 //! pass-rate number hides. The report types, verdict vocabulary, and
 //! distillation live in this crate's library (`src/lib.rs`), where the
 //! contract is documented; this binary is the CLI + subprocess orchestration.
 //!
 //! ```bash
-//! # cheapest: 4 tasks on a flash-tier model, $0.20/task cap, 4 concurrent
+//! # cheapest: 4 tasks on a flash-tier model, 4 concurrent
 //! cargo run -p loop-bench -- --n 4
 //!
 //! # pick tasks + model explicitly
@@ -115,16 +115,20 @@ struct Args {
     tasks: Vec<String>,
 
     /// Provider/model to run. Defaults to a flash-tier model for cheapness.
+    ///
+    /// Cheapness is the cost control here, along with the task count and
+    /// harbor's own timeout. There is deliberately **no `--budget`**: a
+    /// per-trial `STELLA_SPEND_LIMIT` is refused by the adapter (#2411)
+    /// because a cap truncates a trial into a loss, and this harness is the
+    /// worst possible place for that — silent-death and zero-work are the
+    /// exact signals it reports, so a cap would manufacture the failures it
+    /// exists to detect. Bound spend at the provider key (#3009).
     #[arg(short = 'm', long, default_value = DEFAULT_MODEL)]
     model: String,
 
     /// Concurrent trials.
     #[arg(long, default_value_t = 4)]
     concurrent: usize,
-
-    /// Per-task USD budget cap (STELLA_SPEND_LIMIT).
-    #[arg(long, default_value_t = 0.20)]
-    budget: f64,
 
     /// Harbor dataset name.
     #[arg(long, default_value = "terminal-bench")]
@@ -518,22 +522,6 @@ fn resolve_tasks(args: &Args) -> Vec<String> {
 /// `model` and `job_name` are parameters rather than reads off `args` because
 /// `--compare` runs this once per arm, each into its own job directory.
 fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Result<(), i32> {
-    // A non-positive (or NaN) cap denies the very first model call, which
-    // would report as a zero-work loop failure for every task — the harness
-    // manufacturing the signal it gates on. Warn loudly rather than hand
-    // harbor a cap that cannot pass. The threshold is not `<= 0.0` because the
-    // cap reaches stella at four decimals (see the `STELLA_SPEND_LIMIT` env below),
-    // so a positive-but-tinier-than-that cap is rounded to `0.0000` and is
-    // exactly as unspendable — check the value that will actually be sent, not
-    // the one the operator typed.
-    if !args.budget.is_finite() || args.budget < 0.000_05 {
-        eprintln!(
-            "warning: --budget {} reaches stella as {:.4}, which is not a spendable \
-             cap; every trial will be denied before its first tool call and report as \
-             a loop failure",
-            args.budget, args.budget
-        );
-    }
     // Floored like `--n` (#611): harbor's behavior at `-n 0` is undefined
     // from here, and an operator asking for zero concurrency meant one.
     let concurrent = args.concurrent.max(1);
@@ -566,7 +554,6 @@ fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Res
         cmd.args(["-i", task]);
     }
 
-    cmd.env("STELLA_SPEND_LIMIT", format!("{:.4}", args.budget));
     match &args.stella_binary {
         Some(path) => {
             cmd.env("STELLA_BINARY", path);
@@ -591,11 +578,10 @@ fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Res
     cmd.env("PYTHONPATH", pythonpath);
 
     eprintln!(
-        "▶ loop-bench: {} task(s) × {} trial(s) on {} (budget ${:.2}/task, {} concurrent)",
+        "▶ loop-bench: {} task(s) × {} trial(s) on {} ({} concurrent)",
         tasks.len(),
         args.trials.max(1),
         model,
-        args.budget,
         concurrent
     );
     let mut child = cmd.spawn().map_err(|e| {

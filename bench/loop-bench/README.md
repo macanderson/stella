@@ -29,8 +29,8 @@ cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   #
 ```
 
 Defaults: 4 tasks from `DEFAULT_POOL`, `openrouter/z-ai/glm-4.7-flash`,
-`--budget 0.20` USD/task (passed on as `STELLA_SPEND_LIMIT`), `--concurrent 4`,
-`--dataset terminal-bench`, output under `loop-bench-jobs/loop-bench/`.
+`--concurrent 4`, `--dataset terminal-bench`, output under
+`loop-bench-jobs/loop-bench/`.
 `--stella-binary` / `$STELLA_BINARY` names the uploaded binary; `--json` emits
 the report for CI instead of the table, and `--json-out <path>` writes that same
 report to a file while the table still goes to stdout.
@@ -308,10 +308,12 @@ way.
   the verifier must not read as a verifier failure. Only harbor's
   `verifier/reward.txt` is read, not its `reward.json` alternative; a
   `--dataset` whose verifier writes the JSON form under-credits every trial.
-- A `--budget` that is non-finite, non-positive, **or smaller than the `0.0001`
-  the cap is transmitted at** denies the very first model call, so every task
-  reports as a loop failure: the harness manufacturing the signal it gates on.
-  It warns rather than proceeding silently.
+- There is **no per-trial spend cap, deliberately** (#3009). The adapter
+  refuses `STELLA_SPEND_LIMIT` outright (#2411) because a cap truncates a trial
+  into a loss — and loss is exactly what this harness measures, so a cap would
+  manufacture the silent-death and zero-work signals it gates on. Cost is bounded
+  by the flash-tier default model, the task count, `--timeout`, and the provider
+  key, which fails a run visibly instead of truncating one.
 - `$STELLA_BINARY` must be a **Linux amd64** build; that is what the task
   containers run. Unset, it warns, and the adapter then resolves `stella` on
   `PATH` before `target/release/stella` — on a dev machine the `PATH` hit is a

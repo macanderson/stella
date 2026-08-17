@@ -44,10 +44,6 @@ on:
         description: "Provider/model (blank = the pinned nightly model)"
         required: false
         type: string
-      budget:
-        description: "Per-task USD cap (blank = the pinned nightly budget)"
-        required: false
-        type: string
       min_pass:
         description: "Fail if fewer than N tasks pass; 0 disables (blank = the pinned floor)"
         required: false
@@ -78,7 +74,6 @@ env:
   # every night. Pinned here rather than inherited from the harness default for
   # the same reason as the task list.
   LOOP_BENCH_MODEL: "openrouter/z-ai/glm-4.7-flash"
-  LOOP_BENCH_BUDGET: "0.20"
   # The pass-rate floor (#873), OFF until this job has a history to set it
   # from. A floor guessed rather than observed is red every night on a
   # flash-tier model under a $0.20 cap, and a gate that is always red is a gate
@@ -219,7 +214,6 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TASKS: ${{ inputs.tasks || env.LOOP_BENCH_TASKS }}
           MODEL: ${{ inputs.model || env.LOOP_BENCH_MODEL }}
-          BUDGET: ${{ inputs.budget || env.LOOP_BENCH_BUDGET }}
           MIN_PASS: ${{ inputs.min_pass || env.LOOP_BENCH_MIN_PASS }}
         run: |
           set -euo pipefail
@@ -236,7 +230,6 @@ jobs:
           cargo run --quiet -p loop-bench -- \
             --tasks "$TASKS" \
             --model "$MODEL" \
-            --budget "$BUDGET" \
             --min-pass "$MIN_PASS" \
             --timeout "$LOOP_BENCH_HARBOR_TIMEOUT" \
             --json-out loop-bench-out/report.json \
