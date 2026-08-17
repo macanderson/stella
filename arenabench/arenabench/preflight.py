@@ -59,18 +59,32 @@ def require_known_tasks(spec: MatchSpec, registry: Registry) -> None:
         )
 
 
-def balance_verdict(trials: int, cost_per_trial_usd: float | None) -> balance.Verdict:
+def balance_verdict(
+    trials: int,
+    cost_per_trial_usd: float | None,
+    seat_credential: str | None = None,
+) -> balance.Verdict:
     """Price ``trials`` against whatever balance this host can read.
 
     The key is read from the submitting host's own environment only: a cloud
     seat reads its credentials from SSM and this host may hold none of them,
     and reaching into SSM for a secret the process does not otherwise need,
     purely to price a run, is a worse trade than an unchecked preflight.
+
+    That trade is settled, and ``seat_credential`` is what keeps it honest.
+    A verdict priced against one wallet and spent from another must say so,
+    or a false all-clear reads exactly like a real one (#3308) — so the
+    caller passes the credential name the seats will actually spend when it
+    knows one, and the verdict names both.
     """
-    key = balance.openrouter_key()
-    reading = balance.fetch_openrouter_balance(key) if key else None
+    found = balance.openrouter_key()
+    if found is None:
+        return balance.verdict(None, trials, cost_per_trial_usd)
+    env_name, key = found
+    reading = balance.fetch_openrouter_balance(key)
     return balance.verdict(
         reading.remaining_usd if reading else None,
         trials,
         cost_per_trial_usd,
+        balance.Wallet(env_name=env_name, seat_credential=seat_credential),
     )

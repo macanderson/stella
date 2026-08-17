@@ -79,7 +79,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from . import preflight
+from . import balance, preflight
 from .model import MatchSpec, slugify
 from .registry import DEFAULT_REGISTRY
 from .sut import is_full_sha, is_safe_ref
@@ -100,6 +100,7 @@ __all__ = [
     "ref_safe",
     "refused_seats",
     "register_cli",
+    "seat_gateway_credential",
     "select_queue",
     "slice_spec",
     "ssm_env_name",
@@ -483,6 +484,27 @@ def refused_seats(
     return out
 
 
+def seat_gateway_credential(
+    needed: Mapping[str, list[str]],
+    available: Iterable[str],
+) -> str | None:
+    """The gateway credential the seats will spend, if SSM will supply one.
+
+    The preflight prices the submitting host's own key, which is a different
+    account from the one the trials spend whenever the two hosts differ. This
+    names the second account so the verdict can print both (#3308): a seat's
+    declared candidate that SSM actually provides and that is a gateway key
+    name. ``None`` when nothing matches — there is then no second wallet to
+    name, and inventing one would be worse than saying nothing.
+    """
+    provided = set(available)
+    for candidates in needed.values():
+        for name in candidates:
+            if name in provided and name in balance.KEY_ENV_NAMES:
+                return name
+    return None
+
+
 def unknown_tasks(declared: Iterable[str], known: Iterable[str]) -> list[str]:
     """Declared task names the dataset does not contain, in declared order.
 
@@ -717,7 +739,8 @@ def _cmd_cloud_run(
     # credentials will not exist in the trial environment must not launch.
     needed = required_env(spec)
     seat_env = {c.id: c.env for c in spec.contestants}
-    refused = refused_seats(needed, seat_env, executor.available_credentials())
+    available = executor.available_credentials()
+    refused = refused_seats(needed, seat_env, available)
     if refused:
         names = {c.id: c.name for c in spec.contestants}
         print(
@@ -764,7 +787,9 @@ def _cmd_cloud_run(
     plans = plan_trials(spec)
 
     money = preflight.balance_verdict(
-        len(plans), getattr(args, "est_cost_per_trial", None)
+        len(plans),
+        getattr(args, "est_cost_per_trial", None),
+        seat_gateway_credential(needed, available),
     )
     print(f"balance   : {money.message}")
     if money.blocks and not getattr(args, "ignore_balance", False):
