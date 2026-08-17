@@ -204,7 +204,8 @@ text{font-family:var(--sans);fill:var(--ink2)}
       <a href="#s-record"><span class="n">27</span><span>Writing the turn down</span></a>
       <a href="#s-reflect"><span class="n">28</span><span>Reflection → memories → skills</span></a>
       <a href="#s-foundry"><span class="n">29</span><span>The tool foundry (short version)</span></a>
-      <a href="#s-next"><span class="n">30</span><span>What the next two decks cover</span></a>
+      <a href="#s-plugins"><span class="n">30</span><span>Where the loop is going — wrappers become plugins</span></a>
+      <a href="#s-next"><span class="n">31</span><span>What the next two decks cover</span></a>
     </div>
     <div class="toc-part">
       <div class="h">Appendix</div>
@@ -872,11 +873,21 @@ text{font-family:var(--sans);fill:var(--ink2)}
       from failing to passing, what does the diff say. There is exactly <b>one</b> extra model
       call in the whole verification story, and it is the one that <em>writes the test</em>. That
       survives because it creates the measuring stick rather than replacing it.</p></div>
-    <div class="card"><h4>The pipeline owns the ending</h4>
-      <p>The engine emits its own "complete" event, which is right for one turn and wrong for a
-      plan with a revise loop. So each turn gets a private channel; the pipeline forwards
-      everything except those, and emits the real ending itself.</p></div>
+    <div class="card"><h4>The engine owns its turn's ending</h4>
+      <p>Each turn ends with the engine's own event, meaning <em>this turn is over</em> — never
+      <em>the work is over</em>. A plan step or a revise round just asks for another turn, and
+      three turns put three endings in the journal, unedited. The pipeline's own ending is a
+      separate event with a separate name, emitted once and last.</p>
+      <p class="meta" style="font-family:var(--mono);font-size:12px;color:var(--ink3)">
+      crates/stella-pipeline/src/pipeline.rs — "Event ownership"</p></div>
   </div>
+
+  <div class="note green"><p><b>This one changed, and it is worth knowing why.</b> The pipeline
+  used to hand every turn a private channel and forward everything except the engine's own
+  ending, so it could be the single authority on when a run was over. That was a two-way
+  connection between the engine and one of its callers — and a dropped event or a
+  double-closed channel produced a run that looked finished and was not. It is now
+  one-directional (#3379): the wrapper reads the engine's stream, it never edits it.</p></div>
 </section>
 
 <!-- ============ 20 stage walker ============ -->
@@ -1190,9 +1201,59 @@ text{font-family:var(--sans);fill:var(--ink2)}
   which is why an exact repeat is explicitly not a foundry proposal.</p></div>
 </section>
 
-<!-- ============ 30 next ============ -->
-<section class="slide" id="s-next" data-title="What comes next">
+<!-- ============ 30 wrappers become plugins ============ -->
+<section class="slide" id="s-plugins" data-title="Where the loop is going">
   <p class="eyebrow">Part 5 · 30</p>
+  <h2>Where the loop is going — wrappers become plugins</h2>
+  <p class="lead">Everything in Part 4 describes what ships today: <b>one step loop, one built-in
+  wrapper, and the wrapper is still the default.</b> The direction is to keep the loop and move
+  the wrapper out of the binary. Some of that has landed. Most has not, and this slide says
+  which is which — because a deck that promises the end state is how a reader ends up
+  believing a shipped binary already has it.</p>
+
+  <h3>The four points a wrapper gets</h3>
+  <div class="scroller"><table>
+    <tr><th>Point</th><th>When it runs</th><th>What it may do</th><th>What it may not do</th></tr>
+    <tr><td class="mono">before_turn</td><td>before the loop is asked for a turn</td>
+      <td>add context, pick a plan, narrow scope, choose a model role</td><td>run the loop itself</td></tr>
+    <tr><td class="mono">after_turn</td><td>once the turn's ending lands</td>
+      <td>gather evidence — run a test, read a diff, author a witness</td><td>change the turn that just ran</td></tr>
+    <tr><td class="mono">judge</td><td>after <code>after_turn</code></td>
+      <td>turn the evidence into a verdict</td><td>call a model</td></tr>
+    <tr><td class="mono">again?</td><td>after <code>judge</code></td>
+      <td>ask for another turn, or stop with an outcome</td><td>fake an ending the engine did not emit</td></tr>
+  </table></div>
+  <p><code>judge</code> and <code>again?</code> are synchronous and the <em>host</em> runs them, so
+  a plugin declares its verdict rule as data and supplies evidence — it never ships verdict code.
+  That is the same rule the staged pipeline already keeps, carried across rather than re-argued.</p>
+
+  <div class="grid g2">
+    <div class="card"><div class="num" style="color:var(--green)">LANDED</div><h4>The parts you can read today</h4>
+      <p>The engine owns its turn's ending, so no wrapper holds a private channel (#3379). The
+      wrapper socket exists — four points, two transports, and the wire one is what CI exercises
+      (<code>crates/stella-runtime/src/wrapper/</code>). A manifest grammar and an installer
+      exist (<code>stella plugin</code>). Turn records already separate <em>which door</em> from
+      <em>which wrapper ran</em>, and a NULL there means the raw loop, which is a fact rather
+      than a missing value.</p></div>
+    <div class="card"><div class="num" style="color:var(--orange)">NOT YET</div><h4>The parts that are still ahead</h4>
+      <p>Nothing dispatches through the socket: every call to it in the tree is in its own tests
+      (#3494), and no installed plugin's hooks are routed into a session either (#3521). The
+      staged pipeline is still a built-in crate, still the default, and <code>--no-pipeline</code>
+      is still the opt-out. Inverting that flag is deliberately the <em>last</em> move, because it
+      is the claim that the earlier ones worked.</p></div>
+  </div>
+
+  <div class="note blue"><p><b>How to read this deck against the binary.</b> Slide 03 says
+  <em>two loops, six doors</em>, and that is still literally true of what you install. The end
+  state is one loop, six doors, and zero built-in wrappers — at which point slide 03 gets
+  rewritten, not before.</p>
+  <p class="meta" style="font-family:var(--mono);font-size:12px;color:var(--ink3)">
+  doc:turn-loop-wrappers · doc:pipeline-as-plugins · doc:wrapper-socket</p></div>
+</section>
+
+<!-- ============ 31 next ============ -->
+<section class="slide" id="s-next" data-title="What comes next">
+  <p class="eyebrow">Part 5 · 31</p>
   <h2>What the next two decks cover</h2>
   <div class="grid g3">
     <div class="card"><div class="num" style="color:var(--gold)">THIS DECK</div>

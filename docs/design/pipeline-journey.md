@@ -44,20 +44,29 @@ Stella has two ways to run a prompt:
   No stages, no verification.
 - **The staged pipeline** (`stella run`, the default; per-turn in the Command
   Deck while `/pipeline` is ON): the step loop wrapped in the stages below,
-  with deterministic verification and terminal-event ownership moved up into
-  `Pipeline::run`.
+  with deterministic verification and a run-level ending of its own, emitted
+  beside the engine's per-turn endings rather than in place of them.
 
 "Full pipeline mode" is the second one. The engine still does all the actual
 work — reading files, editing, running commands — but the pipeline decides
 *when* the engine runs, *what evidence* is collected around it, and *whether
 the result may be called done*.
 
-The pipeline owns the terminal events. `Engine::run_turn` emits its own
-`Stage { Complete }` per turn, which is correct for one turn but wrong for a
-multi-step or revising run — so the pipeline gives each engine turn a private
-channel, forwards everything except the engine's stage/terminal events, and is
-the single authority for `Complete` / terminal `Error` (see the "Event
-ownership" section of the `pipeline.rs` module docs).
+**The engine owns each turn's ending; the pipeline owns the run's** (#3379).
+`Engine::run_turn` ends every turn with its own `TurnComplete` — *this turn is
+over*, never *the work is over* — and each one reaches the consumer unedited,
+so a three-turn plan puts three in the journal. A plan step or a revise round
+simply requests another turn. The pipeline's own ending is a separate event
+with a separate name: `Complete` on success or a non-retryable `Error` on
+failure, exactly once and last, enforced by `crate::replay::validate_stream`.
+
+Until #3379 the connection ran both ways: the pipeline handed each turn a
+private channel and forwarded everything except the engine's stage/terminal
+events, making itself the single authority on when a run was over. That is the
+shape `doc:turn-loop-wrappers` §3 retired — a wrapper reads the engine's
+stream and never edits it, which is also the precondition for the wrapper ever
+being a plugin. See the "Event ownership" section of the `pipeline.rs` module
+docs for the current contract.
 
 ## 1. Intake: triage and recall run side by side
 
