@@ -146,6 +146,85 @@ async fn run_one_turn(provider: &dyn Provider, bus: &HookBus) -> TurnOutcome {
     engine.run_turn(&mut messages, &mut budget, &tx).await
 }
 
+/// Drive one turn through `Engine::assemble`, declaring a lane.
+async fn run_one_turn_in_lane(
+    provider: &dyn Provider,
+    bus: &HookBus,
+    lane: stella_protocol::TurnLane,
+) -> TurnOutcome {
+    let tools = NoTools;
+    let sleeper = NoSleep;
+    let engine = Engine::assemble(
+        provider,
+        &tools,
+        EngineConfig::default(),
+        &sleeper,
+        crate::driver::capabilities::TurnCapabilities {
+            bus: Some(bus),
+            lane: Some(lane),
+            ..no_seams()
+        },
+    );
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut messages = vec![CompletionMessage::user("hi")];
+    let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
+    engine.run_turn(&mut messages, &mut budget, &tx).await
+}
+
+/// `TurnCapabilities` has no `Default`, so `..` needs a base value; this is
+/// the "every seam off" one, written once for the two tests below.
+fn no_seams<'a>() -> crate::driver::capabilities::TurnCapabilities<'a> {
+    crate::driver::capabilities::TurnCapabilities::none()
+}
+
+/// The witness for #3410: the lane a turn ran in reaches the wire.
+///
+/// Fails before this change for a structural reason — `turn_started_payload`
+/// had no `lane` argument and the engine had nowhere to hold one, so the
+/// field simply does not exist in the emitted payload.
+#[tokio::test]
+async fn a_turn_stamps_the_lane_that_assembled_it() {
+    let (bus, recorder) = Recorder::attach();
+    let outcome = run_one_turn_in_lane(
+        &OneShotProvider,
+        &bus,
+        stella_protocol::TurnLane::Builtin(stella_protocol::BuiltinLane::FleetWorker),
+    )
+    .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let started = recorder
+        .first(names::AGENT_TURN_STARTED)
+        .expect("the turn opened");
+    assert_eq!(
+        started.payload.get("lane"),
+        Some(&serde_json::json!({ "builtin": "fleet_worker" })),
+        "the lane rides the turn-started payload in its wire shape",
+    );
+}
+
+/// The other half, and the reason `lane` is an `Option`: an engine built
+/// through the legacy builder path reports `null` rather than guessing a
+/// lane. An observer grouping by lane must be able to tell "no lane was
+/// declared" from a lane it does not recognise — the same rule #3388 applies
+/// to `pipeline_variant`'s NULL.
+#[tokio::test]
+async fn the_legacy_builder_path_reports_no_lane_rather_than_a_wrong_one() {
+    let (bus, recorder) = Recorder::attach();
+    let outcome = run_one_turn(&OneShotProvider, &bus).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let started = recorder
+        .first(names::AGENT_TURN_STARTED)
+        .expect("the turn opened");
+    assert_eq!(
+        started.payload.get("lane"),
+        Some(&serde_json::Value::Null),
+        "the key is present and null -- not absent, which would be indistinguishable \
+         from an older build that never recorded a lane",
+    );
+}
+
 /// The #1133 acceptance for the turn and step boundaries: a registered
 /// observer sees the turn open, the step open and close, and the turn close.
 #[tokio::test]
