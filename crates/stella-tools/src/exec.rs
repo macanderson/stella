@@ -358,9 +358,11 @@ pub(crate) async fn wait_with_capped_output(
 /// It exists so a spawn site outside this crate can take the policy without
 /// taking a `libc` dependency and a fifth copy of the block — the plugin
 /// transport (`stella_runtime::wrapper::subprocess`) is the first such caller.
-/// The three remaining in-crate copies ([`crate::bash`], [`crate::custom`],
-/// and `stella-cli`'s session tools) predate it and are tracked for
-/// conversion; nothing about them differs.
+/// The three remaining copies ([`crate::bash`], [`crate::custom`], and
+/// `stella-cli`'s session tools) predate it and are tracked for conversion in
+/// #3549; nothing about them differs. `stella-cli`'s daemon and the TUI's pty
+/// harness are deliberately not in that set — their `pre_exec` closures do
+/// more than this one and check what this one ignores.
 #[cfg(unix)]
 pub fn detach_into_own_process_group(cmd: &mut Command) {
     // SAFETY: the closure calls one async-signal-safe libc function and
