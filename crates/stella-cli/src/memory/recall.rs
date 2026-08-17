@@ -505,6 +505,14 @@ impl SessionMemory {
         .await
     }
     /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
+    ///
+    /// `#[cfg(test)]` because that is the whole truth about it: production
+    /// recall goes through [`Self::recalled_frames`] (which reports to stderr)
+    /// or [`Self::recalled_frames_anchored`] (which takes the caller's own
+    /// sink), and #3435 left this wrapper with test callers alone. Gating it
+    /// is what makes `-D dead-code` agree with the doc comment, rather than an
+    /// `#[allow]` asserting over the top of it.
+    #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
         goal: &str,
