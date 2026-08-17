@@ -27,8 +27,8 @@ mod pipeline_variant;
 mod token_unit;
 
 use error_class::migrate_v24_to_v25;
-pub(crate) use execution_role::{ROLE_KINDS, SYSTEM_NON_DOOR};
 use execution_role::migrate_v26_to_v27;
+pub(crate) use execution_role::{ROLE_KINDS, SYSTEM_NON_DOOR};
 use legacy_unique::migrate_v0_to_v1;
 use pipeline_variant::migrate_v25_to_v26;
 use token_unit::migrate_v18_to_v19;
@@ -284,7 +284,6 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     )?;
     Ok(count > 0)
 }
-
 
 /// v1 → v2: `files_touched` grows per-file line-delta totals and the ordered
 /// JSON audit log ([`FileTouchRow`](crate::FileTouchRow)), plus the UNIQUE (execution_id, path)

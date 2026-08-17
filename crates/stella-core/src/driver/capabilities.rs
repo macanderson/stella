@@ -365,7 +365,10 @@ mod tests {
         owned.bus = Some(Arc::clone(&bus));
 
         let borrowed = owned.as_borrowed();
-        assert!(borrowed.bus.is_some(), "an owned seam reached the borrowed view");
+        assert!(
+            borrowed.bus.is_some(),
+            "an owned seam reached the borrowed view"
+        );
         assert!(borrowed.gate.is_none(), "a seam not set stays unset");
     }
 

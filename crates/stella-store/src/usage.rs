@@ -27,13 +27,12 @@
 //! single transaction (#467). The drain loop that pinpoints such a row lives in
 //! [`crate::drain`].
 //!
-//! Schema: `usage.db` is versioned by *convergence*, not by a `user_version`
-//! migration list (unlike `.stella/private/store.db`, see `crate::migrations`).
-//! Every table in `USAGE_SCHEMA` is `CREATE ... IF NOT EXISTS` and the whole
-//! batch replays on every open, so an additive table or index reaches an
-//! existing hub the next time it is opened. Adding a table here is the
-//! migration; a table that ever needs a *reshape* would need the versioned
-//! machinery introduced first.
+//! Schema: see [`schema`], which now carries both mechanisms. Convergence is
+//! still the ordinary one — every table is `CREATE ... IF NOT EXISTS`, the
+//! batch replays on every open, and adding a table needs nothing else. What
+//! this doc used to say could not be done — reshape an existing table, or
+//! correct a value inside one — is what `schema::HUB_MIGRATIONS` added when
+//! #3396 first actually needed it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

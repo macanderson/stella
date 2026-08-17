@@ -200,7 +200,10 @@ mod tests {
         .expect("seed");
         apply_migration(&mut conn, migrate_v26_to_v27, 27).expect("migrate");
 
-        assert_eq!(rows(&conn), vec![("some-older-build-value".to_string(), None)]);
+        assert_eq!(
+            rows(&conn),
+            vec![("some-older-build-value".to_string(), None)]
+        );
     }
 
     /// A file with no `executions` table at all is not an error.

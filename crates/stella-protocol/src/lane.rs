@@ -275,7 +275,13 @@ mod tests {
 
     #[test]
     fn display_agrees_with_the_wire_spelling() {
-        assert_eq!(TurnLane::Builtin(BuiltinLane::SubagentFork).to_string(), "subagent_fork");
-        assert_eq!(TurnLane::Plugin(LaneId::new("acme.replay")).to_string(), "plugin:acme.replay");
+        assert_eq!(
+            TurnLane::Builtin(BuiltinLane::SubagentFork).to_string(),
+            "subagent_fork"
+        );
+        assert_eq!(
+            TurnLane::Plugin(LaneId::new("acme.replay")).to_string(),
+            "plugin:acme.replay"
+        );
     }
 }
