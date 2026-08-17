@@ -48,6 +48,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "Which rung of the evidence ladder a `verdict` event actually came to rest on. The verdict's `passed` and `deterministic` flags cannot express this on their own: several distinct outcomes share the same pair of booleans, so the rung is carried explicitly rather than inferred. Read this field, not the flags, when you need to know what was established."
+    )
+)]
 pub enum LadderRung {
     /// Deterministic pass: a fail→pass flip of the tracked command, touched
     /// tests green, diff within budget, no fresh diagnostics. The verifier was
@@ -129,6 +135,12 @@ pub enum LadderRung {
     /// (`crate::witness::airlock::FailureFingerprint`), never "it failed
     /// twice": a witness that fails *differently* after the work is genuine
     /// feedback about the change and keeps reaching `Revise`.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "The authored witness produced the same failure before and after the work, so it cannot discriminate: nothing it reports is a fact about the change, and no revision can make it one. This is a claim about the witness, not about the work -- it says the instrument's demand cannot be met by doing the task, and says nothing about whether the task was done. The discriminator is failure-fingerprint equality, never merely \"it failed twice\": a witness that fails differently after the work is genuine feedback and reaches `revise` instead."
+        )
+    )]
     WitnessUnsatisfiable,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass

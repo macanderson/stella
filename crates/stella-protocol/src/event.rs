@@ -313,6 +313,12 @@ pub enum AgentEvent {
     /// approval of that review. A turn-scoped stage arriving while a scope
     /// gate is open would forge consent nobody gave, so every consumer that
     /// branches on stages must be able to select the scope it means.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression."
+        )
+    )]
     Stage { name: StageKind, scope: StageScope },
     /// The step's answer text, in full — the authoritative, durable record.
     /// Not a fragment, despite the live preview sibling
@@ -712,6 +718,12 @@ pub enum AgentEvent {
         /// read as "not truncated": absence of the signal is not evidence of
         /// a clean stop.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Why generation stopped, as the provider reported it. `length` is the only ground truth a consumer has that this step was cut off at the output ceiling -- the \"we stopped first\" signal. Absent on older streams, so treat a missing value as unknown rather than as a natural stop."
+            )
+        )]
         finish_reason: Option<crate::completion::FinishReason>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
@@ -732,6 +744,12 @@ pub enum AgentEvent {
         ///
         /// [`UNKNOWN_MODEL`] survives as the one documented spelling of "no
         /// model could be named here", and is expected to be rare.
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The model the failed call was dispatched to. Per-call attribution, on the same contract as a `step_usage` event's `provider`: this names what was actually being called, never the session's configured default."
+            )
+        )]
         model: String,
         reason: UsageIncompleteReason,
         duration_ms: u64,
@@ -1071,6 +1089,12 @@ pub enum AgentEvent {
     /// bracket IS the attribution for every event emitted between them.
     /// See [`crate::subagent_event`] for what the child forwards and what it
     /// deliberately drops at that boundary.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a deliberately narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops."
+        )
+    )]
     SubAgent { phase: SubAgentPhase },
     /// What the pipeline did with the winning candidate's workspace, and why
     /// (#2942). Emitted exactly once per isolated run, at the single point the
@@ -1084,6 +1108,16 @@ pub enum AgentEvent {
     ///
     /// See [`crate::delivery_event`] for why the outcome is a sum type and what
     /// the counts are measured from.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "What the pipeline did with the winning candidate's workspace, and why. \
+Emitted exactly once per isolated run, at the single point the decision is \
+taken. The `delivery` object is internally tagged on its own `outcome` field, \
+so a reader selects an arm by that field rather than by the presence or \
+absence of a sibling key."
+        )
+    )]
     CandidateDelivery {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<String>,
@@ -1099,6 +1133,12 @@ pub enum AgentEvent {
     /// The turn failed. `retryable` is the source's own classification (see
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "The turn failed. `retryable` is the source's own classification of the failure and must be read as given -- never re-derived by matching on `message`, whose wording is not part of this contract."
+        )
+    )]
     Error { message: String, retryable: bool },
     /// **One turn** finished. `cost_usd` is that turn's spend and `model` the
     /// model that served its last committed call; both summarize the
