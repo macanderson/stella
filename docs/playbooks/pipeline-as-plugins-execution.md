@@ -7,129 +7,153 @@ status: living
 # Executing the plugin extraction — the autonomous run protocol
 
 The plan is `doc:pipeline-as-plugins`. **This document is how it gets
-executed** — the order, the audit bar every change must clear, the merge policy,
-and the three points where the run must stop and ask a human.
+executed** — the order, when an audit is worth running, and how to merge.
 
-It is written to be executed by an autonomous session with no human watching, so
-everything a human would normally supply — judgement about when to stop, what
-counts as done, what must never be auto-merged — is written down here instead.
+It is written for an autonomous session with no human watching. The bias
+throughout is **shipping over ceremony**: there are no customers on this yet, so
+nearly every mistake is one commit away from being fixed, and the protocol is
+deliberately lighter than this repository's usual bar. Where it is strict, it is
+strict about the handful of things that are genuinely hard to undo.
 
 ---
 
 ## 0. Standing rules for the whole run
 
-1. **The gate is the floor, not the bar.** `make gate` green is necessary and
-   never sufficient. Nothing merges on a green gate alone.
-2. **One logical change per PR.** A PR that touches two work items gets split.
-3. **Never widen a baseline to pass.** Not `scripts/file-size-baseline.txt`, not
-   `deny.toml`, not `scripts/typed-errors-baseline.txt`. If a change needs a
-   ceiling raised, that is a signal to split the file, and the split is the work.
-4. **Never delete a test to make a change pass.** If a test must go, name it in
-   the PR description and say why.
-5. **Nothing left behind.** Every defect noticed and not fixed becomes a GitHub
-   issue written as a handoff before the phase closes.
-6. **Stop and file rather than guess.** If a work item turns out to depend on
-   something this document did not anticipate, open an issue describing the
-   dependency and move to the next independent item. Do not improvise an
-   architectural decision.
-7. **Report the unflattering number.** If a benchmark comparison goes against
-   the plugin path, say so plainly and stop the phase.
+**Bias to shipping.** There are no customers on this yet and every mistake here
+is recoverable by another commit. Velocity is worth more than ceremony, so the
+rules below are deliberately few. When a rule and progress conflict, and the
+mistake would be cheap to undo, ship and fix forward.
 
----
+1. **Say what you did.** The one rule that never relaxes. If you widened a
+   baseline, deleted a test, added an `#[allow]`, or shipped a shortcut — write
+   it in the PR description. Undoing a mistake is cheap; finding an
+   undocumented one six weeks later is not.
+2. **One logical change per PR**, where that is natural. Do not spend time
+   splitting a coherent change to satisfy the rule.
+3. **Prefer fixing to filing**, and prefer filing to forgetting. A one-line
+   issue is fine here — the handoff-quality bar applies to work you are handing
+   off, not to a note for yourself next week.
+4. **Report the unflattering number.** If a benchmark goes against the plugin
+   path, say so. This one is not ceremony: a flattering benchmark spends the
+   exact credibility the project is trying to build.
+5. **Do not improvise an architectural decision** that would be expensive to
+   reverse — the socket's shape, or who a principal is. Everything else, decide
+   and move.
 
-## 1. The adversarial audit bar
+## 1. Adversarial audit — scaled to the blast radius
 
-Every PR this run opens must clear an adversarial audit **before** it is
-eligible to merge. A self-review does not count — the point is that the author
-and the auditor are different contexts.
+Audits are for the changes where a defect is *expensive*, not for every diff.
+Most of this work is mechanical and its errors are loud.
 
-### The protocol
+**Skip the audit entirely** for documentation, renames, dependency deletions,
+file moves, and anything the compiler and tests already prove.
 
-For each PR, spawn **three independent auditors** with no shared context, each
-given the diff and a distinct lens:
+**One auditor** for ordinary code changes. Give it the diff, prompt it to
+**refute** rather than approve, and ask for concrete failures only — inputs plus
+wrong output, or an invariant plus the line that breaks it. "This could be
+cleaner" is not a finding. Fix what it finds if the fix is quick; file it and
+merge if not.
 
-| Lens | Asks |
+**Three auditors, and they block**, for the four changes where a defect is not
+recoverable by a follow-up PR:
+
+| Item | Why it blocks |
 |---|---|
-| **Correctness** | Where is this wrong? Name inputs and the wrong output. |
-| **Architecture** | Which invariant does this break? Cite it by number. Is a port becoming a concretion? |
-| **Security / authority** | What can a plugin do after this that it could not before? Who is the principal? |
+| **A1** plugin identity | a mistake here silently grants authority |
+| **A3** the wrapper socket | every plugin binds to it; its shape sets once implementations exist |
+| **A5/A3b** the wire contract | the same, for every non-Rust plugin |
+| **D3** self-driving's grant | the widest authority any plugin will hold |
 
-Each auditor is prompted to **refute**, not to approve, and defaults to
-"blocking" when uncertain. A finding is only recorded if it names a concrete
-failure — inputs plus wrong behaviour, or an invariant plus the line that breaks
-it. "This could be cleaner" is not a finding.
+Use three lenses there: correctness, architecture (cite the invariant by
+number), and authority (what can a plugin do now that it could not before?).
+Anything one of them blocks gets fixed before merge.
 
-### The decision
+## 2. Merge policy — light
 
-- **Any auditor raises a blocking finding** → fix it and re-audit from scratch.
-  Do not argue with the auditor in place of fixing.
-- **Two or more auditors independently raise the same non-blocking finding** →
-  treat as blocking. Independent agreement is signal.
-- **All three clear it** → eligible to merge, subject to §2.
+Merge when the change works and the audit (if §1 required one) cleared. That is
+the whole policy.
 
-### The audits that must be deeper
+Specifically:
 
-Three work items get **five** auditors instead of three, because a defect in
-them is not recoverable by a follow-up PR:
+- **CI green is the goal, not a gate.** If CI is red for a reason your diff did
+  not cause — a known flake, an already-broken base, an unrelated guard — say so
+  in the PR and merge anyway. Re-running a flake three times is time spent
+  buying nothing.
+- **Do not run the full `make gate` locally on every PR.** Run what your change
+  plausibly touches. The whole workspace test suite is not a per-PR cost worth
+  paying here.
+- **Do not stop the run when `main` goes red.** Note it, open a fix, keep
+  working. Repair it before the phase closes, not before the next commit.
+- **Fix forward over revert**, unless the breakage blocks other work.
 
-- **A1 (plugin identity)** — a mistake here silently grants authority.
-- **A3 (the wrapper socket)** — every plugin binds to it; its shape is
-  effectively permanent once implementations exist.
-- **D3 (self-driving's authority grant)** — the widest grant any plugin will
-  hold.
+Two things still hold, because they are about not losing information rather
+than about caution: never force-push over someone else's work, and never merge a
+PR whose base is a topic branch while believing it reaches `main`.
 
----
+## 3. Decisions — what is settled, and what the evidence decides
 
-## 2. Merge policy
+**No decision blocks this run.** An earlier draft of this playbook held three
+open gates; two of them were questions the evidence answers, and holding them
+open was over-caution rather than caution. What follows is the current state.
 
-A PR merges when **all** of the following hold. This list is exhaustive; if a
-condition is not listed, it is not a reason to merge.
+### D-1 — `judge` stays in-process. SETTLED (Mac, 2026-08-17).
 
-1. `make gate` is green **locally on the merge result**, not just on the branch.
-   A green branch and a green base can still compose into a red `main` — that is
-   the shared-cell failure this repository has hit repeatedly with
-   `Cargo.lock` and `scripts/file-size-baseline.txt`.
-2. CI is green on the actual head commit. Re-fetch before believing it: checks
-   can display the previous head.
-3. The adversarial audit of §1 cleared.
-4. The item is **not** behind a human gate (§3).
-5. The PR description names any test it deleted and cites the issues it closes,
-   with `Closes #N` **both** in the description and as a commit trailer.
+`judge` remains synchronous, I/O-free and total, so "calls no model" stays a
+property of the signature rather than a rule someone polices
+(`doc:turn-loop-wrappers` §9.2). Plugins participate by:
 
-**Never** force-push, never merge with admin override, never merge a PR whose
-base is a topic branch believing it reaches `main`.
+- supplying **evidence** out-of-process, in any language, inside the subprocess
+  budget — running a test suite is exactly the workload the in-process bus
+  cannot host; and
+- declaring their **verdict rule as data** — the closed condition grammar,
+  `[requirements]`, and the `[oracle]` flip/tamper policy. Data has no
+  programming language, so a Python author and a Rust author write the identical
+  artifact.
 
-After each merge, re-run the composition check on `main` (`make main-canary`).
-If `main` goes red, **stop the entire run** and fix it before opening anything
-else. A red `main` makes every subsequent PR red and destroys the signal this
-whole run depends on.
+Do not re-litigate this per plugin. Cite this section.
 
----
+**One task still runs, and it is a falsifier, not a gate.** Before A3 freezes
+the socket, express one genuinely different definition of done — not Vera's — as
+declarative data. Anything that will not fit is evidence for **widening the
+grammar**, not for reopening the decision. Report what did not fit; widen the
+grammar in the same phase if the gap is real.
 
-## 3. The three human gates — stop and ask
+### D-2 — transport: decided by the spike, not by a preference.
 
-These are architectural decisions with one-way doors. The run **must not**
-decide them, and must not proceed past them by picking the option that unblocks
-itself.
+Implement the Stop-hook path twice — once as a shell hook, once as an MCP server
+with a lifecycle extension — and compare on latency, failure modes, and how much
+a non-Rust author must understand to write a plugin.
 
-| Gate | Question | Where it is argued |
-|---|---|---|
-| **G1 — transport** | Shell-hook protocol, or MCP plus a lifecycle extension? | `doc:pipeline-as-plugins` §5, #3246 §O5 |
-| **G2 — `judge`** | Does `judge` stay in-process and pure, with plugins supplying evidence and declaring rules as data? | `doc:pipeline-as-plugins` §6 |
-| **G3 — self-driving authority** | May a plugin hold `gh`, AWS, `brew`, `~/.zshrc` and daemon powers, and under what gate? | `doc:pipeline-as-plugins` §10 |
+**Then pick the winner and proceed.** This is a measurement, and a run that
+stops to ask a human which number is larger is not automating anything. Record
+the comparison in the PR so the choice is reviewable.
 
-At each gate: post the evidence gathered, state the recommendation and its
-reasoning, name what would falsify it, and **stop**. Do not open the dependent
-PRs. Work on an independent item instead, or end the run cleanly with a summary.
+Escalate **only** if the spike is genuinely inconclusive — neither option clearly
+better on the three axes — and say precisely which axis tied.
 
-**G1 is preceded by a spike, not by an argument.** Implement the Stop-hook path
-twice — once as a shell hook, once as an MCP server with a lifecycle extension —
-compare them on latency, failure modes, and how much a non-Rust author has to
-understand. Present the comparison, not a preference.
+### D-3 — self-driving authority: the default is "no new power".
 
-**G2 is preceded by a falsifier.** Express one genuinely different definition of
-done — not Vera's — as declarative data. What will not fit is the evidence for
-widening the grammar. Run this before A3 freezes the socket.
+Self-driving already holds `gh`, AWS, `brew`, `~/.zshrc` and daemon powers
+today, as a shell script running with full user authority. Making it a plugin
+**relocates** that authority; it does not grant it. So the default is settled:
+**the plugin gets exactly what the shell script has today, and not one
+capability more.**
+
+The real requirement this places on Track A is on the authority system, not on
+the decision: `Principal` and the gate must be **able to express** a grant that
+wide, and a user must be able to see it at install time. Build to that.
+
+Escalate only if A1 lands and it turns out the grant **cannot** be expressed or
+**cannot** be shown to the user before install — that is a design gap worth a
+human, and it is a different question from "may it".
+
+### The standing rule underneath all three
+
+Decide from evidence and proceed. Escalate when the evidence is genuinely
+ambiguous or when a choice would grant authority nobody asked for — not merely
+because a decision feels weighty. When escalating, post the evidence, the
+recommendation, and what would falsify it, then work an independent item rather
+than idling.
 
 ---
 
@@ -161,8 +185,10 @@ Can start immediately, in parallel, gated by nothing:
 
 ### Phase 2 — Track A substrate, sequential
 
-**A1** (plugin identity) → **A2** (#3387 blessed constructor) → **G1 spike** →
-**G1 gate** → **G2 falsifier** → **G2 gate** → **A3a + A3b** (socket, both halves
+**A1** (plugin identity) → **A2** (#3387 blessed constructor) → **transport
+spike** (D-2: run it, pick the winner, record the comparison) → **grammar
+falsifier** (D-1: express a non-Vera definition of done as data; widen the
+grammar if it does not fit) → **A3a + A3b** (socket, both halves
 authored together) → **A4** (loader) → **A5** (`[runtime]` manifest block) →
 **A6** (structured verdicts) → **A7** (`max_holds`) → **A8** (stages and
 signals) → **A9** (plugin events and the trace fold) → **A10** (serializable
@@ -191,16 +217,24 @@ not, that is a Track A bug. Stop, file it, fix it in Track A.**
 `stella-goal`.
 
 Each ships behind `--pipeline <variant>` with the wrapper id recorded on the
-executions row. **A side-by-side benchmark must hold before the built-in path is
-deleted** — and a five-task solve rate cannot resolve anything smaller than a
-catastrophe, so comparisons need repeats per task and any two runs differing by
-more than one commit are confounded and must be reported as such.
+executions row, so both paths coexist and can be compared later.
 
-Cutting `stella-cli`'s dependency on `stella-pipeline` is the **last** slice.
+**Do not gate each extraction on a benchmark.** Keeping both paths alive is what
+makes that safe — a plugin that turns out worse is a flag flip away from being
+bypassed, not a rollback. Benchmark once, near the end, before deleting the
+built-in path for good. When you do, say plainly if the number goes the wrong
+way; a five-task solve rate resolves only catastrophes, so do not read a small
+difference as a result.
+
+Cutting `stella-cli`'s dependency on `stella-pipeline` is the **last** slice —
+it is the one step that removes the fallback.
 
 ### Phase 5 — Track D, self-driving as a plugin
 
-**G3 gate first.** Then the command surface, then the plugin. Keep
+Per D-3 the authority question is settled — the plugin gets exactly what the
+shell script holds today and nothing more — so proceed straight to the command
+surface, then the plugin. Escalate only if that grant cannot be expressed by the
+authority system or shown to the user before install. Keep
 `make self-driving-test` green with its assertions intact — if one has to be
 relaxed, behaviour changed and that is a bug in the move. Verify the
 observatory's `/api/self-driving` route still works rather than assuming it.
@@ -245,14 +279,11 @@ plugin without reading any Rust. If they cannot, the phase is not done.
 
 ## 5. Ending the run
 
-The run ends — cleanly, with a report — when any of these is true:
+Keep going while there is mergeable work. End with a report when the phases are
+done, when an escalation under §3 is genuinely warranted, or when two
+consecutive phases produce nothing mergeable.
 
-- All phases are complete.
-- A human gate is reached and the recommendation has been posted.
-- `main` is red and the run could not repair it.
-- A benchmark comparison went against the plugin path.
-- Two consecutive phases produced no mergeable work.
-
-The final report states: what merged, what is open, what was filed, which gates
-are waiting on a human, and — explicitly — **anything that was shipped as an
-expedient**, because shipping a shortcut quietly is the one unrecoverable move.
+The report says: what merged, what is open, what you filed, anything awaiting a
+human — and **explicitly, every shortcut you shipped**. That last one is the
+whole reason the light protocol above is safe: a documented shortcut is a task,
+an undocumented one is a trap.

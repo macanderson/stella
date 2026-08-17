@@ -350,6 +350,19 @@
       "status": "proposed",
       "title": "Every wrapper is a plugin: the full extraction plan"
     },
+    "pipeline-as-plugins-execution": {
+      "path": "docs/playbooks/pipeline-as-plugins-execution.md",
+      "sections": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "living",
+      "title": "Executing the plugin extraction \u2014 the autonomous run protocol"
+    },
     "pipeline-journey": {
       "path": "docs/design/pipeline-journey.md",
       "sections": [
