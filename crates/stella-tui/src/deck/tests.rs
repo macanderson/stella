@@ -542,7 +542,7 @@ fn complete_marks_done_and_records_final_cost() {
     w.apply_inbound(&reg("lead"));
     w.apply_inbound(&ev(
         "lead",
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.033,
         },

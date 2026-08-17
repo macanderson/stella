@@ -1213,7 +1213,7 @@ mod tests {
                 message: "e".into(),
                 retryable: false,
             },
-            AgentEvent::TurnComplete {
+            AgentEvent::RunComplete {
                 model: "m".into(),
                 cost_usd: 0.0,
             },

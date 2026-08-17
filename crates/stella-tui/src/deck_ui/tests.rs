@@ -1376,7 +1376,7 @@ fn a_finished_turn_releases_a_routing_card_stuck_on_its_prompt() {
     ingest_inbound(
         &Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::TurnComplete {
+            event: AgentEvent::RunComplete {
                 model: "test-model".into(),
                 cost_usd: 0.0,
             },

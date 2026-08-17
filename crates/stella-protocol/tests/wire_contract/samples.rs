@@ -26,6 +26,13 @@ use stella_protocol::{
     SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
 };
 
+/// Both scopes an [`AgentEvent::Stage`] can report (#3398). Enumerated like
+/// every other nested vocabulary so the wire contract fails if a third is
+/// added without a sample.
+pub(crate) fn all_stage_scopes() -> Vec<StageScope> {
+    vec![StageScope::Turn, StageScope::Run]
+}
+
 pub(crate) fn all_stage_kinds() -> Vec<StageKind> {
     use StageKind::*;
     vec![
@@ -636,7 +643,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
     // Every stage kind, in BOTH scopes: the wire contract has to pin the
     // engine's turn phases and a wrapper's run stages as distinct events
     // (#3398), not one of them arbitrarily.
-    for scope in [StageScope::Turn, StageScope::Run] {
+    for scope in all_stage_scopes() {
         events.extend(
             all_stage_kinds()
                 .into_iter()

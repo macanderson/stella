@@ -100,7 +100,7 @@ fn an_open_park_is_live_state_and_the_wake_closes_it() {
 #[test]
 fn a_turn_that_ends_mid_park_closes_the_span_anyway() {
     for terminal in [
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },
@@ -219,7 +219,7 @@ fn streaming_preview_clears_on_error_complete_and_a_new_prompt() {
             message: "aborted".into(),
             retryable: false,
         },
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.01,
         },
@@ -269,7 +269,7 @@ fn replaying_a_log_with_deltas_is_deterministic() {
             deadline_remaining_ms: None,
         },
         text("Hello"),
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.01,
         },
@@ -439,7 +439,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
         name: StageKind::Execute,
         scope: stella_protocol::StageScope::Run,
     });
-    model.apply(&AgentEvent::TurnComplete {
+    model.apply(&AgentEvent::RunComplete {
         model: "glm".into(),
         cost_usd: 0.5,
     });
@@ -471,7 +471,7 @@ fn a_turn_that_dies_at_the_gate_records_no_approval() {
             message: "aborted".into(),
             retryable: false,
         },
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.01,
         },
@@ -502,7 +502,7 @@ fn scope_review_clears_on_error_and_complete() {
             message: "aborted".into(),
             retryable: false,
         },
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.01,
         },
@@ -549,7 +549,7 @@ fn an_identical_error_repeated_immediately_is_reported_once() {
 #[test]
 fn complete_populates_hud() {
     let mut model = SessionModel::new();
-    model.apply(&AgentEvent::TurnComplete {
+    model.apply(&AgentEvent::RunComplete {
         model: "glm-5.2".into(),
         cost_usd: 0.033,
     });
@@ -965,7 +965,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
 #[test]
 fn a_terminal_event_clears_a_pending_hunk_review() {
     for terminal in [
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },
@@ -1109,7 +1109,7 @@ fn replay_of_the_same_log_yields_identical_models() {
             removed: 1,
             diff: Some("@@\n-a\n+b".into()),
         },
-        AgentEvent::TurnComplete {
+        AgentEvent::RunComplete {
             model: "glm".into(),
             cost_usd: 0.01,
         },
