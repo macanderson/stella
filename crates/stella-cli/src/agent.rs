@@ -61,6 +61,7 @@ mod prompt;
 mod reflect;
 pub(crate) mod resume;
 mod skill_usage;
+mod summary;
 pub(crate) mod tool_stack;
 mod tools;
 mod turn_close;
@@ -1693,7 +1694,11 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
-    persistence::emit_run_complete_for_turn(&tx, &cfg.model_id, &outcome);
+    // What this turn changed in the shared tree (#3413), measured at the
+    // boundary and emitted *before* the close below: these are the turn's own
+    // events and a consumer folding the stream must see them inside the turn
+    // they describe. See `crate::turn_files` for why a measurement, not a hook.
+    crate::turn_files::emit_shared_tree_changes(cfg, &tx);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).
@@ -1723,34 +1728,9 @@ async fn run_turn(
     );
 
     if format == OutputFormat::Json {
-        // One final JSON object: the outcome summary plus the full event
-        // log (the same objects stream-json would have emitted line by
-        // line).
-        let (status, text, cost_usd, reason) = match &outcome {
-            TurnOutcome::Completed { text, cost_usd } => {
-                ("completed", Some(text.clone()), Some(*cost_usd), None)
-            }
-            TurnOutcome::Aborted {
-                reason, cost_usd, ..
-            } => ("aborted", None, Some(*cost_usd), Some(reason.clone())),
-        };
-        let summary = RawRunSummary {
-            schema_version: crate::SUMMARY_SCHEMA_VERSION,
-            status,
-            text,
-            cost_usd,
-            reason,
-            model: format!("{}/{}", cfg.provider.id, cfg.model_id),
-            events: collected,
-            files_touched: serde_json::json!({ "files_touched": [] }),
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
-                "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
-            ))
-        );
-        crate::note_json_summary_emitted();
+        // One final JSON object: the outcome summary plus the full event log
+        // (the same objects stream-json would have emitted line by line).
+        summary::print_json_summary(cfg, &outcome, collected);
     }
 
     match outcome {

@@ -761,40 +761,61 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was read/created/modified/deleted by the agent, carrying both
-    /// the authoritative line delta and a diff for display. Only the mutating
-    /// kinds have a live producer today (see the emission point below);
-    /// `Read` survives in the kind space because recorded journals carry it
-    /// and replay must parse them.
+    /// A file was created/modified/deleted during a turn, carrying both the
+    /// authoritative line delta and a diff for display.
     ///
-    /// **Observability, never evidence.** This stream records what the
-    /// pipeline *adopted* out of a winning candidate; it is **not** a complete
-    /// record of workspace mutation, and nothing may found a claim about what
-    /// changed on counting it. A turn the pipeline never delivered — an
-    /// engine-only `run_turn`, a declined candidate, a run whose work stayed
-    /// in the snapshot — mutates nothing here and so emits nothing here. The
-    /// authority on what changed is the git diff of the tree, and a consumer
-    /// that needs that answer takes it from there (#2873, which removed the
-    /// last three decisions that read a count of these events; the tally
-    /// survives as a recorded-only field on `LadderSnapshot`).
+    /// **Observability, never evidence.** Nothing may found a claim about what
+    /// changed on counting these — #2873 removed the last three decisions that
+    /// did, and the tally survives only as a recorded-only field on
+    /// `LadderSnapshot`. The reason is sharper than "it might be incomplete":
+    /// the two producers below answer two *different* questions, and only one
+    /// of them is about the agent.
     ///
-    /// The single emission point is `Pipeline::deliver_winner`
-    /// (`stella-pipeline/src/pipeline/delivery.rs`), which emits one event per
-    /// `AdoptedChange` immediately beside the `CandidateWorkspace::attribute_adopted`
-    /// call that writes the session's durable file-touch ledger from the same
-    /// rows (#2907) — so the TUI, the audit log and the exported JSON cannot
-    /// disagree about what a turn changed. (This doc once claimed one emission
-    /// point "by construction" while the deck in fact synthesized its own
-    /// events from tool inputs, in a wrapper that knew only four tool names and
-    /// sat on one of three tool stacks. Files edited in bulk, or by a worker
-    /// lane, were reported as `+0 -0`.)
+    /// # The two producers, and what each one's answer means
     ///
-    /// `added`/`removed` are the counts adoption measured against the real
-    /// tree (git's numstat plus the patch it applied). Consumers **must** use them
-    /// rather than counting `+`/`-` lines in `diff`: the diff is a bounded,
-    /// deliberately coarse rendering of the changed region, and re-deriving
-    /// from it is what made the two disagree. Reads carry `0/0` and no diff;
-    /// consumers that only care about mutations filter on `kind`.
+    /// 1. **Candidate adoption** — `Pipeline::deliver_winner`
+    ///    (`stella-pipeline/src/pipeline/delivery.rs`), one event per
+    ///    `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`
+    ///    call that writes the same rows to the host's durable ledger (#2907).
+    ///    This one **is** attribution: adoption measures a candidate against a
+    ///    sealed baseline, so it can tell the agent's edits from anyone else's.
+    /// 2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over
+    ///    `WorkJournal::snapshot_worktree` (#3413). This one is **not**
+    ///    attribution. It answers *what changed in the tree during this turn*,
+    ///    which is the honest question a whole-tree measurement can answer: a
+    ///    user editing a file in another window mid-turn lands here
+    ///    indistinguishably from the agent's own writes.
+    ///
+    /// A consumer that needs "what did the agent do" takes it from the git diff
+    /// of the tree, or from adoption. This stream is for showing a human what
+    /// moved.
+    ///
+    /// # Why an engine-only turn is measured rather than hooked (#3413)
+    ///
+    /// It once emitted from the tools, and for a while after that from nowhere:
+    /// the 12-tool purge (#3244) deleted every file-writing built-in and the
+    /// file-CRUD ledger that emitted these, and this doc went on naming a
+    /// `ToolRegistry::record_touch` that no longer existed. Restoring a tool
+    /// hook is not available and would not be right if it were. Nothing left
+    /// names a path — the twelve built-ins are the task board, the scratch
+    /// state plane, sub-agents and `get_environment`, and a turn that mutates
+    /// the tree does it through an MCP server or a custom script tool, neither
+    /// of which describes its paths in any schema the engine reads. And
+    /// synthesizing these from tool *inputs* is the known defect, not the
+    /// design: a wrapper that did exactly that, knowing four hard-coded tool
+    /// names and sitting on one of three tool stacks, is what reported files
+    /// edited in bulk or by a worker lane as `+0 -0` (#2290).
+    ///
+    /// So the answer is a measurement, taken once per turn at the boundary.
+    /// The cost is one `git add -A` plus a `write-tree` against a dedicated
+    /// index, after the model has answered.
+    ///
+    /// `added`/`removed` are what the producer measured — git's `--numstat`
+    /// against the two trees, or, for adoption, numstat plus the patch it
+    /// applied. Consumers **must** use them rather than counting `+`/`-` lines
+    /// in `diff`: the diff is a bounded, deliberately coarse rendering of the
+    /// changed region, and re-deriving from it is what made the two disagree.
+    /// A binary file carries `0/0` and its kind.
     FileChange {
         path: String,
         kind: FileChangeKind,
@@ -1220,17 +1241,30 @@ impl<'de> Deserialize<'de> for AgentEvent {
     }
 }
 
-/// What happened to a file in a [`AgentEvent::FileChange`] event — as declared
-/// by the tool that touched it, which is why [`Self::is_mutation`] answers
-/// "was this call a write" and never "did the tree change". See the variant's
-/// doc for the difference and why only git can answer the second.
+/// What happened to a file in a [`AgentEvent::FileChange`] event.
+///
+/// Both live producers measure a tree against a tree, so every kind emitted
+/// today is a mutation — see [`Self::Read`] for the one that is not, and why
+/// it stays in the space anyway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FileChangeKind {
-    /// Content was successfully read — no mutation, never a diff. Rides the
-    /// same event so the files-touched panel sees reads without a second
-    /// data path.
+    /// Content was successfully read — no mutation, never a diff.
+    ///
+    /// **Replay-only, permanently, and this is the decision rather than a gap
+    /// awaiting one (#3413).** It had a producer when a `read` built-in
+    /// existed; the 12-tool purge (#3244) removed it, and nothing will emit it
+    /// again. Neither surviving producer can: both diff a tree against a tree,
+    /// and a read leaves no trace in a tree to diff. Re-acquiring one would
+    /// mean going back to declaring file operations from tool inputs, which is
+    /// the defect [`AgentEvent::FileChange`] documents rather than a capability
+    /// worth restoring.
+    ///
+    /// It stays in the kind space because journals recorded before the purge
+    /// carry it and replay must parse them — deleting the variant would make
+    /// those streams unreadable. Consumers must keep handling it, and must not
+    /// treat its absence from a live stream as evidence that nothing was read.
     Read,
     /// The file did not exist before this change.
     Created,
@@ -1241,13 +1275,13 @@ pub enum FileChangeKind {
 }
 
 impl FileChangeKind {
-    /// Whether the tool call that emitted this kind was a write — what the
-    /// inline transcript diffs and the files-touched panel key on. Reads are
-    /// listed here so one panel sees both; they carry `0/0` and no diff.
+    /// Whether this kind describes a write — what the inline transcript diffs
+    /// and the files-touched panel key on. [`Self::Read`] is the only `false`,
+    /// and only ever arrives from a replayed journal.
     ///
-    /// A `true` here is not a licence to claim the tree changed: it is one
-    /// tool's declaration about one call, and the calls it cannot see are the
-    /// majority (see [`AgentEvent::FileChange`]).
+    /// A `true` here is not a licence to claim the *agent* changed the file:
+    /// the shared-tree producer measures the turn, not the actor (see
+    /// [`AgentEvent::FileChange`]).
     #[must_use]
     pub fn is_mutation(self) -> bool {
         !matches!(self, FileChangeKind::Read)

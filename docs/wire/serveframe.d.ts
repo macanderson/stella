@@ -1159,10 +1159,11 @@ export type DeliveryOutcome = {
 export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
 
 /**
- * What happened to a file in a [`AgentEvent::FileChange`] event — as declared
- * by the tool that touched it, which is why [`Self::is_mutation`] answers
- * "was this call a write" and never "did the tree change". See the variant's
- * doc for the difference and why only git can answer the second.
+ * What happened to a file in a [`AgentEvent::FileChange`] event.
+ *
+ * Both live producers measure a tree against a tree, so every kind emitted
+ * today is a mutation — see [`Self::Read`] for the one that is not, and why
+ * it stays in the space anyway.
  */
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
