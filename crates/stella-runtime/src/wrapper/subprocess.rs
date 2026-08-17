@@ -223,6 +223,29 @@ impl std::fmt::Debug for SubprocessWrapper {
     }
 }
 
+/// The writer task's state for one conversation, bundled so [`SubprocessWrapper::converse`]
+/// takes it as one parameter rather than two.
+///
+/// The two fields move together for a reason, not just to satisfy
+/// `clippy::too_many_arguments`: every place `converse` reads or clears
+/// `frames` is also a place that may need to reach `writer` — a call
+/// arriving after a prior send already failed joins `writer` to recover the
+/// fault that killed it (`WrapperError::AnswerChannelFailed`) rather than
+/// reporting the unrelated "no gate" error. Splitting them back into two
+/// parameters would not remove that coupling, only hide it.
+struct WriterState<'a> {
+    /// The channel a host call is answered through. `None` from the start
+    /// when no conversation was ever offered (no gate, or the manifest
+    /// declares no `[loop] calls`); moves from `Some` to `None` when a send
+    /// finds the writer already gone.
+    frames: Option<mpsc::Sender<Vec<u8>>>,
+    /// The writer task, taken (and joined) only when a call arrives with
+    /// `frames` already `None` and the conversation was genuinely open — the
+    /// one case where the real transport fault has to be recovered rather
+    /// than discarded.
+    writer: &'a mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+}
+
 impl SubprocessWrapper {
     /// Declare a wrapper process.
     ///
@@ -389,10 +412,15 @@ impl SubprocessWrapper {
         // host writes a recall answer the plugin is not reading because it is
         // writing something the host is not reading.
         let (frames, outbox) = mpsc::channel::<Vec<u8>>(1);
-        let writer = tokio::spawn(write_frames(stdin, outbox));
-        // A send failing means the writer is gone, which the join below
-        // diagnoses with the actual I/O error; there is nothing better to say
-        // here than "carry on and read what the child has to say".
+        // `Option`, not a bare handle: `converse` takes it the moment it needs
+        // the writer's actual outcome — a host call arriving after a prior
+        // send already failed — so the fault that killed it is joined and
+        // reported instead of discarded (`WrapperError::AnswerChannelFailed`).
+        // Left `Some` here, it is this function's to abort or join below.
+        let mut writer = Some(tokio::spawn(write_frames(stdin, outbox)));
+        // A send failing means the writer is gone, which a join diagnoses with
+        // the actual I/O error; there is nothing better to say here than
+        // "carry on and read what the child has to say".
         let _ = frames.send(body).await;
 
         // Stdin closes now unless the plugin can actually ask for something.
@@ -402,6 +430,10 @@ impl SubprocessWrapper {
         let conversation = self.gate.as_ref().filter(|gate| gate.offers_calls());
         let channel = conversation.map(|gate| gate.open());
         let frames = channel.is_some().then_some(frames);
+        let writer_state = WriterState {
+            frames,
+            writer: &mut writer,
+        };
 
         let mut stderr_seen = Vec::new();
         let mut read = 0usize;
@@ -410,7 +442,7 @@ impl SubprocessWrapper {
                 .converse(
                     &mut stdout,
                     &mut stderr,
-                    frames,
+                    writer_state,
                     channel.as_ref(),
                     &mut stderr_seen,
                     &mut read,
@@ -419,9 +451,16 @@ impl SubprocessWrapper {
             // `converse` has dropped the sender, so the writer has shut stdin
             // down and the child has its EOF. Waiting for the exit *after* the
             // answer is what keeps a plugin that answers and then dies loudly
-            // an `Exit` rather than a success.
+            // an `Exit` rather than a success. Trailing stdout is drained too
+            // — see `settle`'s own doc for why that half is not optional.
             let status = self
-                .settle(&mut child, &mut stderr, &mut stderr_seen, &mut read)
+                .settle(
+                    &mut child,
+                    &mut stdout,
+                    &mut stderr,
+                    &mut stderr_seen,
+                    &mut read,
+                )
                 .await?;
             Ok::<_, WrapperError>((response, status))
         })
@@ -436,13 +475,21 @@ impl SubprocessWrapper {
                 // the direct child alone.
                 #[cfg(unix)]
                 guard.kill_now();
-                writer.abort();
+                // `converse` already joined the writer when it needed to
+                // report its own failure (`AnswerChannelFailed`) — nothing to
+                // abort at that point, the task is gone. Any other error path
+                // leaves it running, so it is aborted here as before.
+                if let Some(writer) = writer.take() {
+                    writer.abort();
+                }
                 return Err(error);
             }
             Err(_) => {
                 #[cfg(unix)]
                 guard.kill_now();
-                writer.abort();
+                if let Some(writer) = writer.take() {
+                    writer.abort();
+                }
                 return Err(WrapperError::Timeout {
                     program: self.program.clone(),
                     timeout: self.timeout,
@@ -459,20 +506,26 @@ impl SubprocessWrapper {
         // broken pipe it causes says nothing about the answer. Any other write
         // failure did lose the request, so it is reported. A join failure — the
         // writer task panicked or was cancelled — is the same class of loss.
-        match writer.await {
-            Ok(Err(source)) if source.kind() != std::io::ErrorKind::BrokenPipe => {
-                return Err(WrapperError::Transport {
-                    program: self.program.clone(),
-                    source,
-                });
+        //
+        // `writer` is always `Some` on this path: `converse` only ever takes
+        // it on its way to returning an error, and this branch is reached
+        // only when `converse` returned `Ok`.
+        if let Some(writer) = writer {
+            match writer.await {
+                Ok(Err(source)) if source.kind() != std::io::ErrorKind::BrokenPipe => {
+                    return Err(WrapperError::Transport {
+                        program: self.program.clone(),
+                        source,
+                    });
+                }
+                Err(join) => {
+                    return Err(WrapperError::Transport {
+                        program: self.program.clone(),
+                        source: std::io::Error::other(join),
+                    });
+                }
+                Ok(_) => {}
             }
-            Err(join) => {
-                return Err(WrapperError::Transport {
-                    program: self.program.clone(),
-                    source: std::io::Error::other(join),
-                });
-            }
-            Ok(_) => {}
         }
 
         if !status.success() {
@@ -531,11 +584,18 @@ impl SubprocessWrapper {
         &self,
         stdout: &mut tokio::process::ChildStdout,
         stderr: &mut tokio::process::ChildStderr,
-        mut frames: Option<mpsc::Sender<Vec<u8>>>,
+        mut writer_state: WriterState<'_>,
         channel: Option<&super::host_call::PointChannel<'_>>,
         stderr_seen: &mut Vec<u8>,
         read: &mut usize,
     ) -> Result<Option<WrapperResponse>, WrapperError> {
+        // Whether a conversation was ever open, decided once and fixed for the
+        // whole call: `writer_state.frames` only ever moves from `Some` to
+        // `None` below (a send failure), never the reverse, so this is
+        // exactly what tells a later `None` apart from the manifest/gate case
+        // that starts `None` and stays there. See the two arms below where a
+        // call finds no sender.
+        let conversation_was_open = writer_state.frames.is_some();
         let mut framer = Framer::default();
         let mut chunk = vec![0u8; READ_CHUNK];
         let mut errchunk = vec![0u8; READ_CHUNK];
@@ -586,7 +646,49 @@ impl SubprocessWrapper {
                     PluginMessage::Response(response) => return Ok(Some(response)),
                     PluginMessage::Call(call) => {
                         let asked = call.call();
-                        let Some(sender) = &frames else {
+                        let Some(sender) = &writer_state.frames else {
+                            // Two different shapes read as "no sender", and
+                            // conflating them was the defect: reporting both
+                            // as a manifest/gate problem sends whoever is
+                            // debugging a broken pipe to edit `[loop] calls`,
+                            // which does nothing.
+                            if conversation_was_open {
+                                // The channel was open — the manifest declares
+                                // this call and a gate was attached, proven by
+                                // the fact that something was already sent
+                                // through it. It failed transport-side after
+                                // that, most likely because the child closed
+                                // its stdin without reading a prior answer
+                                // (the framing this socket documents blesses a
+                                // plugin pipelining calls ahead of reading
+                                // them). Join the writer — it has already
+                                // exited, or this call could not have found
+                                // `frames` empty — to recover *why*, rather
+                                // than aborting it unread the way the caller
+                                // once did.
+                                let source = match writer_state.writer.take() {
+                                    Some(handle) => match handle.await {
+                                        Ok(Err(source)) => source,
+                                        Ok(Ok(())) => std::io::Error::other(
+                                            "the writer task exited normally, but a send to it \
+                                             had already failed",
+                                        ),
+                                        Err(join) => std::io::Error::other(join),
+                                    },
+                                    // Unreachable in practice: nothing else
+                                    // takes `writer` before this arm can run.
+                                    // Named rather than unwrapped, per
+                                    // invariant 5.
+                                    None => std::io::Error::other(
+                                        "the writer task's outcome was already taken",
+                                    ),
+                                };
+                                return Err(WrapperError::AnswerChannelFailed {
+                                    program: self.program.clone(),
+                                    call: asked,
+                                    source,
+                                });
+                            }
                             // Stdin is already closed because the manifest
                             // declared no callable capability, so there is no
                             // way to tell the plugin it may not have this. A
@@ -612,9 +714,17 @@ impl SubprocessWrapper {
                         .map_err(WrapperError::Encode)?;
                         if sender.send(answer).await.is_err() {
                             // The writer is gone, so no further answer can
-                            // reach the plugin. Stop pretending otherwise;
-                            // the join in `exchange` reports why.
-                            frames = None;
+                            // reach the plugin. Stop pretending otherwise. If
+                            // the point response is what arrives next anyway,
+                            // `exchange`'s own join on `writer` reports why
+                            // once this function returns; if instead another
+                            // call arrives while `frames` is `None`, the
+                            // branch above joins it here and reports
+                            // `AnswerChannelFailed` directly, since
+                            // `conversation_was_open` proves that call is not
+                            // the manifest/gate problem `UnannouncedCall`
+                            // means.
+                            writer_state.frames = None;
                         }
                     }
                 }
@@ -656,41 +766,68 @@ impl SubprocessWrapper {
             })
     }
 
-    /// Drain what the child still has to say and wait for it to exit.
+    /// Drain what the child still has to say on **both** streams and wait for
+    /// it to exit.
     ///
-    /// Stderr is read to EOF first: the child may be blocked writing a
-    /// diagnostic into a pipe nobody is emptying, and waiting for a process
-    /// that cannot finish its own error message is a deadlock with a
-    /// helpful-looking cause.
+    /// `converse` stops reading stdout the instant it finds the point
+    /// response — there is no more of the wire contract left to parse — but
+    /// the pipe behind that file descriptor does not know the conversation is
+    /// over, and neither does a child still writing to it. A plugin that
+    /// prints trailing output after answering (an unflushed logger that also
+    /// targets stdout, a debug print, anything past one OS pipe buffer, ~64
+    /// KiB on Linux) fills that pipe and blocks in `write(2)`, and a child
+    /// blocked in `write(2)` never reaches `exit(2)` — so `child.wait()` below
+    /// would hang until the outer timeout killed the group, turning a plugin
+    /// that had already answered correctly into a `Timeout`. Stdout is
+    /// therefore read to EOF here exactly as stderr already was, for the
+    /// identical reason stated on that half below: waiting for a process that
+    /// cannot finish writing is a deadlock with a helpful-looking cause. The
+    /// bytes themselves are discarded — the response was already parsed and
+    /// returned — only the ceiling still applies, over both streams together,
+    /// the same accounting `converse` uses.
     async fn settle(
         &self,
         child: &mut tokio::process::Child,
+        stdout: &mut tokio::process::ChildStdout,
         stderr: &mut tokio::process::ChildStderr,
         stderr_seen: &mut Vec<u8>,
         read: &mut usize,
     ) -> Result<std::process::ExitStatus, WrapperError> {
         let mut chunk = vec![0u8; READ_CHUNK];
-        loop {
-            let filled =
-                stderr
-                    .read(&mut chunk)
-                    .await
-                    .map_err(|source| WrapperError::Transport {
-                        program: self.program.clone(),
-                        source,
-                    })?;
+        let mut errchunk = vec![0u8; READ_CHUNK];
+        let mut stdout_open = true;
+        let mut stderr_open = true;
+        while stdout_open || stderr_open {
+            let (result, is_stdout) = tokio::select! {
+                result = stdout.read(&mut chunk), if stdout_open => (result, true),
+                result = stderr.read(&mut errchunk), if stderr_open => (result, false),
+            };
+            let filled = result.map_err(|source| WrapperError::Transport {
+                program: self.program.clone(),
+                source,
+            })?;
             if filled == 0 {
-                break;
+                if is_stdout {
+                    stdout_open = false;
+                } else {
+                    stderr_open = false;
+                }
+                continue;
             }
             *read += filled;
             if *read > MAX_CAPTURE_BYTES {
                 return Err(WrapperError::OutputCap {
                     program: self.program.clone(),
-                    stream: "stderr",
+                    stream: if is_stdout { "stdout" } else { "stderr" },
                     cap: MAX_CAPTURE_BYTES,
                 });
             }
-            stderr_seen.extend_from_slice(&chunk[..filled]);
+            if !is_stdout {
+                stderr_seen.extend_from_slice(&errchunk[..filled]);
+            }
+            // Trailing stdout carries nothing this transport reads — the point
+            // response already ended the conversation — so it is drained and
+            // dropped, never buffered.
         }
         child
             .wait()

@@ -312,3 +312,69 @@ async fn a_grant_below_steering_leaks_no_capability() {
         "an observer's declared call is not a call this host will answer"
     );
 }
+
+/// **A dead writer is not the same defect as a missing gate, and the real
+/// fault must not be discarded.**
+///
+/// The plugin here closes its own stdin right after reading the request —
+/// legitimate for a script that pipelines calls ahead of reading their
+/// answers, exactly as the framing doc at the top of `host_call.rs` blesses —
+/// and then keeps asking. The manifest declares `recall` and a gate is
+/// attached and answers the first ask or two normally; only once the host's
+/// write back to the child's closed stdin has actually failed and the
+/// internal writer task has exited does a further ask find no way to be
+/// answered.
+///
+/// Before the fix this returned `WrapperError::UnannouncedCall` — the
+/// manifest/no-gate error — even though the manifest plainly declares
+/// `[loop] calls = ["recall"]` and `gate` is plainly attached, which is an
+/// operator being told to fix a config that was never broken while the real
+/// transport fault (a broken pipe) is silently dropped by `writer.abort()`
+/// never being joined. This asserts the distinct, correctly-named error and
+/// that it carries the real I/O error rather than nothing.
+#[tokio::test]
+async fn a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let generous = LoopGrant {
+        max_calls: Some(8),
+        ..manifest.loop_grant.clone()
+    };
+    let gate = gate(generous, DEFAULT_HOST_MAX_CALLS);
+
+    // Closing stdin immediately after the request is read guarantees the
+    // host's very first answer write lands on an already-closed pipe: no
+    // race against the host's own scheduling is needed for this test to be
+    // reliable. Three asks follow with no read in between — pipelining ahead
+    // rather than a round trip — with a short pause between each so the
+    // writer task, once it fails, has had time to exit and drop its receiver
+    // before the next ask's guard is checked.
+    let script = r#"
+read -r request
+exec 0<&-
+printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"first"}}'
+sleep 0.2
+printf '%s\n' '{"call":"recall","id":2,"args":{"goal":"second"}}'
+sleep 0.2
+printf '%s\n' '{"call":"recall","id":3,"args":{"goal":"third"}}'
+"#;
+
+    let error = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+        .before_turn(before())
+        .await
+        .expect_err("a channel that died mid-conversation cannot answer a further ask");
+
+    let WrapperError::AnswerChannelFailed { call, source, .. } = &error else {
+        panic!(
+            "a dead writer must be reported as its own fault, not the manifest/gate error: \
+             {error}"
+        );
+    };
+    assert_eq!(*call, HostCall::Recall);
+    // The real cause reached the caller instead of being thrown away by an
+    // unjoined `writer.abort()`.
+    assert_eq!(
+        source.kind(),
+        std::io::ErrorKind::BrokenPipe,
+        "the recovered error names the actual transport fault: {source}"
+    );
+}
