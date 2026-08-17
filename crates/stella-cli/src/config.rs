@@ -149,6 +149,30 @@ fn upstream_pin_override() -> Option<&'static [String]> {
     UPSTREAM_PIN.get().map(Vec::as_slice)
 }
 
+/// `--allow-dir`: extra directories this invocation may write to.
+///
+/// A process-wide cell for the same reason as [`UPSTREAM_PIN`] above — it is a
+/// fact about the invocation `main` establishes once, and the other entry
+/// points into `Config::load` have no view of it. Unlike the pin it does not
+/// outrank settings: the two lists are UNIONED (`crate::write_dirs::resolve`),
+/// because a flag that replaced the committed list would revoke a write
+/// permission the operator never asked to revoke.
+static ALLOW_DIRS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Record `--allow-dir` for the rest of this process. Called by `main`; a
+/// second call is ignored, so no later caller can widen a running session's
+/// write scope.
+pub(crate) fn set_allow_dirs(dirs: Vec<String>) {
+    if !dirs.is_empty() {
+        let _ = ALLOW_DIRS.set(dirs);
+    }
+}
+
+/// The invocation's `--allow-dir` values, empty when none were given.
+fn allow_dirs_override() -> &'static [String] {
+    ALLOW_DIRS.get().map_or(&[][..], Vec::as_slice)
+}
+
 /// Which source supplies a provider's upstream pin: the flag outranks the
 /// settings entry, and absent both there is no pin.
 ///
@@ -506,6 +530,13 @@ pub struct Config {
     /// checkout (settings `create_worktrees`). Default `ask`, put once at
     /// triage and only when the run is going to change files.
     pub create_worktrees: crate::settings::CreateWorktrees,
+    /// Directories outside [`Self::workspace_root`] a write tool may touch,
+    /// already absolute: the union of `[workspace] allowed_dirs` and
+    /// `--allow-dir` (see [`crate::write_dirs`]). Empty is the default scope —
+    /// the workspace root alone. Handed to the tool registry at assembly time
+    /// (`ToolRegistry::allow_write_dirs`), which is the only place the grant
+    /// takes effect.
+    pub allowed_write_dirs: Vec<std::path::PathBuf>,
     /// Monotonic authority computed while loading the scope chain. Runtime
     /// adapters consume this instead of reinterpreting trust environment
     /// variables or repository settings independently.
@@ -706,6 +737,10 @@ impl Config {
         cfg.ignore_gitignore = settings.ignore_gitignore();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
+        // Config and flag compose here, once, so no consumer downstream can
+        // apply only one of the two sources.
+        cfg.allowed_write_dirs =
+            settings.allowed_write_dirs(&cfg.workspace_root, allow_dirs_override());
         // Keyed off the provider actually picked, like the engine baseline
         // above — a `providers.anthropic.cache_ttl` pin must not leak onto a
         // session that resolved to a different provider.
@@ -861,6 +896,7 @@ impl Config {
                     ignore_gitignore: true,
                     reward_policy: stella_pipeline::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
+                    allowed_write_dirs: Vec::new(),
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
                     credential_advisories: credentials_file.advisories().to_vec(),
@@ -1077,6 +1113,7 @@ impl Config {
             ignore_gitignore: true,
             reward_policy: stella_pipeline::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
+            allowed_write_dirs: Vec::new(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
             credential_advisories: credentials_file.advisories().to_vec(),
@@ -1419,6 +1456,7 @@ impl Config {
             model_pinned_by_flag: false,
             durability: Default::default(),
             create_worktrees: Default::default(),
+            allowed_write_dirs: Vec::new(),
             api_key: ApiKey::new("dummy-key-unused-offline"),
             credential_source: None,
             workspace_root: std::path::PathBuf::from("/tmp"),

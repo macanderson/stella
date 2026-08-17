@@ -204,11 +204,19 @@ impl Tool for EditFile {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Which directory this edit is allowed to land in, decided before
+        // anything is opened.
+        let (scope_root, path) = match ctx.resolve_for_write(path) {
+            Ok(resolved) => resolved,
+            Err(refusal) => return ToolOutput::error(refusal.to_string()),
+        };
+        let path = path.as_str();
+
         // One held root descriptor for both halves of the edit: the read below
         // and the write at the end walk the same descriptors rather than
         // resolving `path` twice against a filesystem that can move under
         // them (#938).
-        let handle = match crate::rootfd::RootHandle::open(root) {
+        let handle = match crate::rootfd::RootHandle::open(&scope_root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
                 return ToolOutput::error(format!("cannot open workspace root: {e}"));

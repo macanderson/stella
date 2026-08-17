@@ -287,7 +287,35 @@ impl Tool for ReadFile {
             }
         };
 
-        let handle = match crate::rootfd::RootHandle::open(root) {
+        // The one read the scope refuses: another session's git worktree. Not
+        // a security boundary — it is a correctness one. See
+        // `stella_core::workspace_scope` on why a parallel checkout of the
+        // same repository is the read an agent must not silently get.
+        if let Some(refusal) = ctx.refuse_read(path) {
+            return ToolOutput::error(refusal);
+        }
+
+        // Read from whichever allowed root holds this path, not from the
+        // session root alone.
+        //
+        // Without this, a directory granted by `--allow-dir` was **writable
+        // but not readable**: `write_file` opened the scope root that
+        // `resolve_for_write` chose, while this tool opened `ctx.root()` and
+        // `rootfd` then refused the absolute path as an escape. An agent
+        // could create a file and be told the file it had just written did
+        // not exist — the worst shape a boundary bug can take, because
+        // nothing about the message points at the boundary.
+        let (root, path) = match ctx.resolve_for_read(path) {
+            Some(resolved) => resolved,
+            // Outside every root: fall back to the session root and let
+            // `rootfd` answer. Reads are not scope-confined (see
+            // `stella_core::workspace_scope`), so this preserves the previous
+            // behaviour exactly rather than inventing a new refusal.
+            None => (root.to_path_buf(), path.to_string()),
+        };
+        let path = path.as_str();
+
+        let handle = match crate::rootfd::RootHandle::open(&root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
                 return ToolOutput::error(format!("cannot open workspace root: {e}"));
@@ -372,7 +400,7 @@ impl Tool for ReadFile {
                 // of the FULL content (even for a ranged read): drift asks
                 // "has the file changed since the model looked", and the
                 // whole file was current at that moment.
-                let reads = self.ledger.record_read(root, path, &content);
+                let reads = self.ledger.record_read(&root, path, &content);
                 let lines: Vec<&str> = content.lines().collect();
                 let start = offset.unwrap_or(1).saturating_sub(1);
                 let end = start.saturating_add(limit).min(lines.len());
@@ -459,7 +487,7 @@ impl Tool for ReadFile {
                 // lines or stop at the payload cap, and in both cases there are
                 // bytes on disk the model was never shown.
                 self.ledger.record_coverage(
-                    root,
+                    &root,
                     path,
                     shown == total && clipped_lines == 0 && !payload_capped,
                 );
@@ -978,13 +1006,58 @@ mod tests {
         assert!(result.is_error());
     }
 
+    /// **Reads are not confined to the workspace**, and this test now says so.
+    ///
+    /// It used to assert that `../../etc/passwd` was refused. That was the
+    /// behaviour when `read_file` opened only the session root, and it is the
+    /// behaviour that was deliberately changed: an agent fixing a build needs
+    /// system headers, the toolchain and a dependency's source, and a read
+    /// cannot damage the user's tree (`stella_core::workspace_scope`).
+    ///
+    /// Worth noting how it was passing on macOS while the change was already
+    /// in: `std::env::temp_dir()` there is `/var/folders/…/T/`, so
+    /// `../../etc/passwd` resolves to a path that does not exist, and the read
+    /// failed for the wrong reason. On Linux CI the same expression resolves
+    /// to the real `/etc/passwd` and the read succeeded — which is how the
+    /// stale assertion surfaced at all. A test that passes on one platform by
+    /// accident of path arithmetic is worse than no test, so this one now
+    /// pins the rule directly, on a file it creates itself.
     #[tokio::test]
-    async fn path_escape_returns_error() {
-        let dir = std::env::temp_dir();
+    async fn a_read_outside_the_workspace_is_allowed() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let outside = elsewhere.path().join("readable.txt");
+        std::fs::write(&outside, "readable\n").expect("write");
+
         let result = ReadFile::default()
-            .execute(&serde_json::json!({"path": "../../etc/passwd"}), &cx(&dir))
+            .execute(
+                &serde_json::json!({ "path": outside.to_string_lossy() }),
+                &cx(workspace.path()),
+            )
             .await;
-        assert!(result.is_error());
+        let ToolOutput::Ok { content, .. } = result else {
+            panic!("a read outside the workspace must succeed: {result:?}");
+        };
+        assert!(content.contains("readable"), "{content}");
+    }
+
+    /// The one read that IS refused: another session's worktree — a second
+    /// checkout of the same repository at another revision, so reading it
+    /// answers about the wrong copy of the file being edited.
+    #[tokio::test]
+    async fn a_read_into_a_sibling_worktree_is_refused() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let worktree = workspace.path().join(".stella/worktrees/sibling");
+        std::fs::create_dir_all(&worktree).expect("mkdir");
+        std::fs::write(worktree.join("other.rs"), "pub fn other() {}\n").expect("write");
+
+        let result = ReadFile::default()
+            .execute(
+                &serde_json::json!({ "path": ".stella/worktrees/sibling/other.rs" }),
+                &cx(workspace.path()),
+            )
+            .await;
+        assert!(result.is_error(), "{result:?}");
     }
 
     #[tokio::test]

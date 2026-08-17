@@ -52,6 +52,7 @@ mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
 pub mod waiting;
+pub mod workspace_scope;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the

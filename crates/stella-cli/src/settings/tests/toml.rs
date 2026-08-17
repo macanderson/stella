@@ -174,6 +174,51 @@ fn an_absent_reward_key_is_the_default_not_zero() {
     assert_eq!(policy.shaping.per_revision, 0.1);
 }
 
+/// `[workspace] allowed_dirs` parses, survives the scope merge, and lowers to
+/// absolute paths against the project root.
+///
+/// **Witness.** Each half fails on its own: without the `TomlConfig` field the
+/// key is an unknown-key warning and lowers to `None`; without the
+/// `overlay_scope` arm the list parses and merges away, which is the failure
+/// `enable_recap` and `create_worktrees` each shipped once.
+#[test]
+fn a_workspace_allowed_dirs_list_parses_and_lowers_to_absolute_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[workspace]\nallowed_dirs = [\"/srv/shared\", \"vendor\"]\n",
+    );
+    let scope = load_toml(&path, ConfigScope::Project).unwrap();
+    assert_eq!(
+        scope.allowed_dirs.as_deref(),
+        Some(&["/srv/shared".to_string(), "vendor".to_string()][..]),
+        "the [workspace] section must lower onto Settings::allowed_dirs"
+    );
+
+    let mut merged = Settings::default();
+    merged.overlay_scope(&scope);
+    assert_eq!(
+        merged.allowed_write_dirs(Path::new("/work/project"), &[]),
+        vec![
+            PathBuf::from("/srv/shared"),
+            PathBuf::from("/work/project/vendor"),
+        ],
+        "the list must survive the merge and resolve against the project root"
+    );
+
+    // A `--allow-dir` widens that grant; it never replaces it.
+    assert_eq!(
+        merged.allowed_write_dirs(Path::new("/work/project"), &["/srv/scratch".to_string()]),
+        vec![
+            PathBuf::from("/srv/shared"),
+            PathBuf::from("/work/project/vendor"),
+            PathBuf::from("/srv/scratch"),
+        ],
+        "--allow-dir must union with the configured list"
+    );
+}
+
 /// No `[reward]` block at all is exactly the defaults — the shipped behavior is
 /// unchanged for every workspace that never opts in.
 #[test]
