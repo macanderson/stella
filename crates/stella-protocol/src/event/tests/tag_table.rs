@@ -21,6 +21,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
     let sample = vec![
         AgentEvent::Stage {
             name: StageKind::Triage,
+            scope: crate::StageScope::Run,
         },
         AgentEvent::Text { text: "hi".into() },
         AgentEvent::TextDelta { delta: "h".into() },
@@ -111,7 +112,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             message: "m".into(),
             retryable: false,
         },
-        AgentEvent::Complete {
+        AgentEvent::TurnComplete {
             model: "m".into(),
             cost_usd: 0.0,
         },

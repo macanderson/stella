@@ -60,7 +60,9 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
 /// agent's lifecycle.
 pub(super) fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
     match ev {
-        AgentEvent::Complete { .. } => Some(AgentStatus::Done),
+        // An agent is Done when its RUN ends, not when one of its turns
+        // does — a wrapped run has several turns and is still working (#3379).
+        AgentEvent::RunComplete { .. } => Some(AgentStatus::Done),
         AgentEvent::Error { retryable, .. } => Some(if *retryable {
             AgentStatus::Running
         } else {
@@ -103,7 +105,7 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::Unknown { event_type, .. } => {
             (TraceKind::Other, format!("unrecognized `{event_type}`"))
         }
-        AgentEvent::Stage { name } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
+        AgentEvent::Stage { name, .. } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
         AgentEvent::Text { text } => (TraceKind::Text, snip(text)),
         // Mapped for completeness; `apply_event` never traces deltas (one
         // row per token would churn the capped ring — see the guard there).
@@ -319,16 +321,10 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         ),
         AgentEvent::AskUser { question, .. } => (TraceKind::Other, snip(question)),
         AgentEvent::Error { message, .. } => (TraceKind::Error, snip(message)),
-        // A turn boundary, not the agent's ending (#3379) — `TraceKind::Other`
-        // keeps it out of the deck's terminal styling, which a wrapped run
-        // would otherwise wear once per revise round. `status_from_event`
-        // above deliberately leaves it to the wildcard for the same reason:
-        // a finished turn does not make the agent `Done`.
-        AgentEvent::TurnComplete { model, cost_usd } => (
-            TraceKind::Other,
-            format!("turn done — {model} ${cost_usd:.4}"),
-        ),
-        AgentEvent::Complete { model, cost_usd } => {
+        AgentEvent::TurnComplete { model, cost_usd } => {
+            (TraceKind::Complete, format!("turn {model} ${cost_usd:.4}"))
+        }
+        AgentEvent::RunComplete { model, cost_usd } => {
             (TraceKind::Complete, format!("{model} ${cost_usd:.4}"))
         }
     }

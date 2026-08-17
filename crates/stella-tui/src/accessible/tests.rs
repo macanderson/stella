@@ -27,6 +27,7 @@ fn stage(agent: &str) -> Inbound {
         agent: agent.into(),
         event: AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         },
     }
 }

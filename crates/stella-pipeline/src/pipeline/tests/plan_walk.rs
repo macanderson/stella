@@ -206,8 +206,8 @@ async fn a_no_tool_call_step_ends_the_walk_with_one_consolidated_check() {
     );
 }
 
-/// #3379 witness: the engine owns its own ending, and the pipeline owns the
-/// run's — one journal, both endings, in order, neither suppressed.
+/// #3379/#3398 witness: every engine turn ends in the journal, and the
+/// pipeline — which is a wrapper, not the run's owner — ends nothing.
 ///
 /// It lives beside the plan walk because this is the workspace's cheapest
 /// genuinely multi-turn run: an 8-step plan the worker never closes out is
@@ -215,12 +215,14 @@ async fn a_no_tool_call_step_ends_the_walk_with_one_consolidated_check() {
 /// verdict.
 ///
 /// Fails on `main`, where `filtered_turn_events` dropped every engine
-/// `Complete` before any consumer saw it and exactly one terminal event
-/// existed for the whole run — so a reader could not tell how many turns the
-/// run took, and the one word `complete` meant "a turn ended" when the engine
-/// said it and "the job ended" when the pipeline did.
+/// `Complete` before any consumer saw it and the pipeline emitted a terminator
+/// of its own — so a reader could not tell how many turns the run took, and a
+/// wrapper that cannot know whether it is the whole run claimed to be it. On
+/// `stella goal`, which drives one `Pipeline::run` per round over a single
+/// stream, that claim was demonstrably false and put one terminator per round
+/// on one run's stream.
 #[tokio::test]
-async fn every_engine_turn_ends_in_the_journal_and_the_run_ends_once() {
+async fn every_engine_turn_ends_in_the_journal_and_the_pipeline_ends_nothing() {
     let mut script = vec![text_result("multi"), eight_step_plan()];
     for n in 1..=8 {
         script.push(writing_tool_result(&format!("did step {n}")));
@@ -231,12 +233,12 @@ async fn every_engine_turn_ends_in_the_journal_and_the_run_ends_once() {
 
     assert_eq!(outcome.status, PipelineStatus::Completed);
 
-    // The two endings, in the order they were emitted.
+    // The endings, in the order they were emitted.
     let endings: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {
             AgentEvent::TurnComplete { .. } => Some("turn"),
-            AgentEvent::Complete { .. } => Some("run"),
+            AgentEvent::RunComplete { .. } => Some("run"),
             _ => None,
         })
         .collect();
@@ -245,23 +247,20 @@ async fn every_engine_turn_ends_in_the_journal_and_the_run_ends_once() {
         endings.iter().filter(|e| **e == "turn").count(),
         8,
         "one engine ending per turn the run actually drove — the walk ran 8 \
-         steps, so 8 turns finished and the journal says so: {endings:?}"
+         steps, so 8 turns finished and the journal says so, none of them \
+         filtered out by the wrapper above them: {endings:?}"
     );
     assert_eq!(
         endings.iter().filter(|e| **e == "run").count(),
-        1,
-        "the run terminates exactly once, and `complete` still means what the \
-         wire contract publishes: {endings:?}"
-    );
-    assert_eq!(
-        endings.last(),
-        Some(&"run"),
-        "the run's ending is last; nothing may follow it: {endings:?}"
+        0,
+        "the pipeline is a wrapper, not the owner of the stream it writes to, \
+         so it emits no run terminator at all (#3398). Whoever created the \
+         stream emits exactly one, after the pipeline returns: {endings:?}"
     );
 
     // Enforced mechanically too, not only by the assertions above: a per-turn
-    // ending let through as `complete` would fail the published terminal
-    // invariant here rather than merely reading oddly.
+    // ending let through as the run's terminator would fail the published
+    // terminal invariant here rather than merely reading oddly.
     let violations = crate::replay::validate_stream(&events);
     assert!(
         violations.is_empty(),

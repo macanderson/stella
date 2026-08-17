@@ -142,11 +142,13 @@ async fn main() -> std::io::Result<()> {
                         let next = match decision {
                             ScopeDecision::Approve | ScopeDecision::Trim => AgentEvent::Stage {
                                 name: StageKind::Execute,
+                                scope: stella_protocol::StageScope::Run,
                             },
                             ScopeDecision::Revise { .. } => AgentEvent::Stage {
                                 name: StageKind::Plan,
+                                scope: stella_protocol::StageScope::Run,
                             },
-                            ScopeDecision::Abort => AgentEvent::Complete {
+                            ScopeDecision::Abort => AgentEvent::TurnComplete {
                                 model: "glm-5.2".into(),
                                 cost_usd: 0.0,
                             },
@@ -402,9 +404,11 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
     let steps = vec![
         ev(AgentEvent::Stage {
             name: StageKind::Triage,
+            scope: stella_protocol::StageScope::Run,
         }),
         ev(AgentEvent::Stage {
             name: StageKind::Execute,
+            scope: stella_protocol::StageScope::Run,
         }),
         ev(AgentEvent::ToolStart {
             call: ToolCall {
@@ -457,7 +461,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             session_limit_usd: None,
             deadline_remaining_ms: None,
         }),
-        ev(AgentEvent::Complete {
+        ev(AgentEvent::TurnComplete {
             model: "glm-5.2".into(),
             cost_usd: 0.008,
         }),

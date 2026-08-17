@@ -3,7 +3,7 @@
 //! joined the completion path. A child module of `driver` so the engine
 //! internals stay reachable.
 
-use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole};
+use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole, StageKind};
 
 use super::truncation::{self, ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL};
 use super::user_hooks::STOP_HOOK_MARKER_PREFIX;
@@ -187,17 +187,10 @@ impl<'a> Engine<'a> {
                 )));
                 return None;
             }
-            // The engine's ending, and the whole of it (#3379). It says "this
-            // turn is over" and never "the work is over": the engine has no
-            // way to know whether its caller wants another turn, so claiming
-            // the run-terminal `Complete` here is a claim it cannot support —
-            // and it is what forced every multi-turn wrapper to reach back in
-            // and filter the engine's own events out of the consumer stream.
-            // The run's owner emits `Complete`; nobody suppresses this.
-            //
-            // `StageKind::Complete` is likewise the run owner's word, not
-            // ours: emitted here it ranked ahead of Verify and made a staged
-            // run's stage order illegal the moment it stopped being filtered.
+            let _ = events.send(AgentEvent::Stage {
+                name: StageKind::Complete,
+                scope: stella_protocol::StageScope::Turn,
+            });
             let _ = events.send(AgentEvent::TurnComplete {
                 model: result.model.clone(),
                 cost_usd: total_cost_usd,

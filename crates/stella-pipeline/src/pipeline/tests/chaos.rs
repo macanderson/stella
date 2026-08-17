@@ -326,7 +326,7 @@ fn assert_loop_invariant(
         let terminal = events.iter().any(|e| {
             matches!(
                 e,
-                AgentEvent::Complete { .. }
+                AgentEvent::TurnComplete { .. }
                     | AgentEvent::Error {
                         retryable: false,
                         ..

@@ -23,6 +23,7 @@
  */
 export type AgentEvent = {
   name: StageKind;
+  scope: StageScope;
   type: "stage";
 } | {
   text: string;
@@ -663,7 +664,7 @@ export type AgentEvent = {
 } | {
   cost_usd: number;
   model: string;
-  type: "complete";
+  type: "run_complete";
 };
 
 /**
@@ -1885,12 +1886,22 @@ export interface ScopeProposal {
  */
 export type ServiceTier = "auto" | "default" | "flex" | "priority";
 
+export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+
 /**
  * A named point in the turn's data flow. Exactly one stage vocabulary
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
+ * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
+ *
+ * Deliberately **not** `#[serde(default)]`. A default would silently claim
+ * one scope for every historical recording, and half of them are the other
+ * one — a decode ambiguity that would live in the fixtures forever. A
+ * recording written before this field existed decodes through
+ * [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
+ * rather than guessing wrong.
  */
-export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageScope = "turn" | "run";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly

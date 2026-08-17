@@ -1349,7 +1349,7 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
         !events
             .iter()
             .any(|e| matches!(e, AgentEvent::TurnComplete { .. })),
-        "an empty turn must NOT emit a TurnComplete success marker"
+        "an empty turn must NOT emit a Complete success marker"
     );
 }
 

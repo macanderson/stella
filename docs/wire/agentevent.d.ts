@@ -1057,12 +1057,22 @@ export interface ScopeProposal {
   write_globs?: string[];
 }
 
+export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+
 /**
  * A named point in the turn's data flow. Exactly one stage vocabulary
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
+ * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
+ *
+ * Deliberately **not** `#[serde(default)]`. A default would silently claim
+ * one scope for every historical recording, and half of them are the other
+ * one — a decode ambiguity that would live in the fixtures forever. A
+ * recording written before this field existed decodes through
+ * [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
+ * rather than guessing wrong.
  */
-export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageScope = "turn" | "run";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly
@@ -1300,6 +1310,7 @@ export interface VerdictEvidence {
  */
 export type AgentEvent = {
   name: StageKind;
+  scope: StageScope;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
@@ -2104,7 +2115,7 @@ export type AgentEvent = {
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
-  type: "complete";
+  type: "run_complete";
 };
 
 /**
@@ -2152,4 +2163,4 @@ export type KnownTypeTag =
   | "candidate_delivery"
   | "error"
   | "turn_complete"
-  | "complete";
+  | "run_complete";

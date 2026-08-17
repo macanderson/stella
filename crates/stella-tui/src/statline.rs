@@ -850,6 +850,7 @@ mod tests {
             agent: "lead".into(),
             event: AgentEvent::Stage {
                 name: StageKind::Execute,
+                scope: stella_protocol::StageScope::Run,
             },
         });
         m

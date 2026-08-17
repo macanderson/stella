@@ -567,7 +567,10 @@ mod tests {
         m.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Stage { name: stage },
+            event: AgentEvent::Stage {
+                name: stage,
+                scope: stella_protocol::StageScope::Run,
+            },
         });
         m
     }
@@ -666,7 +669,7 @@ mod tests {
         let mut m = agent_running(StageKind::Verify);
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::RunComplete {
                 model: "glm-5.2".into(),
                 cost_usd: 0.1,
             },
@@ -698,7 +701,7 @@ mod tests {
         let mut m = agent_running(StageKind::Verify);
         m.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Complete {
+            event: AgentEvent::RunComplete {
                 model: "glm-5.2".into(),
                 cost_usd: 0.1,
             },

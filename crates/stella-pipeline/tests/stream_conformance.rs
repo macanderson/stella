@@ -83,25 +83,26 @@ fn corruptions() -> Vec<Corruption> {
                     at,
                     AgentEvent::Stage {
                         name: StageKind::Triage,
+                        scope: stella_protocol::StageScope::Run,
                     },
                 );
             },
         },
         Corruption {
-            name: "a second Complete",
-            expect: "more than one Complete",
+            name: "a second run_complete",
+            expect: "more than one run_complete",
             apply: |events| {
                 let terminal = events
                     .iter()
                     .rev()
-                    .find(|e| matches!(e, AgentEvent::Complete { .. }))
+                    .find(|e| matches!(e, AgentEvent::RunComplete { .. }))
                     .expect("the fixture terminates")
                     .clone();
                 events.push(terminal);
             },
         },
         Corruption {
-            name: "an event after Complete",
+            name: "an event after run_complete",
             expect: "not the last event",
             apply: |events| {
                 events.push(AgentEvent::Text {
@@ -178,12 +179,12 @@ fn the_corruption_set_covers_every_invariant_the_validator_claims() {
     // check ride along looking enforced.
     let expectations: Vec<&str> = corruptions().into_iter().map(|c| c.expect).collect();
     for invariant in [
-        "illegal stage transition", // 1. legal stage ordering
-        "never matched",            // 2. tool pairing, open side
-        "no preceding tool_start",  // 2. tool pairing, orphan side
-        "more than one Complete",   // 3. terminal Complete, count
-        "not the last event",       // 3. terminal Complete, position
-        "backwards",                // 4. monotonic budget
+        "illegal stage transition",   // 1. legal stage ordering
+        "never matched",              // 2. tool pairing, open side
+        "no preceding tool_start",    // 2. tool pairing, orphan side
+        "more than one run_complete", // 3. the RUN's terminator, count
+        "not the last event",         // 3. the RUN's terminator, position
+        "backwards",                  // 4. monotonic budget
     ] {
         assert!(
             expectations.contains(&invariant),
