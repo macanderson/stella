@@ -160,6 +160,37 @@ pub(super) fn event_sender_for_run(
     (EventSender::new(sender), false)
 }
 
+/// The sender the pipeline itself emits on, for a one-shot run.
+///
+/// On `stream-json` the caller emits its own terminal `Complete` once
+/// reflection and accounting have settled, carrying the all-calls total — so
+/// the pipeline's earlier, pre-reflection one is dropped here rather than left
+/// to be "replaced" downstream. It never was replaced anywhere it mattered:
+/// the renderer only ever *displayed* the last `Complete`, but the durable
+/// JSONL sink appends every event it is handed, so both landed in the
+/// benchmark evidence file and a consumer that stopped at the first terminal
+/// event read the pre-reflection cost (#960).
+///
+/// Suppression is exactly as wide as the replacement. The pipeline emits
+/// `Complete` only on an `Ok` outcome, and the one-shot path sends its
+/// replacement for every `Ok` outcome, so a run that had a terminal event
+/// before still has exactly one — never zero.
+///
+/// Every other format keeps the pipeline's `Complete`: it is the only one they
+/// get.
+pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) -> EventSender {
+    if format != OutputFormat::StreamJson {
+        return events.clone();
+    }
+    let inner = events.clone();
+    EventSender::from_fn(move |event| {
+        if matches!(event, AgentEvent::Complete { .. }) {
+            return Ok(());
+        }
+        inner.send(event)
+    })
+}
+
 /// The durable sink, and the point at which an event becomes a *line*.
 ///
 /// The line carries this sink's own `ts` (#2111). The renderer publishes the
