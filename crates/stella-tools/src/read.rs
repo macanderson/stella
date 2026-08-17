@@ -1006,13 +1006,58 @@ mod tests {
         assert!(result.is_error());
     }
 
+    /// **Reads are not confined to the workspace**, and this test now says so.
+    ///
+    /// It used to assert that `../../etc/passwd` was refused. That was the
+    /// behaviour when `read_file` opened only the session root, and it is the
+    /// behaviour that was deliberately changed: an agent fixing a build needs
+    /// system headers, the toolchain and a dependency's source, and a read
+    /// cannot damage the user's tree (`stella_core::workspace_scope`).
+    ///
+    /// Worth noting how it was passing on macOS while the change was already
+    /// in: `std::env::temp_dir()` there is `/var/folders/…/T/`, so
+    /// `../../etc/passwd` resolves to a path that does not exist, and the read
+    /// failed for the wrong reason. On Linux CI the same expression resolves
+    /// to the real `/etc/passwd` and the read succeeded — which is how the
+    /// stale assertion surfaced at all. A test that passes on one platform by
+    /// accident of path arithmetic is worse than no test, so this one now
+    /// pins the rule directly, on a file it creates itself.
     #[tokio::test]
-    async fn path_escape_returns_error() {
-        let dir = std::env::temp_dir();
+    async fn a_read_outside_the_workspace_is_allowed() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let outside = elsewhere.path().join("readable.txt");
+        std::fs::write(&outside, "readable\n").expect("write");
+
         let result = ReadFile::default()
-            .execute(&serde_json::json!({"path": "../../etc/passwd"}), &cx(&dir))
+            .execute(
+                &serde_json::json!({ "path": outside.to_string_lossy() }),
+                &cx(workspace.path()),
+            )
             .await;
-        assert!(result.is_error());
+        let ToolOutput::Ok { content, .. } = result else {
+            panic!("a read outside the workspace must succeed: {result:?}");
+        };
+        assert!(content.contains("readable"), "{content}");
+    }
+
+    /// The one read that IS refused: another session's worktree — a second
+    /// checkout of the same repository at another revision, so reading it
+    /// answers about the wrong copy of the file being edited.
+    #[tokio::test]
+    async fn a_read_into_a_sibling_worktree_is_refused() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let worktree = workspace.path().join(".stella/worktrees/sibling");
+        std::fs::create_dir_all(&worktree).expect("mkdir");
+        std::fs::write(worktree.join("other.rs"), "pub fn other() {}\n").expect("write");
+
+        let result = ReadFile::default()
+            .execute(
+                &serde_json::json!({ "path": ".stella/worktrees/sibling/other.rs" }),
+                &cx(workspace.path()),
+            )
+            .await;
+        assert!(result.is_error(), "{result:?}");
     }
 
     #[tokio::test]
