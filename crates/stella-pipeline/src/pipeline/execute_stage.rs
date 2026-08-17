@@ -318,8 +318,8 @@ impl<'a> Pipeline<'a> {
     /// Run one engine turn, forwarding every event to the consumer **live**
     /// (a concurrent drain task, not a post-hoc flush — an execute turn can
     /// run tool loops for minutes, and buffering froze the renderer for the
-    /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
-    /// owns those), tallying `FileChange`s into `signals.file_changes` for
+    /// whole turn) **except** the engine's `Complete` (the pipeline owns the
+    /// run's terminal event), tallying `FileChange`s into `signals.file_changes` for
     /// the zero-diff guard and mutating-capable `ToolStart`s into
     /// `signals.mutating_actions` for the ladder's no-op rung.
     ///
@@ -442,10 +442,12 @@ impl<'a> Pipeline<'a> {
         let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
-                // The pipeline is the sole authority for stage boundaries and
-                // the terminal event of an outcome-producing run — drop the
-                // engine's per-turn copies.
-                AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => Ok(()),
+                // The pipeline is the sole authority for the terminal event of
+                // an outcome-producing run — drop the engine's per-turn copy.
+                // (The engine no longer emits a `Stage` of its own: #3416
+                // moved that boundary out to the run owner, which is why this
+                // arm names only `Complete`.)
+                AgentEvent::Complete { .. } => Ok(()),
                 // Concurrent candidates share this stream, and these two are
                 // the only events whose meaning depends on arriving
                 // uninterrupted: `TextDelta` is a preview its own `Text` event

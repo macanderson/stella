@@ -32,6 +32,18 @@ use stella_tui::Inbound;
 pub(crate) struct InsightScope {
     pub(crate) provider_id: String,
     pub(crate) cache_ttl: CacheTtl,
+    /// Whether this lane's forwarder opens the turn with its own
+    /// `Stage(Execute)`. The engine emits no stage boundary — `StageKind` is
+    /// the run owner's vocabulary (#3416) — so a raw lane must emit one or its
+    /// HUD never leaves the previous turn's stage. A **staged** lane must not:
+    /// the pipeline emits `Triage` first, and an `Execute` ahead of it is a
+    /// backwards transition `replay::validate_stage_ordering` rejects.
+    ///
+    /// It rides this struct rather than a seventh `spawn_forwarder` parameter
+    /// for the reason the struct exists at all: the deck's call sites are in a
+    /// file closed to growth. Defaulting to `true` in [`Self::from_config`] is
+    /// what keeps `command_deck.rs` untouched — only the staged lane opts out.
+    pub(crate) opens_execute_stage: bool,
 }
 
 impl InsightScope {
@@ -39,7 +51,15 @@ impl InsightScope {
         Self {
             provider_id: cfg.provider.id.to_string(),
             cache_ttl: cfg.effective_cache_ttl(),
+            opens_execute_stage: true,
         }
+    }
+
+    /// The lane runs the staged pipeline, which emits every stage boundary of
+    /// its own — see [`Self::opens_execute_stage`].
+    pub(crate) fn staged(mut self) -> Self {
+        self.opens_execute_stage = false;
+        self
     }
 }
 
@@ -105,6 +125,7 @@ mod tests {
         InsightScope {
             provider_id: provider_id.to_string(),
             cache_ttl: CacheTtl::FiveMinutes,
+            opens_execute_stage: true,
         }
     }
 
@@ -202,6 +223,7 @@ mod tests {
         let one_hour = InsightScope {
             provider_id: "anthropic".to_string(),
             cache_ttl: CacheTtl::OneHour,
+            opens_execute_stage: true,
         };
         let event = step_usage("claude-fable-5", 1_000_000, 400_000, 100_000);
         let pricing = Catalog::current()

@@ -1628,7 +1628,7 @@ async fn run_turn(
         .map(|memory| crate::memory::SessionRequery::new(memory, messages));
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format);
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
@@ -1642,13 +1642,9 @@ async fn run_turn(
         cfg.provider.id.to_string(),
         durable_pre_persisted,
     );
-    // First event of the turn: what recall put in front of the model. It
-    // precedes the stage boundaries deliberately — the context was assembled
-    // before the turn began, and a receipt that ordered it after the first
-    // stage would misdescribe when it entered.
-    if let Some(event) = recall_event {
-        let _ = tx.send(event);
-    }
+    // Recall's frames, then this run's own opening stage boundary — see
+    // `output::open_raw_turn` for the ordering and for why it lives there.
+    output::open_raw_turn(&tx, recall_event);
 
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.

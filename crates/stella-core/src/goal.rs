@@ -239,6 +239,13 @@ impl Engine<'_> {
             let round_offset = goal_round_turn_offset(round);
             let round_engine =
                 self.with_turn_instance(self.config.turn_instance.saturating_add(round_offset));
+            // The goal loop owns this round's stage vocabulary, exactly as it
+            // owns the `Verdict` boundary below: the engine emits no `Stage`
+            // of its own (#3416), so a round that skipped this would leave the
+            // HUD showing the previous round's verdict while work was running.
+            let _ = events.send(AgentEvent::Stage {
+                name: StageKind::Execute,
+            });
             match round_engine.run_turn(messages, budget, events).await {
                 TurnOutcome::Completed { .. } => {}
                 TurnOutcome::Aborted { reason, kind, .. } => {

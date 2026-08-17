@@ -529,7 +529,12 @@ pub(crate) async fn drive_turn(
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
 ) -> DrivenTurn {
-    let events = EventSender::new(events.clone());
+    // The host driving this session is the run owner, and a run owner emits
+    // its own stage boundaries — the engine emits none (#3416).
+    let events = EventSender::new(events.clone()).pairing_stage_complete();
+    let _ = events.send(AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+    });
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
     let outcome = engine.drive(&mut state, &events).await;
     let budget = *state.budget();

@@ -489,7 +489,14 @@ pub(crate) async fn drive_resumed_turn(
     mut state: stella_core::step::TurnState,
     events: &stella_core::EventSender,
 ) -> TurnOutcome {
-    engine.drive(&mut state, events).await
+    // The run owner emits its own stage boundaries — the engine emits none
+    // (#3416). A resumed turn is still an execute turn, and the consumers that
+    // render `hud.stage` cannot tell one from a fresh one.
+    let events = events.pairing_stage_complete();
+    let _ = events.send(stella_protocol::AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+    });
+    engine.drive(&mut state, &events).await
 }
 
 #[cfg(test)]

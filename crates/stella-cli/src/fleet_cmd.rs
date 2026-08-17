@@ -947,6 +947,16 @@ async fn run_task(
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }
+                // A fleet worker owns its lane's stage vocabulary; the engine
+                // emits no `Stage` of its own (#3416). Opening boundary only:
+                // the closing one pairs onto the engine's `Complete` through
+                // `EventSender::pairing_stage_complete`, and this lane hands
+                // the engine a bare `UnboundedSender` there is no seam to wrap
+                // — the fleet renders lanes from the ledger, not from a stage
+                // HUD, so the gap costs nothing here.
+                let _ = tx.send(AgentEvent::Stage {
+                    name: stella_protocol::StageKind::Execute,
+                });
                 tokio::select! {
                     outcome = engine.run_turn(&mut messages, &mut budget, &tx) => {
                         Raced::Outcome(outcome)

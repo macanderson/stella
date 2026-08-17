@@ -17,10 +17,15 @@
 //! was the same obligations written out three times, which is how one of them
 //! ends up keeping four of five:
 //!
-//! - **frame the turn** — the opening `Stage(Execute)` and the
-//!   `agent.turn.started` / `agent.turn.completed` pair on the hook bus, so an
-//!   extension observing turns sees every turn as a turn and never an unpaired
-//!   boundary (#1133);
+//! - **frame the turn** — the `agent.turn.started` / `agent.turn.completed`
+//!   pair on the hook bus, so an extension observing turns sees every turn as
+//!   a turn and never an unpaired boundary (#1133). The turn's `Stage`
+//!   boundary is deliberately **not** framed here: `StageKind` is the run
+//!   owner's vocabulary, eight of its eleven values name stages the engine
+//!   knows nothing about, and a `Stage(Execute)` emitted from inside the loop
+//!   was a claim about a caller the engine cannot see — it arrived while a
+//!   staged run was in `Witness`, which is why the pipeline had to drop it
+//!   (#3416). Every run owner emits its own;
 //! - **gate on the step cap the state carries** — a turn restored at step 37
 //!   of 40 gets 3 more, not 40;
 //! - **run exactly one committed step** through [`Engine::run_step`];
@@ -55,7 +60,7 @@
 //!
 //! [`EngineConfig::turn_halt`]: crate::EngineConfig
 
-use stella_protocol::{AgentEvent, StageKind};
+use stella_protocol::AgentEvent;
 
 use super::{Engine, TurnOutcome, bus, lifecycle, settlement, step_cap_reason};
 use crate::event_sender::EventSender;
@@ -79,9 +84,6 @@ impl Engine<'_> {
     /// current-thread runtime. See that method for why, and for why a caller
     /// that needs to stop a turn should cancel rather than drop this future.
     pub async fn drive(&self, state: &mut TurnState, events: &EventSender) -> TurnOutcome {
-        let _ = events.send(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
         self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
             lifecycle::turn_started_payload(
                 state.messages().len(),

@@ -191,6 +191,39 @@ pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) 
     })
 }
 
+/// Open a raw (non-staged) run's turn on `events`: this turn's `ContextRecall`,
+/// if recall ran, and then the run owner's own `Stage(Execute)`.
+///
+/// Both halves are ordered deliberately. Recall goes first because the context
+/// was assembled *before* the turn began, and a receipt that ordered it after
+/// the first stage would misdescribe when it entered. The stage boundary is
+/// here at all because the engine emits none — `StageKind` is the run owner's
+/// vocabulary, not the loop's (#3416) — and it lives in this module rather than
+/// at the call site because `agent.rs` is a god file closed to growth.
+pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEvent>) {
+    if let Some(event) = recall_event {
+        let _ = events.send(event);
+    }
+    let _ = events.send(AgentEvent::Stage {
+        name: stella_protocol::StageKind::Execute,
+    });
+}
+
+/// [`event_sender_for_run`] for a **raw** (non-staged) run: the same boundary,
+/// plus the run owner's closing `Stage(Complete)` paired onto the engine's
+/// terminal event — see [`EventSender::pairing_stage_complete`].
+///
+/// A separate constructor rather than a flag because the staged run shares
+/// `event_sender_for_run` and must not be paired: the pipeline emits every
+/// stage boundary of its own.
+pub(super) fn raw_event_sender_for_run(
+    sender: mpsc::UnboundedSender<AgentEvent>,
+    format: OutputFormat,
+) -> (EventSender, bool) {
+    let (events, durable_pre_persisted) = event_sender_for_run(sender, format);
+    (events.pairing_stage_complete(), durable_pre_persisted)
+}
+
 /// The durable sink, and the point at which an event becomes a *line*.
 ///
 /// The line carries this sink's own `ts` (#2111). The renderer publishes the
