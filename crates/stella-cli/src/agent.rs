@@ -1620,7 +1620,7 @@ async fn run_turn(
         &cfg.workspace_root,
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (tx, durable_pre_persisted) = event_sender_for_raw_run(raw_tx, format);
+    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never
@@ -1699,6 +1699,14 @@ async fn run_turn(
     // events and a consumer folding the stream must see them inside the turn
     // they describe. See `crate::turn_files` for why a measurement, not a hook.
     crate::turn_files::emit_shared_tree_changes(cfg, &tx);
+    // This path owns its run — one raw engine turn, no pipeline above it — so
+    // it owes the run's terminator (#3379). The engine ends the turn with
+    // `TurnComplete` and deliberately says nothing about the run, and every
+    // other owner (the deck, fleet, goal, resume, the pipeline one-shot) goes
+    // through this same seam; without it a raw `stella run` ended on
+    // `turn_complete` and simply stopped, leaving every consumer waiting for a
+    // terminal event that never came. Last, after the turn's own events above.
+    persistence::emit_run_complete_for_turn(&tx, &cfg.model_id, &outcome);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).
