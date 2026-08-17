@@ -19,11 +19,18 @@
 //! - every built-in's [`stella_protocol::ToolContract`] ([`crate::contracts`]).
 //!
 //! **To add a tool:** register it in
-//! [`ToolRegistry::new`](crate::registry::ToolRegistry), then add one line
-//! here. Nothing else needs a count bumped. Two PRs adding different tools
-//! merge to the correct union instead of a wrong integer, and a tool
-//! registered but never declared here fails the registry tests by *name*,
-//! not by an off-by-one.
+//! [`ToolRegistry::new`](crate::registry::ToolRegistry), add one line here,
+//! and introduce it in `stella-cli`'s `tool_steering!()` prose. Nothing else
+//! needs a count bumped. Two PRs adding different tools merge to the correct
+//! union instead of a wrong integer, and a tool registered but never declared
+//! here fails the registry tests by *name*, not by an off-by-one.
+//!
+//! The third step is enforced too (#3557): the steering block presents each
+//! group as a complete list, so a tool it never mentions reads to the model
+//! as one that does not exist. `stella-cli`'s `agent::prompt::tool_names`
+//! fails by name when a row here goes unintroduced, and both it and
+//! `tests/tool_name_liveness_witness.rs` fail when prose points the model at
+//! a name in [`RETIRED_TOOL_NAMES`] instead.
 
 use stella_protocol::RiskLevel;
 

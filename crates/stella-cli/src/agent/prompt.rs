@@ -742,5 +742,11 @@ pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path
 #[cfg(test)]
 mod parity;
 
+/// The other half of that discipline, pointed at the tool names the steering
+/// contract spells out in prose: every built-in is introduced, and no retired
+/// one is still promised (#3557).
+#[cfg(test)]
+mod tool_names;
+
 #[cfg(test)]
 mod tests;
