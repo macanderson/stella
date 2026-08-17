@@ -873,6 +873,67 @@ mod usage_recovery_tests {
 }
 
 #[cfg(test)]
+mod run_terminator_tests {
+    use super::*;
+
+    fn drain(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
+
+    /// A completed raw turn ends its run; an aborted one does not, because the
+    /// abort already crossed the stream as `Error` and a run must never end on
+    /// both.
+    ///
+    /// The rule was documented on [`emit_run_complete_for_turn`] and nowhere
+    /// asserted, which is how the raw one-shot path came to call nothing at all
+    /// (#3379 landing against #3418/#3425): the only signal was a dead-code
+    /// lint on an uncalled helper, and a lint on the producer says nothing
+    /// about whether a run still ends.
+    #[test]
+    fn a_completed_turn_ends_the_run_and_an_aborted_one_does_not() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let events = stella_core::EventSender::new(tx);
+
+        emit_run_complete_for_turn(
+            &events,
+            "worker",
+            &TurnOutcome::Completed {
+                text: "done".into(),
+                cost_usd: 0.5,
+            },
+        );
+        let seen = drain(&mut rx);
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [AgentEvent::RunComplete { model, cost_usd }]
+                    if model == "worker" && (*cost_usd - 0.5).abs() < f64::EPSILON
+            ),
+            "a completed turn ends the run, carrying its model and spend: {seen:?}"
+        );
+
+        emit_run_complete_for_turn(
+            &events,
+            "worker",
+            &TurnOutcome::Aborted {
+                reason: "budget".into(),
+                kind: stella_core::AbortKind::DeliberateStop,
+                cost_usd: 0.5,
+            },
+        );
+        assert!(
+            drain(&mut rx).is_empty(),
+            "an aborted turn already sent Error; sealing it as a success would \
+             make the run end on both"
+        );
+    }
+}
+
+#[cfg(test)]
 mod stream_tests {
     use super::*;
 

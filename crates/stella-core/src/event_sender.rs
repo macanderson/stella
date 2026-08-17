@@ -172,7 +172,7 @@ mod run_ending_tests {
                 seen.as_slice(),
                 [
                     AgentEvent::TurnComplete { .. },
-                    AgentEvent::Complete { model, cost_usd },
+                    AgentEvent::RunComplete { model, cost_usd },
                 ] if model == "opus" && (*cost_usd - 0.25).abs() < f64::EPSILON
             ),
             "the turn ending passes through unedited and the run's follows it, \
@@ -207,18 +207,18 @@ mod run_ending_tests {
         );
         let terminal: Vec<&AgentEvent> = seen
             .iter()
-            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .filter(|e| matches!(e, AgentEvent::RunComplete { .. }))
             .collect();
         assert!(
             matches!(
                 terminal.as_slice(),
-                [AgentEvent::Complete { cost_usd, .. }]
+                [AgentEvent::RunComplete { cost_usd, .. }]
                     if (*cost_usd - 0.6).abs() < 1e-9
             ),
             "exactly one run ending, carrying the run's total: {terminal:?}"
         );
         assert!(
-            matches!(seen.last(), Some(AgentEvent::Complete { .. })),
+            matches!(seen.last(), Some(AgentEvent::RunComplete { .. })),
             "and it is last: {seen:?}"
         );
     }
@@ -241,7 +241,7 @@ mod run_ending_tests {
         assert!(
             !seen
                 .iter()
-                .any(|e| matches!(e, AgentEvent::Complete { .. })),
+                .any(|e| matches!(e, AgentEvent::RunComplete { .. })),
             "a failed run must not be sealed as a success: {seen:?}"
         );
     }
