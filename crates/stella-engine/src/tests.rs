@@ -248,7 +248,10 @@ async fn new_turn_then_run_step_drives_a_turn_to_done() {
 
     let types: Vec<String> = drain(&mut rx).iter().map(event_type).collect();
     assert!(types.contains(&"tool_start".to_string()));
-    assert!(types.contains(&"complete".to_string()));
+    // The ENGINE's ending names the turn, not the run (#3379): a host driving
+    // several turns gets one of these each, and emits the run's own ending
+    // itself.
+    assert!(types.contains(&"turn_complete".to_string()));
 }
 
 #[tokio::test]
