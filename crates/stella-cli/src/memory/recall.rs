@@ -504,15 +504,11 @@ impl SessionMemory {
         })
         .await
     }
-    /// Recall with an injectable diagnostic sink to avoid global stderr
-    /// capture in tests, keeping only the [`Recall`].
+    /// Recall with an injectable diagnostic sink to avoid global stderr capture in tests.
     ///
-    /// Test-gated since #3358 moved the production callers to
-    /// [`Self::recalled_frames_anchored`], which returns the host's drop
-    /// report alongside the recall: a production caller of this form is a
-    /// caller discarding the drops again, which is the defect that issue
-    /// closed. The gate is what says so — without it the method is merely
-    /// unused, which is a lint, not a contract.
+    /// Test-only, and gated as such: every caller is inside a `#[cfg(test)]`
+    /// module, so the shipping binary carries no reference to it and
+    /// `clippy -D warnings` reads it as dead code in that build.
     #[cfg(test)]
     pub(super) async fn recalled_frames_reporting(
         &self,
