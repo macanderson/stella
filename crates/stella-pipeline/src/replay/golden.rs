@@ -329,7 +329,11 @@ mod tests {
     use stella_protocol::StageKind;
 
     fn stage(name: StageKind) -> AgentEvent {
-        AgentEvent::Stage { name }
+        // These fixtures are a wrapper's stream, so its own vocabulary.
+        AgentEvent::Stage {
+            name,
+            scope: stella_protocol::StageScope::Run,
+        }
     }
     fn complete() -> AgentEvent {
         AgentEvent::TurnComplete {

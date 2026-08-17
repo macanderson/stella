@@ -580,9 +580,8 @@ pub(crate) async fn run_goal_turn(
     // run's one ending (#3398). A goal that ends unmet still *ended*: the
     // rounds ran, the money was spent, and the outcome is carried by the
     // execution record, not by withholding the terminator.
-    if let GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. } = &outcome {
-        persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
-    }
+    let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
+    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
