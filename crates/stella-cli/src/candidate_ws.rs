@@ -123,6 +123,7 @@ use crate::agent::{
 };
 
 mod adopt;
+mod adoption_ledger;
 mod escape;
 mod modes;
 mod oracle_writes;
@@ -310,6 +311,11 @@ pub(crate) struct GitCandidateWorkspaces {
     /// `None` leaves the `task` tool reporting sub-agents as unavailable —
     /// see [`GitCandidateWorkspaces::with_sub_agents`].
     sub_agents: Option<Arc<dyn stella_core::subagent::SubAgentDispatcher>>,
+    /// Where adopted changes are attributed durably (#3419). `None` leaves
+    /// `attribute_adopted` the no-op it has always been — which is correct
+    /// for a session with no store open, and was silently the case for every
+    /// session until this existed.
+    adoption_ledger: Option<adoption_ledger::AdoptionLedger>,
 }
 
 impl GitCandidateWorkspaces {
@@ -327,7 +333,23 @@ impl GitCandidateWorkspaces {
             candidate_mcp: None,
             events: None,
             sub_agents: None,
+            adoption_ledger: None,
         }
+    }
+
+    /// Attribute every adoption these candidates deliver to `execution_id`.
+    ///
+    /// The durable half of #2907's "one adoption, two projections": the
+    /// `FileChange` events already ride the session's stream, and this is what
+    /// puts the same rows in `files_touched`. Without it the table is empty
+    /// for every run and `stella export`'s files dump renders nothing (#3419).
+    pub(crate) fn with_adoption_ledger(
+        mut self,
+        store: Arc<stella_store::Store>,
+        execution_id: i64,
+    ) -> Self {
+        self.adoption_ledger = Some(adoption_ledger::AdoptionLedger::new(store, execution_id));
+        self
     }
 
     /// Let every candidate delegate through the session's sub-agent runner.
@@ -513,6 +535,7 @@ impl GitCandidateWorkspaces {
                     task_board,
                     sole_candidate: AtomicBool::new(false),
                     omitted,
+                    adoption_ledger: self.adoption_ledger.clone(),
                 })
             }
             Err(reason) => {
@@ -738,6 +761,10 @@ pub(crate) struct GitCandidateWorkspace {
     /// see [`snapshot_gaps`]. A display list for the candidate's context, not
     /// a set anything branches on.
     omitted: Vec<String>,
+    /// Where this candidate's adopted changes are recorded durably (#3419).
+    /// `None` when the session opened no store, which is the only case in
+    /// which having no durable record is correct.
+    adoption_ledger: Option<adoption_ledger::AdoptionLedger>,
 }
 
 impl GitCandidateWorkspace {
@@ -933,6 +960,19 @@ impl GitCandidateWorkspace {
 impl CandidateWorkspace for GitCandidateWorkspace {
     fn root(&self) -> &str {
         &self.root
+    }
+
+    /// The durable half of the adoption (#3419).
+    ///
+    /// The trait's default is a no-op, and this port took it for as long as it
+    /// existed — so `files_touched` was empty in production for every run
+    /// while the `FileChange` events describing the same adoption rode the
+    /// stream. See [`adoption_ledger`] for the row shape and why a write
+    /// failure here is never allowed to fail the adoption.
+    fn attribute_adopted(&self, adopted: &[AdoptedChange]) {
+        if let Some(ledger) = &self.adoption_ledger {
+            ledger.record(adopted);
+        }
     }
 
     fn tools(&self) -> &dyn stella_core::ToolExecutor {
