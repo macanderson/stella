@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from arenabench.balance import COMFORTABLE_HEADROOM, verdict
+from arenabench.balance import COMFORTABLE_HEADROOM, Wallet, openrouter_key, verdict
+from arenabench.cloud import seat_gateway_credential
 
 
 class TestBalanceVerdict:
@@ -60,3 +61,79 @@ class TestBalanceVerdict:
         answer = verdict(remaining_usd=50.0, trials=89, cost_per_trial_usd=estimate)
         assert answer.level == "ok"
         assert "--est-cost-per-trial" in answer.message
+
+
+class TestWalletProvenance:
+    """A verdict must say whose money it counted (#3308).
+
+    The preflight prices the submitting host's key and the trials spend a
+    key from SSM. When those are different accounts, an unattributed clean
+    verdict is byte-indistinguishable from a real all-clear — which is the
+    reading that returned three runs to the empty-balance loss this whole
+    preflight exists to stop.
+    """
+
+    LOCAL = Wallet(env_name="OPENROUTER_API_KEY")
+    SPLIT = Wallet(env_name="OPENROUTER_KEY", seat_credential="OPENROUTER_API_KEY")
+
+    def test_a_clean_verdict_names_both_wallets_when_the_seats_spend_another(self):
+        answer = verdict(200.0, 89, 0.40, self.SPLIT)
+        assert answer.level == "ok"
+        assert "priced against OPENROUTER_KEY on this host" in answer.message
+        assert "seats spend the SSM-provided OPENROUTER_API_KEY" in answer.message
+
+    def test_with_no_declared_seat_credential_only_the_env_var_is_named(self):
+        answer = verdict(200.0, 89, 0.40, self.LOCAL)
+        assert "priced against OPENROUTER_API_KEY on this host" in answer.message
+        assert "seats spend" not in answer.message
+
+    @pytest.mark.parametrize(
+        ("remaining", "estimate", "level"),
+        [(0.0, None, "refuse"), (12.0, 0.40, "refuse"), (40.0, 0.40, "warn"),
+         (50.0, None, "ok")],
+    )
+    def test_every_arm_that_priced_a_wallet_attributes_it(
+        self, remaining, estimate, level
+    ):
+        """Including the refusals: a refusal over the wrong wallet is a false
+        refusal, and the operator can only see that if it is named."""
+        answer = verdict(remaining, 89, estimate, self.SPLIT)
+        assert answer.level == level
+        assert "priced against OPENROUTER_KEY on this host" in answer.message
+
+    def test_an_unread_balance_attributes_nothing(self):
+        """No wallet was read, so there is no wallet to name."""
+        answer = verdict(None, 89, 0.40, self.SPLIT)
+        assert answer.level == "unknown"
+        assert "priced against" not in answer.message
+
+    def test_the_key_arrives_with_the_name_it_was_read_from(self, monkeypatch):
+        """`verdict` can only name the variable if `openrouter_key` says which
+        one answered — the fallback name is not the primary one."""
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_KEY", "sk-not-a-real-key")
+        assert openrouter_key() == ("OPENROUTER_KEY", "sk-not-a-real-key")
+
+    def test_no_key_at_all_reads_as_no_reading(self, monkeypatch):
+        for name in ("OPENROUTER_API_KEY", "OPENROUTER_KEY"):
+            monkeypatch.delenv(name, raising=False)
+        assert openrouter_key() is None
+
+
+class TestSeatGatewayCredential:
+    """Which wallet the seats will spend, derived from what SSM will supply."""
+
+    def test_a_declared_gateway_key_that_ssm_provides_is_named(self):
+        needed = {"stella": ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]}
+        available = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"}
+        assert seat_gateway_credential(needed, available) == "OPENROUTER_API_KEY"
+
+    def test_a_declared_key_ssm_will_not_supply_is_not_named(self):
+        """Naming a credential the trial will not hold would be a second false
+        reassurance, not a fix for the first."""
+        needed = {"stella": ["OPENROUTER_API_KEY"]}
+        assert seat_gateway_credential(needed, {"ANTHROPIC_API_KEY"}) is None
+
+    def test_seats_spending_no_gateway_key_name_nothing(self):
+        needed = {"cc": ["ANTHROPIC_API_KEY"]}
+        assert seat_gateway_credential(needed, {"ANTHROPIC_API_KEY"}) is None

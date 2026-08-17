@@ -34,10 +34,14 @@ from typing import Literal
 __all__ = [
     "Balance",
     "Verdict",
+    "Wallet",
     "fetch_openrouter_balance",
     "openrouter_key",
     "verdict",
 ]
+
+#: Environment variables an OpenRouter key may arrive in, in preference order.
+KEY_ENV_NAMES = ("OPENROUTER_API_KEY", "OPENROUTER_KEY")
 
 #: How much headroom over the projected spend counts as comfortable. A run
 #: priced at exactly its balance is a run that ends in a 402 partway through,
@@ -58,6 +62,34 @@ class Balance:
 
 
 @dataclass(frozen=True)
+class Wallet:
+    """Which wallet a reading priced — by name, never by value.
+
+    A cloud run prices the submitting host's own key and then spends a key
+    the seats read from SSM. Those are two accounts that merely tend to be
+    the same one, and when they are not, a clean verdict over a funded local
+    wallet is byte-indistinguishable from a clean verdict over the wallet
+    that will actually pay — which is the exact reading that returned three
+    runs to the empty-balance loss this preflight exists to stop (#3308).
+    So a priced verdict says whose money it counted.
+    """
+
+    #: The environment variable the priced key was read from on this host.
+    env_name: str
+    #: The credential name the trial seats will spend instead, when the run
+    #: knows one. ``None`` when nothing is declared — the local key is then
+    #: all there is to name, and naming it is still the whole point.
+    seat_credential: str | None = None
+
+    def provenance(self) -> str:
+        """The parenthetical an operator reads to place the number."""
+        priced = f"priced against {self.env_name} on this host"
+        if self.seat_credential is None:
+            return priced
+        return f"{priced}; seats spend the SSM-provided {self.seat_credential}"
+
+
+@dataclass(frozen=True)
 class Verdict:
     """The preflight's answer: whether to submit, and what to tell the human."""
 
@@ -74,6 +106,7 @@ def verdict(
     remaining_usd: float | None,
     trials: int,
     cost_per_trial_usd: float | None,
+    wallet: Wallet | None = None,
 ) -> Verdict:
     """Whether a wallet holding ``remaining_usd`` should fund this run.
 
@@ -86,45 +119,70 @@ def verdict(
     ``remaining_usd`` of ``None`` means the balance could not be read, which
     is reported and never blocks: an unreachable gateway must not be able to
     stop a run that would have succeeded.
+
+    ``wallet`` names whose money was counted and is appended to every arm
+    that priced one. The unknown arm deliberately carries none: no wallet
+    was read, so there is nothing to attribute.
     """
     if remaining_usd is None:
         return Verdict("unknown", "balance not checked — the gateway did not answer")
     if remaining_usd <= 0:
-        return Verdict(
+        return _priced(
             "refuse",
+            wallet,
             f"the gateway balance is ${remaining_usd:.2f} — every trial would 402 "
             "on its first model call and score as an operational abort",
         )
     if cost_per_trial_usd is None or cost_per_trial_usd <= 0:
-        return Verdict(
+        return _priced(
             "ok",
+            wallet,
             f"gateway balance ${remaining_usd:.2f}; projected spend unknown "
             "(pass --est-cost-per-trial to have it checked)",
         )
     projected = trials * cost_per_trial_usd
     if remaining_usd < projected:
-        return Verdict(
+        return _priced(
             "refuse",
+            wallet,
             f"the gateway balance is ${remaining_usd:.2f} but this run projects "
             f"${projected:.2f} ({trials} trials x ${cost_per_trial_usd:.2f}) — the "
             "money would run out partway through and the trials it kills would "
             "score as operational aborts",
         )
     if remaining_usd < projected * COMFORTABLE_HEADROOM:
-        return Verdict(
+        return _priced(
             "warn",
+            wallet,
             f"gateway balance ${remaining_usd:.2f} against a projected "
             f"${projected:.2f} — under {COMFORTABLE_HEADROOM:g}x headroom, and a "
             "panel's expensive tail spends multiples of the mean",
         )
-    return Verdict(
+    return _priced(
         "ok",
+        wallet,
         f"gateway balance ${remaining_usd:.2f} against a projected ${projected:.2f}",
     )
 
 
-def openrouter_key() -> str | None:
-    """The submitting host's own OpenRouter key, if it has one.
+def _priced(
+    level: Literal["ok", "warn", "refuse"],
+    wallet: Wallet | None,
+    message: str,
+) -> Verdict:
+    """A verdict over a wallet that was actually read, attributed if it can be."""
+    if wallet is None:
+        return Verdict(level, message)
+    return Verdict(level, f"{message} ({wallet.provenance()})")
+
+
+def openrouter_key() -> tuple[str, str] | None:
+    """The submitting host's own OpenRouter key and the name it came from.
+
+    The name travels with the key because the verdict has to print it: a
+    reading that cannot say which variable it read cannot be told from a
+    reading of the wrong account (#3308). Names are printable; the key is
+    not, and nothing but :func:`fetch_openrouter_balance` may see it.
 
     Deliberately local-only. A cloud run's seats read their credentials from
     SSM and the submitting host may legitimately hold none of them — in which
@@ -132,10 +190,10 @@ def openrouter_key() -> str | None:
     secret this process does not otherwise need, purely to price a run, is a
     worse trade than an unchecked preflight.
     """
-    for name in ("OPENROUTER_API_KEY", "OPENROUTER_KEY"):
+    for name in KEY_ENV_NAMES:
         value = os.environ.get(name)
         if value:
-            return value
+            return name, value
     return None
 
 

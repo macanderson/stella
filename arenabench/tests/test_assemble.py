@@ -22,6 +22,7 @@ test touches S3.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,63 @@ def test_the_longest_matching_slug_wins() -> None:
     assert seat_for_job_dir("abc-stella-bare", ["stella", "stella-bare"]) == (
         "stella-bare"
     )
+
+
+def test_one_trial_fetched_into_two_roots_is_discovered_once(tmp_path: Path) -> None:
+    """The `cloud run` layout: a gate watcher downloads each job's whole prefix
+    into its label directory and the fetch tail downloads it again into the
+    job-uuid directory. Two byte-identical trees of one trial both matched the
+    trial glob, so the assembler filed a twin cell named `<trial>x2` and every
+    aggregate over cells double-counted the run (#3324).
+    """
+    run_dir = tmp_path / "twinned"
+    run_dir.mkdir(parents=True)
+    (run_dir / "match.toml").write_text(MATCH_TOML, encoding="utf-8")
+    label = "000-stella-bare-loop-fix-git"
+    _write_trial(run_dir, "job-uuid", "stella-bare-loop", "fix-git", 1)
+    shutil.copytree(run_dir / "job-uuid", run_dir / label)
+    (run_dir / "jobs.json").write_text(
+        json.dumps({
+            "run_id": "twinned",
+            "jobs": [{"id": "job-uuid", "label": label, "task": "fix-git"}],
+        }),
+        encoding="utf-8",
+    )
+
+    trials = discover_trials(run_dir, ["stella-bare-loop", "claude-code"])
+    assert len(trials) == 1, [str(t.path) for t in trials]
+
+    assembly = assemble_run(run_dir, workspace=tmp_path / "arena")
+    manifest = json.loads(
+        (assembly.match_dir / ASSEMBLY_NAME).read_text(encoding="utf-8")
+    )
+    names = [cell["trial"] for cell in manifest["cells"]]
+    assert names == ["fix-git__a1xyz"], names
+
+
+def test_two_different_trials_sharing_a_name_are_both_kept(tmp_path: Path) -> None:
+    """The guard is identity, not name equality.
+
+    Harbor's `<task>__<suffix>` carries no uniqueness guarantee across the
+    separate containers a fan-out uses — which is why `link_name` exists. Two
+    genuinely different trials that collide on every path segment must both
+    survive and be disambiguated, exactly as before.
+    """
+    run_dir = tmp_path / "collided"
+    run_dir.mkdir(parents=True)
+    (run_dir / "match.toml").write_text(MATCH_TOML, encoding="utf-8")
+    _write_trial(run_dir, "job-000", "stella-bare-loop", "fix-git", 1, reward=1.0)
+    _write_trial(run_dir, "job-001", "stella-bare-loop", "fix-git", 1, reward=0.0)
+    (run_dir / "jobs.json").write_text(
+        json.dumps({"jobs": [
+            {"id": "job-000", "label": "000-stella-bare-loop-fix-git"},
+            {"id": "job-001", "label": "001-stella-bare-loop-fix-git"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    trials = discover_trials(run_dir, ["stella-bare-loop", "claude-code"])
+    assert len(trials) == 2, [str(t.path) for t in trials]
 
 
 def test_a_colliding_trial_name_keeps_its_task() -> None:
